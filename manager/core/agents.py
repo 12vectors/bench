@@ -109,9 +109,11 @@ def _validate(filename: str, stage: str, allowed: set[str], why: str | None = No
 def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str, log_path: Path):
     """Run one headless job through the configured agent adapter.
 
-    The adapter contract: `run` gets AGENT_PROMPT and AGENT_MODE
-    (work = may mutate, review = read-only) plus the BOARD_* passthrough
-    for its event bridge; its stdout is the job log; exit 0 = completed.
+    The adapter contract: `run` gets AGENT_PROMPT, AGENT_MODE (the intent:
+    work = mutate and commit, act-pr = work + push, review = read-only +
+    post PR verdicts) and AGENT_COMMANDS (the project's runnable command
+    prefixes) plus the BOARD_* passthrough for its event bridge; its
+    stdout is the job log; exit 0 = completed.
     """
     adapter = config.adapter_dir()
     if adapter is None:
@@ -122,6 +124,7 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str, log
     env.update({
         "AGENT_PROMPT": prompt,
         "AGENT_MODE": mode,
+        "AGENT_COMMANDS": config.AGENT_COMMANDS,
         "AGENT_CWD": str(cwd),
         "BOARD_AGENT_ID": agent_id,
         "BOARD_TASK": filename,
@@ -250,12 +253,20 @@ def _declined_reason(log_path: str) -> str | None:
     return None
 
 
-def _discard_untouched_worktree(record: dict) -> bool:
-    """Remove worktree + branch, but only if the agent committed nothing."""
+def _no_new_commits(record: dict) -> bool:
+    """True iff the worktree's HEAD is still the commit the agent started
+    from — i.e. the run produced no commits on the branch."""
+    if not record.get("worktree") or not record.get("base"):
+        return False
     head = subprocess.run(
         ["git", "-C", record["worktree"], "rev-parse", "HEAD"],
         capture_output=True, text=True)
-    if head.returncode != 0 or head.stdout.strip() != record["base"]:
+    return head.returncode == 0 and head.stdout.strip() == record["base"]
+
+
+def _discard_untouched_worktree(record: dict) -> bool:
+    """Remove worktree + branch, but only if the agent committed nothing."""
+    if not _no_new_commits(record):
         return False
     subprocess.run(["git", "-C", str(config.REPO), "worktree", "remove", "--force",
                     record["worktree"]], capture_output=True)
@@ -295,11 +306,6 @@ def _reap_agent(agent_id: str, proc: subprocess.Popen, log_file) -> None:
         summary = (f"{name} declined {filename} — not ready: {declined}"
                    + ("" if cleaned else f" (worktree {record['worktree']} kept: it has commits)"))
     elif rc == 0 and not stopped:
-        if find_stage_of(filename) == "in-progress":
-            try:
-                move_task(filename, "in-progress", "review", actor="agent")
-            except ValueError:
-                pass
         try:
             report = _clean_log(Path(record["log"]).read_text(encoding="utf-8",
                                                               errors="replace"))
@@ -307,7 +313,19 @@ def _reap_agent(agent_id: str, proc: subprocess.Popen, log_file) -> None:
             report = ""
         _file_report(record, "Work report", report)
         _session_report(record, report)
-        summary = f"{name} finished {filename} — review branch {branch}"
+        if _no_new_commits(record):
+            # A "clean" exit with an empty branch is how permission bugs
+            # hide: nothing reaches review/ silently.
+            summary = (f"{name} exited cleanly on {filename} but committed "
+                       f"NOTHING to {branch} — card stays in in-progress; "
+                       f"read the report before relaunching")
+        else:
+            if find_stage_of(filename) == "in-progress":
+                try:
+                    move_task(filename, "in-progress", "review", actor="agent")
+                except ValueError:
+                    pass
+            summary = f"{name} finished {filename} — review branch {branch}"
     elif stopped:
         summary = f"{name} was held on {filename} — nothing is lost"
     else:
@@ -384,7 +402,8 @@ def start_pr_fix(filename: str, stage: str) -> dict:
 
     prompt = config.prompt("act-pr.md").format(
         filename=filename, branch=branch, pr=task["pr"], body=task["body"])
-    proc, log_file = _launch("work", prompt, worktree, agent_id, filename, log_path)
+    # act-pr is the one intent allowed to push: the PR must update.
+    proc, log_file = _launch("act-pr", prompt, worktree, agent_id, filename, log_path)
 
     record = {
         "id": agent_id, "task": filename, "branch": branch,

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# opencode adapter: run one headless job to completion.
+#
+# Contract (same for every adapter):
+#   env in:  AGENT_PROMPT    the full prompt
+#            AGENT_MODE      work | act-pr | review — the launch intent
+#                            (see core/adapters/README.md)
+#            AGENT_COMMANDS  comma-separated neutral command prefixes the
+#                            project lets agents run (tests/checks)
+#            AGENT_CWD       working directory (already set as cwd by the board)
+#            BOARD_*         passthrough for the event bridge
+#   stdout:  captured by the board as the job log; `opencode run` prints
+#            the agent's final text there, so the closing report's marker
+#            lines (NOT READY:, PR REVIEW:, ...) parse unchanged
+#   exit:    passes through from opencode; 0 = completed
+#
+# permission_config.py renders the intent as an opencode config —
+# last-match-wins glob rules over bash, edit allow/deny — handed to the
+# launch via OPENCODE_CONFIG so nothing is written into the worktree.
+#
+# Events: opencode loads project plugins from .opencode/plugin/, so a
+# worktree of a repo wired by this adapter (`wire` installs the shim,
+# committed to the repo) reports events with the BOARD_* env forwarded
+# through the process environment. An unwired repo just runs silently.
+#
+# BOARD_OPENCODE_BIN overrides the binary (used by the test stubs).
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIN="${BOARD_OPENCODE_BIN:-opencode}"
+MODE="${AGENT_MODE:-work}"
+
+CONFIG_FILE="$(mktemp "${TMPDIR:-/tmp}/bench-opencode-XXXXXX.json")"
+trap 'rm -f "$CONFIG_FILE"' EXIT
+python3 "$HERE/permission_config.py" "$MODE" > "$CONFIG_FILE"
+export OPENCODE_CONFIG="$CONFIG_FILE"
+
+"$BIN" run "$AGENT_PROMPT"

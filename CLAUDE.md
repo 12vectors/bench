@@ -20,7 +20,8 @@ its status — there is no other source of truth.
     │   │                    put anything project-specific here.
     │   ├── VERSION, board.py, config.py … httpd.py, board.html
     │   ├── prompts/      ← Default agent prompt templates
-    │   ├── adapters/     ← Agent-vendor integrations (claude/ ships; README)
+    │   ├── adapters/     ← Agent-vendor integrations (claude/ and
+    │   │                    opencode/ ship; contract in README)
     │   └── driver.example/
     └── local/            ← This project's half. Updates never touch it.
         ├── .env          ← Settings (gitignored; defaults in core/.env.example)
@@ -60,8 +61,13 @@ config → state → taskfiles → events / github / drive → agents → watch 
 Headless jobs run through an adapter (`BOARD_AGENT_ADAPTER`, default
 `claude`), so the manager works with other coding agents too. An adapter is
 a directory with `run` (execute one job: `AGENT_PROMPT` + `AGENT_MODE`
-work|review in, stdout = the log, markers parsed from it) and `wire`
-(idempotently give the host project live-session visibility). Adapters
+work|act-pr|review + `AGENT_COMMANDS` in, stdout = the log, markers parsed
+from it) and `wire` (idempotently give the host project live-session
+visibility). Headless jobs answer no permission prompts, so each intent is
+granted exactly the side effects its prompt demands — commit and test for
+work, push for act-pr, posting PR verdicts for review — with the project's
+own runnable commands coming from `BOARD_AGENT_COMMANDS` as neutral
+prefixes each adapter renders in its vendor's rule syntax. Adapters
 translate their vendor's events into the board's normalized schema at the
 edge — core never sees vendor payloads. The full contract, including the
 event schema, lives in `core/adapters/README.md`.
@@ -153,7 +159,7 @@ the command again while it is already up just reopens that tab rather than
 failing on a port clash.
 
 All settings live in `manager/core/.env.example` with their defaults documented —
-the port, the claude binary agents launch with, the agent permission mode,
+the port, the binaries agents launch with, the commands agents may run,
 the worktrees directory, the watch interval and the in-memory caps. Copy it
 to `manager/local/.env` (gitignored) to override locally; real environment
 variables beat `.env`, which beats the defaults. The hook bridge reads the
@@ -231,9 +237,11 @@ only then does work start — the server refuses launches from anywhere else.
    checkout anyway.)
 2. The agent works in the worktree: implements, tests, commits. Its hook
    events stream to the board like any session.
-3. On clean exit the board moves the card to `review/`; on failure it stays
-   in `in-progress/` and the exit is narrated in the ticker. Stdout is kept in
-   `.agent/logs/`.
+3. On clean exit with commits on the branch the board moves the card to
+   `review/`; on failure it stays in `in-progress/` and the exit is narrated
+   in the ticker. A clean exit that committed *nothing* also stays in
+   `in-progress/` and is called out loudly — an empty branch reaching
+   review/ is how a broken launch hides. Stdout is kept in `.agent/logs/`.
 
 ## Pull requests
 

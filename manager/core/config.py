@@ -88,6 +88,13 @@ WORKTREES = REPO / setting("BOARD_WORKTREES", ".worktrees")
 # Which agent adapter runs headless jobs. Resolution ladder: local wins.
 ADAPTER = setting("BOARD_AGENT_ADAPTER", "claude")
 
+# Command prefixes headless agents may run in a worktree (the project's
+# test/check commands) — neutral, comma-separated; each adapter renders
+# them in its own permission-rule syntax. The universal git/gh grants are
+# the adapter's own knowledge; this list is the project's half.
+AGENT_COMMANDS = setting("BOARD_AGENT_COMMANDS",
+                         "python3 -m unittest,python3 -m pytest")
+
 # GitHub plumbing: the gh CLI (stub-able for tests) and the git remote PRs
 # go to. Empty remote = auto-detect the first remote; no remote = no PRs.
 GH_BIN = setting("BOARD_GH_BIN", "gh")

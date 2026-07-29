@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""opencode adapter: wire live-session visibility into the host project.
+
+Contract (same for every adapter): called by install.py with the project
+root as argv[1] (and optionally --dry-run). Idempotently ensures the
+project's own sessions report events to the board; prints a report; exit
+0 on ok/fixed, 1 on a project that cannot be wired.
+
+For opencode that means a plugin. opencode loads project plugins from
+.opencode/plugin/, so this installs .opencode/plugin/bench-board.js — a
+one-line re-export of this adapter's plugin.js, which stays under
+manager/core/ where updates replace it wholesale. The shim only has to
+exist; committed to the repo, it also rides along into every work
+agent's worktree, so headless jobs report events too.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+SHIM_NAME = "bench-board.js"
+
+
+def shim_text(target: Path) -> str:
+    rel = os.path.relpath(HERE / "plugin.js", target.parent).replace(os.sep, "/")
+    return (
+        "// Bench board bridge — installed by the opencode adapter's `wire`.\n"
+        "// The implementation lives with the task manager core, so updates\n"
+        "// replace it in place; this shim only has to exist.\n"
+        f'export {{ BenchBoard }} from "{rel}"\n'
+    )
+
+
+def main() -> int:
+    args = [a for a in sys.argv[1:] if a != "--dry-run"]
+    dry_run = "--dry-run" in sys.argv[1:]
+    project = Path(args[0]).resolve() if args else Path.cwd()
+
+    if not project.is_dir():
+        print(f"{project} is not a directory — nothing to wire.")
+        return 1
+    if not (HERE / "plugin.js").is_file():
+        print(f"error: {HERE / 'plugin.js'} is missing — the adapter looks broken.")
+        return 1
+
+    target = project / ".opencode" / "plugin" / SHIM_NAME
+    wanted = shim_text(target)
+    current = target.read_text(encoding="utf-8") if target.is_file() else None
+    status = "ok" if current == wanted else ("added" if current is None else "repaired")
+
+    print(f"adapter:  opencode\nplugin:   {target}\n")
+    print(f"  plugin {SHIM_NAME:<20} {status}")
+
+    if status == "ok":
+        print("\nEverything already in place — nothing to do.")
+        return 0
+    if dry_run:
+        print("\nDry run — no changes written.")
+        return 0
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(wanted, encoding="utf-8")
+    print("\nWrote the plugin shim. Note: running opencode sessions load "
+          "plugins at startup — restart them to pick this up. Commit "
+          ".opencode/ so agent worktrees carry it too.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

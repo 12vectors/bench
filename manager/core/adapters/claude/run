@@ -2,25 +2,35 @@
 # Claude adapter: run one headless job to completion.
 #
 # Contract (same for every adapter):
-#   env in:  AGENT_PROMPT  the full prompt
-#            AGENT_MODE    work | review  ("may mutate" vs "read-only")
-#            AGENT_CWD     working directory (already set as cwd by the board)
-#            BOARD_*       passthrough for the event bridge
+#   env in:  AGENT_PROMPT    the full prompt
+#            AGENT_MODE      work | act-pr | review — the launch intent
+#                            (see core/adapters/README.md)
+#            AGENT_COMMANDS  comma-separated neutral command prefixes the
+#                            project lets agents run (tests/checks)
+#            AGENT_CWD       working directory (already set as cwd by the board)
+#            BOARD_*         passthrough for the event bridge
 #   stdout:  captured by the board as the job log; the closing report's
 #            marker lines (NOT READY:, PR REVIEW:, ...) are parsed from it
 #   exit:    0 = completed; anything else = failed
+#
+# Headless runs have no human to answer permission prompts: whatever the
+# generated settings do not allow is denied. hook_settings.py grants each
+# intent exactly what its own prompt demands (commit and test for work,
+# push for act-pr, gh pr review for review) — never bypassPermissions.
 #
 # BOARD_CLAUDE_BIN overrides the binary (used by the test stubs).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN="${BOARD_CLAUDE_BIN:-claude}"
-SETTINGS="$(python3 "$HERE/hook_settings.py")"
+MODE="${AGENT_MODE:-work}"
+SETTINGS="$(python3 "$HERE/hook_settings.py" "$MODE")"
 
-if [ "${AGENT_MODE:-work}" = "review" ]; then
+if [ "$MODE" = "review" ]; then
   exec "$BIN" -p "$AGENT_PROMPT" --settings "$SETTINGS" \
     --permission-mode default \
     --disallowedTools Edit Write MultiEdit NotebookEdit
 else
+  # work and act-pr both mutate the worktree; the allowlist differs.
   exec "$BIN" -p "$AGENT_PROMPT" --settings "$SETTINGS" \
     --permission-mode acceptEdits
 fi
