@@ -413,5 +413,15 @@ Type is orthogonal to status. A discovery task — research, scoping, spiking an
 approach — moves through the same five stages as everything else; "discovery"
 describes the work, not where it sits on the board.
 
+An optional **Depends on** line can name what must land first — task numbers
+or external preconditions — so sequencing lives in the header instead of
+prose asides:
+
+```markdown
+**Depends on:** 03, 05
+```
+
+The board does not enforce it; it informs whoever picks the next card.
+
 The rest of the file is freeform — description, research findings, approach,
 open questions, whatever is relevant to the current stage.
