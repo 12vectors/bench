@@ -24,3 +24,24 @@ End your reply with a report whose FIRST line is exactly
 ADDRESSED: <one line on what changed>
 followed by a bullet per review point: what was asked, and what you did
 about it (or why you deliberately did not).
+
+Whatever the outcome, write the report itself for its reader: a teammate
+who did not watch the work and will decide what happens to this card in
+under a minute. It is appended to the task file as the permanent record
+and may travel further (a PR body, a GitHub review), so:
+
+- Lead with the state of the work. The first sentence after any marker
+  line states what happened and where things stand — committed or not,
+  tested or not, blocked on what — before any narrative. The one fact
+  the reader must not miss is the headline, never a mid-paragraph aside.
+- Separate "to do" from "to know". Anything the reader must act on (run
+  the tests, check a file, answer a question) goes in its own short
+  list; prose explains, it never hides an action item.
+- Write complete sentences, spell out any shorthand you coined while
+  working, and give file paths repo-relative so they are clickable.
+- Short but self-sufficient beats concise: be selective about what to
+  include — drop what would not change the reader's decision — rather
+  than compressing the wording into fragments.
+
+Marker lines are machine-parsed by the board: keep their wording and
+position exactly as specified above.
