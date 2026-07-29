@@ -1,0 +1,1746 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bench — task board</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230d6e8c'/><circle cx='8' cy='8' r='3' fill='%23e9f3f3'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+  /* ── Bench design system: salt, pine and whitewash ─────────────────────
+     Colour only ever means state: --accent an agent alive, --calm settled,
+     --alarm snagged, --idle out of mind. Mono for machine output, sans for
+     people. If the interface is shouting, something is actually wrong.   */
+  :root{
+    --bg:#0c1a20; --canvas:#112329; --surface:#162c33; --raised:#1e373f; --sunken:#0a161b;
+    --border:#264349; --border-soft:#1c343a; --line:rgba(255,255,255,.05);
+    --text:#e9f3f3; --muted:#95afb4; --dim:#62828a;
+    --accent:#56c2d8; --calm:#a6c96f; --alarm:#e08a63; --idle:#5d757b;
+    --on-accent:#0a161b; --on-calm:#141a10;
+    --shadow:0 10px 24px -18px rgba(0,0,0,.9);
+    --pad:14px; --gap:10px; --radius:10px; --col:296px;
+    --sans:'IBM Plex Sans',system-ui,sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  :root[data-theme="light"]{
+    --bg:#dde9ec; --canvas:#eaf3f4; --surface:#ffffff; --raised:#ffffff; --sunken:#e2edef;
+    --border:#c5d7db; --border-soft:#d9e6e9; --line:rgba(18,50,60,.05);
+    --text:#12323b; --muted:#4d6e77; --dim:#87a1a8;
+    --accent:#0d6e8c; --calm:#5f7f33; --alarm:#b1543a; --idle:#93a8ac;
+    --on-accent:#ffffff; --on-calm:#ffffff;
+    --shadow:0 10px 24px -20px rgba(30,50,42,.42);
+  }
+  @keyframes breathe{0%,100%{opacity:.35;transform:scale(.82)}50%{opacity:1;transform:scale(1)}}
+  @keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+  @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes slidein{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:translateX(0)}}
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation:none !important;transition:none !important}
+  }
+
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font:13px/1.5 var(--sans); -webkit-font-smoothing:antialiased;
+    height:100vh; display:flex; flex-direction:column;
+  }
+  .mono{font-family:var(--mono)}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{color:var(--text);text-decoration:underline}
+  ::selection{background:var(--accent);color:var(--on-accent)}
+  button{
+    font-family:inherit;font-size:12.5px;color:var(--muted);cursor:pointer;
+    background:transparent;border:1px solid var(--border);border-radius:8px;
+    padding:6px 10px;transition:border-color .14s ease,color .14s ease;
+  }
+  button:hover{border-color:var(--accent);color:var(--text)}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  select{
+    font-family:inherit;font-size:12.5px;color:var(--text);background:var(--surface);
+    border:1px solid var(--border);border-radius:8px;padding:6px 9px;
+  }
+  .label{font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+  .spacer{flex:1}
+
+  /* ── header ── */
+  header{
+    display:flex;align-items:center;gap:14px;padding:10px 18px;flex-wrap:wrap;
+    background:var(--canvas);border-bottom:1px solid var(--border);
+  }
+  .brand{display:flex;align-items:baseline;gap:10px}
+  .brand b{font-size:15px;font-weight:600;letter-spacing:-.01em}
+  .brand .path{font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .views{display:flex;gap:2px;padding:3px;background:var(--sunken);border:1px solid var(--border-soft);border-radius:8px}
+  .views button{padding:5px 12px;border:1px solid transparent;border-radius:6px;font-size:12.5px;font-weight:500;color:var(--muted)}
+  .views button:hover{color:var(--text);border-color:transparent}
+  .views button.on{background:var(--surface);border-color:var(--border);color:var(--text)}
+  .livechip{
+    display:flex;align-items:center;gap:9px;padding:5px 12px 5px 10px;cursor:pointer;
+    background:var(--surface);border:1px solid var(--border);border-radius:99px;font-size:12.5px;
+  }
+  .livechip .mono{font-size:11.5px;color:var(--dim)}
+  .dot{width:7px;height:7px;border-radius:99px;background:var(--idle);flex:none}
+  .dot.live{background:var(--accent);animation:breathe 2.4s ease-in-out infinite}
+
+  /* ── kanban ── */
+  main{flex:1;display:flex;min-height:0}
+  .view{flex:1;min-width:0;display:none}
+  .view.on{display:flex}
+  #view-board{flex-direction:column}
+  #board{flex:1;display:flex;gap:var(--gap);align-items:stretch;padding:14px 18px;overflow-x:auto;min-height:0}
+  .kcol{flex:0 0 var(--col);width:var(--col);display:flex;flex-direction:column;gap:8px;min-height:0}
+  .kcol > h2{
+    margin:0;display:flex;align-items:center;gap:8px;padding:0 4px 2px;
+    font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
+  }
+  .kcol > h2 .tickmark{width:6px;height:6px;border-radius:2px;flex:none}
+  .kcol > h2 .count{font-family:var(--mono);font-size:11px;font-weight:400;color:var(--dim)}
+  .kcol > h2 .note{margin-left:auto;font-weight:400;letter-spacing:0;text-transform:none;font-size:11px;color:var(--dim)}
+  .drop{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:var(--gap);border-radius:var(--radius)}
+  .drop.over{background:color-mix(in oklab, var(--accent) 9%, transparent)}
+  .empty{
+    padding:22px 14px;border:1px dashed var(--border);border-radius:var(--radius);
+    text-align:center;font-size:12.5px;color:var(--dim);
+  }
+
+  .card{
+    position:relative;display:flex;flex-direction:column;gap:9px;padding:var(--pad);
+    background:var(--surface);border:1px solid var(--border-soft);border-radius:var(--radius);
+    box-shadow:var(--shadow);cursor:grab;
+    transition:border-color .14s ease,transform .14s ease;
+  }
+  .card:hover{transform:translateY(-1px);border-color:var(--accent)}
+  .card.dragging{opacity:.4}
+  .card.selected{border-color:var(--accent)}
+  .card.running{border-color:var(--border)}
+  .card .toprow{display:flex;align-items:center;gap:8px;min-width:0;min-height:20px}
+  .card .mark{width:6px;height:6px;border-radius:2px;flex:none}
+  .card .mark.breathing{animation:breathe 2.4s ease-in-out infinite}
+  .card .ref{font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .card .high{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;color:var(--alarm)}
+  .pill{font-size:11px;padding:2px 7px;border-radius:99px;white-space:nowrap}
+  .pill.drift{background:color-mix(in oklab, var(--alarm) 16%, transparent);color:var(--alarm)}
+  .card .title{font-size:13.5px;line-height:1.35;font-weight:500;text-wrap:pretty}
+  .card.done-dim .title{color:var(--muted)}
+  /* PR verdicts: pine when it settled, terracotta when it snagged */
+  .card.verdict-good{border-color:color-mix(in oklab, var(--calm) 55%, var(--border))}
+  .card.verdict-bad{border-color:color-mix(in oklab, var(--alarm) 55%, var(--border))}
+  /* tool chips: destinations, not statuses — they live in the card's footer,
+     never squeezed into the author row */
+  .chiprow{
+    display:flex;align-items:center;gap:5px;flex-wrap:wrap;
+    padding-top:9px;border-top:1px solid var(--line);
+  }
+  .chip2{
+    display:inline-flex;align-items:center;gap:5px;flex:none;
+    padding:3px 9px;background:transparent;
+    border:1px solid var(--border);border-radius:99px;
+    font-family:var(--mono);font-size:11px;color:var(--muted);
+    white-space:nowrap;text-decoration:none;
+  }
+  .chip2 .g2{font-size:9.5px;opacity:.75}
+  a.chip2:hover,button.chip2:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
+  .chip2.ok{color:var(--calm);border-color:color-mix(in oklab, var(--calm) 45%, transparent)}
+  .chip2.accent{color:var(--accent);border-color:color-mix(in oklab, var(--accent) 55%, transparent)}
+  .chip2.bad{color:var(--alarm);border-color:color-mix(in oklab, var(--alarm) 45%, transparent)}
+  .chip2.dim{color:var(--dim);border-style:dashed;cursor:help}
+  .chip2.dim:hover{color:var(--dim);border-color:var(--border)}
+  .card .whorow{display:flex;align-items:center;gap:7px;min-width:0}
+  .card .initial{
+    display:flex;align-items:center;justify-content:center;width:18px;height:18px;flex:none;
+    border-radius:99px;background:var(--sunken);border:1px solid var(--border);
+    font-family:var(--mono);font-size:9.5px;color:var(--muted);
+  }
+  .card .who{font-size:12px;color:var(--muted);white-space:nowrap}
+  .card .meta{font-family:var(--mono);font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .well{
+    display:flex;align-items:flex-start;gap:7px;padding:8px 9px;background:var(--sunken);
+    border-radius:7px;font-family:var(--mono);font-size:11.5px;line-height:1.45;color:var(--muted);
+    overflow:hidden;
+  }
+  .well .lead{color:var(--accent);flex:none}
+  .well .wbody{flex:1;min-width:0;overflow-wrap:anywhere}
+  .well.bad{border-left:2px solid var(--alarm);border-radius:0 7px 7px 0}
+  .well.bad .lead{color:var(--alarm)}
+  .caret{color:var(--accent);animation:blink 1.1s step-end infinite}
+  /* hover actions take over the pill's slot — never stack on top of it */
+  .hoveracts{display:none;gap:4px;animation:rise .12s ease}
+  .card:hover .hoveracts,.hoveracts:has(.armed){display:flex}
+  .card.has-acts:hover .toprow .pill.status,
+  .card.has-acts:hover .toprow .high,
+  .card.has-acts:has(.hoveracts .armed) .toprow .pill.status,
+  .card.has-acts:has(.hoveracts .armed) .toprow .high{display:none}
+  .hoveracts button{
+    display:flex;align-items:center;gap:4px;padding:2px 8px;
+    background:var(--raised);border:1px solid var(--border);border-radius:99px;
+    font-size:11px;color:var(--muted);
+  }
+  .hoveracts button:hover{border-color:var(--accent);color:var(--accent)}
+  .hoveracts button .g{font-family:var(--mono);font-size:10px}
+  .hoveracts button.armed{color:var(--alarm);border-color:var(--alarm)}
+
+  /* ── the activity bar: log drawer + latest line + archive tray ── */
+  #logpanel{
+    flex:none;display:none;flex-direction:column;min-height:0;
+    background:var(--canvas);border-top:1px solid var(--border);
+  }
+  #logpanel.open{display:flex}
+  #loggrip{height:8px;flex:none;cursor:ns-resize;display:flex;align-items:center;justify-content:center}
+  #loggrip::before{content:"";width:44px;height:3px;border-radius:99px;background:var(--border)}
+  #loggrip:hover::before,#loggrip.dragging::before{background:var(--accent)}
+  #loghead{
+    display:flex;align-items:center;gap:10px;padding:2px 18px 8px;
+    border-bottom:1px solid var(--border-soft);flex-wrap:wrap;
+  }
+  #loghead .mono{font-size:11px;color:var(--dim)}
+  #loghead button{padding:3px 10px;border-radius:99px;font-size:11.5px}
+  #loghead button.on{background:var(--surface);border-color:var(--accent);color:var(--text)}
+  #loghead details{font-family:var(--mono);font-size:11px;color:var(--dim);position:relative}
+  #loghead summary{cursor:pointer;list-style:none}
+  #loghead summary::before{content:"▸ "}
+  #loghead details[open] summary::before{content:"▾ "}
+  #loghead ul{
+    position:absolute;bottom:calc(100% + 6px);right:0;z-index:25;margin:0;
+    padding:8px 14px 8px 26px;background:var(--raised);border:1px solid var(--border);
+    border-radius:8px;box-shadow:var(--shadow);max-height:40vh;overflow-y:auto;min-width:230px;
+  }
+  #loghead .xfile{cursor:pointer;padding:1px 0;white-space:nowrap}
+  #loghead .xfile:hover{color:var(--accent)}
+  #logbody{flex:1;min-height:0;overflow-y:auto;padding:6px 18px 12px;display:grid;gap:2px;align-content:start}
+  .ev{display:grid;grid-template-columns:64px 18px 1fr;align-items:baseline;gap:10px;font-size:12px;min-width:0}
+  .ev time{font-family:var(--mono);font-size:11px;color:var(--dim)}
+  .ev .glyph{font-family:var(--mono);font-size:11.5px;color:var(--muted);text-align:center}
+  .ev .what{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+  .ev .what .who-b{font-weight:600}
+  .ev.ok .glyph{color:var(--calm)}
+  .ev.bad .glyph{color:var(--alarm)}
+  .ev.run .glyph{color:var(--accent)}
+  .ev.quiet .what{color:var(--dim)}
+
+  #statusbar{
+    flex:none;display:flex;align-items:center;gap:14px;height:42px;padding:0 14px 0 12px;
+    background:var(--canvas);border-top:1px solid var(--border);
+    transition:background .16s ease,border-color .16s ease;
+  }
+  #statusbar.drag{border-top-color:var(--accent)}
+  #statusbar.hot{background:color-mix(in oklab, var(--accent) 10%, var(--canvas))}
+  #actbtn{
+    display:flex;align-items:center;gap:8px;padding:5px 10px;flex:none;
+    background:transparent;border:1px solid transparent;border-radius:7px;font-size:12px;color:var(--muted);
+  }
+  #actbtn:hover{border-color:var(--border);color:var(--text)}
+  #actbtn .chev{font-family:var(--mono);font-size:10px;color:var(--dim)}
+  #actbtn .mono{font-size:11px;color:var(--dim)}
+  #bartail{
+    flex:1;min-width:0;display:flex;align-items:baseline;gap:8px;
+    font-family:var(--mono);font-size:11.5px;color:var(--dim);overflow:hidden;
+  }
+  #bartail .t-what{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #bartail .t-who{color:var(--muted)}
+  #barhint{flex:1;display:none;align-items:center;justify-content:center;gap:9px;font-size:12.5px;color:var(--accent)}
+  #statusbar.drag #barhint{display:flex}
+  #statusbar.drag #bartail{display:none}
+  #tray{
+    display:flex;align-items:center;gap:8px;padding:6px 13px;flex:none;cursor:pointer;
+    background:var(--surface);border:1px solid var(--border);border-radius:8px;
+    color:var(--muted);font-size:12.5px;
+    transition:background .14s ease,border-color .14s ease,transform .14s ease;
+  }
+  #statusbar.drag #tray{border:1px dashed var(--accent);color:var(--accent)}
+  #statusbar.hot #tray{
+    background:color-mix(in oklab, var(--accent) 22%, transparent);
+    border:1px solid var(--accent);color:var(--accent);transform:scale(1.06);
+  }
+  #tray .glyph2{font-size:13px;line-height:1}
+  #tray .count{padding:1px 7px;background:var(--sunken);border-radius:99px;font-family:var(--mono);font-size:11px;color:var(--dim)}
+  #tray b{font-weight:500}
+
+  /* ── sessions ── */
+  #view-flight{min-height:0}
+  .f-rail{
+    width:250px;flex:none;display:flex;flex-direction:column;gap:4px;
+    padding:16px 14px;background:var(--canvas);border-right:1px solid var(--border);overflow-y:auto;
+  }
+  .f-rail .label{padding:0 4px 8px}
+  .sess-row{
+    display:flex;flex-direction:column;gap:5px;padding:10px 11px;text-align:left;
+    background:transparent;border:1px solid transparent;border-radius:8px;cursor:pointer;
+  }
+  .sess-row:hover{border-color:var(--border-soft)}
+  .sess-row.sel{background:var(--surface);border-color:var(--border)}
+  .sess-row .top{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:500;color:var(--text)}
+  .sess-row .sid{font-family:var(--mono);font-size:10.5px;font-weight:400;color:var(--dim)}
+  .sess-row .sub{font-size:11.5px;color:var(--muted);line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .f-main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .f-head{display:flex;align-items:flex-start;gap:20px;padding:15px 20px;border-bottom:1px solid var(--border-soft);flex-wrap:wrap}
+  .f-head .s-title{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:600}
+  .f-head .s-title .sid{font-family:var(--mono);font-size:12px;font-weight:400;color:var(--dim)}
+  .f-head .s-line{font-size:12.5px;color:var(--muted);margin-top:4px}
+  .spark{display:flex;align-items:flex-end;gap:2px;height:34px;margin-left:auto}
+  .spark i{width:5px;min-height:4px;background:var(--border);border-radius:1px;display:block}
+  .spark i.now{background:var(--accent)}
+  .filters{display:flex;gap:6px;padding:12px 20px;flex-wrap:wrap}
+  .filters button{padding:4px 11px;border-radius:99px;font-size:12px}
+  .filters button.on{background:var(--surface);border-color:var(--accent);color:var(--text)}
+  .tl{flex:1;overflow-y:auto;padding:0 20px 20px}
+  .tl-row{
+    display:grid;grid-template-columns:66px 20px 1fr;align-items:start;gap:10px;
+    padding:9px 0;border-bottom:1px solid var(--line);
+  }
+  .tl-row time{font-family:var(--mono);font-size:11.5px;color:var(--dim);padding-top:1px}
+  .tl-row .glyph{font-family:var(--mono);font-size:11.5px;color:var(--muted);padding-top:1px;text-align:center}
+  .tl-row.ok .glyph{color:var(--calm)}
+  .tl-row.bad .glyph{color:var(--alarm)}
+  .tl-row.run .glyph{color:var(--accent)}
+  .tl-row.move .glyph{color:var(--accent)}
+  .tl-row .tbody{display:flex;flex-direction:column;gap:6px;min-width:0}
+  .tl-row .text{font-size:13px;line-height:1.45;color:var(--text);overflow-wrap:anywhere}
+  .tl-row .text .arrow{color:var(--accent)}
+  .tl-row .text .actor{color:var(--dim)}
+  .fold{border:none;max-width:760px}
+  .fold summary{cursor:pointer;list-style:none;font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .fold summary::before{content:"▸ "}
+  .fold[open] summary::before{content:"▾ "}
+  .fold pre{
+    margin:6px 0 0;padding:8px 10px;background:var(--sunken);border-radius:6px;
+    font-family:var(--mono);font-size:11.5px;line-height:1.5;color:var(--muted);
+    white-space:pre-wrap;overflow-x:auto;
+  }
+  .stopbtn:hover{border-color:var(--alarm);color:var(--alarm)}
+  .f-empty{padding:30px 20px;font-size:12.5px;color:var(--dim)}
+
+  /* ── focus ── */
+  #view-focus{flex-direction:column;overflow-y:auto}
+  .c-top{display:flex;align-items:center;gap:10px;padding:14px 18px 0}
+  .c-strip{display:flex;gap:8px;flex:1;overflow-x:auto}
+  .c-seg{
+    flex:1;min-width:0;display:flex;align-items:baseline;gap:8px;padding:6px 11px;
+    background:var(--surface);border:1px solid var(--border-soft);border-radius:8px;
+  }
+  .c-seg .lbl{font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+  .c-seg .n{font-family:var(--mono);font-size:14px;font-weight:500;font-variant-numeric:tabular-nums}
+  .c-seg.hot{border-color:color-mix(in oklab, var(--accent) 55%, var(--border))}
+  .c-seg.hot .n{color:var(--accent)}
+  .c-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:14px;padding:14px 18px 6px;align-content:start}
+  @media (max-width:900px){.c-grid{grid-template-columns:1fr}}
+  .panel{
+    display:flex;flex-direction:column;gap:12px;padding:16px;
+    background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);
+  }
+  .panel .phead{display:flex;align-items:center;gap:9px}
+  .panel .phead .r{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .refline{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11.5px;color:var(--dim);flex-wrap:wrap}
+  .refline .acc{color:var(--accent)}
+  .focus-title{margin:0;font-size:22px;line-height:1.25;font-weight:600;letter-spacing:-.015em;text-wrap:pretty}
+  .steps{display:flex;flex-direction:column;border:1px solid var(--border-soft);border-radius:9px;overflow:hidden}
+  .step{display:flex;align-items:center;gap:10px;padding:10px 13px;border-bottom:1px solid var(--line)}
+  .step:last-child{border-bottom:none}
+  .step .glyph{font-family:var(--mono);font-size:12px;width:12px;flex:none}
+  .step .stext{flex:1;font-size:13px}
+  .step.done .glyph{color:var(--calm)} .step.done .stext{color:var(--muted)}
+  .step.doing{background:var(--sunken)} .step.doing .glyph{color:var(--accent)} .step.doing .stext{color:var(--text);font-weight:500}
+  .step.todo .glyph{color:var(--dim)} .step.todo .stext{color:var(--dim)}
+  .c-side{display:flex;flex-direction:column;gap:14px}
+  .check-row{display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--line)}
+  .check-row:last-child{border-bottom:none}
+  .check-row .glyph{font-family:var(--mono);font-size:12px;width:12px;flex:none}
+  .check-row .name{flex:1;font-family:var(--mono);font-size:12.5px;color:var(--text)}
+  .check-row .state{font-size:11.5px;text-align:right}
+  .check-row.pass .glyph,.check-row.pass .state{color:var(--calm)}
+  .check-row.fail .glyph,.check-row.fail .state{color:var(--alarm)}
+  .check-row.none .glyph,.check-row.none .state{color:var(--dim)}
+  .file-row{display:flex;align-items:center;gap:10px;min-width:0;padding:3px 0}
+  .file-row .fpath{flex:1;font-family:var(--mono);font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+  .file-row .add{font-family:var(--mono);font-size:11px;color:var(--calm)}
+  .file-row .del{font-family:var(--mono);font-size:11px;color:var(--alarm)}
+  .minifeed{display:grid;gap:3px}
+  .also{display:flex;gap:10px;padding:0 18px 18px;flex-wrap:wrap}
+  .also .card{flex:1 1 240px;cursor:default}
+  .also .card:hover{transform:none;border-color:var(--border-soft)}
+
+  /* ── drawer ── */
+  #drawer{
+    position:fixed;top:0;right:0;bottom:0;width:min(460px,92vw);z-index:20;display:none;
+    background:var(--canvas);border-left:1px solid var(--border);
+    box-shadow:-24px 0 50px -30px rgba(0,0,0,.7);animation:slidein .18s ease;
+  }
+  #drawer.open{display:flex}
+  #drawergrip{width:10px;flex:none;cursor:ew-resize;display:flex;align-items:center;justify-content:center}
+  #drawergrip::before{content:"";width:3px;height:44px;border-radius:99px;background:var(--border)}
+  #drawergrip:hover::before,#drawergrip.dragging::before{background:var(--accent)}
+  #drawerbody{
+    flex:1;min-width:0;overflow-y:auto;display:flex;flex-direction:column;gap:14px;
+    padding:20px 20px 20px 6px;
+  }
+  #drawer .dhead{display:flex;align-items:center;gap:10px}
+  #drawer .dbody{font-size:13px;line-height:1.6}
+  #drawer .dbody h1{font-size:19px;line-height:1.3;font-weight:600;letter-spacing:-.01em;margin:0 0 4px;text-wrap:pretty}
+  #drawer .dbody h2{font-size:14px;margin:18px 0 6px}
+  #drawer .dbody h3{font-size:13px;margin:14px 0 4px}
+  #drawer .dbody p,#drawer .dbody li{font-size:12.5px;color:var(--muted)}
+  #drawer .dbody strong{color:var(--text)}
+  #drawer .dbody code{font-family:var(--mono);font-size:11.5px;background:var(--sunken);padding:1px 4px;border-radius:3px}
+  #drawer .dbody pre{background:var(--sunken);border-radius:8px;padding:10px 12px;overflow-x:auto}
+  #drawer .dbody pre code{background:none;padding:0}
+  #drawer .dbody hr{border:0;border-top:1px solid var(--border-soft);margin:14px 0}
+  #drawer .dbody blockquote{margin:8px 0;padding-left:10px;border-left:3px solid var(--border);color:var(--muted)}
+  #drawer .dbody .tablewrap{overflow-x:auto;margin:10px 0;border:1px solid var(--border-soft);border-radius:8px}
+  #drawer .dbody table{border-collapse:collapse;width:100%;font-size:12px;line-height:1.45}
+  #drawer .dbody th{
+    text-align:left;padding:7px 10px;font-size:10.5px;font-weight:600;
+    letter-spacing:.07em;text-transform:uppercase;color:var(--muted);
+    border-bottom:1px solid var(--border);background:var(--sunken);white-space:nowrap;
+  }
+  #drawer .dbody td{padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top;color:var(--muted)}
+  #drawer .dbody tr:last-child td{border-bottom:none}
+  #drawer .dbody td code{white-space:nowrap}
+  #drawer .dmeta{font-family:var(--mono);font-size:11px;color:var(--dim)}
+
+  /* ── completion sheet ── */
+  #sheetwrap{
+    position:fixed;inset:0;z-index:30;display:none;align-items:flex-start;
+    justify-content:center;padding-top:18vh;background:rgba(10,9,8,.5);
+    backdrop-filter:blur(2px);
+  }
+  #sheetwrap.open{display:flex}
+  .sheet{
+    width:min(460px,92vw);display:flex;flex-direction:column;gap:12px;
+    padding:18px;background:var(--canvas);border:1px solid var(--border);
+    border-radius:12px;box-shadow:0 30px 60px -30px rgba(0,0,0,.8);
+    animation:rise .16s ease;
+  }
+  .sheet .stitle{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:600}
+  .sheet .stitle .mono{font-size:11.5px;font-weight:400;color:var(--dim)}
+  .sheet p{margin:0;font-size:12.5px;line-height:1.55;color:var(--muted)}
+  .sheet .sbtns{display:flex;flex-direction:column;gap:6px;margin-top:2px}
+  .sheet .sbtns button{text-align:left;padding:10px 12px;font-size:13px}
+  .sheet .sbtns button small{display:block;font-size:11.5px;color:var(--dim);margin-top:2px}
+  .sheet .sbtns button.shipit{background:var(--calm);border-color:var(--calm);color:var(--on-calm);font-weight:500}
+  .sheet .sbtns button.shipit small{color:color-mix(in oklab, var(--on-calm) 75%, transparent)}
+  .sheet .sbtns button.shipit:hover{border-color:var(--calm);color:var(--on-calm);filter:brightness(1.06)}
+
+  /* ── toast ── */
+  #toast{
+    position:fixed;left:50%;bottom:44px;transform:translateX(-50%);z-index:40;display:none;
+    align-items:center;gap:10px;padding:11px 16px;font-size:13px;color:var(--text);
+    background:var(--raised);border:1px solid var(--border);border-radius:99px;
+    box-shadow:0 16px 34px -22px rgba(0,0,0,.8);animation:rise .18s ease;
+  }
+  #toast.show{display:flex}
+  #toast .dot{background:var(--calm)}
+  #toast.err .dot{background:var(--alarm)}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><b>Bench</b><span class="path" id="root"></span></div>
+  <nav class="views" id="views">
+    <button data-view="board" class="on">Board</button>
+    <button data-view="flight">Sessions</button>
+    <button data-view="focus">Focus</button>
+  </nav>
+  <span class="spacer"></span>
+  <div class="livechip" id="livechip" title="open Sessions"></div>
+  <button id="themebtn">Daylight</button>
+  <button id="refresh">Refresh</button>
+</header>
+
+<main>
+  <!-- board -->
+  <div class="view on" id="view-board">
+    <div id="board"></div>
+  </div>
+
+  <!-- sessions -->
+  <div class="view" id="view-flight">
+    <aside class="f-rail" id="frail"></aside>
+    <div class="f-main">
+      <div class="f-head" id="fsession"></div>
+      <div class="filters" id="ffilters"></div>
+      <div class="tl" id="ftl"></div>
+    </div>
+  </div>
+
+  <!-- focus -->
+  <div class="view" id="view-focus">
+    <div class="c-top">
+      <select id="focussel"></select>
+      <div class="c-strip" id="cstrip"></div>
+    </div>
+    <div class="c-grid" id="cgrid"></div>
+    <div class="also" id="calso"></div>
+  </div>
+</main>
+
+<div id="logpanel">
+  <div id="loggrip" title="drag to resize"></div>
+  <div id="loghead"></div>
+  <div id="logbody"></div>
+</div>
+<footer id="statusbar">
+  <button id="actbtn"></button>
+  <span id="bartail"></span>
+  <span id="barhint"><span style="font-size:14px">↓</span><span id="barhinttext"></span></span>
+  <div id="tray" title="Drop a card here to archive it"></div>
+</footer>
+<aside id="drawer"><div id="drawergrip" title="drag to resize"></div><div id="drawerbody"></div></aside>
+<div id="sheetwrap"></div>
+<div id="toast"><span class="dot"></span><span id="toastmsg"></span></div>
+
+<script>
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+const S = {
+  state: null,
+  events: {},            // sid -> events (streamed + lazily loaded)
+  loaded: {},            // sid -> true once history fetched
+  running: {},           // sid -> in-flight Bash event (PreToolUse)
+  view: 'board',
+  selected: null,        // task open in the drawer
+  flightSid: null,
+  focusSid: null,
+  filter: 'all',
+  diffCache: {},         // agentId -> {at, files, fetching}
+  openFolds: new Set(),  // expanded output folds, kept across renders
+  fileView: null,        // {dir, name, content} open in the drawer
+  logStick: true,        // follow the newest event unless the user scrolled up
+  logOpen: localStorage.getItem('bench-log-open') === '1',
+  logFilter: 'all',
+  dragging: null,        // {file, from} while a card is mid-drag
+  dockHot: false,        // pointer over the bar with an archivable card
+  dark: localStorage.getItem('bench-theme')
+    ? localStorage.getItem('bench-theme') === 'dark'
+    : !window.matchMedia('(prefers-color-scheme: light)').matches,
+};
+
+/* colour only ever means state */
+const STAGE_TINT = { backlog: 'var(--dim)', 'to-do': 'var(--muted)',
+  'in-progress': 'var(--accent)', review: 'var(--calm)', done: 'var(--idle)' };
+const STAGE_NOTE = { 'to-do': 'next up', review: 'your move' };
+const GLYPHS = { session: '●', end: '○', idle: '…', edit: '✎', read: '◔', search: '⌕',
+  command: '$', test: '▶', check: '☑', git: '⎇', plan: '≡', subagent: '⑂', web: '∿',
+  move: '⇢', new: '＋', agent: '⚑', report: '▣', other: '·' };
+const FILTERS = [
+  ['all', 'All', null],
+  ['moves', 'Moves', new Set(['move', 'new', 'agent'])],
+  ['edits', 'Edits', new Set(['edit'])],
+  ['reads', 'Reads', new Set(['read', 'search'])],
+  ['tests', 'Tests', new Set(['test', 'check'])],
+  ['commands', 'Commands', new Set(['command', 'subagent', 'web', 'other'])],
+  ['git', 'Git', new Set(['git'])],
+  ['plan', 'Plan', new Set(['plan', 'report'])],
+];
+
+function mix(tint, pct) { return `color-mix(in oklab, ${tint} ${pct}%, transparent)`; }
+function pillFor(stage, working) {
+  if (working) return { text: 'working', tint: 'var(--accent)', bg: mix('var(--accent)', 16) };
+  if (stage === 'review') return { text: 'waiting on you', tint: 'var(--calm)', bg: mix('var(--calm)', 18) };
+  if (stage === 'to-do') return { text: 'queued', tint: 'var(--muted)', bg: 'var(--sunken)' };
+  if (stage === 'in-progress') return { text: 'in progress', tint: 'var(--accent)', bg: mix('var(--accent)', 12) };
+  if (stage === 'done') return { text: 'done', tint: 'var(--idle)', bg: 'var(--sunken)' };
+  return { text: 'backlog', tint: 'var(--dim)', bg: 'var(--sunken)' };
+}
+
+/* PR verdict: the file's latest claude review + GitHub's live state.
+   Any red signal wins; green needs an approval and no red. */
+function prVerdict(task) {
+  if (!task.pr) return null;
+  const gh = (S.state.prs || {})[task.file];
+  const signals = [task.prVerdict, gh && gh.verdict];
+  if (signals.includes('red')) return 'red';
+  if (signals.includes('green')) return 'green';
+  return 'pending';
+}
+
+function fmtClock(ts) {
+  return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+function fmtShort(ts) {
+  return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+function ago(ts) {
+  const s = Math.max(0, Date.now() / 1000 - ts);
+  if (s < 60) return `${Math.round(s)}s`;
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  if (s < 86400) return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
+}
+function elapsed(fromTs, toTs) {
+  const s = Math.max(0, (toTs || Date.now() / 1000) - fromTs);
+  const m = Math.floor(s / 60), h = Math.floor(m / 60);
+  return h ? `${h}h ${m % 60}m` : `${m}m`;
+}
+function sessionElapsed(meta) {
+  const over = meta.status === 'ended' || !isLiveSession(meta);
+  return elapsed(meta.started, over ? (meta.last || meta.started) : null);
+}
+
+let toastTimer = null;
+function toast(message, isError = false) {
+  const el = $('#toast');
+  $('#toastmsg').textContent = message;
+  el.classList.toggle('err', isError);
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+}
+
+function applyTheme() {
+  document.documentElement.setAttribute('data-theme', S.dark ? 'dark' : 'light');
+  $('#themebtn').textContent = S.dark ? 'Daylight' : 'Night';
+  localStorage.setItem('bench-theme', S.dark ? 'dark' : 'light');
+}
+
+/* ── data ─────────────────────────────────────────────────────────────── */
+
+async function loadState() {
+  const res = await fetch('/api/state');
+  S.state = await res.json();
+  for (const meta of S.state.sessions) if (!(meta.id in S.events)) S.events[meta.id] = [];
+  $('#root').textContent = S.state.board.root.replace(/^.*?\/([^/]+\/\.task-manager).*$/, '$1');
+  render();
+}
+
+async function loadSession(sid) {
+  if (S.loaded[sid]) return;
+  S.loaded[sid] = true;
+  try {
+    const res = await fetch('/api/session?id=' + encodeURIComponent(sid));
+    const data = await res.json();
+    // keep any events that streamed in after the history snapshot was taken
+    const lastTs = data.events.length ? data.events[data.events.length - 1].ts : 0;
+    const streamed = (S.events[sid] || []).filter(e => e.ts > lastTs);
+    S.events[sid] = data.events.concat(streamed);
+    render();
+  } catch { S.loaded[sid] = false; }
+}
+
+function sessionsOf(pred) { return (S.state?.sessions || []).filter(pred); }
+function agentFor(sid) { return (S.state?.agents || []).find(a => a.session === sid); }
+function agentOnTask(file) {
+  return (S.state?.agents || []).find(a => a.task === file && a.status === 'running');
+}
+function sessionMeta(sid) { return (S.state?.sessions || []).find(m => m.id === sid); }
+function isLiveSession(m) {
+  const fresh = (Date.now() / 1000 - (m.last || m.started || 0)) < 900;
+  return m.status !== 'ended' && fresh;
+}
+function allTasks() { return (S.state?.board.stages || []).flatMap(s => s.tasks); }
+
+function connectStream() {
+  const es = new EventSource('/api/stream');
+  let hadError = false;
+  es.onopen = () => {
+    if (hadError) { hadError = false; loadState(); }
+    S.sseDown = false; renderChip();
+  };
+  es.onerror = () => { hadError = true; S.sseDown = true; renderChip(); };
+  es.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'event') {
+      const ev = msg.event, sid = ev.session;
+      if (msg.session) {
+        const idx = (S.state.sessions || []).findIndex(m => m.id === sid);
+        if (idx >= 0) S.state.sessions[idx] = msg.session;
+        else S.state.sessions.unshift(msg.session);
+      }
+      if (ev.running) { S.running[sid] = ev; }
+      else {
+        delete S.running[sid];
+        (S.events[sid] ||= []).push(ev);
+        if (S.events[sid].length > 800) S.events[sid].splice(0, S.events[sid].length - 800);
+      }
+      // an agent's first event links it to its session — refetch so cards
+      // switch from "warming up" to the live line without waiting for a move
+      if (msg.session && msg.session.agentId) {
+        const rec = (S.state.agents || []).find(a => a.id === msg.session.agentId);
+        if (rec && !rec.session) { loadState(); return; }
+      }
+      scheduleRender();
+    } else if (msg.type === 'board' || msg.type === 'agents') {
+      loadState();
+    } else if (msg.type === 'board_event') {
+      S.state?.boardEvents.push(msg.event);
+      scheduleRender();
+    }
+  };
+}
+
+let renderQueued = false;
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => { renderQueued = false; render(); });
+}
+
+/* ── header ───────────────────────────────────────────────────────────── */
+
+function renderChip() {
+  const agents = (S.state?.agents || []).filter(a => a.status === 'running');
+  const liveYou = sessionsOf(m => isLiveSession(m) && !m.agentId);
+  const el = $('#livechip');
+  if (S.sseDown) {
+    el.innerHTML = `<span class="dot" style="background:var(--alarm)"></span>` +
+      `<span style="color:var(--alarm)">reconnecting…</span>` +
+      `<span class="mono">what you see may be stale</span>`;
+    return;
+  }
+  if (agents.length) {
+    const longest = Math.min(...agents.map(a => a.started));
+    el.innerHTML = `<span class="dot live"></span>` +
+      `<span>${agents.length} agent${agents.length > 1 ? 's' : ''} working</span>` +
+      `<span class="mono">${elapsed(longest)}</span>`;
+  } else if (liveYou.length) {
+    el.innerHTML = `<span class="dot live"></span><span>you, working</span>` +
+      `<span class="mono">${liveYou.length} session${liveYou.length > 1 ? 's' : ''}</span>`;
+  } else {
+    el.innerHTML = `<span class="dot"></span><span style="color:var(--muted)">quiet</span>`;
+  }
+}
+
+function setView(view) {
+  S.view = view;
+  document.querySelectorAll('#views button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'view-' + view));
+  render();
+}
+
+function render() {
+  if (!S.state) return;
+  renderChip();
+  if (S.view === 'board') renderBoard();
+  else if (S.view === 'flight') renderFlight();
+  else renderFocus();
+  renderBar();
+  renderLog();
+}
+
+/* ── board ────────────────────────────────────────────────────────────── */
+
+function renderBoard() {
+  const board = $('#board');
+  board.innerHTML = '';
+  for (const stage of S.state.board.stages) {
+    const col = document.createElement('section');
+    col.className = 'kcol';
+    const agentsHere = stage.tasks.filter(t => agentOnTask(t.file)).length;
+    const note = agentsHere ? `${agentsHere} agent${agentsHere > 1 ? 's' : ''}` : (STAGE_NOTE[stage.slug] || '');
+    col.innerHTML =
+      `<h2><span class="tickmark" style="background:${STAGE_TINT[stage.slug]}"></span>` +
+      `<span>${stage.label}</span><span class="count">${stage.tasks.length}</span>` +
+      `<span class="note">${esc(note)}</span></h2>`;
+    const drop = document.createElement('div');
+    drop.className = 'drop';
+    drop.dataset.stage = stage.slug;
+    if (!stage.tasks.length) drop.innerHTML = '<div class="empty">Nothing here. Good.</div>';
+    for (const task of stage.tasks) drop.appendChild(cardFor(task));
+    drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+    drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+    drop.addEventListener('drop', (e) => {
+      e.preventDefault();
+      drop.classList.remove('over');
+      const { file, from } = JSON.parse(e.dataTransfer.getData('application/json'));
+      if (from !== stage.slug) move(file, from, stage.slug);
+    });
+    col.appendChild(drop);
+    board.appendChild(col);
+  }
+  if (S.selected) {
+    S.selected = allTasks().find(t => t.file === S.selected.file) || null;
+  }
+  renderDrawer();
+}
+
+function cardFor(task) {
+  const el = document.createElement('article');
+  const agent = agentOnTask(task.file);
+  const working = agent && agent.mode !== 'review';
+  const verdict = task.stage === 'review' ? prVerdict(task) : null;
+  el.className = 'card'
+    + (S.selected && S.selected.file === task.file ? ' selected' : '')
+    + (working ? ' running' : '')
+    + (verdict === 'green' ? ' verdict-good' : verdict === 'red' ? ' verdict-bad' : '')
+    + (task.stage === 'done' ? ' done-dim' : '');
+  el.draggable = true;
+
+  let tint = working ? 'var(--accent)' : STAGE_TINT[task.stage];
+  let pill = agent && agent.mode === 'review'
+    ? { text: 'reviewing', tint: 'var(--accent)', bg: mix('var(--accent)', 16) }
+    : pillFor(task.stage, working);
+  if (!agent && verdict === 'green') {
+    pill = { text: 'approved', tint: 'var(--calm)', bg: mix('var(--calm)', 18) };
+    tint = 'var(--calm)';
+  } else if (!agent && verdict === 'red') {
+    pill = { text: 'changes asked', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16) };
+    tint = 'var(--alarm)';
+  }
+  const high = (task.priority || '').toLowerCase() === 'high';
+  const top = [
+    `<span class="mark${working ? ' breathing' : ''}" style="background:${tint}"></span>`,
+    `<span class="ref">${task.number ? '#' + esc(task.number) : esc(task.file.slice(0, 10))}</span>`,
+    '<span class="spacer"></span>',
+    high ? '<span class="high">HIGH</span>' : '',
+    task.statusMismatch ? `<span class="pill drift" title="File says ${esc(task.declaredStatus)}">drift</span>` : '',
+    `<span class="pill status" style="background:${pill.bg};color:${pill.tint}">${pill.text}</span>`,
+  ];
+
+  // two actions per state, max — whatever you'd actually do without opening the card
+  const actions = [];
+  const stillTrue = { glyph: '◔', label: 'still true?', confirm: 'check it?',
+    title: 'A read-only agent checks this task is still true of the codebase',
+    run: () => fireAgent(task, '/api/agent/review') };
+  if (agent) {
+    actions.push({ glyph: '‖', label: 'hold', confirm: 'hold it?',
+      title: 'Stop this agent — nothing is lost',
+      run: () => stopAgent(agent.id) });
+  } else if (task.stage === 'review' && task.pr) {
+    const prState2 = (S.state.prs || {})[task.file];
+    const reviewIn = !!task.prVerdict ||
+      (prState2 && (prState2.verdict !== 'pending' ||
+        (prState2.copilot && prState2.copilot !== 'asked')));
+    const reviewPR = { glyph: '◔', label: 'review PR', confirm: 'review it?',
+      title: 'A read-only agent reviews the PR and posts its verdict to GitHub',
+      run: () => fireAgent(task, '/api/agent/review-pr') };
+    if (reviewIn) {
+      actions.push({ glyph: '↻', label: 'act on PR', confirm: 'act on it?',
+        title: 'An agent addresses the review feedback in the worktree, commits and pushes',
+        run: () => fireAgent(task, '/api/agent/act-pr') }, reviewPR);
+    } else {
+      actions.push(reviewPR, { glyph: '⚑', label: 'copilot', confirm: 'ask copilot?',
+        title: 'Request a GitHub Copilot review on the PR',
+        run: () => askCopilot(task) });
+    }
+  } else {
+    if (task.stage === 'in-progress') {
+      actions.push({ glyph: '▸', label: 'start work', confirm: 'start it?',
+        title: 'A worktree, a branch, and a headless Claude on this task',
+        run: () => fireAgent(task, '/api/agent/start') });
+    } else if (task.stage === 'review') {
+      actions.push({ glyph: '↩', label: 'back', title: 'Send it back for more work',
+        run: () => move(task.file, 'review', 'in-progress') });
+    } else if (task.stage === 'done') {
+      actions.push({ glyph: '↺', label: 'reopen', title: 'Put it back in the queue',
+        run: () => move(task.file, 'done', 'to-do') });
+    }
+    actions.push(stillTrue);
+  }
+  if (actions.length) el.classList.add('has-acts');
+
+  // the who row: who has it, plus one mono fact
+  let who, initial, meta;
+  if (agent) {
+    who = agent.name || (agent.mode === 'review' ? 'review agent' : 'agent');
+    initial = (agent.name || (agent.mode === 'review' ? 'R' : 'A')).slice(0, 1);
+    meta = elapsed(agent.started) + (agent.branch ? ' · ' + agent.branch : '');
+  } else {
+    initial = '·';
+    if (task.stage === 'backlog' || task.stage === 'to-do') who = 'nobody yet';
+    else if (task.stage === 'in-progress') who = 'unattended';
+    else if (task.stage === 'review') who = 'needs your eyes';
+    else who = 'merged';
+    meta = 'edited ' + ago(task.mtime) + ' ago';
+    if (task.stage === 'in-progress' && (Date.now() / 1000 - task.mtime) / 86400 >= 1) meta += ' · idle';
+  }
+  const extras = [];
+  if (!high && task.priority) extras.push(esc(task.priority.toLowerCase()));
+  if (task.type) extras.push(esc(task.type.toLowerCase()));
+
+  let liveLine = '';
+  if (agent && agent.session) {
+    const run = S.running[agent.session];
+    const smeta = sessionMeta(agent.session);
+    const last = run || (smeta && smeta.lastSummary ? { summary: smeta.lastSummary, ok: null } : null);
+    if (last && last.summary) {
+      const active = run || (smeta && smeta.status === 'active');
+      liveLine = `<div class="well"><span class="lead">›</span>` +
+        `<span class="wbody">${esc(last.summary)}${active ? '<span class="caret">▌</span>' : ''}</span></div>`;
+    }
+  } else if (agent) {
+    liveLine = `<div class="well"><span class="lead">›</span><span class="wbody">warming up<span class="caret">▌</span></span></div>`;
+  }
+
+  // tool chips: destinations, not statuses — they live in the card's footer
+  const prState = (S.state.prs || {})[task.file];
+  const detail = prState && prState.detail ? prState.detail : 'open the PR';
+  const hasBranch = (S.state.branches || []).includes(task.file.replace(/\.md$/, ''));
+  const chips = [];
+  if (prState && prState.ci) {
+    chips.push({ label: 'CI', glyph: { pass: '✓', fail: '✕', running: '◌' }[prState.ci],
+      cls: { pass: 'ok', fail: 'bad', running: 'accent' }[prState.ci], title: detail });
+  }
+  if (prState && prState.copilot) {
+    chips.push({ label: 'copilot',
+      glyph: { asked: '◌', approved: '✓', changes: '✕', commented: '·' }[prState.copilot],
+      cls: { asked: 'accent', approved: 'ok', changes: 'bad', commented: '' }[prState.copilot],
+      title: 'Copilot: ' + ({ asked: 'review requested', approved: 'approved',
+        changes: 'changes requested', commented: 'commented' }[prState.copilot]) });
+  }
+  if (task.pr) chips.push({ label: 'PR', glyph: '↗', cls: '', href: task.pr, title: detail });
+  let driveWell = '';
+  if (task.stage === 'review') {
+    const d = S.state.drive;
+    if (d && d.task === task.file && (d.status === 'up' || d.status === 'starting')) {
+      if (d.status === 'up') chips.push({ label: 'open', glyph: '✳', cls: 'accent',
+        href: d.url || '#', title: "the app, running this task's code" });
+      else {
+        chips.push({ label: 'starting', glyph: '◌', cls: 'accent',
+          title: 'the driver is bringing the app up — progress below' });
+        driveWell = `<div class="well"><span class="lead">✳</span>` +
+          `<span class="wbody">${esc(d.line || 'driver starting…')}<span class="caret">▌</span></span></div>`;
+      }
+      chips.push({ label: 'park', glyph: '‖', cls: '', act: 'park', title: 'Stop the drive' });
+    } else if (d && d.task === task.file && d.status === 'refused') {
+      chips.push({ label: 'drive', glyph: '✕', cls: 'bad', act: 'go',
+        title: 'The last drive did not come up — click to try again' });
+      driveWell = `<div class="well bad"><span class="lead">✳</span>` +
+        `<span class="wbody">${esc(d.reason || 'the driver gave up — see the drive log')}</span></div>`;
+    } else if (!hasBranch && !task.pr) {
+      chips.push({ label: 'no branch', glyph: '', cls: 'dim',
+        title: 'No work attached: no agent ran on this task, so there is no branch to PR, review or drive. ▸ start work runs from in-progress.' });
+    } else if (S.state.hasDriver && hasBranch) {
+      chips.push({ label: 'drive', glyph: '✳', cls: 'accent', act: 'go',
+        title: "Launch the app locally from this task's worktree" });
+    } else if (!S.state.hasDriver) {
+      chips.push({ label: 'no driver', glyph: '', cls: 'dim',
+        title: 'No driver to launch the local app — create manager/local/driver/start (an executable; see manager/core/driver.example/).' });
+    }
+  }
+  // project commands run against this task's worktree
+  if (hasBranch && ['in-progress', 'review'].includes(task.stage)) {
+    for (const cmd of (S.state.commands || [])) {
+      const running = (S.state.commandRuns || []).some(r => r.task === task.file && r.name === cmd.name);
+      if (running) {
+        chips.push({ label: cmd.name, glyph: '◌', cls: 'accent',
+          title: `${cmd.name} is running — the ticker narrates the ending` });
+      } else {
+        chips.push({ label: cmd.name, glyph: '$', cls: '', cmd: cmd.name,
+          title: cmd.help || `run local/commands/${cmd.name} against this task's worktree` });
+      }
+    }
+  }
+  const chipRow = chips.length
+    ? '<div class="chiprow">' + chips.map(c => {
+        const g = c.glyph ? `<span class="g2">${c.glyph}</span>` : '';
+        if (c.href) return `<a class="chip2 ${c.cls}" href="${esc(c.href)}" target="_blank" rel="noopener" title="${esc(c.title)}">${esc(c.label)}${g}</a>`;
+        if (c.act) return `<button class="chip2 ${c.cls}" data-drive="${c.act}" title="${esc(c.title)}">${esc(c.label)}${g}</button>`;
+        if (c.cmd) return `<button class="chip2 ${c.cls}" data-cmd="${esc(c.cmd)}" title="${esc(c.title)}">${esc(c.label)}${g}</button>`;
+        return `<span class="chip2 ${c.cls}" title="${esc(c.title)}">${esc(c.label)}${g}</span>`;
+      }).join('') + '</div>'
+    : '';
+
+  el.innerHTML =
+    `<div class="toprow">${top.join('')}</div>` +
+    `<div class="title">${esc(task.title)}</div>` +
+    `<div class="whorow"><span class="initial">${initial}</span><span class="who">${who}</span>` +
+    `<span class="meta">${esc(meta)}${extras.length ? ' · ' + extras.join(' · ') : ''}</span></div>` +
+    chipRow + driveWell + liveLine;
+  el.querySelectorAll('a.chip2').forEach(a =>
+    a.addEventListener('click', (e) => e.stopPropagation()));
+  el.querySelectorAll('[data-drive]').forEach(btn =>
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (btn.dataset.drive === 'go') startDrive(task); else parkDrive();
+    }));
+  el.querySelectorAll('[data-cmd]').forEach(btn =>
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const name = btn.dataset.cmd;
+      if (btn.classList.contains('armed')) runCommand(task, name);
+      else {
+        btn.classList.add('armed');
+        btn.firstChild.textContent = 'run it?';
+        setTimeout(() => { btn.classList.remove('armed'); btn.firstChild.textContent = name; }, 3500);
+      }
+    }));
+
+  if (actions.length) {
+    const slot = document.createElement('span');
+    slot.className = 'hoveracts';
+    for (const act of actions) {
+      const btn = document.createElement('button');
+      btn.innerHTML = `<span class="g">${act.glyph}</span><span>${act.label}</span>`;
+      btn.title = act.title;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!act.confirm || btn.classList.contains('armed')) { act.run(); return; }
+        btn.classList.add('armed');
+        btn.lastElementChild.textContent = act.confirm;
+        setTimeout(() => {
+          btn.classList.remove('armed');
+          btn.lastElementChild.textContent = act.label;
+        }, 3500);
+      });
+      slot.appendChild(btn);
+    }
+    el.querySelector('.toprow').appendChild(slot);
+  }
+
+  el.addEventListener('dragstart', (e) => {
+    el.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/json', JSON.stringify({ file: task.file, from: task.stage }));
+    if (['backlog', 'to-do', 'done'].includes(task.stage)) {
+      S.dragging = { file: task.file, from: task.stage };
+      renderBar();
+    }
+  });
+  el.addEventListener('dragend', () => {
+    el.classList.remove('dragging');
+    S.dragging = null; S.dockHot = false; renderBar();
+  });
+  el.addEventListener('click', () => showDetail(task));
+  return el;
+}
+
+async function fireAgent(task, url) {
+  toast(`starting on ${task.file}…`);
+  const res = await fetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: task.file, stage: task.stage }),
+  });
+  const data = await res.json();
+  if (!res.ok) { toast(data.error || 'that did not start', true); return; }
+  const who = data.agent.name || 'An agent';
+  toast(url.endsWith('act-pr')
+    ? `${who} is acting on the review of ${task.file}'s PR`
+    : url.endsWith('review-pr')
+      ? `${who} is reviewing ${task.file}'s PR`
+      : data.agent.mode === 'review'
+        ? `${who} is checking ${task.file} is still true of the codebase`
+        : `${who} is on it — branch ${data.agent.branch}`);
+  await loadState();
+}
+
+async function runCommand(task, name) {
+  const res = await fetch('/api/command/run', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, file: task.file }),
+  });
+  const data = await res.json();
+  toast(res.ok ? `${name} running on ${task.file} — the ticker narrates the ending`
+               : (data.error || `${name} did not start`), !res.ok);
+  loadState();
+}
+
+async function startDrive(task) {
+  const res = await fetch('/api/drive/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: task.file }),
+  });
+  const data = await res.json();
+  toast(res.ok ? 'Driver starting — progress shows on the card'
+               : (data.error || 'the driver did not start'), !res.ok);
+  loadState();
+}
+
+async function parkDrive() {
+  const res = await fetch('/api/drive/stop', { method: 'POST' });
+  const data = await res.json();
+  toast(res.ok ? 'Parked' : (data.error || 'could not park'), !res.ok);
+  loadState();
+}
+
+async function askCopilot(task) {
+  const res = await fetch('/api/pr/copilot', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: task.file }),
+  });
+  const data = await res.json();
+  toast(res.ok ? `Copilot asked to review ${task.file}'s PR`
+               : (data.error || 'Copilot request failed'), !res.ok);
+}
+
+async function move(file, from, to) {
+  // finishing a task with work attached is a decision, not just a drag
+  if (to === 'done') {
+    const task = findTask(file);
+    const stem = file.replace(/\.md$/, '');
+    if (task && (task.pr || (S.state.branches || []).includes(stem))) {
+      completeSheet(task, from);
+      return;
+    }
+  }
+  await rawMove(file, from, to);
+}
+
+async function rawMove(file, from, to) {
+  const res = await fetch('/api/move', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file, from, to }),
+  });
+  const data = await res.json();
+  if (!res.ok) { toast(data.error || 'move failed', true); await loadState(); return; }
+  toast(`${file} → ${to}/`);
+  if (S.selected && S.selected.file === file) S.selected = data.task;
+  await loadState();
+}
+
+function closeSheet() { $('#sheetwrap').classList.remove('open'); $('#sheetwrap').innerHTML = ''; }
+
+function completeSheet(task, from) {
+  const d = S.state.drive;
+  const driving = d && d.task === task.file && ['starting', 'up'].includes(d.status);
+  const wrap = $('#sheetwrap');
+  wrap.innerHTML =
+    `<div class="sheet">` +
+    `<div class="stitle"><span>${esc(task.title)}</span>` +
+    `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}→ done</span></div>` +
+    `<p>This task has ${task.pr ? 'a PR and ' : ''}a branch with work on it. What should happen?</p>` +
+    `<div class="sbtns">` +
+    `<button id="sh-keep">Keep it where it is<small>Nothing moves, nothing changes.</small></button>` +
+    `<button id="sh-move">Just move the card<small>The branch${task.pr ? ', PR' : ''} and worktree stay as they are.</small></button>` +
+    `<button id="sh-ship" class="shipit">Merge &amp; clean up<small>${driving ? 'Park the drive, then m' : 'M'}erge the branch into main, push` +
+    `${task.pr ? ' (marks the PR merged)' : ''}, remove the worktree and branches, move the card.</small></button>` +
+    `</div></div>`;
+  wrap.classList.add('open');
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+  $('#sh-keep').addEventListener('click', closeSheet);
+  $('#sh-move').addEventListener('click', () => { closeSheet(); rawMove(task.file, from, 'done'); });
+  $('#sh-ship').addEventListener('click', async () => {
+    closeSheet();
+    toast(`Completing ${task.file} — the ticker narrates each step`);
+    const res = await fetch('/api/task/complete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: task.file, from }),
+    });
+    const data = await res.json();
+    if (!res.ok) { toast(data.error || 'completion failed — the card stays', true); }
+    else toast(data.merged ? `${task.file} merged and cleaned up` : `${task.file} moved to done`);
+    await loadState();
+  });
+}
+
+function showDetail(task) {
+  const changed = !S.selected || S.selected.file !== task.file;
+  S.selected = task;
+  renderBoard();
+  if (changed) $('#drawerbody').scrollTop = 0;
+}
+
+function renderDrawer() {
+  const panel = $('#drawer');
+  const body = $('#drawerbody');
+  if (S.fileView) {
+    const f = S.fileView;
+    body.innerHTML =
+      `<div class="dhead"><span class="mono" style="font-size:12px;color:var(--dim)">${esc(f.dir)}/${esc(f.name)}</span>` +
+      `<span class="spacer"></span><button id="closeDrawer">Close</button></div>` +
+      `<div class="dbody">${md(f.content)}</div>`;
+    panel.classList.add('open');
+    $('#closeDrawer').addEventListener('click', () => { S.fileView = null; renderDrawer(); });
+    return;
+  }
+  if (!S.selected) { panel.classList.remove('open'); body.innerHTML = ''; return; }
+  const t = S.selected;
+  const agent = agentOnTask(t.file);
+  const pill = agent && agent.mode === 'review'
+    ? { text: 'reviewing', tint: 'var(--accent)', bg: mix('var(--accent)', 16) }
+    : pillFor(t.stage, agent && agent.mode !== 'review');
+  const when = new Date(t.mtime * 1000).toLocaleString();
+  body.innerHTML =
+    `<div class="dhead">` +
+    `<span class="mono" style="font-size:12px;color:var(--dim)">${t.number ? '#' + esc(t.number) : ''}</span>` +
+    `<span class="pill" style="background:${pill.bg};color:${pill.tint}">${pill.text}</span>` +
+    `<span class="spacer"></span>` +
+    `<button id="closeDrawer">Close</button></div>` +
+    `<div class="dbody">${md(t.body)}</div>` +
+    `<div class="dmeta">${esc(t.stage)}/${esc(t.file)} · ${t.words} words · edited ${esc(when)}</div>`;
+  panel.classList.add('open');
+  $('#closeDrawer').addEventListener('click', () => { S.selected = null; renderBoard(); });
+}
+
+function allRecentEvents() {
+  const merged = [];
+  for (const evs of Object.values(S.events)) merged.push(...evs.slice(-40));
+  merged.push(...(S.state.boardEvents || []).slice(-60));
+  for (const run of Object.values(S.running)) merged.push(run);
+  merged.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  return merged;
+}
+
+function evRow(ev) {
+  const cls = ev.running ? 'run' : ev.ok === false ? 'bad' : ev.ok === true ? 'ok' : '';
+  const glyph = GLYPHS[ev.kind] || '·';
+  const meta = ev.session ? sessionMeta(ev.session) : null;
+  const who = meta ? `<span class="who-b">${esc((meta.label || '').split(' · ')[0])}</span> ` : '';
+  return `<div class="ev ${cls}"><time>${fmtClock(ev.ts)}</time>` +
+    `<span class="glyph">${glyph}</span><span class="what">${who}${esc(ev.summary)}</span></div>`;
+}
+
+function renderBar() {
+  const bar = $('#statusbar');
+  const drag = !!S.dragging;
+  const hot = drag && S.dockHot;
+  bar.classList.toggle('drag', drag);
+  bar.classList.toggle('hot', hot);
+
+  const merged = allRecentEvents();
+  $('#actbtn').innerHTML =
+    `<span class="chev">${S.logOpen ? '▾' : '▴'}</span>` +
+    `<span class="dot live"></span><span>Activity</span>` +
+    `<span class="mono">${merged.length}</span>`;
+
+  const tail = merged[merged.length - 1];
+  $('#bartail').innerHTML = tail
+    ? `<span>${fmtClock(tail.ts)}</span>` +
+      `<span style="color:${tail.ok === false ? 'var(--alarm)' : tail.ok === true ? 'var(--calm)' : 'var(--muted)'}">${GLYPHS[tail.kind] || '·'}</span>` +
+      `<span class="t-what">${tail.session && sessionMeta(tail.session) ? `<span class="t-who">${esc((sessionMeta(tail.session).label || '').split(' · ')[0])}</span> ` : ''}${esc(tail.summary)}</span>`
+    : `<span style="color:var(--dim)">quiet — events tick along here as they happen</span>`;
+
+  $('#barhinttext').textContent = hot
+    ? 'Release to archive — ⌘Z brings it back'
+    : 'Drop anywhere along this bar to archive';
+
+  const count = S.state.archivedCount || 0;
+  $('#tray').innerHTML =
+    `<span class="glyph2">${hot ? '↓' : '⌸'}</span>` +
+    `<b>${hot ? 'Let go' : 'Archive'}</b>` +
+    (count > 0 && !hot ? `<span class="count">${count}</span>` : '');
+}
+
+function renderLog() {
+  $('#logpanel').classList.toggle('open', S.logOpen);
+  if (!S.logOpen) return;
+  const active = FILTERS.find(([key]) => key === S.logFilter);
+  const kinds = active ? active[2] : null;
+  const merged = allRecentEvents();
+  const events = merged.filter(ev => !kinds || kinds.has(ev.kind)).slice(-150);
+  const extras = Object.entries(S.state.board.extras).map(([name, files]) =>
+    `<details><summary>${name}/ ${files.length}</summary><ul>` +
+    files.map(f => `<li class="xfile" data-dir="${esc(name)}" data-name="${esc(f)}">${esc(f)}</li>`).join('') +
+    `</ul></details>`).join('');
+  $('#loghead').innerHTML =
+    `<span class="label">Everything that happened</span>` +
+    `<span class="mono">${merged.length} events</span>` +
+    `<span class="spacer"></span>` +
+    FILTERS.map(([key, label]) =>
+      `<button class="${S.logFilter === key ? 'on' : ''}" data-lf="${key}">${label}</button>`).join('') +
+    extras;
+  document.querySelectorAll('#loghead [data-lf]').forEach(b =>
+    b.addEventListener('click', () => { S.logFilter = b.dataset.lf; renderLog(); }));
+  document.querySelectorAll('#loghead .xfile').forEach(li =>
+    li.addEventListener('click', () => openExtra(li.dataset.dir, li.dataset.name)));
+  const body = $('#logbody');
+  body.innerHTML = events.length ? events.map(evRow).join('')
+    : '<div class="ev quiet"><time></time><span class="glyph">·</span><span class="what">Nothing here. Good.</span></div>';
+  if (S.logStick) body.scrollTop = body.scrollHeight;
+}
+
+async function archiveCard(file, from) {
+  const res = await fetch('/api/archive', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file, from }),
+  });
+  const data = await res.json();
+  toast(res.ok ? `Archived ${file} — ⌘Z brings it back` : (data.error || 'archive failed'), !res.ok);
+  await loadState();
+}
+
+async function unarchiveLast() {
+  const res = await fetch('/api/unarchive', { method: 'POST' });
+  const data = await res.json();
+  toast(res.ok ? `${data.file} brought back to ${data.to}/` : (data.error || 'nothing to bring back'), !res.ok);
+  await loadState();
+}
+
+/* ── sessions ─────────────────────────────────────────────────────────── */
+
+function pickFlightSid() {
+  if (S.flightSid && sessionMeta(S.flightSid)) return S.flightSid;
+  const live = sessionsOf(isLiveSession);
+  const agentLive = live.find(m => m.agentId);
+  S.flightSid = (agentLive || live[0] || (S.state.sessions || [])[0] || {}).id || null;
+  return S.flightSid;
+}
+
+function renderFlight() {
+  const sid = pickFlightSid();
+  if (sid) loadSession(sid);
+
+  const rows = (S.state.sessions || []).map(m => {
+    const active = isLiveSession(m) && m.status === 'active';
+    return `<div class="sess-row${m.id === sid ? ' sel' : ''}" data-sid="${esc(m.id)}" role="button" tabindex="0">` +
+      `<span class="top"><span class="dot${active ? ' live' : ''}"></span>` +
+      `<span>${esc((m.label || m.id.slice(0, 8)).split(' · ')[0])}</span>` +
+      `<span class="sid">${esc(m.id.slice(0, 8))}</span></span>` +
+      `<span class="sub">${m.task ? 'on ' + esc(m.task) + ' · ' : ''}${m.count || 0} events · ${m.last ? ago(m.last) + ' ago' : ''}</span>` +
+      (m.lastSummary ? `<span class="sub">${esc(m.lastSummary)}</span>` : '') +
+      `</div>`;
+  }).join('');
+  $('#frail').innerHTML = `<div class="label">Sessions</div>` +
+    (rows || '<div class="f-empty">None yet. Start an agent, or open a claude session in this repo.</div>');
+  document.querySelectorAll('#frail .sess-row').forEach(el =>
+    el.addEventListener('click', () => { S.flightSid = el.dataset.sid; render(); }));
+
+  const meta = sessionMeta(sid);
+  if (!meta) {
+    $('#fsession').innerHTML = '<span style="color:var(--dim)">no session selected</span>';
+    $('#ffilters').innerHTML = '';
+    $('#ftl').innerHTML = '';
+    return;
+  }
+  const events = S.events[sid] || [];
+  const files = new Set(events.filter(e => e.file && e.kind === 'edit').map(e => e.file));
+  const tests = events.filter(e => e.kind === 'test').length;
+  const agent = agentFor(sid);
+  const stopBtn = agent && agent.status === 'running'
+    ? `<button id="stopagent" class="stopbtn" data-aid="${esc(agent.id)}">Hold</button>` : '';
+  const branch = agent && agent.branch ? ` · <span class="mono">${esc(agent.branch)}</span>` : '';
+  $('#fsession').innerHTML =
+    `<div><div class="s-title">${esc((meta.label || sid).split(' · ')[0])}` +
+    `<span class="sid">${esc(sid.slice(0, 8))}</span></div>` +
+    `<div class="s-line">${meta.task ? 'on ' + esc(meta.task) + ' · ' : ''}` +
+    `started ${fmtShort(meta.started)} · ${meta.count || 0} events · ` +
+    `${files.size} files edited · ${tests} test runs${branch}</div></div>` +
+    stopBtn + spark(events, meta);
+  const stop = $('#stopagent');
+  if (stop) stop.addEventListener('click', () => stopAgent(stop.dataset.aid));
+
+  $('#ffilters').innerHTML = FILTERS.map(([key, label]) =>
+    `<button class="${S.filter === key ? 'on' : ''}" data-f="${key}">${label}</button>`).join('');
+  document.querySelectorAll('#ffilters button').forEach(el =>
+    el.addEventListener('click', () => { S.filter = el.dataset.f; render(); }));
+
+  renderTimeline(sid, meta, events);
+}
+
+async function stopAgent(aid) {
+  const res = await fetch('/api/agent/stop', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: aid }),
+  });
+  const data = await res.json();
+  toast(res.ok ? 'Held — nothing is lost' : (data.error || 'could not stop it'), !res.ok);
+  loadState();
+}
+
+function spark(events, meta) {
+  if (!events.length) return '';
+  const start = meta.started || events[0].ts;
+  const end = Math.max(meta.last || 0, events[events.length - 1].ts, start + 60);
+  const n = 34, span = (end - start) / n;
+  const buckets = new Array(n).fill(0);
+  for (const ev of events) {
+    const i = Math.min(n - 1, Math.max(0, Math.floor((ev.ts - start) / span)));
+    buckets[i]++;
+  }
+  const max = Math.max(...buckets, 1);
+  const live = isLiveSession(meta);
+  const bars = buckets.map((b, i) =>
+    `<i${live && i >= n - 3 ? ' class="now"' : ''} style="height:${Math.max(4, Math.round(b / max * 30))}px"></i>`).join('');
+  return `<div class="spark" title="events over the session">${bars}</div>`;
+}
+
+function renderTimeline(sid, meta, events) {
+  const active = FILTERS.find(([key]) => key === S.filter);
+  const kinds = active ? active[2] : null;
+  const boardEvents = (S.state.boardEvents || [])
+    .filter(be => be.file && be.file === meta.task)
+    .map(be => ({ ...be, _board: true }));
+  let items = events.filter(ev => !kinds || kinds.has(ev.kind));
+  if (!kinds || kinds.has('move')) items = items.concat(boardEvents);
+  items.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+
+  // collapse runs of consecutive reads/searches into one foldable row
+  const grouped = [];
+  for (const ev of items) {
+    const prev = grouped[grouped.length - 1];
+    if ((ev.kind === 'read' || ev.kind === 'search') && prev && prev._group) {
+      prev.events.push(ev); prev.ts = ev.ts; continue;
+    }
+    if (ev.kind === 'read' || ev.kind === 'search') {
+      grouped.push({ _group: true, ts: ev.ts, first: ev.ts, events: [ev] });
+    } else grouped.push(ev);
+  }
+
+  const run = S.running[sid];
+  const out = [];
+  if (run) out.push(tlRow({ ...run, _key: 'running' }, 'run', true));
+  for (let i = grouped.length - 1; i >= 0; i--) {
+    const item = grouped[i];
+    if (item._group) {
+      if (item.events.length === 1) out.push(tlRow(item.events[0]));
+      else {
+        const key = `g${item.first}`;
+        const list = item.events.map(e => e.file || e.summary.replace(/^searched /, '⌕ ')).join('\n');
+        out.push(`<div class="tl-row"><time>${fmtClock(item.first)}</time>` +
+          `<span class="glyph">${GLYPHS.read}</span><div class="tbody">` +
+          `<div class="text">read and searched ${item.events.length} places</div>` +
+          fold(key, 'show them', list) + `</div></div>`);
+      }
+    } else out.push(tlRow(item));
+  }
+  $('#ftl').innerHTML = out.join('') ||
+    '<div class="f-empty">Nothing matches this filter.</div>';
+  document.querySelectorAll('#ftl details').forEach(d => {
+    d.addEventListener('toggle', () => {
+      if (d.open) S.openFolds.add(d.dataset.key); else S.openFolds.delete(d.dataset.key);
+    });
+  });
+}
+
+function fold(key, label, body) {
+  const open = S.openFolds.has(key) ? ' open' : '';
+  return `<details class="fold" data-key="${esc(key)}"${open}><summary>${esc(label)}</summary><pre>${esc(body)}</pre></details>`;
+}
+
+function tlRow(ev, forceCls, caret) {
+  const cls = forceCls || (ev._board ? 'move' : ev.ok === false ? 'bad' : ev.ok === true ? 'ok' : '');
+  const glyph = GLYPHS[ev.kind] || '·';
+  const key = ev._key || `e${ev.ts}`;
+  let text = esc(ev.summary);
+  if (ev.kind === 'move') {
+    text = `<strong>${esc(ev.file)}</strong> ${esc(ev.from)} <span class="arrow">→</span> ${esc(ev.to)}` +
+      ` <span class="actor">· ${esc(ev.actor)}</span>`;
+  }
+  if (caret) text += '<span class="caret">▌</span>';
+  let extra = '';
+  if (ev.detail) extra = fold(key, ev.kind === 'plan' ? 'plan steps' : ev.kind === 'report' ? 'the report' : 'output', ev.detail);
+  else if (ev.cmd && ev.cmd.length > 90) extra = `<div class="text mono" style="font-size:11.5px;color:var(--dim)">${esc(ev.cmd)}</div>`;
+  return `<div class="tl-row ${cls}"><time>${fmtClock(ev.ts)}</time>` +
+    `<span class="glyph">${glyph}</span>` +
+    `<div class="tbody"><div class="text">${text}</div>${extra}</div></div>`;
+}
+
+/* ── focus ────────────────────────────────────────────────────────────── */
+
+function pickFocusSid() {
+  if (S.focusSid && sessionMeta(S.focusSid)) return S.focusSid;
+  const live = sessionsOf(isLiveSession);
+  const agentLive = live.find(m => m.agentId);
+  S.focusSid = (agentLive || live[0] || (S.state.sessions || [])[0] || {}).id || null;
+  return S.focusSid;
+}
+
+function renderFocus() {
+  const sid = pickFocusSid();
+  if (sid) loadSession(sid);
+  const meta = sessionMeta(sid);
+
+  const options = (S.state.sessions || []).map(m =>
+    `<option value="${esc(m.id)}"${m.id === sid ? ' selected' : ''}>${esc(m.label || m.id.slice(0, 8))}${m.task ? ' — ' + esc(m.task) : ''}</option>`).join('');
+  $('#focussel').innerHTML = options || '<option>no sessions yet</option>';
+
+  const hot = meta && meta.task ? findTask(meta.task)?.stage : 'in-progress';
+  $('#cstrip').innerHTML = S.state.board.stages.map(s =>
+    `<div class="c-seg${s.slug === hot ? ' hot' : ''}"><span class="lbl">${s.label}</span><span class="n">${s.tasks.length}</span></div>`).join('');
+
+  if (!meta) {
+    $('#cgrid').innerHTML = `<div class="panel"><div class="phead"><span class="dot"></span>` +
+      `<span class="label">Right now</span></div>` +
+      `<p style="margin:0;color:var(--dim);font-size:12.5px">Nothing yet. Start an agent from a card, ` +
+      `or open a claude session in this repo — it shows up here as it works.</p></div>`;
+    $('#calso').innerHTML = '';
+    return;
+  }
+
+  const events = S.events[sid] || [];
+  const agent = agentFor(sid);
+  const task = meta.task ? findTask(meta.task) : null;
+  const run = S.running[sid];
+  const live = isLiveSession(meta) && meta.status === 'active';
+
+  const last = run || events[events.length - 1];
+  const wellCls = last && last.ok === false ? ' bad' : '';
+  const act = last
+    ? `<div class="well${wellCls}"><span class="lead">›</span><span class="wbody">${esc(last.summary)}` +
+      `${(run || live) ? '<span class="caret">▌</span>' : ''}</span></div>`
+    : '<div class="well"><span class="lead">›</span><span class="wbody">no activity yet</span></div>';
+
+  const plan = [...events].reverse().find(e => e.kind === 'plan' && e.detail);
+  let steps = '';
+  if (plan) {
+    const lines = plan.detail.split('\n').filter(Boolean);
+    steps = '<div class="steps">' + lines.map(l => {
+      const cls = l.startsWith('[x]') ? 'done' : l.startsWith('[>]') ? 'doing' : 'todo';
+      const glyph = cls === 'done' ? '✓' : cls === 'doing' ? '›' : '○';
+      return `<div class="step ${cls}"><span class="glyph">${glyph}</span><span class="stext">${esc(l.replace(/^\[.\]\s*/, ''))}</span></div>`;
+    }).join('') + '</div>';
+  }
+
+  const stopBtn = agent && agent.status === 'running'
+    ? `<button id="cstop" class="stopbtn" data-aid="${esc(agent.id)}">Hold</button>` : '';
+  const refBits = [];
+  if (task) {
+    refBits.push(task.number ? '#' + esc(task.number) : esc(task.file));
+    refBits.push(`<span class="acc">${esc((meta.label || '').split(' · ')[0])}</span>`);
+    if (agent && agent.branch) refBits.push('worktree ' + esc(agent.branch));
+    refBits.push(esc(task.stage) + '/' + esc(task.file));
+  } else {
+    refBits.push(esc(sid.slice(0, 8)), 'no task attached');
+  }
+
+  const nowPanel =
+    `<div class="panel"><div class="phead">` +
+    `<span class="dot${live ? ' live' : ''}"></span><span class="label">Right now</span>` +
+    `<span class="r" id="celapsed">${sessionElapsed(meta)} on this</span>${stopBtn}</div>` +
+    `<div class="refline">${refBits.join('<span>·</span>')}</div>` +
+    `<h1 class="focus-title">${esc(task ? task.title : 'Session')}</h1>` +
+    steps + act + `</div>`;
+
+  const rev = [...events].reverse();
+  const lastTest = rev.find(e => e.kind === 'test' && !e.running);
+  const lastLint = rev.find(e => e.kind === 'check' && (e.cmd || '').includes('lint-imports'));
+  const lastFront = rev.find(e => e.kind === 'check' && /type-check|vitest|npm/.test(e.cmd || ''));
+  const checkRow = (name, ev) => {
+    if (!ev) return `<div class="check-row none"><span class="glyph">—</span><span class="name">${name}</span><span class="state">not run</span></div>`;
+    const cls = ev.ok === false ? 'fail' : ev.ok === true ? 'pass' : 'none';
+    const glyph = ev.ok === false ? '✕' : ev.ok === true ? '✓' : '·';
+    const state = esc(ev.summary.replace(/^pytest — /, '').replace(/^ran: /, '')) + ' · ' + fmtShort(ev.ts);
+    return `<div class="check-row ${cls}"><span class="glyph">${glyph}</span><span class="name">${name}</span><span class="state">${state}</span></div>`;
+  };
+  const checksPanel = `<div class="panel"><div class="phead"><span class="label">Checks</span></div>` +
+    checkRow('pytest', lastTest) + checkRow('lint-imports', lastLint) +
+    checkRow('frontend', lastFront) + `</div>`;
+
+  let fileRows = '', fileHead = '';
+  const diff = agent && S.diffCache[agent.id];
+  if (agent) fetchDiff(agent.id);
+  if (diff && diff.files && diff.files.length) {
+    const tp = diff.files.reduce((n, f) => n + f.plus, 0);
+    const tm = diff.files.reduce((n, f) => n + f.minus, 0);
+    fileHead = `<span class="r">+${tp} −${tm}</span>`;
+    fileRows = diff.files.slice(0, 12).map(f =>
+      `<div class="file-row"><span class="fpath">&lrm;${esc(f.file)}&lrm;</span>` +
+      `<span class="add">+${f.plus}</span><span class="del">−${f.minus}</span></div>`).join('');
+    if (diff.files.length > 12) fileRows += `<div class="file-row" style="color:var(--dim);font-size:11.5px">… ${diff.files.length - 12} more</div>`;
+  } else {
+    const counts = {};
+    for (const ev of events) if (ev.kind === 'edit' && ev.file) counts[ev.file] = (counts[ev.file] || 0) + 1;
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    fileRows = entries.slice(0, 12).map(([f, n]) =>
+      `<div class="file-row"><span class="fpath">&lrm;${esc(f)}&lrm;</span>` +
+      `<span class="add" style="color:var(--dim)">${n} edit${n > 1 ? 's' : ''}</span></div>`).join('')
+      || '<div class="file-row" style="color:var(--dim);font-size:12px">nothing edited yet</div>';
+  }
+  const filesPanel = `<div class="panel"><div class="phead"><span class="label">Files it has touched</span>${fileHead}</div><div>${fileRows}</div></div>`;
+
+  const recent = events.slice(-6).reverse().map(evRow).join('');
+  const recentPanel = `<div class="panel"><div class="phead"><span class="label">Recent</span></div>` +
+    `<div class="minifeed">${recent || '<span style="color:var(--dim);font-size:12px">nothing yet</span>'}</div></div>`;
+
+  $('#cgrid').innerHTML = nowPanel + `<div class="c-side">${checksPanel}${filesPanel}${recentPanel}</div>`;
+  const cstop = $('#cstop');
+  if (cstop) cstop.addEventListener('click', () => stopAgent(cstop.dataset.aid));
+
+  const others = allTasks().filter(t =>
+    ['in-progress', 'review'].includes(t.stage) && (!task || t.file !== task.file));
+  $('#calso').innerHTML = others.map(t => {
+    const pill = pillFor(t.stage, !!agentOnTask(t.file));
+    return `<div class="card"><div class="toprow">` +
+      `<span class="ref">${t.number ? '#' + esc(t.number) : ''}</span><span class="spacer"></span>` +
+      `<span class="pill" style="background:${pill.bg};color:${pill.tint}">${pill.text}</span></div>` +
+      `<div class="title">${esc(t.title)}</div></div>`;
+  }).join('');
+}
+
+function findTask(file) { return allTasks().find(t => t.file === file) || null; }
+
+async function fetchDiff(agentId) {
+  const cached = S.diffCache[agentId];
+  if (cached && (cached.fetching || Date.now() - cached.at < 8000)) return;
+  S.diffCache[agentId] = { ...(cached || {}), fetching: true };
+  try {
+    const res = await fetch('/api/diff?agent=' + encodeURIComponent(agentId));
+    const data = await res.json();
+    S.diffCache[agentId] = { at: Date.now(), files: data.files || [] };
+    if (S.view === 'focus') scheduleRender();
+  } catch {
+    S.diffCache[agentId] = { at: Date.now(), files: cached ? cached.files : [] };
+  }
+}
+
+/* ── extras / markdown ────────────────────────────────────────────────── */
+
+async function openExtra(dir, name) {
+  const url = `/files/${encodeURIComponent(dir)}/${encodeURIComponent(name)}`;
+  if (name.toLowerCase().endsWith('.md')) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) { toast(`could not read ${name}`, true); return; }
+      S.fileView = { dir, name, content: await res.text() };
+      S.selected = null;
+      renderDrawer();
+      $('#drawerbody').scrollTop = 0;
+    } catch { toast(`could not read ${name}`, true); }
+  } else {
+    window.open(url, '_blank');  // html renders, everything else the browser handles
+  }
+}
+
+// Small markdown renderer — enough for these task files, no dependencies.
+function md(src) {
+  const blocks = esc(src).split(/\n{2,}/);
+  const inline = (t) => t
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+
+  let inFence = false, fenced = [];
+  const out = [];
+  for (const block of blocks) {
+    if (inFence || block.startsWith('```')) {
+      fenced.push(block);
+      const ticks = (block.match(/```/g) || []).length;
+      inFence = inFence ? ticks % 2 === 0 : ticks % 2 === 1;
+      if (!inFence) {
+        const body = fenced.join('\n\n').replace(/^```[^\n]*\n?/, '').replace(/```\s*$/, '');
+        out.push(`<pre><code>${body}</code></pre>`);
+        fenced = [];
+      }
+      continue;
+    }
+    const lines = block.split('\n');
+    if (lines.length >= 2 && /^\s*\|.*\|\s*$/.test(lines[0]) && /^\s*\|[\s:|-]+\|\s*$/.test(lines[1])) {
+      const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map(c => inline(c.trim()));
+      const head = cells(lines[0]);
+      const rows = lines.slice(2).filter(l => /\|/.test(l)).map(cells);
+      out.push('<div class="tablewrap"><table><thead><tr>' +
+        head.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>' +
+        rows.map(r => '<tr>' + r.map(c => `<td>${c}</td>`).join('') + '</tr>').join('') +
+        '</tbody></table></div>');
+    } else if (/^#{1,6}\s/.test(block)) {
+      out.push(lines.map(l => {
+        const m = l.match(/^(#{1,6})\s+(.*)$/);
+        return m ? `<h${m[1].length}>${inline(m[2])}</h${m[1].length}>` : `<p>${inline(l)}</p>`;
+      }).join(''));
+    } else if (/^\s*[-*]\s/.test(block)) {
+      out.push('<ul>' + lines.map(l => `<li>${inline(l.replace(/^\s*[-*]\s+/, ''))}</li>`).join('') + '</ul>');
+    } else if (/^\s*\d+\.\s/.test(block)) {
+      out.push('<ol>' + lines.map(l => `<li>${inline(l.replace(/^\s*\d+\.\s+/, ''))}</li>`).join('') + '</ol>');
+    } else if (/^&gt;/.test(block)) {
+      out.push('<blockquote>' + inline(block.replace(/^&gt;\s?/gm, '')).replace(/\n/g, '<br>') + '</blockquote>');
+    } else if (/^-{3,}$/.test(block.trim())) {
+      out.push('<hr>');
+    } else {
+      out.push(`<p>${inline(block).replace(/\n/g, '<br>')}</p>`);
+    }
+  }
+  if (fenced.length) out.push(`<pre><code>${fenced.join('\n\n')}</code></pre>`);
+  return out.join('');
+}
+
+/* ── boot ─────────────────────────────────────────────────────────────── */
+
+document.querySelectorAll('#views button').forEach(b =>
+  b.addEventListener('click', () => setView(b.dataset.view)));
+$('#livechip').addEventListener('click', () => setView('flight'));
+$('#themebtn').addEventListener('click', () => { S.dark = !S.dark; applyTheme(); });
+$('#focussel').addEventListener('change', (e) => { S.focusSid = e.target.value; render(); });
+$('#refresh').addEventListener('click', loadState);
+window.addEventListener('focus', loadState);
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if ($('#sheetwrap').classList.contains('open')) { closeSheet(); }
+  else if (S.fileView) { S.fileView = null; renderDrawer(); }
+  else if (S.selected) { S.selected = null; renderBoard(); }
+});
+
+/* the drawer: drag its left edge to widen */
+{
+  const grip = $('#drawergrip'), panel = $('#drawer');
+  const saved = parseInt(localStorage.getItem('bench-drawer-w'), 10);
+  if (saved) panel.style.width = Math.min(saved, Math.round(innerWidth * 0.92)) + 'px';
+  let dragging = false, startX = 0, startW = 0;
+  grip.addEventListener('mousedown', (e) => {
+    dragging = true; startX = e.clientX; startW = panel.offsetWidth;
+    grip.classList.add('dragging'); e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const w = Math.min(Math.max(startW + (startX - e.clientX), 380), Math.round(innerWidth * 0.92));
+    panel.style.width = w + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false; grip.classList.remove('dragging');
+    localStorage.setItem('bench-drawer-w', panel.offsetWidth);
+  });
+}
+
+/* the activity log: drag its grip to resize, scroll to read back */
+{
+  const grip = $('#loggrip'), body = $('#logbody');
+  body.style.height = (parseInt(localStorage.getItem('bench-log-h'), 10) ||
+    Math.round(innerHeight * 0.30)) + 'px';
+  let dragging = false, startY = 0, startH = 0;
+  grip.addEventListener('mousedown', (e) => {
+    dragging = true; startY = e.clientY; startH = body.offsetHeight;
+    grip.classList.add('dragging'); e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const h = Math.min(Math.max(startH + (startY - e.clientY), 80), Math.round(innerHeight * 0.6));
+    body.style.height = h + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false; grip.classList.remove('dragging');
+    localStorage.setItem('bench-log-h', body.offsetHeight);
+  });
+  body.addEventListener('scroll', () => {
+    S.logStick = body.scrollTop + body.clientHeight >= body.scrollHeight - 8;
+  });
+}
+
+/* the activity bar: toggle, archive dock, ⌘Z */
+$('#actbtn').addEventListener('click', () => {
+  S.logOpen = !S.logOpen;
+  localStorage.setItem('bench-log-open', S.logOpen ? '1' : '0');
+  renderBar(); renderLog();
+});
+$('#tray').addEventListener('click', () => {
+  const n = S.state && S.state.archivedCount || 0;
+  toast(n ? `${n} archived — ⌘Z undoes the last one from this board` : 'Nothing archived yet. Drag a card here.');
+});
+{
+  const bar = $('#statusbar');
+  bar.addEventListener('dragover', (e) => {
+    if (!S.dragging) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (!S.dockHot) { S.dockHot = true; renderBar(); }
+  });
+  bar.addEventListener('dragleave', (e) => {
+    if (e.relatedTarget && bar.contains(e.relatedTarget)) return;
+    if (S.dockHot) { S.dockHot = false; renderBar(); }
+  });
+  bar.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const d = S.dragging;
+    S.dragging = null; S.dockHot = false; renderBar();
+    if (d) archiveCard(d.file, d.from);
+  });
+}
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' &&
+      !/input|textarea|select/i.test(e.target.tagName)) {
+    e.preventDefault();
+    unarchiveLast();
+  }
+});
+let tickCount = 0;
+setInterval(() => {
+  renderChip();
+  const el = $('#celapsed');
+  if (el && S.focusSid) {
+    const m = sessionMeta(S.focusSid);
+    if (m) el.textContent = `${sessionElapsed(m)} on this`;
+  }
+  // safety net: refetch every 30s so a missed broadcast can never
+  // leave the page lying for long
+  if (++tickCount % 6 === 0) loadState();
+}, 5000);
+
+applyTheme();
+loadState().then(connectStream);
+</script>
+</body>
+</html>

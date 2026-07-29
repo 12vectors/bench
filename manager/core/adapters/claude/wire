@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Claude adapter: wire live-session visibility into the host project.
+
+Contract (same for every adapter): called by install.py with the project
+root as argv[1] (and optionally --dry-run). Idempotently ensures the
+project's own sessions report events to the board; prints a report; exit 0
+on ok/fixed, 1 on a project that cannot be wired.
+
+For Claude Code that means .claude/settings.json: plansDirectory pointing
+at the task manager's plans, and the five event hooks running this
+adapter's emit.py. Fully present → "ok", touches nothing. Partial, stale
+(old .tasks/ or manager/hooks paths) or duplicated → repaired in place.
+Other hooks and settings are never touched.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+PLANS_DIR = "./.task-manager/plans"
+EMIT_CMD = 'python3 "$CLAUDE_PROJECT_DIR/.task-manager/manager/core/adapters/claude/emit.py"'
+HOOK = {"type": "command", "command": EMIT_CMD, "timeout": 5}
+
+# event -> matcher the adapter's hook group should carry (None = no matcher).
+EVENT_MATCHERS = {
+    "SessionStart": None,
+    "PreToolUse": "Bash",
+    "PostToolUse": "*",
+    "Stop": None,
+    "SessionEnd": None,
+}
+
+
+def _is_ours(hook) -> bool:
+    """Any hook invoking one of our emit.py locations is ours — including
+    the legacy .tasks/hooks and manager/hooks paths, which get repaired."""
+    cmd = str(hook.get("command", "")) if isinstance(hook, dict) else ""
+    return "emit.py" in cmd and (".task-manager" in cmd or ".tasks" in cmd)
+
+
+def _matcher_ok(event_matcher: str | None, group_matcher) -> bool:
+    if event_matcher == "Bash":
+        return group_matcher == "Bash"
+    return group_matcher in (None, "", "*")
+
+
+def _event_status(groups, matcher) -> str:
+    ours = [
+        (group.get("matcher"), hook)
+        for group in groups if isinstance(group, dict)
+        for hook in (group.get("hooks") or []) if _is_ours(hook)
+    ]
+    if not ours:
+        return "missing"
+    if len(ours) == 1:
+        group_matcher, hook = ours[0]
+        if (hook.get("command") == EMIT_CMD and hook.get("type") == "command"
+                and hook.get("timeout") == 5 and _matcher_ok(matcher, group_matcher)):
+            return "ok"
+    return "repair"
+
+
+def _fix_event(hooks_cfg: dict, event: str, matcher: str | None) -> None:
+    groups = hooks_cfg.get(event)
+    if not isinstance(groups, list):
+        groups = []
+        hooks_cfg[event] = groups
+    for group in groups:
+        if isinstance(group, dict) and isinstance(group.get("hooks"), list):
+            group["hooks"] = [h for h in group["hooks"] if not _is_ours(h)]
+    groups[:] = [g for g in groups
+                 if not (isinstance(g, dict) and g.get("hooks") == [])]
+    target = next(
+        (g for g in groups
+         if isinstance(g, dict) and _matcher_ok(matcher, g.get("matcher"))),
+        None)
+    if target is None:
+        target = {"hooks": []} if matcher is None else {"matcher": matcher, "hooks": []}
+        groups.append(target)
+    target.setdefault("hooks", []).append(dict(HOOK))
+
+
+def main() -> int:
+    args = [a for a in sys.argv[1:] if a != "--dry-run"]
+    dry_run = "--dry-run" in sys.argv[1:]
+    project = Path(args[0]).resolve() if args else Path.cwd()
+    claude_dir = project / ".claude"
+    settings_path = claude_dir / "settings.json"
+
+    if not claude_dir.is_dir():
+        print(f"{project} is not a .claude-initialised project "
+              f"(no .claude/ directory) — the claude adapter has nothing to wire.")
+        return 1
+    if not (HERE / "emit.py").is_file():
+        print(f"error: {HERE / 'emit.py'} is missing — the adapter looks broken.")
+        return 1
+
+    settings: dict = {}
+    if settings_path.is_file():
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            print(f"error: {settings_path} is not valid JSON ({exc}) — fix it first.")
+            return 1
+        if not isinstance(settings, dict):
+            print(f"error: {settings_path} does not contain a JSON object.")
+            return 1
+
+    report: list[str] = []
+    changed = False
+
+    if settings.get("plansDirectory") == PLANS_DIR:
+        report.append("plansDirectory              ok")
+    else:
+        old = settings.get("plansDirectory")
+        report.append(f"plansDirectory              {'set' if old is None else f'fixed (was {old!r})'}")
+        settings["plansDirectory"] = PLANS_DIR
+        changed = True
+
+    hooks_cfg = settings.get("hooks")
+    if not isinstance(hooks_cfg, dict):
+        hooks_cfg = {}
+        settings["hooks"] = hooks_cfg
+
+    for event, matcher in EVENT_MATCHERS.items():
+        groups = hooks_cfg.get(event) if isinstance(hooks_cfg.get(event), list) else []
+        status = _event_status(groups, matcher)
+        label = f"{event}{f'[{matcher}]' if matcher else ''}"
+        if status == "ok":
+            report.append(f"hook {label:<22} ok")
+        else:
+            report.append(f"hook {label:<22} {'added' if status == 'missing' else 'repaired'}")
+            _fix_event(hooks_cfg, event, matcher)
+            changed = True
+
+    print(f"adapter:  claude\nsettings: {settings_path}\n")
+    print("\n".join(f"  {line}" for line in report))
+
+    if not changed:
+        print("\nEverything already in place — nothing to do.")
+        return 0
+    if dry_run:
+        print("\nDry run — no changes written.")
+        return 0
+
+    settings_path.parent.mkdir(exist_ok=True)
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    print("\nWrote settings. Note: running Claude sessions snapshot their hooks "
+          "at startup — restart them to pick this up.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Example driver — copy this directory to manager/local/driver/ and make it
+# launch YOUR project's app from a task worktree. The board runs `start` and
+# owns it as a process group.
+#
+# The whole contract:
+#   env in:  DRIVE_WORKTREE  absolute path of the task's worktree checkout
+#            DRIVE_BRANCH    its branch (task/<stem>)
+#            DRIVE_TASK      the task filename
+#            DRIVE_REPO      the main repo checkout
+#   refuse:  exit non-zero QUICKLY; whatever you printed becomes the reason
+#            shown in the ticker ("port busy", "branch has migrations", …)
+#   ready:   print exactly `DRIVE URL: http://...` — the card links there
+#   run:     keep running until SIGTERM ("park"), then take the app down
+#
+# Typical duties, all project-specific and none of the board's business:
+# preflight port checks, copying gitignored env files into the worktree,
+# dependency install/link, starting processes, health checks, teardown.
+set -euo pipefail
+
+echo "this is the example driver — copy me to manager/local/driver/start and edit"
+exit 1

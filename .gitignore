@@ -1,0 +1,3 @@
+manager/local/.env
+manager/local/state/
+__pycache__/
