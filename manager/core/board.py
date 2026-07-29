@@ -56,8 +56,10 @@ def main() -> None:
             webbrowser.open(url)
         return
 
-    config.SESSIONS_DIR.mkdir(exist_ok=True)
-    config.AGENT_DIR.mkdir(exist_ok=True)
+    # parents=True: local/state/ is gitignored and ships empty, so a fresh
+    # checkout has neither it nor its children — boot must create the chain.
+    config.SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    config.AGENT_DIR.mkdir(parents=True, exist_ok=True)
     events.load_disk_sessions()
     threading.Thread(target=watch.watcher, daemon=True).start()
     threading.Thread(target=github.poller, daemon=True).start()
