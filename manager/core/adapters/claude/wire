@@ -16,13 +16,21 @@ Other hooks and settings are never touched.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-PLANS_DIR = "./.task-manager/plans"
-EMIT_CMD = 'python3 "$CLAUDE_PROJECT_DIR/.task-manager/manager/core/adapters/claude/emit.py"'
-HOOK = {"type": "command", "command": EMIT_CMD, "timeout": 5}
+TM = HERE.parents[3]  # …/manager/core/adapters/claude → the manager's root
+
+
+def _tm_prefix(project: Path) -> str:
+    """The manager's path relative to the project root, as a prefix for
+    settings entries — ".task-manager/" vendored one level inside a host
+    repo, "" when the manager IS the project (self-hosted bench)."""
+    rel = os.path.relpath(TM, project)
+    return "" if rel == "." else rel.replace(os.sep, "/") + "/"
+
 
 # event -> matcher the adapter's hook group should carry (None = no matcher).
 EVENT_MATCHERS = {
@@ -36,9 +44,12 @@ EVENT_MATCHERS = {
 
 def _is_ours(hook) -> bool:
     """Any hook invoking one of our emit.py locations is ours — including
-    the legacy .tasks/hooks and manager/hooks paths, which get repaired."""
+    the legacy .tasks/hooks and manager/hooks paths, and the old hardcoded
+    .task-manager path in a layout that no longer uses it; all repaired."""
     cmd = str(hook.get("command", "")) if isinstance(hook, dict) else ""
-    return "emit.py" in cmd and (".task-manager" in cmd or ".tasks" in cmd)
+    return "emit.py" in cmd and (
+        ".task-manager" in cmd or ".tasks" in cmd
+        or "manager/core/adapters/claude/emit.py" in cmd)
 
 
 def _matcher_ok(event_matcher: str | None, group_matcher) -> bool:
@@ -47,7 +58,7 @@ def _matcher_ok(event_matcher: str | None, group_matcher) -> bool:
     return group_matcher in (None, "", "*")
 
 
-def _event_status(groups, matcher) -> str:
+def _event_status(groups, matcher, emit_cmd: str) -> str:
     ours = [
         (group.get("matcher"), hook)
         for group in groups if isinstance(group, dict)
@@ -57,13 +68,13 @@ def _event_status(groups, matcher) -> str:
         return "missing"
     if len(ours) == 1:
         group_matcher, hook = ours[0]
-        if (hook.get("command") == EMIT_CMD and hook.get("type") == "command"
+        if (hook.get("command") == emit_cmd and hook.get("type") == "command"
                 and hook.get("timeout") == 5 and _matcher_ok(matcher, group_matcher)):
             return "ok"
     return "repair"
 
 
-def _fix_event(hooks_cfg: dict, event: str, matcher: str | None) -> None:
+def _fix_event(hooks_cfg: dict, event: str, matcher: str | None, emit_cmd: str) -> None:
     groups = hooks_cfg.get(event)
     if not isinstance(groups, list):
         groups = []
@@ -80,7 +91,8 @@ def _fix_event(hooks_cfg: dict, event: str, matcher: str | None) -> None:
     if target is None:
         target = {"hooks": []} if matcher is None else {"matcher": matcher, "hooks": []}
         groups.append(target)
-    target.setdefault("hooks", []).append(dict(HOOK))
+    target.setdefault("hooks", []).append(
+        {"type": "command", "command": emit_cmd, "timeout": 5})
 
 
 def main() -> int:
@@ -89,6 +101,11 @@ def main() -> int:
     project = Path(args[0]).resolve() if args else Path.cwd()
     claude_dir = project / ".claude"
     settings_path = claude_dir / "settings.json"
+
+    prefix = _tm_prefix(project)
+    plans_dir = f"./{prefix}plans"
+    emit_cmd = (f'python3 "$CLAUDE_PROJECT_DIR/{prefix}'
+                f'manager/core/adapters/claude/emit.py"')
 
     if not claude_dir.is_dir():
         print(f"{project} is not a .claude-initialised project "
@@ -112,12 +129,12 @@ def main() -> int:
     report: list[str] = []
     changed = False
 
-    if settings.get("plansDirectory") == PLANS_DIR:
+    if settings.get("plansDirectory") == plans_dir:
         report.append("plansDirectory              ok")
     else:
         old = settings.get("plansDirectory")
         report.append(f"plansDirectory              {'set' if old is None else f'fixed (was {old!r})'}")
-        settings["plansDirectory"] = PLANS_DIR
+        settings["plansDirectory"] = plans_dir
         changed = True
 
     hooks_cfg = settings.get("hooks")
@@ -127,13 +144,13 @@ def main() -> int:
 
     for event, matcher in EVENT_MATCHERS.items():
         groups = hooks_cfg.get(event) if isinstance(hooks_cfg.get(event), list) else []
-        status = _event_status(groups, matcher)
+        status = _event_status(groups, matcher, emit_cmd)
         label = f"{event}{f'[{matcher}]' if matcher else ''}"
         if status == "ok":
             report.append(f"hook {label:<22} ok")
         else:
             report.append(f"hook {label:<22} {'added' if status == 'missing' else 'repaired'}")
-            _fix_event(hooks_cfg, event, matcher)
+            _fix_event(hooks_cfg, event, matcher, emit_cmd)
             changed = True
 
     print(f"adapter:  claude\nsettings: {settings_path}\n")

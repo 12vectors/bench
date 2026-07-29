@@ -43,7 +43,7 @@ def broadcast(payload: dict) -> None:
 
 def persist(name: str, record: dict) -> None:
     try:
-        config.SESSIONS_DIR.mkdir(exist_ok=True)
+        config.SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
         with (config.SESSIONS_DIR / name).open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
     except OSError:

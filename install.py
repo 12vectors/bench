@@ -19,9 +19,29 @@ import sys
 from pathlib import Path
 
 TM = Path(__file__).resolve().parent
-PROJECT = TM.parent
 LOCAL = TM / "manager" / "local"
 CORE = TM / "manager" / "core"
+
+
+def _project_root() -> Path:
+    """The host project's root: the git toplevel seen from the manager's
+    directory (same resolution as config._repo_root). Vendored installs
+    drop .task-manager/.git at clone time, so this finds the host repo;
+    when the manager IS the repo (self-hosted), it finds that repo itself.
+    No git → fall back to the vendored-layout assumption, the parent."""
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", str(TM), "rev-parse", "--show-toplevel"],
+            text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+        if out:
+            return Path(out)
+    except (subprocess.CalledProcessError, OSError):
+        pass
+    return TM.parent
+
+
+PROJECT = _project_root()
 
 
 def adapter_name() -> str:
