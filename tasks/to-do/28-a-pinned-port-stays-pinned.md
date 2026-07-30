@@ -1,6 +1,7 @@
 # 28 — A pinned port stays pinned: fix the TIME_WAIT hop that rewrites .env
 
-**Status:** Backlog
+**Status:** To Do
+**Assignee:** istos
 **Priority:** Medium — a routine stop/start silently moves a deliberately pinned port; found by the first downstream install within hours of 0.2
 **Type:** Bug
 
