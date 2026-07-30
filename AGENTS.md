@@ -280,10 +280,35 @@ reassignment. An unclaimed card claims itself on launch.
 2. The agent works in the worktree: implements, tests, commits. Its hook
    events stream to the board like any session.
 3. On clean exit with commits on the branch the board moves the card to
-   `review/`; on failure it stays in `in-progress/` and the exit is narrated
-   in the ticker. A clean exit that committed *nothing* also stays in
+   `review/`; on failure it stays in `in-progress/` and the card wears the
+   failure (below). A clean exit that committed *nothing* also stays in
    `in-progress/` and is called out loudly — an empty branch reaching
-   review/ is how a broken launch hides. Stdout is kept in `.agent/logs/`.
+   review/ is how a broken launch hides. Stdout is kept in
+   `local/state/agent/logs/`.
+
+### A run that died
+
+An agent that exits non-zero is the one outcome a person must not miss, so
+it is a **state the card wears**, not an event that scrolls past. The run's
+record keeps the exit code, when it ended, and the cleaned tail of its log
+— the excerpt, which for an API outage is the whole story ("API Error:
+500 …") and which a launch that died before the agent ever spoke still
+answers honestly. From that the board does three things: the card takes the
+`--alarm` border and a `run failed` pill, with the excerpt on hover and in
+full in the card sheet; a toast fires, because failures are rare and
+actionable; and the ticker keeps its line, now naming what the log ended on
+rather than pointing vaguely at a file. Every headless kind lands here —
+work, act-pr, PR review, relevance check — and a card that is not in
+in-progress wears it just the same.
+
+The state is scoped to the run and the stage: the next launch supersedes it
+(the card reads its most recent run), and moving the card to another stage
+drops it, since the failure was about the work in the stage it died in.
+Nothing retries by itself — a dead run is a human decision point, and an
+outage would make auto-retry a thundering herd — but the way is cleared for
+the human: a failed run that committed nothing has its worktree and empty
+branch removed, exactly as a decline does, so **▸ start work** is one click
+again. A failed run *with* commits keeps its worktree; there is work in it.
 
 ## Pull requests
 

@@ -84,6 +84,10 @@ def _agent_public(record: dict) -> dict:
     # The model the launch was actually given; None = inherited the
     # vendor's own default. Honesty for the Sessions/Focus views.
     public["model"] = record.get("model")
+    public["ended"] = record.get("ended")
+    # The outcome a failed run leaves behind, for the card to wear (see
+    # _record_failure). None on every run that did not die.
+    public["failure"] = record.get("failure")
     return public
 
 
@@ -368,6 +372,78 @@ def _discard_untouched_worktree(record: dict) -> bool:
     return True
 
 
+def _failure_excerpt(log_path: str | None, lines: int = 6, cap: int = 600) -> str:
+    """The tail of a dead run's log, cleaned — usually the whole story
+    ("API Error: 500 …"). A launch that died before the agent ever spoke
+    leaves a line or two, or nothing at all; say which rather than showing
+    an empty card."""
+    text = ""
+    if log_path:
+        try:
+            text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+    kept = [line.rstrip() for line in _clean_log(text, cap=8000).splitlines()
+            if line.strip()]
+    if not kept:
+        return "no output — the run died before the agent said anything"
+    return "\n".join(kept[-lines:])[-cap:]
+
+
+def _headline(excerpt: str, cap: int = 120) -> str:
+    """One line of an excerpt for a ticker line or a toast: the last one,
+    which is where a dying process says why."""
+    lines = [line for line in (excerpt or "").splitlines() if line.strip()]
+    return (lines[-1].strip()[:cap] if lines else "no output")
+
+
+def _why(record: dict) -> str:
+    """What a dead run's log ended on, for the ticker line that records it."""
+    return _headline((record.get("failure") or {}).get("excerpt", ""))
+
+
+def _record_failure(record: dict, rc: int) -> dict:
+    """A dead run is a state its card wears, not an event that scrolls by.
+
+    Every headless kind lands here, launches that died before the agent
+    spoke included: the outcome goes onto the run's record — exit code,
+    when it ended, the log's cleaned tail, and the stage the card was in —
+    so the board can show it, and a toast says it once to whoever is
+    looking. The stage is part of the state because the state is about
+    work in that stage: carried into review/ it would libel the next run.
+    """
+    failure = {
+        "rc": rc,
+        "ended": record.get("ended") or time.time(),
+        "excerpt": _failure_excerpt(record.get("log")),
+        "stage": find_stage_of(record["task"]) or record.get("origin"),
+        "log": record.get("log"),
+        "mode": record.get("mode", "work"),
+    }
+    with state.LOCK:
+        record["failure"] = failure
+    name = record.get("name") or "the agent"
+    state.broadcast({
+        "type": "toast", "error": True,
+        "message": f"{name} failed on {record['task']} (rc={rc}) — "
+                   f"{_headline(failure['excerpt'])}",
+    })
+    return failure
+
+
+def forget_failure(filename: str) -> bool:
+    """Drop a card's failed-run state. Called when the card moves stage:
+    the failure belonged to the work in the stage it died in, and no card
+    should arrive somewhere new already wearing an alarm. A relaunch needs
+    no call — the newer run is what the card reads."""
+    cleared = False
+    with state.LOCK:
+        for record in state.AGENTS.values():
+            if record["task"] == filename and record.pop("failure", None):
+                cleared = True
+    return cleared
+
+
 def _finish(agent_id: str, proc: subprocess.Popen, log_file) -> tuple[dict, bool, int]:
     rc = proc.wait()
     log_file.close()
@@ -376,6 +452,10 @@ def _finish(agent_id: str, proc: subprocess.Popen, log_file) -> tuple[dict, bool
         stopped = record["status"] == "stopped"
         record["status"] = "stopped" if stopped else ("done" if rc == 0 else "failed")
         record["rc"] = rc
+        record["ended"] = time.time()
+        failed = record["status"] == "failed"
+    if failed:
+        _record_failure(record, rc)
     return record, stopped, rc
 
 
@@ -422,7 +502,14 @@ def _reap_agent(agent_id: str, proc: subprocess.Popen, log_file) -> None:
     elif stopped:
         summary = f"{name} was held on {filename} — nothing is lost"
     else:
-        summary = f"{name} exited on {filename} rc={rc} — see its log"
+        # The card now wears the failure; the ticker keeps the record of it
+        # and names what the log's tail said. A run that committed nothing
+        # also leaves nothing worth keeping, so the worktree goes and
+        # ▸ start work is one click again — same reasoning as a decline.
+        cleaned = _discard_untouched_worktree(record)
+        summary = (f"{name} exited on {filename} rc={rc} — {_why(record)}"
+                   + (" (worktree cleared — relaunch when you have read it)" if cleaned
+                      else f" (worktree {record['worktree']} kept: it has commits)"))
     state.record_board_event({"kind": "agent", "actor": "agent", "file": filename,
                               "summary": summary})
     state.broadcast({"type": "agents"})
@@ -534,7 +621,7 @@ def _reap_pr_fix(agent_id: str, proc: subprocess.Popen, log_file) -> None:
     elif stopped:
         summary = f"{name} was held while acting on {filename}'s PR"
     else:
-        summary = f"{name} failed acting on {filename}'s PR (rc={rc}) — see its log"
+        summary = f"{name} failed acting on {filename}'s PR (rc={rc}) — {_why(record)}"
     state.record_board_event({"kind": "agent", "actor": "agent", "file": filename,
                               "summary": summary})
     state.broadcast({"type": "board"})
@@ -561,7 +648,9 @@ def _reap_pr_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
 
     if stopped:
         summary = f"{name}'s PR review of {filename} was held"
-    elif rc != 0 or verdict is None:
+    elif rc != 0:
+        summary = f"{name}'s PR review of {filename} died (rc={rc}) — {_why(record)}"
+    elif verdict is None:
         summary = f"{name}'s PR review of {filename} ended without a verdict — see its log"
     else:
         word = "approved it" if verdict == "APPROVE" else "asked for changes"
@@ -592,7 +681,7 @@ def _reap_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
     if stopped:
         summary = f"{name}'s check of {filename} was held"
     elif rc != 0:
-        summary = f"{name}'s check of {filename} exited rc={rc} — see its log"
+        summary = f"{name}'s check of {filename} exited rc={rc} — {_why(record)}"
     else:
         summary = f"{name} on {filename}: {verdict[:140] if verdict else 'report appended to the task'}"
     state.record_board_event({"kind": "agent", "actor": "agent", "file": filename,

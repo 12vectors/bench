@@ -158,6 +158,9 @@
   /* PR verdicts: pine when it settled, terracotta when it snagged */
   .card.verdict-good{border-color:color-mix(in oklab, var(--calm) 55%, var(--border))}
   .card.verdict-bad{border-color:color-mix(in oklab, var(--alarm) 55%, var(--border))}
+  /* the last run on this card died: the same terracotta, worn until the
+     next launch replaces it or the card moves stage */
+  .card.run-failed{border-color:color-mix(in oklab, var(--alarm) 55%, var(--border))}
   /* tool chips: destinations, not statuses — they live in the card's footer,
      never squeezed into the author row */
   .chiprow{
@@ -437,6 +440,8 @@
     padding:20px 20px 20px 6px;
   }
   #drawer .dhead{display:flex;align-items:center;gap:10px}
+  /* the dead run's excerpt, above the task itself: machine output, bounded */
+  #drawer .well.bad pre{margin:6px 0 4px;white-space:pre-wrap;max-height:220px;overflow-y:auto;color:var(--text)}
   #drawer .dbody{font-size:13px;line-height:1.6}
   #drawer .dbody h1{font-size:19px;line-height:1.3;font-weight:600;letter-spacing:-.01em;margin:0 0 4px;text-wrap:pretty}
   #drawer .dbody h2{font-size:14px;margin:18px 0 6px}
@@ -701,6 +706,30 @@ function agentFor(sid) { return (S.state?.agents || []).find(a => a.session === 
 function agentOnTask(file) {
   return (S.state?.agents || []).find(a => a.task === file && a.status === 'running');
 }
+/* The most recent run on a card. Records outlive their processes, so the
+   latest launch is a max-by-start question, not a find. */
+function lastRunOn(file) {
+  return (S.state?.agents || []).reduce(
+    (best, a) => (a.task === file && (!best || a.started > best.started) ? a : best), null);
+}
+/* A dead run is a state the card wears: alarm border, `run failed` pill and
+   the log's tail, until the next launch replaces it (a newer run is the
+   latest one) or the card moves stage (the server drops the state, and the
+   stage stamp keeps the card honest in the seconds before the watcher
+   notices). Every headless kind counts — work, act-pr, PR review, relevance. */
+function failedRun(task) {
+  const last = lastRunOn(task.file);
+  const failure = last && last.status === 'failed' ? last.failure : null;
+  return failure && failure.stage === task.stage ? failure : null;
+}
+/* The line a run died on: the excerpt's last, which is where a dying
+   process says why ("API Error: 500 …"). Bounded, so one enormous line of
+   machine output cannot grow the card — the whole excerpt is a hover away. */
+function whyFailed(failure) {
+  const lines = (failure.excerpt || '').split('\n').filter(l => l.trim());
+  const why = lines.length ? lines[lines.length - 1].trim() : 'no output';
+  return why.length > 160 ? why.slice(0, 160) + '…' : why;
+}
 function sessionMeta(sid) { return (S.state?.sessions || []).find(m => m.id === sid); }
 function isLiveSession(m) {
   const fresh = (Date.now() / 1000 - (m.last || m.started || 0)) < 900;
@@ -888,10 +917,12 @@ function cardFor(task) {
   const agent = agentOnTask(task.file);
   const working = agent && agent.mode !== 'review';
   const verdict = task.stage === 'review' ? prVerdict(task) : null;
+  const failure = failedRun(task);
   el.className = 'card'
     + (S.selected && S.selected.file === task.file ? ' selected' : '')
     + (working ? ' running' : '')
     + (verdict === 'green' ? ' verdict-good' : verdict === 'red' ? ' verdict-bad' : '')
+    + (failure ? ' run-failed' : '')
     + (task.stage === 'done' ? ' done-dim' : '');
   el.draggable = true;
 
@@ -906,6 +937,13 @@ function cardFor(task) {
     pill = { text: 'changes asked', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16) };
     tint = 'var(--alarm)';
   }
+  if (failure) {
+    // the newest thing that happened here, and the only actionable one:
+    // it outranks a PR verdict from before the run died
+    pill = { text: 'run failed', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16),
+             title: failure.excerpt };
+    tint = 'var(--alarm)';
+  }
   const high = (task.priority || '').toLowerCase() === 'high';
   const top = [
     `<span class="mark${working ? ' breathing' : ''}" style="background:${tint}"></span>`,
@@ -913,7 +951,8 @@ function cardFor(task) {
     '<span class="spacer"></span>',
     high ? '<span class="high">HIGH</span>' : '',
     task.statusMismatch ? `<span class="pill drift" title="File says ${esc(task.declaredStatus)}">drift</span>` : '',
-    `<span class="pill status" style="background:${pill.bg};color:${pill.tint}">${pill.text}</span>`,
+    `<span class="pill status" style="background:${pill.bg};color:${pill.tint}"` +
+      `${pill.title ? ` title="${esc(pill.title)}"` : ''}>${pill.text}</span>`,
   ];
 
   // two actions per state, max — whatever you'd actually do without opening the card
@@ -1010,6 +1049,12 @@ function cardFor(task) {
     }
   } else if (agent) {
     liveLine = `<div class="well"><span class="lead">·</span><span class="wbody">warming up<span class="caret">▌</span></span></div>`;
+  } else if (failure) {
+    // "API Error: 500" one hover away instead of buried in a log file: the
+    // line the run died on here, the whole excerpt on hover and in the sheet
+    liveLine = `<div class="well bad" title="${esc(failure.excerpt)}">` +
+      `<span class="lead">·</span><span class="wbody">rc=${esc(failure.rc)} · ` +
+      `${esc(whyFailed(failure))}</span></div>`;
   }
 
   // tool chips: destinations, not statuses — they live in the card's footer
@@ -1375,16 +1420,28 @@ function renderDrawer() {
   if (!S.selected) { panel.classList.remove('open'); body.innerHTML = ''; return; }
   const t = S.selected;
   const agent = agentOnTask(t.file);
-  const pill = agent && agent.mode === 'review'
+  const failure = failedRun(t);
+  const pill = failure
+    ? { text: 'run failed', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16) }
+    : agent && agent.mode === 'review'
     ? { text: 'reviewing', tint: 'var(--accent)', bg: mix('var(--accent)', 16) }
     : pillFor(t.stage, agent && agent.mode !== 'review');
   const when = new Date(t.mtime * 1000).toLocaleString();
+  // the whole excerpt, not just the line the card shows — the sheet is
+  // where you read what killed the run without opening files on disk
+  const failBlock = failure
+    ? `<div class="well bad"><span class="lead">·</span><div class="wbody">` +
+      `<b>run failed</b> · rc=${esc(failure.rc)} · ${esc(ago(failure.ended))} ago` +
+      `<pre>${esc(failure.excerpt)}</pre>` +
+      `<span style="color:var(--dim)">${esc(failure.log || '')}</span></div></div>`
+    : '';
   body.innerHTML =
     `<div class="dhead">` +
     `<span class="mono" style="font-size:12px;color:var(--dim)">${t.number ? '#' + esc(t.number) : ''}</span>` +
     `<span class="pill" style="background:${pill.bg};color:${pill.tint}">${pill.text}</span>` +
     `<span class="spacer"></span>` +
     `<button id="closeDrawer">Close</button></div>` +
+    failBlock +
     `<div class="dbody">${md(t.body)}</div>` +
     `<div class="dmeta">${esc(t.stage)}/${esc(t.file)} · ${t.words} words · edited ${esc(when)}</div>`;
   panel.classList.add('open');
