@@ -140,6 +140,22 @@ class UpdateFromRelease(unittest.TestCase):
             self.assertEqual((tm / path).read_bytes(), content,
                              f"{path} must survive byte-identical")
 
+    def test_update_heals_a_non_executable_install_py(self):
+        # The v0.1-alpha field report: installs unpacked from an artifact
+        # that carried mode 644 stay broken by themselves, because `cp`
+        # onto an existing file keeps the destination's mode. update.sh's
+        # chmod line is what heals them — existing victims, not only fresh
+        # installs.
+        tm = self.make_install()
+        (tm / "install.py").chmod(0o644)
+
+        result = self.run_update(tm)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(
+            os.access(tm / "install.py", os.X_OK),
+            "update.sh must restore install.py's executable bit")
+
     def test_agents_brief_replaces_an_old_vendor_named_copy(self):
         # Ported from the retired test_update_round_trip.py (whose harness
         # targeted the removed git-clone mechanism): an install from the

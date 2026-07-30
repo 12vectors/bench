@@ -55,6 +55,32 @@ def expected_files() -> set:
     return files
 
 
+def shebang_members(tarball: Path) -> dict:
+    """{member name: tar-header mode} for every file in the artifact whose
+    content starts `#!`.
+
+    The tar header is the truth here, not the repo: git records only the
+    exec bit, and release.sh stages through a copy where a umask could
+    still lose it (task 21's risk)."""
+    modes = {}
+    with tarfile.open(tarball) as tar:
+        for member in tar.getmembers():
+            if not member.isfile():
+                continue
+            stream = tar.extractfile(member)
+            if stream is None or stream.read(2) != b"#!":
+                continue
+            modes[member.name.removeprefix("./")] = member.mode
+    return modes
+
+
+def shebang_files_missing_exec(tarball: Path) -> list:
+    """The invariant, in one place: a shipped file that starts `#!` and
+    cannot be run. Anything this names is a bug."""
+    return sorted(name for name, mode in shebang_members(tarball).items()
+                  if not mode & 0o100)
+
+
 def build_artifact(out: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(REPO / "release.sh"), "--tarball", str(out),
@@ -136,12 +162,39 @@ class ArtifactContents(unittest.TestCase):
         self.assertIn('BENCH_SOURCE_DEFAULT=""',
                       (REPO / "update.sh").read_text("utf-8"))
 
-    def test_scripts_are_executable_in_the_tarball(self):
-        for name in ("start.sh", "stop.sh", "update.sh",
+    def test_every_shipped_shebang_file_is_executable(self):
+        """A shebang is a promise the file can be run. v0.1-alpha shipped
+        install.py mode 644, so the README one-liner's `./install.py` was
+        permission-denied on every install. The invariant is absolute — no
+        exception list: a file that may not be run must not claim it can,
+        and adding an exception here means editing this test with a reason.
+        """
+        self.assertEqual([], shebang_files_missing_exec(self.tarball))
+        # The sweep must actually have reached the scripts — an artifact
+        # whose members read as empty would pass vacuously.
+        seen = shebang_members(self.tarball)
+        for name in ("install.py", "start.sh", "stop.sh", "update.sh",
+                     "manager/core/board.py",
                      "manager/core/adapters/claude/run",
                      "manager/core/adapters/claude/wire"):
-            mode = self.members[name].mode
-            self.assertTrue(mode & 0o100, f"{name} lost its executable bit")
+            self.assertIn(name, seen,
+                          f"{name} was not seen as a shebang file")
+
+    def test_the_executable_invariant_catches_a_stripped_mode(self):
+        """The guard itself, proven to bite: repack the real artifact with
+        install.py's mode stripped — exactly the v0.1-alpha shape — and the
+        check must name it. Without this, a sweep that silently stopped
+        finding shebangs would read as a clean tarball forever."""
+        stripped = self.scratch / "mode-stripped.tar.gz"
+        with tarfile.open(self.tarball) as src, \
+                tarfile.open(stripped, "w:gz") as out:
+            for member in src.getmembers():
+                if member.name.removeprefix("./") == "install.py":
+                    member.mode = 0o644
+                out.addfile(member, src.extractfile(member)
+                            if member.isfile() else None)
+
+        self.assertEqual(["install.py"], shebang_files_missing_exec(stripped))
 
 
 class ReleaseRefusals(unittest.TestCase):
@@ -221,6 +274,19 @@ class ArtifactInstalls(unittest.TestCase):
         self.assertNotIn("removed", result.stdout)
         self.assertTrue((tm / "tasks" / "task-template.md").is_file())
         self.assertTrue((tm / "manager" / "local" / "state").is_dir())
+
+    def test_install_py_runs_directly_from_an_unpacked_release(self):
+        """The README's next step after unpacking is `./install.py`.
+        v0.1-alpha shipped it mode 644, so that step was permission-denied
+        on every install. Run as a program — no interpreter in front of it
+        — so the exec bit is what is under test, unpacked and in place."""
+        tm = self.make_install("runnable")
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("BOARD_", "BENCH_"))}
+        result = subprocess.run([str(tm / "install.py")],
+                                capture_output=True, text=True,
+                                cwd=tm.parent, env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_board_serves_from_an_unpacked_artifact(self):
         tm = self.make_install("serving")
