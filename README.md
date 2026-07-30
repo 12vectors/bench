@@ -4,7 +4,10 @@ A live kanban for coding-agent work: task files in stage directories are
 the only source of truth; a stdlib-only board narrates everything that
 happens to them — agents working in git worktrees, PRs opening on review,
 CI and Copilot state on the cards, drives of the app from a task's own
-branch, and an archive that is never a delete.
+branch, and an archive that is never a delete. Turn on team mode
+(`BOARD_SYNC=1`) and the truth is `origin/main`: moves commit and push
+themselves, every board pulls on a beat, and the person who claimed a
+card first keeps it.
 
 ## Install into a repo
 

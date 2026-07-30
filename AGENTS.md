@@ -44,7 +44,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state → taskfiles → events / github / drive → agents → watch / httpd → board.py
+config → state → taskfiles → events / github / drive / sync → agents → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -53,6 +53,7 @@ config → state → taskfiles → events / github / drive → agents → watch 
 - `events.py` — ingests NORMALIZED events (the adapter contract), session registry
 - `github.py` — PR opening, Copilot requests, review/CI polling
 - `drive.py` — runs the project driver, tracks the one live drive
+- `sync.py` — origin/main as the shared board: push on move, pull on a beat
 - `agents.py` — headless work/review jobs, launched through the adapter
 - `watch.py` — 2s disk poller narrating moves made outside the API
 - `httpd.py` — HTTP routes, the SSE stream, serving the page
@@ -175,7 +176,8 @@ view swaps only the tail (`<project> · sessions`).
 
 All settings live in `manager/core/.env.example` with their defaults documented —
 the port, the binaries agents launch with, the commands agents may run,
-the worktrees directory, whether moves claim and commit themselves, the
+the worktrees directory, whether moves claim and commit themselves,
+whether boards sync through origin/main and how often, the
 watch interval and the in-memory caps. Copy it to `manager/local/.env`
 (gitignored) to override locally; real environment
 variables beat `.env`, which beats the defaults. The hook bridge reads the
@@ -204,7 +206,11 @@ The board has three views (header switcher):
 - **Board** — the kanban, live. Active Claude Code sessions appear as chips in
   the header; a card an agent is working on carries a live activity line; the
   bottom ticker narrates the latest events and every move is attributed
-  (`you` / `agent` / `disk`).
+  (`you` / `agent` / `disk`, or the teammate's git name when a sync brought
+  it). With `BOARD_SYNC` on, a second header chip appears — and only
+  appears — when sync stops converging, saying whether it is behind
+  (origin unreachable, self-healing) or stalled on something only a human
+  can settle.
 - **Sessions** — a flight recorder per session: a chronological timeline of
   reads, edits, test runs, commits and card moves, with filters and expandable
   output. Sessions persist to `.sessions/*.jsonl`, so past ones can be replayed.
@@ -433,12 +439,55 @@ the move and the claim land in one commit touching only that task file,
 messaged `board: <number> → <stage> (<name>)`, staged by pathspec so
 unrelated staged work is neither committed nor unstaged (hooks are skipped —
 this is bookkeeping, not code). Pushing is not part of it: those commits sit
-on your local `main` until you push it, which the PR guard above will tell
-you about if you forget. The setting is off by default: a single-player
+on your local `main` until you push it (or until `BOARD_SYNC` pushes them —
+see below), which the PR guard above will tell you about if you forget. The
+setting is off by default: a single-player
 board neither writes nor clears the assignee and makes no commits, exactly
 as before, and `tasks/` is committed by hand. The gate governs only whether
 a *move* writes the line — an **Assignee:** added to a file by hand is still
 read and shown on the card whether the gate is on or off.
+
+## Syncing boards
+
+`BOARD_SYNC=1` makes `origin/main` the truth and every board a converging
+replica. It implies `BOARD_COMMIT_MOVES` — a move that never commits has
+nothing to publish — and off (the default) nothing below runs: no fetch,
+no push, no thread, no behaviour change at all.
+
+- **Push is event-driven.** The commit a move makes is pushed as soon as
+  it lands. A rejected push means another board got there first, so the
+  board fetches, replays its own commits on top and pushes again.
+- **Pull is a beat.** Every `BOARD_SYNC_INTERVAL` (30s by default) and
+  once at startup: fetch, then fast-forward. The watcher narrates what
+  arrived, attributed to the commit's author rather than `disk`.
+- **Losing a race is a toast, not a mystery.** When replaying collides
+  with a card someone else already moved, origin wins: the local move is
+  dropped, the file reverts to origin's version and the board says
+  `07 claimed by elena — your move was undone`.
+- **A human's unpushed commit is never published.** Before any auto-push
+  every local-ahead commit on `main` must be `board: `-prefixed. One
+  that isn't stops the push (and the replay), names itself in the ticker
+  and holds the header's `sync stalled` chip until you push it yourself
+  or move it off main.
+- **Offline is quiet.** An unreachable origin says so once, then works
+  locally; commits queue on `main` and go out on the next reachable
+  fetch.
+
+Two disciplines make this safe, and team mode assumes both:
+
+- **Local `main` advances only through the board and origin.** Code work
+  lives in worktrees and PRs — that is what keeps the main checkout clean
+  and fast-forwardable. Uncommitted changes to tracked files, a checkout
+  sitting on another branch, or a divergence the guard won't replay all
+  stall sync rather than risking your work; each one is narrated once and
+  shown as a chip in the header until it clears.
+- **Sync never merges.** It fast-forwards, or rebases the board's own
+  bookkeeping commits. Nothing here force-pushes, and nothing reacts to
+  what it pulled beyond narrating it.
+
+One board fetches twice a minute at the default interval; N boards make
+N times that. Against GitHub this is nothing, but on a rate-limited or
+metered remote raise `BOARD_SYNC_INTERVAL`.
 
 ## Task file format
 
