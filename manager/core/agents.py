@@ -168,7 +168,10 @@ def _fresh_branch_point() -> tuple[str | None, str | None]:
     if fetched.returncode != 0 or \
             _git("rev-parse", "--verify", "--quiet", "origin/main").returncode != 0:
         return None, "fetch of origin/main failed; branched from local HEAD"
-    ahead = _git("rev-list", "--count", "main..origin/main").stdout.strip()
+    # Counted against HEAD, not main: HEAD is the fallback base, so this is
+    # exactly what launching would have missed — accurate even when the
+    # board checkout sits on another branch.
+    ahead = _git("rev-list", "--count", "HEAD..origin/main").stdout.strip()
     if ahead.isdigit() and int(ahead) > 0:
         return "origin/main", (f"branched from origin/main, "
                                f"{ahead} ahead of this checkout")

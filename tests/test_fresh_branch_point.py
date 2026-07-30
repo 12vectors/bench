@@ -98,6 +98,15 @@ class FreshBranchPoint(unittest.TestCase):
             capture_output=True)
         self.assertNotEqual(upstream_cfg.returncode, 0)
 
+    def test_ahead_count_is_relative_to_the_checkout_not_local_main(self):
+        # The checkout already holds origin/main's tip on another branch;
+        # only local main is behind. Nothing was missed, so no narration —
+        # counting main..origin/main would have claimed "1 ahead" here.
+        _commit(self.upstream, "landed elsewhere")
+        _git(self.local, "fetch", "-q", "origin")
+        _git(self.local, "checkout", "-q", "-b", "other", "origin/main")
+        self.assertEqual(agents._fresh_branch_point(), ("origin/main", None))
+
     def test_origin_in_sync_is_used_without_narration(self):
         self.assertEqual(agents._fresh_branch_point(), ("origin/main", None))
 
