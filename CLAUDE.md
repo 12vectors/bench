@@ -232,9 +232,14 @@ on `in-progress/` cards: moving a card to in-progress is the commitment, and
 only then does work start — the server refuses launches from anywhere else.
 
 1. The board creates a git worktree at `.worktrees/<task-stem>/` on a new
-   branch `task/<task-stem>` from current HEAD. (The agent is told not to
-   touch the task file — worktree moves would be invisible to the main
-   checkout anyway.)
+   branch `task/<task-stem>` from the newest main it can see: with an
+   `origin` remote it fetches `origin/main` first (bounded by
+   `BOARD_FETCH_TIMEOUT`) and branches from that; no remote, a failed
+   fetch or a timeout fall back to current HEAD, so launching never
+   waits on the network. The main checkout itself is never touched, and
+   the ticker names the branch point whenever it isn't just HEAD. (The
+   agent is told not to touch the task file — worktree moves would be
+   invisible to the main checkout anyway.)
 2. The agent works in the worktree: implements, tests, commits. Its hook
    events stream to the board like any session.
 3. On clean exit with commits on the branch the board moves the card to
