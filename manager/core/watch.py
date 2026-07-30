@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import time
 
+import agents
 import config
 import github
 import state
@@ -57,6 +58,9 @@ def narrate(prev: dict[str, set[str]], cur: dict[str, set[str]]) -> None:
                 "actor": actor, "remote": remote,
                 "summary": f"{f} moved {prev_loc[f]} → {stage} ({actor})",
             })
+            # a failed run is worn by the card in the stage it died in —
+            # wherever the card goes next, it arrives without the alarm
+            agents.forget_failure(f)
             if stage == "review" and not remote:
                 # a card entering review with a work branch gets a PR — on
                 # the actor's board only, or the team gets one PR attempt
