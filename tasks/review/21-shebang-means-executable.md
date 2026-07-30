@@ -1,6 +1,7 @@
 # 21 — A shebang means executable: fix the shipped modes and test the invariant
 
 **Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/20
 **Assignee:** istos
 **Priority:** High — first external-install bug report: ./install.py is permission-denied on every install of v0.1-alpha
 **Type:** Bug
