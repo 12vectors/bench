@@ -1300,12 +1300,15 @@ function renderFlight() {
   const stopBtn = agent && agent.status === 'running'
     ? `<button id="stopagent" class="stopbtn" data-aid="${esc(agent.id)}">Hold</button>` : '';
   const branch = agent && agent.branch ? ` · <span class="mono">${esc(agent.branch)}</span>` : '';
+  // Honesty about what the run actually rode: the configured model, or
+  // the vendor default it inherited. Interactive sessions say nothing.
+  const model = agent ? ` · <span class="mono">${agent.model ? esc(agent.model) : 'model inherited'}</span>` : '';
   $('#fsession').innerHTML =
     `<div><div class="s-title">${esc((meta.label || sid).split(' · ')[0])}` +
     `<span class="sid">${esc(sid.slice(0, 8))}</span></div>` +
     `<div class="s-line">${meta.task ? 'on ' + esc(meta.task) + ' · ' : ''}` +
     `started ${fmtShort(meta.started)} · ${meta.count || 0} events · ` +
-    `${files.size} files edited · ${checks} check runs${branch}</div></div>` +
+    `${files.size} files edited · ${checks} check runs${branch}${model}</div></div>` +
     stopBtn + spark(events, meta);
   const stop = $('#stopagent');
   if (stop) stop.addEventListener('click', () => stopAgent(stop.dataset.aid));
@@ -1490,6 +1493,7 @@ function renderFocus() {
     refBits.push(task.number ? '#' + esc(task.number) : esc(task.file));
     refBits.push(`<span class="acc">${esc((meta.label || '').split(' · ')[0])}</span>`);
     if (agent && agent.branch) refBits.push('worktree ' + esc(agent.branch));
+    if (agent) refBits.push(agent.model ? esc(agent.model) : 'model inherited');
     refBits.push(esc(task.stage) + '/' + esc(task.file));
   } else {
     refBits.push(esc(sid.slice(0, 8)), 'no task attached');
