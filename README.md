@@ -21,6 +21,11 @@ bench's own cards or settings, so the board starts empty by construction.
 Commit `.task-manager/` into the host repo — core is vendored on purpose,
 so clones work offline and updates show up in the host's own diffs.
 
+The workflow brief ships as `.task-manager/AGENTS.md` — the cross-vendor
+name coding agents read natively — with `CLAUDE.md` beside it as a one-line
+compatibility pointer. Both live inside `.task-manager/`, so a host repo's
+own root `AGENTS.md` is never touched.
+
 ## Update
 
 ```bash
@@ -57,4 +62,8 @@ install one-liner above depends on.
 Core knows about tasks, worktrees, PRs and events. It knows nothing about
 any particular app (drivers do: `local/driver/start`), agent vendor
 (adapters do: `core/adapters/`), or project (`local/` does). Full docs in
-CLAUDE.md; the adapter contract in `manager/core/adapters/README.md`.
+AGENTS.md; the adapter contract in `manager/core/adapters/README.md`.
+
+## License
+
+[MIT](LICENSE).

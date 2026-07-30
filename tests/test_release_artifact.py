@@ -115,12 +115,16 @@ class ArtifactContents(unittest.TestCase):
         self.assertNotIn("manager/local/.env", self.files)
 
     def test_local_is_the_generated_starter_not_benchs_own(self):
-        seeded = self.read_member("manager/local/CLAUDE.md")
+        # The starter mirrors the root pair (task 13): AGENTS.md holds the
+        # notes, CLAUDE.md is the compatibility pointer.
+        seeded = self.read_member("manager/local/AGENTS.md")
         self.assertIn("This file is yours", seeded)
         self.assertNotEqual(
             seeded,
-            (REPO / "manager" / "local" / "CLAUDE.md").read_text("utf-8"),
+            (REPO / "manager" / "local" / "AGENTS.md").read_text("utf-8"),
             "bench's own local notes must never ship")
+        pointer = self.read_member("manager/local/CLAUDE.md")
+        self.assertIn("@AGENTS.md", pointer)
         for sub in ("adapters", "commands", "driver", "prompts"):
             self.assertIn(f"manager/local/{sub}/.gitkeep", self.files)
 

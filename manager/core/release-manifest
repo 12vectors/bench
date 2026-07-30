@@ -20,8 +20,10 @@
 #
 # Anything not listed here does not ship: bench's own task cards, its
 # manager/local/ content, local/state/, .claude/, tests/, release.sh.
+copy AGENTS.md
 copy CLAUDE.md
 copy README.md
+copy LICENSE
 copy install.py
 copy start.sh
 copy stop.sh
@@ -41,4 +43,5 @@ keep manager/local/adapters
 keep manager/local/commands
 keep manager/local/driver
 keep manager/local/prompts
+seed manager/local/AGENTS.md
 seed manager/local/CLAUDE.md

@@ -14,7 +14,24 @@ Do this properly:
   repos/{{owner}}/{{repo}}/pulls/<number>/comments`.
 - Address each point in the code. If you disagree with a point, do not
   silently ignore it — leave it unchanged and say why in your summary.
-- Follow repo CLAUDE.md: layering rules, definition of done. Run the tests
+- If the PR conflicts with main (check `gh pr view {branch} --json
+  mergeable` — CONFLICTING means yes), resolve it mechanically:
+  - `git fetch origin main`, then `git merge origin/main` in this
+    worktree. Never rebase and never force-push: the branch is public,
+    so the resolution must be additive.
+  - Resolve each conflicted file honouring both sides' intent, and run
+    the project's tests until they pass.
+  - Put the resolution in its own commit — never folded into other
+    changes — with a message naming the conflicted files and the choice
+    made in each.
+  - Cover the resolution explicitly in your closing report: which files
+    conflicted and what you chose.
+  - If both intents cannot hold at once — main has made this branch's
+    premise false — resolve nothing: run `git merge --abort`, leave the
+    branch as it was, and state in your report that a human must
+    decide, naming the specific collision. Guessing at a semantic
+    conflict is the one forbidden move.
+- Follow repo AGENTS.md: layering rules, definition of done. Run the tests
   that cover what you changed until they pass.
 - Commit in clear, reviewable commits and push the branch (`git push`) so
   the PR updates.

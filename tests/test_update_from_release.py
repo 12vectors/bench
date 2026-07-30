@@ -140,6 +140,29 @@ class UpdateFromRelease(unittest.TestCase):
             self.assertEqual((tm / path).read_bytes(), content,
                              f"{path} must survive byte-identical")
 
+    def test_agents_brief_replaces_an_old_vendor_named_copy(self):
+        # Ported from the retired test_update_round_trip.py (whose harness
+        # targeted the removed git-clone mechanism): an install from the
+        # pre-rename era has the full brief as CLAUDE.md and no AGENTS.md;
+        # updating must deliver the brief under the cross-vendor name and
+        # turn CLAUDE.md into the pointer.
+        tm = self.make_install()
+        old_brief = "# Task Workflow\n\nThe old full vendor-named brief.\n"
+        (tm / "CLAUDE.md").write_text(old_brief, encoding="utf-8")
+        (tm / "AGENTS.md").unlink()
+
+        result = self.run_update(tm)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with tarfile.open(self.tarball) as tar:
+            agents = tar.extractfile("./AGENTS.md").read().decode("utf-8")
+        self.assertEqual((tm / "AGENTS.md").read_text(encoding="utf-8"),
+                         agents)
+        self.assertIn("# Task Workflow", agents)
+        pointer = (tm / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn("@AGENTS.md", pointer)
+        self.assertNotEqual(pointer, old_brief)
+
     def test_no_published_release_changes_nothing(self):
         tm = self.make_install()
         before = snapshot(tm)

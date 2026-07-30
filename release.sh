@@ -22,9 +22,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="$ROOT/manager/core/release-manifest"
 ASSET="bench.tar.gz"
 
-# The starter manager/local/CLAUDE.md a fresh install unpacks — bench's
-# own repo has its real one, so this is generated, never copied.
-seed_local_claude_md() {
+# The starter manager/local/ notes a fresh install unpacks — bench's own
+# repo has its real ones, so these are generated, never copied. AGENTS.md
+# is the content; CLAUDE.md is the compatibility pointer, mirroring the
+# root pair (task 13).
+seed_local_agents_md() {
   cat <<'MD'
 # Project-specific workflow notes
 
@@ -35,6 +37,16 @@ what the driver assumes, what each local command is for.
 Settings live in manager/local/.env (gitignored); every option and its
 default is documented in manager/core/.env.example. A `checks` file here
 replaces core/checks as the Focus view's definition-of-done panel.
+MD
+}
+
+seed_local_claude_md() {
+  cat <<'MD'
+<!-- Compatibility pointer, load-bearing: the project notes live in AGENTS.md
+(the vendor-neutral name all coding agents read); this file makes Claude Code
+CLIs without native AGENTS.md support load it via the import below. -->
+
+@AGENTS.md
 MD
 }
 
@@ -79,6 +91,10 @@ build_tarball() { # build_tarball <out.tar.gz> <source-repo-or-empty>
         ;;
       seed)
         case "$path" in
+          manager/local/AGENTS.md)
+            mkdir -p "$stage/$(dirname "$path")"
+            seed_local_agents_md > "$stage/$path"
+            ;;
           manager/local/CLAUDE.md)
             mkdir -p "$stage/$(dirname "$path")"
             seed_local_claude_md > "$stage/$path"

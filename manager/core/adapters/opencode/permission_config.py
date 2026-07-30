@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Print the opencode config JSON for one headless launch: the permission
-rules for the launch's intent.
+rules for the launch's intent, plus the model when the board configured one.
 
 Usage: permission_config.py [work|act-pr|review]
 
@@ -14,13 +14,21 @@ and never a blanket allow: the worktree is isolated, the shell is not.
   work    "edit": "allow" + git bookkeeping (add/commit/status/diff) and
           the project's test/check commands. No push.
   act-pr  the work stance + `git push` + reading the PR's reviews and
-          line comments through gh.
+          line comments through gh + `git fetch`/`git merge` so a
+          conflicted PR can be resolved by merging main into the
+          branch. The branch is public, so resolution is additive
+          only: rebase and the force-push spellings get explicit deny
+          rules, placed last so they win over the `git push *` allow.
   review  "edit": "deny" + reading the PR it judges + posting the
           verdict with gh pr review/comment. Everything else denied.
 
 The project's test/check commands arrive in AGENT_COMMANDS as comma-
 separated neutral command prefixes (set BOARD_AGENT_COMMANDS in
 local/.env); here each becomes "<prefix>" and "<prefix> *" allow rules.
+
+AGENT_MODEL, when set, becomes the config's top-level "model" key —
+opencode's "provider/model-id" form (opencode.ai/docs/config), passed
+through untranslated. Absent = no key, opencode's own resolution applies.
 """
 import json
 import os
@@ -30,9 +38,19 @@ import sys
 MODE_PREFIXES = {
     "work": ["git add", "git commit", "git status", "git diff"],
     "act-pr": ["git add", "git commit", "git status", "git diff",
+               "git fetch", "git merge",
                "git push", "gh pr view", "gh pr diff", "gh api"],
     "review": ["git status", "git diff", "git log", "git show",
                "gh pr view", "gh pr diff", "gh pr review", "gh pr comment"],
+}
+# History must never rewrite under a public PR: deny the force and rebase
+# spellings even though nothing allows them — "git push *" would otherwise
+# cover them. Globs run over the whole command line, so the flag is caught
+# wherever it sits.
+MODE_DENY_PATTERNS = {
+    "act-pr": ["git rebase", "git rebase *",
+               "git push --force*", "git push * --force*",
+               "git push -f", "git push -f *", "git push * -f *"],
 }
 # Which intents run the project's own test/check commands.
 MODES_WITH_PROJECT_COMMANDS = {"work", "act-pr"}
@@ -53,20 +71,26 @@ def bash_rules(mode: str, commands: list[str]) -> dict:
     for prefix in prefixes:
         rules[prefix] = "allow"
         rules[f"{prefix} *"] = "allow"
+    for pattern in MODE_DENY_PATTERNS.get(mode, []):
+        rules[pattern] = "deny"  # last, so it wins over the allows
     return rules
 
 
-def build_config(mode: str, commands: list[str]) -> dict:
-    return {
+def build_config(mode: str, commands: list[str], model: str = "") -> dict:
+    config = {
         "$schema": "https://opencode.ai/config.json",
         "permission": {
             "edit": "deny" if mode == "review" else "allow",
             "bash": bash_rules(mode, commands),
         },
     }
+    if model:
+        config["model"] = model
+    return config
 
 
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "work"
     commands = split_commands(os.environ.get("AGENT_COMMANDS", ""))
-    print(json.dumps(build_config(mode, commands)))
+    model = os.environ.get("AGENT_MODEL", "").strip()
+    print(json.dumps(build_config(mode, commands, model)))

@@ -95,11 +95,34 @@ ADAPTER = setting("BOARD_AGENT_ADAPTER", "claude")
 # the adapter's own knowledge; this list is the project's half.
 AGENT_COMMANDS = setting("BOARD_AGENT_COMMANDS", "python3 -m unittest")
 
+# Model per launch intent — an opaque vendor-native name core passes to the
+# adapter untranslated (what names mean anything is vendor knowledge). Empty
+# = inherit the vendor's own default, exactly today's behaviour. A per-intent
+# setting beats the general one; review covers PR reviews and relevance
+# checks (they share the review intent).
+AGENT_MODEL = setting("BOARD_AGENT_MODEL", "")
+AGENT_MODELS = {
+    "work": setting("BOARD_AGENT_MODEL_WORK", ""),
+    "act-pr": setting("BOARD_AGENT_MODEL_ACT_PR", ""),
+    "review": setting("BOARD_AGENT_MODEL_REVIEW", ""),
+}
+
+
+def agent_model(mode: str) -> str:
+    """The model one launch intent rides — '' means inherit."""
+    return AGENT_MODELS.get(mode, "") or AGENT_MODEL
+
+
 # GitHub plumbing: the gh CLI (stub-able for tests) and the git remote PRs
 # go to. Empty remote = auto-detect the first remote; no remote = no PRs.
 GH_BIN = setting("BOARD_GH_BIN", "gh")
 GIT_REMOTE = setting("BOARD_GIT_REMOTE", "")
 PR_POLL_INTERVAL = float(setting("BOARD_PR_POLL_INTERVAL", "60"))
+
+# How long a work-agent launch waits for `git fetch origin main` before
+# branching from local HEAD instead. Launching must never be blocked by
+# network weather; this bounds the whole delay.
+FETCH_TIMEOUT = float(setting("BOARD_FETCH_TIMEOUT", "10"))
 
 WATCH_INTERVAL = float(setting("BOARD_WATCH_INTERVAL", "2"))
 EVENTS_CAP = int(setting("BOARD_EVENTS_CAP", "800"))

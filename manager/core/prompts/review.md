@@ -14,7 +14,7 @@ written? Specifically:
   written (renamed modules, replaced approaches, merged tasks)?
 - Is anything in it now wrong or misleading?
 
-You are read-only: make NO edits, NO commits, move nothing. Read CLAUDE.md
+You are read-only: make NO edits, NO commits, move nothing. Read AGENTS.md
 and the code; run read-only commands (grep, git log) as needed.
 
 End with a report whose FIRST line is exactly

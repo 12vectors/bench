@@ -7,6 +7,9 @@
 #                            (see core/adapters/README.md)
 #            AGENT_COMMANDS  comma-separated neutral command prefixes the
 #                            project lets agents run (tests/checks)
+#            AGENT_MODEL     optional; a claude model name/alias passed
+#                            through as --model. Absent = the CLI's own
+#                            resolution (user settings), untouched.
 #            AGENT_CWD       working directory (already set as cwd by the board)
 #            BOARD_*         passthrough for the event bridge
 #   stdout:  captured by the board as the job log; the closing report's
@@ -25,12 +28,20 @@ BIN="${BOARD_CLAUDE_BIN:-claude}"
 MODE="${AGENT_MODE:-work}"
 SETTINGS="$(python3 "$HERE/hook_settings.py" "$MODE")"
 
+# The ${arr[@]+...} expansion keeps set -u happy on bash 3.2 when unset.
+MODEL_ARGS=()
+if [ -n "${AGENT_MODEL:-}" ]; then
+  MODEL_ARGS=(--model "$AGENT_MODEL")
+fi
+
 if [ "$MODE" = "review" ]; then
   exec "$BIN" -p "$AGENT_PROMPT" --settings "$SETTINGS" \
+    ${MODEL_ARGS[@]+"${MODEL_ARGS[@]}"} \
     --permission-mode default \
     --disallowedTools Edit Write NotebookEdit
 else
   # work and act-pr both mutate the worktree; the allowlist differs.
   exec "$BIN" -p "$AGENT_PROMPT" --settings "$SETTINGS" \
+    ${MODEL_ARGS[@]+"${MODEL_ARGS[@]}"} \
     --permission-mode acceptEdits
 fi
