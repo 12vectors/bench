@@ -6,7 +6,10 @@
 <!-- The server rewrites this to "<project> · bench"; the view switcher keeps
      it in step. Project first — tab truncation eats the tail. -->
 <title>bench</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230d6e8c'/><circle cx='8' cy='8' r='3' fill='%23e9f3f3'/></svg>">
+<!-- The icon is the wordmark's own b on an accent tile, as the design draws
+     it at app-icon size. Its outline is the same string as #mark-b below —
+     one letter, two places; tests/test_header_logo.py keeps them equal. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill-rule='evenodd'><rect width='16' height='16' rx='4' fill='%230d6e8c'/><path fill='%23ffffff' transform='translate(4.81 3.57) scale(.011)' d='M15 0H178V210H330C450 210 565 305 565 420V530C565 645 450 740 330 740H15V648H60V92H15ZM178 314V636H305C385 636 447 585 447 530V420C447 365 385 314 305 314Z'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
@@ -23,6 +26,8 @@
     --on-accent:#0a161b; --on-calm:#141a10;
     --shadow:0 10px 24px -18px rgba(0,0,0,.9);
     --pad:14px; --gap:10px; --radius:10px; --col:296px; --col-min:240px;
+    /* the wordmark's b-height — the one number that sizes the logo */
+    --logo-h:14px;
     --sans:'IBM Plex Sans',system-ui,sans-serif;
     --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
   }
@@ -74,8 +79,13 @@
     display:flex;align-items:center;gap:14px;padding:10px 18px;flex-wrap:wrap;
     background:var(--canvas);border-bottom:1px solid var(--border);
   }
-  .brand{display:flex;align-items:baseline;gap:10px}
-  .brand b{font-size:15px;font-weight:600;letter-spacing:-.01em}
+  /* The word is the logo — "bench" set in Zilla Slab SemiBold, tracked
+     -.015em. It ships as outlines, not text: this page may not fetch a font
+     for it, and outlines can never fall back to something else. currentColor
+     gives it the theme's own ink, so it is never a colour that means state,
+     and --logo-h scales it in one place rather than per theme.           */
+  .brand{display:flex;align-items:baseline;gap:11px}
+  .brand .mark{height:var(--logo-h);width:auto;fill:currentColor;flex:none}
   .brand .path{font-family:var(--mono);font-size:11.5px;color:var(--dim)}
   .views{display:flex;gap:2px;padding:3px;background:var(--sunken);border:1px solid var(--border-soft);border-radius:8px}
   .views button{padding:5px 12px;border:1px solid transparent;border-radius:6px;font-size:12.5px;font-weight:500;color:var(--muted)}
@@ -476,7 +486,20 @@
 </head>
 <body>
 <header>
-  <div class="brand"><b>Bench</b><span class="path" id="root"></span></div>
+  <!-- The wordmark, one glyph per path, on a 1000-unit em: baseline at y=740,
+       x-height top at 210, ascender at 0; the box runs to 746 to hold the
+       round letters' overshoot. Translations are the advance widths with the
+       design's -.015em tracking already folded in. -->
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 2674 746" fill-rule="evenodd" role="img" aria-label="bench">
+      <path id="mark-b" d="M15 0H178V210H330C450 210 565 305 565 420V530C565 645 450 740 330 740H15V648H60V92H15ZM178 314V636H305C385 636 447 585 447 530V420C447 365 385 314 305 314Z"/>
+      <path transform="translate(565)" d="M205 204H319C415 204 494 283 494 379V522H148V582C148 616 172 642 206 642H330C395 642 445 615 470 566V670C440 712 390 746 319 746H205C109 746 30 667 30 571V379C30 283 109 204 205 204ZM148 428V368C148 335 172 308 206 308H318C352 308 376 335 376 368V428Z"/>
+      <path transform="translate(1074)" d="M15 210H330C450 210 520 300 520 400V648H565V740H357V648H402V400C402 345 375 314 320 314H178V648H223V740H15V648H60V302H15Z"/>
+      <path transform="translate(1639)" d="M300 204C358 204 404 212 438 236L392 326C365 313 336 308 300 308C212 308 148 378 148 475C148 572 212 642 300 642C336 642 365 637 392 624L438 714C404 738 358 746 300 746C167 746 30 640 30 475C30 310 167 204 300 204Z"/>
+      <path transform="translate(2094)" d="M15 0H178V210H330C450 210 520 300 520 400V648H565V740H357V648H402V400C402 345 375 314 320 314H178V648H223V740H15V648H60V92H15Z"/>
+    </svg>
+    <span class="path" id="root"></span>
+  </div>
   <nav class="views" id="views">
     <button data-view="board" class="on">Board</button>
     <button data-view="flight">Sessions</button>
