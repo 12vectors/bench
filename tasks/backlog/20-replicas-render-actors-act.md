@@ -1,7 +1,6 @@
 # 20 — Replica etiquette: the actor's board acts, everyone else renders
 
-**Status:** To Do
-**Assignee:** istos
+**Status:** Backlog
 **Priority:** High — without it, task 19 turns every board action into N duplicate side effects
 **Type:** Feature
 **Depends on:** 18, 19 — etiquette for a fleet that exists only once
