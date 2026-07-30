@@ -8,6 +8,7 @@ layouts — the same entry point start.sh uses — so what is asserted is
 what a real first boot does to disk.
 """
 
+import os
 import shutil
 import subprocess
 import sys
@@ -47,9 +48,10 @@ def make_host(root: Path) -> Path:
 
 
 def run_install(tm: Path, *args: str) -> subprocess.CompletedProcess:
+    env = {k: v for k, v in os.environ.items() if not k.startswith("BOARD_")}
     return subprocess.run(
         [sys.executable, str(tm / "install.py"), *args],
-        capture_output=True, text=True, cwd=tm.parent)
+        capture_output=True, text=True, cwd=tm.parent, env=env)
 
 
 def shipped_files(tm: Path) -> list[Path]:
@@ -109,6 +111,21 @@ class FirstBoot(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("removed", result.stdout)
         self.assertNotEqual(shipped_files(self.tm), [])
+        self.assertFalse((local / "state").exists())
+
+    def test_symlinked_leftover_is_unlinked_not_followed(self):
+        """A symlink among the leftovers is removed as a link — the
+        directory it points to survives untouched."""
+        outside = self.scratch / "outside"
+        outside.mkdir()
+        (outside / "precious.md").write_text("keep me\n", encoding="utf-8")
+        link = self.tm / "tasks" / "backlog" / "10-linked"
+        link.symlink_to(outside)
+        result = run_install(self.tm)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(link.is_symlink())
+        self.assertFalse(link.exists())
+        self.assertTrue((outside / "precious.md").is_file())
 
     def test_self_hosted_repo_is_never_cleaned(self):
         """When the manager IS the repo (bench itself, or a dev clone of

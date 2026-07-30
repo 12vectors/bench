@@ -61,19 +61,24 @@ def _content_dirs(tm: Path) -> list[Path]:
             + [tasks / "archive", tm / "plans", tm / "reference"])
 
 
-def first_boot_leftovers(tm: Path, project: Path) -> list[Path]:
-    """The distribution's own cards, plans and reference documents — the
-    paths a first boot must clear. Empty in every other situation:
+def first_boot(tm: Path, project: Path) -> bool:
+    """True only on a vendored install's very first run — the one moment
+    anything in the stage directories can only be the distribution's own.
+    False in every other situation:
 
     - self-hosted (the manager IS the repo): tasks/ is that repo's own
       history, never distribution residue — including a fresh dev clone;
     - already wired (local/.env or local/state/ exists): anything in the
       stage directories can only be the host project's own work."""
     if project.resolve() == tm.resolve():
-        return []
+        return False
     local = tm / "manager" / "local"
-    if (local / ".env").exists() or (local / "state").exists():
-        return []
+    return not (local / ".env").exists() and not (local / "state").exists()
+
+
+def first_boot_leftovers(tm: Path) -> list[Path]:
+    """The distribution's shipped cards, plans and reference documents —
+    the paths a first boot must clear."""
     return [child
             for d in _content_dirs(tm) if d.is_dir()
             for child in sorted(d.iterdir()) if child.name not in KEEP]
@@ -83,17 +88,23 @@ def first_boot_clean(dry_run: bool) -> None:
     """First boot only: remove the distribution's shipped content and stamp
     local/state/ so this never runs again — even if the adapter wire fails
     (a host without .claude/ still gets the board via start.sh) or the host
-    creates cards before the next run."""
-    leftovers = first_boot_leftovers(TM, PROJECT)
+    creates cards before the next run. Off first boot nothing is touched,
+    not even the stamp."""
+    if not first_boot(TM, PROJECT):
+        return
+    leftovers = first_boot_leftovers(TM)
     if leftovers:
         print("first boot — clearing the distribution's own cards:")
         verb = "would remove" if dry_run else "removed"
         for path in leftovers:
             print(f"  {verb}  {path.relative_to(TM)}")
             if not dry_run:
-                shutil.rmtree(path) if path.is_dir() else path.unlink()
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
         print()
-    if not dry_run and PROJECT != TM:
+    if not dry_run:
         (LOCAL / "state").mkdir(parents=True, exist_ok=True)
 
 
