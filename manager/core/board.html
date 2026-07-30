@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bench — task board</title>
+<!-- The server rewrites this to "<project> · bench"; the view switcher keeps
+     it in step. Project first — tab truncation eats the tail. -->
+<title>bench</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230d6e8c'/><circle cx='8' cy='8' r='3' fill='%23e9f3f3'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -746,8 +748,19 @@ function setView(view) {
   render();
 }
 
+/* The tab says which bench this is: the project first (tab truncation eats
+   the tail, and the tail is the same in every bench tab), then the view.
+   Without a project in state the server-rendered title stands. */
+const VIEW_TITLES = { board: 'bench', flight: 'sessions', focus: 'focus' };
+
+function renderTitle() {
+  if (!S.state?.project) return;
+  document.title = S.state.project + ' · ' + (VIEW_TITLES[S.view] || 'bench');
+}
+
 function render() {
   if (!S.state) return;
+  renderTitle();
   renderChip();
   if (S.view === 'board') renderBoard();
   else if (S.view === 'flight') renderFlight();

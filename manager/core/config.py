@@ -86,6 +86,11 @@ PORT = int(setting("BOARD_PORT", "26071"))
 # One isolated checkout per running work agent, relative to the repo root.
 WORKTREES = REPO / setting("BOARD_WORKTREES", ".worktrees")
 
+# The project this board serves. Every board looks alike in a tab bar, so
+# the title leads with this name — the repo directory's, unless the setting
+# says otherwise (checkouts all called "app" need the override).
+PROJECT = setting("BOARD_TITLE", "").strip() or REPO.name
+
 # Which agent adapter runs headless jobs. Resolution ladder: local wins.
 ADAPTER = setting("BOARD_AGENT_ADAPTER", "claude")
 

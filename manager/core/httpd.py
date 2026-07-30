@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import queue
+import re
 import subprocess
 import time
+from html import escape
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -27,6 +29,7 @@ def state_payload() -> dict:
         board_events = list(state.BOARD_EVENTS[-80:])
     return {
         "board": taskfiles.collect(),
+        "project": config.PROJECT,
         "sessions": sessions,
         "agents": agents.list_public(),
         "prs": github.public_state(),
@@ -40,6 +43,17 @@ def state_payload() -> dict:
         "boardEvents": board_events,
         "now": time.time(),
     }
+
+
+_TITLE = re.compile(rb"<title>.*?</title>", re.DOTALL)
+
+
+def page_bytes() -> bytes:
+    """board.html with the project's name rendered into its <title>, so the
+    tab reads right on first paint rather than after the first state load."""
+    html = (config.CORE / "board.html").read_bytes()
+    title = escape(f"{config.PROJECT} · bench").encode("utf-8")
+    return _TITLE.sub(lambda _: b"<title>" + title + b"</title>", html, count=1)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -61,11 +75,10 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         path = url.path
         if path in ("/", "/index.html", "/board.html"):
-            page = config.CORE / "board.html"
-            if not page.is_file():
+            if not (config.CORE / "board.html").is_file():
                 self._send(500, b"board.html is missing", "text/plain")
                 return
-            self._send(200, page.read_bytes(), "text/html; charset=utf-8")
+            self._send(200, page_bytes(), "text/html; charset=utf-8")
         elif path == "/api/tasks":
             self._json(200, taskfiles.collect())
         elif path == "/api/state":

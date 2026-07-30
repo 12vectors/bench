@@ -166,6 +166,13 @@ Port **26071 is pinned** so the URL is always the same one to bookmark. Running
 the command again while it is already up just reopens that tab rather than
 failing on a port clash.
 
+Since a second bench means a second tab, the tab title names its project:
+`<project> · bench` — the project first, because tab truncation eats the
+tail and the tail is the same in every bench tab. The project is the repo
+directory's name unless `BOARD_TITLE` in `local/.env` overrides it. The
+server renders it into the page, so it is right on first paint; switching
+view swaps only the tail (`<project> · sessions`).
+
 All settings live in `manager/core/.env.example` with their defaults documented —
 the port, the binaries agents launch with, the commands agents may run,
 the worktrees directory, the watch interval and the in-memory caps. Copy it
