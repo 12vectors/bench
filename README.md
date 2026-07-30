@@ -13,6 +13,10 @@ git clone <this repo> .task-manager && rm -rf .task-manager/.git
 ./.task-manager/start.sh        # wires the project (idempotent) and serves
 ```
 
+The first `start.sh` clears the distribution's own cards from `tasks/`,
+`plans/` and `reference/` (printing each removal), so a fresh install
+starts with an empty board.
+
 Commit `.task-manager/` into the host repo — core is vendored on purpose,
 so clones work offline and updates show up in the host's own diffs.
 
