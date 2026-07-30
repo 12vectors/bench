@@ -201,6 +201,7 @@ def _commit_move(filename: str, target: str, src: Path, dst: Path, who: str,
         if result.returncode == 0:
             result = _git("commit", "--no-verify", "-m", message, "--", *spec, timeout=60)
             if result.returncode == 0:
+                state.task_committed(filename)   # sync (when on) publishes it
                 return
         lines = (result.stderr or result.stdout).strip().splitlines()
         detail = lines[-1] if lines else f"git exited {result.returncode}"

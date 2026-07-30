@@ -134,12 +134,19 @@ PR_POLL_INTERVAL = float(setting("BOARD_PR_POLL_INTERVAL", "60"))
 # network weather; this bounds the whole delay.
 FETCH_TIMEOUT = float(setting("BOARD_FETCH_TIMEOUT", "10"))
 
+# Team mode's second half: origin/main is the shared truth and every board
+# a converging replica — board commits push as they are made, a beat pulls
+# what other boards published. Off by default; on, it implies COMMIT_MOVES
+# below, because a move that never commits has nothing to publish.
+SYNC = flag("BOARD_SYNC")
+SYNC_INTERVAL = float(setting("BOARD_SYNC_INTERVAL", "30"))
+
 # Team mode's first half: a board-made move claims the card (writing
 # **Assignee:** from git's own user.name) and commits itself, so ownership
 # and stage travel with the file to every clone. Off by default — a
 # single-player board moves cards exactly as it always did, and committing
 # tasks/ stays a hand job.
-COMMIT_MOVES = flag("BOARD_COMMIT_MOVES")
+COMMIT_MOVES = flag("BOARD_COMMIT_MOVES") or SYNC
 
 WATCH_INTERVAL = float(setting("BOARD_WATCH_INTERVAL", "2"))
 EVENTS_CAP = int(setting("BOARD_EVENTS_CAP", "800"))
