@@ -1,6 +1,7 @@
 # 11 — A failed agent run must leave a visible trace on the card
 
-**Status:** To Do
+**Status:** In Progress
+**Assignee:** istos
 **Priority:** High — three agents died today and the board showed nothing a human would notice
 **Type:** Feature
 
