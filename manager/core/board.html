@@ -236,7 +236,7 @@
   }
   #loghead .xfile{cursor:pointer;padding:1px 0;white-space:nowrap}
   #loghead .xfile:hover{color:var(--accent)}
-  #logbody{flex:1;min-height:0;overflow-y:auto;padding:6px 18px 12px;display:grid;gap:2px;align-content:start}
+  #logbody{flex:none;max-height:60vh;overflow-y:auto;padding:6px 18px 12px;display:grid;gap:2px;align-content:start}
   .ev{display:grid;grid-template-columns:64px 18px 1fr;align-items:baseline;gap:10px;font-size:12px;min-width:0}
   .ev time{font-family:var(--mono);font-size:11px;color:var(--dim)}
   .ev .glyph{font-family:var(--mono);font-size:11.5px;color:var(--muted);text-align:center}
@@ -1804,8 +1804,10 @@ document.addEventListener('keydown', (e) => {
 /* the activity log: drag its grip to resize, scroll to read back */
 {
   const grip = $('#loggrip'), body = $('#logbody');
-  body.style.height = (parseInt(localStorage.getItem('bench-log-h'), 10) ||
-    Math.round(innerHeight * 0.30)) + 'px';
+  const clamp = (px) => Math.min(Math.max(px, 80), Math.round(innerHeight * 0.6));
+  let h = clamp(parseInt(localStorage.getItem('bench-log-h'), 10) ||
+    Math.round(innerHeight * 0.30));
+  body.style.height = h + 'px';
   let dragging = false, startY = 0, startH = 0;
   grip.addEventListener('mousedown', (e) => {
     dragging = true; startY = e.clientY; startH = body.offsetHeight;
@@ -1813,13 +1815,13 @@ document.addEventListener('keydown', (e) => {
   });
   document.addEventListener('mousemove', (e) => {
     if (!dragging) return;
-    const h = Math.min(Math.max(startH + (startY - e.clientY), 80), Math.round(innerHeight * 0.6));
+    h = clamp(startH + (startY - e.clientY));
     body.style.height = h + 'px';
   });
   document.addEventListener('mouseup', () => {
     if (!dragging) return;
     dragging = false; grip.classList.remove('dragging');
-    localStorage.setItem('bench-log-h', body.offsetHeight);
+    localStorage.setItem('bench-log-h', h);
   });
   body.addEventListener('scroll', () => {
     S.logStick = body.scrollTop + body.clientHeight >= body.scrollHeight - 8;
