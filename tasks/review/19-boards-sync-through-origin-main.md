@@ -1,6 +1,6 @@
 # 19 — Boards sync through origin/main: push on move, pull on a beat
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** High — this is the multi-user feature; 18 without it is bookkeeping
 **Type:** Feature
@@ -98,3 +98,29 @@ own commit (18) and why replicas must not react (20).
 - Reverting a lost move while the user is mid-drag needs care in the
   UI — the board re-reads disk on every render, which should make
   this safe, but test the race deliberately.
+
+
+---
+
+## Work report — 2026-07-30 09:48 (Juno)
+
+sts, including 34 new ones. Nothing is pushed or merged.
+
+### What changed
+
+- **`manager/core/sync.py` (new)** — the whole feature, gated on `BOARD_SYNC`. Push is event-driven; pull is a beat (`BOARD_SYNC_INTERVAL`, default 30s, plus once at startup). A purely-behind board fast-forwards; a diverged one replays its own `board: ` commits on top and never merges past the divergence. A replay that conflicts on a task file drops the local move and toasts `07 claimed by elena — your move was undone`. The piggyback guard sits in front of every push *and* every replay. Unreachable origin, uncommitted changes, a checkout off main and a stray commit each narrate once and hold a header chip rather than repeating every beat.
+- **`manager/core/state.py`** — a `COMMIT_HOOKS` registry plus `task_committed()`; `taskfiles.py` fires it after a move's commit. This is how push stays event-driven without `taskfiles` importing anything to its right in the module map.
+- **`manager/core/watch.py`** — moves that arrived over origin are attributed to the commit's author instead of `disk`; the narration moved out of the polling loop into a testable `narrate()`.
+- **`manager/core/board.py` / `httpd.py` / `board.html`** — the beat and hook start only with the gate on; `sync.status()` rides the state payload; a header chip appears *only* when sync stops converging; the SSE stream gained a `toast` type so the server can address the person, not just the ticker.
+- **`AGENTS.md`, `README.md`, `manager/core/.env.example`** — a "Syncing boards" section covering the two disciplines team mode assumes (local main advances only through the board and origin; sync never merges), plus the fetch-rate note for metered remotes.
+
+### What a reviewer should look at first
+
+1. `manager/core/sync.py:168` (`_publish`) and `:262` (`_replay`) — the push guard and the race resolution are where this card either works or quietly loses someone's work.
+2. `tests/test_boards_sync.py` — every case runs two real clones of a real bare upstream against real git, including both race shapes (same target and different targets), the stale-drag race the card flagged as a risk, and the "gate off touches no network" case (proved with a remote that never answers).
+3. `manager/core/state.py:26` — the hook registry, if you disagree with that being the way to keep `taskfiles` left of `sync` in the module map.
+
+### Two decisions I made that the card left open
+
+- **A divergence is not always a stall.** The card says never to pull past a divergence. When *every* local-ahead commit is a board commit, the board rebases them instead of stalling — that replay *is* the race resolution, and the piggyback guard means a human's commit still stalls it loudly. A pure "always stall" reading would leave a board that queued moves while offline stuck until someone moved a card.
+- **"Non-clean tree" means modified tracked files.** Untracked files do not stall sync; a stray scratch file on someone's disk should not stop a team converging.
