@@ -1,6 +1,6 @@
 # 03 — Focus checks come from the project, not from core
 
-**Status:** Backlog
+**Status:** In Progress
 **Priority:** Medium — cosmetic on bench's own board, but every adopting project sees a stranger's definition of done
 **Type:** Feature
 

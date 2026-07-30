@@ -1,6 +1,6 @@
 # 09 — Fit all five columns on small laptop screens
 
-**Status:** To Do
+**Status:** In Progress
 **Priority:** Medium — daily-driver hardware; the Done column is cut off on a 13" MacBook
 **Type:** Bug
 

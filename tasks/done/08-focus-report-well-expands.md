@@ -1,6 +1,6 @@
 # 08 — Let the agent's report open from the Focus view
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/4
 **Priority:** Medium — the report is the payoff of a whole agent run, and Focus dead-ends exactly there
 **Type:** Bug

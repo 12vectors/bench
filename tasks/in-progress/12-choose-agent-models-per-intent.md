@@ -1,6 +1,6 @@
 # 12 — Let the board choose agent models, per launch intent
 
-**Status:** Backlog
+**Status:** In Progress
 **Priority:** Medium — works today by inheritance, but invisibly and uncontrollably
 **Type:** Feature
 

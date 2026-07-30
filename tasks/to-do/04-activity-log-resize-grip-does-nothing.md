@@ -1,6 +1,6 @@
 # 04 — Make the activity log's resize grip actually resize
 
-**Status:** Backlog
+**Status:** To Do
 **Priority:** Medium — a visible, advertised control ("drag to resize") that silently does nothing
 **Type:** Bug
 

@@ -1,6 +1,6 @@
 # 11 — A failed agent run must leave a visible trace on the card
 
-**Status:** Backlog
+**Status:** To Do
 **Priority:** High — three agents died today and the board showed nothing a human would notice
 **Type:** Feature
 

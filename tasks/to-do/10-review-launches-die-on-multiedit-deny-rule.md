@@ -1,6 +1,6 @@
 # 10 — Review launches die at startup: MultiEdit deny rule names a tool that no longer exists
 
-**Status:** Backlog
+**Status:** To Do
 **Priority:** High — every ◔ review PR / ◔ still true? launch fails before the agent starts
 **Type:** Bug
 
