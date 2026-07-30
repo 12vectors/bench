@@ -888,7 +888,10 @@ function cardFor(task) {
     meta = elapsed(agent.started) + (agent.branch ? ' · ' + agent.branch : '');
   } else {
     initial = '·';
-    if (task.stage === 'backlog' || task.stage === 'to-do') who = 'nobody yet';
+    // a claimed card names its owner in every stage — in done/ the line is
+    // history: who did this. Unclaimed cards keep the old stage vocabulary.
+    if (task.assignee) { who = task.assignee; initial = task.assignee.slice(0, 1); }
+    else if (task.stage === 'backlog' || task.stage === 'to-do') who = 'nobody yet';
     else if (task.stage === 'in-progress') who = 'unattended';
     else if (task.stage === 'review') who = 'needs your eyes';
     else who = 'merged';
@@ -989,7 +992,7 @@ function cardFor(task) {
   el.innerHTML =
     `<div class="toprow">${top.join('')}</div>` +
     `<div class="title">${esc(task.title)}</div>` +
-    `<div class="whorow"><span class="initial">${initial}</span><span class="who">${who}</span>` +
+    `<div class="whorow"><span class="initial">${esc(initial)}</span><span class="who">${esc(who)}</span>` +
     `<span class="meta">${esc(meta)}${extras.length ? ' · ' + extras.join(' · ') : ''}</span></div>` +
     chipRow + driveWell + liveLine;
   el.querySelectorAll('a.chip2').forEach(a =>
