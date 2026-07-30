@@ -1,6 +1,7 @@
 # 25 — Cards order within a lane: a Rank line the board writes on drop
 
-**Status:** Backlog
+**Status:** To Do
+**Assignee:** istos
 **Priority:** Medium — a backlog that cannot say "this first" makes priority live in someone's head
 **Type:** Feature
 
