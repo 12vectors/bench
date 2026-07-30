@@ -1,6 +1,6 @@
 # 07 — Enrich the task template (new tasks only; existing cards untouched)
 
-**Status:** Done
+**Status:** Archived
 **PR:** https://github.com/12vectors/bench/pull/3
 **Priority:** Medium — template quality compounds: every future card inherits it
 **Type:** Chore

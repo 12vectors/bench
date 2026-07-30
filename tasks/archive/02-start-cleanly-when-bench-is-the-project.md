@@ -1,6 +1,6 @@
 # 02 — Start cleanly when bench is the project itself
 
-**Status:** Done
+**Status:** Archived
 **PR:** https://github.com/12vectors/bench/pull/1
 **Priority:** High — ./start.sh is broken in this repo, and one of the three defects breaks every fresh install anywhere
 **Type:** Bug

@@ -1,6 +1,7 @@
 # 03 — Focus checks come from the project, not from core
 
-**Status:** In Progress
+**Status:** Archived
+**PR:** https://github.com/12vectors/bench/pull/6
 **Priority:** Medium — cosmetic on bench's own board, but every adopting project sees a stranger's definition of done
 **Type:** Feature
 
@@ -83,3 +84,20 @@ lint-imports / frontend` as bench's checks, all "not run" — they are the
 origin project's, frozen at extraction time (the same fossil layer as
 the `.task-manager/` path assumption in
 `../backlog/02-start-cleanly-when-bench-is-the-project.md`).
+
+
+---
+
+## Work report — 2026-07-30 07:18 (Basil)
+
+The work is complete: implemented, tested and committed in two commits on `task/03-focus-checks-come-from-the-project` (`7df286b` the mechanism, `fe4872d` the doc rewording), with the full suite green — 69 tests, 20 of them new, via `python3 -m unittest discover -s tests` — and a clean tree.
+
+**What changed.** What counts as a definition-of-done check now lives in one project-owned file instead of being hardcoded into core. `manager/core/checks` ships the old three rows (pytest / lint-imports / frontend) as the default; a file named `checks` in `manager/local/` replaces it wholesale, exactly like prompt overrides. The claude adapter (`manager/core/adapters/claude/emit.py`) classifies each Bash command against the resolved file and carries the entry's label into the event summary; `config.checks()` reads the same file and `httpd.py` serves it in `/api/state`; the Focus panel in `manager/core/board.html` renders one row per served entry and matches events with the same patterns — no fixed rows, no duplicated regexes. Bench's own `manager/local/checks` defines `unittest`, so the self-hosted Focus view finally shows a check that can actually run here. `CLAUDE.md` and `tasks/task-template.md` now describe the definition of done generically.
+
+
+**For the reviewer, in order of interest:**
+
+- One judgment call to sanction: the acceptance bans naming pytest anywhere in `manager/core/` outside the checks default, so the shipped `BOARD_AGENT_COMMANDS` default shrank from `python3 -m unittest,python3 -m pytest` to `python3 -m unittest` (`manager/core/config.py`, `.env.example`). A pytest project relying on the old default must now set one line in `local/.env` — the `.env.example` comment already warns that a missing runner is a test agents cannot run.
+- A deliberate behaviour shift: the claude adapter no longer emits kind `test` (every matched check is kind `check`, which the schema keeps for other adapters), and the Sessions header's "N test runs" counter became "N check runs" counting both kinds.
+- `emit.py`'s runtime moved under a `__main__` guard so the classifier is importable by tests; hook invocation (`python3 emit.py`) is unchanged.
+- `tests/test_checks_definition.py` pins the acceptance directly, including a repo-walk test asserting no fossil stack names in `manager/core/`, a parser-agreement test between adapter and board, and a label-edit-flows-through test.

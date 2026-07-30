@@ -1,6 +1,6 @@
 # 06 — Agent closing reports written for humans, not for the parser
 
-**Status:** Done
+**Status:** Archived
 **PR:** https://github.com/12vectors/bench/pull/2
 **Priority:** Medium — every report lands in a task file and a PR body that a person must act on
 **Type:** Feature

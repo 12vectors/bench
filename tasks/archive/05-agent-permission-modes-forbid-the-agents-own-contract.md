@@ -1,6 +1,6 @@
 # 05 — Launch headless agents with permissions that allow their own contract
 
-**Status:** Done
+**Status:** Archived
 **Priority:** High — the work loop's core promise (implement, test, commit) is currently impossible for the agent asked to keep it
 **Type:** Bug
 

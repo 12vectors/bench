@@ -1,6 +1,7 @@
 # 13 — AGENTS.md as the canonical brief; CLAUDE.md becomes a pointer
 
-**Status:** Backlog
+**Status:** Archived
+**PR:** https://github.com/12vectors/bench/pull/9
 **Priority:** Medium — correctness gap for the opencode adapter today, naming debt everywhere else
 **Type:** Refactor
 
@@ -96,3 +97,31 @@ a vendor's name was baked into core-owned, cross-vendor machinery.
 - Host projects may have their own root AGENTS.md; bench's lives inside
   `.task-manager/`, so no collision — but verify nested-file pickup for
   both vendors rather than assuming it.
+
+
+---
+
+## Work report — 2026-07-30 07:35 (Milo)
+
+The task is complete. Closing report:
+
+---
+
+The rename is implemented, tested and committed as `e10b5cf` on this branch: the workflow brief now lives in `AGENTS.md` (root and `manager/local/`), each `CLAUDE.md` is a five-line compatibility pointer, and the full suite — 78 tests including a new end-to-end `update.sh` round-trip test — passes.
+
+What changed:
+
+- `AGENTS.md` now holds the full brief verbatim; the only content edits are its own tree diagram (both files listed, pointer labelled) and one "checks it against the task and AGENTS.md" self-reference. `CLAUDE.md` is now only an `@AGENTS.md` import plus a comment explaining it is load-bearing for Claude Code CLIs without native AGENTS.md support. The same pair exists in `manager/local/`.
+- `update.sh` copies both names in its core-owned file list, with a comment stating why: on an old-layout install, `AGENTS.md` arrives and the pointer *replaces* the old full `CLAUDE.md`, so no vendor-named brief is resurrected or shadows the real one.
+- All four prompts (`manager/core/prompts/work.md`, `review.md`, `review-pr.md`, `act-pr.md`), `README.md`, the `manager/core/board.py` and `manager/core/taskfiles.py` docstrings, and `tasks/task-template.md` (three "repo CLAUDE.md" mentions — same naming debt, so included) now say AGENTS.md. `README.md`'s install section gained the promised line: the brief is `AGENTS.md`, `CLAUDE.md` a compatibility pointer, both inside `.task-manager/` so a host repo's own root AGENTS.md is untouched.
+- `manager/core/adapters/README.md` documents in the `run` contract that vendors reading `AGENTS.md` from the working tree natively (opencode, current Claude Code) pick it up in every worktree with no adapter work. I confirmed the opencode adapter runs `opencode run` with the worktree as cwd, so no adapter change was needed.
+
+How it was verified:
+
+- New `tests/test_update_round_trip.py` builds an old-layout install (full vendor-named `CLAUDE.md`, no `AGENTS.md`) and a scratch distribution repo from this repo's real top-level files, runs the real `update.sh` as a subprocess, and asserts the brief arrives as `AGENTS.md`, the pointer replaces the old full copy, and `manager/local/` and `tasks/` are untouched. `python3 -m unittest discover -s tests`: 78 tests, all pass.
+- The acceptance grep across core, prompts, scripts, README returns only the pointer files' own copy lines and deliberate compatibility mentions.
+
+For the reviewer:
+
+- One acceptance item is only partially verifiable from inside this run: "a Claude Code session still loads the full brief". This session itself proves the pre-rename load; the pointer uses Claude Code's standard `@path` import, but the sandbox denied `claude --version`, so please open one fresh interactive session in the repo and confirm the brief is in context.
+- First files to look at: `update.sh` (the round-trip guarantee), `CLAUDE.md` (the pointer wording), and the new test.

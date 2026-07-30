@@ -1,6 +1,6 @@
 # 01 — Ship a pristine board on install, not bench's own cards
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/5
 **Priority:** High — every install made after we start dogfooding inherits our cards
 **Type:** Bug
@@ -92,3 +92,17 @@ The fix is implemented, committed (`44537ae`), and verified: the full test suite
 - Start with `first_boot_leftovers` and `first_boot_clean` in `install.py` — the guard logic and the stamp ordering are the whole risk surface.
 - Run `python3 -m unittest discover -s tests` to reproduce the green run.
 - One acceptance step I could not run literally: the sandbox denies executing `install.py` directly in this checkout, so "bench itself is untouched" is proven by `test_self_hosted_repo_is_never_cleaned` (which builds a git-initialised self-hosted layout) rather than by a live run here. The scratch-host tests cover the clone → first-run → second-run sequence the other acceptance points describe.
+
+
+---
+
+## PR update — 2026-07-30 07:22 (Cleo)
+
+ADDRESSED: All four Copilot review points fixed — symlink-safe removal, stamp gated on the first-boot guard, and hermetic tests with two new assertions/cases; 55 tests pass.
+
+- **Symlink deletion could follow a link into `rmtree` (install.py:94).** Fixed: removal now calls `shutil.rmtree` only for real directories (`is_dir() and not is_symlink()`) and unlinks everything else, so a symlinked leftover is removed as a link and its target survives. A new test, `test_symlinked_leftover_is_unlinked_not_followed` in `tests/test_install_first_boot.py`, proves a directory pointed to from `tasks/backlog/` is left intact.
+- **The `local/state/` stamp was created even when the guard was disarmed (install.py:96–97).** Fixed by restructuring: the guard is now its own predicate, `first_boot()`, computed once (with `resolve()` for the self-hosted comparison, as the reviewer asked) and gating both the clean and the stamp. A run where `local/.env` already exists, or a self-hosted repo, now touches nothing at all — not even the stamp directory. `first_boot_leftovers()` shrank to just the listing.
+- **`test_existing_env_file_disarms_the_guard` didn't assert the stamp stays absent.** Added `assertFalse((local / "state").exists())` to that test; it fails against the old behaviour and passes now.
+- **`run_install()` leaked the caller's `BOARD_*` environment into the subprocess.** Fixed: it now filters `BOARD_*` variables out of the environment, matching the existing pattern in `tests/test_self_hosting.py`, so a CI- or user-set `BOARD_AGENT_ADAPTER` can't redirect the test to an adapter that isn't in the scratch host.
+
+To verify: `python3 -m unittest discover -s tests` — 55 tests, all passing (54 before, plus the new symlink case).
