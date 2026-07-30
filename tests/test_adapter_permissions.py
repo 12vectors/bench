@@ -53,6 +53,29 @@ class ClaudeAllowRules(unittest.TestCase):
         for prefix in ["git push", "gh pr view", "gh pr diff", "gh api"]:
             self.assertIn(f"Bash({prefix}:*)", rules)
 
+    def test_act_pr_resolves_conflicts_additively(self):
+        # Conflicted PRs: merging main into the branch is allowed; history
+        # rewriting is not, and not merely by omission — `git push` alone
+        # would cover the force spellings, so they are denied outright.
+        rules = hook_settings.allow_rules("act-pr", COMMANDS)
+        for prefix in ["git fetch", "git merge"]:
+            self.assertIn(f"Bash({prefix})", rules)
+            self.assertIn(f"Bash({prefix}:*)", rules)
+        joined = " ".join(rules)
+        self.assertNotIn("git rebase", joined)
+        self.assertNotIn("--force", joined)
+        deny = hook_settings.settings("act-pr", COMMANDS)["permissions"]["deny"]
+        for prefix in ["git push --force", "git push -f", "git rebase"]:
+            self.assertIn(f"Bash({prefix}:*)", deny)
+
+    def test_only_act_pr_may_fetch_and_merge(self):
+        for mode in ("work", "review"):
+            joined = " ".join(hook_settings.allow_rules(mode, COMMANDS))
+            self.assertNotIn("git fetch", joined)
+            self.assertNotIn("git merge", joined)
+            self.assertNotIn("deny",
+                             hook_settings.settings(mode, COMMANDS)["permissions"])
+
     def test_review_posts_verdicts_but_writes_nothing_locally(self):
         rules = hook_settings.allow_rules("review", COMMANDS)
         for prefix in ["gh pr review", "gh pr comment", "gh pr view",
@@ -89,6 +112,26 @@ class OpencodeConfig(unittest.TestCase):
         bash = permission_config.build_config("act-pr", COMMANDS)["permission"]["bash"]
         self.assertEqual(bash["git push *"], "allow")
         self.assertEqual(bash["gh pr view *"], "allow")
+
+    def test_act_pr_resolves_conflicts_additively(self):
+        bash = permission_config.build_config("act-pr", COMMANDS)["permission"]["bash"]
+        for prefix in ["git fetch", "git merge"]:
+            self.assertEqual(bash[prefix], "allow")
+            self.assertEqual(bash[f"{prefix} *"], "allow")
+        for pattern in ["git rebase", "git rebase *", "git push --force*",
+                        "git push * --force*", "git push -f", "git push -f *",
+                        "git push * -f *"]:
+            self.assertEqual(bash[pattern], "deny")
+        # last match wins: the denies must come after the push allow
+        keys = list(bash)
+        self.assertGreater(keys.index("git push --force*"),
+                           keys.index("git push *"))
+
+    def test_only_act_pr_may_fetch_and_merge(self):
+        for mode in ("work", "review"):
+            bash = permission_config.build_config(mode, COMMANDS)["permission"]["bash"]
+            for absent in ["git fetch", "git merge", "git rebase"]:
+                self.assertNotIn(absent, bash)  # unlisted = denied by "*"
 
     def test_review_cannot_edit_and_bash_default_denies(self):
         config = permission_config.build_config("review", COMMANDS)

@@ -14,7 +14,11 @@ and never a blanket allow: the worktree is isolated, the shell is not.
   work    "edit": "allow" + git bookkeeping (add/commit/status/diff) and
           the project's test/check commands. No push.
   act-pr  the work stance + `git push` + reading the PR's reviews and
-          line comments through gh.
+          line comments through gh + `git fetch`/`git merge` so a
+          conflicted PR can be resolved by merging main into the
+          branch. The branch is public, so resolution is additive
+          only: rebase and the force-push spellings get explicit deny
+          rules, placed last so they win over the `git push *` allow.
   review  "edit": "deny" + reading the PR it judges + posting the
           verdict with gh pr review/comment. Everything else denied.
 
@@ -34,9 +38,19 @@ import sys
 MODE_PREFIXES = {
     "work": ["git add", "git commit", "git status", "git diff"],
     "act-pr": ["git add", "git commit", "git status", "git diff",
+               "git fetch", "git merge",
                "git push", "gh pr view", "gh pr diff", "gh api"],
     "review": ["git status", "git diff", "git log", "git show",
                "gh pr view", "gh pr diff", "gh pr review", "gh pr comment"],
+}
+# History must never rewrite under a public PR: deny the force and rebase
+# spellings even though nothing allows them — "git push *" would otherwise
+# cover them. Globs run over the whole command line, so the flag is caught
+# wherever it sits.
+MODE_DENY_PATTERNS = {
+    "act-pr": ["git rebase", "git rebase *",
+               "git push --force*", "git push * --force*",
+               "git push -f", "git push -f *", "git push * -f *"],
 }
 # Which intents run the project's own test/check commands.
 MODES_WITH_PROJECT_COMMANDS = {"work", "act-pr"}
@@ -57,6 +71,8 @@ def bash_rules(mode: str, commands: list[str]) -> dict:
     for prefix in prefixes:
         rules[prefix] = "allow"
         rules[f"{prefix} *"] = "allow"
+    for pattern in MODE_DENY_PATTERNS.get(mode, []):
+        rules[pattern] = "deny"  # last, so it wins over the allows
     return rules
 
 
