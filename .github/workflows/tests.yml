@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Stdlib-only, no install: the suite must pass on the oldest
+        # Python bench supports and the newest current one.
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Configure git for the tests that build scratch repos
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@bench.invalid
+          git config --global init.defaultBranch main
+      - run: python3 -m unittest discover -s tests -v
