@@ -40,9 +40,13 @@ side effects its prompt demands, and never a blanket allow-everything
 - `work` — implement, test, commit in an isolated worktree. May edit
   files, run local git bookkeeping (`git add/commit/status/diff`) and
   the project's `AGENT_COMMANDS`. No push.
-- `act-pr` — the work stance, plus `git push` (the PR must update) and
+- `act-pr` — the work stance, plus `git push` (the PR must update),
   reading the PR's reviews and line comments (`gh pr view`, `gh pr
-  diff`, `gh api`).
+  diff`, `gh api`), and `git fetch`/`git merge` so a conflicted PR can
+  be resolved by merging main into the branch. Resolution is additive
+  only — the branch is public — so `git rebase` and the force-push
+  spellings must be denied, not merely unlisted (a plain `git push`
+  allow would otherwise cover them).
 - `review` — read-only on the working tree: no edit tools, no commits.
   May read a PR (`gh pr view`, `gh pr diff`, read-only git) and post the
   verdict (`gh pr review`, `gh pr comment`).

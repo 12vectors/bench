@@ -191,16 +191,21 @@ def _is_copilot(login) -> bool:
     return "copilot" in str(login or "").lower()
 
 
-def _poll_pr(filename: str, url: str) -> None:
-    number = url.rstrip("/").rsplit("/", 1)[-1]
-    result = _run([config.GH_BIN, "pr", "view", number,
-                   "--json", "reviews,reviewRequests,statusCheckRollup,state"], timeout=60)
-    if result.returncode != 0:
-        return
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return
+def _conflict_state(data: dict, prev: dict) -> bool | None:
+    """GitHub computes mergeability lazily: UNKNOWN means "not computed
+    yet", never "fine" — keep the previous reading so the chip does not
+    flap while GitHub thinks."""
+    mergeable = str(data.get("mergeable") or "").upper()
+    if mergeable == "CONFLICTING":
+        return True
+    if mergeable == "MERGEABLE":
+        return False
+    return prev.get("conflicts")
+
+
+def _fold(data: dict, prev: dict) -> dict:
+    """One gh pr-view payload + the previous snapshot → the new snapshot.
+    Pure fold: fetching, events and broadcasts stay in _poll_pr."""
     reviews = data.get("reviews") or []
     checks = data.get("statusCheckRollup") or []
     changes = any(r.get("state") == "CHANGES_REQUESTED" for r in reviews)
@@ -219,15 +224,18 @@ def _poll_pr(filename: str, url: str) -> None:
     elif cop_requested:
         copilot = "asked"
     else:
-        copilot = PR_STATE.get(filename, {}).get("copilot")
-        copilot = "asked" if copilot == "asked" else None
+        copilot = "asked" if prev.get("copilot") == "asked" else None
 
     states = [_check_state(c) for c in checks]
     ci = ("fail" if "fail" in states
           else "running" if "running" in states
           else "pass" if states else None)
 
-    verdict = ("red" if (changes or ci == "fail")
+    conflicts = _conflict_state(data, prev)
+
+    # A conflict is changes-needed-by-you, not a CI failure: it beats any
+    # approval but leaves the CI chip telling its own story.
+    verdict = ("red" if (changes or ci == "fail" or conflicts)
                else "green" if approved else "pending")
     detail_bits = []
     if reviews:
@@ -235,14 +243,32 @@ def _poll_pr(filename: str, url: str) -> None:
     if ci:
         detail_bits.append({"fail": "checks failing", "running": "checks running",
                             "pass": "checks ok"}[ci])
+    if conflicts:
+        detail_bits.append("conflicts with main")
     if copilot:
         detail_bits.append("copilot " + {"asked": "asked", "approved": "approved",
                                          "changes": "asked for changes",
                                          "commented": "commented"}[copilot])
+    return {"verdict": verdict, "ci": ci, "copilot": copilot,
+            "conflicts": conflicts, "detail": " · ".join(detail_bits)}
+
+
+def _poll_pr(filename: str, url: str) -> None:
+    number = url.rstrip("/").rsplit("/", 1)[-1]
+    result = _run([config.GH_BIN, "pr", "view", number,
+                   "--json", "reviews,reviewRequests,statusCheckRollup,state,mergeable"],
+                  timeout=60)
+    if result.returncode != 0:
+        return
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return
     prev = PR_STATE.get(filename, {})
-    PR_STATE[filename] = {"verdict": verdict, "ci": ci, "copilot": copilot,
-                          "url": url, "detail": " · ".join(detail_bits),
-                          "ts": time.time()}
+    entry = _fold(data, prev)
+    entry.update({"url": url, "ts": time.time()})
+    PR_STATE[filename] = entry
+    verdict, ci, copilot = entry["verdict"], entry["ci"], entry["copilot"]
     if prev.get("copilot") in (None, "asked") and copilot in ("approved", "changes", "commented"):
         word = {"approved": "approved it", "changes": "asked for changes",
                 "commented": "commented"}[copilot]
@@ -250,7 +276,14 @@ def _poll_pr(filename: str, url: str) -> None:
             "kind": "agent", "actor": "board", "file": filename,
             "summary": f"Copilot reviewed {filename}'s PR and {word}"})
         state.broadcast({"type": "board"})
-    if prev.get("verdict") != verdict and verdict != "pending":
+    if bool(prev.get("conflicts")) != bool(entry["conflicts"]):
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": (f"{filename}'s PR conflicts with main — ↻ act on PR "
+                        f"can attempt the resolution" if entry["conflicts"]
+                        else f"{filename}'s PR no longer conflicts with main")})
+        state.broadcast({"type": "board"})
+    elif prev.get("verdict") != verdict and verdict != "pending":
         word = "approved" if verdict == "green" else "changes asked"
         state.record_board_event({
             "kind": "agent", "actor": "board", "file": filename,
@@ -283,7 +316,7 @@ def poller() -> None:
 
 
 def public_state() -> dict:
-    return {f: {k: v.get(k) for k in ("verdict", "ci", "copilot", "detail", "url")}
+    return {f: {k: v.get(k) for k in ("verdict", "ci", "copilot", "conflicts", "detail", "url")}
             for f, v in PR_STATE.items()}
 
 

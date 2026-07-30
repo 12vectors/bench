@@ -285,10 +285,18 @@ review and line comment, addresses each point or says why not, commits,
 pushes so the PR updates, and appends a `## PR update` section to the task
 file. Then **◔ review PR** again, until it settles.
 
-The board polls open PRs of review-stage cards (reviews + CI checks, every
-60s — a plain thread in board.py, no agent involved, silent when review/ is
-empty) and folds everything into one verdict — any changes-requested review
-or failing check wins over any approval. Tool chips (CI, copilot, PR, drive)
+The board polls open PRs of review-stage cards (reviews + CI checks +
+GitHub's mergeable state, every 60s — a plain thread in board.py, no agent
+involved, silent when review/ is empty) and folds everything into one
+verdict — any changes-requested review or failing check wins over any
+approval. A PR GitHub cannot merge cleanly wears an alarm-coloured
+`conflicts` chip and counts as changes-needed-by-you (not a CI failure);
+**↻ act on PR** resolves mechanical conflicts by merging main into the
+branch — additively, never rebasing or force-pushing — in a dedicated
+resolution commit, and refuses semantic ones, naming the collision for a
+human to settle. GitHub computes mergeability lazily, so an UNKNOWN
+reading keeps the chip's last state rather than flapping.
+Tool chips (CI, copilot, PR, drive)
 are destinations, not statuses: they live in the card's footer row, never
 squeezed into the author row — `CI ✓` (pine), `CI ✕` (terracotta), `◌`
 while in flight, with hover actions staying in the status pill's slot. The card wears it in the design
