@@ -253,6 +253,14 @@ Basil, …) — picked per launch, never shared by two running agents, shown as
 are held in memory, so a restarted board falls back to plain "Agent" for
 sessions that predate it.
 
+Beside that name, wherever it identifies a run — the sessions list, the
+session and Focus headers, the working card's agent line — sits the model
+the launch rode: a small mono chip in the id hash's dim register
+(`opus-4-8`, the vendor's whole string on hover). Which brain did the work
+is a review question, not a state, so the chip takes no colour. A launch
+that inherited the vendor default, and a session replayed from disk, wear
+no chip at all — the board says nothing rather than guessing.
+
 **▸ start work** launches a headless `claude -p` on the task. It exists only
 on `in-progress/` cards: moving a card to in-progress is the commitment, and
 only then does work start — the server refuses launches from anywhere else.
