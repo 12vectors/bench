@@ -428,8 +428,10 @@ unrelated staged work is neither committed nor unstaged (hooks are skipped —
 this is bookkeeping, not code). Pushing is not part of it: those commits sit
 on your local `main` until you push it, which the PR guard above will tell
 you about if you forget. The setting is off by default: a single-player
-board writes no assignee and makes no commits, exactly as before, and
-`tasks/` is committed by hand.
+board neither writes nor clears the assignee and makes no commits, exactly
+as before, and `tasks/` is committed by hand. The gate governs only whether
+a *move* writes the line — an **Assignee:** added to a file by hand is still
+read and shown on the card whether the gate is on or off.
 
 ## Task file format
 
