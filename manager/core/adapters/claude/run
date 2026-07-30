@@ -28,7 +28,7 @@ SETTINGS="$(python3 "$HERE/hook_settings.py" "$MODE")"
 if [ "$MODE" = "review" ]; then
   exec "$BIN" -p "$AGENT_PROMPT" --settings "$SETTINGS" \
     --permission-mode default \
-    --disallowedTools Edit Write MultiEdit NotebookEdit
+    --disallowedTools Edit Write NotebookEdit
 else
   # work and act-pr both mutate the worktree; the allowlist differs.
   exec "$BIN" -p "$AGENT_PROMPT" --settings "$SETTINGS" \

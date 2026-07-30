@@ -150,8 +150,12 @@ class ClaudeRunScript(unittest.TestCase):
         args = self._run("review")
         self.assertIn("default", args)
         self.assertIn("--disallowedTools", args)
-        for tool in ["Edit", "Write", "MultiEdit", "NotebookEdit"]:
+        # This list tracks a moving vendor surface: a deny rule naming a
+        # tool the installed CLI no longer has kills the launch outright
+        # (MultiEdit did exactly that — task 10).
+        for tool in ["Edit", "Write", "NotebookEdit"]:
             self.assertIn(tool, args)
+        self.assertNotIn("MultiEdit", args)
         allow = self._settings(args)["permissions"]["allow"]
         self.assertIn("Bash(gh pr review:*)", allow)
         self.assertNotIn("Bash(git commit:*)", allow)

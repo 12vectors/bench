@@ -1,3 +1,5 @@
 manager/local/.env
 manager/local/state/
 __pycache__/
+.worktrees/
+.claude/settings.local.json
