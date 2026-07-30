@@ -119,6 +119,12 @@ if ! fetch_release; then
 fi
 
 mkdir "$tmp/dist"
+# Nothing in the asset may name a path outside its own root — tar
+# implementations differ on how much of that they refuse themselves.
+if tar -tzf "$asset" | grep -E '^/|(^|/)\.\.(/|$)' >/dev/null; then
+  echo "The $tag asset contains paths that escape its own root. Refusing to install it; nothing was changed." >&2
+  exit 1
+fi
 tar -xzf "$asset" -C "$tmp/dist"
 dist="$tmp/dist"
 manifest="$dist/manager/core/release-manifest"
@@ -135,13 +141,26 @@ if [ "v$artifact_version" != "$tag" ]; then
   exit 1
 fi
 
+# The manifest's copy paths land under $TM verbatim, so none may reach
+# outside it — checked before anything is replaced, leaving a poisoned
+# manifest no partial update to hide behind.
+while read -r kind path _; do
+  [ "$kind" = "copy" ] || continue
+  case "/$path/" in *//*|*/../*)
+    echo "Release $tag manifest names an unsafe path: $path. Refusing to install it; nothing was changed." >&2
+    exit 1;;
+  esac
+done < "$manifest"
+
 before="$(cat "$TM/manager/core/VERSION" 2>/dev/null || echo '?')"
 rsync -a --delete "$dist/manager/core/" "$TM/manager/core/"
 # The artifact's manifest names the top-level core-owned files (class
 # `copy`) — read the new list, so a release adding a script updates it.
 while read -r kind path _; do
   [ "$kind" = "copy" ] || continue
-  [ -f "$dist/$path" ] && cp "$dist/$path" "$TM/$path"
+  [ -f "$dist/$path" ] || continue
+  mkdir -p "$TM/$(dirname "$path")"
+  cp "$dist/$path" "$TM/$path"
 done < "$manifest"
 chmod +x "$TM"/start.sh "$TM"/stop.sh "$TM"/update.sh 2>/dev/null || true
 find "$TM/manager/core/adapters" -name run -o -name wire | xargs chmod +x 2>/dev/null || true

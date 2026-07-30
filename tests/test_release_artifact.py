@@ -68,7 +68,9 @@ class ArtifactContents(unittest.TestCase):
         cls.scratch = Path(tempfile.mkdtemp(prefix="bench-artifact-")).resolve()
         cls.tarball = cls.scratch / "bench.tar.gz"
         result = build_artifact(cls.tarball)
-        assert result.returncode == 0, result.stdout + result.stderr
+        if result.returncode != 0:  # not assert: must survive python -O
+            raise RuntimeError(
+                f"release.sh failed:\n{result.stdout}{result.stderr}")
         with tarfile.open(cls.tarball) as tar:
             cls.members = {m.name.removeprefix("./"): m
                            for m in tar.getmembers()}
@@ -187,7 +189,9 @@ class ArtifactInstalls(unittest.TestCase):
         cls.scratch = Path(tempfile.mkdtemp(prefix="bench-install-")).resolve()
         cls.tarball = cls.scratch / "bench.tar.gz"
         result = build_artifact(cls.tarball)
-        assert result.returncode == 0, result.stdout + result.stderr
+        if result.returncode != 0:  # not assert: must survive python -O
+            raise RuntimeError(
+                f"release.sh failed:\n{result.stdout}{result.stderr}")
 
     @classmethod
     def tearDownClass(cls):

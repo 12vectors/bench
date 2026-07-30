@@ -8,6 +8,7 @@ of it.
     python3 -m unittest discover -s tests
 """
 
+import io
 import os
 import shutil
 import subprocess
@@ -59,7 +60,9 @@ class UpdateFromRelease(unittest.TestCase):
             ["bash", str(REPO / "release.sh"), "--tarball", str(cls.tarball),
              "--source", "example/bench"],
             capture_output=True, text=True)
-        assert result.returncode == 0, result.stdout + result.stderr
+        if result.returncode != 0:  # not assert: must survive python -O
+            raise RuntimeError(
+                f"release.sh failed:\n{result.stdout}{result.stderr}")
         cls.version = (REPO / "manager" / "core" / "VERSION").read_text().strip()
 
         cls.stubs = cls.scratch / "bin"
@@ -157,6 +160,43 @@ class UpdateFromRelease(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(f"contains core VERSION {self.version}", result.stderr)
+        self.assertEqual(snapshot(tm), before)
+
+    def test_asset_with_escaping_member_paths_is_refused(self):
+        tm = self.make_install()
+        bad = self.scratch / "bad-members.tar.gz"
+        with tarfile.open(bad, "w:gz") as tar:
+            info = tarfile.TarInfo("../escape")
+            payload = b"outside\n"
+            info.size = len(payload)
+            tar.addfile(info, io.BytesIO(payload))
+        before = snapshot(tm)
+
+        result = self.run_update(tm, STUB_TARBALL=str(bad))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("escape its own root", result.stderr)
+        self.assertEqual(snapshot(tm), before)
+
+    def test_unsafe_manifest_copy_path_is_refused(self):
+        # A well-formed asset whose manifest reaches outside .task-manager/
+        # must be refused whole — before core/ is touched.
+        tm = self.make_install()
+        workdir = self.scratch / "bad-manifest"
+        with tarfile.open(self.tarball) as tar:
+            tar.extractall(workdir)
+        manifest = workdir / "manager" / "core" / "release-manifest"
+        manifest.write_text(manifest.read_text(encoding="utf-8")
+                            + "copy ../outside\n", encoding="utf-8")
+        bad = self.scratch / "bad-manifest.tar.gz"
+        with tarfile.open(bad, "w:gz") as tar:
+            tar.add(workdir, arcname=".")
+        before = snapshot(tm)
+
+        result = self.run_update(tm, STUB_TARBALL=str(bad))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsafe path: ../outside", result.stderr)
         self.assertEqual(snapshot(tm), before)
 
     def test_exact_tag_via_bench_ref(self):
