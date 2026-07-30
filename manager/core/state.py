@@ -21,6 +21,7 @@ EVENTS: dict[str, list[dict]] = {}         # session_id -> slim events
 BOARD_EVENTS: list[dict] = []              # moves + agent lifecycle
 AGENTS: dict[str, dict] = {}               # agent_id -> launch record
 EXPECTED_MOVES: dict[tuple[str, str], tuple[str, float]] = {}  # (file, to) -> (actor, ts)
+COMMIT_HOOKS: list = []                    # run after a board-made task commit
 
 # The port actually being served; board.py sets it from --port at startup so
 # launched agents know where to report events.
@@ -57,6 +58,19 @@ def record_board_event(event: dict) -> None:
         del BOARD_EVENTS[:-config.BOARD_EVENTS_CAP]
     persist("board.jsonl", event)
     broadcast({"type": "board_event", "event": event})
+
+
+def task_committed(filename: str) -> None:
+    """A board-made move committed itself. Registered hooks turn that into
+    whatever else should follow — sync.py's push, when the gate is on. The
+    hook is a registry rather than an import so taskfiles stays to the left
+    of everything that reacts to it; a hook that raises must never break a
+    move that has already happened on disk."""
+    for hook in list(COMMIT_HOOKS):
+        try:
+            hook(filename)
+        except Exception:   # noqa: BLE001 — the move is done; nothing may undo it
+            pass
 
 
 def expect_move(filename: str, target: str, actor: str) -> None:

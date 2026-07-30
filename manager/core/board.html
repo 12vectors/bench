@@ -86,6 +86,9 @@
     background:var(--surface);border:1px solid var(--border);border-radius:99px;font-size:12.5px;
   }
   .livechip .mono{font-size:11.5px;color:var(--dim)}
+  /* an author display beats the UA's [hidden] — say it here or the sync
+     chip is never hidden */
+  .livechip[hidden]{display:none}
   .dot{width:7px;height:7px;border-radius:99px;background:var(--idle);flex:none}
   .dot.live{background:var(--accent);animation:breathe 2.4s ease-in-out infinite}
 
@@ -480,6 +483,7 @@
     <button data-view="focus">Focus</button>
   </nav>
   <span class="spacer"></span>
+  <div class="livechip" id="syncchip" hidden style="cursor:default"></div>
   <div class="livechip" id="livechip" title="open Sessions"></div>
   <button id="themebtn">Daylight</button>
   <button id="refresh">Refresh</button>
@@ -562,10 +566,10 @@ const STAGE_TINT = { backlog: 'var(--dim)', 'to-do': 'var(--muted)',
 const STAGE_NOTE = { 'to-do': 'next up', review: 'your move' };
 const GLYPHS = { session: '●', end: '○', idle: '…', edit: '✎', read: '◔', search: '⌕',
   command: '$', test: '▶', check: '☑', git: '⎇', plan: '≡', subagent: '⑂', web: '∿',
-  move: '⇢', new: '＋', agent: '⚑', report: '▣', other: '·' };
+  move: '⇢', new: '＋', agent: '⚑', report: '▣', sync: '⇅', other: '·' };
 const FILTERS = [
   ['all', 'All', null],
-  ['moves', 'Moves', new Set(['move', 'new', 'agent'])],
+  ['moves', 'Moves', new Set(['move', 'new', 'agent', 'sync'])],
   ['edits', 'Edits', new Set(['edit'])],
   ['reads', 'Reads', new Set(['read', 'search'])],
   ['tests', 'Tests', new Set(['test', 'check'])],
@@ -702,6 +706,10 @@ function connectStream() {
       scheduleRender();
     } else if (msg.type === 'board' || msg.type === 'agents') {
       loadState();
+    } else if (msg.type === 'toast') {
+      // the server needs to say something to the person, not just the
+      // ticker — losing a card to another board is the case that matters
+      toast(msg.message, !!msg.error);
     } else if (msg.type === 'board_event') {
       S.state?.boardEvents.push(msg.event);
       scheduleRender();
@@ -741,6 +749,23 @@ function renderChip() {
   }
 }
 
+/* Sync only shows itself when it has stopped converging: a stall that is
+   not visible is two halves of a team quietly drifting apart. Offline is
+   driftwood (degraded, self-healing); anything waiting on a human is
+   terracotta. */
+function renderSync() {
+  const s = S.state?.sync;
+  const el = $('#syncchip');
+  if (!s || !s.enabled || s.state === 'ok') { el.hidden = true; return; }
+  const alarm = s.state === 'stalled';
+  const detail = s.detail || '';
+  el.hidden = false;
+  el.title = detail;
+  el.innerHTML = `<span class="dot" style="background:var(--${alarm ? 'alarm' : 'idle'})"></span>` +
+    `<span style="color:var(--${alarm ? 'alarm' : 'muted'})">sync ${alarm ? 'stalled' : 'behind'}</span>` +
+    `<span class="mono">${esc(detail.split(' — ')[0].replace(/^sync[^:]*:\s*/, ''))}</span>`;
+}
+
 function setView(view) {
   S.view = view;
   document.querySelectorAll('#views button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
@@ -762,6 +787,7 @@ function render() {
   if (!S.state) return;
   renderTitle();
   renderChip();
+  renderSync();
   if (S.view === 'board') renderBoard();
   else if (S.view === 'flight') renderFlight();
   else renderFocus();

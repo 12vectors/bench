@@ -18,6 +18,7 @@ import drive
 import events
 import github
 import state
+import sync
 import taskfiles
 
 
@@ -40,6 +41,7 @@ def state_payload() -> dict:
         "commandRuns": commands.public(),
         "checks": config.checks(),
         "archivedCount": taskfiles.archived_count(),
+        "sync": sync.status(),
         "boardEvents": board_events,
         "now": time.time(),
     }
