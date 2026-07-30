@@ -881,6 +881,10 @@ function cardFor(task) {
     chips.push({ label: 'CI', glyph: { pass: '✓', fail: '✕', running: '◌' }[prState.ci],
       cls: { pass: 'ok', fail: 'bad', running: 'accent' }[prState.ci], title: detail });
   }
+  if (prState && prState.conflicts) {
+    chips.push({ label: 'conflicts', glyph: '✕', cls: 'bad',
+      title: 'GitHub cannot merge this into main — ↻ act on PR can attempt a resolution merge' });
+  }
   if (prState && prState.copilot) {
     chips.push({ label: 'copilot',
       glyph: { asked: '◌', approved: '✓', changes: '✕', commented: '·' }[prState.copilot],
