@@ -55,7 +55,8 @@ config → state → taskfiles → events / github / drive / sync → agents →
 - `drive.py` — runs the project driver, tracks the one live drive
 - `sync.py` — origin/main as the shared board: push on move, pull on a beat
 - `agents.py` — headless work/review jobs, launched through the adapter
-- `watch.py` — 2s disk poller narrating moves made outside the API
+- `watch.py` — 2s disk poller narrating moves made outside the API, and
+  the gate that keeps a move a pull applied from triggering anything
 - `httpd.py` — HTTP routes, the SSE stream, serving the page
 - `board.py` — argparse + startup wiring only
 
@@ -239,10 +240,12 @@ the board.
 
 Card actions appear on hover, taking over the status pill's slot (never
 stacking on top of it) — at most two per state, only things you'd actually
-do without opening the card: **▸ start work** on in-progress cards,
-**‖ hold** while an agent runs, **↩ back** on cards waiting on you,
-**↺ reopen** on done cards, and **◔ still true?** everywhere. Actions that
-cost tokens or stop work arm on first click and fire on the second.
+do without opening the card: **▸ start work** on in-progress cards (**▸
+take over** when someone else holds them), **‖ hold** while an agent runs,
+**↩ back** on cards waiting on you, **↑ open PR** on review cards whose
+branch has none, **↺ reopen** on done cards, and **◔ still true?**
+everywhere. Actions that cost tokens or stop work arm on first click and
+fire on the second.
 
 Each launched agent wears a short name for its lifetime (Wren, Juno,
 Basil, …) — picked per launch, never shared by two running agents, shown as
@@ -253,6 +256,9 @@ sessions that predate it.
 **▸ start work** launches a headless `claude -p` on the task. It exists only
 on `in-progress/` cards: moving a card to in-progress is the commitment, and
 only then does work start — the server refuses launches from anywhere else.
+In team mode it also refuses a card someone else holds, naming them; the
+action reads **▸ take over** there, and firing it is the deliberate
+reassignment. An unclaimed card claims itself on launch.
 
 1. The board creates a git worktree at `.worktrees/<task-stem>/` on a new
    branch `task/<task-stem>` from the newest main it can see: with an
@@ -283,6 +289,14 @@ quietly. One guard is loud: if local `main` is ahead of the remote, the PR
 would drag those commits into its diff, so the board refuses and tells you
 to push main first (then move the card out and back, or wait for the next
 entry into review/).
+
+The board that opens it is the one whose user moved the card (see "State
+syncs; reactions don't"), and the `**PR:**` line is the backstop behind
+that: it is checked before every `gh pr create`, in team mode it commits
+itself so it reaches the other boards, and a create that races anyway
+adopts the PR GitHub already has rather than failing. A review card that
+has a branch but no PR carries an **↑ open PR** action — the way to ask
+for one after the fact, since no board opens it behind your back.
 
 Review-stage cards with a PR carry two actions:
 
@@ -351,6 +365,16 @@ branch, remove the worktree and local branch, then move the card. Every
 step narrates in the ticker; a merge conflict aborts cleanly and the card
 stays put. Cards without work move silently, and hand-moves on disk are
 never intercepted — the board only asks when you act through it.
+
+With `BOARD_SYNC` on the merge is made **on origin** instead: the board
+runs `gh pr merge` on the card's PR, cleans up and moves the card, and
+local `main` fast-forwards to the result on the next beat. Replicas
+converge only while main advances by fast-forward, so no board makes a
+merge commit of its own. Two consequences the local path hid: whoever
+clicks needs merge rights on the repo, not just push rights, and a branch
+without a PR is refused with a pointer to **↑ open PR** — there is nothing
+for origin to merge otherwise. Single-player merges locally, exactly as
+above.
 One agent per task at a time; a work agent's worktree must not already
 exist when starting.
 
@@ -422,8 +446,10 @@ assignee keeps it when someone else moves it on. Walking a card all the way
 back to `backlog/` clears the line — nobody holds it again.
 
 The assignee is who launches agents on the card and whose judgment the
-review waits for. It is a convention, not a lock: the board does not (yet)
-refuse anyone else's actions.
+review waits for. It gates exactly one thing — starting work, which
+another board refuses until you take the card over deliberately (see
+"State syncs; reactions don't"). Everything else is convention: reading,
+reviewing and moving are open to anyone, and git history is the audit.
 
 Two consequences worth knowing:
 
@@ -472,6 +498,35 @@ no push, no thread, no behaviour change at all.
 - **Offline is quiet.** An unreachable origin says so once, then works
   locally; commits queue on `main` and go out on the next reachable
   fetch.
+
+### State syncs; reactions don't
+
+The board does not only render state, it reacts to it: a card entering
+review opens a PR. With N replicas watching one truth, a reaction must
+fire on exactly one of them, so **only the board whose user made the move
+acts on it**. A move a pull applied renders and narrates — attributed to
+its author — and triggers nothing. `watch.py` answers the question, since
+that is where the attribution already lives, and every future automation
+hung off a stage transition inherits it: am I the actor?
+
+The file-carried gates stay in place behind that rule, so the rare double
+is harmless rather than loud: the `**PR:**` line before `gh pr create`
+(and a create that races anyway adopts the open PR), an existing branch
+and worktree before a work launch. Both layers, deliberately — the
+actor-only rule prevents the duplication, idempotency survives it.
+
+Two consequences you can see:
+
+- **A half-done side effect is nobody's to finish automatically.** The
+  actor's board can die between moving a card and opening its PR; no
+  other board picks that up, and in team mode the startup catch-up stands
+  down for the same reason. The card wears **↑ open PR** instead — a
+  person decides.
+- **Ownership gates work launches.** A card someone else holds refuses
+  **▸ start work**, naming them, and offers **▸ take over** as the
+  deliberate second path. Shared liveness is not part of this: a
+  teammate's running agent is a static "in-progress, assigned to them" on
+  your board, because agent registries stay in each board's own memory.
 
 Two disciplines make this safe, and team mode assumes both:
 
