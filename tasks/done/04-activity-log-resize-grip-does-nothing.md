@@ -1,6 +1,6 @@
 # 04 — Make the activity log's resize grip actually resize
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/14
 **Priority:** Medium — a visible, advertised control ("drag to resize") that silently does nothing
 **Type:** Bug

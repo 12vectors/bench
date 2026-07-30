@@ -1,6 +1,6 @@
 # 24 — A model chip beside every agent name
 
-**Status:** Backlog
+**Status:** To Do
 **Priority:** Low — the data is already there; this is putting it where eyes are
 **Type:** Feature
 
