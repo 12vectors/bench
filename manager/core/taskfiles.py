@@ -1,6 +1,6 @@
 """Reading and moving task files — the only module that touches tasks/.
 
-The directory a task file sits in *is* its status (see ../CLAUDE.md). Nothing
+The directory a task file sits in *is* its status (see ../AGENTS.md). Nothing
 here knows about agents or HTTP; it is the same folder kanban you could drive
 by hand with mv.
 """

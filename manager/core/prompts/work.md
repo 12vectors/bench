@@ -4,7 +4,7 @@ You are in an isolated git worktree on branch `{branch}` created for this task.
 All your work happens here: commit to this branch, do not push, do not merge,
 and do not switch branches.
 
-Read CLAUDE.md at the repo root first and follow it, including its
+Read AGENTS.md at the repo root first and follow it, including its
 definition of done — run whatever checks it names until they pass.
 
 The task is `{filename}`. Its content:
@@ -24,7 +24,7 @@ NOT READY: <one-line reason>
 followed by a bullet list of the specific questions that block the task.
 The board treats that marker as "send the task back for refinement". Only
 questions that change what should be built count — implementation details
-you can decide yourself by reading the codebase and CLAUDE.md do not.
+you can decide yourself by reading the codebase and AGENTS.md do not.
 
 Rules:
 - Do NOT move, rename or edit the task file itself — the board manages its

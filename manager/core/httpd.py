@@ -35,6 +35,7 @@ def state_payload() -> dict:
         "branches": github.task_branches(),
         "commands": config.commands(),
         "commandRuns": commands.public(),
+        "checks": config.checks(),
         "archivedCount": taskfiles.archived_count(),
         "boardEvents": board_events,
         "now": time.time(),

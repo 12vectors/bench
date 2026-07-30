@@ -1,0 +1,18 @@
+# Definition-of-done checks — the project half of the Focus view's
+# CHECKS panel. One check per line:
+#
+#     <label>: <regex matched against the commands agents run>
+#
+# The board never runs anything: the agent adapter classifies each
+# command an agent runs against these patterns, and Focus shows the last
+# matching run per row, judged pass/fail from the command's own output.
+#
+# Core ships this default; a file named `checks` in manager/local/
+# replaces it WHOLESALE (same resolution as prompts — the local file
+# wins by filename). The adapter and the browser read the same file, so
+# a label edited here flows to classification and rendering alike; keep
+# patterns in the regex dialect Python and JavaScript share. Read fresh
+# on every event and request — edits apply without a restart.
+pytest: \bpytest\b
+lint-imports: \blint-imports\b
+frontend: type-check|vue-tsc|\bnpm (run )?test\b|\bvitest\b

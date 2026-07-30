@@ -20,7 +20,7 @@
     --accent:#56c2d8; --calm:#a6c96f; --alarm:#e08a63; --idle:#5d757b;
     --on-accent:#0a161b; --on-calm:#141a10;
     --shadow:0 10px 24px -18px rgba(0,0,0,.9);
-    --pad:14px; --gap:10px; --radius:10px; --col:296px;
+    --pad:14px; --gap:10px; --radius:10px; --col:296px; --col-min:240px;
     --sans:'IBM Plex Sans',system-ui,sans-serif;
     --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
   }
@@ -91,7 +91,7 @@
   .view.on{display:flex}
   #view-board{flex-direction:column}
   #board{flex:1;display:flex;gap:var(--gap);align-items:stretch;padding:14px 18px;overflow-x:auto;min-height:0}
-  .kcol{flex:0 0 var(--col);width:var(--col);display:flex;flex-direction:column;gap:8px;min-height:0}
+  .kcol{flex:1 1 0;min-width:var(--col-min);max-width:var(--col);display:flex;flex-direction:column;gap:8px;min-height:0}
   .kcol > h2{
     margin:0;display:flex;align-items:center;gap:8px;padding:0 4px 2px;
     font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
@@ -1295,17 +1295,20 @@ function renderFlight() {
   }
   const events = S.events[sid] || [];
   const files = new Set(events.filter(e => e.file && e.kind === 'edit').map(e => e.file));
-  const tests = events.filter(e => e.kind === 'test').length;
+  const checks = events.filter(e => e.kind === 'test' || e.kind === 'check').length;
   const agent = agentFor(sid);
   const stopBtn = agent && agent.status === 'running'
     ? `<button id="stopagent" class="stopbtn" data-aid="${esc(agent.id)}">Hold</button>` : '';
   const branch = agent && agent.branch ? ` · <span class="mono">${esc(agent.branch)}</span>` : '';
+  // Honesty about what the run actually rode: the configured model, or
+  // the vendor default it inherited. Interactive sessions say nothing.
+  const model = agent ? ` · <span class="mono">${agent.model ? esc(agent.model) : 'model inherited'}</span>` : '';
   $('#fsession').innerHTML =
     `<div><div class="s-title">${esc((meta.label || sid).split(' · ')[0])}` +
     `<span class="sid">${esc(sid.slice(0, 8))}</span></div>` +
     `<div class="s-line">${meta.task ? 'on ' + esc(meta.task) + ' · ' : ''}` +
     `started ${fmtShort(meta.started)} · ${meta.count || 0} events · ` +
-    `${files.size} files edited · ${tests} test runs${branch}</div></div>` +
+    `${files.size} files edited · ${checks} check runs${branch}${model}</div></div>` +
     stopBtn + spark(events, meta);
   const stop = $('#stopagent');
   if (stop) stop.addEventListener('click', () => stopAgent(stop.dataset.aid));
@@ -1490,6 +1493,7 @@ function renderFocus() {
     refBits.push(task.number ? '#' + esc(task.number) : esc(task.file));
     refBits.push(`<span class="acc">${esc((meta.label || '').split(' · ')[0])}</span>`);
     if (agent && agent.branch) refBits.push('worktree ' + esc(agent.branch));
+    if (agent) refBits.push(agent.model ? esc(agent.model) : 'model inherited');
     refBits.push(esc(task.stage) + '/' + esc(task.file));
   } else {
     refBits.push(esc(sid.slice(0, 8)), 'no task attached');
@@ -1504,19 +1508,27 @@ function renderFocus() {
     steps + act + `</div>`;
 
   const rev = [...events].reverse();
-  const lastTest = rev.find(e => e.kind === 'test' && !e.running);
-  const lastLint = rev.find(e => e.kind === 'check' && (e.cmd || '').includes('lint-imports'));
-  const lastFront = rev.find(e => e.kind === 'check' && /type-check|vitest|npm/.test(e.cmd || ''));
   const checkRow = (name, ev) => {
-    if (!ev) return `<div class="check-row none"><span class="glyph">—</span><span class="name">${name}</span><span class="state">not run</span></div>`;
+    if (!ev) return `<div class="check-row none"><span class="glyph">—</span><span class="name">${esc(name)}</span><span class="state">not run</span></div>`;
     const cls = ev.ok === false ? 'fail' : ev.ok === true ? 'pass' : 'none';
     const glyph = ev.ok === false ? '✕' : ev.ok === true ? '✓' : '·';
-    const state = esc(ev.summary.replace(/^pytest — /, '').replace(/^ran: /, '')) + ' · ' + fmtShort(ev.ts);
-    return `<div class="check-row ${cls}"><span class="glyph">${glyph}</span><span class="name">${name}</span><span class="state">${state}</span></div>`;
+    const text = ev.summary.startsWith(name + ' — ')
+      ? ev.summary.slice(name.length + 3) : ev.summary.replace(/^ran: /, '');
+    const state = esc(text) + ' · ' + fmtShort(ev.ts);
+    return `<div class="check-row ${cls}"><span class="glyph">${glyph}</span><span class="name">${esc(name)}</span><span class="state">${state}</span></div>`;
   };
+  // One row per project-defined check — labels and command patterns come
+  // from the served checks definition (local/checks over core/checks),
+  // the same file the adapter classifies against.
+  const checkRows = (S.state?.checks || []).map(c => {
+    let re = null;
+    try { re = new RegExp(c.pattern); } catch { /* skip unparseable */ }
+    const ev = re && rev.find(e => !e.running && e.cmd && re.test(e.cmd));
+    return checkRow(c.label, ev);
+  }).join('');
   const checksPanel = `<div class="panel"><div class="phead"><span class="label">Checks</span></div>` +
-    checkRow('pytest', lastTest) + checkRow('lint-imports', lastLint) +
-    checkRow('frontend', lastFront) + `</div>`;
+    (checkRows || `<div class="check-row none"><span class="glyph">—</span><span class="name">no checks defined</span><span class="state"></span></div>`) +
+    `</div>`;
 
   let fileRows = '', fileHead = '';
   const diff = agent && S.diffCache[agent.id];

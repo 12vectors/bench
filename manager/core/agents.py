@@ -81,6 +81,9 @@ def _agent_public(record: dict) -> dict:
               ("id", "task", "branch", "worktree", "status", "rc", "started", "session")}
     public["mode"] = record.get("mode", "work")
     public["name"] = record.get("name")
+    # The model the launch was actually given; None = inherited the
+    # vendor's own default. Honesty for the Sessions/Focus views.
+    public["model"] = record.get("model")
     return public
 
 
@@ -111,9 +114,11 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str, log
 
     The adapter contract: `run` gets AGENT_PROMPT, AGENT_MODE (the intent:
     work = mutate and commit, act-pr = work + push, review = read-only +
-    post PR verdicts) and AGENT_COMMANDS (the project's runnable command
-    prefixes) plus the BOARD_* passthrough for its event bridge; its
-    stdout is the job log; exit 0 = completed.
+    post PR verdicts), AGENT_COMMANDS (the project's runnable command
+    prefixes) and AGENT_MODEL (the configured model, when there is one)
+    plus the BOARD_* passthrough for its event bridge; its stdout is the
+    job log; exit 0 = completed. Returns (proc, log_file, model) with
+    model = '' when the launch inherits the vendor default.
     """
     adapter = config.adapter_dir()
     if adapter is None:
@@ -130,6 +135,13 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str, log
         "BOARD_TASK": filename,
         "BOARD_PORT": str(state.serve_port),
     })
+    model = config.agent_model(mode)
+    if model:
+        env["AGENT_MODEL"] = model
+    else:
+        # Inherit = the variable is simply absent. Popping also stops a
+        # stray AGENT_MODEL in the board's own environment leaking through.
+        env.pop("AGENT_MODEL", None)
     log_file = log_path.open("wb")
     try:
         proc = subprocess.Popen(
@@ -138,7 +150,7 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str, log
     except OSError as exc:
         log_file.close()
         raise ValueError(f"could not launch adapter {adapter}: {exc}")
-    return proc, log_file
+    return proc, log_file, model
 
 
 def _fresh_branch_point() -> tuple[str | None, str | None]:
@@ -229,7 +241,7 @@ def start_agent(filename: str, stage: str) -> dict:
 
     prompt = config.prompt("work.md").format(
         branch=branch, filename=filename, body=task["body"])
-    proc, log_file = _launch("work", prompt, worktree, agent_id, filename, log_path)
+    proc, log_file, model = _launch("work", prompt, worktree, agent_id, filename, log_path)
 
     name = _pick_name(stem)
     record = {
@@ -237,7 +249,7 @@ def start_agent(filename: str, stage: str) -> dict:
         "worktree": str(worktree), "base": base, "status": "running",
         "rc": None, "started": time.time(), "session": None,
         "log": str(log_path), "proc": proc, "origin": stage, "mode": "work",
-        "name": name,
+        "name": name, "model": model or None,
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
@@ -266,14 +278,14 @@ def start_review(filename: str, stage: str) -> dict:
 
     prompt = config.prompt("review.md").format(
         stage=stage, filename=filename, body=task["body"])
-    proc, log_file = _launch("review", prompt, config.REPO, agent_id, filename, log_path)
+    proc, log_file, model = _launch("review", prompt, config.REPO, agent_id, filename, log_path)
 
     name = _pick_name(filename)
     record = {
         "id": agent_id, "task": filename, "branch": None, "worktree": None,
         "base": None, "status": "running", "rc": None, "started": time.time(),
         "session": None, "log": str(log_path), "proc": proc,
-        "origin": stage, "mode": "review", "name": name,
+        "origin": stage, "mode": "review", "name": name, "model": model or None,
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
@@ -399,13 +411,13 @@ def start_pr_review(filename: str, stage: str) -> dict:
 
     prompt = config.prompt("review-pr.md").format(
         filename=filename, pr=task["pr"], branch=branch, body=task["body"])
-    proc, log_file = _launch("review", prompt, config.REPO, agent_id, filename, log_path)
+    proc, log_file, model = _launch("review", prompt, config.REPO, agent_id, filename, log_path)
 
     record = {
         "id": agent_id, "task": filename, "branch": branch, "worktree": None,
         "base": None, "status": "running", "rc": None, "started": time.time(),
         "session": None, "log": str(log_path), "proc": proc,
-        "origin": stage, "mode": "review", "name": name,
+        "origin": stage, "mode": "review", "name": name, "model": model or None,
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
@@ -450,14 +462,14 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     prompt = config.prompt("act-pr.md").format(
         filename=filename, branch=branch, pr=task["pr"], body=task["body"])
     # act-pr is the one intent allowed to push: the PR must update.
-    proc, log_file = _launch("act-pr", prompt, worktree, agent_id, filename, log_path)
+    proc, log_file, model = _launch("act-pr", prompt, worktree, agent_id, filename, log_path)
 
     record = {
         "id": agent_id, "task": filename, "branch": branch,
         "worktree": str(worktree), "base": None, "status": "running",
         "rc": None, "started": time.time(), "session": None,
         "log": str(log_path), "proc": proc, "origin": stage, "mode": "work",
-        "name": name,
+        "name": name, "model": model or None,
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record

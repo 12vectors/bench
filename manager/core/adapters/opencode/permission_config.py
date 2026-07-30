@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Print the opencode config JSON for one headless launch: the permission
-rules for the launch's intent.
+rules for the launch's intent, plus the model when the board configured one.
 
 Usage: permission_config.py [work|act-pr|review]
 
@@ -21,6 +21,10 @@ and never a blanket allow: the worktree is isolated, the shell is not.
 The project's test/check commands arrive in AGENT_COMMANDS as comma-
 separated neutral command prefixes (set BOARD_AGENT_COMMANDS in
 local/.env); here each becomes "<prefix>" and "<prefix> *" allow rules.
+
+AGENT_MODEL, when set, becomes the config's top-level "model" key —
+opencode's "provider/model-id" form (opencode.ai/docs/config), passed
+through untranslated. Absent = no key, opencode's own resolution applies.
 """
 import json
 import os
@@ -56,17 +60,21 @@ def bash_rules(mode: str, commands: list[str]) -> dict:
     return rules
 
 
-def build_config(mode: str, commands: list[str]) -> dict:
-    return {
+def build_config(mode: str, commands: list[str], model: str = "") -> dict:
+    config = {
         "$schema": "https://opencode.ai/config.json",
         "permission": {
             "edit": "deny" if mode == "review" else "allow",
             "bash": bash_rules(mode, commands),
         },
     }
+    if model:
+        config["model"] = model
+    return config
 
 
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "work"
     commands = split_commands(os.environ.get("AGENT_COMMANDS", ""))
-    print(json.dumps(build_config(mode, commands)))
+    model = os.environ.get("AGENT_MODEL", "").strip()
+    print(json.dumps(build_config(mode, commands, model)))

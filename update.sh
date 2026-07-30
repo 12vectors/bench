@@ -4,7 +4,8 @@
 #     ./.task-manager/update.sh
 #
 # Replaces manager/core/ WHOLESALE plus the top-level core-owned files
-# (CLAUDE.md, install.py, start.sh, stop.sh, update.sh). Never touches
+# (AGENTS.md, its pointer CLAUDE.md, install.py, start.sh, stop.sh,
+# update.sh). Never touches
 # tasks/, plans/, reference/, or manager/local/ — your project's tasks,
 # driver, adapters, prompt overrides, .env and state survive every update.
 #
@@ -37,7 +38,9 @@ if [ ! -d "$tmp/dist/manager/core" ]; then
 fi
 
 rsync -a --delete "$tmp/dist/manager/core/" "$TM/manager/core/"
-for f in CLAUDE.md README.md install.py start.sh stop.sh update.sh; do
+# AGENTS.md is the workflow brief; CLAUDE.md its compatibility pointer —
+# copying both means an old full CLAUDE.md is replaced, never resurrected.
+for f in AGENTS.md CLAUDE.md README.md LICENSE install.py start.sh stop.sh update.sh; do
   [ -f "$tmp/dist/$f" ] && cp "$tmp/dist/$f" "$TM/$f"
 done
 chmod +x "$TM"/start.sh "$TM"/stop.sh "$TM"/update.sh 2>/dev/null || true

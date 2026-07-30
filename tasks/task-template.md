@@ -8,7 +8,7 @@ Anything below marked *optional* is deletable, and deleting beats leaving
 it hollow — an empty boilerplate section reads as thinking that never
 happened. Board process (review, PR, CI, merge) and the project-wide
 definition of done stay off the card: the board does the former
-mechanically and the repo CLAUDE.md owns the latter.
+mechanically and the repo AGENTS.md owns the latter.
 
 This template lives in tasks/, which updates never touch — improvements to
 it ship only with fresh installs, so local edits are yours to keep.
@@ -33,13 +33,13 @@ tasks (`../done/...`), plan files (`../../plans/...`) and reference
 documents (`../../reference/...`) — a link outlives a summary.
 
 **Affected areas:** the modules or layers this touches, one line in the
-repo CLAUDE.md's module-map vocabulary — telling reviewers where to look
+repo AGENTS.md's module-map vocabulary — telling reviewers where to look
 and agents where to stop. Optional: delete when the title already says it.
 
 ## What to build
 
 The work itself, concrete enough to start on. Name the layers things belong
-in — the repo CLAUDE.md's dependency rules decide where code goes, not
+in — the repo AGENTS.md's dependency rules decide where code goes, not
 convenience.
 
 - First piece
@@ -55,9 +55,9 @@ tempting neighbours — delete rather than leave empty.
 ## Acceptance
 
 Observable outcomes, not implementation steps — review agents judge the
-diff against exactly this list. The repo's definition of done (tests pass,
-`lint-imports` clean, new behaviour covered) applies on top; don't restate
-it. Given/When/Then phrasing is welcome where it sharpens a criterion, and
+diff against exactly this list. The repo's definition of done (the
+project's configured checks pass, new behaviour covered) applies on top;
+don't restate it. Given/When/Then phrasing is welcome where it sharpens a criterion, and
 edge cases belong here too — boundaries, empty inputs, failure paths.
 
 - [ ] Something a reviewer can check without reading the diff
