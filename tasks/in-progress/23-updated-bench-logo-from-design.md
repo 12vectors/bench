@@ -1,6 +1,7 @@
 # 23 — Bring the updated bench logo in from the design project
 
-**Status:** Backlog
+**Status:** In Progress
+**Assignee:** istos
 **Priority:** Low — visual identity, no behaviour
 **Type:** Chore
 
