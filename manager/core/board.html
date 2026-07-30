@@ -101,6 +101,17 @@
   .livechip[hidden]{display:none}
   .dot{width:7px;height:7px;border-radius:99px;background:var(--idle);flex:none}
   .dot.live{background:var(--accent);animation:breathe 2.4s ease-in-out infinite}
+  /* the model chip: which brain did this, beside the name that did it.
+     Machine-produced, so mono; a model is not a state, so it borrows no
+     colour — it lives in the session-id hash's register wherever names
+     appear, tracking each site's hash size. cursor:help because the
+     unshortened string is on the title. */
+  .mchip{font-family:var(--mono);font-size:10.5px;font-weight:400;color:var(--dim);white-space:nowrap;cursor:help}
+  /* the card's row is the tight one: there the chip gives way like the
+     mono fact beside it rather than pushing the row wider */
+  .card .whorow .mchip{font-size:11px;overflow:hidden;text-overflow:ellipsis}
+  .f-head .s-title .mchip{font-size:12px}
+  .refline .mchip{font-size:11.5px}
 
   /* ── kanban ── */
   main{flex:1;display:flex;min-height:0}
@@ -697,6 +708,24 @@ function isLiveSession(m) {
 }
 function allTasks() { return (S.state?.board.stages || []).flatMap(s => s.tasks); }
 
+/* Which model a run rode, shortened for the chip: the provider path an
+   opencode-style id carries (anthropic/model-x) and the vendor word a
+   claude one repeats (claude-opus-4-8) are both redundant beside a board
+   that already knows its vendor. Nothing else is touched — an unknown
+   name is shown as recorded rather than guessed at. */
+function shortModel(model) {
+  return String(model).split('/').pop().replace(/^claude-/, '');
+}
+
+/* One chip, every place a name identifies a run. A launch that never knew
+   its model (it inherited the vendor default, or the session was replayed
+   from disk after a restart) gets nothing at all: no chip is the honest
+   answer, a placeholder would read as a model named "unknown". */
+function modelChip(agent) {
+  if (!agent || !agent.model) return '';
+  return `<span class="mchip" title="${esc(agent.model)}">${esc(shortModel(agent.model))}</span>`;
+}
+
 function connectStream() {
   const es = new EventSource('/api/stream');
   let hadError = false;
@@ -1060,6 +1089,7 @@ function cardFor(task) {
     `<div class="toprow">${top.join('')}</div>` +
     `<div class="title">${esc(task.title)}</div>` +
     `<div class="whorow"><span class="initial">${esc(initial)}</span><span class="who">${esc(who)}</span>` +
+    modelChip(agent) +
     `<span class="meta">${esc(meta)}${extras.length ? ' · ' + extras.join(' · ') : ''}</span></div>` +
     chipRow + driveWell + liveLine;
   el.querySelectorAll('a.chip2').forEach(a =>
@@ -1474,7 +1504,7 @@ function renderFlight() {
     return `<div class="sess-row${m.id === sid ? ' sel' : ''}" data-sid="${esc(m.id)}" role="button" tabindex="0">` +
       `<span class="top"><span class="dot${active ? ' live' : ''}"></span>` +
       `<span>${esc((m.label || m.id.slice(0, 8)).split(' · ')[0])}</span>` +
-      `<span class="sid">${esc(m.id.slice(0, 8))}</span></span>` +
+      `<span class="sid">${esc(m.id.slice(0, 8))}</span>${modelChip(agentFor(m.id))}</span>` +
       `<span class="sub">${m.task ? 'on ' + esc(m.task) + ' · ' : ''}${m.count || 0} events · ${m.last ? ago(m.last) + ' ago' : ''}</span>` +
       (m.lastSummary ? `<span class="sub">${esc(m.lastSummary)}</span>` : '') +
       `</div>`;
@@ -1498,12 +1528,14 @@ function renderFlight() {
   const stopBtn = agent && agent.status === 'running'
     ? `<button id="stopagent" class="stopbtn" data-aid="${esc(agent.id)}">Hold</button>` : '';
   const branch = agent && agent.branch ? ` · <span class="mono">${esc(agent.branch)}</span>` : '';
-  // Honesty about what the run actually rode: the configured model, or
-  // the vendor default it inherited. Interactive sessions say nothing.
-  const model = agent ? ` · <span class="mono">${agent.model ? esc(agent.model) : 'model inherited'}</span>` : '';
+  // Honesty about what the run actually rode. A known model is the chip's
+  // job now, beside the name; the line keeps only what the chip cannot
+  // say — that this launch inherited the vendor default. Interactive
+  // sessions say nothing.
+  const model = agent && !agent.model ? ` · <span class="mono">model inherited</span>` : '';
   $('#fsession').innerHTML =
     `<div><div class="s-title">${esc((meta.label || sid).split(' · ')[0])}` +
-    `<span class="sid">${esc(sid.slice(0, 8))}</span></div>` +
+    `<span class="sid">${esc(sid.slice(0, 8))}</span>${modelChip(agent)}</div>` +
     `<div class="s-line">${meta.task ? 'on ' + esc(meta.task) + ' · ' : ''}` +
     `started ${fmtShort(meta.started)} · ${meta.count || 0} events · ` +
     `${files.size} files edited · ${checks} check runs${branch}${model}</div></div>` +
@@ -1690,9 +1722,11 @@ function renderFocus() {
   const refBits = [];
   if (task) {
     refBits.push(task.number ? '#' + esc(task.number) : esc(task.file));
-    refBits.push(`<span class="acc">${esc((meta.label || '').split(' · ')[0])}</span>`);
+    refBits.push(`<span class="acc">${esc((meta.label || '').split(' · ')[0])}</span>` +
+                 modelChip(agent));
     if (agent && agent.branch) refBits.push('worktree ' + esc(agent.branch));
-    if (agent) refBits.push(agent.model ? esc(agent.model) : 'model inherited');
+    // the chip says which model; the line is left saying only what it can't
+    if (agent && !agent.model) refBits.push('model inherited');
     refBits.push(esc(task.stage) + '/' + esc(task.file));
   } else {
     refBits.push(esc(sid.slice(0, 8)), 'no task attached');
