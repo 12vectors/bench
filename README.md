@@ -9,13 +9,14 @@ branch, and an archive that is never a delete.
 ## Install into a repo
 
 ```bash
-git clone <this repo> .task-manager && rm -rf .task-manager/.git
+mkdir .task-manager && curl -L \
+  https://github.com/12vectors/bench/releases/latest/download/bench.tar.gz \
+  | tar -xz -C .task-manager
 ./.task-manager/start.sh        # wires the project (idempotent) and serves
 ```
 
-The first `start.sh` clears the distribution's own cards from `tasks/`,
-`plans/` and `reference/` (printing each removal), so a fresh install
-starts with an empty board.
+No token, no clone: releases are curated artifacts that never contained
+bench's own cards or settings, so the board starts empty by construction.
 
 Commit `.task-manager/` into the host repo — core is vendored on purpose,
 so clones work offline and updates show up in the host's own diffs.
@@ -23,16 +24,33 @@ so clones work offline and updates show up in the host's own diffs.
 ## Update
 
 ```bash
-# in manager/local/.env:  BENCH_SOURCE=<this repo's git url>
-./.task-manager/update.sh              # latest
-BENCH_REF=v1 ./.task-manager/update.sh # a specific release tag
+./.task-manager/update.sh              # latest release
+BENCH_REF=v2 ./.task-manager/update.sh # an exact release tag
 ```
 
-Updates replace `manager/core/` and the top-level scripts wholesale and
-touch nothing else — tasks, plans, reference, and everything under
-`manager/local/` (your driver, commands, prompt overrides, settings,
-state) survive every update. Then `python3 .task-manager/install.py` and
-restart the board.
+The artifact is stamped with the repo it was built from, so updating
+needs no configuration; `BENCH_SOURCE=<owner/repo>` in
+`manager/local/.env` overrides the stamp. Updates replace
+`manager/core/` and the top-level scripts wholesale and touch nothing
+else — tasks, plans, reference, and everything under `manager/local/`
+(your driver, commands, prompt overrides, settings, state) survive every
+update. Then `python3 .task-manager/install.py` and restart the board.
+If the source repo has no published release yet, `update.sh` says so and
+changes nothing.
+
+## Working on bench itself
+
+```bash
+git clone git@github.com:12vectors/bench.git && cd bench && ./start.sh
+```
+
+A clone carries bench's own cards and local/ content — that is dev mode,
+not an install. (Installing from a clone anyway works: `install.py`
+clears the shipped cards on its first boot in a host repo.) Releases are
+built by `./release.sh` from the manifest at
+`manager/core/release-manifest`: tag = `v<VERSION>`, one stable asset
+name (`bench.tar.gz`), contents at the tarball root — the two things the
+install one-liner above depends on.
 
 ## The three-layer law
 

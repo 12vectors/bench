@@ -9,7 +9,7 @@ its status — there is no other source of truth.
 ├── install.py            ← Wires the project via the agent adapter (see below)
 ├── start.sh              ← One-command start: install + port handling + board
 ├── stop.sh               ← Safe stop: refuses while agents run (--force overrides)
-├── update.sh             ← Replace core/ from the distribution repo; local/ survives
+├── update.sh             ← Replace core/ from the published release; local/ survives
 ├── tasks/                ← Task state, nothing else. Works as a plain folder
 │   ├── backlog/…done/    ←   kanban even if manager/ is deleted or ignored.
 │   └── archive/          ← Archived cards: out of the flow, never deleted
@@ -110,11 +110,17 @@ Commands arm on first click and run on the second.
 
 ## Updating
 
-`./.task-manager/update.sh` fetches the distribution repo (`BENCH_SOURCE`
-in `local/.env`), replaces `manager/core/` wholesale plus the top-level
-scripts, and touches nothing else — tasks, driver, prompt overrides, `.env`
-and state all survive. Then re-run `install.py` (idempotent re-wire) and
-restart the board.
+`./.task-manager/update.sh` downloads the latest GitHub Release of the
+distribution repo (`BENCH_REF=v3` pins a tag; the source is stamped into
+the script at build time, `BENCH_SOURCE` in `local/.env` overrides it),
+replaces `manager/core/` wholesale plus the top-level files named in the
+artifact's `manager/core/release-manifest`, and touches nothing else —
+tasks, driver, prompt overrides, `.env` and state all survive. No release
+published → it says so and changes nothing; developers working on bench
+itself update their clone with git instead. Then re-run `install.py`
+(idempotent re-wire) and restart the board. Releases are cut from the
+bench repo with `release.sh` (never shipped in the artifact): it builds
+the tarball from the manifest, tags `v<VERSION>` and publishes via `gh`.
 
 ## Installing into a project
 
