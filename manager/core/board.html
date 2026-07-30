@@ -20,7 +20,7 @@
     --accent:#56c2d8; --calm:#a6c96f; --alarm:#e08a63; --idle:#5d757b;
     --on-accent:#0a161b; --on-calm:#141a10;
     --shadow:0 10px 24px -18px rgba(0,0,0,.9);
-    --pad:14px; --gap:10px; --radius:10px; --col:296px;
+    --pad:14px; --gap:10px; --radius:10px; --col:296px; --col-min:240px;
     --sans:'IBM Plex Sans',system-ui,sans-serif;
     --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
   }
@@ -91,7 +91,7 @@
   .view.on{display:flex}
   #view-board{flex-direction:column}
   #board{flex:1;display:flex;gap:var(--gap);align-items:stretch;padding:14px 18px;overflow-x:auto;min-height:0}
-  .kcol{flex:0 0 var(--col);width:var(--col);display:flex;flex-direction:column;gap:8px;min-height:0}
+  .kcol{flex:1 1 0;min-width:var(--col-min);max-width:var(--col);display:flex;flex-direction:column;gap:8px;min-height:0}
   .kcol > h2{
     margin:0;display:flex;align-items:center;gap:8px;padding:0 4px 2px;
     font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
