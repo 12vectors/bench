@@ -141,6 +141,40 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str, log
     return proc, log_file
 
 
+def _fresh_branch_point() -> tuple[str | None, str | None]:
+    """Where a brand-new task branch should start: the newest main that
+    exists. With an `origin` remote, fetch its main (bounded by
+    FETCH_TIMEOUT) and branch from origin/main — never touching the main
+    checkout itself, the fetched ref is only the branch point. No remote,
+    a failed fetch or a timeout all mean today's behaviour: branch from
+    HEAD, because launching must never be blocked by network weather.
+
+    Returns (start point, ticker note); (None, …) means HEAD. The note is
+    non-None whenever the branch point deserves a mention — origin/main
+    ahead of this checkout, or a fetch that had to be skipped.
+    """
+    def _git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", "-C", str(config.REPO), *args],
+                              capture_output=True, text=True)
+
+    if "origin" not in _git("remote").stdout.split():
+        return None, None
+    try:
+        fetched = subprocess.run(
+            ["git", "-C", str(config.REPO), "fetch", "origin", "main"],
+            capture_output=True, text=True, timeout=config.FETCH_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None, "fetch of origin/main timed out; branched from local HEAD"
+    if fetched.returncode != 0 or \
+            _git("rev-parse", "--verify", "--quiet", "origin/main").returncode != 0:
+        return None, "fetch of origin/main failed; branched from local HEAD"
+    ahead = _git("rev-list", "--count", "main..origin/main").stdout.strip()
+    if ahead.isdigit() and int(ahead) > 0:
+        return "origin/main", (f"branched from origin/main, "
+                               f"{ahead} ahead of this checkout")
+    return "origin/main", None
+
+
 def start_agent(filename: str, stage: str) -> dict:
     # Moving a card to in-progress is the commitment; only then does work start.
     _validate(filename, stage, {"in-progress"},
@@ -156,6 +190,7 @@ def start_agent(filename: str, stage: str) -> dict:
 
     branch_exists = _git("rev-parse", "--verify", "--quiet", branch).returncode == 0
     continuing = worktree.exists()
+    base_note = None
     if continuing:
         # earlier work exists — the agent continues on it rather than refusing
         current = subprocess.run(
@@ -172,8 +207,14 @@ def start_agent(filename: str, stage: str) -> dict:
             base = _git("merge-base", "main", branch).stdout.strip()
             result = _git("worktree", "add", str(worktree), branch)
         else:
-            base = _git("rev-parse", "HEAD").stdout.strip()
-            result = _git("worktree", "add", "-b", branch, str(worktree))
+            point, base_note = _fresh_branch_point()
+            if point:
+                base = _git("rev-parse", point).stdout.strip()
+                result = _git("worktree", "add", "--no-track", "-b", branch,
+                              str(worktree), point)
+            else:
+                base = _git("rev-parse", "HEAD").stdout.strip()
+                result = _git("worktree", "add", "-b", branch, str(worktree))
         if result.returncode != 0:
             raise ValueError(f"git worktree add failed: {result.stderr.strip()[:300]}")
 
@@ -197,11 +238,14 @@ def start_agent(filename: str, stage: str) -> dict:
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
+    summary = (f"{name} is back on {filename} — continuing branch {branch}"
+               if continuing else
+               f"{name} started on {filename} (branch {branch})")
+    if base_note:
+        summary += f" — {base_note}"
     state.record_board_event({
         "kind": "agent", "actor": "agent", "file": filename,
-        "summary": (f"{name} is back on {filename} — continuing branch {branch}"
-                    if continuing else
-                    f"{name} started on {filename} (branch {branch})"),
+        "summary": summary,
     })
     threading.Thread(target=_reap_agent, args=(agent_id, proc, log_file),
                      daemon=True).start()

@@ -101,6 +101,11 @@ GH_BIN = setting("BOARD_GH_BIN", "gh")
 GIT_REMOTE = setting("BOARD_GIT_REMOTE", "")
 PR_POLL_INTERVAL = float(setting("BOARD_PR_POLL_INTERVAL", "60"))
 
+# How long a work-agent launch waits for `git fetch origin main` before
+# branching from local HEAD instead. Launching must never be blocked by
+# network weather; this bounds the whole delay.
+FETCH_TIMEOUT = float(setting("BOARD_FETCH_TIMEOUT", "10"))
+
 WATCH_INTERVAL = float(setting("BOARD_WATCH_INTERVAL", "2"))
 EVENTS_CAP = int(setting("BOARD_EVENTS_CAP", "800"))
 BOARD_EVENTS_CAP = int(setting("BOARD_HISTORY_CAP", "300"))
