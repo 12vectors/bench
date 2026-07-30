@@ -35,6 +35,8 @@
   @keyframes breathe{0%,100%{opacity:.35;transform:scale(.82)}50%{opacity:1;transform:scale(1)}}
   @keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
   @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes fadein{from{opacity:0}to{opacity:1}}
+  @keyframes drain{from{transform:scaleX(1)}to{transform:scaleX(0)}}
   @keyframes slidein{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:translateX(0)}}
   @media (prefers-reduced-motion: reduce){
     *,*::before,*::after{animation:none !important;transition:none !important}
@@ -116,7 +118,9 @@
   .card.dragging{opacity:.4}
   .card.selected{border-color:var(--accent)}
   .card.running{border-color:var(--border)}
-  .card .toprow{display:flex;align-items:center;gap:8px;min-width:0;min-height:20px}
+  /* the row reserves the action buttons' 24px, so hovering swaps the pill
+     for actions without the card growing or anything below it shifting */
+  .card .toprow{display:flex;align-items:center;gap:8px;min-width:0;min-height:24px}
   .card .mark{width:6px;height:6px;border-radius:2px;flex:none}
   .card .mark.breathing{animation:breathe 2.4s ease-in-out infinite}
   .card .ref{font-family:var(--mono);font-size:11.5px;color:var(--dim)}
@@ -135,7 +139,7 @@
     padding-top:9px;border-top:1px solid var(--line);
   }
   .chip2{
-    display:inline-flex;align-items:center;gap:5px;flex:none;
+    position:relative;display:inline-flex;align-items:center;gap:5px;flex:none;
     padding:3px 9px;background:transparent;
     border:1px solid var(--border);border-radius:99px;
     font-family:var(--mono);font-size:11px;color:var(--muted);
@@ -166,21 +170,44 @@
   .well.bad{border-left:2px solid var(--alarm);border-radius:0 7px 7px 0}
   .well.bad .lead{color:var(--alarm)}
   .caret{color:var(--accent);animation:blink 1.1s step-end infinite}
-  /* hover actions take over the pill's slot — never stack on top of it */
-  .hoveracts{display:none;gap:4px;animation:rise .12s ease}
-  .card:hover .hoveracts,.hoveracts:has(.armed){display:flex}
+  /* hover actions take over the pill's slot — never stack on top of it.
+     they fade in place (opacity only): the target must not travel while
+     the pointer approaches it. padding + negative margin widen the slot's
+     hitbox without moving anything; clicks landing there die at the slot. */
+  .hoveracts{display:none;gap:4px;animation:fadein .12s ease;padding:4px;margin:-4px}
+  .card:hover .hoveracts,.hoveracts:has(.armed),.hoveracts:has(.busy){display:flex}
   .card.has-acts:hover .toprow .pill.status,
   .card.has-acts:hover .toprow .high,
   .card.has-acts:has(.hoveracts .armed) .toprow .pill.status,
-  .card.has-acts:has(.hoveracts .armed) .toprow .high{display:none}
+  .card.has-acts:has(.hoveracts .armed) .toprow .high,
+  .card.has-acts:has(.hoveracts .busy) .toprow .pill.status,
+  .card.has-acts:has(.hoveracts .busy) .toprow .high{display:none}
   .hoveracts button{
-    display:flex;align-items:center;gap:4px;padding:2px 8px;
+    position:relative;display:flex;align-items:center;gap:4px;
+    padding:4px 10px;min-height:24px;
     background:var(--raised);border:1px solid var(--border);border-radius:99px;
     font-size:11px;color:var(--muted);
   }
   .hoveracts button:hover{border-color:var(--accent);color:var(--accent)}
   .hoveracts button .g{font-family:var(--mono);font-size:10px}
-  .hoveracts button.armed{color:var(--alarm);border-color:var(--alarm)}
+  /* every state's label occupies the same grid cell, so the button is
+     born as wide as its widest state and never reshapes under the cursor */
+  .actlbl{display:inline-grid;justify-items:center}
+  .actlbl>span{grid-area:1/1;white-space:nowrap;visibility:hidden}
+  .actlbl .l-rest{visibility:visible}
+  button.armed .actlbl .l-rest,button.busy .actlbl .l-rest{visibility:hidden}
+  button.armed .actlbl .l-arm{visibility:visible}
+  button.busy .actlbl .l-busy{visibility:visible}
+  /* armed = alarm, and the disarm window drains visibly along the bottom */
+  .hoveracts button.armed,button.chip2.armed{color:var(--alarm);border-color:var(--alarm)}
+  button.armed::after{
+    content:"";position:absolute;left:9px;right:9px;bottom:2px;height:2px;
+    border-radius:99px;background:var(--alarm);transform-origin:left;
+    animation:drain 5s linear var(--arm-delay,0s) forwards;
+  }
+  /* busy = the request is away: breathe until the redraw or the timeout */
+  .hoveracts button.busy,button.chip2.busy{color:var(--accent);border-color:var(--accent);cursor:default}
+  button.busy .g,button.busy .g2{animation:breathe 2.4s ease-in-out infinite}
 
   /* ── the activity bar: log drawer + latest line + archive tray ── */
   #logpanel{
@@ -519,6 +546,7 @@ const S = {
   logStick: true,        // follow the newest event unless the user scrolled up
   logOpen: localStorage.getItem('bench-log-open') === '1',
   logFilter: 'all',
+  acts: {},              // action key -> {phase: 'armed'|'busy', until} across re-renders
   dragging: null,        // {file, from} while a card is mid-drag
   dockHot: false,        // pointer over the bar with an archivable card
   dark: localStorage.getItem('bench-theme')
@@ -799,11 +827,11 @@ function cardFor(task) {
 
   // two actions per state, max — whatever you'd actually do without opening the card
   const actions = [];
-  const stillTrue = { glyph: '◔', label: 'still true?', confirm: 'check it?',
+  const stillTrue = { glyph: '◔', label: 'still true?', confirm: 'check it?', busy: 'checking…',
     title: 'A read-only agent checks this task is still true of the codebase',
     run: () => fireAgent(task, '/api/agent/review') };
   if (agent) {
-    actions.push({ glyph: '‖', label: 'hold', confirm: 'hold it?',
+    actions.push({ glyph: '‖', label: 'hold', confirm: 'hold it?', busy: 'holding…',
       title: 'Stop this agent — nothing is lost',
       run: () => stopAgent(agent.id) });
   } else if (task.stage === 'review' && task.pr) {
@@ -811,28 +839,28 @@ function cardFor(task) {
     const reviewIn = !!task.prVerdict ||
       (prState2 && (prState2.verdict !== 'pending' ||
         (prState2.copilot && prState2.copilot !== 'asked')));
-    const reviewPR = { glyph: '◔', label: 'review PR', confirm: 'review it?',
+    const reviewPR = { glyph: '◔', label: 'review PR', confirm: 'review it?', busy: 'reviewing…',
       title: 'A read-only agent reviews the PR and posts its verdict to GitHub',
       run: () => fireAgent(task, '/api/agent/review-pr') };
     if (reviewIn) {
-      actions.push({ glyph: '↻', label: 'act on PR', confirm: 'act on it?',
+      actions.push({ glyph: '↻', label: 'act on PR', confirm: 'act on it?', busy: 'acting…',
         title: 'An agent addresses the review feedback in the worktree, commits and pushes',
         run: () => fireAgent(task, '/api/agent/act-pr') }, reviewPR);
     } else {
-      actions.push(reviewPR, { glyph: '⚑', label: 'copilot', confirm: 'ask copilot?',
+      actions.push(reviewPR, { glyph: '⚑', label: 'copilot', confirm: 'ask copilot?', busy: 'asking…',
         title: 'Request a GitHub Copilot review on the PR',
         run: () => askCopilot(task) });
     }
   } else {
     if (task.stage === 'in-progress') {
-      actions.push({ glyph: '▸', label: 'start work', confirm: 'start it?',
+      actions.push({ glyph: '▸', label: 'start work', confirm: 'start it?', busy: 'starting…',
         title: 'A worktree, a branch, and a headless Claude on this task',
         run: () => fireAgent(task, '/api/agent/start') });
     } else if (task.stage === 'review') {
-      actions.push({ glyph: '↩', label: 'back', title: 'Send it back for more work',
+      actions.push({ glyph: '↩', label: 'back', busy: 'moving…', title: 'Send it back for more work',
         run: () => move(task.file, 'review', 'in-progress') });
     } else if (task.stage === 'done') {
-      actions.push({ glyph: '↺', label: 'reopen', title: 'Put it back in the queue',
+      actions.push({ glyph: '↺', label: 'reopen', busy: 'reopening…', title: 'Put it back in the queue',
         run: () => move(task.file, 'done', 'to-do') });
     }
     actions.push(stillTrue);
@@ -936,7 +964,7 @@ function cardFor(task) {
         const g = c.glyph ? `<span class="g2">${c.glyph}</span>` : '';
         if (c.href) return `<a class="chip2 ${c.cls}" href="${esc(c.href)}" target="_blank" rel="noopener" title="${esc(c.title)}">${esc(c.label)}${g}</a>`;
         if (c.act) return `<button class="chip2 ${c.cls}" data-drive="${c.act}" title="${esc(c.title)}">${esc(c.label)}${g}</button>`;
-        if (c.cmd) return `<button class="chip2 ${c.cls}" data-cmd="${esc(c.cmd)}" title="${esc(c.title)}">${esc(c.label)}${g}</button>`;
+        if (c.cmd) return `<button class="chip2 ${c.cls}" data-cmd="${esc(c.cmd)}" title="${esc(c.title)}">${actLabel(c.label, 'run it?', 'running…')}${g}</button>`;
         return `<span class="chip2 ${c.cls}" title="${esc(c.title)}">${esc(c.label)}${g}</span>`;
       }).join('') + '</div>'
     : '';
@@ -954,35 +982,26 @@ function cardFor(task) {
       e.stopPropagation();
       if (btn.dataset.drive === 'go') startDrive(task); else parkDrive();
     }));
-  el.querySelectorAll('[data-cmd]').forEach(btn =>
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const name = btn.dataset.cmd;
-      if (btn.classList.contains('armed')) runCommand(task, name);
-      else {
-        btn.classList.add('armed');
-        btn.firstChild.textContent = 'run it?';
-        setTimeout(() => { btn.classList.remove('armed'); btn.firstChild.textContent = name; }, 3500);
-      }
-    }));
+  el.querySelectorAll('[data-cmd]').forEach(btn => {
+    btn.addEventListener('click', (e) => e.stopPropagation());
+    const name = btn.dataset.cmd;
+    wireAction(btn, `${task.file}::$${name}`, {
+      label: name, confirm: 'run it?', busy: 'running…',
+      run: () => runCommand(task, name),
+    });
+  });
 
   if (actions.length) {
     const slot = document.createElement('span');
     slot.className = 'hoveracts';
+    // one guard for the whole slot: clicks in its padding or in the gap
+    // between buttons die here instead of opening the card's detail
+    slot.addEventListener('click', (e) => e.stopPropagation());
     for (const act of actions) {
       const btn = document.createElement('button');
-      btn.innerHTML = `<span class="g">${act.glyph}</span><span>${act.label}</span>`;
+      btn.innerHTML = `<span class="g">${act.glyph}</span>${actLabel(act.label, act.confirm, act.busy)}`;
       btn.title = act.title;
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (!act.confirm || btn.classList.contains('armed')) { act.run(); return; }
-        btn.classList.add('armed');
-        btn.lastElementChild.textContent = act.confirm;
-        setTimeout(() => {
-          btn.classList.remove('armed');
-          btn.lastElementChild.textContent = act.label;
-        }, 3500);
-      });
+      wireAction(btn, `${task.file}::${act.label}`, act);
       slot.appendChild(btn);
     }
     el.querySelector('.toprow').appendChild(slot);
@@ -1005,6 +1024,78 @@ function cardFor(task) {
   return el;
 }
 
+/* arm-then-fire is the contract for anything that costs tokens or stops
+   work. This one state machine walks every action button — hover actions
+   and $-command chips alike — through rest → armed → busy. The truth
+   lives in S.acts, keyed by task file + action, because cards are torn
+   down and rebuilt on every SSE render: a rebuild mid-window re-applies
+   the same picture (the drain bar resumes via a negative delay), and a
+   second click keeps its meaning across the redraw. */
+const ARM_MS = 5000, FIRE_TIMEOUT_MS = 15000;
+
+function actLabel(rest, confirm, busy) {
+  return `<span class="actlbl"><span class="l-rest">${esc(rest)}</span>` +
+    (confirm ? `<span class="l-arm">${esc(confirm)}</span>` : '') +
+    `<span class="l-busy">${esc(busy || rest)}</span></span>`;
+}
+
+function wireAction(btn, key, act) {
+  const st = S.acts[key];
+  if (st && st.until > Date.now()) {
+    if (st.phase === 'busy') lockAction(btn);
+    else armAction(btn, key, st.until - Date.now());
+  } else if (st) delete S.acts[key];
+  btn.addEventListener('click', () => {
+    if (btn.disabled) return;
+    if (act.confirm && !btn.classList.contains('armed')) armAction(btn, key, ARM_MS);
+    else fireAction(btn, key, act);
+  });
+}
+
+function armAction(btn, key, remaining) {
+  S.acts[key] = { phase: 'armed', until: Date.now() + remaining };
+  // the CSS drain animation is ARM_MS long; a rebuilt button rejoins it
+  // partway through with a negative delay instead of starting over
+  btn.style.setProperty('--arm-delay', `${remaining - ARM_MS}ms`);
+  btn.classList.add('armed');
+  setTimeout(() => {
+    if ((S.acts[key] || {}).phase === 'armed') delete S.acts[key];
+    btn.classList.remove('armed');
+  }, remaining);
+}
+
+function lockAction(btn) {
+  btn.classList.remove('armed');
+  btn.classList.add('busy');
+  btn.disabled = true;
+}
+
+async function fireAction(btn, key, act) {
+  lockAction(btn);
+  S.acts[key] = { phase: 'busy', until: Date.now() + FIRE_TIMEOUT_MS };
+  // client-side optimism needs an honest exit: if neither the response
+  // nor an SSE redraw arrives, come back to rest loudly — never silently
+  const bail = setTimeout(() => {
+    if ((S.acts[key] || {}).phase !== 'busy') return;
+    delete S.acts[key];
+    toast(`${act.label} got no answer in ${FIRE_TIMEOUT_MS / 1000}s — not fired again; check the board`, true);
+    scheduleRender();
+  }, FIRE_TIMEOUT_MS);
+  let ok;
+  try { ok = await act.run() !== false; }
+  catch (e) { ok = false; toast(`${act.label} failed — ${e.message || 'no response'}`, true); }
+  clearTimeout(bail);
+  if ((S.acts[key] || {}).phase === 'busy') {
+    delete S.acts[key];
+    btn.disabled = false;
+    btn.classList.remove('busy');
+    // a successful run usually re-rendered the card already (loadState);
+    // this pass unlocks any survivor whose card did not change
+    scheduleRender();
+  }
+  return ok;
+}
+
 async function fireAgent(task, url) {
   toast(`starting on ${task.file}…`);
   const res = await fetch(url, {
@@ -1012,7 +1103,7 @@ async function fireAgent(task, url) {
     body: JSON.stringify({ file: task.file, stage: task.stage }),
   });
   const data = await res.json();
-  if (!res.ok) { toast(data.error || 'that did not start', true); return; }
+  if (!res.ok) { toast(data.error || 'that did not start', true); return false; }
   const who = data.agent.name || 'An agent';
   toast(url.endsWith('act-pr')
     ? `${who} is acting on the review of ${task.file}'s PR`
@@ -1022,6 +1113,7 @@ async function fireAgent(task, url) {
         ? `${who} is checking ${task.file} is still true of the codebase`
         : `${who} is on it — branch ${data.agent.branch}`);
   await loadState();
+  return true;
 }
 
 async function runCommand(task, name) {
@@ -1032,7 +1124,8 @@ async function runCommand(task, name) {
   const data = await res.json();
   toast(res.ok ? `${name} running on ${task.file} — the ticker narrates the ending`
                : (data.error || `${name} did not start`), !res.ok);
-  loadState();
+  await loadState();
+  return res.ok;
 }
 
 async function startDrive(task) {
@@ -1061,6 +1154,7 @@ async function askCopilot(task) {
   const data = await res.json();
   toast(res.ok ? `Copilot asked to review ${task.file}'s PR`
                : (data.error || 'Copilot request failed'), !res.ok);
+  return res.ok;
 }
 
 async function move(file, from, to) {
@@ -1070,10 +1164,10 @@ async function move(file, from, to) {
     const stem = file.replace(/\.md$/, '');
     if (task && (task.pr || (S.state.branches || []).includes(stem))) {
       completeSheet(task, from);
-      return;
+      return true;
     }
   }
-  await rawMove(file, from, to);
+  return rawMove(file, from, to);
 }
 
 async function rawMove(file, from, to) {
@@ -1083,10 +1177,11 @@ async function rawMove(file, from, to) {
     body: JSON.stringify({ file, from, to }),
   });
   const data = await res.json();
-  if (!res.ok) { toast(data.error || 'move failed', true); await loadState(); return; }
+  if (!res.ok) { toast(data.error || 'move failed', true); await loadState(); return false; }
   toast(`${file} → ${to}/`);
   if (S.selected && S.selected.file === file) S.selected = data.task;
   await loadState();
+  return true;
 }
 
 function closeSheet() { $('#sheetwrap').classList.remove('open'); $('#sheetwrap').innerHTML = ''; }
@@ -1328,7 +1423,8 @@ async function stopAgent(aid) {
   });
   const data = await res.json();
   toast(res.ok ? 'Held — nothing is lost' : (data.error || 'could not stop it'), !res.ok);
-  loadState();
+  await loadState();
+  return res.ok;
 }
 
 function spark(events, meta) {
