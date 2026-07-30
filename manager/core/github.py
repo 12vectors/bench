@@ -4,6 +4,13 @@ Copilot reviews, and polling PR state for cards sitting in review/.
 All of it is mechanical `git` + `gh` — no Claude involvement. The PR url is
 written into the task file (`**PR:** <url>`), keeping the file the single
 source of truth; only the volatile review/check state lives in memory.
+
+With replicas watching one truth, *who* opens a PR matters: the trigger is
+the actor's board (watch.py refuses to fire on a move a pull applied) and
+the `**PR:**` line is the backstop behind it — carried by the file, so a
+second attempt from anywhere finds the PR already there, and a `gh pr
+create` that races anyway adopts the open PR instead of erroring. Polling
+is read-only and every board does it.
 """
 
 from __future__ import annotations
@@ -19,7 +26,7 @@ from pathlib import Path
 import config
 import drive as drive_mod
 import state
-from taskfiles import STATUS_RE, find_stage_of, move_task, read_task
+from taskfiles import STATUS_RE, commit_edit, find_stage_of, move_task, read_task
 
 PR_STATE: dict[str, dict] = {}   # filename -> {verdict, detail, url, ts}
 _OPENING: set[str] = set()       # filenames with a PR-open in flight
@@ -47,6 +54,10 @@ def _branch_exists(branch: str) -> bool:
 
 
 def _write_pr_line(filename: str, url: str) -> None:
+    """The url joins the header — and in team mode commits itself, so the
+    gate that stops a second board opening a second PR travels to the other
+    boards rather than sitting in one working tree (where it would also
+    stall sync, which never runs over uncommitted changes)."""
     stage = find_stage_of(filename)
     if not stage:
         return
@@ -59,59 +70,80 @@ def _write_pr_line(filename: str, url: str) -> None:
     else:
         text = f"**PR:** {url}\n\n" + text
     path.write_text(text, encoding="utf-8")
+    commit_edit(filename, stage, "PR opened")
+
+
+class _Quiet(ValueError):
+    """A reason not worth the ticker: no branch, or a PR already open. The
+    automatic path swallows these; the explicit action still shows them."""
 
 
 def maybe_open_pr(filename: str) -> None:
-    """Card entered review/ — open a PR for its branch if one can be opened.
+    """Card entered review/ on *this* board — open a PR for its branch if
+    one can be opened.
 
-    Quiet when there is simply no branch (hand-written tasks); loud in the
-    ticker when a PR *should* be possible but something stands in the way.
+    Quiet when there is simply no branch (hand-written tasks) or a PR is
+    already on the card; loud in the ticker when a PR *should* be possible
+    but something stands in the way.
     """
     if filename in _OPENING:
         return
     _OPENING.add(filename)
     try:
         _open_pr(filename)
+    except _Quiet:
+        pass
+    except ValueError as exc:
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": str(exc)})
     finally:
         _OPENING.discard(filename)
 
 
-def _open_pr(filename: str) -> None:
+def open_pr_now(filename: str) -> str:
+    """The explicit action behind ↑ open PR: no board ever completes a
+    half-done side effect on its own (the actor's board may have died
+    between moving the card and opening the PR), so a person asks for it —
+    and hears the reason when it cannot happen."""
+    if filename in _OPENING:
+        raise ValueError(f"a PR for {filename} is already being opened")
+    _OPENING.add(filename)
+    try:
+        return _open_pr(filename)
+    finally:
+        _OPENING.discard(filename)
+
+
+def _open_pr(filename: str) -> str:
     branch = f"task/{filename[:-3]}"
     if not _branch_exists(branch):
-        return  # nothing to publish — a hand-moved card without agent work
+        # nothing to publish — a hand-moved card without agent work
+        raise _Quiet(f"{filename} has no {branch} branch — nothing to open a PR from")
     stage = find_stage_of(filename)
     if stage != "review":
-        return
+        raise _Quiet(f"{filename} is not in review/ — PRs open from there")
     task = read_task(config.TASKS / stage / filename, stage)
     if task.get("pr"):
-        return  # already open
+        raise _Quiet(f"{filename} already has a PR: {task['pr']}")
 
     rname = remote()
     if rname is None or not gh_available():
-        state.record_board_event({
-            "kind": "agent", "actor": "board", "file": filename,
-            "summary": f"no PR for {filename}: " +
-                       ("no git remote configured" if rname is None else "gh is not installed")})
-        return
+        raise ValueError(f"no PR for {filename}: " +
+                         ("no git remote configured" if rname is None
+                          else "gh is not installed"))
 
     # The PR's diff is computed against the remote main — refuse to open one
     # that would drag unpushed main commits along with it.
     _run(["git", "fetch", rname, "main"], timeout=120)
     ahead = _run(["git", "rev-list", "--count", f"{rname}/main..main"]).stdout.strip()
     if ahead.isdigit() and int(ahead) > 0:
-        state.record_board_event({
-            "kind": "agent", "actor": "board", "file": filename,
-            "summary": f"won't open a PR for {filename}: main is {ahead} commits "
-                       f"ahead of {rname} — push main first, then move the card again"})
-        return
+        raise ValueError(f"won't open a PR for {filename}: main is {ahead} commits "
+                         f"ahead of {rname} — push main first, then move the card again")
 
     push = _run(["git", "push", "-u", rname, branch], timeout=180)
     if push.returncode != 0:
-        state.record_board_event({
-            "kind": "agent", "actor": "board", "file": filename,
-            "summary": f"push failed for {branch}: {push.stderr.strip()[:140]}"})
-        return
+        raise ValueError(f"push failed for {branch}: {push.stderr.strip()[:140]}")
 
     body = (f"Task: `{filename}` — tracked in `.task-manager/tasks/review/`.\n\n"
             f"Opened by the board when the card moved to review.")
@@ -121,10 +153,20 @@ def _open_pr(filename: str) -> None:
     result = _run([config.GH_BIN, "pr", "create", "--head", branch, "--base", "main",
                    "--title", task["title"], "--body", body], timeout=120)
     if result.returncode != 0:
+        # The rare double-fire: two attempts crossed and GitHub already has
+        # the PR. Adopt it — one PR still exists, and the card learns its
+        # url. Anything else is a real failure.
+        adopted = _existing_pr(branch) if _already_exists(result) else ""
+        if not adopted:
+            raise ValueError(f"PR creation failed for {branch}: "
+                             f"{result.stderr.strip()[:140]}")
+        _write_pr_line(filename, adopted)
         state.record_board_event({
             "kind": "agent", "actor": "board", "file": filename,
-            "summary": f"PR creation failed for {branch}: {result.stderr.strip()[:140]}"})
-        return
+            "summary": f"{filename}'s PR was already open — adopted it: {adopted}"})
+        state.broadcast({"type": "board"})
+        _poll_pr(filename, adopted)
+        return adopted
     url = next((l.strip() for l in result.stdout.splitlines() if "/pull/" in l), result.stdout.strip())
     _write_pr_line(filename, url)
     state.record_board_event({
@@ -132,6 +174,20 @@ def _open_pr(filename: str) -> None:
         "summary": f"PR opened for {filename}: {url}"})
     state.broadcast({"type": "board"})
     _poll_pr(filename, url)  # first CI/review snapshot without waiting a cycle
+    return url
+
+
+def _already_exists(result: subprocess.CompletedProcess) -> bool:
+    return "already exists" in (result.stderr + result.stdout).lower()
+
+
+def _existing_pr(branch: str) -> str:
+    """The url of the PR already open for this branch, if gh can name it."""
+    found = _run([config.GH_BIN, "pr", "view", branch, "--json", "url",
+                  "--jq", ".url"], timeout=60)
+    if found.returncode != 0:
+        return ""
+    return next((l.strip() for l in found.stdout.splitlines() if "/pull/" in l), "")
 
 
 def _agent_log_tail(filename: str, cap: int = 1500) -> str:
@@ -326,9 +382,15 @@ def open_pr_async(filename: str) -> None:
 
 def complete_task(filename: str, stage: str) -> dict:
     """The user chose "merge & clean up" on a move to done: park the drive
-    if it is this task's, merge the branch into main, push (which marks the
-    PR merged), remove the worktree and branches, then move the card.
-    Every step narrates; a conflict aborts cleanly and the card stays."""
+    if it is this task's, merge the branch, remove the worktree and
+    branches, then move the card. Every step narrates; a conflict aborts
+    cleanly and the card stays.
+
+    Where the merge happens depends on team mode. Single-player merges into
+    the local main and pushes it, exactly as it always did; with
+    `BOARD_SYNC` on the merge is made on origin through `gh pr merge`, so
+    local main only ever fast-forwards to it — the discipline the whole
+    sync design rests on."""
     if stage not in config.STAGE_DIRS or stage == "done":
         raise ValueError("complete runs on a live-stage card")
     if not (config.TASKS / stage / filename).is_file():
@@ -348,37 +410,18 @@ def complete_task(filename: str, stage: str) -> dict:
 
     merged = False
     if _branch_exists(branch):
-        current = _run(["git", "branch", "--show-current"]).stdout.strip()
-        if current != "main":
-            raise ValueError(f"the repo is on '{current}', not main — switch first")
-        result = _run(["git", "merge", "--no-edit", branch], timeout=120)
-        if result.returncode != 0:
-            _run(["git", "merge", "--abort"])
-            detail = (result.stdout.strip() or result.stderr.strip())[-160:]
-            raise ValueError(f"merge conflict — resolve by hand ({detail})")
+        if config.SYNC:
+            _merge_on_origin(filename, stage, branch)
+        else:
+            _merge_locally(filename, branch)
         merged = True
-        state.record_board_event({
-            "kind": "agent", "actor": "board", "file": filename,
-            "summary": f"merged {branch} into main"})
-
-        rname = remote()
-        if rname:
-            push = _run(["git", "push", rname, "main"], timeout=180)
-            if push.returncode != 0:
-                state.record_board_event({
-                    "kind": "agent", "actor": "board", "file": filename,
-                    "summary": f"merged locally but the push failed — push main "
-                               f"yourself ({push.stderr.strip()[:100]})"})
-            else:
-                _run(["git", "push", rname, "--delete", branch], timeout=60)
-                state.record_board_event({
-                    "kind": "agent", "actor": "board", "file": filename,
-                    "summary": f"pushed main (PR marked merged) and deleted {branch} on {rname}"})
 
         worktree = config.WORKTREES / stem
         if worktree.exists():
             _run(["git", "worktree", "remove", "--force", str(worktree)])
-        _run(["git", "branch", "-d", branch])
+        # -D under sync: main here has not merged the branch yet (origin
+        # did), so the safe delete would refuse something already landed.
+        _run(["git", "branch", "-D" if config.SYNC else "-d", branch])
         PR_STATE.pop(filename, None)
         state.record_board_event({
             "kind": "agent", "actor": "board", "file": filename,
@@ -387,6 +430,65 @@ def complete_task(filename: str, stage: str) -> dict:
     move_task(filename, stage, "done", actor="you")
     state.broadcast({"type": "board"})
     return {"merged": merged}
+
+
+def _merge_locally(filename: str, branch: str) -> None:
+    """Single-player: merge into the checkout's own main and push it."""
+    current = _run(["git", "branch", "--show-current"]).stdout.strip()
+    if current != "main":
+        raise ValueError(f"the repo is on '{current}', not main — switch first")
+    result = _run(["git", "merge", "--no-edit", branch], timeout=120)
+    if result.returncode != 0:
+        _run(["git", "merge", "--abort"])
+        detail = (result.stdout.strip() or result.stderr.strip())[-160:]
+        raise ValueError(f"merge conflict — resolve by hand ({detail})")
+    state.record_board_event({
+        "kind": "agent", "actor": "board", "file": filename,
+        "summary": f"merged {branch} into main"})
+
+    rname = remote()
+    if rname:
+        push = _run(["git", "push", rname, "main"], timeout=180)
+        if push.returncode != 0:
+            state.record_board_event({
+                "kind": "agent", "actor": "board", "file": filename,
+                "summary": f"merged locally but the push failed — push main "
+                           f"yourself ({push.stderr.strip()[:100]})"})
+        else:
+            _run(["git", "push", rname, "--delete", branch], timeout=60)
+            state.record_board_event({
+                "kind": "agent", "actor": "board", "file": filename,
+                "summary": f"pushed main (PR marked merged) and deleted {branch} on {rname}"})
+
+
+def _merge_on_origin(filename: str, stage: str, branch: str) -> None:
+    """Team mode: the merge commit is made by GitHub, on origin.
+
+    Replicas keep converging only while local main advances by
+    fast-forward, so the board never creates a merge commit of its own —
+    it asks origin for one and lets the sync beat deliver it. Needs merge
+    rights on the repo for whoever clicks, which the local path did not.
+    """
+    task = read_task(config.TASKS / stage / filename, stage)
+    url = task.get("pr")
+    if not url:
+        raise ValueError(
+            f"{filename} has no PR, and with BOARD_SYNC on the merge is made on "
+            f"origin — open a PR for {branch} first (↑ open PR on the card)")
+    if not gh_available():
+        raise ValueError("gh is not installed — with BOARD_SYNC on the merge runs on origin")
+    number = url.rstrip("/").rsplit("/", 1)[-1]
+    result = _run([config.GH_BIN, "pr", "merge", number, "--merge"], timeout=180)
+    if result.returncode != 0:
+        detail = (result.stderr.strip() or result.stdout.strip())[-160:]
+        raise ValueError(f"origin would not merge the PR — resolve it on GitHub ({detail})")
+    state.record_board_event({
+        "kind": "agent", "actor": "board", "file": filename,
+        "summary": f"merged {filename}'s PR on origin — local main fast-forwards "
+                   f"on the next sync beat"})
+    rname = remote()
+    if rname:
+        _run(["git", "push", rname, "--delete", branch], timeout=60)
 
 
 def task_branches() -> list[str]:
@@ -400,7 +502,14 @@ def task_branches() -> list[str]:
 def reconcile() -> None:
     """Catch up on moves the watcher never saw (board was down): any card
     already sitting in review/ with a branch but no PR gets its PR opened
-    now. Runs once at startup."""
+    now. Runs once at startup.
+
+    Not in team mode. A replica cannot tell whose move it missed, so every
+    board starting up would race to open the same PR — and the card that
+    needs one wears the explicit ↑ open PR action instead, which is a
+    person deciding rather than N boards guessing."""
+    if config.SYNC:
+        return
     time.sleep(3)  # let the server settle first
     directory = config.TASKS / "review"
     if not directory.is_dir():

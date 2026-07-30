@@ -21,7 +21,7 @@ from pathlib import Path
 import config
 import events
 import state
-from taskfiles import find_stage_of, move_task, read_task
+from taskfiles import actor_name, find_stage_of, move_task, read_task, set_assignee
 
 
 def _clean_log(text: str, cap: int = 3000) -> str:
@@ -190,10 +190,44 @@ def _fresh_branch_point() -> tuple[str | None, str | None]:
     return "origin/main", None
 
 
-def start_agent(filename: str, stage: str) -> dict:
+def _claim_for_launch(filename: str, stage: str, takeover: bool) -> None:
+    """One agent per task is a board-memory rule; across machines the card
+    file is the only thing every board can see, so the claim is what gates
+    a launch here.
+
+    Someone else's card refuses — naming who holds it — unless this is the
+    deliberate takeover, which reassigns the card to whoever asked. An
+    unclaimed card claims itself on launch: starting work is as much a
+    commitment as the move that usually writes the line.
+
+    Only in team mode. With `BOARD_COMMIT_MOVES` off nothing writes the
+    assignee, so nothing may refuse on it either — the launch is exactly
+    what it was before.
+    """
+    if not config.COMMIT_MOVES:
+        return
+    path = config.TASKS / stage / filename
+    holder = read_task(path, stage).get("assignee")
+    me = actor_name()
+    if holder and me and holder != me and not takeover:
+        raise ValueError(f"{holder} holds {filename} — take it over deliberately "
+                         f"(the card's ▸ take over), or clear the Assignee line")
+    if not me:
+        return                       # no identity to write; git has no name here
+    if holder == me:
+        return
+    set_assignee(filename, stage, me)
+    state.record_board_event({
+        "kind": "agent", "actor": "board", "file": filename,
+        "summary": (f"{me} took {filename} over from {holder}" if holder
+                    else f"{me} claimed {filename} by starting work on it")})
+
+
+def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     # Moving a card to in-progress is the commitment; only then does work start.
     _validate(filename, stage, {"in-progress"},
               "work starts from in-progress/ — move the card there first")
+    _claim_for_launch(filename, stage, takeover)
 
     stem = filename[:-3]
     branch = f"task/{stem}"
