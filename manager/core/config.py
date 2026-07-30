@@ -73,6 +73,11 @@ def setting(key: str, default: str) -> str:
     return _ENV.get(key, default)
 
 
+def flag(key: str, default: str = "") -> bool:
+    """A boolean setting. Anything but empty/0/false/no/off is on."""
+    return setting(key, default).strip().lower() not in ("", "0", "false", "no", "off")
+
+
 def child_env() -> dict[str, str]:
     """Environment for adapter/driver child processes: the real environment
     with local/.env settings folded in (process env still wins), so
@@ -123,6 +128,13 @@ PR_POLL_INTERVAL = float(setting("BOARD_PR_POLL_INTERVAL", "60"))
 # branching from local HEAD instead. Launching must never be blocked by
 # network weather; this bounds the whole delay.
 FETCH_TIMEOUT = float(setting("BOARD_FETCH_TIMEOUT", "10"))
+
+# Team mode's first half: a board-made move claims the card (writing
+# **Assignee:** from git's own user.name) and commits itself, so ownership
+# and stage travel with the file to every clone. Off by default — a
+# single-player board moves cards exactly as it always did, and committing
+# tasks/ stays a hand job.
+COMMIT_MOVES = flag("BOARD_COMMIT_MOVES")
 
 WATCH_INTERVAL = float(setting("BOARD_WATCH_INTERVAL", "2"))
 EVENTS_CAP = int(setting("BOARD_EVENTS_CAP", "800"))
