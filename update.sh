@@ -162,7 +162,7 @@ while read -r kind path _; do
   mkdir -p "$TM/$(dirname "$path")"
   cp "$dist/$path" "$TM/$path"
 done < "$manifest"
-chmod +x "$TM"/start.sh "$TM"/stop.sh "$TM"/update.sh 2>/dev/null || true
+chmod +x "$TM"/start.sh "$TM"/stop.sh "$TM"/update.sh "$TM"/install.py 2>/dev/null || true
 find "$TM/manager/core/adapters" -name run -o -name wire | xargs chmod +x 2>/dev/null || true
 
 after="$(cat "$TM/manager/core/VERSION" 2>/dev/null || echo '?')"
