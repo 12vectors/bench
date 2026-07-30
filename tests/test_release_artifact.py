@@ -138,6 +138,46 @@ class ArtifactContents(unittest.TestCase):
             self.assertTrue(mode & 0o100, f"{name} lost its executable bit")
 
 
+class ReleaseRefusals(unittest.TestCase):
+    """Publishing must be reproducible from its tag: a dirty tree or an
+    already-existing tag stops release.sh before anything is built."""
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp(prefix="bench-release-")).resolve()
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        shutil.copy(REPO / "release.sh", self.repo / "release.sh")
+        core = self.repo / "manager" / "core"
+        core.mkdir(parents=True)
+        (core / "VERSION").write_text("7\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q", str(self.repo)],
+                       check=True, capture_output=True)
+        self.git = ["git", "-C", str(self.repo),
+                    "-c", "user.name=t", "-c", "user.email=t@t"]
+
+    def release(self) -> subprocess.CompletedProcess:
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("BOARD_", "BENCH_"))}
+        return subprocess.run(["bash", str(self.repo / "release.sh")],
+                              capture_output=True, text=True,
+                              cwd=self.repo, env=env)
+
+    def test_refuses_a_dirty_tree(self):
+        result = self.release()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("dirty", result.stderr)
+
+    def test_refuses_an_existing_tag(self):
+        subprocess.run([*self.git, "add", "-A"], check=True,
+                       capture_output=True)
+        subprocess.run([*self.git, "commit", "-q", "-m", "x"], check=True,
+                       capture_output=True)
+        subprocess.run([*self.git, "tag", "v7"], check=True,
+                       capture_output=True)
+        result = self.release()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("v7 already exists", result.stderr)
+
+
 class ArtifactInstalls(unittest.TestCase):
     """Unpacking a release as .task-manager/ is the install: first boot
     has nothing to scrub, and the board serves from it."""
