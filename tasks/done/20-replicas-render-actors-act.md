@@ -1,6 +1,7 @@
 # 20 — Replica etiquette: the actor's board acts, everyone else renders
 
-**Status:** Review
+**Status:** Done
+**PR:** https://github.com/12vectors/bench/pull/18
 **Assignee:** istos
 **Priority:** High — without it, task 19 turns every board action into N duplicate side effects
 **Type:** Feature
@@ -129,3 +130,24 @@ mmitted on `task/20-replicas-render-actors-act` — two commits (`755d40d` imple
 - `gh pr merge` needs merge rights on the repo for every team member who clicks merge & clean up. That is a real-world constraint the local-merge path did not have; it is stated in AGENTS.md and `manager/core/.env.example`.
 - The launch guard covers **▸ start work** only, not the read-only reviews or ↻ act on PR — reading someone else's card is never a stampede, and the acceptance criterion named start work specifically.
 - On a review card that has a branch but no PR, **↑ open PR** takes the slot **◔ still true?** would have had, keeping to the two-actions-per-state rule.
+
+
+---
+
+## PR review — 2026-07-30 11:50 (Ada)
+
+PR REVIEW: APPROVE
+
+**State of the work:** The PR is complete, committed on `task/20-replicas-render-actors-act` (two commits), and by the author's report all 251 tests pass, 33 of them new. I read the full diff and all surrounding code; I could not execute the suite myself because this sandbox blocks the git/subprocess the tests spawn, so the green result is the author's report plus my read of a thorough, well-structured test file — not my own run. My approval rests on the code reading.
+
+**What I checked and found good**
+- **The load-bearing change (`manager/core/watch.py:32`) is correct.** `_actor` now returns `(actor, remote)`; `remote` is true only when a move was absent from this board's expectations *and* sync attributes it to a commit author — i.e. it arrived over origin. The PR trigger in `narrate` fires only when `not remote`. UI move acts once (expectation consumed), pulled move is inert, plain `mv` on this disk still acts. All three paths are tested, including the race-loser's reverted file returning as an inert move.
+- **Idempotency backstop is real.** `_write_pr_line` commits the `**PR:**` line via `taskfiles.commit_edit` (team mode only) so the gate reaches other boards rather than stalling sync as an uncommitted change; a racing `gh pr create` adopts the existing PR (`_already_exists`/`_existing_pr`) instead of erroring; a genuine failure still raises.
+- **Claims gate launches** (`manager/core/agents.py`, `_claim_for_launch`) with an armed `▸ take over` path threaded through `httpd.py`; unassigned claims on launch, your own card is untouched, off-mode reads no lock.
+- **Merges via origin** under `BOARD_SYNC` (`github.py:_merge_on_origin`); the single-player path is the old code extracted verbatim as `_merge_locally`. Dead-actor edge handled: `reconcile` stands down in team mode, and the `↑ open PR` action (`/api/pr/open`) covers a half-done side effect.
+- **Layering is clean** — only `taskfiles.py` touches task files; the `_commit`/`commit_edit`/`set_assignee` refactor is tidy. The merge-rights-on-origin constraint is documented in AGENTS.md and `.env.example`.
+
+**To know (not blocking)**
+- Under `BOARD_SYNC`, `complete_task` commits the move-to-done on local main while origin holds the new merge commit, so local main diverges until the next sync beat rebases the board's own commit onto origin's merge. This is task-19 sync behaviour, not introduced here — but the new tests assert only the pre-beat state and don't drive a beat to prove convergence. Worth a manual two-board smoke test before a team relies on merge & clean-up under sync.
+
+**For the human deciding this card:** one action — either merge it yourself (a formal approving review can't come from the PR author's own identity), or have a second teammate click ◔ review PR so GitHub records an approval from a different account.
