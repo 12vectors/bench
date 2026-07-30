@@ -1,6 +1,6 @@
 # 24 — A model chip beside every agent name
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** Low — the data is already there; this is putting it where eyes are
 **Type:** Feature
@@ -72,3 +72,31 @@ Prompted (2026-07-30) by reading a session where the model sat at the
 end of the metadata line: with work/review models diverging per task
 12's intent split, "which model did this" is now a routine review
 question, and the answer was hiding.
+
+
+---
+
+## Work report — 2026-07-30 12:04 (Olive)
+
+The work is committed and the full suite passes.
+
+---
+
+Committed on `task/24-model-chip-beside-the-agent-name` as `053e1d7`; the whole suite (`python3 -m unittest`, 274 tests including 10 new ones) passes.
+
+**What changed**
+
+`manager/core/board.html` gains one chip component — `modelChip(agent)`, with a `shortModel()` helper — rendered wherever a name identifies a run: the sessions-list row, the session-detail header, the Focus header's reference line, and the working card's agent line. The chip is small mono text in `var(--dim)`, the same register as the session-id hash it sits next to, and takes no state colour. It shows the model shortened by dropping the redundant vendor prefix (`claude-opus-4-8` → `opus-4-8`, `anthropic/claude-opus-4-8` → `opus-4-8`) with the full recorded string on hover; a name the shortening rule doesn't recognise, such as `gpt-4o`, is shown exactly as recorded. A launch whose model was never known — an inherited vendor default, or a session replayed from disk after a board restart — renders no chip and no placeholder.
+
+No server-side change was needed: the model already reaches the browser on the agent record, and the sessions list resolves it through the existing `agentFor()` lookup.
+
+**One behaviour change beyond adding the chip, worth a reviewer's eye:** the session-detail metadata line and the Focus reference line used to end with the model string. Leaving that would have said the same thing twice in one header, so those two places now print only `model inherited`, and only when the model genuinely is unknown. Task 12's honesty about inheriting is preserved; the duplicated resolved name is gone.
+
+`AGENTS.md` gains a paragraph describing the chip next to the agent-names paragraph.
+
+**Nothing is required of the reader to accept this card**, but two things are worth a look:
+
+- `manager/core/board.html:105-114` — the `.mchip` rules, including the per-site font sizes that track each context's id-hash size, and the card-only ellipsis bound so a long model name squeezes rather than widens the card's row.
+- `tests/test_model_chip.py` — the behaviour half lifts `esc`, `shortModel` and `modelChip` out of the page and runs them in node, skipping cleanly where node is absent (GitHub's `ubuntu-latest` runners have it). The placement half stays source-level, in the house style, since `board.html` has no frontend test runner.
+
+I did not verify this in a running board — the change is presentation-only and the render sites are exercised as source invariants rather than in a browser. If you want a visual check before merging, the ⛭ drive chip on the review card launches this worktree's board.
