@@ -1,6 +1,7 @@
 # 10 — Review launches die at startup: MultiEdit deny rule names a tool that no longer exists
 
 **Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/23
 **Assignee:** istos
 **Priority:** High — every ◔ review PR / ◔ still true? launch fails before the agent starts
 **Type:** Bug
