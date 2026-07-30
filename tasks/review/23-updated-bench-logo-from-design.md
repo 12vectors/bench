@@ -1,6 +1,6 @@
 # 23 — Bring the updated bench logo in from the design project
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** Low — visual identity, no behaviour
 **Type:** Chore
@@ -77,3 +77,25 @@ access, here is exactly what to run" is the right report.
   "align" neighbouring header details while in there is exactly how
   logo chores become layout regressions; out-of-scope list is the
   fence.
+
+
+---
+
+## Work report — 2026-07-30 11:16 (Ada)
+
+ became an inline `<svg class="mark">`, one `<path>` per letter of b-e-n-c-h on a 1000-unit em (baseline y=740, x-height top y=210, ascender y=0), with the design's −0.015em tracking folded into the per-glyph translations.
+- `fill:currentColor` gives the mark `--text` in both Night and Daylight from one copy, so it introduces no colour and in particular no state colour. `--logo-h:14px` (the wordmark's b-height, = 19px × 0.74) is the single token that sizes it.
+- `.brand` gap 10px → 11px, per the design. This is the one place I moved a neighbour: the acceptance bullet says the path line sits where it did, but "What to build" asks for the design's spacing against that line, so I took the design. It is a 1px shift and the header's height is set by the view switcher, not the brand, so nothing reflows.
+- The tab icon's dot became the wordmark's own `b` on the accent tile it already had (the design's app-icon treatment: accent ground, white letter). Both copies of the `b` are the same outline string, and a test keeps them equal.
+- Still fully self-contained: no `@font-face`, no font file, no new request. A test pins the page's external URLs to exactly the three IBM Plex ones that were already there and would fail if a fourth appeared.
+
+## To do before merging
+
+1. **Look at the header in both themes.** Zilla Slab's own contours are not reachable from this environment — `curl` and Python are not permitted to a headless agent here, so I could not fetch or convert the font binary, and I have no browser to render into. The five outlines are therefore hand-authored in Zilla Slab's idiom (slab feet, 118-unit stems, 104-unit bars, top-left flags on `b`/`h`/`n`, vertically-sheared `c` and `e` terminals), not exported from the face. I verified each path is a closed, non-self-intersecting loop and that even-odd filling puts the counters in the right places by point-sampling every region, but that proves the letters are *well-formed*, not that they are *handsome*.
+2. **If they are not right, swapping in real outlines is mechanical**: replace the five `d` attributes in the `<svg class="mark">` block and the one in the `<link rel="icon">`, keeping the `#mark-b` and favicon strings identical — `test_header_logo.TheTabIcon.test_it_is_the_wordmark_s_own_b` fails if they diverge, and the em grid is documented in the comment above the SVG.
+
+## To know
+
+- The design's `--logo` / `--logo-weight` / `--logo-track` custom properties are the control that swaps between the eight candidate faces; they have no meaning once the chosen face is outlined, so they are not carried over. `--logo-h` is what replaces them as the mark's one token.
+- Task 22's tab retitling is already on `main` (`de5cedb`), so the icon change sits alongside a title that is already `<project> · bench`; nothing needed coordinating.
+- Out of scope and left alone: the README's `# Bench`, and everything else in the design files (the docs-site directions in `Bench Docs.dc.html` are a whole separate body of work).
