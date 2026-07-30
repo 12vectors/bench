@@ -1,6 +1,7 @@
 # 23 — Bring the updated bench logo in from the design project
 
-**Status:** Review
+**Status:** Done
+**PR:** https://github.com/12vectors/bench/pull/19
 **Assignee:** istos
 **Priority:** Low — visual identity, no behaviour
 **Type:** Chore
@@ -99,3 +100,27 @@ access, here is exactly what to run" is the right report.
 - The design's `--logo` / `--logo-weight` / `--logo-track` custom properties are the control that swaps between the eight candidate faces; they have no meaning once the chosen face is outlined, so they are not carried over. `--logo-h` is what replaces them as the mark's one token.
 - Task 22's tab retitling is already on `main` (`de5cedb`), so the icon change sits alongside a title that is already `<project> · bench`; nothing needed coordinating.
 - Out of scope and left alone: the README's `# Bench`, and everything else in the design files (the docs-site directions in `Bench Docs.dc.html` are a whole separate body of work).
+
+
+---
+
+## PR review — 2026-07-30 11:48 (Fern)
+
+PR REVIEW: REQUEST CHANGES
+
+The engineering is production-quality and every mechanical invariant holds; the single open item is human visual verification, because the wordmark ships as **hand-authored approximations of Zilla Slab, not the design's real outlines**. The build is otherwise ready to merge.
+
+**What is good (verified against the branch, not just the tests):**
+- Scope is exactly the card: only `manager/core/board.html` (favicon + `.brand`) and the new `tests/test_header_logo.py`. No neighbouring header details "aligned" while in there.
+- Self-contained (acceptance #2): no `@font-face`, no font file, no new request; the external-URL set is pinned to the three pre-existing IBM Plex ones.
+- Theme mechanism correct: `fill:currentColor` → `--text` in both themes from one copy, no baked colour, none of the state tokens; `--logo-h` is the one sizing token.
+- Favicon/wordmark `b` are byte-identical (I confirmed 2 occurrences of the same outline on-branch, `board.html:9` and `:495`), so they cannot drift; even-odd fill keeps the counters open.
+- Neighbours preserved (acceptance #3): header padding/alignment, the mono path line, and the header control order are invariant-tested. CI green on 3.11 and 3.13.
+
+**To do before merge (human — an agent re-run hits the same tooling wall):**
+1. Eyeball the header in **Night and Daylight** against the design. The five glyphs are hand-drawn (design MCP needs interactive auth; the font binary was unreachable headless), so acceptance #1 ("matching the design") is unverified and cannot be closed from source. If the shapes are off, swapping in real outlines is mechanical — replace the five `d` strings in `<svg class="mark">` and the favicon's, keeping `#mark-b` and the icon identical (`test_header_logo.TheTabIcon` enforces it).
+2. While there, confirm the mono path line still sits right: `.brand` gap moved 10px → 11px (disclosed, "per the design"), which acceptance #3 nominally forbids — trivial, but it's the one intentional neighbour shift.
+
+**To know:**
+- I requested changes purely to keep the card in your hands for that visual check; nothing in the code needs rework. Once the glyphs are confirmed against the design, this is an approve.
+- I could not run the suite locally (sandbox denied `python3 -m unittest`), but both CI test jobs passed, which covers it.
