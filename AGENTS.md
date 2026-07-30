@@ -168,8 +168,9 @@ failing on a port clash.
 
 All settings live in `manager/core/.env.example` with their defaults documented —
 the port, the binaries agents launch with, the commands agents may run,
-the worktrees directory, the watch interval and the in-memory caps. Copy it
-to `manager/local/.env` (gitignored) to override locally; real environment
+the worktrees directory, whether moves claim and commit themselves, the
+watch interval and the in-memory caps. Copy it to `manager/local/.env`
+(gitignored) to override locally; real environment
 variables beat `.env`, which beats the defaults. The hook bridge reads the
 same `.env`, so changing `BOARD_PORT` moves the board, the agents and the
 hooks together.
@@ -397,6 +398,39 @@ Moves are not always forward. Going back a stage is normal and expected —
 verification failing, or an approach not surviving contact with the code, should
 move the task backwards rather than being worked around in place.
 
+## Claiming a card
+
+**Claiming is moving.** Taking a card out of `backlog/` or `to-do/` towards
+work is the commitment, so that is where ownership is recorded: the board
+writes an `**Assignee:** <name>` line into the header, taken from this
+checkout's `git config user.name` — the identity git history already shows,
+no new concept. The first claim sticks: a card that already names an
+assignee keeps it when someone else moves it on. Walking a card all the way
+back to `backlog/` clears the line — nobody holds it again.
+
+The assignee is who launches agents on the card and whose judgment the
+review waits for. It is a convention, not a lock: the board does not (yet)
+refuse anyone else's actions.
+
+Two consequences worth knowing:
+
+- **Hand-moves bypass the claim.** A plain `mv` between stage directories
+  is still a first-class move (the watcher narrates it), but nothing writes
+  the assignee — update the line yourself in the same edit as **Status**.
+- **Identity is git's, so it collides like git's.** Two machines both
+  configured `user.name = ronald` are one person as far as the board is
+  concerned. Teams that share a git history already share that assumption.
+
+With `BOARD_COMMIT_MOVES` on, board-made moves also **commit themselves**:
+the move and the claim land in one commit touching only that task file,
+messaged `board: <number> → <stage> (<name>)`, staged by pathspec so
+unrelated staged work is neither committed nor unstaged (hooks are skipped —
+this is bookkeeping, not code). Pushing is not part of it: those commits sit
+on your local `main` until you push it, which the PR guard above will tell
+you about if you forget. The setting is off by default: a single-player
+board writes no assignee and makes no commits, exactly as before, and
+`tasks/` is committed by hand.
+
 ## Task file format
 
 Each task is a markdown file with a descriptive filename
@@ -434,6 +468,17 @@ isn't obvious from the title:
 Type is orthogonal to status. A discovery task — research, scoping, spiking an
 approach — moves through the same five stages as everything else; "discovery"
 describes the work, not where it sits on the board.
+
+An optional **Assignee** line records who holds the card:
+
+```markdown
+**Assignee:** ronald
+```
+
+The board writes it when a move claims the card (see "Claiming a card") and
+removes it when the card is walked back to `backlog/`; on `done/` cards it
+stays as history. Editing it by hand is fine — it is a plain header field,
+and a hand-move should update it alongside **Status**.
 
 An optional **Depends on** line can name what must land first — task numbers
 or external preconditions — so sequencing lives in the header instead of
