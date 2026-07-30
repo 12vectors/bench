@@ -1,6 +1,6 @@
 # 20 — Replica etiquette: the actor's board acts, everyone else renders
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** High — without it, task 19 turns every board action into N duplicate side effects
 **Type:** Feature
@@ -102,3 +102,30 @@ and should answer it the same way.
 - `gh pr merge` needs merge rights on origin for every team member —
   a real-world constraint the docs must state, since the local-merge
   path hid it.
+
+
+---
+
+## Work report — 2026-07-30 11:19 (Otto)
+
+mmitted on `task/20-replicas-render-actors-act` — two commits (`755d40d` implementation + tests, `96ec71f` docs), with `python3 -m unittest` green at 251 tests (33 of them new, in `tests/test_actor_acts.py`). Nothing is blocked and nothing was left out of scope.
+
+**What changed**
+
+- **Remote moves are inert.** `manager/core/watch.py` now returns `(actor, remote)` from `_actor`, and a move a pull applied narrates and renders but opens no PR. A plain `mv` on this disk still acts — inert means "happened elsewhere", not "unattributed".
+- **Idempotency as the backstop.** In `manager/core/github.py` the `**PR:**` line now commits itself in team mode through a new `taskfiles.commit_edit` (sharing the move's pathspec-scoped commit machinery), so the gate travels to the other boards instead of sitting in one working tree — where it would also have stalled sync, which never runs over uncommitted changes. A `gh pr create` that races anyway adopts the PR GitHub already holds rather than erroring.
+- **Claims gate launches.** `agents.start_agent` refuses a card someone else holds, naming them; the card offers **▸ take over** as the deliberate armed second path, which reassigns via `taskfiles.set_assignee`. An unheld card claims itself on launch. All of it only under `BOARD_COMMIT_MOVES`: with the gate off nothing writes an assignee, so nothing reads one as a lock.
+- **Merges go through origin.** With `BOARD_SYNC=1`, `complete_task` runs `gh pr merge` and lets the sync beat deliver the result; local `main` only ever fast-forwards. Sync off keeps the local merge path unchanged.
+- **The dead-actor edge case.** The startup `reconcile` stands down in team mode, and a review card with a branch and no PR carries an **↑ open PR** action (`POST /api/pr/open`) — asked for by a person, never completed automatically by another board.
+
+**What a reviewer should look at first**
+
+1. `manager/core/watch.py:32` — the one function that decides "am I the actor?". Every future stage-transition automation inherits it, so it is the load-bearing change.
+2. `manager/core/github.py:415` (`_merge_on_origin`) — the origin-side merge, and the two constraints it exposes that the local path hid.
+3. `tests/test_actor_acts.py` — two real clones of a real bare upstream plus a stub `gh`; the `elsewhere()` helper is what keeps one process's in-memory registries out of the other's evidence.
+
+**Worth knowing (no action needed)**
+
+- `gh pr merge` needs merge rights on the repo for every team member who clicks merge & clean up. That is a real-world constraint the local-merge path did not have; it is stated in AGENTS.md and `manager/core/.env.example`.
+- The launch guard covers **▸ start work** only, not the read-only reviews or ↻ act on PR — reading someone else's card is never a stampede, and the acceptance criterion named start work specifically.
+- On a review card that has a branch but no PR, **↑ open PR** takes the slot **◔ still true?** would have had, keeping to the two-actions-per-state rule.
