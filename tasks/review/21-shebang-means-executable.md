@@ -1,6 +1,6 @@
 # 21 — A shebang means executable: fix the shipped modes and test the invariant
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** High — first external-install bug report: ./install.py is permission-denied on every install of v0.1-alpha
 **Type:** Bug
@@ -98,3 +98,28 @@ that.
   check the tar header's mode, not assume repo mode equals artifact
   mode forever (release.sh could gain umask surprises on other
   machines).
+
+
+---
+
+## Work report — 2026-07-30 12:00 (Hazel)
+
+ guard that keeps them landed, plus the patch-release bump.
+
+**What I verified was already fixed.** All 14 shebang'd tracked files carry mode `100755` in git — including the four the card names (`install.py`, `manager/core/board.py`, `manager/core/adapters/claude/hook_settings.py`, `manager/core/adapters/opencode/permission_config.py`) — and `update.sh:165` already lists `install.py` in its `chmod +x` repair line. I changed neither.
+
+**What I built.**
+
+- `tests/test_release_artifact.py` — the invariant, factored into `shebang_files_missing_exec()` and asserted against the tar header rather than repo modes (git records only the exec bit, and `release.sh` stages through a copy where a umask could still lose it — the risk the card flagged). No exception list. A second test proves the guard bites by repacking the real artifact with `install.py` set to mode 644 and asserting the check names it; a third unpacks a release and runs `./install.py` as a program with no interpreter in front of it, which is acceptance criterion 1 end to end.
+- `tests/test_update_from_release.py` — an install whose `install.py` is mode 644 (the shape v0.1-alpha left in the field) is executable after any update from the fixed tree. This is a real test of the repair line: `cp` onto an existing file keeps the *destination's* mode, so nothing else heals it.
+- `manager/core/VERSION` → `0.1-alpha.1`. I took the card's recommendation and cut the patch rather than writing a release note that tells users to work around the bug.
+- `manager/core/release-manifest` — the invariant stated in the header comment, where the shipping list already lives.
+
+**Actions for the reviewer:**
+
+1. Publish the patch after merge: `./release.sh` from the merged tree tags and publishes `v0.1-alpha.1`. I could not do it here (no push, and it needs `gh`), so the card's fourth deliverable is decided and staged but not executed.
+2. Confirm you want the version bump on this branch — it is the one change here that is a release decision rather than a test.
+
+**Worth knowing.** The acceptance criterion asked for a deliberate local mode-strip demonstrated before committing the test. `chmod` is not permitted to me in this headless context, so I demonstrated it two other ways and watched both new assertions fail before they passed: I temporarily added `chmod -x "$stage"/install.py` inside `release.sh`'s build (the real repo → stage → tar path), which made the invariant test fail with `AssertionError: [] != ['install.py']`; and I temporarily removed `install.py` from `update.sh`'s chmod list, which made the heal test fail. Both files were restored, and `git status` confirms no mode or content drift in either. The repacking test now carries that demonstration permanently, which is stronger than a one-off manual strip.
+
+I deliberately did not add a build-time `chmod` sweep to `release.sh` for all shebang'd files. It would make the new test pass tautologically and hide exactly the repo-mode error this card exists to catch.
