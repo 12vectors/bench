@@ -915,9 +915,17 @@ function cardFor(task) {
     }
   } else {
     if (task.stage === 'in-progress') {
-      actions.push({ glyph: '▸', label: 'start work', confirm: 'start it?', busy: 'starting…',
-        title: 'A worktree, a branch, and a headless Claude on this task',
-        run: () => fireAgent(task, '/api/agent/start') });
+      // someone else's card is never started by accident: the action says
+      // whose it is, and firing it is the deliberate takeover
+      const held = task.assignee && S.state.me && task.assignee !== S.state.me
+        ? task.assignee : null;
+      actions.push(held
+        ? { glyph: '▸', label: 'take over', confirm: `take from ${held}?`, busy: 'starting…',
+            title: `${held} holds this card — starting work takes it over and reassigns it to you`,
+            run: () => fireAgent(task, '/api/agent/start', { takeover: true }) }
+        : { glyph: '▸', label: 'start work', confirm: 'start it?', busy: 'starting…',
+            title: 'A worktree, a branch, and a headless Claude on this task',
+            run: () => fireAgent(task, '/api/agent/start') });
     } else if (task.stage === 'review') {
       actions.push({ glyph: '↩', label: 'back', busy: 'moving…', title: 'Send it back for more work',
         run: () => move(task.file, 'review', 'in-progress') });
@@ -925,7 +933,17 @@ function cardFor(task) {
       actions.push({ glyph: '↺', label: 'reopen', busy: 'reopening…', title: 'Put it back in the queue',
         run: () => move(task.file, 'done', 'to-do') });
     }
-    actions.push(stillTrue);
+    // work in review with no PR: no board opens one behind your back, so
+    // the card offers it instead of the relevance check
+    if (task.stage === 'review' && !task.pr
+        && (S.state.branches || []).includes(task.file.replace(/\.md$/, ''))) {
+      actions.push({ glyph: '↑', label: 'open PR', confirm: 'open it?', busy: 'opening…',
+        title: 'Push the branch and open its PR — the board does this when a card '
+             + 'enters review, and this is how you ask for it afterwards',
+        run: () => openPR(task) });
+    } else {
+      actions.push(stillTrue);
+    }
   }
   if (actions.length) el.classList.add('has-acts');
 
@@ -1165,11 +1183,11 @@ async function fireAction(btn, key, act) {
   return ok;
 }
 
-async function fireAgent(task, url) {
+async function fireAgent(task, url, extra) {
   toast(`starting on ${task.file}…`);
   const res = await fetch(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ file: task.file, stage: task.stage }),
+    body: JSON.stringify({ file: task.file, stage: task.stage, ...(extra || {}) }),
   });
   const data = await res.json();
   if (!res.ok) { toast(data.error || 'that did not start', true); return false; }
@@ -1213,6 +1231,17 @@ async function parkDrive() {
   const data = await res.json();
   toast(res.ok ? 'Parked' : (data.error || 'could not park'), !res.ok);
   loadState();
+}
+
+async function openPR(task) {
+  const res = await fetch('/api/pr/open', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: task.file }),
+  });
+  const data = await res.json();
+  toast(res.ok ? `PR opened for ${task.file}` : (data.error || 'the PR did not open'), !res.ok);
+  await loadState();
+  return res.ok;
 }
 
 async function askCopilot(task) {
@@ -1267,8 +1296,13 @@ function completeSheet(task, from) {
     `<div class="sbtns">` +
     `<button id="sh-keep">Keep it where it is<small>Nothing moves, nothing changes.</small></button>` +
     `<button id="sh-move">Just move the card<small>The branch${task.pr ? ', PR' : ''} and worktree stay as they are.</small></button>` +
-    `<button id="sh-ship" class="shipit">Merge &amp; clean up<small>${driving ? 'Park the drive, then m' : 'M'}erge the branch into main, push` +
-    `${task.pr ? ' (marks the PR merged)' : ''}, remove the worktree and branches, move the card.</small></button>` +
+    // team mode merges on origin: the board never makes a merge commit of
+    // its own, so every replica's main keeps fast-forwarding
+    `<button id="sh-ship" class="shipit">Merge &amp; clean up<small>${driving ? 'Park the drive, then m' : 'M'}erge ` +
+    ((S.state.sync || {}).enabled
+      ? `the PR on GitHub, remove the worktree and branches, move the card — local main fast-forwards on the next sync beat.`
+      : `the branch into main, push${task.pr ? ' (marks the PR merged)' : ''}, remove the worktree and branches, move the card.`) +
+    `</small></button>` +
     `</div></div>`;
   wrap.classList.add('open');
   wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });

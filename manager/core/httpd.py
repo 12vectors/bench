@@ -40,6 +40,9 @@ def state_payload() -> dict:
         "commands": config.commands(),
         "commandRuns": commands.public(),
         "checks": config.checks(),
+        # who this board is, so a card can tell "yours" from "someone
+        # else's". Empty outside team mode: nothing claims anything there.
+        "me": taskfiles.actor_name() if config.COMMIT_MOVES else "",
         "archivedCount": taskfiles.archived_count(),
         "sync": sync.status(),
         "boardEvents": board_events,
@@ -167,7 +170,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True})
             elif path == "/api/agent/start":
                 payload = self._read_body()
-                agent = agents.start_agent(payload["file"], payload["stage"])
+                # takeover: the second, deliberate click on a card someone
+                # else holds — never the default a stale card face sends
+                agent = agents.start_agent(payload["file"], payload["stage"],
+                                           bool(payload.get("takeover")))
                 self._json(200, {"agent": agent})
             elif path == "/api/agent/review":
                 payload = self._read_body()
@@ -181,6 +187,9 @@ class Handler(BaseHTTPRequestHandler):
                 payload = self._read_body()
                 agent = agents.start_pr_fix(payload["file"], payload["stage"])
                 self._json(200, {"agent": agent})
+            elif path == "/api/pr/open":
+                payload = self._read_body()
+                self._json(200, {"url": github.open_pr_now(payload["file"])})
             elif path == "/api/pr/copilot":
                 payload = self._read_body()
                 url = github.request_copilot(payload["file"])

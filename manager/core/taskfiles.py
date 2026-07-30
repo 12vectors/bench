@@ -181,35 +181,82 @@ def _set_assignee(text: str, name: str) -> str:
     return TITLE_RE.sub(lambda m: f"{m.group(0)}\n\n**Assignee:** {name}", text, count=1)
 
 
-def _commit_move(filename: str, target: str, src: Path, dst: Path, who: str,
-                 number: str | None) -> None:
-    """The move and the claim in one commit touching only this task file.
+def set_assignee(filename: str, stage: str, name: str) -> None:
+    """Write who holds a card where it stands, replacing whoever held it.
 
-    Staging is scoped to the file's own paths (`git add` then a pathspec
-    commit), so a developer's unrelated staged changes are neither committed
-    nor unstaged. Hooks are skipped: this is the board's bookkeeping, not a
-    code change. Anything going wrong is narrated — the card has already
-    moved on disk, which is the source of truth.
+    A move's claim never overwrites — the first claim sticks. This is the
+    other door: a launch claiming an unheld card, or the deliberate
+    takeover of someone else's. It commits like every other board edit, so
+    the new owner travels to the other boards.
     """
-    message = f"board: {number or filename[:-3]} → {target} ({who or 'board'})"
+    path = config.TASKS / stage / filename
+    text = path.read_text(encoding="utf-8")
+    updated = (ASSIGNEE_RE.sub(f"**Assignee:** {name}", text, count=1)
+               if ASSIGNEE_RE.search(text) else _set_assignee(text, name))
+    if updated == text:
+        return
+    path.write_text(updated, encoding="utf-8")
+    commit_edit(filename, stage, f"claimed by {name}")
+
+
+def _commit(filename: str, message: str, spec: list[str], failure: str) -> bool:
+    """One commit touching only this task file's paths.
+
+    Staging is scoped to those paths (`git add` then a pathspec commit), so
+    a developer's unrelated staged changes are neither committed nor
+    unstaged. Hooks are skipped: this is the board's bookkeeping, not a code
+    change. Anything going wrong is narrated — what the commit records has
+    already happened on disk, which is the source of truth.
+    """
     try:
-        spec = [str(dst)]
-        tracked = _git("ls-files", "--", str(src))
-        if tracked.returncode == 0 and tracked.stdout.strip():
-            spec.insert(0, str(src))   # git knew the old path: record its removal
         result = _git("add", "-A", "--", *spec)
         if result.returncode == 0:
             result = _git("commit", "--no-verify", "-m", message, "--", *spec, timeout=60)
             if result.returncode == 0:
                 state.task_committed(filename)   # sync (when on) publishes it
-                return
+                return True
         lines = (result.stderr or result.stdout).strip().splitlines()
         detail = lines[-1] if lines else f"git exited {result.returncode}"
     except (subprocess.SubprocessError, OSError) as exc:
         detail = str(exc)
     state.record_board_event({
         "kind": "agent", "actor": "board", "file": filename,
-        "summary": f"{filename} moved, but committing it failed: {detail[:140]}"})
+        "summary": f"{failure}: {detail[:140]}"})
+    return False
+
+
+def _commit_move(filename: str, target: str, src: Path, dst: Path, who: str,
+                 number: str | None) -> None:
+    """The move and the claim in one commit."""
+    spec = [str(dst)]
+    try:
+        tracked = _git("ls-files", "--", str(src))
+        if tracked.returncode == 0 and tracked.stdout.strip():
+            spec.insert(0, str(src))   # git knew the old path: record its removal
+    except (subprocess.SubprocessError, OSError):
+        pass
+    _commit(filename, f"board: {number or filename[:-3]} → {target} ({who or 'board'})",
+            spec, f"{filename} moved, but committing it failed")
+
+
+def commit_edit(filename: str, stage: str, what: str) -> bool:
+    """Commit a board-made edit to a card in place — the `**PR:**` line and
+    anything else the board writes into a file it does not move.
+
+    Team mode's own bookkeeping, so it carries the `board: ` prefix sync's
+    piggyback guard looks for, and it fires the same commit hook a move
+    does. With `BOARD_COMMIT_MOVES` off it does nothing at all: the edit
+    stays in the working tree for a human to commit, exactly as before.
+    """
+    if not config.COMMIT_MOVES:
+        return False
+    path = config.TASKS / stage / filename
+    number = NUMBER_RE.match(filename)
+    return _commit(filename,
+                   f"board: {number.group(1) if number else filename[:-3]} "
+                   f"{what} ({actor_name() or 'board'})",
+                   [str(path)],
+                   f"{filename}: {what} recorded, but committing it failed")
 
 
 def move_task(filename: str, source: str, target: str, actor: str = "you") -> dict:
