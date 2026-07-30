@@ -3,3 +3,4 @@ manager/local/state/
 __pycache__/
 .worktrees/
 .claude/settings.local.json
+.DS_Store
