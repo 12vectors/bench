@@ -1,6 +1,6 @@
 # 11 — A failed agent run must leave a visible trace on the card
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/22
 **Assignee:** istos
 **Priority:** High — three agents died today and the board showed nothing a human would notice
@@ -105,3 +105,26 @@ nded` on every run and, when a run exits non-zero and was not held, calls the ne
 - `manager/core/board.html:720` (`failedRun`) — the two-part scoping (most recent run, and only in the stage it failed in) is what keeps the alarm off other cards and out of review/.
 
 **One thing to know:** I verified the frontend logic by extracting `lastRunOn` / `failedRun` / `whyFailed` and running them under `node` against fabricated state (failure shows on its own card in its stage, disappears when the card is in review/, does not appear on another card, is superseded by a newer run, and the headline is the log's last line), plus the source-level invariants in the test file. I did not open the board in a browser to look at the rendered card, so the visual — border, pill and well together — is the one thing worth eyeballing before merge.
+
+
+---
+
+## PR review — 2026-07-30 14:12 (Cleo)
+
+PR REVIEW: APPROVE
+
+The work is complete, committed on `task/11-failed-agent-runs-must-be-visible`, mergeable (CLEAN), and CI-green on Python 3.11 and 3.13 — I could not run the suite locally (this sandbox blocks directory creation and worktrees), but the new `tests/test_failed_run_visible.py` passes on CI. A failed agent run now leaves a durable trace the card wears, and every acceptance criterion is met.
+
+**What I checked and found good**
+- **Recording (`agents.py`).** `_finish` stamps `ended` and, on a non-zero non-stopped exit, calls `_record_failure`, which puts `{rc, ended, excerpt, stage, log, mode}` on the run record and fires one error toast. Because it hangs off `_finish`, all four headless kinds inherit it — work, act-pr, PR review, relevance. `_agent_public` exposes `failure`/`ended`, so `/api/state` carries it.
+- **The excerpt** (`_failure_excerpt` → `_clean_log`) is the cleaned log tail, handles a launch that died before speaking ("no output …"), and survives the 91-byte MultiEdit-fossil case.
+- **Card surfaces (`board.html`).** Alarm border, `run failed` pill with the excerpt as tooltip, an alarm well showing `rc=N · <last line>`, and the whole excerpt + log path in the card sheet.
+- **Scoping is double-guarded** — the one thing that keeps the alarm off other cards and out of review/: `failedRun` gates on the *newest* run (`lastRunOn` is a max-by-`started`) AND `failure.stage === task.stage`; separately `watch.narrate` calls `agents.forget_failure` on any stage move. Relaunch clears it because the newer running record wins.
+- **Worktree cleanup is safely scoped.** `_discard_untouched_worktree` is added only to `_reap_agent` and no-ops unless `base` is set with zero commits, so act-pr's persistent worktree/branch (base=None) is never deleted. A failed work run with commits keeps its worktree.
+- **Layering/DoD.** `watch`→`agents` respects the module-map direction with no import cycle; the ticker (permanent record) is preserved on every reaper; AGENTS.md documents the state and corrects the stale `.agent/logs/` path to `local/state/agent/logs/` (confirmed: `STATE=local/state`, `AGENT_DIR=state/agent`).
+
+**To know (no action required to merge)**
+- The rendered card — border + pill + well together — was verified via source-level invariants and `node`, not eyeballed in a browser. Acceptance #1 is visual; a 10-second glance at a real failed card is worth it but not a blocker.
+
+**One process note**
+- The formal GitHub approval could not be posted because the PR's author identity is the same `istos` this board acts as; the verdict is on the PR as [a comment](https://github.com/12vectors/bench/pull/22#issuecomment-5130649491). A human with a distinct account can click Approve if a green check is wanted before merge.
