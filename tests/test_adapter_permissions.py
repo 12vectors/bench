@@ -164,6 +164,9 @@ class ClaudeRunScript(unittest.TestCase):
             wrapper = _write_stub(Path(tmp), "bin",
                                   f"#!/usr/bin/env bash\nexec python3 {stub} \"$@\"\n")
             env = dict(os.environ)
+            # A leaked AGENT_MODEL would add --model to argv, and the flag
+            # lists below are asserted whole. (test_agent_model.py owns it.)
+            env.pop("AGENT_MODEL", None)
             env.update({"BOARD_CLAUDE_BIN": str(wrapper),
                         "AGENT_PROMPT": "do the task", "AGENT_MODE": mode,
                         "AGENT_COMMANDS": "python3 -m unittest"})
@@ -175,10 +178,17 @@ class ClaudeRunScript(unittest.TestCase):
     def _settings(self, args: list[str]) -> dict:
         return json.loads(args[args.index("--settings") + 1])
 
+    def _flags(self, args: list[str]) -> list[str]:
+        """argv with the generated settings payload elided, so the whole
+        flag list can be asserted literally."""
+        i = args.index("--settings")
+        return args[:i + 1] + ["<settings>"] + args[i + 2:]
+
     def test_work_launch_accepts_edits_and_allows_commits(self):
         args = self._run("work")
-        self.assertIn("acceptEdits", args)
-        self.assertNotIn("--disallowedTools", args)
+        self.assertEqual(self._flags(args),
+                         ["-p", "do the task", "--settings", "<settings>",
+                          "--permission-mode", "acceptEdits"])
         allow = self._settings(args)["permissions"]["allow"]
         self.assertIn("Bash(git commit:*)", allow)
         self.assertIn("Bash(python3 -m unittest:*)", allow)
@@ -186,19 +196,25 @@ class ClaudeRunScript(unittest.TestCase):
 
     def test_act_pr_launch_may_push(self):
         args = self._run("act-pr")
-        self.assertIn("acceptEdits", args)
+        self.assertEqual(self._flags(args),
+                         ["-p", "do the task", "--settings", "<settings>",
+                          "--permission-mode", "acceptEdits"])
         self.assertIn("Bash(git push:*)", self._settings(args)["permissions"]["allow"])
 
     def test_review_launch_disallows_edit_tools_and_may_post_verdicts(self):
+        # The deny list is asserted whole, because it is the one flag list
+        # that tracks a moving vendor surface: it spells "cannot edit
+        # files" in the vendor's tool names, and a rule naming a tool the
+        # installed CLI no longer has is refused at startup — the launch
+        # then dies before the agent speaks, which is what the retired
+        # MultiEdit did to every review and relevance launch (task 10).
+        # Any change here is a change a reviewer must re-verify against
+        # the installed CLI's tool roster rather than against memory.
         args = self._run("review")
-        self.assertIn("default", args)
-        self.assertIn("--disallowedTools", args)
-        # This list tracks a moving vendor surface: a deny rule naming a
-        # tool the installed CLI no longer has kills the launch outright
-        # (MultiEdit did exactly that — task 10).
-        for tool in ["Edit", "Write", "NotebookEdit"]:
-            self.assertIn(tool, args)
-        self.assertNotIn("MultiEdit", args)
+        self.assertEqual(self._flags(args),
+                         ["-p", "do the task", "--settings", "<settings>",
+                          "--permission-mode", "default",
+                          "--disallowedTools", "Edit", "Write", "NotebookEdit"])
         allow = self._settings(args)["permissions"]["allow"]
         self.assertIn("Bash(gh pr review:*)", allow)
         self.assertNotIn("Bash(git commit:*)", allow)

@@ -35,6 +35,14 @@ if [ -n "${AGENT_MODEL:-}" ]; then
 fi
 
 if [ "$MODE" = "review" ]; then
+  # "Cannot edit files" has to be spelled in the vendor's own tool names,
+  # and that roster moves under us: a deny rule naming a tool the
+  # installed CLI does not have is refused outright ("matches no known
+  # tool"), so the launch dies before the agent speaks — which is how the
+  # retired MultiEdit killed every review and relevance launch (task 10).
+  # Re-check these names against the installed CLI rather than memory
+  # whenever the list is touched; tests/test_adapter_permissions.py
+  # asserts the flag list whole so any edit surfaces in review.
   exec "$BIN" -p "$AGENT_PROMPT" --settings "$SETTINGS" \
     ${MODEL_ARGS[@]+"${MODEL_ARGS[@]}"} \
     --permission-mode default \
