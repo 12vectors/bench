@@ -14,7 +14,7 @@ Review the PR properly:
   context, not in isolation.
 - Check the work against the task: does it do what the task asked? Is
   anything missing, wrong, or beyond scope?
-- Check it against CLAUDE.md at the repo root: layering rules, definition of
+- Check it against AGENTS.md at the repo root: layering rules, definition of
   done, testing expectations.
 
 You are read-only on the working tree: make NO edits, NO commits, move

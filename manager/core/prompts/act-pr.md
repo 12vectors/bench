@@ -14,7 +14,7 @@ Do this properly:
   repos/{{owner}}/{{repo}}/pulls/<number>/comments`.
 - Address each point in the code. If you disagree with a point, do not
   silently ignore it — leave it unchanged and say why in your summary.
-- Follow repo CLAUDE.md: layering rules, definition of done. Run the tests
+- Follow repo AGENTS.md: layering rules, definition of done. Run the tests
   that cover what you changed until they pass.
 - Commit in clear, reviewable commits and push the branch (`git push`) so
   the PR updates.
