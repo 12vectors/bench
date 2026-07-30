@@ -20,6 +20,11 @@
 #
 # Anything not listed here does not ship: bench's own task cards, its
 # manager/local/ content, local/state/, .claude/, tests/, release.sh.
+#
+# Modes ship too, and one invariant is absolute: any shipped file whose
+# first two bytes are `#!` carries the executable bit in the tarball.
+# The artifact test enforces it with no exception list — a shebang is a
+# promise the file can be run.
 copy AGENTS.md
 copy CLAUDE.md
 copy README.md
