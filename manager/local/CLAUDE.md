@@ -1,9 +1,5 @@
-# Project-specific workflow notes
+<!-- Compatibility pointer, load-bearing: the project notes live in AGENTS.md
+(the vendor-neutral name all coding agents read); this file makes Claude Code
+CLIs without native AGENTS.md support load it via the import below. -->
 
-This file is yours — updates never touch manager/local/. Put here what an
-agent or teammate needs that the core doc cannot know: post-merge chores,
-what the driver assumes, what each local command is for.
-
-Bench's definition of done is `python3 -m unittest` and nothing else; the
-`checks` file beside this one is what the Focus view's CHECKS panel shows
-for this project.
+@AGENTS.md

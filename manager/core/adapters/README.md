@@ -23,6 +23,11 @@ An adapter is a directory with two executables:
   `PR REVIEW:`, `ADDRESSED:`) — the board parses them from this output, so
   the agent's final text must reach stdout.
 - exit 0 = completed; anything else = failed.
+- The workflow brief the prompts point agents at is `AGENTS.md` at the
+  repo root (`CLAUDE.md` beside it is only a compatibility pointer).
+  Vendors that read `AGENTS.md` from the working directory's tree
+  natively — opencode does, as does current Claude Code — pick it up in
+  every worktree with no adapter work; `run` never needs to inject it.
 
 ### Launch intents (`AGENT_MODE`)
 

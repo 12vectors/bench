@@ -6,7 +6,7 @@
 
 The manager sits cleanly on top of the tasks/ directory: it reads and moves
 task files, but the tasks work as a plain folder kanban without it. See
-../CLAUDE.md for the workflow and the module map:
+../AGENTS.md for the workflow and the module map:
 
     config.py     paths, stages, launch configuration
     state.py      shared registries, event persistence, SSE fan-out
