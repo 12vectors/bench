@@ -1,6 +1,7 @@
 # 27 — update.sh offers to commit the update it just made
 
-**Status:** Backlog
+**Status:** To Do
+**Assignee:** istos
 **Priority:** Medium — every update leaves doctrine-mandated homework in the host's tree; the first 0.2 field report asked for exactly this
 **Type:** Feature
 
