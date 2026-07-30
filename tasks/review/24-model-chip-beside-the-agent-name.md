@@ -1,6 +1,7 @@
 # 24 — A model chip beside every agent name
 
 **Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/21
 **Assignee:** istos
 **Priority:** Low — the data is already there; this is putting it where eyes are
 **Type:** Feature
