@@ -1,6 +1,7 @@
 # 24 — A model chip beside every agent name
 
-**Status:** To Do
+**Status:** In Progress
+**Assignee:** istos
 **Priority:** Low — the data is already there; this is putting it where eyes are
 **Type:** Feature
 
