@@ -1,6 +1,7 @@
 # 19 — Boards sync through origin/main: push on move, pull on a beat
 
-**Status:** Review
+**Status:** Done
+**PR:** https://github.com/12vectors/bench/pull/17
 **Assignee:** istos
 **Priority:** High — this is the multi-user feature; 18 without it is bookkeeping
 **Type:** Feature
@@ -124,3 +125,46 @@ sts, including 34 new ones. Nothing is pushed or merged.
 
 - **A divergence is not always a stall.** The card says never to pull past a divergence. When *every* local-ahead commit is a board commit, the board rebases them instead of stalling — that replay *is* the race resolution, and the piggyback guard means a human's commit still stalls it loudly. A pure "always stall" reading would leave a board that queued moves while offline stuck until someone moved a card.
 - **"Non-clean tree" means modified tracked files.** Untracked files do not stall sync; a stray scratch file on someone's disk should not stop a team converging.
+
+
+---
+
+## Relevance review — 2026-07-30 10:17 (Wren)
+
+RELEVANCE REVIEW: Still relevant
+
+The feature is fully built and committed on branch `task/19-boards-sync-through-origin-main` (two commits: `9d98e2c` sync, `ee8469d` docs), tested, but not merged to `main` and — notably — with **no PR opened yet**. The card is correctly parked in `review/`. Nothing in the task has gone stale; keep it as is and drive it through review/merge.
+
+**What I verified**
+- `manager/core/sync.py` does **not** exist on `main`; it lives only on the task branch (448 lines), and its module docstring matches the work report point-for-point (event-driven push, beat pull, piggyback guard, divergence-replay, offline degradation). The branch diff also touches `state.py` (+14, the `task_committed` hook), `watch.py` (+59, author attribution), `board.py`/`httpd.py`/`board.html`, `config.py` (settings), `AGENTS.md`/`README.md`/`.env.example`, and adds `tests/test_boards_sync.py` (565 lines). This is the complete surface the card's "Affected areas" named.
+- Both dependencies the card rests on have landed on `main`: task 18 (`48a8d6a Merge branch 'task/18-cards-claimed-on-move'` — the claim-commit atomicity the races rely on) and task 14 (fresh branches off origin/main). No renamed modules or replaced approaches; `watch.py`'s 2s poller and the `board:`-prefixed commit convention the guard keys on are both still present exactly as the card assumes.
+- The two decisions Juno flagged as card-left-open (divergence-is-not-always-a-stall via board-commit replay; "non-clean tree" = modified *tracked* files) are design refinements within scope, not contradictions of the card.
+
+**To know (one process oddity, not a task defect)**
+- The task file has **no `**PR:**` line** — the board normally opens a PR automatically when a card enters `review/`, yet none is recorded here. Worth a glance at why before merging (a common cause is local `main` being ahead of `origin/main`, which makes the board refuse the auto-PR; I couldn't confirm the ahead/behind count in this read-only session). This affects how the card gets reviewed, not whether the work is still wanted.
+
+**To do**
+- Nothing on the task text. Proceed with review of the branch (open/repair the PR, run `tests/test_boards_sync.py`, then merge). Do not rewrite or drop the card.
+
+**Recommendation:** Keep as is. The task is an accurate, current record of complete-but-unmerged work; it stays in `review/` until the branch is reviewed and merged.
+
+
+---
+
+## PR review — 2026-07-30 10:33 (Wren)
+
+PR REVIEW: APPROVE
+
+The work is complete, committed on `task/19-boards-sync-through-origin-main` (two commits), and not yet merged. Task 19 delivers exactly what the card asked: origin/main becomes the shared truth behind `BOARD_SYNC`, board moves push themselves, a beat pulls every 30s, remote moves are attributed to their author, and losing a same-card race is a toast that reverts cleanly. I reviewed the full diff, the surrounding modules, and all of `tests/test_boards_sync.py`. GitHub refused a formal approval because the PR is authored by this checkout's own git user (`istos`), so the verdict is posted as a PR comment instead.
+
+**What I checked**
+- **Every acceptance criterion maps to code and a test.** Gate off touches no network (`test_the_gate_off_does_not_touch_the_network`, using an `ext::sleep 30` remote that would hang if touched); event-driven push via `state.task_committed` → `on_commit` off-thread; piggyback guard (`_stray`, sync.py:501) refuses any non-`board:`-prefixed local-ahead commit before both push and replay; race resolution (`_replay`, sync.py:606) drops the local move on a task-file conflict and toasts who took the card; offline degrades quietly and catches up. Both race shapes plus the mid-drag stale-drop race are tested and converge to identical file bytes.
+- **Layering (AGENTS.md).** Clean and deliberate: `sync.py` imports only modules to its left; `watch.py` (to its right) imports `sync`; `taskfiles` stays left of what reacts to it by firing a `state.COMMIT_HOOKS` registry rather than importing sync. Module map, README, `.env.example`, and the new "Syncing boards" section are all updated and accurate.
+
+**To know (non-blocking, for whoever merges)**
+- **`_NOTES` is read without a lock** (sync.py:76 — `status()` iterates `.values()` on the httpd thread) while `_note`/`_clear` mutate it on the beat/push threads. Its sibling `ARRIVED` gets `_ARRIVED_LOCK`; `_NOTES` does not. A concurrent mutation during iteration can raise `RuntimeError: dictionary changed size during iteration`, failing one state payload. Rare and self-recovering, but the asymmetry reads as an oversight — a lock or a snapshot copy would close it.
+- **Merge-to-done window**: the "merge & clean up" flow creates a non-`board:` merge commit before pushing it; if the 30s beat fires in that gap it briefly flags `sync stalled` before the flow's own push lands and self-clears. Cosmetic, low-probability.
+
+**To do**
+- Run `python3 -m pytest tests/test_boards_sync.py` before merging — the sandbox here blocked worktree/temp-dir creation so I could not execute the suite myself; it reads as correct and comprehensive, and the earlier relevance review reported it passing.
+- Optionally guard `_NOTES` with a lock (or copy before iterating) — a small follow-up, not a blocker.
