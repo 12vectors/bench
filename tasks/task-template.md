@@ -55,9 +55,9 @@ tempting neighbours — delete rather than leave empty.
 ## Acceptance
 
 Observable outcomes, not implementation steps — review agents judge the
-diff against exactly this list. The repo's definition of done (tests pass,
-`lint-imports` clean, new behaviour covered) applies on top; don't restate
-it. Given/When/Then phrasing is welcome where it sharpens a criterion, and
+diff against exactly this list. The repo's definition of done (the
+project's configured checks pass, new behaviour covered) applies on top;
+don't restate it. Given/When/Then phrasing is welcome where it sharpens a criterion, and
 edge cases belong here too — boundaries, empty inputs, failure paths.
 
 - [ ] Something a reviewer can check without reading the diff

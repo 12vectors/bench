@@ -25,6 +25,10 @@ from pathlib import Path
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
+# manager/ — the same distance up from core/adapters/claude/ as from a
+# local/adapters/claude/ override, so both copies resolve the same files.
+MANAGER = Path(__file__).resolve().parents[3]
+
 
 def _txt(value, cap=600):
     return value[:cap] if isinstance(value, str) else ""
@@ -49,6 +53,56 @@ def _resp_text(resp):
         return "\n".join(i["text"] for i in resp
                          if isinstance(i, dict) and isinstance(i.get("text"), str))
     return ""
+
+
+def check_defs():
+    """The project's definition-of-done checks: `<label>: <command regex>`
+    per line, local/checks replacing core/checks wholesale — the same file
+    the board serves to the Focus panel, read here for classification so
+    the two never drift. (Core's config.py mirrors this parser; the bridge
+    stays standalone.) Read fresh per event; must never raise."""
+    for base in (MANAGER / "local", MANAGER / "core"):
+        try:
+            text = (base / "checks").read_text(encoding="utf-8")
+        except OSError:
+            continue
+        defs = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            label, sep, pattern = line.partition(":")
+            label, pattern = label.strip(), pattern.strip()
+            if not sep or not label or not pattern:
+                continue
+            try:
+                defs.append((label, re.compile(pattern)))
+            except re.error:
+                continue
+        return defs
+    return []
+
+
+def judge(out):
+    """Generic pass/fail from a check's output — the hook payload carries
+    no exit status (stdout/stderr/interrupted only), so judgment rests on
+    the summaries test tools print: counted results ('3 passed',
+    '1 failed', '2 errors'), lint-style broken totals, and OK/FAILED
+    verdict lines. Returns (ok, summary bit); (None, '') when the output
+    says nothing recognizable either way."""
+    failed = re.search(r"\b\d+ (?:failed|errors?)\b", out)
+    passed = re.search(r"\b\d+ passed\b", out)
+    if failed:
+        return False, failed.group(0) + (f", {passed.group(0)}" if passed else "")
+    if passed:
+        return True, passed.group(0)
+    broken = re.search(r"\b(\d+) broken\b", out)
+    if broken:
+        return broken.group(1) == "0", broken.group(0)
+    verdict = re.search(r"^(OK|FAILED)\b.*", out, re.M)
+    if verdict:
+        return verdict.group(1) == "OK", verdict.group(0)[:60]
+    return None, ""
 
 
 def classify(hook, tool, tool_input, resp):
@@ -88,31 +142,19 @@ def classify(hook, tool, tool_input, resp):
         cmd = _txt(tool_input.get("command"), 240)
         running = hook == "PreToolUse"
         out = "" if running else _resp_text(resp)[:1200]
-        kind, ok = "command", None
-        if re.search(r"\bpytest\b", cmd):
-            kind = "test"
-        elif "lint-imports" in cmd or re.search(r"type-check|vue-tsc|\bnpm (run )?test\b|\bvitest\b", cmd):
-            kind = "check"
-        elif re.match(r"\s*git (commit|add|push|checkout|switch|merge|worktree)", cmd):
+        kind, ok, label = "command", None, None
+        for name, pattern in check_defs():
+            if pattern.search(cmd):
+                kind, label = "check", name
+                break
+        if kind == "command" and re.match(r"\s*git (commit|add|push|checkout|switch|merge|worktree)", cmd):
             kind = "git"
 
         if running:
             summary = f"running: {cmd[:90]}"
-        elif kind == "test":
-            passed = re.search(r"(\d+) passed", out)
-            failed = re.search(r"(\d+) failed", out) or re.search(r"(\d+) error", out)
-            if failed:
-                ok = False
-                summary = f"pytest — {failed.group(0)}" + (f", {passed.group(0)}" if passed else "")
-            elif passed:
-                ok = True
-                summary = f"pytest — {passed.group(0)}"
-            else:
-                summary = f"ran: {cmd[:90]}"
         elif kind == "check":
-            if "broken" in out:
-                ok = not re.search(r"[1-9]\d* broken", out)
-            summary = f"ran: {cmd[:90]}"
+            ok, bits = judge(out)
+            summary = f"{label} — {bits}" if bits else f"ran: {cmd[:90]}"
         elif kind == "git":
             m = re.search(r"""-m ["']([^"']{1,90})""", cmd)
             summary = f"git: {m.group(1) if m else cmd[:80]}"
@@ -129,7 +171,7 @@ def board_port():
     if port:
         return port
     try:
-        env_file = Path(__file__).resolve().parents[3] / "local" / ".env"
+        env_file = MANAGER / "local" / ".env"
         for line in env_file.read_text().splitlines():
             key, _, value = line.strip().partition("=")
             if key.strip() == "BOARD_PORT":
@@ -139,31 +181,36 @@ def board_port():
     return port or "26071"
 
 
-try:
-    payload = json.load(sys.stdin)
-except Exception:
-    payload = {}
+def main():
+    try:
+        payload = json.load(sys.stdin)
+    except Exception:
+        payload = {}
 
-tool_input = payload.get("tool_input")
-event = {
-    "v": 1,
-    "session": payload.get("session_id") or "unknown",
-    "agent": os.environ.get("BOARD_AGENT_ID"),
-    "task": os.environ.get("BOARD_TASK"),
-    **classify(payload.get("hook_event_name") or "?",
-               payload.get("tool_name") or "",
-               tool_input if isinstance(tool_input, dict) else {},
-               payload.get("tool_response")),
-}
+    tool_input = payload.get("tool_input")
+    event = {
+        "v": 1,
+        "session": payload.get("session_id") or "unknown",
+        "agent": os.environ.get("BOARD_AGENT_ID"),
+        "task": os.environ.get("BOARD_TASK"),
+        **classify(payload.get("hook_event_name") or "?",
+                   payload.get("tool_name") or "",
+                   tool_input if isinstance(tool_input, dict) else {},
+                   payload.get("tool_response")),
+    }
 
-try:
-    request = urllib.request.Request(
-        f"http://127.0.0.1:{board_port()}/api/events",
-        data=json.dumps(event).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-    )
-    urllib.request.urlopen(request, timeout=1).read()
-except Exception:
-    pass
+    try:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{board_port()}/api/events",
+            data=json.dumps(event).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(request, timeout=1).read()
+    except Exception:
+        pass
 
-sys.exit(0)
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

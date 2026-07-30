@@ -193,8 +193,9 @@ The board has three views (header switcher):
   reads, edits, test runs, commits and card moves, with filters and expandable
   output. Sessions persist to `.sessions/*.jsonl`, so past ones can be replayed.
 - **Focus** — a heads-up display for one session: the task it holds, its live
-  TodoWrite plan, the definition-of-done checks (pytest / lint-imports /
-  frontend), and per-file diff stats from its worktree.
+  TodoWrite plan, the project's configured definition-of-done checks (a
+  `checks` file in `manager/local/` overriding the shipped default in
+  `core/`), and per-file diff stats from its worktree.
 
 Liveness comes from Claude Code hooks configured in `.claude/settings.json`:
 every session in this repo POSTs normalized events to the board via the

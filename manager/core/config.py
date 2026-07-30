@@ -9,6 +9,7 @@ things are* lives here. No state, no behaviour.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -92,8 +93,7 @@ ADAPTER = setting("BOARD_AGENT_ADAPTER", "claude")
 # test/check commands) — neutral, comma-separated; each adapter renders
 # them in its own permission-rule syntax. The universal git/gh grants are
 # the adapter's own knowledge; this list is the project's half.
-AGENT_COMMANDS = setting("BOARD_AGENT_COMMANDS",
-                         "python3 -m unittest,python3 -m pytest")
+AGENT_COMMANDS = setting("BOARD_AGENT_COMMANDS", "python3 -m unittest")
 
 # GitHub plumbing: the gh CLI (stub-able for tests) and the git remote PRs
 # go to. Empty remote = auto-detect the first remote; no remote = no PRs.
@@ -113,6 +113,36 @@ def prompt(name: str) -> str:
     if override.is_file():
         return override.read_text(encoding="utf-8")
     return (CORE / "prompts" / name).read_text(encoding="utf-8")
+
+
+def checks() -> list[dict]:
+    """Definition-of-done checks for the Focus panel: core ships a default
+    (core/checks); a local/checks replaces it wholesale, like prompts. Each
+    line is `<label>: <command regex>`; invalid regexes are skipped. The
+    agent adapter reads the same file to classify commands (the claude
+    adapter's emit.py is standalone, so the parser is mirrored there), and
+    the browser matches with the served patterns — keep them in the regex
+    dialect Python and JavaScript share. Read fresh on every request."""
+    for base in (LOCAL, CORE):
+        path = base / "checks"
+        if not path.is_file():
+            continue
+        entries = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            label, sep, pattern = line.partition(":")
+            label, pattern = label.strip(), pattern.strip()
+            if not sep or not label or not pattern:
+                continue
+            try:
+                re.compile(pattern)
+            except re.error:
+                continue
+            entries.append({"label": label, "pattern": pattern})
+        return entries
+    return []
 
 
 def adapter_dir() -> Path | None:
