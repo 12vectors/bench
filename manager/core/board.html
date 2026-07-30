@@ -1295,7 +1295,7 @@ function renderFlight() {
   }
   const events = S.events[sid] || [];
   const files = new Set(events.filter(e => e.file && e.kind === 'edit').map(e => e.file));
-  const tests = events.filter(e => e.kind === 'test').length;
+  const checks = events.filter(e => e.kind === 'test' || e.kind === 'check').length;
   const agent = agentFor(sid);
   const stopBtn = agent && agent.status === 'running'
     ? `<button id="stopagent" class="stopbtn" data-aid="${esc(agent.id)}">Hold</button>` : '';
@@ -1305,7 +1305,7 @@ function renderFlight() {
     `<span class="sid">${esc(sid.slice(0, 8))}</span></div>` +
     `<div class="s-line">${meta.task ? 'on ' + esc(meta.task) + ' · ' : ''}` +
     `started ${fmtShort(meta.started)} · ${meta.count || 0} events · ` +
-    `${files.size} files edited · ${tests} test runs${branch}</div></div>` +
+    `${files.size} files edited · ${checks} check runs${branch}</div></div>` +
     stopBtn + spark(events, meta);
   const stop = $('#stopagent');
   if (stop) stop.addEventListener('click', () => stopAgent(stop.dataset.aid));
@@ -1504,19 +1504,27 @@ function renderFocus() {
     steps + act + `</div>`;
 
   const rev = [...events].reverse();
-  const lastTest = rev.find(e => e.kind === 'test' && !e.running);
-  const lastLint = rev.find(e => e.kind === 'check' && (e.cmd || '').includes('lint-imports'));
-  const lastFront = rev.find(e => e.kind === 'check' && /type-check|vitest|npm/.test(e.cmd || ''));
   const checkRow = (name, ev) => {
-    if (!ev) return `<div class="check-row none"><span class="glyph">—</span><span class="name">${name}</span><span class="state">not run</span></div>`;
+    if (!ev) return `<div class="check-row none"><span class="glyph">—</span><span class="name">${esc(name)}</span><span class="state">not run</span></div>`;
     const cls = ev.ok === false ? 'fail' : ev.ok === true ? 'pass' : 'none';
     const glyph = ev.ok === false ? '✕' : ev.ok === true ? '✓' : '·';
-    const state = esc(ev.summary.replace(/^pytest — /, '').replace(/^ran: /, '')) + ' · ' + fmtShort(ev.ts);
-    return `<div class="check-row ${cls}"><span class="glyph">${glyph}</span><span class="name">${name}</span><span class="state">${state}</span></div>`;
+    const text = ev.summary.startsWith(name + ' — ')
+      ? ev.summary.slice(name.length + 3) : ev.summary.replace(/^ran: /, '');
+    const state = esc(text) + ' · ' + fmtShort(ev.ts);
+    return `<div class="check-row ${cls}"><span class="glyph">${glyph}</span><span class="name">${esc(name)}</span><span class="state">${state}</span></div>`;
   };
+  // One row per project-defined check — labels and command patterns come
+  // from the served checks definition (local/checks over core/checks),
+  // the same file the adapter classifies against.
+  const checkRows = (S.state?.checks || []).map(c => {
+    let re = null;
+    try { re = new RegExp(c.pattern); } catch { /* skip unparseable */ }
+    const ev = re && rev.find(e => !e.running && e.cmd && re.test(e.cmd));
+    return checkRow(c.label, ev);
+  }).join('');
   const checksPanel = `<div class="panel"><div class="phead"><span class="label">Checks</span></div>` +
-    checkRow('pytest', lastTest) + checkRow('lint-imports', lastLint) +
-    checkRow('frontend', lastFront) + `</div>`;
+    (checkRows || `<div class="check-row none"><span class="glyph">—</span><span class="name">no checks defined</span><span class="state"></span></div>`) +
+    `</div>`;
 
   let fileRows = '', fileHead = '';
   const diff = agent && S.diffCache[agent.id];
