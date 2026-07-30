@@ -45,3 +45,7 @@ Core knows about tasks, worktrees, PRs and events. It knows nothing about
 any particular app (drivers do: `local/driver/start`), agent vendor
 (adapters do: `core/adapters/`), or project (`local/` does). Full docs in
 AGENTS.md; the adapter contract in `manager/core/adapters/README.md`.
+
+## License
+
+[MIT](LICENSE).

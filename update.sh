@@ -40,7 +40,7 @@ fi
 rsync -a --delete "$tmp/dist/manager/core/" "$TM/manager/core/"
 # AGENTS.md is the workflow brief; CLAUDE.md its compatibility pointer —
 # copying both means an old full CLAUDE.md is replaced, never resurrected.
-for f in AGENTS.md CLAUDE.md README.md install.py start.sh stop.sh update.sh; do
+for f in AGENTS.md CLAUDE.md README.md LICENSE install.py start.sh stop.sh update.sh; do
   [ -f "$tmp/dist/$f" ] && cp "$tmp/dist/$f" "$TM/$f"
 done
 chmod +x "$TM"/start.sh "$TM"/stop.sh "$TM"/update.sh 2>/dev/null || true
