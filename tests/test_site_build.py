@@ -36,9 +36,14 @@ def builder():
 
 BUILDER = builder()
 
-# The sources every page is cut from. A scratch repo needs these and
-# nothing else to build the real manifest.
-SOURCES = ["AGENTS.md", "README.md"]
+# The files a build reads out of the repo: the two the pages are cut
+# from, and the one the version is read from. A scratch repo needs these
+# and nothing else to build the real manifest.
+SOURCES = ["AGENTS.md", "README.md", "manager/core/VERSION"]
+
+# A layout with no markup of its own, written into a scratch site when a
+# test wants to exercise the builder rather than a shipped template.
+PLAIN = "<!doctype html>\n<title>$title</title>\n$body\n"
 
 try:
     import markdown_it  # noqa: F401
@@ -69,11 +74,27 @@ class ScratchRepo:
         shutil.copytree(SITE, root / "site",
                         ignore=shutil.ignore_patterns("dist", "__pycache__"))
         for name in SOURCES:
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(REPO / name, root / name)
 
     @property
     def out(self) -> Path:
         return self.root / "site" / "dist"
+
+    def plain_home(self) -> dict:
+        """A landing page with no markup, so a manifest cut down to one
+        page under test still answers the `/` every layout's wordmark
+        links to — which the build now checks."""
+        (self.root / "site" / "templates" / "plain.html").write_text(
+            PLAIN, encoding="utf-8")
+        return {"path": "/", "title": "Home", "layout": "plain",
+                "section": None, "source": None}
+
+    def pages(self, *entries: dict) -> None:
+        """The manifest reduced to these pages, plus that landing page."""
+        manifest = self.manifest()
+        manifest["pages"] = [self.plain_home(), *entries]
+        self.write_manifest(manifest)
 
     def manifest(self) -> dict:
         return json.loads(
@@ -136,15 +157,17 @@ class TheRealSiteBuilds(unittest.TestCase):
         self.assertTrue((self.out / "static" / "site.css").is_file())
         self.assertTrue((self.out / "static" / "favicon.svg").is_file())
 
-    def test_both_layouts_render_real_content_from_agents_md(self):
-        """Not lorem: the words on the page are the words in the file."""
-        home = self.page("/")
+    def test_the_article_layout_renders_real_content_from_agents_md(self):
+        """Not lorem: the words on the page are the words in the file.
+        (The home layout is authored rather than sliced — its own facts
+        are tests/test_site_landing.py's subject.)"""
+        stages = self.page("/concepts/stages/")
         article = self.page("/concepts/claiming-a-card/")
-        # Sliced out of AGENTS.md's "## Stages" by the home entry.
-        self.assertIn("The directory a file sits in", home)
+        # Sliced out of AGENTS.md's "## Stages".
+        self.assertIn("Most tasks live here for most of their life", stages)
         self.assertIn("a stale <code>in-progress/</code> makes the board",
-                      home)
-        # ...and out of "## Claiming a card" by the article entry.
+                      stages)
+        # ...and out of "## Claiming a card".
         self.assertIn("The first claim sticks", article)
         self.assertIn("Identity is git's, so it collides like git's",
                       article)
@@ -159,9 +182,9 @@ class TheRealSiteBuilds(unittest.TestCase):
     def test_sub_headings_are_promoted_to_the_pages_own_level(self):
         """AGENTS.md's `### backlog/` under `## Stages` becomes an <h2>
         with an anchor, so the layout's contents list can reach it."""
-        home = self.page("/")
-        self.assertIn('<h2 id="backlog">backlog/</h2>', home)
-        self.assertIn('<h2 id="in-progress">in-progress/</h2>', home)
+        stages = self.page("/concepts/stages/")
+        self.assertIn('<h2 id="backlog">backlog/</h2>', stages)
+        self.assertIn('<h2 id="in-progress">in-progress/</h2>', stages)
 
     def test_the_ia_comes_out_of_the_manifest(self):
         article = self.page("/concepts/claiming-a-card/")
@@ -276,13 +299,11 @@ class DriftStopsTheBuild(ScratchCase):
     def test_a_section_emptied_to_its_heading_fails(self):
         """The subtler drift: the heading survives, its content moves
         elsewhere. An empty page is a drift, not a page."""
-        manifest = self.repo.manifest()
-        manifest["pages"] = [{
+        self.repo.pages({
             "path": "/hollow/", "title": "Hollow", "layout": "article",
             "section": "Concepts", "source": "AGENTS.md",
             "from": "## Empty", "to": "## After",
-        }]
-        self.repo.write_manifest(manifest)
+        })
         self.repo.edit("AGENTS.md", "## Claiming a card",
                        "## Empty\n\n## After\n\n## Claiming a card")
         result = self.repo.build()
@@ -293,13 +314,11 @@ class DriftStopsTheBuild(ScratchCase):
     def test_a_heading_inside_a_code_fence_is_not_a_heading(self):
         """AGENTS.md fences a task file template starting `# Task title`.
         Matching that would slice the document in half."""
-        manifest = self.repo.manifest()
-        manifest["pages"] = [{
+        self.repo.pages({
             "path": "/fenced/", "title": "Fenced", "layout": "article",
             "section": "Concepts", "source": "AGENTS.md",
             "from": "# Task title",
-        }]
-        self.repo.write_manifest(manifest)
+        })
         result = self.repo.build()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("# Task title", result.stderr)
@@ -312,13 +331,13 @@ class LinksComeOutWorking(ScratchCase):
     def build_one(self, body: str, *, link_routes=None):
         (self.repo.root / "SOURCE.md").write_text(
             f"# Doc\n\n## Section\n\n{body}\n", encoding="utf-8")
-        manifest = self.repo.manifest()
-        manifest["link_routes"] = link_routes or {}
-        manifest["pages"] = [{
-            "path": "/linked/", "title": "Linked", "layout": "article",
+        self.repo.pages({
+            "path": "/linked/", "title": "Linked", "layout": "plain",
             "section": "Concepts", "source": "SOURCE.md",
             "from": "## Section",
-        }]
+        })
+        manifest = self.repo.manifest()
+        manifest["link_routes"] = link_routes or {}
         self.repo.write_manifest(manifest)
         result = self.repo.build()
         page = self.repo.out / "linked" / "index.html"
@@ -334,9 +353,9 @@ class LinksComeOutWorking(ScratchCase):
     def test_link_routes_win_over_github(self):
         result, html = self.build_one(
             "See [the brief](AGENTS.md#stages).",
-            link_routes={"AGENTS.md": "/concepts/stages/"})
+            link_routes={"AGENTS.md": "/linked/"})
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('href="/concepts/stages/#stages"', html)
+        self.assertIn('href="/linked/#stages"', html)
 
     def test_an_absolute_link_and_an_anchor_are_left_alone(self):
         result, html = self.build_one(
@@ -364,14 +383,12 @@ class TheArticleGutterFollowsTheBody(ScratchCase):
     contents entry without anyone editing the site."""
 
     def test_promoted_sub_headings_become_the_contents_list(self):
-        manifest = self.repo.manifest()
-        manifest["pages"] = [{
+        self.repo.pages({
             "path": "/concepts/team-mode/", "title": "Syncing boards",
             "layout": "article", "section": "Concepts",
             "source": "AGENTS.md", "from": "## Syncing boards",
             "to": "## Task file format",
-        }]
-        self.repo.write_manifest(manifest)
+        })
         result = self.repo.build()
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -395,6 +412,10 @@ class TheManifestIsChecked(ScratchCase):
         self.repo.write_manifest(manifest)
         return self.repo.build()
 
+    def with_landing(self, page: dict):
+        self.repo.pages(page)
+        return self.repo.build()
+
     def test_an_unknown_layout_lists_the_ones_that_exist(self):
         result = self.only({
             "path": "/x/", "title": "X", "layout": "logbook",
@@ -412,13 +433,14 @@ class TheManifestIsChecked(ScratchCase):
         self.assertIn("from", result.stderr)
 
     def test_an_authored_page_says_so_with_a_null_source(self):
-        """The landing page 33 will write has no slice and no drift."""
-        result = self.only({
-            "path": "/", "title": "bench", "layout": "home",
-            "source": None})
+        """An authored page has no slice and so no drift: the builder
+        offers it an empty $body and renders the template's own words."""
+        result = self.with_landing({
+            "path": "/authored/", "title": "Authored", "layout": "plain",
+            "section": None, "source": None})
         self.assertEqual(result.returncode, 0, result.stderr)
-        html = (self.repo.out / "index.html").read_text("utf-8")
-        self.assertIn("Put the agents", html)
+        html = (self.repo.out / "authored" / "index.html").read_text("utf-8")
+        self.assertIn("<title>Authored</title>", html)
 
     def test_a_route_must_be_a_directory_path(self):
         result = self.only({

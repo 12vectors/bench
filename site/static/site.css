@@ -248,26 +248,25 @@ a:hover{color:var(--text);text-decoration:underline}
 .dot-alarm{background:var(--ink-alarm)}
 .dot-calm{background:var(--ink-calm)}
 .terminal-title{font-size:11px;color:var(--ink-dim);margin-left:6px}
+/* The transcript below is real output with the long stretches cut, and
+   the bar is where it says so — a claim about the block, not decoration. */
+.terminal-note{font-size:10.5px;color:var(--ink-dim);letter-spacing:.04em}
 .terminal-body{
   margin:0;padding:18px;background:var(--ink);color:var(--ink-text);
   font:var(--t-code)/1.85 var(--mono);
-  white-space:pre-wrap;word-break:break-all;
+  /* The release url is 72 characters and has to wrap rather than clip;
+     `anywhere` breaks it, and breaks a word only when a word is what
+     does not fit — the transcript's prose lines wrap normally. */
+  white-space:pre-wrap;overflow-wrap:anywhere;
 }
 .t-calm{color:var(--ink-calm)}
 .t-accent{color:var(--ink-accent)}
 .t-muted{color:var(--ink-muted)}
 .t-dim{color:var(--ink-dim)}
 
-.generated{padding:0 44px 34px}
-.page-home .prose{
-  background:var(--surface);border:1px solid var(--border-soft);
-  border-radius:12px;padding:28px 32px 12px;
-}
-.generated-heading{margin-top:0 !important}
-.generated-note{
-  margin:0 0 20px;font-size:11px;color:var(--dim);max-width:none;
-}
-
+/* Every door is a link to a page this site builds — the whole card is
+   the target, so the hover is the card's border rather than an
+   underline under three words of it. */
 .doors{
   display:grid;grid-template-columns:repeat(3,1fr);gap:14px;
   padding:0 44px 34px;
@@ -275,15 +274,37 @@ a:hover{color:var(--text);text-decoration:underline}
 .door{
   display:flex;flex-direction:column;gap:8px;padding:20px;
   background:var(--surface);border:1px solid var(--border-soft);
-  border-radius:12px;
+  border-radius:12px;color:var(--text);
 }
+.door:hover{border-color:var(--accent);color:var(--text);text-decoration:none}
 .door-dark{background:var(--text);border-color:var(--text);color:var(--canvas)}
+.door-dark:hover{border-color:var(--accent);color:var(--canvas)}
 .door-index{font-size:11px;color:var(--dim)}
 .door-dark .door-index{color:#7fa0a8}
 .door-title{font:600 19px/1.2 var(--display)}
 .door-text{font-size:var(--t-ui);line-height:1.6;color:var(--muted)}
 .door-dark .door-text{color:#a9c4c9}
 .door .mono{font-size:var(--t-code)}
+
+/* The strip at the foot of the landing page. It carries the version and
+   nothing else measurable, because the version is the only thing about
+   itself this site can measure. */
+.strip{
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:18px 44px;background:var(--sunken);
+  border-top:1px solid var(--border-soft);
+}
+.strip-label{
+  font-size:var(--t-micro);letter-spacing:.1em;text-transform:uppercase;
+  color:var(--dim);
+}
+.strip-version{
+  font-size:var(--t-code);padding:4px 10px;background:var(--surface);
+  border:1px solid var(--border);border-radius:99px;color:var(--accent);
+}
+.strip-text{font-size:12.5px;line-height:1.55;color:var(--muted);max-width:64ch}
+.strip-text .mono{font-size:var(--t-code)}
+.strip-link{font-size:12px;color:var(--accent)}
 
 /* ── 404 (layout "notfound") ── */
 .lost{
@@ -304,7 +325,7 @@ a:hover{color:var(--text);text-decoration:underline}
   .gutter{display:none}
   .hero{grid-template-columns:1fr;gap:28px;padding:32px 24px}
   .doors{grid-template-columns:repeat(2,1fr);padding:0 24px 28px}
-  .generated{padding:0 24px 28px}
+  .strip{padding:18px 24px}
 }
 @media (max-width:760px){
   .shell{grid-template-columns:minmax(0,1fr)}

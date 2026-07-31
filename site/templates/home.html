@@ -2,20 +2,37 @@
 <!-- Layout "home" — 1b Dockside from the turn-2 docs design: a landing
      that is mostly a terminal and a set of doors.
 
-     The hero copy and the doors are authored here on purpose; task 33
-     owns the landing page's words. Everything under "The five stages"
-     is generated from the source named in site/pages.json.
+     The words here are authored rather than sliced (site/pages.json says
+     so with "source": null), which is exactly why the two facts a
+     landing page must never get subtly wrong are not written here at
+     all: $install_block is README.md's own install command and $version
+     is manager/core/VERSION, both read by site/build.py.
+
+     The terminal is abridged — it says so in its own title bar — but
+     nothing in it is composed. Every line is one a first run really
+     prints: install.py's setup questions and its closing line,
+     board.py's startup. tests/test_site_landing.py holds each of them
+     against the source that prints it, so a reworded prompt fails the
+     suite rather than quietly making this page fiction.
 
      Placeholders are string.Template's, so every literal dollar in the
-     markup is doubled — which is why the shell prompts in the terminal
-     below look doubled in the source and single on the page. -->
+     markup would have to be doubled. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>$site_title · $site_tagline</title>
+<title>$title</title>
 <meta name="description" content="$description">
 <link rel="canonical" href="$canonical">
+<!-- This is the url that gets pasted into a chat, so it carries its own
+     card. No og:image: the site has no raster art, and an empty one is
+     worse than none. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="$site_title">
+<meta property="og:title" content="$title">
+<meta property="og:description" content="$description">
+<meta property="og:url" content="$canonical">
+<meta name="twitter:card" content="summary">
 <link rel="icon" href="$icon">
 <link rel="stylesheet" href="$stylesheet">
 </head>
@@ -26,7 +43,7 @@
   <span class="topbar-sep">/</span>
   <span class="topbar-repo">bench</span>
   <span class="spacer"></span>
-  <span>$version</span>
+  <span>docs for $version</span>
 </div>
 
 <header class="masthead masthead-flat">
@@ -50,8 +67,8 @@ $nav
       working in git worktrees, PRs opening on review, CI on the cards —
       and never merges anything itself.</p>
     <div class="hero-actions">
-      <a class="button button-solid button-lg" href="#stages">Read the stages</a>
-      <a class="button button-lg" href="$repo_url#install-into-a-repo">Install into a repo</a>
+      <a class="button button-solid button-lg" href="/guides/install/">Install into a repo</a>
+      <a class="button button-lg" href="$repo_url">bench on GitHub ↗</a>
     </div>
     <span class="mono aside-note">no account, no service, no database. it is
       python 3 on your own machine.</span>
@@ -62,72 +79,82 @@ $nav
       <span class="dot dot-alarm"></span>
       <span class="dot dot-calm"></span>
       <span class="mono terminal-title">~/your-repo</span>
+      <span class="spacer"></span>
+      <span class="mono terminal-note">first run · abridged</span>
     </div>
-    <pre class="terminal-body"><span class="t-calm">$$</span> mkdir .task-manager &amp;&amp; curl -L \
-    <span class="t-dim">https://github.com/12vectors/bench/releases/latest/download/bench.tar.gz</span> \
-    | tar -xz -C .task-manager
-<span class="t-calm">$$</span> ./.task-manager/start.sh
+    <pre class="terminal-body">$install_block
 
-  <span class="t-muted">No .task-manager/manager/local/.env yet — a few questions and bench writes one.</span>
-    solo or team? <span class="t-accent">[solo]</span>:
-    which agent adapter? <span class="t-accent">[claude]</span>:
-    what command runs this project's tests? <span class="t-accent">[python3 -m unittest]</span>:
+No .task-manager/manager/local/.env yet — a few questions and bench writes one.
+Enter takes the default in [brackets]; Ctrl-D skips the rest.
 
-  Task board for ~/your-repo/.task-manager/tasks
-    <span class="t-accent">http://127.0.0.1:26071/</span>
-    <span class="t-dim">Ctrl-C to stop</span></pre>
-  </div>
-</section>
+  solo or team? <span class="t-accent">[solo]</span>:
+  which agent adapter? <span class="t-accent">[claude]</span>:
+  what command runs this project's tests? <span class="t-accent">[python3 -m unittest]</span>:
 
-<section class="generated" id="stages">
-  <div class="prose">
-    <h2 class="generated-heading">The five stages</h2>
-    <p class="generated-note mono">from <span>$source_path</span> — the
-      section below is this file's, not a retelling of it</p>
-$body
+Wrote .task-manager/manager/local/.env — every other setting is in there, commented; edit it any time.
+
+<span class="t-dim">  …</span>
+
+Task board for ~/your-repo/.task-manager/tasks
+  <span class="t-accent">http://127.0.0.1:26071/</span>
+  <span class="t-dim">Ctrl-C to stop</span></pre>
   </div>
 </section>
 
 <section class="doors">
-  <div class="door">
+  <a class="door" href="/guides/install/">
     <span class="mono door-index">01</span>
-    <span class="door-title">Install</span>
+    <span class="door-title">Install and first run</span>
     <span class="door-text">Untar it into <span class="mono">.task-manager/</span>,
       run <span class="mono">start.sh</span>, answer three questions.
       Port 26071, pinned.</span>
-  </div>
-  <div class="door">
+  </a>
+  <a class="door" href="/concepts/stages/">
     <span class="mono door-index">02</span>
     <span class="door-title">The five stages</span>
     <span class="door-text">backlog → to-do → in-progress → review → done.
       The directory a file sits in <i>is</i> its status.</span>
-  </div>
-  <div class="door">
+  </a>
+  <a class="door" href="/concepts/agents-on-the-board/">
     <span class="mono door-index">03</span>
     <span class="door-title">Agents on the board</span>
     <span class="door-text">▸ start work makes a worktree and a branch, runs
       the agent headless, and moves the card when it exits.</span>
-  </div>
-  <div class="door">
+  </a>
+  <a class="door" href="/concepts/pull-requests/">
     <span class="mono door-index">04</span>
     <span class="door-title">PRs &amp; review</span>
     <span class="door-text">A card entering review gets a PR opened for it.
       Then ◔ review PR, ⚑ copilot, ↻ act on PR — until it settles.</span>
-  </div>
-  <div class="door">
+  </a>
+  <a class="door" href="/concepts/team-mode/">
     <span class="mono door-index">05</span>
     <span class="door-title">Team mode</span>
     <span class="door-text"><span class="mono">BOARD_SYNC=1</span> makes
       origin/main the truth. Moves commit and push themselves; boards pull
       on a beat.</span>
-  </div>
-  <div class="door door-dark">
+  </a>
+  <a class="door door-dark" href="/concepts/three-layer-law/">
     <span class="mono door-index">06</span>
     <span class="door-title">The three-layer law</span>
     <span class="door-text">Core knows tasks, worktrees, PRs and events.
       Drivers know apps, adapters know vendors, local/ knows your
       project.</span>
-  </div>
+  </a>
+</section>
+
+<!-- The strip turn 1 of the design filled with a most-read ranking. This
+     site counts nothing and never will, so it says the one thing about
+     itself it can prove: which version it was built from. -->
+<section class="strip">
+  <span class="mono strip-label">Version</span>
+  <span class="mono strip-version">$version</span>
+  <span class="strip-text">read from <span class="mono">manager/core/VERSION</span>
+    when this page was built. <span class="mono">update.sh</span> replaces an
+    install with the latest release; <span class="mono">BENCH_REF=v2</span>
+    pins an exact one.</span>
+  <span class="spacer"></span>
+  <a class="mono strip-link" href="$releases_url">Releases ↗</a>
 </section>
 
 <footer class="footer">
