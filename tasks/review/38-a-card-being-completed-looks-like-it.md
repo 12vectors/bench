@@ -1,6 +1,7 @@
 # 38 — A card being merged and cleaned up looks like it, and holds still
 
 **Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/37
 **Assignee:** istos
 **Priority:** Medium — a daily-path illusion, with a double-fire hazard
 sitting behind it
