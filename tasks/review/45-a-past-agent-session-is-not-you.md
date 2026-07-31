@@ -1,6 +1,6 @@
 # 45 — A past agent session is labelled "You", because "You" is what the board says when it does not know
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** High — the flight recorder misattributes work, and
 misattribution is worse than an absence: the list looks complete
@@ -141,3 +141,34 @@ shape the identity takes, a file written by the old code and a file
 written by the new one both have to load; a header line prepended to
 existing files would break every reader that assumes line one is an
 event.
+
+
+---
+
+## Work report — 2026-07-31 16:35 (Milo)
+
+Committed on `task/45-a-past-agent-session-is-not-you`, full suite green.
+
+---
+
+The work is **done, committed and verified**: `python3 -m unittest discover -s tests` passes 498 tests, 15 of them new in `tests/test_session_identity.py`. One commit, `f428ee0`.
+
+**What changed**
+
+A session's identity is now persisted beside its event log as `manager/local/state/sessions/<id>.who.json` — agent id, the agent's name, the model it rode, and the task. A separate whole file rather than an extra key on the events, for the reason the card's Risks section names: the logs are append-only JSONL whose first line every reader takes for an event. It is also the only workable place for the name and the model, since neither appears anywhere in the event stream — `state.AGENTS` is memory-only, so a restart was losing them.
+
+- `manager/core/state.py` — `persist_identity()` / `read_identity()`, and the `IDENTITY_SUFFIX` constant. `read_identity()` returns `None` (not `{}`) when nothing was recorded, because "recorded as no agent" and "we do not know" are the two states the label must not blur.
+- `manager/core/events.py` — `ingest_event()` keeps the agent's name and model on the session meta and writes the sidecar, but only when what the board knows changes (so a late-arriving agent id rewrites it and a hundred identical events do not). `load_disk_sessions()` reads it back. `session_label()` now has three registers: the agent's name, `You` only for a session positively known to have carried no agent, and a neutral `Session · <id>` otherwise.
+- `manager/core/board.html` — `agentFor()` falls back to the persisted identity when the live launch record is gone, so a replayed agent session wears its model chip. Things that need liveness (the Hold button, the worktree branch) find nothing on that fallback and stay silent, exactly as they did before.
+- `AGENTS.md` — the Sessions bullet now describes the sidecar and the three labels; it also had a stale path (`.sessions/*.jsonl`), corrected to `local/state/sessions/`.
+
+**For the reviewer, in order**
+
+1. `manager/core/events.py:33` — `session_label()`, the three-register rule, is the heart of the fix.
+2. `manager/core/board.html:716` — `agentFor()` now returns two shapes; check the call sites at lines 1595 and 1754 agree that the replayed shape is allowed to be thinner.
+3. The 63 existing session logs in this checkout have no sidecar, so they will relabel from `You · …` to `Session · …` on the next board start. That is the intended outcome — the card rules out retro-attribution — but it is the visible change on first restart.
+
+**To know**
+
+- `TodoWrite` is not available in this session's toolset, so the board had no live plan to display for this run. Nothing else was affected.
+- The neutral word for an unattributable session is `Session`, rendered as `Session · <id8>`; if you would rather it read `Unknown`, it is one string in `session_label()` and two assertions in the new test file.
