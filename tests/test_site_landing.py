@@ -209,10 +209,13 @@ class ChangingASourceChangesThePage(ScratchCase):
         return (self.repo.out / "index.html").read_text("utf-8")
 
     def test_editing_the_version_file_moves_the_version_on_the_page(self):
-        self.repo.edit("manager/core/VERSION", "0.2-alpha", "9.9-rc1")
+        """Read the version rather than naming one: a test that pins the
+        current version is a test that fails on the next release."""
+        version = text_of(REPO / "manager" / "core" / "VERSION").strip()
+        self.repo.edit("manager/core/VERSION", version, "9.9-rc1")
         self.assertEqual(0, self.repo.build().returncode)
         self.assertIn("9.9-rc1", self.home())
-        self.assertNotIn("0.2-alpha", self.home())
+        self.assertNotIn(version, self.home())
 
     def test_editing_the_readme_moves_the_command_on_the_page(self):
         self.repo.edit("README.md", "mkdir .task-manager && curl -L \\",
