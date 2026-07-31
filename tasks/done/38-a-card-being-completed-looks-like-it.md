@@ -1,6 +1,6 @@
 # 38 — A card being merged and cleaned up looks like it, and holds still
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/37
 **Assignee:** istos
 **Priority:** Medium — a daily-path illusion, with a double-fire hazard
@@ -147,3 +147,28 @@ Two things worth a reviewer's eye first:
 
 1. `tests/test_completing_card.py::ACompletionInFlight::test_a_second_request_mid_completion_starts_no_second_merge` — the second `complete_task` is fired re-entrantly from inside the first one's merge, which is the closest an in-process test gets to the real race; it asserts the refusal message, that only one merge ran, and that the first run still finished.
 2. I could not verify this in a browser — no browser tooling is available in this session, so the card face is covered by source-level invariants in `TheCardFace` (the same approach `tests/test_card_actions.py` takes) rather than by looking at it. A human clicking **Merge & clean up** once is the check I did not do.
+
+
+---
+
+## PR review — 2026-07-31 17:04 (Ada)
+
+PR REVIEW: APPROVE
+
+The work is committed on `task/38-a-card-being-completed-looks-like-it` (3 commits) and merges cleanly against main; I approve it. GitHub refused a formal `--approve` because the authenticated `gh` account authored the PR, so the verdict is posted to the PR as a review comment instead — a human still needs to click merge.
+
+**What the change does, and that it matches the task**
+
+A card being merged and cleaned up now wears a server-held busy state. The claim lives in `manager/core/state.py` (`COMPLETING`, guarded by `LOCK`), is exposed on `/api/state` and pushed over a new SSE `completing` message, and the card in `manager/core/board.html` renders from that truth rather than from the tab that clicked.
+
+**What I checked (all confirmed):**
+
+- **The stated risk — release on every exit.** `github.py:complete_task` validates stage and file-on-disk *before* claiming, then runs the unchanged body as `_complete` inside `try/finally`. Release fires on success, merge conflict, wrong-branch refusal, and an arbitrary crash. The refused second caller raises *before* the `try`, so it never releases the run it lost to. Every one of these paths has a real-git test.
+- **Lock discipline.** `publish_completing` re-acquires `LOCK` via `completing_public`; every call site invokes it *outside* the held lock, so the plain (non-reentrant) `threading.Lock` cannot deadlock. `completing_public` returns per-record copies, so the browser never aliases the live dict. `time` is imported.
+- **The card holds still.** `draggable = !completing`; the action builder falls through to nothing under `if (completing)`; drive and command chips drop; the drawer pill reads `completing`. So `↻ act on PR`, `◔ review PR`, `↩ back`, and `⛭ drive` are all suppressed, not merely ignored on click.
+- **Untouched paths.** No-branch/no-PR cards route through `rawMove`, never `/api/task/complete`, so no flash of busy. `ThreadingHTTPServer` means the synchronous completion never freezes SSE. Correct layering — all code changes are in core, plus a documenting paragraph in `AGENTS.md`. Reused `--accent` + `breathe`; no new colour.
+
+**To do before merging:**
+
+- Click **Merge & clean up** once on a real review card and watch the card face. I could not run a browser and neither could the author — the card surface is covered only by source-level invariants in `tests/test_completing_card.py::TheCardFace`.
+- Run `python3 -m unittest discover -s tests` locally. Test execution was approval-gated in my session, so the "617 green / 23 new" figure is from reading the tests, not running them.
