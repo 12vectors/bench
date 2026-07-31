@@ -1,6 +1,6 @@
 # 29 — A first run writes local/.env, asking the questions it can't guess
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/24
 **Assignee:** istos
 **Priority:** Medium — nothing is broken without it, but two of bench's
@@ -165,3 +165,28 @@ Done and committed. Closing report:
 2. `tests/test_install_first_boot.py:run_install_tty` — the pty harness. It kills and fails loudly on a 60-second timeout, so an unanswered question surfaces as a test failure rather than a hung suite. It is POSIX-only, which matches the rest of bench.
 
 **One judgment call worth confirming:** the solo/team question is binary, so `--setup` normalizes a hand-edited half-team file (`BOARD_COMMIT_MOVES=1` with `BOARD_SYNC=` empty). That file defaults the question to "team", and answering either way writes both keys together. That follows the acceptance criteria as written, but it means `--setup` cannot express "commit moves without sync" — a project that wants it edits the file directly, as it does today.
+
+
+---
+
+## PR review — 2026-07-31 09:42 (Milo)
+
+PR REVIEW: APPROVE
+
+The work is complete, committed on `task/29-first-run-writes-local-env` (`6352054`), and does exactly what task 29 asks. I verified it by static analysis; I could not run the suite in this review sandbox (test execution wasn't permitted here), so the approval rests on reading the diff and its context — the work report states the full suite passes (320 tests, OK).
+
+**What I checked**
+- Read the full diff plus the surrounding code (`install.py`, `manager/core/config.py:53-78`, `start.sh:73-87`).
+- The two new pure helpers mirror core's own parsing exactly: `env_values()` = `config._load_env`'s parser, `env_on()` = `config.flag`'s rule (`empty/0/false/no/off` → off). So the file `install.py` writes and the file the board reads agree by construction.
+- Bare-Enter-equals-example invariant holds: every answered key exists in `.env.example` at the value the defaults use (`BOARD_COMMIT_MOVES=`, `BOARD_SYNC=`, `BOARD_AGENT_ADAPTER=claude`, `BOARD_AGENT_COMMANDS=python3 -m unittest`), and `substitute()` normalizes to a single trailing newline matching the example — so "solo + Enter + Enter" reproduces the shipped file byte-for-byte.
+- Guard ordering (the load-bearing risk): `setup()` runs after `first_boot_clean()`, which stamps `local/state/` before `.env` is written, so `first_boot()` reads false next run regardless. Covered by a dedicated test.
+- Non-blocking contract: `sys.stdin.isatty()` and the dry-run / existing-`.env` early returns gate every `input()` call, so hooks/`update.sh`/CI never block. `--setup` is stripped from the adapter passthrough; `--dry-run` still passes through.
+- `start.sh` needs no change; its fallback-port writer still edits the written file in place (a test extracts that snippet and runs it).
+
+**Good**: all nine acceptance bullets have a matching test, plus unit tests of the helpers; the pty harness fails loudly on timeout rather than hanging.
+
+**For you to decide / look at**
+1. Run `python3 -m unittest discover -s tests` locally before merging — I couldn't run it here.
+2. Accepted design call: since solo/team is binary, `--setup` normalizes a hand-edited half-team file (commit-moves on, sync off) to both-on-together. This follows the acceptance criteria as written; a project wanting commit-moves-without-sync edits the file directly.
+
+No layering or scope concerns — changes are `install.py` (top-level), a comment block in `.env.example`, docs and tests. No board module touched, exactly as the task scoped it.
