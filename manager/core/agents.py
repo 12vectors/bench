@@ -22,7 +22,8 @@ import config
 import events
 import reports
 import state
-from taskfiles import actor_name, find_stage_of, move_task, read_task, set_assignee
+from taskfiles import (actor_name, append_to_task, find_stage_of, move_task,
+                       read_task, set_assignee)
 
 
 def _report_of(record: dict, text: str | None = None) -> str:
@@ -39,17 +40,17 @@ def _report_of(record: dict, text: str | None = None) -> str:
 
 
 def _file_report(record: dict, heading: str, report: str) -> None:
-    """The report travels with the task, like every review does."""
+    """The report travels with the task, like every review does — and, like
+    every other board-made write to a task file, it reaches git rather than
+    sitting modified in one working tree (task 44)."""
     stage = find_stage_of(record["task"])
     if not stage or not report:
         return
-    path = config.TASKS / stage / record["task"]
     stamp = time.strftime("%Y-%m-%d %H:%M")
-    try:
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(f"\n\n---\n\n## {heading} — {stamp} ({record.get('name') or 'agent'})\n\n{report}\n")
-    except OSError:
-        pass
+    name = record.get("name") or "agent"
+    append_to_task(record["task"], stage,
+                   f"\n\n---\n\n## {heading} — {stamp} ({name})\n\n{report}\n",
+                   f"{heading} filed")
 
 
 def _session_report(record: dict, report: str) -> None:

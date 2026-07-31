@@ -106,6 +106,16 @@ out of every column, never deleted, Status set to `Archived`. The toast says
 without an undo in the same breath. Cards in the working stages
 (in-progress, review) cannot be archived; finish or walk them back first.
 
+Archiving is a move, so it commits like one: under `BOARD_COMMIT_MOVES`
+the rename into `tasks/archive/` lands in a single `board: <n> → archived
+(<name>)` commit naming both paths, and ⌘Z commits its own way back. That
+is not bookkeeping for its own sake — an uncommitted deletion of a tracked
+file is exactly what `BOARD_SYNC` refuses to run over, so an archive that
+stopped at the disk would silently hold up every later move on that board,
+and the archived card would exist in one working tree only. The same law
+covers every write the board makes to a task file: the `**PR:**` line, a
+claim, and an agent's closing report all reach git the same way.
+
 ## Local commands
 
 Projects grow chores that belong to a specific checkout — applying a
