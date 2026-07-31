@@ -1,6 +1,7 @@
 # 44 — Archiving a card reaches git, and so does every other write the board makes to a task file
 
 **Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/36
 **Assignee:** istos
 **Priority:** High — an archive silently stalls team-mode sync, and the
 board says nothing about why
