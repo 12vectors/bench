@@ -1,0 +1,42 @@
+# Response headers for bench.12vectors.com.
+#
+# Read by Cloudflare Workers static assets at deploy time — the file is
+# consumed, never served — and copied here from site/root/ by
+# site/build.py, because the host looks for it at the root of the build
+# and nowhere else.
+#
+# Rules apply in order and a later rule wins on a header it repeats. The
+# two blocks below are written so that even a host that merged them
+# instead would land on the safe side: HTML would still revalidate.
+
+# Everything, so that no page can ever forget one of these.
+#
+#   nosniff              a text/plain file must not become a script
+#   Referrer-Policy      a full url is never sent to another origin
+#   HSTS                 one year, this host and anything below it. No
+#                        `preload`: that is a submission to browser
+#                        vendors and a commitment this card did not make
+#   X-Frame-Options      nothing here is meant to be framed
+#   CSP                  the runtime form of the site's own promise —
+#                        no analytics, no font CDN, no third-party
+#                        anything. `default-src 'none'` means an asset
+#                        must be named below to load at all, and no
+#                        'unsafe-inline' anywhere means an injected
+#                        <script> does not run
+#   Cache-Control        HTML revalidates on every view, so a deploy is
+#                        visible on the next reload. The ETag makes that
+#                        a 304 rather than a re-download
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  X-Frame-Options: DENY
+  Content-Security-Policy: default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Cache-Control: public, max-age=0, must-revalidate
+
+# The stylesheet and the icon are linked with a ?v=<hash> of their own
+# contents (site/build.py, stamp()), and the fonts never change under a
+# given filename. All of it is safe to keep for a year and never check:
+# a deploy that changes the stylesheet changes the url that asks for it.
+/static/*
+  Cache-Control: public, max-age=31536000, immutable
