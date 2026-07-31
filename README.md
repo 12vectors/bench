@@ -70,9 +70,15 @@ install one-liner above depends on.
 ## The three-layer law
 
 Core knows about tasks, worktrees, PRs and events. It knows nothing about
-any particular app (drivers do: `local/driver/start`), agent vendor
-(adapters do: `core/adapters/`), or project (`local/` does). Full docs in
-AGENTS.md; the adapter contract in `manager/core/adapters/README.md`.
+any particular app (drivers do: `manager/local/driver/start`), agent
+vendor (adapters do: `manager/core/adapters/`), or project
+(`manager/local/` does).
+
+The consequence is what makes an update safe: `update.sh` replaces
+`manager/core/` wholesale, and everything a project taught bench about
+itself lives outside it. Full docs in [AGENTS.md](AGENTS.md); the adapter
+contract in
+[manager/core/adapters/README.md](manager/core/adapters/README.md).
 
 ## License
 

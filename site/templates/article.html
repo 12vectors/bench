@@ -51,7 +51,13 @@ $sidebar
   <article class="prose">
     <div class="crumbs">$breadcrumb</div>
     <h1>$title</h1>
+    <!-- The one sentence an article authors. Everything below it is the
+         body placeholder: a heading slice of the file named in the
+         gutter. (Placeholders substitute inside comments too, so this
+         one cannot spell that name out.) -->
+    <p class="prose-lede">$lede</p>
 $body
+$flow
   </article>
 
   <aside class="gutter">

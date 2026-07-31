@@ -39,7 +39,16 @@
       "description": "backlog, to-do, in-progress, review, done — the directory a task file sits in is its status, and there is no other source of truth.",
       "source": "AGENTS.md",
       "from": "## Stages",
-      "to": "## Moving a task"
+      "to": "## Claiming a card"
+    },
+    {
+      "path": "/concepts/task-files/",
+      "title": "Task files",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "A task is a markdown file with a numbered name and a short header. Status is the only field the board enforces.",
+      "source": "AGENTS.md",
+      "from": "## Task file format"
     },
     {
       "path": "/concepts/claiming-a-card/",
@@ -90,6 +99,17 @@
       "source": "README.md",
       "from": "## The three-layer law",
       "to": "## License"
+    },
+    {
+      "path": "/concepts/adapters/",
+      "title": "Agent adapters",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "Headless jobs run through an adapter, so the board works with coding agents other than Claude Code — and never sees a vendor's payloads.",
+      "lede": "The adapter is the layer that knows a coding agent. It launches one headless job, and translates that vendor's events into the board's own schema — which is what keeps every other line of core free of any particular agent.",
+      "source": "AGENTS.md",
+      "from": "## Agent adapters",
+      "to": "## Drives"
     },
     {
       "path": "/404.html",
