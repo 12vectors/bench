@@ -1,6 +1,7 @@
 # 32 — Serve bench.12vectors.com from a Cloudflare Worker
 
 **Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/27
 **Assignee:** istos
 **Priority:** High — the site is not a site until it has an address
 **Type:** Feature
