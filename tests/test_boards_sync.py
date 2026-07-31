@@ -171,6 +171,22 @@ class TwoBoards(unittest.TestCase):
                          "a move that arrived over origin is not 'disk'")
         self.assertEqual((moves[0]["from"], moves[0]["to"]), ("backlog", "to-do"))
 
+    def test_an_archive_publishes_itself_and_empties_the_other_board(self):
+        """Task 44: an archive is a board-made move like any other, so it
+        commits, pushes and reaches the teammate — where the card is simply
+        gone from every column rather than lingering as one it never saw
+        leave."""
+        self.use(self.ada)
+        taskfiles.archive_task(FILENAME, "backlog")
+        self.assertEqual(sync.push_now(), "ok")
+
+        self.use(self.elena)
+        self.assertEqual(sync.pull_now(), "pulled")
+
+        self.assertIsNone(self.stage_of(self.elena), "out of every column")
+        self.assertTrue((self.elena / "tasks" / "archive" / FILENAME).is_file(),
+                        "never deleted: a fresh clone still has the card")
+
     def test_attribution_is_consumed_once_and_expires(self):
         self.move(self.ada, "backlog", "to-do")
         sync.push_now()

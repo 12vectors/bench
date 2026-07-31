@@ -1,8 +1,14 @@
-"""Reading and moving task files — the only module that touches tasks/.
+"""Reading, moving and writing task files — the only module that touches tasks/.
 
 The directory a task file sits in *is* its status (see ../AGENTS.md). Nothing
 here knows about agents or HTTP; it is the same folder kanban you could drive
 by hand with mv.
+
+Every write goes out through one of two doors — `_relocate` for anything
+that changes which directory a card sits in, `append_to_task`/`commit_edit`
+for anything written into it where it stands — and both commit under the
+`COMMIT_MOVES` gate. That is deliberate: committing is a property of
+writing to a task file, not something each caller has to remember.
 """
 
 from __future__ import annotations
@@ -105,9 +111,15 @@ def find_stage_of(filename: str) -> str | None:
 ARCHIVE_FROM = {"backlog", "to-do", "done"}
 
 
-def archive_task(filename: str, source: str) -> dict:
+def archive_task(filename: str, source: str, actor: str = "you") -> dict:
     """Archive: out of the flow but never deleted. tasks/archive/ is not a
-    stage — archived cards simply leave the board."""
+    stage — archived cards simply leave the board.
+
+    It is still a board-made write to a task file, so it goes out through
+    `_relocate` like every other one: attributed, and committed under the
+    same gate a move is (an uncommitted deletion of a tracked file is
+    precisely what stops sync publishing anything else).
+    """
     if source not in ARCHIVE_FROM:
         raise ValueError("archive takes cards from backlog, to-do or done only")
     if Path(filename).name != filename or not filename.endswith(".md"):
@@ -121,14 +133,13 @@ def archive_task(filename: str, source: str) -> dict:
     text = src.read_text(encoding="utf-8")
     if STATUS_RE.search(text):
         text = STATUS_RE.sub("**Status:** Archived", text, count=1)
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    src.write_text(text, encoding="utf-8")
-    shutil.move(str(src), str(dst))
+    _relocate(filename, src, dst, text, "archived", actor)
     return {"file": filename, "from": source}
 
 
-def unarchive_task(filename: str, target: str) -> dict:
-    """⌘Z: bring the last archived card back where it came from."""
+def unarchive_task(filename: str, target: str, actor: str = "you") -> dict:
+    """⌘Z: bring the last archived card back where it came from — and
+    record the way back in git, exactly as the way out was."""
     if target not in ARCHIVE_FROM:
         raise ValueError("unknown stage to restore into")
     src = config.TASKS / "archive" / filename
@@ -140,8 +151,7 @@ def unarchive_task(filename: str, target: str) -> dict:
     text = src.read_text(encoding="utf-8")
     if STATUS_RE.search(text):
         text = STATUS_RE.sub(f"**Status:** {config.STAGE_LABELS[target]}", text, count=1)
-    src.write_text(text, encoding="utf-8")
-    shutil.move(str(src), str(dst))
+    _relocate(filename, src, dst, text, target, actor)
     return {"file": filename, "to": target}
 
 
@@ -225,9 +235,20 @@ def _commit(filename: str, message: str, spec: list[str], failure: str) -> bool:
     return False
 
 
+def _number(filename: str) -> str | None:
+    match = NUMBER_RE.match(filename)
+    return match.group(1) if match else None
+
+
 def _commit_move(filename: str, target: str, src: Path, dst: Path, who: str,
                  number: str | None) -> None:
-    """The move and the claim in one commit."""
+    """The move and the claim in one commit.
+
+    Both paths are named, so git records a rename rather than a delete and
+    an add — and a card git has never seen (a brand-new backlog file) names
+    only its destination, since a pathspec matching nothing in HEAD would
+    fail the commit outright.
+    """
     spec = [str(dst)]
     try:
         tracked = _git("ls-files", "--", str(src))
@@ -237,6 +258,27 @@ def _commit_move(filename: str, target: str, src: Path, dst: Path, who: str,
         pass
     _commit(filename, f"board: {number or filename[:-3]} → {target} ({who or 'board'})",
             spec, f"{filename} moved, but committing it failed")
+
+
+def _relocate(filename: str, src: Path, dst: Path, text: str, target: str,
+              actor: str, who: str | None = None) -> None:
+    """The one door out of a directory under tasks/: register who is doing
+    it, write the file, move it, commit it.
+
+    Every mover in this module goes through here, so committing is a
+    property of *writing to a task file* rather than something each caller
+    remembers — the way archiving forgot it. `target` is what the ticker
+    and the commit message call the destination (a stage slug, or
+    `archived`), and `who` is this checkout's git name when the caller has
+    already paid for it.
+    """
+    state.expect_move(filename, target, actor)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text(text, encoding="utf-8")
+    shutil.move(str(src), str(dst))
+    if config.COMMIT_MOVES:
+        _commit_move(filename, target, src, dst,
+                     actor_name() if who is None else who, _number(filename))
 
 
 def commit_edit(filename: str, stage: str, what: str) -> bool:
@@ -251,12 +293,30 @@ def commit_edit(filename: str, stage: str, what: str) -> bool:
     if not config.COMMIT_MOVES:
         return False
     path = config.TASKS / stage / filename
-    number = NUMBER_RE.match(filename)
     return _commit(filename,
-                   f"board: {number.group(1) if number else filename[:-3]} "
+                   f"board: {_number(filename) or filename[:-3]} "
                    f"{what} ({actor_name() or 'board'})",
                    [str(path)],
                    f"{filename}: {what} recorded, but committing it failed")
+
+
+def append_to_task(filename: str, stage: str, text: str, what: str) -> bool:
+    """Append to a card where it stands, and commit the write.
+
+    The other half of the same law: an agent's closing report is the
+    permanent record the project keeps on purpose, so it reaches git like
+    the `**PR:**` line does instead of sitting modified in one working
+    tree. Returns whether the text was written (the commit is the gate's
+    business, and is narrated if it fails).
+    """
+    path = config.TASKS / stage / filename
+    try:
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(text)
+    except OSError:
+        return False
+    commit_edit(filename, stage, what)
+    return True
 
 
 def move_task(filename: str, source: str, target: str, actor: str = "you") -> dict:
@@ -293,11 +353,5 @@ def move_task(filename: str, source: str, target: str, actor: str = "you") -> di
         elif name and claims(source, target):
             text = _set_assignee(text, name)
 
-    state.expect_move(filename, target, actor)
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    src.write_text(text, encoding="utf-8")
-    shutil.move(str(src), str(dst))
-    task = read_task(dst, target)
-    if config.COMMIT_MOVES:
-        _commit_move(filename, target, src, dst, name, task["number"])
-    return task
+    _relocate(filename, src, dst, text, target, actor, who=name)
+    return read_task(dst, target)
