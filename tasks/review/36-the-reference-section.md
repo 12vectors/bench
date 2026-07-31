@@ -1,6 +1,6 @@
 # 36 — Add the reference section: settings and the contracts
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** Low — deliberately after v1; the guides carry the site until
 someone needs an exact default
@@ -95,3 +95,26 @@ The task cites the design file as `Bench Docs.dc.html`, but the file in the repo
 ## Recommendation
 
 **Keep as is** (with the one filename tweak above). The card is accurate, unblocked, and correctly scoped; it remains deliberately deferred per its own Priority/Notes ("promote when someone asks 'what's the default for X' twice"). Nothing here is stale enough to warrant a rewrite, and no work has been done that would move it toward done.
+
+
+---
+
+## Work report — 2026-07-31 16:29 (Reed)
+
+abled, because the file writes `<git user.name>` meaning a placeholder and a parser honouring HTML would swallow it.
+- **`site/templates/reference.html`** — the 1c Logbook layout: the article's three columns with the contents gutter given over to a pinned console listing every entry on the page (keys with their defaults on the settings page, headings on a sliced one). It links the same anchors "On this page" carries, so the existing 1080px fold already covers it and no third copy of the links exists.
+- **`site/pages.json`** — a `Reference` section beside Guides and Concepts: `/reference/settings/`, `/reference/adapters/`, `/reference/driver/`, `/reference/commands/`.
+- **`site/static/site.css`**, **`site/README.md`** — the console and the light "flag" strip under each setting; the manifest's new `generate` key, the parser's two build failures, and the layout documented.
+- **`tests/test_site_pages.py`** — its `articles()` helper now means "pages in the article layout" rather than "every page on the flow", since the flow has a second layout on it. The one promise that is site-wide, `test_no_body_is_authored_twice`, was widened rather than narrowed: every flow page must name a source and either a `from` or a `generate`.
+
+**Two judgement calls worth confirming**
+
+- The card's third bullet reads as one page ("`/reference/driver` and the local-command contract — the two executables a project writes itself"). I shipped it as **two** pages, `/reference/driver/` and `/reference/commands/`, because the two sections are not adjacent in `AGENTS.md` and a single slice spanning them would have dragged "The activity bar and the archive" onto a contract page. Merging them would mean reordering `AGENTS.md`, which is outside the card's stated affected areas.
+- Those two pages have no sub-headings, so they render no console — the layout drops the box rather than pinning an empty terminal, the same way the contents strip already handles a body with no `h2`s. If you want a console on all four, the fix is in `AGENTS.md`'s section structure, not in `site/`.
+
+**The four acceptance criteria, and where each is checked**
+
+- A new key in `.env.example` appears with its default and no site edit — `ANewSettingReachesTheSiteByItself.test_a_new_key_appears_with_its_default_and_its_comment`.
+- Every setting exactly once, and a key documented nowhere fails the build — `TheSettingsPageIsTheEnvFile.test_every_setting_appears_exactly_once_in_the_console` (compared against an independent parser written in the test file, sharing no code with the builder's) and `ADriftingEnvFileStopsTheBuild.test_a_key_documented_nowhere_fails_rather_than_being_skipped`.
+- The contract pages are slices — `TheContractPagesAreSlices`, plus two drift tests proving a renamed heading stops the build naming its route.
+- A multi-line comment does not swallow the next key — `test_a_multi_line_comment_does_not_swallow_the_next_key`, whose fixture deliberately names the second key inside the first key's comment.
