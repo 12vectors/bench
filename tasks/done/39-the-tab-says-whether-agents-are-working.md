@@ -1,6 +1,6 @@
 # 39 — The browser tab says whether agents are working
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/32
 **Assignee:** istos
 **Priority:** Medium — the state you most want while the tab is *not* the
@@ -124,3 +124,30 @@ Committed on `task/39-the-tab-says-whether-agents-are-working` as `72a0d41`; the
 2. The edit to `tests/test_board_title.py:129` — an existing assertion was deliberately loosened in one direction (the literal string no longer starts with the project) and its intent re-homed. Worth confirming that trade reads right.
 
 Nothing here needs running by hand; the definition of done is `python3 -m unittest`, which passes. The out-of-scope neighbours the card named — the favicon and a failed run in the tab — are untouched.
+
+
+---
+
+## PR review — 2026-07-31 16:19 (Wren)
+
+PR REVIEW: APPROVE
+
+The work is complete, committed on `task/39-the-tab-says-whether-agents-are-working` (`72a0d41`), and ready to merge. My approval could not be posted via `gh pr review --approve` — GitHub refuses it because this checkout's git identity (`istos`) is the PR author — so the verdict is recorded as a PR comment (issuecomment-5143882620) instead. The verdict itself is unaffected.
+
+**What this does.** The browser tab title now leads with `<n>◌ · ` while and only while agents are running, ahead of the project name, so a backgrounded/narrow tab still answers "is something happening without me". A quiet board shows the old `<project> · <view>` string byte-for-byte.
+
+**What I checked (read the full diff; read the PR branch's `board.html` at every touch point):**
+- Count leads the title — `tabTitle()` (`manager/core/board.html:888`) prefixes only when the count is truthy. Traced by hand: 0→`bench · bench`, 1→`1◌ · bench · bench`, 3→`3◌ · bench · bench`.
+- One agent reads as `1◌`, not "1 agents" — count + mark, no pluralised word.
+- Tab and header chip cannot disagree — the inline `status === 'running'` filter is lifted into `runningAgents()` (`board.html:823`) and both `renderChip()` and `renderTitle()` call it. The only other running reference (`agentOnTask`, a `.find` keyed on the task file, `board.html:718`) is a different question and correctly left alone.
+- Write-on-change — `shownTitle` (`board.html:895`) caches the last string; `renderTitle()` returns early when unchanged, so an SSE burst does not thrash `document.title`.
+- Survives view switch; returns to plain when the last agent finishes — no reload, since the prefix keys on the count, not the view.
+- Mark is the board's own `◌` in-flight glyph (already used by the CI/copilot/starting chips), not an emoji.
+- Scope — frontend-only, no server change as the task required; favicon, failed-run-in-tab and notifications untouched; the AGENTS.md "Seeing the board" paragraph updated to keep docs in step.
+- Tests — new `tests/test_tab_agents.py` is thorough (node behaviour for 0/1/N, running-only counting, all three views, finish-to-plain, no write before state, 20-frame burst → one write, plus source-level wiring invariants). The existing `tests/test_board_title.py` assertion that the `document.title` literal "starts with the project" was correctly re-homed to "built via `tabTitle(S.state.project, …)`" — a reasonable loosening now that a prefix can precede the project.
+
+**To know (not blocking):**
+- I could not execute the suite in this read-only review session (python/node are sandbox-blocked here). The work report states the full 497-test suite passes, and the title logic is simple enough that I verified it by inspection and manual tracing. A human merging may want to run `python3 -m unittest` once to confirm.
+- Merging is yours — the board never merges. The self-approval block above means the automated PR-poll won't see an APPROVE review from this identity; treat this comment as the verdict.
+
+No changes required.
