@@ -1,6 +1,6 @@
 # 44 — Archiving a card reaches git, and so does every other write the board makes to a task file
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** High — an archive silently stalls team-mode sync, and the
 board says nothing about why
@@ -133,3 +133,21 @@ something each caller remembers — otherwise the next writer added to
 **Risks** — the two archived cards and the appended report sitting
 uncommitted in this checkout right now need committing by hand before
 sync resumes; that is separate from this card and should not wait for it.
+
+
+---
+
+## Work report — 2026-07-31 16:57 (Nell)
+
+ `unarchive_task()` and `move_task()` all go through it, so committing is a property of relocating a task file rather than something each caller remembers. Messages match the existing family — `board: 44 → archived (<name>)` on the way out, `board: 44 → to-do (<name>)` on the way back — and carry the `board: ` prefix that `sync._stray()` requires. Both paths are named in the pathspec so git records a rename; a card git has never seen names only its destination, so a brand-new backlog file commits as an addition instead of failing on a pathspec that matches nothing in HEAD.
+- The second door is `taskfiles.append_to_task()`: it appends to a card where it stands and commits through the existing `commit_edit()`. `agents._file_report()` (`manager/core/agents.py:42`) now uses it instead of opening `config.TASKS` itself, so a run's closing report is recorded rather than left as a modified file. That also restores the module law — `taskfiles.py` is again the only module writing under `tasks/`.
+- `expect_move` is now registered for archive and unarchive. The visible effect is on the undo: the card reappearing in a stage directory was narrated by the watcher as an anonymous `disk` arrival, and is now attributed to `you`. The archive itself needed nothing further — `watch.narrate()` only reads stage directories and says nothing about a departure, and the HTTP route already records its own `you`-attributed event.
+- `AGENTS.md` gained a paragraph in "The activity bar and the archive" stating that archiving commits like a move and why.
+
+**Verification** — new `tests/test_archive_commits.py` (12 cases, against a real throwaway git repo) covers each acceptance line: clean `git status` after an archive, the commit naming both paths, `sync._clean()`'s exact `--untracked-files=no` view being empty, `state.task_committed()` firing so event-driven push picks it up, the undo's own commit, the report append committing, the never-committed card, the `you` attribution, and both gate-off cases behaving byte-for-byte as before. One case added to `tests/test_boards_sync.py` runs the two-board harness end to end: ada archives, the commit pushes, elena pulls, and the card is gone from every column but present in `tasks/archive/`.
+
+**For the reviewer, in order**
+
+1. `_relocate()` in `manager/core/taskfiles.py` — the whole change hinges on that one helper, including `move_task()`'s behaviour being unchanged (it now passes its already-computed git name through as `who`).
+2. A finished work agent now produces two commits where it produced one: `board: 44 Work report filed (<name>)` while the card is still in `in-progress`, then the existing `board: 44 → review (<name>)`. Both are `board: `-prefixed, so sync publishes both, but it is a visible change to the commit log.
+3. The task's own Risks note still stands and is not addressed here: the two already-archived cards and the appended report sitting uncommitted in the main checkout need committing by hand before sync resumes there.
