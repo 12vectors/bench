@@ -1,0 +1,11 @@
+# The minisite's only dependency, pinned.
+#
+# The stdlib-only law binds manager/core/ — the tool people install. This
+# directory is neither shipped nor installed (manager/core/release-manifest:
+# "Anything not listed here does not ship"), and AGENTS.md leans on fenced
+# code, nested lists, inline code and tables, which is a bad place to spend
+# risk on a hand-rolled parser.
+#
+#   python3 -m pip install -r site/requirements.txt
+#
+markdown-it-py==4.0.0
