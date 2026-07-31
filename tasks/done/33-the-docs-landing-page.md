@@ -1,6 +1,6 @@
 # 33 — Build the landing page: Dockside, on things bench really does
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/28
 **Assignee:** istos
 **Priority:** High — the front door, and the only page most visitors read
