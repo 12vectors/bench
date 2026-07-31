@@ -1,0 +1,22 @@
+Work is committed on `task/32-serve-bench-12vectors-com-from-a-worker` in two commits and the suite is green, but **nothing has been deployed** — this headless run had no Cloudflare credentials and no network for `npx`, so `wrangler deploy`, `wrangler dev` and every live-response check are still outstanding.
+
+## What to do
+
+1. **Deploy it**: `cd site && npx wrangler deploy` from a shell logged in to Cloudflare, then confirm that `https://bench.12vectors.com/` answers with the built landing page now.
+2. **Tick or reject the acceptance boxes I could not reach** — the ones I marked "one, two and four" — they are acceptance criteria 1, 2 and 4, and they are the ones no test in this repo can reach.
+3. **Replace the account line** in `site/README.md`'s "Where the site lives" table with what `wrangler whoami` prints. I described the account by its defining property (the one holding the `12vectors.com` zone) rather than inventing a name or ID.
+4. **Open the follow-up card** for a GitHub Action on merge, if you still want one.
+
+## What to know
+
+The card's open question carried the author's own recommendation — manual deploy for v1 — so I built that rather than sending the card back: `site/wrangler.jsonc` and a documented command sequence, no workflow file, no Cloudflare token in repository secrets.
+
+Serving the site needed three things from the builder first, which is the first commit (`ad639a3`):
+
+- **A real 404.** Cloudflare's `not_found_handling: "404-page"` wants a literal `404.html` at the root of the assets directory, so a manifest route may now name an `.html` file instead of ending in `/`. `/404.html` is a normal entry with a new `notfound` layout — the site's design and nav, a link back to the landing page, `noindex`, no canonical, and a `null` section that keeps it off the nav it renders.
+- **`site/root/`**, copied verbatim to the top of the build the way `static/` is copied into a subdirectory. It holds `_headers`, which the host reads from the root and nowhere else. A file in `root/` that a route would also write stops the build.
+- **Fingerprinted asset urls.** The templates link the stylesheet and icon through `$stylesheet`/`$icon`, carrying `?v=<hash>` of the file's contents. Nothing in `static/` is renamed, so the tree and the `/static/*` glob are unchanged — but the url moves when the file does, which is what makes the year-long `immutable` cache safe rather than a way to ship an invisible deploy.
+
+Two judgement calls worth a look. I added a `default-src 'none'` **Content-Security-Policy** to `site/root/_headers` beyond the three headers the card named: it turns "no analytics, no third-party anything" into something the browser enforces, and a test asserts no built page contains an inline `<script>` or `style=` that the policy would block. And I could not reach the Cloudflare docs from this run, so two behaviours are asserted from memory: that Workers static assets reads `_headers` at all, and that a later rule wins on a header it repeats. Both are written to fail safe — if either is wrong, HTML still revalidates and the static assets merely revalidate more often than needed.
+
+**Review first:** `site/wrangler.jsonc` and `site/root/_headers` — everything the live site does is decided in those two files. Then `site/build.py`'s `target_for`, `stamp` and `root_files`, which are the builder's side of them. `tests/test_site_deploy.py` covers the config, the built artefacts, and the fact that `wrangler.jsonc`, `pages.json` and `README.md` cannot drift apart about which domain this is; its docstring says plainly what it does not cover.

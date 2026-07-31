@@ -20,16 +20,22 @@ from pathlib import Path
 
 import config
 import events
+import reports
 import state
 from taskfiles import actor_name, find_stage_of, move_task, read_task, set_assignee
 
 
-def _clean_log(text: str, cap: int = 3000) -> str:
-    """An agent's -p output is its final report; strip the hook-failure
-    noise other tools may have interleaved."""
-    lines = [l for l in text.strip().splitlines()
-             if not ("hook" in l and "failed" in l)]
-    return "\n".join(lines).strip()[-cap:]
+def _report_of(record: dict, text: str | None = None) -> str:
+    """What the record keeps of a run's report: cleaned, and clipped by
+    reports.report — head first, because the report's own first line is
+    where it says what happened. `text` names the part after a marker when
+    there is one; otherwise the whole log."""
+    if text is None:
+        try:
+            text = Path(record["log"]).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+    return reports.report(text, log_path=record.get("log"))
 
 
 def _file_report(record: dict, heading: str, report: str) -> None:
@@ -383,7 +389,7 @@ def _failure_excerpt(log_path: str | None, lines: int = 6, cap: int = 600) -> st
             text = Path(log_path).read_text(encoding="utf-8", errors="replace")
         except OSError:
             text = ""
-    kept = [line.rstrip() for line in _clean_log(text, cap=8000).splitlines()
+    kept = [line.rstrip() for line in reports.tail(text, 8000).splitlines()
             if line.strip()]
     if not kept:
         return "no output — the run died before the agent said anything"
@@ -479,11 +485,7 @@ def _reap_agent(agent_id: str, proc: subprocess.Popen, log_file) -> None:
         summary = (f"{name} declined {filename} — not ready: {declined}"
                    + ("" if cleaned else f" (worktree {record['worktree']} kept: it has commits)"))
     elif rc == 0 and not stopped:
-        try:
-            report = _clean_log(Path(record["log"]).read_text(encoding="utf-8",
-                                                              errors="replace"))
-        except OSError:
-            report = ""
+        report = _report_of(record)
         _file_report(record, "Work report", report)
         _session_report(record, report)
         if _no_new_commits(record):
@@ -614,7 +616,7 @@ def _reap_pr_fix(agent_id: str, proc: subprocess.Popen, log_file) -> None:
         except OSError:
             text = ""
         idx = text.find("ADDRESSED:")
-        report = text[idx:].strip() if idx >= 0 else text.strip()[-1500:]
+        report = _report_of(record, text[idx:] if idx >= 0 else text)
         _file_report(record, "PR update", report)
         _session_report(record, report)
         summary = f"{name} acted on {filename}'s PR — re-review when ready"
@@ -640,7 +642,7 @@ def _reap_pr_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
         except OSError:
             text = ""
         idx = text.find("PR REVIEW:")
-        report = text[idx:].strip() if idx >= 0 else text.strip()[-1500:]
+        report = _report_of(record, text[idx:] if idx >= 0 else text)
         match = re.search(r"^PR REVIEW:\s*(APPROVE|REQUEST CHANGES)", report)
         verdict = match.group(1) if match else None
         _file_report(record, "PR review", report)
@@ -672,7 +674,7 @@ def _reap_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
         except OSError:
             text = ""
         idx = text.find("RELEVANCE REVIEW")
-        report = text[idx:].strip() if idx >= 0 else text.strip()[-1500:]
+        report = _report_of(record, text[idx:] if idx >= 0 else text)
         verdict = report.splitlines()[0] if report else None
         _file_report(record, "Relevance review", report)
         _session_report(record, report)
