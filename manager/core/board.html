@@ -447,6 +447,17 @@
   #drawer .dbody h2{font-size:14px;margin:18px 0 6px}
   #drawer .dbody h3{font-size:13px;margin:14px 0 4px}
   #drawer .dbody p,#drawer .dbody li{font-size:12.5px;color:var(--muted)}
+  #drawer .dbody ul,#drawer .dbody ol{margin:6px 0;padding-left:18px}
+  #drawer .dbody li{margin:3px 0}
+  #drawer .dbody li>ul,#drawer .dbody li>ol{margin:3px 0}
+  /* task-list items: a glyph, not an input — the file is the source of truth */
+  #drawer .dbody li.tick{list-style:none;margin-left:-18px}
+  #drawer .dbody li.tick .box{
+    display:inline-block;width:11px;height:11px;margin-right:7px;
+    border:1px solid var(--border);border-radius:3px;
+    font-size:9px;line-height:10px;text-align:center;
+  }
+  #drawer .dbody li.tick.on .box{border-color:var(--calm);color:var(--calm)}
   #drawer .dbody strong{color:var(--text)}
   #drawer .dbody code{font-family:var(--mono);font-size:11.5px;background:var(--sunken);padding:1px 4px;border-radius:3px}
   #drawer .dbody pre{background:var(--sunken);border-radius:8px;padding:10px 12px;overflow-x:auto}
@@ -1900,7 +1911,8 @@ async function openExtra(dir, name) {
   }
 }
 
-// Small markdown renderer — enough for these task files, no dependencies.
+// Small markdown renderer — for these task files, which are hard-wrapped
+// prose: a logical line spans several source lines. No dependencies.
 function md(src) {
   const blocks = esc(src).split(/\n{2,}/);
   const inline = (t) => t
@@ -1908,6 +1920,56 @@ function md(src) {
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+
+  /* Lists: group physical lines into logical items before rendering. A new
+     item begins only at a marker; a line without one is continuation text
+     joined to the item above with a space — that is what stops a wrapped
+     item from sprouting a second bullet. A marker indented past the level
+     it sits in opens a nested list, and a shallower one closes back to the
+     level that fits, so children indent under their parent instead of
+     flattening beside it. */
+  const MARKER = /^([ \t]*)(?:[-*]|\d+\.)[ \t]+(.*)$/;
+  const ORDERED = /^[ \t]*\d+\./;
+  const TICK = /^\[([ xX])\]\s*(.*)$/;   // - [ ] / - [x], read-only here
+
+  const listTree = (lines) => {
+    const root = { ordered: ORDERED.test(lines[0]), items: [] };
+    const stack = [{ indent: null, list: root }];
+    let last = null;
+    for (const line of lines) {
+      const m = line.match(MARKER);
+      if (!m) {                                  // continuation of the item above
+        if (last && line.trim()) last.text += ' ' + line.trim();
+        continue;
+      }
+      const indent = m[1].replace(/\t/g, '    ').length;
+      const top = () => stack[stack.length - 1];
+      if (top().indent === null) top().indent = indent;
+      while (stack.length > 1 && indent < top().indent) stack.pop();
+      if (last && indent > top().indent) {
+        last.sub = { ordered: ORDERED.test(line), items: [] };
+        stack.push({ indent, list: last.sub });
+      }
+      last = { text: m[2], sub: null };
+      top().list.items.push(last);
+    }
+    return root;
+  };
+
+  const listHtml = (list) => {
+    const tag = list.ordered ? 'ol' : 'ul';
+    return `<${tag}>` + list.items.map((it) => {
+      const t = it.text.match(TICK);
+      const body = inline(t ? t[2] : it.text) + (it.sub ? listHtml(it.sub) : '');
+      if (!t) return `<li>${body}</li>`;
+      // A glyph, never an input: the task file is the source of truth and
+      // the drawer is not an editor. Done reads as settled, open is neutral.
+      const done = t[1] !== ' ';
+      return `<li class="tick${done ? ' on' : ''}">` +
+        `<span class="box" role="img" aria-label="${done ? 'done' : 'not done'}">` +
+        `${done ? '✓' : ''}</span>${body}</li>`;
+    }).join('') + `</${tag}>`;
+  };
 
   let inFence = false, fenced = [];
   const out = [];
@@ -1923,7 +1985,8 @@ function md(src) {
       }
       continue;
     }
-    const lines = block.split('\n');
+    const text = block.replace(/\s+$/, '');   // the split leaves the last block a trailing newline
+    const lines = text.split('\n');
     if (lines.length >= 2 && /^\s*\|.*\|\s*$/.test(lines[0]) && /^\s*\|[\s:|-]+\|\s*$/.test(lines[1])) {
       const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map(c => inline(c.trim()));
       const head = cells(lines[0]);
@@ -1932,21 +1995,20 @@ function md(src) {
         head.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>' +
         rows.map(r => '<tr>' + r.map(c => `<td>${c}</td>`).join('') + '</tr>').join('') +
         '</tbody></table></div>');
-    } else if (/^#{1,6}\s/.test(block)) {
+    } else if (/^#{1,6}\s/.test(text)) {
       out.push(lines.map(l => {
         const m = l.match(/^(#{1,6})\s+(.*)$/);
         return m ? `<h${m[1].length}>${inline(m[2])}</h${m[1].length}>` : `<p>${inline(l)}</p>`;
       }).join(''));
-    } else if (/^\s*[-*]\s/.test(block)) {
-      out.push('<ul>' + lines.map(l => `<li>${inline(l.replace(/^\s*[-*]\s+/, ''))}</li>`).join('') + '</ul>');
-    } else if (/^\s*\d+\.\s/.test(block)) {
-      out.push('<ol>' + lines.map(l => `<li>${inline(l.replace(/^\s*\d+\.\s+/, ''))}</li>`).join('') + '</ol>');
-    } else if (/^&gt;/.test(block)) {
-      out.push('<blockquote>' + inline(block.replace(/^&gt;\s?/gm, '')).replace(/\n/g, '<br>') + '</blockquote>');
-    } else if (/^-{3,}$/.test(block.trim())) {
+    } else if (MARKER.test(lines[0])) {
+      out.push(listHtml(listTree(lines)));
+    } else if (/^&gt;/.test(text)) {
+      // reflow, don't preserve the author's wrap column
+      out.push('<blockquote>' + inline(text.replace(/^&gt;\s?/gm, '')).replace(/\n/g, ' ') + '</blockquote>');
+    } else if (/^-{3,}$/.test(text.trim())) {
       out.push('<hr>');
     } else {
-      out.push(`<p>${inline(block).replace(/\n/g, '<br>')}</p>`);
+      out.push(`<p>${inline(text).replace(/\n/g, ' ')}</p>`);
     }
   }
   if (fenced.length) out.push(`<pre><code>${fenced.join('\n\n')}</code></pre>`);
