@@ -3,6 +3,13 @@
      columns, the sidebar carrying the IA, the generated body in the
      middle, contents and the two GitHub links in the gutter.
 
+     A phone has room for one of those columns, so the other two are
+     written twice: once as the column the design draws, and once as a
+     <details> strip that is display:none until the breakpoint which
+     hides its column. The strips carry the same $sidebar and $toc, so
+     there is one source for the links and no way for the folded copy to
+     say something the column does not.
+
      Placeholders are string.Template's; a literal dollar in the markup
      would have to be doubled. -->
 <html lang="en">
@@ -37,6 +44,16 @@ $nav
   <a class="button button-solid" href="$repo_url">GitHub ↗</a>
 </header>
 
+<!-- The section nav, folded. Shown from 760px down, where the .side
+     column below is gone. A <details> is the whole mechanism: one menu
+     that opens and closes needs no script, and this site has none. -->
+<details class="menu">
+  <summary class="menu-summary">Documentation</summary>
+  <nav class="menu-panel">
+$sidebar
+  </nav>
+</details>
+
 <div class="shell">
 
   <aside class="side">
@@ -51,6 +68,16 @@ $sidebar
   <article class="prose">
     <div class="crumbs">$breadcrumb</div>
     <h1>$title</h1>
+    <!-- "On this page", folded under the title. Shown from 1080px down,
+         where the gutter that normally carries it is gone. A page whose
+         body has no h2s gets an empty $toc, and the stylesheet drops the
+         strip rather than offering a summary over nothing. -->
+    <details class="menu menu-contents">
+      <summary class="menu-summary">On this page</summary>
+      <nav class="menu-panel">
+$toc
+      </nav>
+    </details>
 $body
   </article>
 
