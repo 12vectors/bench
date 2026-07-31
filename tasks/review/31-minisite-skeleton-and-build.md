@@ -1,6 +1,6 @@
 # 31 — Stand up site/ and generate its pages from the repo's own markdown
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** High — nothing else about the site can start until there is a
 build and a place to put pages
@@ -106,3 +106,22 @@ installed project ("read it too", "this file"). Some sections will read
 oddly in public. Where a slice cannot stand alone, the fix is to improve
 `AGENTS.md` — it is read by more agents than people — not to fork the
 prose into the site.
+
+
+---
+
+## Work report — 2026-07-31 11:31 (Basil)
+
+us contract.** The `from` heading is matched on its text (writing the `#`s pins the level too) and is *dropped* from the body — the layout renders the page title, so keeping it would say the name twice. What remains is promoted by `level - 1`, so a section's `###` sub-headings land as the page's `<h2>`s and feed the article's "On this page" list. Headings inside fenced code blocks never match, which matters: AGENTS.md fences a task template whose first line is `# Task title`.
+
+- **Drift, verified end to end.** Renaming `## Claiming a card` in a scratch copy of AGENTS.md makes the build exit 1 with a message naming the route, the file and the heading, and write no page. The same holds for a renamed `to` heading, a deleted source file, and a slice that comes out empty. Every page renders before the output directory is touched, so a drifting rebuild leaves the previous good build standing rather than replacing a working site with a broken one — that is asserted too.
+
+- **Links.** Repo-relative markdown links are rewritten to GitHub blob URLs, or to a site route when `link_routes` in `pages.json` maps the file to one (empty for now; task 34 will fill it). A link to a path that does not exist, or one that escapes the repo, stops the build. Neither current source section contains a markdown link — `AGENTS.md` and `README.md` have exactly two between them, both outside the sliced ranges — so this path is covered by synthetic sources in the tests rather than by the shipped pages.
+
+- **The same-origin check, precisely.** `tests/test_site_build.py` asserts that every `<link>` whose `rel` opens a connection (stylesheet, icon, preload, preconnect, …) and every `<script|img|iframe src>` starts with `/`, that no page preconnects, and that `site/static/site.css` contains no `@import` and no `url()` outside `/static/`. `rel=canonical` is deliberately excluded — it is a statement about the page, not a fetch. This is a mechanical check on the built files, not an observation of a browser's network tab.
+
+- **`site/` never ships.** `tests/test_release_artifact.py` gains `test_the_public_minisite_never_ships`, which asserts no `site/` member is in `bench.tar.gz`, and `tests/test_site_build.py` asserts no release-manifest entry names it. The manifest already excluded it by saying nothing about it; both tests exist because correct-by-omission is what a future manifest edit undoes silently.
+
+- **`.gitignore`** gains `site/dist/`. That file is a `once` manifest entry, so the line reaches host repos on install, where it ignores a directory that will never exist — harmless, and the alternative (a `site/.gitignore`) would have hidden the change from the place a reviewer looks.
+
+- **First thing to look at:** `site/build.py`'s `headings()` and `slice_section()`. Everything the card is really about — that a renamed section breaks the site rather than emptying a page — rests on those two functions being right about where a section starts and stops, including the code-fence case.
