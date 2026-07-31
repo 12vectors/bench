@@ -1,6 +1,7 @@
 # 35 — Make the site read on a phone
 
 **Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/31
 **Assignee:** istos
 **Priority:** Medium — a public URL gets opened on phones whatever the
 design was drawn at
