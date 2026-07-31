@@ -818,8 +818,14 @@ function scheduleRender() {
 
 /* ── header ───────────────────────────────────────────────────────────── */
 
+/* One reading of "an agent is working", shared by the header chip and the
+   tab title, so the two can never disagree about how many. */
+function runningAgents() {
+  return (S.state?.agents || []).filter(a => a.status === 'running');
+}
+
 function renderChip() {
-  const agents = (S.state?.agents || []).filter(a => a.status === 'running');
+  const agents = runningAgents();
   const liveYou = sessionsOf(m => isLiveSession(m) && !m.agentId);
   const el = $('#livechip');
   if (S.sseDown) {
@@ -867,12 +873,33 @@ function setView(view) {
 
 /* The tab says which bench this is: the project first (tab truncation eats
    the tail, and the tail is the same in every bench tab), then the view.
-   Without a project in state the server-rendered title stands. */
+   Without a project in state the server-rendered title stands.
+
+   Ahead of even the project, while and only while agents run, the count —
+   the one state you want most from a tab you are not looking at, and the
+   only place a backgrounded window can still say it. The same reasoning
+   that put the project first applies harder to it, so it leads: a tab
+   narrowed to a few characters still shows it. It is the in-flight glyph
+   the CI and copilot chips already use, not an emoji, and a quiet board
+   is the plain title, byte for byte. */
 const VIEW_TITLES = { board: 'bench', flight: 'sessions', focus: 'focus' };
+const WORKING_MARK = '◌';
+
+function tabTitle(project, view, working) {
+  return (working ? working + WORKING_MARK + ' · ' : '') +
+    project + ' · ' + (VIEW_TITLES[view] || 'bench');
+}
+
+/* render() runs on every SSE frame, so the title is written only when it
+   actually changed rather than dozens of times a second. */
+let shownTitle = null;
 
 function renderTitle() {
   if (!S.state?.project) return;
-  document.title = S.state.project + ' · ' + (VIEW_TITLES[S.view] || 'bench');
+  const title = tabTitle(S.state.project, S.view, runningAgents().length);
+  if (title === shownTitle) return;
+  shownTitle = title;
+  document.title = title;
 }
 
 function render() {

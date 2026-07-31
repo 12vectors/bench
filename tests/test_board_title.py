@@ -127,13 +127,18 @@ class PageInvariants(unittest.TestCase):
         self.assertNotIn("task board", self.html.lower())
 
     def test_the_title_is_only_ever_written_from_the_project(self):
-        """One writer, and it starts with the project — so no code path can
-        put the view name first or revert to the generic string."""
+        """One writer, and the string it writes is built by tabTitle() from
+        the project — so no code path can revert to the generic string. That
+        the project leads everything but the running count (task 39) is
+        tested in test_tab_agents.py."""
         writes = re.findall(r"document\.title\s*=\s*([^\n;]+)", self.html)
         self.assertEqual(len(writes), 1,
                          f"expected one document.title assignment, got {writes}")
-        self.assertTrue(writes[0].startswith("S.state.project"),
-                        f"the project must lead the title, got {writes[0]!r}")
+        body = re.search(r"function renderTitle\(\)\s*\{(.*?)\n\}",
+                         self.html, re.DOTALL)
+        self.assertIsNotNone(body, "board.html lost renderTitle()")
+        self.assertIn("tabTitle(S.state.project", body.group(1),
+                      "the title must be built from the project")
 
     def test_a_stateless_page_keeps_the_served_title(self):
         """Before the first state load there is nothing better to say than
