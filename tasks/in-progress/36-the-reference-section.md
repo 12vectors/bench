@@ -1,6 +1,6 @@
 # 36 — Add the reference section: settings and the contracts
 
-**Status:** To Do
+**Status:** In Progress
 **Assignee:** istos
 **Priority:** Low — deliberately after v1; the guides carry the site until
 someone needs an exact default
@@ -69,3 +69,29 @@ whatever parsing `.env.example` needs.
 
 Left in backlog on purpose. Promote it when someone asks "what's the
 default for X" twice.
+
+
+---
+
+## Relevance review — 2026-07-31 16:08 (Sage)
+
+RELEVANCE REVIEW: Still relevant
+
+The work is **not started** — nothing on `/reference/` exists yet, and the task's dependency (task 34) is done, so this card is unblocked and buildable exactly as written.
+
+## What I checked
+
+- **The site has no reference section.** `site/pages.json` defines only Guides and Concepts pages; there is no `/reference/settings`, `/reference/adapters`, or `/reference/driver` entry, and no `section: "Reference"`.
+- **No `reference` layout exists.** `site/templates/` holds only `article.html`, `home.html`, `notfound.html`. The task's "reference layout from the 1c design" is unbuilt.
+- **No `.env.example` parsing exists.** `site/build.py` slices markdown sections out of source docs by heading (`slice_section`, `sections`, `render_nav`); it has no per-key settings parser. The task's headline acceptance test — a new `BOARD_*` key in `.env.example` auto-appearing on the settings page — is not met by any current code.
+- **The sources the task rests on all still exist**, at the paths it names (resolved from a stage dir's `../../`): `manager/core/.env.example`, `manager/core/adapters/README.md`, `manager/core/driver.example/`, and AGENTS.md's "Local commands" section.
+- **The dependency is satisfied.** Task 34 is in `done/` (commit `6204e1a board: 34 → done`); it established the `article` layout and the `pages.json` manifest pattern this card builds on.
+- **The 1c "Logbook" design is present** in `reference/bench-docs-design-turn2.dc.html` (panel `1c`, labelled LOGBOOK), which is what the task describes.
+
+## One thing to fix if you promote it
+
+The task cites the design file as `Bench Docs.dc.html`, but the file in the repo is `reference/bench-docs-design-turn2.dc.html`. Same design, renamed since the card was written — update the Context bullet so a work agent finds it.
+
+## Recommendation
+
+**Keep as is** (with the one filename tweak above). The card is accurate, unblocked, and correctly scoped; it remains deliberately deferred per its own Priority/Notes ("promote when someone asks 'what's the default for X' twice"). Nothing here is stale enough to warrant a rewrite, and no work has been done that would move it toward done.
