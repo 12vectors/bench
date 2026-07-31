@@ -1,6 +1,6 @@
 # 34 — Generate the guides and concept pages from AGENTS.md
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/29
 **Assignee:** istos
 **Priority:** High — the doors on the landing page have to open onto
