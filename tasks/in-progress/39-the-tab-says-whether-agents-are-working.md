@@ -1,6 +1,7 @@
 # 39 — The browser tab says whether agents are working
 
-**Status:** Backlog
+**Status:** In Progress
+**Assignee:** istos
 **Priority:** Medium — the state you most want while the tab is *not* the
 one you are looking at is the one the tab does not carry
 **Type:** Feature
