@@ -1,6 +1,6 @@
 # 36 — Add the reference section: settings and the contracts
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/33
 **Assignee:** istos
 **Priority:** Low — deliberately after v1; the guides carry the site until
