@@ -1,6 +1,6 @@
 # 30 — Re-cut the docs design on content bench actually has
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** High — every other site card builds from this design; building
 from turn 1 would ship a documented product that does not exist
@@ -92,3 +92,24 @@ Then re-cut each layout on that vocabulary:
 **Risks** — the design is where a wrong idea is cheapest to fix and most
 expensive to inherit: 31–35 all read this file. Getting it wrong here
 means the site ships fluent, well-typeset fiction.
+
+
+---
+
+## Work report — 2026-07-31 11:10 (Ada)
+
+o `AGENTS.md`, `README.md` and `manager/core/.env.example`. The `DesignSync` write path requires an interactive permission grant, and a headless run has nobody to answer it, so the upload to project `43447958-7124-44aa-9ee5-4bd0a9f0bacf` did not happen.
+
+**To do**
+
+1. Upload `reference/bench-docs-design-turn2.dc.html` to the design project as `Bench Docs.dc.html` (it is byte-ready; no edits needed). Turn 1 is overwritten by that upload.
+2. After the upload, `git rm reference/bench-docs-design-turn2.dc.html` — the card scoped itself to the design project with no repo files changed, and this one file is the deliberate deviation so the work would survive the worktree.
+
+**To know**
+
+- **1b Dockside.** The hero terminal is the real install one-liner from `README.md`, the three real first-run questions with their real defaults (`solo`, `claude`, `python3 -m unittest`), and the real `board.py` startup lines on port 26071. The six doors are install, the five stages, agents on the board, PRs and review, team mode, the three-layer law.
+- **1a Harbour.** The article is now "Claiming a card". Its table is what each kind of move does to the `**Assignee:**` line (including the `mv`-on-disk row, which writes nothing); its code block is the two real `manager/local/.env` keys; its numbered steps end on another board refusing **▸ start work** and offering **▸ take over**.
+- **1c Logbook.** The CLI reference became a settings reference with `BOARD_SYNC` as the shown key, the real truthiness rule, and three related keys with their real defaults. The pinned console is the board's own activity log — the event strings are copied from the f-strings in `sync.py`, `agents.py` and `github.py`.
+- **Three deviations from "copy only", all small and all forced by the content.** I removed the breathing pine dot from 1a's top bar (it was pure decoration, and the design system says colour only ever means state); I added `white-space:pre-wrap` to 1b's hero terminal so the real 72-character release URL wraps instead of clipping; and 1a's Concepts sidebar group went from five items to six, its table from three rows to four. Geometry is otherwise untouched.
+- **Verification.** Grepping the new copy for every turn-1 fiction (`bench.toml`, lanes, handoff, brew, SQLite, 7331, `.tasks/`, webhooks, `PAS-…`, `@rosa`, `#platform`, `docs@12vectors.com`, Recipes, Changelog, the seven `bench …` subcommands, `max_diff`, "Waiting on you") returns nothing. All nine `BOARD_*` keys the design names exist in `manager/core/.env.example`; `origin/main` matches `sync.py`'s `UPSTREAM`. `python3 -m unittest` passes: 320 tests, OK — it exercises no design content, so it confirms the commit broke nothing rather than confirming the copy.
+- **First thing to look at:** the 1b hero terminal, since it is the one block where I composed a transcript from several real sources (`README.md`'s install command, `install.py`'s question strings, `board.py`'s startup print) rather than copying one contiguous real output.
