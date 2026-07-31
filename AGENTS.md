@@ -155,10 +155,22 @@ the two settings that change what bench *is* — claim-on-move and syncing
 through origin/main — stay invisible to anyone who has not read
 `core/.env.example`. So the first run asks, and writes the file: **solo or
 team** (team turns `BOARD_COMMIT_MOVES` and `BOARD_SYNC` on together, and
-the question says what that costs), **which agent adapter** (enumerated
-from the adapter directories, so a project's own `local/adapters/` entry
-is offered), and **what command runs this project's tests**
-(`BOARD_AGENT_COMMANDS` — the one a headless agent cannot work around).
+the question says what that costs) and **which agent adapter**
+(enumerated from the adapter directories, so a project's own
+`local/adapters/` entry is offered).
+
+It does not ask what runs the project's tests. That was a third question
+once, and it wanted an answer about a repo the person may have just
+cloned, thirty seconds in and before anything had explained why the
+board needed one. It is detected instead — `package.json` → `npm test`,
+`Cargo.toml` → `cargo test`, `go.mod` → `go test ./...`, a
+`pyproject.toml`/`setup.py`/`tests/` → `python3 -m unittest` — and a
+project matching none of them gets `BOARD_AGENT_COMMANDS` empty, which
+is honest: an agent then runs no project commands until someone fills it
+in. A wrong guess costs nothing an empty value would not, since a prefix
+that matches nothing denies exactly the same way. An existing value is
+never overwritten, so `--setup` cannot undo a hand-edit.
+
 Bare Enter takes the default, Ctrl-D skips the rest, and what lands is
 `core/.env.example` with the answers substituted into their lines: every
 other key, every comment, so the written file is where the project reads

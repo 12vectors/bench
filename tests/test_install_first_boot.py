@@ -204,17 +204,47 @@ class FirstRunSettings(unittest.TestCase):
             self.env_file.read_text(encoding="utf-8"))
 
     def test_bare_enter_everywhere_writes_the_shipped_defaults(self):
-        """Every question defaulted → the file is the example verbatim, so
-        the board behaves exactly as it does with no .env at all."""
-        out = run_install_tty(self.tm, ["", "", ""])
+        """Every question defaulted → the file is the example, save the one
+        key that is read off the project rather than asked about. A scratch
+        host names no test runner, so that key lands empty."""
+        out = run_install_tty(self.tm, ["", ""])
         self.assertIn("solo or team?", out)
         self.assertIn("which agent adapter?", out)
-        self.assertIn("what command runs this project's tests?", out)
-        self.assertEqual(self.env_file.read_text(encoding="utf-8"),
-                         self.example)
+        self.assertEqual(
+            self.env_file.read_text(encoding="utf-8"),
+            self.example.replace("BOARD_AGENT_COMMANDS=python3 -m unittest",
+                                 "BOARD_AGENT_COMMANDS="))
+
+    def test_the_test_command_is_never_asked_for(self):
+        """It was a third question once. It wanted an answer about a repo
+        the person may have just cloned, before anything had explained why
+        the board needed one."""
+        out = run_install_tty(self.tm, ["", ""])
+        self.assertNotIn("runs this project's tests", out)
+
+    def test_the_test_command_is_read_off_the_project(self):
+        (self.tm.parent / "package.json").write_text("{}\n", encoding="utf-8")
+        run_install_tty(self.tm, ["", ""])
+        self.assertEqual(self.values()["BOARD_AGENT_COMMANDS"], "npm test")
+
+    def test_a_project_naming_no_runner_gets_an_empty_allowlist(self):
+        """Empty is honest: the agent runs no project commands until
+        someone fills it in. The example's Python default would be quietly
+        wrong in most repos, and wrong is worse than absent here."""
+        run_install_tty(self.tm, ["", ""])
+        self.assertEqual(self.values()["BOARD_AGENT_COMMANDS"], "")
+
+    def test_the_first_marker_wins(self):
+        """A repo with both a package.json and a tests/ directory is a JS
+        project with tests, not a Python one."""
+        (self.tm.parent / "package.json").write_text("{}\n", encoding="utf-8")
+        (self.tm.parent / "tests").mkdir(exist_ok=True)
+        run_install_tty(self.tm, ["", ""])
+        self.assertEqual(self.values()["BOARD_AGENT_COMMANDS"], "npm test")
 
     def test_answers_are_substituted_into_the_whole_example(self):
-        out = run_install_tty(self.tm, ["team", "claude", "npm test"])
+        (self.tm.parent / "package.json").write_text("{}\n", encoding="utf-8")
+        out = run_install_tty(self.tm, ["team", "claude"])
         written = self.env_file.read_text(encoding="utf-8")
         self.assertEqual(self.values()["BOARD_COMMIT_MOVES"], "1")
         self.assertEqual(self.values()["BOARD_SYNC"], "1")
@@ -229,21 +259,25 @@ class FirstRunSettings(unittest.TestCase):
         self.assertIn("Wrote .task-manager/manager/local/.env", out)
 
     def test_solo_leaves_both_team_settings_empty(self):
-        run_install_tty(self.tm, ["solo", "", ""])
+        run_install_tty(self.tm, ["solo", ""])
         self.assertEqual(self.values()["BOARD_COMMIT_MOVES"], "")
         self.assertEqual(self.values()["BOARD_SYNC"], "")
 
     def test_an_invalid_answer_is_asked_again(self):
-        out = run_install_tty(self.tm, ["both", "team", "", ""])
+        out = run_install_tty(self.tm, ["both", "team", ""])
         self.assertIn("answer solo or team.", out)
         self.assertEqual(self.values()["BOARD_SYNC"], "1")
 
     def test_ctrl_d_skips_the_rest_and_writes_the_defaults(self):
+        """The detected command is settled before the first question, so a
+        Ctrl-D part-way through still leaves the project's own runner —
+        not the example's Python one, which is what a later detection
+        would have been skipped past."""
+        (self.tm.parent / "package.json").write_text("{}\n", encoding="utf-8")
         out = run_install_tty(self.tm, ["team", CTRL_D])
         self.assertIn("skipped", out)
         self.assertEqual(self.values()["BOARD_SYNC"], "1")
-        self.assertEqual(self.values()["BOARD_AGENT_COMMANDS"],
-                         "python3 -m unittest")
+        self.assertEqual(self.values()["BOARD_AGENT_COMMANDS"], "npm test")
 
     def test_the_adapter_question_enumerates_the_directories(self):
         """Adapters are listed from disk, so a project's own local one is
@@ -255,12 +289,12 @@ class FirstRunSettings(unittest.TestCase):
         mine = self.tm / "manager" / "local" / "adapters" / "mine"
         mine.mkdir(parents=True)
         (mine / "run").write_text("#!/bin/sh\n", encoding="utf-8")
-        out = run_install_tty(self.tm, ["", "mine", ""])
+        out = run_install_tty(self.tm, ["", "mine"])
         self.assertIn("here: claude, opencode, mine.", out)
         self.assertEqual(self.values()["BOARD_AGENT_ADAPTER"], "mine")
 
     def test_an_existing_env_is_never_touched_and_the_run_stays_quiet(self):
-        run_install_tty(self.tm, ["team", "", ""])
+        run_install_tty(self.tm, ["team", ""])
         written = self.env_file.read_text(encoding="utf-8")
         result = run_install(self.tm)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -297,13 +331,15 @@ class FirstRunSettings(unittest.TestCase):
                         .replace("BOARD_AGENT_COMMANDS=python3 -m unittest",
                                  "BOARD_AGENT_COMMANDS=make test"),
             encoding="utf-8")
-        out = run_install_tty(self.tm, ["", "", ""], "--setup")
+        out = run_install_tty(self.tm, ["", ""], "--setup")
         self.assertIn("[team]", out)          # the current file's answer…
-        self.assertIn("[make test]", out)     # …offered as the default
         self.assertEqual(self.values()["BOARD_SYNC"], "1")
         self.assertEqual(self.values()["BOARD_PORT"], "26099")
+        # …and the hand-edited command survives, detection notwithstanding:
+        # an existing answer is never second-guessed by a marker file.
+        self.assertEqual(self.values()["BOARD_AGENT_COMMANDS"], "make test")
 
-        out = run_install_tty(self.tm, ["solo", "", ""], "--setup")
+        out = run_install_tty(self.tm, ["solo", ""], "--setup")
         self.assertEqual(self.values()["BOARD_SYNC"], "")
         self.assertEqual(self.values()["BOARD_COMMIT_MOVES"], "")
         self.assertEqual(self.values()["BOARD_PORT"], "26099")
@@ -320,7 +356,7 @@ class FirstRunSettings(unittest.TestCase):
     def test_first_boot_both_clears_the_cards_and_writes_the_env(self):
         """The order is load-bearing: .env is one of the two things the
         first-boot guard reads, so writing it early would skip the clean."""
-        out = run_install_tty(self.tm, ["", "", ""])
+        out = run_install_tty(self.tm, ["", ""])
         self.assertIn("removed  tasks/backlog/00-shipped-card.md", out)
         self.assertEqual(shipped_files(self.tm), [])
         self.assertTrue(self.env_file.is_file())

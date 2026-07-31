@@ -124,9 +124,10 @@ def first_boot_clean(dry_run: bool) -> None:
 # ── First-run settings ────────────────────────────────────────────────
 #
 # Everything not asked about is written at its documented default, so the
-# answers are only the ones no default can be right about: how this
-# project works (solo or team), which agent runs its headless jobs, and
-# what command runs its tests.
+# answers are only the ones no default can be right about and nothing
+# can be read off the project: how this project works (solo or team)
+# and which agent runs its headless jobs. The test command used to be a
+# third question; it is detected instead — see TEST_COMMANDS.
 
 ENV_EXAMPLE = CORE / ".env.example"
 ENV_FILE = LOCAL / ".env"
@@ -137,10 +138,33 @@ TEAM_NOTE = """\
   merges, and a local main that only ever advances through the board.
   Solo — today's default — does none of it."""
 
-COMMANDS_NOTE = """\
-  Headless agents may only run the command prefixes named here, so a test
-  runner missing from the list is a test the work agent cannot run.
-  Comma-separate several."""
+# What runs this project's tests, read off the project rather than asked.
+# It was a question once, and it was the wrong one to put to someone
+# thirty seconds into their first run: it wants an answer about a project
+# they may have just cloned, before anything has explained why the board
+# needs it. The file that names a project's ecosystem usually names its
+# test runner too, so the first match wins and no match writes nothing.
+#
+# A wrong guess costs nothing it did not already cost: the prefix simply
+# never matches, and the agent is denied exactly as it would be with the
+# key empty. What it must never do is guess something *broader* than the
+# truth — every entry here is one runner, not a shell.
+TEST_COMMANDS = [
+    ("package.json", "npm test"),
+    ("Cargo.toml", "cargo test"),
+    ("go.mod", "go test ./..."),
+    ("pyproject.toml", "python3 -m unittest"),
+    ("setup.py", "python3 -m unittest"),
+    ("tests", "python3 -m unittest"),
+]
+
+
+def detect_test_command(root: Path) -> str:
+    """The project's test runner, or "" when nothing here names one."""
+    for marker, command in TEST_COMMANDS:
+        if (root / marker).exists():
+            return command
+    return ""
 
 
 class _Skipped(Exception):
@@ -217,9 +241,25 @@ def _ask(question: str, default: str, note: str = "") -> str:
     return answer or default
 
 
-def ask_questions(current: dict[str, str], answers: dict[str, str]) -> None:
+def ask_questions(current: dict[str, str], answers: dict[str, str],
+                  held: dict[str, str] | None = None) -> None:
     """Fill `answers` in place — in place because a Ctrl-D part-way through
-    keeps what was already answered."""
+    keeps what was already answered.
+
+    `current` is the example's values under the existing file's, which is
+    what a question should offer as its default. `held` is only what this
+    project itself has said — empty on a first run — because "keep what is
+    already there" must not mean "keep the example's default".
+    """
+    held = held or {}
+    # Detected, not asked — and settled before the first question, so a
+    # Ctrl-D part-way through still leaves the project's own runner rather
+    # than the example's Python one. A value this project has already set
+    # wins: --setup must not undo a hand-edit. The example's default is
+    # not such a value, which is why this reads `held` and not `current`.
+    answers["BOARD_AGENT_COMMANDS"] = (
+        held.get("BOARD_AGENT_COMMANDS") or detect_test_command(PROJECT))
+
     team = env_on(current.get("BOARD_SYNC", "")) or env_on(
         current.get("BOARD_COMMIT_MOVES", ""))
     while True:
@@ -246,10 +286,6 @@ def ask_questions(current: dict[str, str], answers: dict[str, str]) -> None:
             print(f"  no such adapter here — one of: {', '.join(allowed)}.")
         answers["BOARD_AGENT_ADAPTER"] = reply
 
-    answers["BOARD_AGENT_COMMANDS"] = _ask(
-        "what command runs this project's tests?",
-        current.get("BOARD_AGENT_COMMANDS", "python3 -m unittest"),
-        note=COMMANDS_NOTE)
 
 
 def setup(dry_run: bool, forced: bool) -> None:
@@ -261,9 +297,12 @@ def setup(dry_run: bool, forced: bool) -> None:
         return
     verb = "rewrite" if exists else "write"
     if dry_run:
-        print(f"would ask: solo or team, which agent adapter, the test "
-              f"command — and {verb} {_rel(ENV_FILE)} from "
-              f"{_rel(ENV_EXAMPLE)}.\nDry run — nothing written.\n")
+        found = detect_test_command(PROJECT)
+        print(f"would ask: solo or team, which agent adapter — and "
+              f"{verb} {_rel(ENV_FILE)} from {_rel(ENV_EXAMPLE)}, with "
+              f"BOARD_AGENT_COMMANDS="
+              f"{found or '(nothing detected)'}.\n"
+              f"Dry run — nothing written.\n")
         return
     if not sys.stdin.isatty():
         if exists:
@@ -290,7 +329,8 @@ def setup(dry_run: bool, forced: bool) -> None:
 
     answers: dict[str, str] = {}
     try:
-        ask_questions(current, answers)
+        ask_questions(current, answers,
+                      held=env_values(base) if exists else {})
     except _Skipped:
         print("  skipped — the rest stay at their documented defaults.")
     except KeyboardInterrupt:

@@ -21,10 +21,13 @@ mkdir .task-manager && curl -L \
 No token, no clone: releases are curated artifacts that never contained
 bench's own cards or settings, so the board starts empty by construction.
 
-The first run asks three questions it cannot answer for you — solo or
-team, which agent adapter, what command runs your tests — and writes
-`manager/local/.env` from the documented example, so every other setting
-is discoverable in your own copy. Bare Enter takes the default
+The first run asks the two questions it cannot answer for you — solo or
+team, and which agent adapter — and writes `manager/local/.env` from the
+documented example, so every other setting is discoverable in your own
+copy. What runs your tests is read off the project rather than asked
+(`package.json` → `npm test`, and so on); nothing recognisable leaves
+`BOARD_AGENT_COMMANDS` empty, and that is the key to set before an agent
+can run them. Bare Enter takes the default
 throughout; with no terminal (CI, a script) it asks nothing and
 `install.py --setup` asks later.
 

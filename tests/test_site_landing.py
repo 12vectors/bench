@@ -48,9 +48,6 @@ CONFIG = REPO / "manager" / "core" / "config.py"
 TRANSCRIPT = [
     ("solo or team?", "solo or team?", INSTALL),
     ("which agent adapter?", "which agent adapter?", INSTALL),
-    ("what command runs this project's tests?",
-     "what command runs this project's tests?", INSTALL),
-    ("python3 -m unittest", "python3 -m unittest", INSTALL),
     ("Task board for", "Task board for", BOARD),
     ("http://127.0.0.1:", "http://127.0.0.1:", BOARD),
     ("26071", "26071", CONFIG),
