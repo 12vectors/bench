@@ -133,26 +133,38 @@ Task board for ~/your-repo/.task-manager/tasks
   </div>
 </section>
 
-<!-- Three sentences a reader has said out loud before finding this page.
-     Each one is answered by a mechanism rather than a promise, and each
-     mechanism has a door below it that explains itself. -->
-<section class="snags">
-  <h2 class="snags-title">You've got agents. Now you've got a coordination problem.</h2>
-  <div class="snag-list">
-    <div class="snag">
-      <span class="snag-said">“Which tab was that in?”</span>
-      <span class="snag-answer">Every agent's task, branch and status on one
-        board — not scattered across chat sessions that forget everything.</span>
+<!-- Why bench, before the six doors say what it does. Four reasons, and
+     the first is the one no hosted tool can answer: it is in your
+     codebase, so it is yours to change. The three after it are the
+     coordination problems a reader has usually already hit. -->
+<section class="why">
+  <h2 class="why-title">Why bench?</h2>
+  <div class="why-list">
+    <div class="why-reason">
+      <span class="why-lead">Simplicity, and total control</span>
+      <span class="why-text">bench lives in your codebase — task files in
+        your repo, a board that reads them, nothing in the middle. And it
+        is built to be extended: the app it drives, the agent it launches,
+        the chores it runs are all yours to write, so the workflow it runs
+        is exactly your workflow.</span>
     </div>
-    <div class="snag">
-      <span class="snag-said">“They keep stepping on each other.”</span>
-      <span class="snag-answer">Each agent works in its own git worktree.
-        Parallel work, zero collisions.</span>
+    <div class="why-reason">
+      <span class="why-lead">Nothing lives in a scrollback</span>
+      <span class="why-text">Every agent's task, branch and status on one
+        board — not scattered across chat sessions that forget everything
+        the moment they end.</span>
     </div>
-    <div class="snag">
-      <span class="snag-said">“Did something just merge?”</span>
-      <span class="snag-answer">Never. bench opens PRs and puts CI on the
-        card — the merge button is yours alone.</span>
+    <div class="why-reason">
+      <span class="why-lead">Parallel work, zero collisions</span>
+      <span class="why-text">Each agent gets its own git worktree and
+        branch. Run five at once without them editing the same file out
+        from under each other.</span>
+    </div>
+    <div class="why-reason">
+      <span class="why-lead">Nothing merges without you</span>
+      <span class="why-text">Finished work arrives as a PR with CI on the
+        card. bench never merges — the button stays yours, and you stop
+        being the thing everything queues behind.</span>
     </div>
   </div>
 </section>
