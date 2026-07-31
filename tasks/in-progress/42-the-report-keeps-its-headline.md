@@ -1,6 +1,7 @@
 # 42 — A long closing report loses its head, which is where it says what happened
 
-**Status:** Backlog
+**Status:** In Progress
+**Assignee:** istos
 **Priority:** High — the task file is the permanent record, and the part it
 drops is the part the reader must act on
 **Type:** Bug
