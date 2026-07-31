@@ -1,0 +1,72 @@
+<!doctype html>
+<!-- Layout "notfound" — the page Cloudflare serves, with a 404 status,
+     for any path the build did not write (site/wrangler.jsonc:
+     not_found_handling "404-page"). It is the site's own design and the
+     site's own nav, so a wrong url is a wrong turn rather than a dead
+     end.
+
+     Two things it deliberately does not have: a <link rel=canonical>,
+     because a 404 is not a page anyone should canonicalise to, and a
+     contents gutter, because there is nothing to list.
+
+     Placeholders are string.Template's; a literal dollar in the markup
+     would have to be doubled. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>$title · $site_title</title>
+<meta name="description" content="$description">
+<meta name="robots" content="noindex">
+<link rel="icon" href="$icon">
+<link rel="stylesheet" href="$stylesheet">
+</head>
+<body class="page-notfound">
+
+<div class="topbar">
+  <span class="topbar-org">12vectors</span>
+  <span class="topbar-sep">/</span>
+  <span class="topbar-repo">bench</span>
+  <span class="spacer"></span>
+  <span>$version</span>
+</div>
+
+<header class="masthead masthead-flat">
+  <a class="wordmark" href="/">
+    <span class="wordmark-name">$site_title</span>
+    <span class="wordmark-tag">$site_tagline</span>
+  </a>
+  <span class="spacer"></span>
+  <nav class="nav">
+$nav
+  </nav>
+  <a class="button" href="$repo_url">GitHub ↗</a>
+</header>
+
+<section class="lost">
+  <span class="mono lost-code">404</span>
+  <h1>Nothing on this path.</h1>
+  <p class="lede">Every page here is generated from a heading in the
+    repository's own markdown, so a url that does not resolve is a url
+    that was never built — a stale link, or a typo.</p>
+  <div class="hero-actions">
+    <a class="button button-solid button-lg" href="/">Back to the landing page</a>
+    <a class="button button-lg" href="$issues_url">Report a broken link ↗</a>
+  </div>
+</section>
+
+<footer class="footer">
+  <pre class="footer-mark">  ___________________
+ |___________________|
+   ||             ||
+   ||             ||</pre>
+  <div class="footer-id">
+    <span class="footer-name">$site_title</span>
+    <span class="mono">a 12vectors product · built in the open</span>
+  </div>
+  <span class="spacer"></span>
+  <a class="mono footer-repo" href="$repo_url">github.com/12vectors/bench</a>
+</footer>
+
+</body>
+</html>

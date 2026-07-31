@@ -32,6 +32,14 @@
       "source": "AGENTS.md",
       "from": "## Claiming a card",
       "to": "## Syncing boards"
+    },
+    {
+      "path": "/404.html",
+      "title": "Not found",
+      "layout": "notfound",
+      "section": null,
+      "description": "That path is not a page on this site.",
+      "source": null
     }
   ]
 }

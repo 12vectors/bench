@@ -28,9 +28,23 @@ the manifest, and a body that repeated it would say it twice.
 Templates are `string.Template`, so placeholders are `$name` and a literal
 dollar is `$$` — `str.format` was not an option with a stylesheet's worth
 of braces in play.
+
+## What the host needs from the build
+
+Two things here exist for the way the site is served (site/wrangler.jsonc,
+Cloudflare Workers static assets), and both are documented where they are
+implemented below:
+
+- `site/root/` is copied verbatim to the TOP of the output, because
+  `_headers` — the caching and security policy — is read by the host from
+  the root and nowhere else.
+- the stylesheet and the icon are linked with a `?v=<hash>` of their own
+  contents (see `stamp`), which is what lets `_headers` cache them for a
+  year without a deploy ever going unseen.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -47,6 +61,16 @@ REPO = SITE.parent
 # knows the tree is its own before removing it. --out pointed at
 # something else refuses rather than deleting a stranger's files.
 MARKER = ".bench-site"
+
+# Copied verbatim to the TOP of the build, unlike static/ which lands in
+# a subdirectory of its own. These are files the host reads rather than
+# pages it serves — `_headers` is the whole list — and they have to sit
+# at the root because that is where Cloudflare looks for them.
+ROOT = "root"
+
+# The assets a template links directly, and the placeholder each one is
+# offered under. See stamp() for why they carry a query string.
+STAMPED = {"stylesheet": "static/site.css", "icon": "static/favicon.svg"}
 
 ATX = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -301,7 +325,31 @@ def load_template(name: str, site: Path) -> Template:
     return Template(path.read_text(encoding="utf-8"))
 
 
-def render_page(page: dict, manifest: dict, *, site: Path, repo: Path) -> str:
+def stamp(site: Path) -> dict:
+    """`{"stylesheet": "/static/site.css?v=<hash>", …}` — the urls the
+    templates link the stylesheet and the icon by.
+
+    Nothing in static/ is renamed by the build: `site.css` stays
+    `site.css`, which is what anyone reading the tree (and the host's
+    own `_headers` globs) can rely on. So the fingerprint rides in the
+    query string instead. Caches key on the whole url, which is what
+    makes `immutable` in site/root/_headers safe: edit the stylesheet
+    and the deploy publishes it under a url nothing has ever cached,
+    while the year-long cache still holds for everyone else."""
+    urls = {}
+    for name, rel in STAMPED.items():
+        path = site / rel
+        if not path.is_file():
+            # Absent is missing_assets()' story to tell, not a crash here.
+            urls[name] = "/" + rel
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:10]
+        urls[name] = f"/{rel}?v={digest}"
+    return urls
+
+
+def render_page(page: dict, manifest: dict, *, site: Path, repo: Path,
+                stamps: dict = None) -> str:
     source = page.get("source")
     if source:
         body, contents = render_markdown(
@@ -314,7 +362,10 @@ def render_page(page: dict, manifest: dict, *, site: Path, repo: Path) -> str:
 
     config = manifest["site"]
     blob = config["blob_base"].rstrip("/") + "/"
+    stamps = stamps if stamps is not None else stamp(site)
     fields = {
+        "stylesheet": stamps["stylesheet"],
+        "icon": stamps["icon"],
         "title": escape(page["title"]),
         "description": escape(page.get("description")
                               or config.get("description", "")),
@@ -371,9 +422,12 @@ def load_manifest(site: Path) -> dict:
                 raise BuildError(f'pages.json: an entry has no "{key}": '
                                  f"{json.dumps(page)}")
         route = page["path"]
-        if not route.startswith("/") or not route.endswith("/"):
-            raise BuildError(f'pages.json: route "{route}" must start and '
-                             f'end with "/"')
+        if not route.startswith("/") or not (route.endswith("/")
+                                             or route.endswith(".html")):
+            raise BuildError(
+                f'pages.json: route "{route}" must start with "/" and '
+                f'either end with "/" (a directory index) or name an '
+                f'.html file (as /404.html does)')
         if route in seen:
             raise BuildError(f'pages.json: route "{route}" appears twice')
         seen.add(route)
@@ -408,11 +462,45 @@ def clear(out: Path) -> None:
     shutil.rmtree(out)
 
 
+def target_for(out: Path, route: str) -> Path:
+    """Where a route is written. `/x/y/` is a directory index, the shape
+    every page has; `/404.html` is that literal file, because Cloudflare's
+    not-found handling looks for a `404.html` and would never find a
+    `404/index.html`."""
+    if not route.endswith("/"):
+        return out / route.lstrip("/")
+    inner = route.strip("/")
+    return (out / inner / "index.html") if inner else (out / "index.html")
+
+
 def copy_static(site: Path, out: Path) -> None:
     static = site / "static"
     if static.is_dir():
         shutil.copytree(static, out / "static",
                         ignore=shutil.ignore_patterns(".DS_Store"))
+
+
+def root_files(site: Path) -> list:
+    """Everything under site/root/, as (source, path relative to the
+    output root). The tree is copied verbatim to the top of the build:
+    these are files the *host* reads — `_headers` — rather than pages the
+    site serves, and Cloudflare only looks for them at the root."""
+    source = site / ROOT
+    if not source.is_dir():
+        return []
+    return [(path, path.relative_to(source))
+            for path in sorted(source.rglob("*"))
+            if path.is_file() and path.name != ".DS_Store"]
+
+
+def copy_root(site: Path, out: Path) -> list:
+    written = []
+    for path, relative in root_files(site):
+        target = out / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+        written.append(target)
+    return written
 
 
 def missing_assets(out: Path) -> list:
@@ -437,8 +525,21 @@ def build(*, repo: Path = REPO, site: Path = None, out: Path = None,
     site = site or (repo / "site")
     out = out or (site / "dist")
     manifest = load_manifest(site)
+    stamps = stamp(site)
 
-    pages = [(page, render_page(page, manifest, site=site, repo=repo))
+    # A file in root/ that a route also claims would be silently replaced
+    # by whichever is written last, so it is a build failure instead.
+    claimed = {str(target_for(Path(), page["path"])): page["path"]
+               for page in manifest["pages"]}
+    for _, relative in root_files(site):
+        route = claimed.get(str(relative))
+        if route:
+            raise BuildError(
+                f'site/{ROOT}/{relative} and the route "{route}" both write '
+                f"{relative}. Rename one — the build will not pick a winner.")
+
+    pages = [(page, render_page(page, manifest, site=site, repo=repo,
+                                stamps=stamps))
              for page in manifest["pages"]]
 
     clear(out)
@@ -446,10 +547,12 @@ def build(*, repo: Path = REPO, site: Path = None, out: Path = None,
     (out / MARKER).write_text(
         "written by site/build.py; safe to delete\n", encoding="utf-8")
     copy_static(site, out)
+    for target in copy_root(site, out):
+        log(f"  {'(root)':<34} {target.relative_to(out)}")
 
     written = []
     for page, html in pages:
-        target = out / page["path"].strip("/") / "index.html"
+        target = target_for(out, page["path"])
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(html, encoding="utf-8")
         written.append(target)

@@ -8,6 +8,7 @@ and not one third-party request.
     python3 -m unittest discover -s tests
 """
 
+import importlib.util
 import json
 import re
 import shutil
@@ -20,6 +21,20 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 SITE = REPO / "site"
 BUILD = SITE / "build.py"
+
+
+def builder():
+    """site/build.py as a module, so a test asking "where does this route
+    land?" asks the builder rather than keeping its own copy of the rule.
+    Its top-level imports are stdlib only; the markdown parser is
+    imported inside the function that needs it."""
+    spec = importlib.util.spec_from_file_location("bench_site_build", BUILD)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+BUILDER = builder()
 
 # The sources every page is cut from. A scratch repo needs these and
 # nothing else to build the real manifest.
@@ -109,11 +124,11 @@ class TheRealSiteBuilds(unittest.TestCase):
             shutil.rmtree(cls.out, ignore_errors=True)
 
     def page(self, route: str) -> str:
-        return (self.out / route.strip("/") / "index.html").read_text("utf-8")
+        return BUILDER.target_for(self.out, route).read_text("utf-8")
 
     def test_one_page_per_manifest_entry(self):
         for entry in self.manifest["pages"]:
-            target = self.out / entry["path"].strip("/") / "index.html"
+            target = BUILDER.target_for(self.out, entry["path"])
             self.assertTrue(target.is_file(),
                             f'{entry["path"]} produced no page')
 
