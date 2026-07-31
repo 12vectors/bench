@@ -36,8 +36,18 @@ happens once, on the machine that refreshes a face; nothing the site
 serves ever makes it.
 
 Both families are licensed for this: IBM Plex under the SIL Open Font
-License 1.1, Zilla Slab likewise. Keeping the downloaded `*.LICENSE.txt`
-beside the woff2 files satisfies the licence's one obligation.
+License 1.1, Zilla Slab likewise. The licence's one obligation is that
+its text and copyright notice travel with the font, and committing the
+woff2 files here is redistribution — so they do:
+
+| File | Covers | From |
+| --- | --- | --- |
+| `IBMPlex.LICENSE.txt` | the six Plex faces | [IBM/plex](https://github.com/IBM/plex) |
+| `ZillaSlab.LICENSE.txt` | `ZillaSlab-SemiBold` | [mozilla/zilla-slab](https://github.com/mozilla/zilla-slab) |
+
+`fetch-fonts.py` does not fetch these — it asks the Google Fonts CSS
+API, which serves the woff2 and nothing else. Adding a family means
+adding its licence here by hand.
 
 ## If they are absent
 
