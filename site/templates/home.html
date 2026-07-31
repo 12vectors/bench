@@ -65,13 +65,14 @@ $nav
 <section class="hero">
   <div class="hero-copy">
     <span class="eyebrow">Documentation</span>
-    <h1>Put the agents<br>on the bench.</h1>
-    <p class="lede">Task files in stage directories are the only source of
-      truth. A stdlib-only board narrates what happens to them — agents
-      working in git worktrees, PRs opening on review, CI on the cards —
-      and never merges anything itself.</p>
+    <h1>Run a team of coding agents.<br>Stay in control.</h1>
+    <p class="lede">Your agents can ship faster than you can keep track.
+      bench turns your repo into mission control: every task is a card,
+      every agent works in its own isolated worktree, every change waits
+      as a PR for your review. You see everything. Nothing merges
+      without you.</p>
     <div class="hero-actions">
-      <a class="button button-solid button-lg" href="/guides/install/">Install into a repo</a>
+      <a class="button button-solid button-lg" href="/guides/install/">Install into a repo — running in 2 minutes</a>
       <a class="button button-lg" href="$repo_url">bench on GitHub ↗</a>
     </div>
     <span class="mono aside-note">no account, no service, no database. it is
@@ -105,51 +106,78 @@ Task board for ~/your-repo/.task-manager/tasks
   </div>
 </section>
 
+<!-- Three sentences a reader has said out loud before finding this page.
+     Each one is answered by a mechanism rather than a promise, and each
+     mechanism has a door below it that explains itself. -->
+<section class="snags">
+  <h2 class="snags-title">You've got agents. Now you've got a coordination problem.</h2>
+  <div class="snag-list">
+    <div class="snag">
+      <span class="snag-said">“Which tab was that in?”</span>
+      <span class="snag-answer">Every agent's task, branch and status on one
+        board — not scattered across chat sessions that forget everything.</span>
+    </div>
+    <div class="snag">
+      <span class="snag-said">“They keep stepping on each other.”</span>
+      <span class="snag-answer">Each agent works in its own git worktree.
+        Parallel work, zero collisions.</span>
+    </div>
+    <div class="snag">
+      <span class="snag-said">“Did something just merge?”</span>
+      <span class="snag-answer">Never. bench opens PRs and puts CI on the
+        card — the merge button is yours alone.</span>
+    </div>
+  </div>
+</section>
+
 <section class="doors">
   <a class="door" href="/guides/install/">
     <span class="mono door-index">01</span>
-    <span class="door-title">Install and first run</span>
-    <span class="door-text">Untar it into <span class="mono">.task-manager/</span>,
-      run <span class="mono">start.sh</span>, answer three questions.
-      Port 26071, pinned.</span>
+    <span class="door-title">Running in two minutes</span>
+    <span class="door-text">Drop it into any repo, run one script, open the
+      board. No account, no config sprawl — it untars into
+      <span class="mono">.task-manager/</span> and serves on port 26071.</span>
   </a>
   <a class="door" href="/concepts/stages/">
     <span class="mono door-index">02</span>
-    <span class="door-title">The five stages</span>
-    <span class="door-text">backlog → to-do → in-progress → review → done.
-      The directory a file sits in <i>is</i> its status.</span>
+    <span class="door-title">Always know what every agent is doing</span>
+    <span class="door-text">Backlog to done at a glance. The board cannot
+      drift from reality, because tasks <i>are</i> files in your repo: the
+      directory a card sits in is its status.</span>
   </a>
   <a class="door" href="/concepts/agents-on-the-board/">
     <span class="mono door-index">03</span>
-    <span class="door-title">Agents on the board</span>
-    <span class="door-text">▸ start work makes a worktree and a branch, runs
-      the agent headless, and moves the card when it exits.</span>
+    <span class="door-title">Parallel agents, zero collisions</span>
+    <span class="door-text">Every agent gets its own git worktree and branch.
+      Run five at once without them overwriting each other.</span>
   </a>
   <a class="door" href="/concepts/pull-requests/">
     <span class="mono door-index">04</span>
-    <span class="door-title">PRs &amp; review</span>
-    <span class="door-text">A card entering review gets a PR opened for it.
-      Then ◔ review PR, ⚑ copilot, ↻ act on PR — until it settles.</span>
+    <span class="door-title">Nothing ships without you</span>
+    <span class="door-text">Finished work arrives as a PR with CI status on
+      the card. bench never merges — you stay the gate, without being the
+      bottleneck.</span>
   </a>
   <a class="door" href="/concepts/team-mode/">
     <span class="mono door-index">05</span>
-    <span class="door-title">Team mode</span>
-    <span class="door-text"><span class="mono">BOARD_SYNC=1</span> makes
-      origin/main the truth. Moves commit and push themselves; boards pull
-      on a beat.</span>
+    <span class="door-title">One board for the whole team</span>
+    <span class="door-text">Synced through git itself
+      (<span class="mono">BOARD_SYNC=1</span>) — no shared server, no
+      per-seat billing, no “who updated the ticket?”</span>
   </a>
   <a class="door door-dark" href="/concepts/three-layer-law/">
     <span class="mono door-index">06</span>
-    <span class="door-title">The three-layer law</span>
-    <span class="door-text">Core knows tasks, worktrees, PRs and events.
-      Drivers know apps, adapters know vendors, local/ knows your
-      project.</span>
+    <span class="door-title">Swap agents without rewiring</span>
+    <span class="door-text">Vendors are adapters. Change your coding agent,
+      or run several, without changing your workflow.</span>
   </a>
 </section>
 
-<!-- The strip turn 1 of the design filled with a most-read ranking. This
-     site counts nothing and never will, so it says the one thing about
-     itself it can prove: which version it was built from. -->
+<!-- The strip turn 1 of the design filled with a most-read ranking. The
+     analytics here counts pageviews and nothing about a person, so it
+     could not honestly rank anything for a reader anyway; the strip says
+     the one thing this page can prove about itself instead — which
+     version it was built from. -->
 <section class="strip">
   <span class="mono strip-label">Version</span>
   <span class="mono strip-version">$version</span>
@@ -168,6 +196,7 @@ Task board for ~/your-repo/.task-manager/tasks
    ||             ||</pre>
   <div class="footer-id">
     <span class="footer-name">$site_title</span>
+    <span class="footer-line">Put the agents on the bench.</span>
     <span class="mono">a 12vectors product · built in the open</span>
   </div>
   <span class="spacer"></span>

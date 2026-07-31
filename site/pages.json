@@ -2,7 +2,7 @@
   "site": {
     "title": "bench",
     "tagline": "docs",
-    "description": "A live kanban for coding-agent work: task files in stage directories are the only source of truth.",
+    "description": "Run a team of coding agents without losing track of what they are doing.",
     "base_url": "https://bench.12vectors.com",
     "repo_url": "https://github.com/12vectors/bench",
     "issues_url": "https://github.com/12vectors/bench/issues",
@@ -15,10 +15,10 @@
   "pages": [
     {
       "path": "/",
-      "title": "bench — a live kanban for coding-agent work",
+      "title": "bench — run a team of coding agents, stay in control",
       "layout": "home",
       "section": null,
-      "description": "Task files in stage directories are the only source of truth. A stdlib-only board narrates what happens to them — agents working in git worktrees, PRs opening on review, CI on the cards — and never merges anything itself.",
+      "description": "Your agents ship faster than you can keep track. Every task is a card, every agent gets its own worktree, every change waits as a PR. Nothing merges without you.",
       "source": null
     },
     {

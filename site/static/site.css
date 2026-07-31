@@ -114,6 +114,10 @@ a:hover{color:var(--text);text-decoration:underline}
 .footer-mark{margin:0;font:9.5px/1.25 var(--mono);color:var(--muted)}
 .footer-id{display:flex;flex-direction:column;gap:4px}
 .footer-name{font:600 15px/1 var(--display);color:var(--canvas)}
+/* The line that used to be the h1. It says what bench is about in the
+   register the product speaks in; the h1 above now says what it does
+   for you. */
+.footer-line{font-size:var(--t-ui);color:var(--ink-muted)}
 .footer-id .mono,.footer-repo{font-size:11px}
 .footer-repo{color:#a9c4c9}
 
@@ -301,6 +305,29 @@ a:hover{color:var(--text);text-decoration:underline}
 .t-muted{color:var(--ink-muted)}
 .t-dim{color:var(--ink-dim)}
 
+/* The three sentences between the hero and the doors. Quiet on purpose:
+   no cards, no borders, no colour — the doors below are the page's one
+   grid of boxes, and repeating that shape here would make the reader
+   look twice at the same thing. The said-out-loud line takes the
+   display face; its answer is body copy. */
+.snags{padding:8px 44px 30px}
+.snags-title{
+  margin:0 0 20px;font:600 var(--t-h2)/1.3 var(--display);
+  letter-spacing:-.01em;color:var(--text);
+}
+.snag-list{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:22px;
+}
+.snag{display:flex;flex-direction:column;gap:6px}
+.snag-said{
+  font:600 var(--t-h3)/1.4 var(--display);color:var(--text);
+  text-wrap:pretty;
+}
+.snag-answer{
+  font-size:var(--t-ui);line-height:1.6;color:var(--muted);
+  text-wrap:pretty;
+}
+
 /* Every door is a link to a page this site builds — the whole card is
    the target, so the hover is the card's border rather than an
    underline under three words of it. */
@@ -416,6 +443,8 @@ a:hover{color:var(--text);text-decoration:underline}
   .menu-contents{display:block}
   .hero{grid-template-columns:minmax(0,1fr);gap:28px;padding:32px 24px}
   .doors{grid-template-columns:repeat(2,minmax(0,1fr));padding:0 24px 28px}
+  .snags{padding:8px 24px 26px}
+  .snag-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
   .strip{padding:18px 24px}
 
   /* Only a code block or a table may scroll sideways, so a token that
@@ -460,6 +489,7 @@ a:hover{color:var(--text);text-decoration:underline}
   .menu{display:block}
   .page-article .prose{padding:24px 20px 36px}
   .doors{grid-template-columns:minmax(0,1fr)}
+  .snag-list{grid-template-columns:minmax(0,1fr);gap:18px}
   .masthead{padding:12px 18px;gap:12px;flex-wrap:wrap}
   .crumbs{flex-wrap:wrap}
   .footer{flex-wrap:wrap;gap:16px 20px;padding:20px 18px}
@@ -500,6 +530,7 @@ a:hover{color:var(--text);text-decoration:underline}
   .hero-actions{gap:8px}
   .hero-actions .button{width:100%}
   .doors{padding:0 16px 24px}
+  .snags{padding:8px 16px 22px}
   .strip{padding:16px}
   .page-article .prose{padding:20px 16px 32px}
   .menu-summary{padding:9px 14px}
