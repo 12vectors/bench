@@ -1,6 +1,6 @@
 # 39 — The browser tab says whether agents are working
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** Medium — the state you most want while the tab is *not* the
 one you are looking at is the one the tab does not carry
@@ -100,3 +100,26 @@ Two follow-ups this deliberately does not do, both worth their own cards:
   wears, with a toast, precisely because it must not be missed — and a
   toast fired at a backgrounded tab is missed by definition. That is a
   sharper version of this same gap.
+
+
+---
+
+## Work report — 2026-07-31 16:13 (Juno)
+
+Committed on `task/39-the-tab-says-whether-agents-are-working` as `72a0d41`; the full suite (497 tests) passes.
+
+**What changed**
+
+- `manager/core/board.html` — `renderTitle()` now builds the tab title through a new pure `tabTitle(project, view, working)`. While agents run it reads `2◌ · <project> · <view>`; with none running it is character-identical to the previous `<project> · <view>`. The mark is `◌`, the in-flight glyph the CI and copilot chips already wear, so the prefix sits in the board's own mono register rather than being an emoji.
+- Same file — the `status === 'running'` filter that `renderChip()` used inline is lifted into `runningAgents()`, and both the header chip and the tab title now count through it. That is what makes "the tab and the chip can never disagree" structural rather than coincidental.
+- Same file — `document.title` is assigned only when the computed string differs from the last one written (a `shownTitle` cache), since `render()` fires on every SSE frame.
+- `tests/test_tab_agents.py` (new) — behaviour run for real in node (skipped when node is absent): the plain title for a quiet board, the count leading for 1/2/3 agents, only `running` records counted, every view carrying it, a finished run returning the tab to the plain title, no write before state arrives, and a 20-frame burst producing exactly one write. Plus source-level wiring checks: one running-filter, one `document.title` writer, and nothing but the count ahead of the project.
+- `tests/test_board_title.py` — its "one writer, starting with the project" invariant asserted the literal assignment began with `S.state.project`, which the prefix makes false. It now asserts the single writer builds its string via `tabTitle(S.state.project, …)`, with the ordering claim itself moved to the new file.
+- `AGENTS.md` — the "Seeing the board" paragraph on the tab title gains the running-agent prefix.
+
+**For the reviewer, in order**
+
+1. `manager/core/board.html:868-897` — the new `tabTitle`/`renderTitle`, and whether `2◌ · ` is the right shape for the prefix. It is the one taste call in the change; the task specified "the count and a mark", and `◌` was picked because it is already bench's in-flight glyph.
+2. The edit to `tests/test_board_title.py:129` — an existing assertion was deliberately loosened in one direction (the literal string no longer starts with the project) and its intent re-homed. Worth confirming that trade reads right.
+
+Nothing here needs running by hand; the definition of done is `python3 -m unittest`, which passes. The out-of-scope neighbours the card named — the favicon and a failed run in the tab — are untouched.
