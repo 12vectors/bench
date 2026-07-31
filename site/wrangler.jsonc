@@ -1,0 +1,43 @@
+// bench.12vectors.com — the built minisite, served as static assets.
+//
+// There is no `main`: this Worker has no script at all. site/dist/ is
+// plain files and Cloudflare's static-assets router serves them, so the
+// cheapest correct thing is to give it nothing to run. Anything that
+// would need a fetch handler (an api, a redirect that depends on state)
+// is a different card.
+//
+//   npx wrangler@4 deploy --config site/wrangler.jsonc
+//
+// See site/README.md for the whole sequence, the account, and what the
+// domain currently points at.
+{
+  "name": "bench-site",
+  "compatibility_date": "2026-07-01",
+
+  "assets": {
+    // Relative to this file. site/build.py writes it; it is gitignored,
+    // so a deploy from a clean checkout builds first.
+    "directory": "./dist",
+
+    // /concepts/claiming-a-card -> 301 -> /concepts/claiming-a-card/,
+    // which is the url the pages link and the one <link rel=canonical>
+    // names. One page, one address: the slashless form redirects rather
+    // than serving a second copy, and no url ever ends in .html.
+    "html_handling": "force-trailing-slash",
+
+    // An unknown path gets dist/404.html with a 404 status — the site's
+    // own not-found page, in the site's own design. Not "single-page-
+    // application", which would answer 200 with the landing page and
+    // tell a crawler every typo is a real url.
+    "not_found_handling": "404-page"
+  },
+
+  // The hostname, taken over at the zone level: Cloudflare points
+  // bench.12vectors.com at this Worker and creates the DNS record. It
+  // touches nothing else on 12vectors.com.
+  "routes": [
+    { "pattern": "bench.12vectors.com", "custom_domain": true }
+  ],
+
+  "observability": { "enabled": true }
+}

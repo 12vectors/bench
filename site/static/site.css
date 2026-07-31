@@ -285,6 +285,19 @@ a:hover{color:var(--text);text-decoration:underline}
 .door-dark .door-text{color:#a9c4c9}
 .door .mono{font-size:var(--t-code)}
 
+/* ── 404 (layout "notfound") ── */
+.lost{
+  display:flex;flex-direction:column;align-items:flex-start;gap:18px;
+  padding:76px 44px 96px;max-width:60ch;
+}
+.lost-code{
+  font-size:11px;letter-spacing:.14em;color:var(--alarm);
+}
+.lost h1{
+  margin:0;font:600 var(--t-hero)/1.05 var(--display);
+  letter-spacing:-.025em;text-wrap:balance;
+}
+
 /* ── narrow ── */
 @media (max-width:1080px){
   .shell{grid-template-columns:220px minmax(0,1fr)}
