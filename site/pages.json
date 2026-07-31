@@ -112,6 +112,49 @@
       "to": "## Drives"
     },
     {
+      "path": "/reference/settings/",
+      "title": "Settings",
+      "layout": "reference",
+      "section": "Reference",
+      "description": "Every BOARD_* setting with its default and what changing it does — generated from manager/core/.env.example, which is where the defaults live.",
+      "lede": "The whole of manager/core/.env.example, read out of the file itself on every build. Precedence runs process environment, then your manager/local/.env, then the defaults below — so a key you never copied is a key at the value shown here.",
+      "source": "manager/core/.env.example",
+      "generate": "settings"
+    },
+    {
+      "path": "/reference/adapters/",
+      "title": "The adapter contract",
+      "layout": "reference",
+      "section": "Reference",
+      "description": "The two executables an adapter is — run and wire — the three launch intents, the model passthrough, and the normalized event schema.",
+      "lede": "What you implement to put a different coding agent behind the board. Two executables, three launch intents, and one event schema; the shipped claude/ and opencode/ adapters are both of these read side by side.",
+      "source": "manager/core/adapters/README.md",
+      "from": "## The contract",
+      "to": "## Writing one"
+    },
+    {
+      "path": "/reference/driver/",
+      "title": "The driver contract",
+      "layout": "reference",
+      "section": "Reference",
+      "description": "manager/local/driver/start: the executable that launches your app from a task's worktree, and the four things the board asks of it.",
+      "lede": "How an app starts is project knowledge, so the board does not hold any of it: it runs one executable you write and owns it as a process group. Four env vars in, one line out when the app is up, and SIGTERM to park it.",
+      "source": "AGENTS.md",
+      "from": "## Drives",
+      "to": "## The activity bar and the archive"
+    },
+    {
+      "path": "/reference/commands/",
+      "title": "The local-command contract",
+      "layout": "reference",
+      "section": "Reference",
+      "description": "manager/local/commands/: project chores run against a task's worktree, surfaced as chips on the cards that have a branch.",
+      "lede": "The driver's contract again, for the chores that belong to one checkout rather than to the app: migrations, reseeds, asset rebuilds. An executable in manager/local/commands/ becomes a chip on every card with a branch.",
+      "source": "AGENTS.md",
+      "from": "## Local commands",
+      "to": "## Updating"
+    },
+    {
       "path": "/404.html",
       "title": "Not found",
       "layout": "notfound",

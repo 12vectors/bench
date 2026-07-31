@@ -25,6 +25,21 @@ the section's own `###` sub-headings land as the page's `<h2>`s. The
 `from` heading itself is dropped: the layout renders the page title from
 the manifest, and a body that repeated it would say it twice.
 
+## The other way a body is made: a generator
+
+A slice needs a source that is already markdown. `manager/core/.env.example`
+is not — it is the settings file, and it documents every key in the
+comment above it. A page may therefore say `"generate": "settings"`
+instead of `"from"`, and the builder turns that file into markdown
+itself (see GENERATORS). It is the same promise by other means: nobody
+transcribes a default into this directory, and a key nothing documents
+stops the build rather than reaching the site bare.
+
+Generated bodies are rendered with raw HTML disabled. A settings comment
+writes `<git user.name>` meaning a placeholder, and a markdown parser
+that honours HTML would swallow it as a tag — the file was never written
+to be markdown, so the builder does not let it be misread as any.
+
 Templates are `string.Template`, so placeholders are `$name` and a literal
 dollar is `$$` — `str.format` was not an option with a stylesheet's worth
 of braces in play.
@@ -102,6 +117,10 @@ STAMPED = {"stylesheet": "static/site.css", "icon": "static/favicon.svg"}
 
 ATX = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+# A setting in an env file: the shape shell and .env agree on. Values are
+# taken verbatim to the end of the line, including an empty one — an
+# empty default is a default, and BOARD_TITLE= says so.
+SETTING = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 CSS_URL = re.compile(r"""url\(\s*["']?([^"')]+)["']?\s*\)""")
 LINK = re.compile(r"""(?:href|src)=["']([^"']+)["']""", re.IGNORECASE)
 COMMENT = re.compile(r"\s{2,}#")
@@ -216,6 +235,122 @@ def slice_section(text: str, page: dict, source: str) -> str:
             f'{route}: the slice of {source} from "{page["from"]}" is '
             f"empty. A page with no body is a drift, not a page.")
     return promote(body, level - 1)
+
+
+# ── generated bodies ──────────────────────────────────────────────────
+
+def env_blocks(text: str, source: str) -> list:
+    """`manager/core/.env.example` as the blocks a blank line separates:
+    `{"comment": [str, …], "keys": [(name, value, line), …]}`.
+
+    That is the file's own grouping and the only one there is — the four
+    `BOARD_AGENT_MODEL*` keys share one comment because they sit under
+    one, with no blank line between them. Blank comment lines (a bare
+    `#`) survive as empty strings, because they are the paragraph breaks
+    inside a comment."""
+    blocks: list = []
+    block = {"comment": [], "keys": []}
+
+    def flush():
+        if block["comment"] or block["keys"]:
+            blocks.append(block)
+
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            flush()
+            block = {"comment": [], "keys": []}
+            continue
+        if line.startswith("#"):
+            # A comment after this block's keys opens the next entry,
+            # even with no blank line between them.
+            if block["keys"]:
+                flush()
+                block = {"comment": [], "keys": []}
+            block["comment"].append(line[1:].strip())
+            continue
+        found = SETTING.match(line)
+        if not found:
+            raise BuildError(
+                f"{source}:{number}: {line.strip()!r} is neither a comment "
+                f"nor a NAME=value setting. The settings page is generated "
+                f"from this file, so it has to stay one.")
+        block["keys"].append((found.group(1), found.group(2), line))
+    flush()
+    return blocks
+
+
+def comment_paragraphs(lines: list) -> list:
+    """A comment block as markdown paragraphs. The bare `#` lines are the
+    author's paragraph breaks; everything else keeps its own line
+    endings, which markdown treats as the soft wraps they are."""
+    paragraphs, current = [], []
+    for line in lines:
+        if line:
+            current.append(line)
+        elif current:
+            paragraphs.append("\n".join(current))
+            current = []
+    if current:
+        paragraphs.append("\n".join(current))
+    return paragraphs
+
+
+def quote(paragraphs: list) -> str:
+    """A comment that documents no key — the file's own preamble, the
+    note about `checks` — as a blockquote, so the page keeps saying which
+    words belong to a setting and which stand on their own."""
+    return "\n>\n".join("> " + text.replace("\n", "\n> ")
+                        for text in paragraphs)
+
+
+def generate_settings(text: str, page: dict, source: str):
+    """(markdown, [(console label, heading), …]) for an env file.
+
+    One `##` entry per group the file makes, headed by the key or keys it
+    documents and opening with those keys exactly as the file writes
+    them — the default is the line, not a retyping of it. The labels are
+    what the layout pins beside the page, one per key rather than one per
+    group, because the question this page answers is about a key."""
+    route = page["path"]
+    body, labels, seen = [], [], {}
+    for block in env_blocks(text, source):
+        paragraphs = comment_paragraphs(block["comment"])
+        if not block["keys"]:
+            body.append(quote(paragraphs))
+            continue
+        names = [name for name, _, _ in block["keys"]]
+        if not paragraphs:
+            raise BuildError(
+                f'{route}: {source} sets {", ".join(names)} with no comment '
+                f"above it. Every setting on this page is its own "
+                f"documentation — document it there, or it cannot be "
+                f"generated here.")
+        heading = ", ".join(names)
+        for name, value, line in block["keys"]:
+            if name in seen:
+                raise BuildError(
+                    f"{route}: {source} sets {name} twice (under "
+                    f'"{seen[name]}" and "{heading}"). A setting has one '
+                    f"default and one place that says so.")
+            seen[name] = heading
+            labels.append((f"{name}={value}", heading))
+        lines = "\n".join(line for _, _, line in block["keys"])
+        # Fenced as `env` rather than bare, so the stylesheet can tell a
+        # default from a code block: one is a value you set, the other is
+        # a terminal, and the design draws them differently.
+        body.append(f"## {heading}\n\n```env\n{lines}\n```")
+        body.extend(paragraphs)
+
+    if not labels:
+        raise BuildError(
+            f"{route}: {source} documents no settings at all. A settings "
+            f"page with nothing on it is a drift, not a page.")
+    return "\n\n".join(part for part in body if part.strip()), labels
+
+
+# What a page may ask for instead of a `from` heading. The manifest names
+# one of these; anything else is a build failure naming what exists.
+GENERATORS = {"settings": generate_settings}
 
 
 # ── facts read out of the repo ────────────────────────────────────────
@@ -395,9 +530,13 @@ def slugify(text: str) -> str:
 
 
 def render_markdown(body: str, *, page: dict, source: str, manifest: dict,
-                    repo: Path):
+                    repo: Path, allow_html: bool = True):
     """(html, [(slug, text)] for the h2s) — heading ids and rewritten
-    links are done on the token stream, not with regexes over HTML."""
+    links are done on the token stream, not with regexes over HTML.
+
+    `allow_html` is off for generated bodies: a file that was never
+    written as markdown says `<git user.name>` meaning a placeholder, and
+    a parser honouring HTML would drop it into the page as a tag."""
     try:
         from markdown_it import MarkdownIt
     except ImportError as missing:  # pragma: no cover - environment
@@ -406,7 +545,8 @@ def render_markdown(body: str, *, page: dict, source: str, manifest: dict,
             "dependency: python3 -m pip install -r site/requirements.txt"
         ) from missing
 
-    renderer = MarkdownIt("commonmark").enable(["table", "strikethrough"])
+    renderer = MarkdownIt("commonmark", {"html": allow_html}).enable(
+        ["table", "strikethrough"])
     tokens = renderer.parse(body)
     contents, seen = [], {}
     for index, token in enumerate(tokens):
@@ -522,12 +662,51 @@ def render_flow(manifest: dict, current: dict) -> str:
     return "\n".join(out)
 
 
+def label(text: str) -> str:
+    """A heading as a nav label. The backticks a heading in a contract
+    file wears — "`run` — execute one headless job" — are markdown for
+    the body, and the body renders them; a list of links is not markdown,
+    so it would show them as punctuation."""
+    return text.replace("`", "")
+
+
 def render_contents(contents: list) -> str:
     if not contents:
         return ""
     out = ['<span class="toc-label">On this page</span>']
     for slug, text in contents:
-        out.append(f'<a class="toc-link" href="#{slug}">{escape(text)}</a>')
+        out.append(f'<a class="toc-link" href="#{slug}">'
+                   f"{escape(label(text))}</a>")
+    return "\n".join(out)
+
+
+def render_console(labels: list, contents: list, page: dict) -> str:
+    """The reference layout's pinned console: one mono line per entry on
+    the page, each linking to it.
+
+    A settings page passes its own labels — `BOARD_PORT=26071`, one per
+    key rather than one per heading, because the question is about a key
+    — and every other page falls back to its headings. Either way the
+    anchors come from the rendered body, so a line here cannot point at
+    a heading the page does not have."""
+    anchors = {text: slug for slug, text in contents}
+    if labels is None:
+        labels = [(text, text) for _, text in contents]
+    if not labels:
+        return ""
+    out = []
+    for text, heading in labels:
+        slug = anchors.get(heading)
+        if slug is None:  # only reachable if a generator invents a heading
+            raise BuildError(
+                f'{page["path"]}: the console lists "{text}" under a heading '
+                f'"{heading}" that the page does not have.')
+        name, sign, value = text.partition("=")
+        line = f'<span class="console-key">{escape(label(name))}</span>'
+        if sign:
+            line += (f'<span class="console-sign">=</span>'
+                     f'<span class="console-value">{escape(value)}</span>')
+        out.append(f'<a class="console-line" href="#{slug}">{line}</a>')
     return "\n".join(out)
 
 
@@ -574,7 +753,17 @@ def stamp(site: Path) -> dict:
 def render_page(page: dict, manifest: dict, *, site: Path, repo: Path,
                 stamps: dict = None, facts: dict = None) -> str:
     source = page.get("source")
-    if source:
+    generator = page.get("generate")
+    labels = None
+    if source and generator:
+        # Not markdown in the repo, so not a slice: the builder makes the
+        # markdown from the file and renders it with HTML off.
+        markdown, labels = GENERATORS[generator](
+            read_source(page, repo), page, source)
+        body, contents = render_markdown(
+            markdown, page=page, source=source, manifest=manifest, repo=repo,
+            allow_html=False)
+    elif source:
         body, contents = render_markdown(
             slice_section(read_source(page, repo), page, source),
             page=page, source=source, manifest=manifest, repo=repo)
@@ -595,7 +784,9 @@ def render_page(page: dict, manifest: dict, *, site: Path, repo: Path,
     source_url = config["repo_url"]
     if source:
         source_url = blob + source
-        anchor = github_anchor(page["from"])
+        # A generated page is the whole file, so there is no section to
+        # open at — the link lands on the file itself.
+        anchor = github_anchor(page["from"]) if page.get("from") else ""
         if anchor:
             source_url += "#" + anchor
 
@@ -618,6 +809,7 @@ def render_page(page: dict, manifest: dict, *, site: Path, repo: Path,
         "install_block": facts["install_block"],
         "body": body,
         "toc": render_contents(contents),
+        "console": render_console(labels, contents, page),
         "nav": render_nav(manifest, page),
         "sidebar": render_sidebar(manifest, page),
         "flow": render_flow(manifest, page),
@@ -686,14 +878,29 @@ def load_manifest(site: Path) -> dict:
             raise BuildError(
                 f'{route}: no "source". A page generated from a file names '
                 f'it; an authored page says "source": null.')
-        if page["source"] and not page.get("from"):
+        if page["source"] and not (page.get("from") or page.get("generate")):
             raise BuildError(
                 f'{route}: "source" is {page["source"]} but there is no '
-                f'"from" heading to slice from.')
+                f'"from" heading to slice from, and no "generate" to build '
+                f"the body with.")
         if not page["source"] and (page.get("from") or page.get("to")):
             raise BuildError(
                 f'{route}: "source" is null, so "from"/"to" have nothing '
                 f"to slice. Remove them or name a source.")
+        if page.get("generate"):
+            if not page["source"]:
+                raise BuildError(
+                    f'{route}: "generate" is {page["generate"]} but there is '
+                    f"no source file to generate the page from.")
+            if page.get("from") or page.get("to"):
+                raise BuildError(
+                    f'{route}: a generated page is not a slice, so "from"/'
+                    f'"to" have nothing to do. Remove them, or remove '
+                    f'"generate".')
+            if page["generate"] not in GENERATORS:
+                raise BuildError(
+                    f'{route}: no generator named "{page["generate"]}". '
+                    f'Known: {", ".join(sorted(GENERATORS))}.')
     return manifest
 
 

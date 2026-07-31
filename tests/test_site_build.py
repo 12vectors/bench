@@ -42,7 +42,7 @@ BUILDER = builder()
 # scratch repo without them fails for a reason that has nothing to do
 # with the test.
 SOURCES = ["AGENTS.md", "README.md", "manager/core/VERSION",
-           "manager/core/adapters/README.md"]
+           "manager/core/adapters/README.md", "manager/core/.env.example"]
 
 # A layout with no markup of its own, written into a scratch site when a
 # test wants to exercise the builder rather than a shipped template.
