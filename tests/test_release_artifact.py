@@ -133,12 +133,24 @@ class ArtifactContents(unittest.TestCase):
                     self.assertEqual(name, f"{top}.gitkeep",
                                      f"content shipped under {top}: {name}")
             for forbidden in ("tests/", ".claude/", ".git/", ".worktrees/",
-                              "manager/local/state"):
+                              "manager/local/state", "site/"):
                 self.assertFalse(name.startswith(forbidden),
                                  f"{forbidden} leaked into the artifact: {name}")
         self.assertNotIn("release.sh", self.files)
         self.assertNotIn("manager/local/checks", self.files)
         self.assertNotIn("manager/local/.env", self.files)
+
+    def test_the_public_minisite_never_ships(self):
+        """site/ is bench.12vectors.com — a directory of pages generated
+        from this repo's own markdown, and no part of the tool anyone
+        installs. The manifest already excludes it by saying nothing
+        about it, but "correct by omission" is exactly the kind of thing
+        a future manifest edit undoes silently, so it is asserted."""
+        leaked = sorted(n for n in self.files if n.startswith("site/"))
+        self.assertEqual([], leaked, "the minisite leaked into a release")
+        # The sweep must have reached a real tarball, or this passes on
+        # an empty one forever.
+        self.assertIn("manager/core/board.py", self.files)
 
     def test_local_is_the_generated_starter_not_benchs_own(self):
         # The starter mirrors the root pair (task 13): AGENTS.md holds the
