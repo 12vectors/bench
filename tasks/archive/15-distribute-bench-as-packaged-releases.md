@@ -1,6 +1,6 @@
 # 15 — Distribute bench as packaged releases; update.sh consumes them
 
-**Status:** Done
+**Status:** Archived
 **PR:** https://github.com/12vectors/bench/pull/11
 **Priority:** Medium — correctness by construction for every future adopter; urgency rises with the first real second install
 **Type:** Feature
