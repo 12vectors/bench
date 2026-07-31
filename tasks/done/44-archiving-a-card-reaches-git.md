@@ -1,6 +1,6 @@
 # 44 — Archiving a card reaches git, and so does every other write the board makes to a task file
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/36
 **Assignee:** istos
 **Priority:** High — an archive silently stalls team-mode sync, and the
@@ -152,3 +152,27 @@ sync resumes; that is separate from this card and should not wait for it.
 1. `_relocate()` in `manager/core/taskfiles.py` — the whole change hinges on that one helper, including `move_task()`'s behaviour being unchanged (it now passes its already-computed git name through as `who`).
 2. A finished work agent now produces two commits where it produced one: `board: 44 Work report filed (<name>)` while the card is still in `in-progress`, then the existing `board: 44 → review (<name>)`. Both are `board: `-prefixed, so sync publishes both, but it is a visible change to the commit log.
 3. The task's own Risks note still stands and is not addressed here: the two already-archived cards and the appended report sitting uncommitted in the main checkout need committing by hand before sync resumes there.
+
+
+---
+
+## PR review — 2026-07-31 17:04 (Otto)
+
+PR REVIEW: APPROVE
+
+This PR is complete, correct, in-scope, and fully tested; CI is green on Python 3.11 and 3.13 and GitHub reports it mergeable with no conflicts. I could **not** post the approval to GitHub because `gh` is authenticated as `istos`, the PR's own author, and GitHub refuses self-approval — a human with review rights needs to click approve, but nothing in the code blocks the merge.
+
+**To do (human reviewer)**
+- Post the GitHub approval yourself, or merge directly — the self-approval block is an auth artifact, not a code problem.
+- Before sync resumes in the main checkout, commit by hand the two already-archived cards and the appended report left uncommitted there. This is the task's own Risks note, separate from this PR.
+
+**What I checked**
+- **The core fix** — `taskfiles._relocate` (`manager/core/taskfiles.py:263`) is now the single door out of a stage directory: it registers `expect_move`, writes, moves, then commits under the `COMMIT_MOVES` gate. `archive_task`, `unarchive_task` and `move_task` all route through it, so committing is a property of relocating a task file rather than something each caller remembers — the design goal the task set. `move_task`'s behaviour is preserved (it threads its git name through as `who` while `actor` still feeds `expect_move`).
+- **Rename recording + never-committed edge case** — `_commit_move` names both paths only when `git ls-files` shows the source was tracked, so a brand-new backlog file commits as a pure addition rather than failing on a pathspec that matches nothing in HEAD.
+- **Appended reports** — `agents._file_report` now goes through `taskfiles.append_to_task` → `commit_edit`, the same path the `**PR:**` line uses, so a run's closing report reaches git instead of sitting modified.
+- **Attribution & push** — `expect_move` on the destination stage makes the ⌘Z restore narrate as `you`, not `disk`; the archive departure isn't narrated by the watcher (it reads stage dirs only) and the HTTP route already records its own `you` event, so no double-narration is introduced. Event-driven push still hangs off `state.task_committed`.
+- **Tests** — `tests/test_archive_commits.py` (against a real throwaway git repo) covers each acceptance line including both gate-off cases; `tests/test_boards_sync.py` adds an end-to-end two-board case (ada archives → pushes → elena pulls → card gone from every column, present in `tasks/archive/`).
+
+**To know (non-blocking, no change requested)**
+- A finished work agent now produces **two** commits where it made one — `board: <n> Work report filed (<name>)` in in-progress, then `board: <n> → review (<name>)`. Both are `board:`-prefixed so sync publishes both; intended, just a visible change to the commit log.
+- The work report says "taskfiles.py is again the only module writing under tasks/", which is slightly overstated — `manager/core/github.py:73` still writes the `**PR:**` line directly before calling `commit_edit`. That is pre-existing and out of scope; the deeper law (every write reaches git) holds.
