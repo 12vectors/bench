@@ -2,11 +2,11 @@
   "site": {
     "title": "bench",
     "tagline": "docs",
-    "version": "0.2-alpha",
     "description": "A live kanban for coding-agent work: task files in stage directories are the only source of truth.",
     "base_url": "https://bench.12vectors.com",
     "repo_url": "https://github.com/12vectors/bench",
     "issues_url": "https://github.com/12vectors/bench/issues",
+    "releases_url": "https://github.com/12vectors/bench/releases",
     "blob_base": "https://github.com/12vectors/bench/blob/main/"
   },
 
@@ -15,10 +15,28 @@
   "pages": [
     {
       "path": "/",
-      "title": "bench",
+      "title": "bench — a live kanban for coding-agent work",
       "layout": "home",
       "section": null,
-      "description": "A live kanban for coding-agent work: task files in stage directories are the only source of truth.",
+      "description": "Task files in stage directories are the only source of truth. A stdlib-only board narrates what happens to them — agents working in git worktrees, PRs opening on review, CI on the cards — and never merges anything itself.",
+      "source": null
+    },
+    {
+      "path": "/guides/install/",
+      "title": "Install and first run",
+      "layout": "article",
+      "section": "Guides",
+      "description": "Untar bench into .task-manager/, run start.sh, and answer the three questions the first run asks.",
+      "source": "README.md",
+      "from": "## Install into a repo",
+      "to": "## Update"
+    },
+    {
+      "path": "/concepts/stages/",
+      "title": "The five stages",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "backlog, to-do, in-progress, review, done — the directory a task file sits in is its status, and there is no other source of truth.",
       "source": "AGENTS.md",
       "from": "## Stages",
       "to": "## Moving a task"
@@ -32,6 +50,46 @@
       "source": "AGENTS.md",
       "from": "## Claiming a card",
       "to": "## Syncing boards"
+    },
+    {
+      "path": "/concepts/agents-on-the-board/",
+      "title": "Agents on the board",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "Start work makes a worktree and a branch, runs the agent headless, and moves the card on the way it exits.",
+      "source": "AGENTS.md",
+      "from": "## Agents working the board",
+      "to": "## Pull requests"
+    },
+    {
+      "path": "/concepts/pull-requests/",
+      "title": "PRs and review",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "A card entering review gets a PR opened for it by the board; then review PR, copilot and act on PR, until it settles.",
+      "source": "AGENTS.md",
+      "from": "## Pull requests",
+      "to": "## Stages"
+    },
+    {
+      "path": "/concepts/team-mode/",
+      "title": "Team mode",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "BOARD_SYNC makes origin/main the truth and every board a converging replica: moves commit and push themselves, and a beat pulls what the other boards published.",
+      "source": "AGENTS.md",
+      "from": "## Syncing boards",
+      "to": "## Task file format"
+    },
+    {
+      "path": "/concepts/three-layer-law/",
+      "title": "The three-layer law",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "Core knows tasks, worktrees, PRs and events. Drivers know apps, adapters know agent vendors, local/ knows your project.",
+      "source": "README.md",
+      "from": "## The three-layer law",
+      "to": "## License"
     },
     {
       "path": "/404.html",

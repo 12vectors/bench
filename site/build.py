@@ -29,6 +29,17 @@ Templates are `string.Template`, so placeholders are `$name` and a literal
 dollar is `$$` — `str.format` was not an option with a stylesheet's worth
 of braces in play.
 
+## What an authored page is still not allowed to type
+
+The landing page's words are authored in its template rather than sliced,
+which would be a hole in the promise above if it extended to facts. It
+does not: the install one-liner and the version reach the template as
+`$install_block` and `$version`, read from `README.md` and
+`manager/core/VERSION` (see `repo_facts`). And every internal link any
+page emits — a door on the landing page as much as a link inside a slice
+— must resolve to something this build writes, or the build stops
+(`check_links`).
+
 ## What the host needs from the build
 
 Two things here exist for the way the site is served (site/wrangler.jsonc,
@@ -75,7 +86,18 @@ STAMPED = {"stylesheet": "static/site.css", "icon": "static/favicon.svg"}
 ATX = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 CSS_URL = re.compile(r"""url\(\s*["']?([^"')]+)["']?\s*\)""")
+LINK = re.compile(r"""(?:href|src)=["']([^"']+)["']""", re.IGNORECASE)
+COMMENT = re.compile(r"\s{2,}#")
 EXTERNAL = ("http://", "https://", "//", "mailto:", "tel:", "data:")
+
+# The two facts the landing page must never carry a hand-typed copy of,
+# and the files that own them. A subtly wrong `curl` is worse than no
+# landing page at all, and a version the release does not have is a
+# support question; both are read, and a source that moved stops the
+# build exactly as a renamed heading does.
+VERSION_FILE = "manager/core/VERSION"
+INSTALL_SOURCE = "README.md"
+INSTALL_HEADING = "## Install into a repo"
 
 
 class BuildError(Exception):
@@ -172,6 +194,91 @@ def slice_section(text: str, page: dict, source: str) -> str:
     return promote(body, level - 1)
 
 
+# ── facts read out of the repo ────────────────────────────────────────
+
+def read_version(repo: Path) -> str:
+    """`manager/core/VERSION`, which is the version `release.sh` tags."""
+    path = repo / VERSION_FILE
+    if not path.is_file():
+        raise BuildError(
+            f"the site shows the version from {VERSION_FILE}, which does "
+            f"not exist. It is the one place the version is written; the "
+            f"site does not keep a second copy.")
+    version = path.read_text(encoding="utf-8").strip()
+    if not version:
+        raise BuildError(f"{VERSION_FILE} is empty.")
+    return version
+
+
+def install_command(repo: Path) -> list:
+    """The lines of README.md's install one-liner, verbatim.
+
+    It is the command people paste, so the landing page reads it out of
+    the file that documents it rather than transcribing it. Editing the
+    README moves the page; renaming the section stops the build."""
+    path = repo / INSTALL_SOURCE
+    if not path.is_file():
+        raise BuildError(
+            f"the install command is read out of {INSTALL_SOURCE}, which "
+            f"does not exist.")
+    text = path.read_text(encoding="utf-8")
+    marks = list(headings(text))
+    start = find_heading(marks, INSTALL_HEADING)
+    if start is None:
+        raise BuildError(
+            f'{INSTALL_SOURCE} has no heading "{INSTALL_HEADING}" — the '
+            f"landing page reads the install command from that section. "
+            f"Fix the heading, or INSTALL_HEADING in site/build.py.")
+    start_line, level = start
+    following = [i for i, found_level, _ in marks
+                 if i > start_line and found_level <= level]
+    end_line = following[0] if following else len(text.splitlines())
+
+    block, fence = [], None
+    for line in text.splitlines()[start_line + 1:end_line]:
+        opener = FENCE.match(line)
+        if opener and fence is None:
+            fence = opener.group(1)
+            continue
+        if opener:
+            break
+        if fence is not None:
+            block.append(line)
+    if not block:
+        raise BuildError(
+            f'{INSTALL_SOURCE}: the "{INSTALL_HEADING}" section has no '
+            f"fenced command block. The landing page's terminal has "
+            f"nothing to show.")
+    return block
+
+
+def render_command(lines: list) -> str:
+    """A command block as terminal html: every line escaped and otherwise
+    verbatim, a prompt on the lines that begin a command — a line after
+    one ending in a backslash is a continuation, not a new command — and
+    a dim tail for a trailing comment."""
+    out, continued = [], False
+    for line in lines:
+        prompt = "" if continued else '<span class="t-calm">$</span> '
+        continued = line.rstrip().endswith("\\")
+        found = COMMENT.search(line)
+        body, tail = (line[:found.start()], line[found.start():]) if found \
+            else (line, "")
+        html = escape(body)
+        if tail:
+            html += f'<span class="t-dim">{escape(tail)}</span>'
+        out.append(prompt + html)
+    return "\n".join(out)
+
+
+def repo_facts(repo: Path) -> dict:
+    """What the templates are offered instead of typing it themselves."""
+    return {
+        "version": read_version(repo),
+        "install_block": render_command(install_command(repo)),
+    }
+
+
 # ── links ─────────────────────────────────────────────────────────────
 
 def rewrite_link(href: str, *, page: dict, source: str, manifest: dict,
@@ -199,6 +306,42 @@ def rewrite_link(href: str, *, page: dict, source: str, manifest: dict,
         return route + hash_mark + fragment
     blob = manifest["site"]["blob_base"].rstrip("/") + "/"
     return blob + rel + hash_mark + fragment
+
+
+def internal_targets(manifest: dict, site: Path) -> set:
+    """Every url the built site answers: one per route (and the file that
+    route is written to), plus everything copied verbatim out of static/
+    and root/."""
+    urls = set()
+    for page in manifest["pages"]:
+        urls.add(page["path"])
+        urls.add("/" + target_for(Path(), page["path"]).as_posix())
+    for base, prefix in ((site / "static", "/static/"), (site / ROOT, "/")):
+        if base.is_dir():
+            urls.update(prefix + path.relative_to(base).as_posix()
+                        for path in base.rglob("*") if path.is_file())
+    return urls
+
+
+def check_links(html: str, page: dict, targets: set) -> None:
+    """A link on a rendered page that the build does not write is a 404
+    with a nice typeface. Markdown links out of a source file are already
+    resolved (rewrite_link); this is the other half — what the templates
+    themselves point at, which is where the landing page's doors live."""
+    for url in LINK.findall(html):
+        if not url or url.startswith("#") or url.startswith(EXTERNAL):
+            continue
+        if not url.startswith("/"):
+            raise BuildError(
+                f'{page["path"]}: links to "{url}". A page is written to '
+                f"its own directory, so a relative link resolves against "
+                f"that; write internal links from the root.")
+        if url.split("#")[0].split("?")[0] not in targets:
+            raise BuildError(
+                f'{page["path"]}: links to "{url}", which this build does '
+                f"not write. Every internal link must resolve to a route "
+                f"in site/pages.json or a file in site/static/ or "
+                f"site/{ROOT}/.")
 
 
 # ── rendering ─────────────────────────────────────────────────────────
@@ -349,7 +492,7 @@ def stamp(site: Path) -> dict:
 
 
 def render_page(page: dict, manifest: dict, *, site: Path, repo: Path,
-                stamps: dict = None) -> str:
+                stamps: dict = None, facts: dict = None) -> str:
     source = page.get("source")
     if source:
         body, contents = render_markdown(
@@ -363,6 +506,7 @@ def render_page(page: dict, manifest: dict, *, site: Path, repo: Path,
     config = manifest["site"]
     blob = config["blob_base"].rstrip("/") + "/"
     stamps = stamps if stamps is not None else stamp(site)
+    facts = facts if facts is not None else repo_facts(repo)
     fields = {
         "stylesheet": stamps["stylesheet"],
         "icon": stamps["icon"],
@@ -371,7 +515,8 @@ def render_page(page: dict, manifest: dict, *, site: Path, repo: Path,
                               or config.get("description", "")),
         "site_title": escape(config["title"]),
         "site_tagline": escape(config.get("tagline", "")),
-        "version": escape(config.get("version", "")),
+        "version": escape(facts["version"]),
+        "install_block": facts["install_block"],
         "body": body,
         "toc": render_contents(contents),
         "nav": render_nav(manifest, page),
@@ -380,6 +525,7 @@ def render_page(page: dict, manifest: dict, *, site: Path, repo: Path,
         "section": escape(page.get("section") or ""),
         "repo_url": config["repo_url"],
         "issues_url": config.get("issues_url", config["repo_url"]),
+        "releases_url": config.get("releases_url", config["repo_url"]),
         "source_url": (blob + source) if source else config["repo_url"],
         "source_path": escape(source or ""),
         "canonical": config.get("base_url", "").rstrip("/") + page["path"],
@@ -414,6 +560,11 @@ def load_manifest(site: Path) -> dict:
     for key in ("title", "repo_url", "blob_base"):
         if key not in manifest["site"]:
             raise BuildError(f'pages.json: site has no "{key}" key')
+    if "version" in manifest["site"]:
+        raise BuildError(
+            f'pages.json: site has a "version" key, but the version the '
+            f"site shows is read from {VERSION_FILE}. Two copies of a "
+            f"version is one copy too many — remove it.")
 
     seen = set()
     for page in manifest["pages"]:
@@ -526,6 +677,7 @@ def build(*, repo: Path = REPO, site: Path = None, out: Path = None,
     out = out or (site / "dist")
     manifest = load_manifest(site)
     stamps = stamp(site)
+    facts = repo_facts(repo)
 
     # A file in root/ that a route also claims would be silently replaced
     # by whichever is written last, so it is a build failure instead.
@@ -539,8 +691,14 @@ def build(*, repo: Path = REPO, site: Path = None, out: Path = None,
                 f"{relative}. Rename one — the build will not pick a winner.")
 
     pages = [(page, render_page(page, manifest, site=site, repo=repo,
-                                stamps=stamps))
+                                stamps=stamps, facts=facts))
              for page in manifest["pages"]]
+
+    # After rendering, before writing: a dead internal link leaves the
+    # last good build standing, exactly as a renamed heading does.
+    targets = internal_targets(manifest, site)
+    for page, html in pages:
+        check_links(html, page, targets)
 
     clear(out)
     out.mkdir(parents=True)

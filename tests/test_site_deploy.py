@@ -318,7 +318,10 @@ class Scratch(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.root, True)
         shutil.copytree(SITE, self.root / "site",
                         ignore=shutil.ignore_patterns("dist", "__pycache__"))
-        for name in ("AGENTS.md", "README.md"):
+        # The markdown the pages are cut from, plus the file the version
+        # shown on them is read from.
+        for name in ("AGENTS.md", "README.md", "manager/core/VERSION"):
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(REPO / name, self.root / name)
         self.out = self.root / "site" / "dist"
 

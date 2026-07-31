@@ -11,6 +11,13 @@ naming the route and the heading it can no longer find. A documented
 behaviour and the behaviour itself cannot drift apart when one is cut
 from the other.
 
+The landing page is the exception that proves it. Its words are authored
+in `templates/home.html` (`"source": null`), so the two facts it must
+never get subtly wrong are not written there at all: the install
+one-liner is read out of `README.md`'s "Install into a repo" block and
+the version out of `manager/core/VERSION`, and the template is offered
+them as `$install_block` and `$version`.
+
 ```bash
 python3 -m pip install -r site/requirements.txt   # once
 python3 site/fetch-fonts.py                       # once, needs network
@@ -168,6 +175,13 @@ Each of these exits non-zero with a message naming the route:
 - a slice that comes out empty;
 - a markdown link to a repo path that does not exist, or that escapes
   the repo — a dead relative link must never reach the site;
+- an internal link on any rendered page — a door on the landing page as
+  much as a link inside a slice — that resolves to nothing this build
+  writes;
+- a missing or empty `manager/core/VERSION`, or a `README.md` whose
+  "Install into a repo" section has lost its command block;
+- a `version` key in `pages.json`, which would be a second copy of a
+  number that has one home;
 - a template placeholder the builder does not supply;
 - a file in `root/` that a route would also write.
 
