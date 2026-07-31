@@ -5,7 +5,5 @@ __pycache__/
 .claude/settings.local.json
 .DS_Store
 site/dist/
-# fetched per checkout by site/fetch-fonts.py, never committed
-site/static/fonts/*.woff2
 # wrangler's local cache, written by a deploy from this checkout
 .wrangler/

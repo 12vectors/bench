@@ -27,11 +27,13 @@ prose into this directory.
 
 ```bash
 python3 -m pip install -r site/requirements.txt   # once
-python3 site/fetch-fonts.py                       # once, needs network
 python3 site/build.py                             # → site/dist/
 ```
 
-`site/dist/` is gitignored — it is output, rebuilt on every deploy.
+`site/dist/` is gitignored — it is output, rebuilt on every deploy. The
+woff2 files under `static/fonts/` are not: they are committed, so a
+clean checkout builds the real typography without asking anyone for it,
+and a deploy is the same bytes from any machine.
 
 `site/` never reaches a host repo: releases ship exactly what
 `../manager/core/release-manifest` lists, and it does not list this
@@ -56,13 +58,12 @@ separate decision with a separate cost, and a follow-up card.
 
 ## Deploying
 
-From a clean checkout, four commands. Re-running the whole sequence is
+From a clean checkout, three commands. Re-running the whole sequence is
 safe: the build empties and rewrites `dist/`, and `wrangler deploy`
 replaces the Worker's assets rather than adding to them.
 
 ```bash
 python3 -m pip install -r site/requirements.txt   # once per machine
-python3 site/fetch-fonts.py                       # once per checkout
 python3 site/build.py                             # → site/dist/
 npx wrangler@4 deploy --config site/wrangler.jsonc
 ```
@@ -135,7 +136,7 @@ answers rather than files:
 | `root/` | Copied to the **top** of `dist/` verbatim: `_headers`, which the host reads and never serves |
 | `wrangler.jsonc` | The Worker: assets directory, url handling, 404, custom domain |
 | `requirements.txt` | `markdown-it-py`, pinned. The only dependency |
-| `fetch-fonts.py` | Downloads the self-hosted woff2 files, once |
+| `fetch-fonts.py` | Refetches the committed woff2 files, or adds a face |
 
 ## A manifest entry
 

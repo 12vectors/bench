@@ -18,16 +18,22 @@ in `site.css` ask for:
 | `IBMPlexMono-Medium.woff2` | IBM Plex Mono | 500 | normal |
 | `ZillaSlab-SemiBold.woff2` | Zilla Slab | 600 | normal |
 
-## Fetching them
+## Where they come from
+
+The seven files are **committed**, so a clean checkout builds the real
+typography with no network and a deploy is the same bytes from any
+machine. Run the script only to refresh them or to add a face:
 
 ```bash
 python3 site/fetch-fonts.py
 ```
 
-The script asks Google Fonts for the CSS these faces would need, reads
-the `woff2` URLs out of the reply, and writes the files here under the
-names above. What it downloads is already the `latin` subset Google
-serves — the site's copy of the font, not a link to Google's.
+It asks Google Fonts for the CSS these faces would need, reads the
+`woff2` URLs out of the reply, and writes the files here under the names
+above. What it downloads is already the `latin` subset Google serves —
+the site's copy of the font, not a link to Google's. That request
+happens once, on the machine that refreshes a face; nothing the site
+serves ever makes it.
 
 Both families are licensed for this: IBM Plex under the SIL Open Font
 License 1.1, Zilla Slab likewise. Keeping the downloaded `*.LICENSE.txt`
