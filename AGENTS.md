@@ -44,11 +44,13 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state → taskfiles → events / github / drive / sync → agents → watch / httpd → board.py
+config → state / reports → taskfiles → events / github / drive / sync → agents → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
 - `state.py` — shared registries, event log persistence, SSE fan-out
+- `reports.py` — what the record keeps of an agent's closing report: one
+  cap, one clip, for the task file and the PR body alike
 - `taskfiles.py` — reading and moving task files; the only code touching tasks/
 - `events.py` — ingests NORMALIZED events (the adapter contract), session registry
 - `github.py` — PR opening, Copilot requests, review/CI polling
@@ -322,6 +324,20 @@ worktree must not already exist when it starts.
    `in-progress/` and is called out loudly — an empty branch reaching
    review/ is how a broken launch hides. Stdout is kept in
    `local/state/agent/logs/`.
+
+### What the record keeps of a report
+
+The agent's closing report is the permanent record: it is appended to the
+task file, shown as the session's last entry, and carried into the PR
+body — the same text in all three, from one helper (`reports.py`) with
+one cap. A report that fits arrives whole. One that doesn't keeps **both
+ends** — the headline the report contract puts first, and the pointer
+that closes it — and loses the middle, cut on line boundaries, with one
+line of prose in its place saying how much went and naming the log under
+`local/state/agent/logs/` that still holds all of it. The reader is never
+left to infer that something was removed. A *failed* run is the deliberate
+exception: its excerpt keeps the log's tail, because for a crash the end
+is the story.
 
 ### A run that died
 

@@ -25,6 +25,7 @@ from pathlib import Path
 
 import config
 import drive as drive_mod
+import reports
 import state
 from taskfiles import STATUS_RE, commit_edit, find_stage_of, move_task, read_task
 
@@ -147,9 +148,9 @@ def _open_pr(filename: str) -> str:
 
     body = (f"Task: `{filename}` — tracked in `.task-manager/tasks/review/`.\n\n"
             f"Opened by the board when the card moved to review.")
-    log_tail = _agent_log_tail(filename)
-    if log_tail:
-        body += f"\n\n## Agent summary\n\n{log_tail}"
+    summary = _agent_report(filename)
+    if summary:
+        body += f"\n\n## Agent summary\n\n{summary}"
     result = _run([config.GH_BIN, "pr", "create", "--head", branch, "--base", "main",
                    "--title", task["title"], "--body", body], timeout=120)
     if result.returncode != 0:
@@ -190,7 +191,10 @@ def _existing_pr(branch: str) -> str:
     return next((l.strip() for l in found.stdout.splitlines() if "/pull/" in l), "")
 
 
-def _agent_log_tail(filename: str, cap: int = 1500) -> str:
+def _agent_report(filename: str) -> str:
+    """The work agent's closing report, clipped exactly as the task file
+    clips it (reports.report — head first, one cap for both). The PR and
+    the record must never tell different stories about the same run."""
     with state.LOCK:
         records = [r for r in state.AGENTS.values()
                    if r["task"] == filename and r.get("mode") == "work"]
@@ -198,10 +202,10 @@ def _agent_log_tail(filename: str, cap: int = 1500) -> str:
         return ""
     latest = max(records, key=lambda r: r["started"])
     try:
-        text = Path(latest["log"]).read_text(encoding="utf-8", errors="replace").strip()
+        text = Path(latest["log"]).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
-    return text[-cap:]
+    return reports.report(text, log_path=latest.get("log"))
 
 
 def request_copilot(filename: str) -> str:
