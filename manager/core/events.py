@@ -10,6 +10,11 @@ adapters/*/emit*) and POST the normalized schema here:
 Core sanitises, updates the session registry, persists a slim record per
 session, and pushes to connected browsers over SSE. It never interprets a
 vendor's tool vocabulary — that knowledge lives in the adapter.
+
+Beside each session's event log sits its identity — who the session
+belonged to, written whole (see state.persist_identity). Events say what
+happened; the identity says whose, and it is the only part a restart
+cannot recover from the stream.
 """
 
 from __future__ import annotations
@@ -25,15 +30,35 @@ KINDS = {"session", "end", "idle", "edit", "read", "search", "command",
          "test", "check", "git", "plan", "subagent", "web", "report", "other"}
 
 
+# In-memory copy of what each session's identity file already says, so the
+# sidecar is rewritten only when what the board knows actually changes.
+_WRITTEN: dict[str, dict] = {}
+
+
 def session_label(meta: dict) -> str:
+    """Who a session was — in three registers, because there are three
+    different states and only one of them is the person.
+
+    An agent's name comes from the live launch record while this board
+    still holds it, and from the identity persisted with the session after
+    a restart; `Agent` (or `Review`) is the honest fallback when the id is
+    known but the name is not. `You` is said only of a session the board
+    positively knows carried no agent — every live one, and every replayed
+    one whose identity file records that. A log written before identities
+    were recorded is none of those: it is unknown, and says so rather than
+    claiming to have been you.
+    """
     agent_id = meta.get("agentId") or ""
     if agent_id:
         record = state.AGENTS.get(agent_id) or {}
         task = meta.get("task") or ""
         num = NUMBER_RE.match(task)
-        who = record.get("name") or ("Review" if agent_id.startswith("review-") else "Agent")
+        who = (record.get("name") or meta.get("agentName")
+               or ("Review" if agent_id.startswith("review-") else "Agent"))
         return f"{who} · #{num.group(1)}" if num else who
-    return f"You · {meta['id'][:8]}"
+    if meta.get("known"):
+        return f"You · {meta['id'][:8]}"
+    return f"Session · {meta['id'][:8]}"
 
 
 def _txt(value, cap: int) -> str | None:
@@ -63,31 +88,51 @@ def ingest_event(raw: dict) -> None:
     with state.LOCK:
         meta = state.SESSIONS.setdefault(sid, {
             "id": sid, "started": event["ts"], "count": 0,
-            "agentId": None, "task": None, "status": "active",
+            "agentId": None, "agentName": None, "agentModel": None,
+            "task": None, "status": "active",
         })
         just_linked = False
         if agent_id:
             meta["agentId"] = agent_id
             record = state.AGENTS.get(agent_id)
             if record is not None:
+                # The name and the model exist nowhere but this record, and
+                # it may only have been registered after the child's first
+                # event — so they are taken every time, not just on linking.
+                meta["agentName"] = record.get("name")
+                meta["agentModel"] = record.get("model")
                 just_linked = record["session"] is None
                 record["session"] = sid
                 task = task or record["task"]
         if task:
             meta["task"] = task
+        # An event reaching here is a session the board is watching live, so
+        # it knows what it is looking at: an agent when one identified
+        # itself, the person when none did.
+        meta["known"] = True
         meta["last"] = event["ts"]
         meta["lastSummary"] = event["summary"]
         meta["lastKind"] = kind
         meta["status"] = {"end": "ended", "idle": "idle"}.get(kind, "active")
         meta["label"] = session_label(meta)
+        identity = None
         if not event.get("running"):
             meta["count"] += 1
             state.EVENTS.setdefault(sid, []).append(event)
             del state.EVENTS[sid][:-config.EVENTS_CAP]
+            identity = {"agentId": meta["agentId"], "name": meta["agentName"],
+                        "model": meta["agentModel"], "task": meta["task"]}
+            if identity == _WRITTEN.get(sid):
+                identity = None
+            else:
+                _WRITTEN[sid] = identity
         meta_snapshot = dict(meta)
 
     if not event.get("running"):
         state.persist(f"{sid}.jsonl", event)
+    if identity is not None:
+        # written beside the log it belongs to, and only when it changed
+        state.persist_identity(sid, identity)
     if just_linked:
         # the agent's card can now show its live line instead of "warming up"
         state.broadcast({"type": "agents"})
@@ -108,9 +153,19 @@ def load_disk_sessions() -> None:
             last = json.loads(lines[-1])
         except (OSError, json.JSONDecodeError, IndexError):
             continue
+        # Who it was, if it was recorded. Absent = a log from before
+        # identities were written; the label must not fill that gap in.
+        identity = state.read_identity(sid)
+        known = identity is not None
+        identity = identity or {}
         meta = {
             "id": sid, "started": first.get("ts"), "last": last.get("ts"),
-            "count": len(lines), "agentId": None, "task": None,
+            "count": len(lines),
+            "agentId": identity.get("agentId"),
+            "agentName": identity.get("name"),
+            "agentModel": identity.get("model"),
+            "task": identity.get("task"),
+            "known": known,
             "status": "ended", "lastSummary": last.get("summary"),
             "lastKind": last.get("kind"),
         }

@@ -11,6 +11,7 @@ import json
 import queue
 import threading
 import time
+from pathlib import Path
 
 import config
 
@@ -29,6 +30,10 @@ serve_port = config.PORT
 
 # The last card archived through this board — the scope of the ⌘Z undo.
 LAST_ARCHIVED: dict | None = None
+
+# A session's identity sidecar, beside its <sid>.jsonl event log. Not a
+# `.jsonl` itself, so no reader that globs the event logs picks it up.
+IDENTITY_SUFFIX = ".who.json"
 
 
 def broadcast(payload: dict) -> None:
@@ -49,6 +54,49 @@ def persist(name: str, record: dict) -> None:
             fh.write(json.dumps(record) + "\n")
     except OSError:
         pass
+
+
+def _session_file(name: str) -> Path | None:
+    if "/" in name or ".." in name:
+        return None
+    return config.SESSIONS_DIR / name
+
+
+def persist_identity(sid: str, identity: dict) -> None:
+    """Who a session belonged to, written beside its event log.
+
+    A whole small file of its own rather than a key on the events: the logs
+    are append-only JSONL whose first line every reader takes for an event,
+    and identity is a property of the session, not of anything that happened
+    inside it. The agent's *name* and *model* live only in board memory, so
+    this file is the only thing a restart can read them back from.
+
+    Rewritten whenever what we know changes — an agent id that arrives on a
+    later event, a name that was not registered yet when the first event
+    landed. The file is written whole, so the last write is simply the truth.
+    """
+    path = _session_file(f"{sid}{IDENTITY_SUFFIX}")
+    if path is None:
+        return
+    try:
+        config.SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(identity), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def read_identity(sid: str) -> dict | None:
+    """The persisted identity, or None when nothing was ever recorded — the
+    difference between "this session was the person" and "we do not know",
+    which is exactly what the label must not blur."""
+    path = _session_file(f"{sid}{IDENTITY_SUFFIX}")
+    if path is None or not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def record_board_event(event: dict) -> None:

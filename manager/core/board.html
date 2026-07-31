@@ -713,7 +713,19 @@ async function loadSession(sid) {
 }
 
 function sessionsOf(pred) { return (S.state?.sessions || []).filter(pred); }
-function agentFor(sid) { return (S.state?.agents || []).find(a => a.session === sid); }
+/* The run behind a session: the live launch record while this board still
+   holds it, else the identity persisted with the session itself. The two
+   answer different amounts — a replayed run has a name and a model, not a
+   process — so what depends on liveness (Hold, the worktree branch) simply
+   finds nothing on the second, and the chip finds what it needs on both. */
+function agentFor(sid) {
+  const live = (S.state?.agents || []).find(a => a.session === sid);
+  if (live) return live;
+  const meta = (S.state?.sessions || []).find(m => m.id === sid);
+  return meta && meta.agentId
+    ? { id: meta.agentId, name: meta.agentName, model: meta.agentModel, replayed: true }
+    : undefined;
+}
 function agentOnTask(file) {
   return (S.state?.agents || []).find(a => a.task === file && a.status === 'running');
 }

@@ -259,7 +259,16 @@ The board has three views (header switcher):
   can settle.
 - **Sessions** — a flight recorder per session: a chronological timeline of
   reads, edits, test runs, commits and card moves, with filters and expandable
-  output. Sessions persist to `.sessions/*.jsonl`, so past ones can be replayed.
+  output. Sessions persist to `local/state/sessions/<id>.jsonl`, so past ones
+  can be replayed — and beside each log sits `<id>.who.json`, who that
+  session was: the agent id, its name, the model it rode and its task. The
+  name and the model are nowhere in the event stream, so that file is the
+  only thing a restart can read them back from, and it is what keeps a
+  replayed agent run wearing its own name and model chip rather than the
+  person's label. Three labels, three states, and each says only what is
+  known: the agent's name, `You` for a session recorded as carrying no
+  agent, and a neutral `Session · <id>` for a log written before any of
+  this was recorded. `You` is never a guess.
 - **Focus** — a heads-up display for one session: the task it holds, its live
   TodoWrite plan, the project's configured definition-of-done checks (a
   `checks` file in `manager/local/` overriding the shipped default in
