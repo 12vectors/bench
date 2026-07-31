@@ -1,6 +1,6 @@
 # 35 — Make the site read on a phone
 
-**Status:** To Do
+**Status:** In Progress
 **Assignee:** istos
 **Priority:** Medium — a public URL gets opened on phones whatever the
 design was drawn at
