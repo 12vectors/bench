@@ -89,22 +89,32 @@ $nav
     </div>
     <pre class="terminal-body">$install_block
 
-No .task-manager/manager/local/.env yet — a few questions and bench writes one.
-Enter takes the default in [brackets]; Ctrl-D skips the rest.
-
   solo or team? <span class="t-accent">[solo]</span>:
   which agent adapter? <span class="t-accent">[claude]</span>:
   what command runs this project's tests? <span class="t-accent">[python3 -m unittest]</span>:
 
-Wrote .task-manager/manager/local/.env — every other setting is in there, commented; edit it any time.
-
 <span class="t-dim">  …</span>
 
 Task board for ~/your-repo/.task-manager/tasks
-  <span class="t-accent">http://127.0.0.1:26071/</span>
-  <span class="t-dim">Ctrl-C to stop</span></pre>
+  <span class="t-accent">http://127.0.0.1:26071/</span></pre>
   </div>
 </section>
+
+<!-- What the command above opens. The shot is stamped like the
+     stylesheet ($$board_shot carries ?v=<hash>), because /static/* is
+     cached immutable for a year and a screenshot that could never be
+     replaced would be a poor thing to publish. -->
+<figure class="shot">
+  <img class="shot-img" src="$board_shot" width="1600" height="857"
+       alt="The bench board: cards in backlog, to-do, in-progress, review
+            and done, three agents working, each card showing its branch
+            and the command its agent is running." decoding="async">
+  <figcaption class="shot-cap">
+    <span class="mono shot-tag">the board</span>
+    <span>bench's own, running on this repo. Three agents at work, each on
+      its own branch — and every one of them stops at review.</span>
+  </figcaption>
+</figure>
 
 <!-- Three sentences a reader has said out loud before finding this page.
      Each one is answered by a mechanism rather than a promise, and each
