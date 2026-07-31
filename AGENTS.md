@@ -67,14 +67,19 @@ Headless jobs run through an adapter (`BOARD_AGENT_ADAPTER`, default
 a directory with `run` (execute one job: `AGENT_PROMPT` + `AGENT_MODE`
 work|act-pr|review + `AGENT_COMMANDS` in, stdout = the log, markers parsed
 from it) and `wire` (idempotently give the host project live-session
-visibility). Headless jobs answer no permission prompts, so each intent is
-granted exactly the side effects its prompt demands — commit and test for
-work, push for act-pr, posting PR verdicts for review — with the project's
-own runnable commands coming from `BOARD_AGENT_COMMANDS` as neutral
-prefixes each adapter renders in its vendor's rule syntax. Adapters
-translate their vendor's events into the board's normalized schema at the
-edge — core never sees vendor payloads. The full contract, including the
-event schema, lives in `core/adapters/README.md`.
+visibility).
+
+Headless jobs answer no permission prompts, so each intent is granted
+exactly the side effects its prompt demands — commit and test for work,
+push for act-pr, posting PR verdicts for review — with the project's own
+runnable commands coming from `BOARD_AGENT_COMMANDS` as neutral prefixes
+each adapter renders in its vendor's rule syntax.
+
+Adapters translate their vendor's events into the board's normalized
+schema at the edge — core never sees vendor payloads. That is what keeps
+the board's own code free of any one vendor: swapping adapters swaps the
+binary that does the work, not the board. The full contract, including
+the event schema, lives in `manager/core/adapters/README.md`.
 
 ## Drives
 
@@ -291,12 +296,14 @@ is a review question, not a state, so the chip takes no colour. A launch
 that inherited the vendor default, and a session replayed from disk, wear
 no chip at all — the board says nothing rather than guessing.
 
-**▸ start work** launches a headless `claude -p` on the task. It exists only
-on `in-progress/` cards: moving a card to in-progress is the commitment, and
-only then does work start — the server refuses launches from anywhere else.
-In team mode it also refuses a card someone else holds, naming them; the
-action reads **▸ take over** there, and firing it is the deliberate
-reassignment. An unclaimed card claims itself on launch.
+**▸ start work** launches a headless agent run on the task, through the
+configured adapter. It exists only on `in-progress/` cards: moving a card
+to in-progress is the commitment, and only then does work start — the
+server refuses launches from anywhere else. In team mode it also refuses a
+card someone else holds, naming them; the action reads **▸ take over**
+there, and firing it is the deliberate reassignment. An unclaimed card
+claims itself on launch. One agent per task at a time, and a work agent's
+worktree must not already exist when it starts.
 
 1. The board creates a git worktree at `.worktrees/<task-stem>/` on a new
    branch `task/<task-stem>` from the newest main it can see: with an
@@ -393,13 +400,14 @@ branch — additively, never rebasing or force-pushing — in a dedicated
 resolution commit, and refuses semantic ones, naming the collision for a
 human to settle. GitHub computes mergeability lazily, so an UNKNOWN
 reading keeps the chip's last state rather than flapping.
-Tool chips (CI, copilot, PR, drive)
-are destinations, not statuses: they live in the card's footer row, never
+
+The card wears that verdict in the design system's state colours:
+approved → pine (`--calm`) border and an `approved` pill; changes asked →
+terracotta (`--alarm`) and a `changes asked` pill; otherwise it stays the
+neutral `waiting on you`. Tool chips (CI, copilot, PR, drive) are
+destinations, not statuses: they live in the card's footer row, never
 squeezed into the author row — `CI ✓` (pine), `CI ✕` (terracotta), `◌`
-while in flight, with hover actions staying in the status pill's slot. The card wears it in the design
-system's state colours: approved → pine (`--calm`) border and an
-`approved` pill; changes asked → terracotta (`--alarm`) and a
-`changes asked` pill; otherwise it stays the neutral `waiting on you`.
+while in flight — with hover actions staying in the status pill's slot.
 Merging remains yours — the board never merges.
 
 The agent's first duty is to judge whether the task is actionable. If the
@@ -438,17 +446,14 @@ clicks needs merge rights on the repo, not just push rights, and a branch
 without a PR is refused with a pointer to **↑ open PR** — there is nothing
 for origin to merge otherwise. Single-player merges locally, exactly as
 above.
-One agent per task at a time; a work agent's worktree must not already
-exist when starting.
 
+## Stages
 
 The flow is linear:
 
 ```
 backlog → to-do → in-progress → review → done
 ```
-
-## Stages
 
 ### backlog/
 Where new tasks are written and where they wait. A backlog task may be rough,
@@ -485,7 +490,7 @@ Supporting documents that tasks can link to — external specs, API documentatio
 research notes, screenshots, competitive analysis, regulatory references, etc.
 These don't move through the workflow; they're stable resources. Reference them
 from task files using relative links — two levels up from a stage directory
-(e.g. `[IVASS spec](../../reference/ivass-document-requirements.md)`).
+(e.g. `[the payments API spec](../../reference/payments-api.md)`).
 
 ## Moving a task
 
@@ -529,10 +534,10 @@ messaged `board: <number> → <stage> (<name>)`, staged by pathspec so
 unrelated staged work is neither committed nor unstaged (hooks are skipped —
 this is bookkeeping, not code). Pushing is not part of it: those commits sit
 on your local `main` until you push it (or until `BOARD_SYNC` pushes them —
-see below), which the PR guard above will tell you about if you forget. The
-setting is off by default: a single-player
-board neither writes nor clears the assignee and makes no commits, exactly
-as before, and `tasks/` is committed by hand. The gate governs only whether
+see "Syncing boards"), which the guard in "Pull requests" will tell you
+about if you forget. The setting is off by default: a single-player
+board neither writes nor clears the assignee and makes no commits, and
+`tasks/` is committed by hand. The gate governs only whether
 a *move* writes the line — an **Assignee:** added to a file by hand is still
 read and shown on the card whether the gate is on or off.
 
@@ -633,6 +638,22 @@ Use those exact status values — nothing else (not "Not started", "WIP", etc.) 
 and keep the status in step with the directory the file sits in. Priority may
 carry a short justification after the level
 (e.g. `Medium — foundational for any real environment`).
+
+Every header field, and who writes it:
+
+| Field | Required | Value | Written by |
+| --- | --- | --- | --- |
+| **Status** | yes | `Backlog` · `To Do` · `In Progress` · `Review` · `Done` (`Archived` for a card in `tasks/archive/`) | you, or the board on a move |
+| **Priority** | yes | `High` · `Medium` · `Low`, optionally followed by a short justification | you |
+| **Type** | no | `Discovery` · `Bug` · `Feature` · `Refactor` · `Chore` | you |
+| **Assignee** | no | a name, taken from `git config user.name` | the board on a claiming move, or you by hand |
+| **Depends on** | no | task numbers or external preconditions, comma-separated | you |
+| **PR** | no | the pull request url | the board when it opens one |
+
+**Status** is the field the board holds you to: a header that disagrees
+with the directory the file sits in is flagged `status drift`.
+**Assignee** and **PR** it writes and reads itself. The rest are for
+whoever picks the next card.
 
 An optional **Type** line can record what kind of work the task is, when that
 isn't obvious from the title:
