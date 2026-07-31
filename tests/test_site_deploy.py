@@ -295,6 +295,20 @@ class EveryResponseCarriesTheBaseline(unittest.TestCase):
         self.assertNotIn("font-src https", policy,
                          "the fonts are self-hosted and stay that way")
 
+    def test_the_analytics_origin_is_allowed_everything_it_uses(self):
+        """Fathom sends its pageview as an *image* request, so naming the
+        origin under script-src alone loads the script and blocks the one
+        thing it exists to do. Nothing server-side can see that: the
+        response is a clean 200 and the beacon dies in the browser. It
+        cost a live deploy once — hence a test."""
+        policy = self.everything["Content-Security-Policy"]
+        for directive in ("img-src", "script-src", "connect-src"):
+            with self.subTest(directive=directive):
+                found = re.search(rf"{directive}([^;]*)", policy)
+                self.assertIsNotNone(found, f"{directive} is not set")
+                self.assertIn("https://cdn.usefathom.com", found.group(1),
+                              f"{directive} does not allow the beacon")
+
 
 class TheTwoKindsOfFileAreCachedDifferently(unittest.TestCase):
     """The edge case in the task: a stale HTML page must not survive a

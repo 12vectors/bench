@@ -160,9 +160,12 @@ answers rather than files:
 - **Baseline headers, and one third party by choice.** `nosniff`, a
   referrer policy, a year of HSTS, `X-Frame-Options`, and a
   Content-Security-Policy of `default-src 'none'` with `'self'` for
-  styles, fonts and images. The one origin named besides this one is
+  styles and fonts. The one origin named besides this one is
   `cdn.usefathom.com`: Fathom serves the analytics script and receives
-  its pageviews. It sets no cookie and collects nothing about a person,
+  its pageviews. It is named under `script-src`, `connect-src` **and
+  `img-src`** — the beacon is an image request, so an `img-src` that
+  forgets it loads the script and blocks the pageview, with a clean 200
+  on every check. It sets no cookie and collects nothing about a person,
   which is why the site still needs no consent banner — but it is a
   third party, and the policy names it rather than opening the door
   generally. A second one would fail

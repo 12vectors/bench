@@ -33,7 +33,13 @@
 #                        <script> does not run. One origin besides
 #                        'self' is named: cdn.usefathom.com, which
 #                        serves the analytics script and receives its
-#                        pageviews. Fathom sets no cookie and collects
+#                        pageviews. It appears in THREE directives, and
+#                        img-src is the one that is easy to miss:
+#                        Fathom sends its pageview as an image request,
+#                        so script-src alone loads the script and blocks
+#                        everything it was loaded to do — silently, on
+#                        the browser's side, where no deploy check
+#                        looks. Fathom sets no cookie and collects
 #                        nothing about a person, which is why it needs
 #                        no banner — but it is a third party, and the
 #                        policy says so out loud rather than quietly
@@ -43,7 +49,7 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   X-Frame-Options: DENY
-  Content-Security-Policy: default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; script-src https://cdn.usefathom.com; connect-src https://cdn.usefathom.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self' https://cdn.usefathom.com; script-src https://cdn.usefathom.com; connect-src https://cdn.usefathom.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 
 # The stylesheet and the icon are linked with a ?v=<hash> of their own
 # contents (site/build.py, stamp()), and the fonts never change under a
