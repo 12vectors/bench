@@ -1,7 +1,7 @@
 # 35 — Make the site read on a phone
 
 <<<<<<<< HEAD:tasks/in-progress/35-the-site-reads-on-a-phone.md
-**Status:** In Progress
+**Status:** Done
 ========
 **Status:** Review
 **PR:** https://github.com/12vectors/bench/pull/31
