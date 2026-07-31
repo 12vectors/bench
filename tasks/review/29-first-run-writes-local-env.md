@@ -1,6 +1,7 @@
 # 29 — A first run writes local/.env, asking the questions it can't guess
 
 **Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/24
 **Assignee:** istos
 **Priority:** Medium — nothing is broken without it, but two of bench's
 defining settings are invisible to anyone who hasn't read `.env.example`
