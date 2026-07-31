@@ -406,10 +406,9 @@ img{max-width:100%;height:auto}
 .install-copy p{margin:0;max-width:52ch;color:var(--muted);text-wrap:pretty}
 .install .terminal{min-width:0}
 
-/* Why bench, above the doors. Deliberately unboxed: the doors below are
-   the page's one grid of cards, and repeating that shape here would make
-   the eye read the same object twice. Two columns rather than three, so
-   the first reason — the one that needs a sentence, not a phrase — has
+/* Why bench: the landing page's one content section, between the
+   install band and the footer. Two columns rather than three, so the
+   first reason — the one that needs a sentence, not a phrase — has
    somewhere to put it. */
 .why{padding:8px 44px 30px}
 .why-title{
@@ -429,28 +428,6 @@ img{max-width:100%;height:auto}
   font-size:var(--t-ui);line-height:1.6;color:var(--muted);
   text-wrap:pretty;
 }
-
-/* Every door is a link to a page this site builds — the whole card is
-   the target, so the hover is the card's border rather than an
-   underline under three words of it. */
-.doors{
-  display:grid;grid-template-columns:repeat(3,1fr);gap:14px;
-  padding:0 44px 34px;
-}
-.door{
-  display:flex;flex-direction:column;gap:8px;padding:20px;
-  background:var(--surface);border:1px solid var(--border-soft);
-  border-radius:12px;color:var(--text);
-}
-.door:hover{border-color:var(--accent);color:var(--text);text-decoration:none}
-.door-dark{background:var(--text);border-color:var(--text);color:var(--canvas)}
-.door-dark:hover{border-color:var(--accent);color:var(--canvas)}
-.door-index{font-size:11px;color:var(--dim)}
-.door-dark .door-index{color:#7fa0a8}
-.door-title{font:600 19px/1.2 var(--display)}
-.door-text{font-size:var(--t-ui);line-height:1.6;color:var(--muted)}
-.door-dark .door-text{color:#a9c4c9}
-.door .mono{font-size:var(--t-code)}
 
 /* The strip at the foot of the landing page. It carries the version and
    nothing else measurable, because the version is the only thing about
@@ -548,7 +525,6 @@ img{max-width:100%;height:auto}
   .menu-contents{display:block}
   .hero{grid-template-columns:minmax(0,1fr);gap:28px;padding:32px 24px}
   .install{grid-template-columns:minmax(0,1fr);gap:26px;padding:28px 24px}
-  .doors{grid-template-columns:repeat(2,minmax(0,1fr));padding:0 24px 28px}
   .why{padding:8px 24px 26px}
   .strip{padding:18px 24px}
 
@@ -594,7 +570,6 @@ img{max-width:100%;height:auto}
   .side{display:none}
   .menu{display:block}
   .page-article .prose,.page-reference .prose{padding:24px 20px 36px}
-  .doors{grid-template-columns:minmax(0,1fr)}
   .why-list{grid-template-columns:minmax(0,1fr);gap:18px}
   .masthead{padding:12px 18px;gap:12px;flex-wrap:wrap}
   .crumbs{flex-wrap:wrap}
@@ -635,7 +610,6 @@ img{max-width:100%;height:auto}
   .hero{padding:26px 16px}
   .hero-actions{gap:8px}
   .hero-actions .button{width:100%}
-  .doors{padding:0 16px 24px}
   .why{padding:8px 16px 22px}
   .strip{padding:16px}
   .install{padding:24px 16px}

@@ -32,7 +32,6 @@ HEADING_ID = re.compile(r'<h2 id="([^"]+)"')
 TOC_LINK = re.compile(r'class="toc-link" href="#([^"]+)"')
 SIDE_HERE = re.compile(r'class="side-link side-here" href="([^"]+)"')
 GUTTER_LINK = re.compile(r'class="gutter-link" href="([^"]+)"')
-DOOR = re.compile(r'class="door[^"]*" href="([^"]+)"')
 LEDE = re.compile(r'<p class="prose-lede">(.*?)</p>', re.S)
 # Both rails are written twice — the column the design draws, and the
 # folded <details> strip that replaces it below the breakpoint. So these
@@ -267,19 +266,6 @@ class EditThisPageOpensTheSection(BuiltSite):
                 continue
             self.assertNotIn("#", self.page(entry["path"]).split(
                 'class="gutter-link" href="')[-1].split('"')[0])
-
-
-class TheDoorsOpenOntoArticles(BuiltSite):
-    """Task 33 put six doors on the landing page. This is the other end of
-    them."""
-
-    def test_every_door_lands_on_a_page_in_the_flow(self):
-        routes = {entry["path"] for entry in self.flow}
-        doors = DOOR.findall(self.page("/"))
-        self.assertEqual(6, len(doors))
-        for door in doors:
-            self.assertIn(door, routes,
-                          f"the door to {door} opens onto nothing")
 
 
 @needs_renderer

@@ -11,8 +11,8 @@ Three promises, each mechanised below:
   held against the source that prints it — install.py's setup questions,
   board.py's startup. A reworded prompt fails here rather than quietly
   turning the strongest thing on the page into fiction.
-- **Every door opens.** The six cards point at routes this build writes,
-  and a link that resolves to nothing fails the build instead of shipping.
+- **Its links go somewhere.** A link that resolves to nothing fails the
+  build instead of shipping.
 
     python3 -m unittest discover -s tests
 """
@@ -135,24 +135,9 @@ class TheTerminalIsATranscript(LandingCase):
         self.assertIn("abridged", self.home)
 
 
-class TheDoorsOpen(LandingCase):
-    """Six doors, each a page this site builds."""
-
-    def doors(self) -> list:
-        return re.findall(r'<a class="door[^"]*" href="([^"]+)"', self.home)
-
-    def test_there_are_six_and_they_are_distinct(self):
-        self.assertEqual(6, len(self.doors()))
-        self.assertEqual(6, len(set(self.doors())))
-
-    def test_each_one_is_a_route_the_build_writes(self):
-        routes = {page["path"] for page in self.manifest["pages"]}
-        for door in self.doors():
-            with self.subTest(door=door):
-                self.assertIn(door, routes)
-                self.assertTrue(
-                    BUILDER.target_for(self.out, door).is_file(),
-                    f"{door} is in the manifest but produced no page")
+class TheHeroLeadsSomewhere(LandingCase):
+    """The landing page's only links into the docs, now that the six
+    doors are gone: these two buttons and the header nav."""
 
     def test_both_hero_buttons_go_somewhere_real(self):
         """One to the install guide, one to the repository."""
@@ -286,10 +271,12 @@ class ADeadInternalLinkStopsTheBuild(ScratchCase):
         self.assertIn("does not write", result.stderr)
 
     def test_it_fails_before_anything_is_written(self):
-        """As drift does: the last good build stays up."""
+        """As drift does: the last good build stays up. Aimed at the
+        install guide because the hero button hard-links it — the
+        landing page's other internal links went with the doors."""
         manifest = self.repo.manifest()
         manifest["pages"] = [page for page in manifest["pages"]
-                             if page["path"] != "/concepts/team-mode/"]
+                             if page["path"] != "/guides/install/"]
         self.repo.write_manifest(manifest)
         self.repo.build()
         self.assertFalse(self.repo.out.exists(),

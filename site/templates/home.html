@@ -1,6 +1,8 @@
 <!doctype html>
-<!-- Layout "home" — 1b Dockside from the turn-2 docs design: a landing
-     that is mostly a terminal and a set of doors.
+<!-- Layout "home" — 1b Dockside from the turn-2 docs design, reduced to
+     three things: what bench is, what installing it costs, and why to
+     bother. The six doors it used to end on are gone; the header nav is
+     the way into the docs.
 
      The words here are authored rather than sliced (site/pages.json says
      so with "source": null), which is exactly why the two facts a
@@ -133,10 +135,10 @@ Task board for ~/your-repo/.task-manager/tasks
   </div>
 </section>
 
-<!-- Why bench, before the six doors say what it does. Four reasons, and
-     the first is the one no hosted tool can answer: it is in your
-     codebase, so it is yours to change. The three after it are the
-     coordination problems a reader has usually already hit. -->
+<!-- Why bench. Four reasons, and the first is the one no hosted tool can
+     answer: it is in your codebase, so it is yours to change. The three
+     after it are the coordination problems a reader has usually already
+     hit. -->
 <section class="why">
   <h2 class="why-title">Why bench?</h2>
   <div class="why-list">
@@ -167,49 +169,6 @@ Task board for ~/your-repo/.task-manager/tasks
         being the thing everything queues behind.</span>
     </div>
   </div>
-</section>
-
-<section class="doors">
-  <a class="door" href="/guides/install/">
-    <span class="mono door-index">01</span>
-    <span class="door-title">Running in two minutes</span>
-    <span class="door-text">Drop it into any repo, run one script, open the
-      board. No account, no config sprawl — it untars into
-      <span class="mono">.task-manager/</span> and serves on port 26071.</span>
-  </a>
-  <a class="door" href="/concepts/stages/">
-    <span class="mono door-index">02</span>
-    <span class="door-title">Always know what every agent is doing</span>
-    <span class="door-text">Backlog to done at a glance. The board cannot
-      drift from reality, because tasks <i>are</i> files in your repo: the
-      directory a card sits in is its status.</span>
-  </a>
-  <a class="door" href="/concepts/agents-on-the-board/">
-    <span class="mono door-index">03</span>
-    <span class="door-title">Parallel agents, zero collisions</span>
-    <span class="door-text">Every agent gets its own git worktree and branch.
-      Run five at once without them overwriting each other.</span>
-  </a>
-  <a class="door" href="/concepts/pull-requests/">
-    <span class="mono door-index">04</span>
-    <span class="door-title">Nothing ships without you</span>
-    <span class="door-text">Finished work arrives as a PR with CI status on
-      the card. bench never merges — you stay the gate, without being the
-      bottleneck.</span>
-  </a>
-  <a class="door" href="/concepts/team-mode/">
-    <span class="mono door-index">05</span>
-    <span class="door-title">One board for the whole team</span>
-    <span class="door-text">Synced through git itself
-      (<span class="mono">BOARD_SYNC=1</span>) — no shared server, no
-      per-seat billing, no “who updated the ticket?”</span>
-  </a>
-  <a class="door door-dark" href="/concepts/three-layer-law/">
-    <span class="mono door-index">06</span>
-    <span class="door-title">Swap agents without rewiring</span>
-    <span class="door-text">Vendors are adapters. Change your coding agent,
-      or run several, without changing your workflow.</span>
-  </a>
 </section>
 
 <!-- The strip turn 1 of the design filled with a most-read ranking. The
