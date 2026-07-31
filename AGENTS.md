@@ -208,6 +208,14 @@ directory's name unless `BOARD_TITLE` in `local/.env` overrides it. The
 server renders it into the page, so it is right on first paint; switching
 view swaps only the tail (`<project> · sessions`).
 
+While agents are running the title leads with how many — `2◌ · <project>
+· bench` — because a backgrounded tab is the only place that state can
+still be read, and the reasoning that put the project first applies
+harder to it: a tab narrowed to a few characters still shows the count.
+It is the same list the header's live chip counts, so the two can never
+disagree, it rides every view, and a board with nothing running has
+exactly the plain title above, byte for byte.
+
 All settings live in `manager/core/.env.example` with their defaults documented —
 the port, the binaries agents launch with, the commands agents may run,
 the worktrees directory, whether moves claim and commit themselves,
