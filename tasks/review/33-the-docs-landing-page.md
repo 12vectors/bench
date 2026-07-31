@@ -1,6 +1,6 @@
 # 33 — Build the landing page: Dockside, on things bench really does
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** High — the front door, and the only page most visitors read
 **Type:** Feature
@@ -75,3 +75,22 @@ facts.
 The terminal is the strongest thing in the design and the most dangerous:
 a fabricated transcript is the single easiest way to lose a developer
 audience's trust. Paste real output.
+
+
+---
+
+## Work report — 2026-07-31 12:10 (Nell)
+
+build now *refuses* one if it reappears, so there cannot be a second copy. `tests/test_site_landing.py` changes both sources in a scratch repo and asserts the rebuilt page moved with them, and asserts a missing `VERSION`, a renamed install heading and an install section with no command block each stop the build.
+
+- **The terminal, which the card called the most dangerous thing on the page.** It shows `README.md`'s own command lines and then lines that `install.py`, `manager/core/board.py` and `manager/core/config.py` really print. It shows *fewer* lines than a first run does — the three question notes and the adapter's wiring report are cut — and it says so in its own title bar (`first run · abridged`) rather than passing an excerpt off as the whole output. `TheTerminalIsATranscript` in `tests/test_site_landing.py` holds each shown line against the source file that prints it, so rewording a prompt in `install.py` fails the suite.
+
+- **A dead internal link is now a build failure.** `check_links()` runs after every page renders and before anything is written, so a bad link leaves the previous good build standing, exactly as heading drift already did. This is what makes "the doors must not 404" enforceable rather than a review checklist item.
+
+- **The strip is the version, not analytics.** Turn 1's "most opened this week" is gone; the strip carries `0.2-alpha` read from `VERSION`, a sentence about `update.sh` and `BENCH_REF`, and a link to the releases page. I did not fetch the latest release at build time: that would put a network call in the build and make the output depend on when it ran.
+
+- **Head tags.** `/` carries its own `<title>`, description, canonical, and `og:type`/`og:site_name`/`og:title`/`og:description`/`og:url` plus `twitter:card=summary`. There is deliberately no `og:image` — the site has no raster art, and a broken image url is worse than none. The other two layouts (`article`, `notfound`) were left as they were; extending the card set to them is task 34's or 35's call.
+
+- **Two changes outside the landing page you should expect in the diff.** The home page no longer carries a generated body, so the tests in `tests/test_site_build.py` that read stage content off `/` now read it off `/concepts/stages/`; and the scratch repos in `tests/test_site_build.py` and `tests/test_site_deploy.py` copy `manager/core/VERSION` alongside the markdown, because every build now reads it. I also changed the terminal's `word-break:break-all` to `overflow-wrap:anywhere` in `site/static/site.css`, so the 72-character release url still wraps but the transcript's prose lines no longer break mid-word.
+
+- **First thing to look at:** `site/build.py`'s `install_command()` and `render_command()`. Everything about this card that matters — that the command on the front page is the command in `README.md`, prompt markers and all — rests on those two being right about where the block starts, where it ends, and which lines are continuations rather than new commands.
