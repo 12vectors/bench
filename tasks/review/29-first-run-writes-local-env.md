@@ -1,6 +1,6 @@
 # 29 — A first run writes local/.env, asking the questions it can't guess
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** Medium — nothing is broken without it, but two of bench's
 defining settings are invisible to anyone who hasn't read `.env.example`
@@ -139,3 +139,28 @@ out-of-scope reconciliation card would address.
   main only advances through the board. The question should say so in a
   line; a project that answers "team" by accident gets a board that
   narrates sync problems it cannot fix.
+
+
+---
+
+## Work report — 2026-07-31 07:56 (Fern)
+
+Done and committed. Closing report:
+
+---
+
+**The work is complete, committed on `task/29-first-run-writes-local-env` as `6352054`, and the full suite passes (`python3 -m unittest` — 320 tests, OK).** Nothing is blocked; `start.sh` needed no change, as the task predicted.
+
+**What changed**
+
+- `install.py` grew a setup step: with no `manager/local/.env` it asks three questions — solo or team (team turns `BOARD_COMMIT_MOVES` and `BOARD_SYNC` on together, with a note on what team mode costs), which agent adapter (enumerated from `manager/core/adapters/` plus `manager/local/adapters/`, never hardcoded), and what command runs the project's tests (`BOARD_AGENT_COMMANDS`) — then writes `manager/core/.env.example` with those answers substituted into their existing lines, every other key and comment intact. Bare Enter takes each default; Ctrl-D skips the rest and writes the defaults; Ctrl-C cancels and writes nothing. It runs after `first_boot_clean`, never asks when stdin is not a terminal (one line, then carries on), does nothing under `--dry-run` beyond reporting, and never touches an existing `.env` except under the new `--setup`, which pre-fills from the current file and rewrites in place. `--setup` is stripped from what is passed through to the adapter's `wire`.
+- `install.py` also now flushes stdout before launching the adapter's `wire`, so a piped run's output is no longer out of order (the child's report used to print before the parent's).
+- `manager/core/.env.example`, `AGENTS.md` ("The first run writes local/.env", plus the settings paragraph) and `README.md` document the behaviour.
+- `tests/test_install_first_boot.py` gained thirteen tests covering every acceptance bullet. Interactive runs get a real pty; every other run gets `/dev/null` on stdin, which is also the non-interactive case being asserted. The existing `run_install` helper now pins `stdin=subprocess.DEVNULL` explicitly, so tests cannot inherit a developer's terminal and hang.
+
+**Two things to look at first**
+
+1. `install.py:437` (`setup`) — the guard ordering and the TTY check are the two risks the task names; `test_first_boot_both_clears_the_cards_and_writes_the_env` and `test_without_a_terminal_it_says_so_and_writes_nothing` are what catch a regression in each.
+2. `tests/test_install_first_boot.py:run_install_tty` — the pty harness. It kills and fails loudly on a 60-second timeout, so an unanswered question surfaces as a test failure rather than a hung suite. It is POSIX-only, which matches the rest of bench.
+
+**One judgment call worth confirming:** the solo/team question is binary, so `--setup` normalizes a hand-edited half-team file (`BOARD_COMMIT_MOVES=1` with `BOARD_SYNC=` empty). That file defaults the question to "team", and answering either way writes both keys together. That follows the acceptance criteria as written, but it means `--setup` cannot express "commit moves without sync" — a project that wants it edits the file directly, as it does today.
