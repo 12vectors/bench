@@ -1,6 +1,8 @@
 # 42 — A long closing report loses its head, which is where it says what happened
 
-**Status:** Backlog
+**Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/34
+**Assignee:** istos
 **Priority:** High — the task file is the permanent record, and the part it
 drops is the part the reader must act on
 **Type:** Bug
@@ -130,3 +132,23 @@ short inputs, where the head and tail windows overlap. Handle "the cap is
 larger than the text" and "the two windows meet" before anything else;
 that is where an off-by-one duplicates a paragraph into the permanent
 record.
+
+
+---
+
+## Work report — 2026-07-31 16:29 (Olive)
+
+ks. Its run's log lives in `manager/local/state/agent/logs/` in the main checkout — outside this worktree, and outside what this session was allowed to read — so the 619 lost characters are still only recoverable there. The report in the card still begins `four" — they are` and still omits "nothing has been deployed".
+2. **Decide whether `reports.CAP = 12000` is the number you want.** It is ~1,800 words, four times the old 3,000 (~450), and documented as such in `manager/core/reports.py`. Card 32's 3,619-byte report now passes through whole, which is the point — the clip is a backstop, not the norm.
+
+## What to know
+
+`manager/core/reports.py` is new and is the one place a report is clipped. It sits left of both consumers in the module map (`config → state / reports → taskfiles → …`) and imports `config` alone, so `github.py` never reaches sideways into `agents.py`. It exposes `clean` (the old hook-noise strip), `report` (the head-and-tail clip) and `tail` (a dead run's ending).
+
+`report` returns a short report cleaned and otherwise byte for byte, with no elision line. Over the cap, it keeps leading whole lines (two-thirds of the budget) and trailing whole lines (the rest), separated by one line of prose: `… 8,214 characters of this report were cut here to keep the record within 12000 characters. The whole report is in \`manager/local/state/agent/logs/32-….log\`.` The budget is sized from that line at its longest before it is written, so the result never exceeds the cap. A report that is one enormous line — the edge case the card names — is cut at a space rather than not shown.
+
+Both consumers now go through it: `agents.py`'s work report, and the act-PR, PR-review and relevance paths (which previously tail-sliced only when their marker was missing, and were uncapped when it was present), plus `github.py`'s PR body, which used to keep a different 1,500-character tail. `_failure_excerpt` still keeps the log's tail through `reports.tail` — that asymmetry is deliberate and is now asserted by a test.
+
+Two things worth knowing about the test fixture. The live log for card 32 was not reachable from this worktree, so `tests/fixtures/32-work-report.log` is that report **reassembled**: the 3,000 characters the old clip preserved are verbatim from the done card, and the 619 it discarded are rebuilt from the quotation in card 42. It is byte-sized to the 3,619 the original was, and the test module's docstring says all of this plainly. If you recover the real log, dropping it in place of the fixture should leave every assertion standing.
+
+**Review first:** `manager/core/reports.py` — the whole fix is there, and `report`'s budget arithmetic is where an off-by-one would duplicate a paragraph into the permanent record. Then `TheWindowsMeet` in `tests/test_report_clip.py`, which sweeps caps from 200 to 1,200 asserting no line is ever kept twice and no output exceeds its cap. `AGENTS.md` gains a "What the record keeps of a report" section under the work-agent steps.

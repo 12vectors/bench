@@ -252,9 +252,14 @@ class OnlyCodeAndTablesScrollSideways(unittest.TestCase):
                       block.get(".prose :not(pre) > code", "").replace(" ", ""))
 
     def test_an_image_can_never_widen_the_page(self):
+        """Both the article body's rule and the floor under every layout:
+        the landing page's board shot lives outside .prose, so a rule
+        scoped to prose would not have covered it."""
         base = rules(base_sheet(self.css))
-        self.assertIn("max-width:100%",
-                      base.get(".prose img", "").replace(" ", ""))
+        for selector in (".prose img", "img"):
+            with self.subTest(selector=selector):
+                self.assertIn("max-width:100%",
+                              base.get(selector, "").replace(" ", ""))
 
 
 class EveryTemplateSaysHowWideItIs(unittest.TestCase):

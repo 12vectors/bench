@@ -40,21 +40,19 @@ CONFIG = REPO / "manager" / "core" / "config.py"
 #
 # The page shows fewer lines than a real first run does; its title bar
 # says "abridged". It shows none a first run does not.
+#
+# Shorter since the board shot joined the hero: the terminal gives up
+# height so the screenshot below it clears the fold. Trimming lines is
+# allowed — every line here must still be shown, and still be real — but
+# a line added back has to earn both halves of that again.
 TRANSCRIPT = [
-    ("a few questions and bench writes one.",
-     "a few questions and bench writes", INSTALL),
-    ("Enter takes the default in [brackets]; Ctrl-D skips the rest.",
-     "Enter takes the default in [brackets]; Ctrl-D skips the rest.", INSTALL),
     ("solo or team?", "solo or team?", INSTALL),
     ("which agent adapter?", "which agent adapter?", INSTALL),
     ("what command runs this project's tests?",
      "what command runs this project's tests?", INSTALL),
     ("python3 -m unittest", "python3 -m unittest", INSTALL),
-    ("every other setting is in there, commented; edit it any time.",
-     "every other setting is in there,", INSTALL),
     ("Task board for", "Task board for", BOARD),
     ("http://127.0.0.1:", "http://127.0.0.1:", BOARD),
-    ("Ctrl-C to stop", "Ctrl-C to stop", BOARD),
     ("26071", "26071", CONFIG),
 ]
 

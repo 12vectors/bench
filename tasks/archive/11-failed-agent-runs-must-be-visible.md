@@ -1,6 +1,6 @@
 # 11 — A failed agent run must leave a visible trace on the card
 
-**Status:** Done
+**Status:** Archived
 **PR:** https://github.com/12vectors/bench/pull/22
 **Assignee:** istos
 **Priority:** High — three agents died today and the board showed nothing a human would notice

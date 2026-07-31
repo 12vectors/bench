@@ -66,6 +66,9 @@ a:hover{color:var(--text);text-decoration:underline}
 .dim{color:var(--dim)}
 .spacer{flex:1}
 .rule{height:1px;background:var(--border-soft);margin:12px 0}
+/* No image, anywhere, may widen the page. .prose img keeps its own
+   rule for the article body; this is the floor under every layout. */
+img{max-width:100%;height:auto}
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation:none !important;transition:none !important}
 }
@@ -362,6 +365,24 @@ a:hover{color:var(--text);text-decoration:underline}
 .t-muted{color:var(--ink-muted)}
 .t-dim{color:var(--ink-dim)}
 
+/* The board itself, directly under the hero — the claim the copy makes,
+   shown rather than described. Sized so its top edge clears the fold on
+   a laptop, which is what the shortened terminal above it buys. */
+.shot{margin:0;padding:0 44px 30px}
+.shot-img{
+  display:block;width:100%;height:auto;
+  border:1px solid var(--border);border-radius:12px;
+  box-shadow:var(--shadow);background:var(--ink);
+}
+.shot-cap{
+  display:flex;gap:12px;align-items:baseline;padding:10px 2px 0;
+  font-size:var(--t-ui);line-height:1.55;color:var(--muted);
+}
+.shot-tag{
+  flex:0 0 auto;font-size:var(--t-micro);letter-spacing:.1em;
+  text-transform:uppercase;color:var(--dim);
+}
+
 /* The three sentences between the hero and the doors. Quiet on purpose:
    no cards, no borders, no colour — the doors below are the page's one
    grid of boxes, and repeating that shape here would make the reader
@@ -503,6 +524,7 @@ a:hover{color:var(--text);text-decoration:underline}
   .snags{padding:8px 24px 26px}
   .snag-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
   .strip{padding:18px 24px}
+  .shot{padding:0 24px 26px}
 
   /* Only a code block or a table may scroll sideways, so a token that
      cannot break — a url, a curl one-liner in running text — breaks
@@ -589,6 +611,8 @@ a:hover{color:var(--text);text-decoration:underline}
   .doors{padding:0 16px 24px}
   .snags{padding:8px 16px 22px}
   .strip{padding:16px}
+  .shot{padding:0 16px 22px}
+  .shot-cap{flex-direction:column;gap:4px}
   .page-article .prose,.page-reference .prose{padding:20px 16px 32px}
   .menu-summary{padding:9px 14px}
   .footer{padding:18px 14px}

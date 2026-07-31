@@ -113,7 +113,8 @@ STATIC_SKIP = ("*.md", ".DS_Store")
 
 # The assets a template links directly, and the placeholder each one is
 # offered under. See stamp() for why they carry a query string.
-STAMPED = {"stylesheet": "static/site.css", "icon": "static/favicon.svg"}
+STAMPED = {"stylesheet": "static/site.css", "icon": "static/favicon.svg",
+           "board_shot": "static/board.png"}
 
 ATX = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -793,6 +794,7 @@ def render_page(page: dict, manifest: dict, *, site: Path, repo: Path,
     fields = {
         "stylesheet": stamps["stylesheet"],
         "icon": stamps["icon"],
+        "board_shot": stamps["board_shot"],
         "title": escape(page["title"]),
         "description": escape(page.get("description")
                               or config.get("description", "")),
