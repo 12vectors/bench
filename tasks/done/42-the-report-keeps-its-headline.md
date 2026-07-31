@@ -1,6 +1,6 @@
 # 42 — A long closing report loses its head, which is where it says what happened
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/34
 **Assignee:** istos
 **Priority:** High — the task file is the permanent record, and the part it
@@ -152,3 +152,27 @@ Both consumers now go through it: `agents.py`'s work report, and the act-PR, PR-
 Two things worth knowing about the test fixture. The live log for card 32 was not reachable from this worktree, so `tests/fixtures/32-work-report.log` is that report **reassembled**: the 3,000 characters the old clip preserved are verbatim from the done card, and the 619 it discarded are rebuilt from the quotation in card 42. It is byte-sized to the 3,619 the original was, and the test module's docstring says all of this plainly. If you recover the real log, dropping it in place of the fixture should leave every assertion standing.
 
 **Review first:** `manager/core/reports.py` — the whole fix is there, and `report`'s budget arithmetic is where an off-by-one would duplicate a paragraph into the permanent record. Then `TheWindowsMeet` in `tests/test_report_clip.py`, which sweeps caps from 200 to 1,200 asserting no line is ever kept twice and no output exceeds its cap. `AGENTS.md` gains a "What the record keeps of a report" section under the work-agent steps.
+
+
+---
+
+## PR review — 2026-07-31 16:40 (Reed)
+
+PR REVIEW: APPROVE
+
+The work is complete, correct, in scope, and every acceptance criterion is backed by a test; I approve merging it. GitHub refused a formal `--approve` (the board's git user is this PR's author — self-approval is blocked), so the verdict is posted as a review comment instead. I could not execute the suite locally (Python is gated in this review session), so my confirmation is by close reading of the arithmetic and the tests, not a local run — CI on the PR should be the final green light.
+
+**What it does.** A new `manager/core/reports.py` becomes the single home for clipping an agent's closing report. `report()` passes short reports through cleaned-but-otherwise-unchanged; for a long one it keeps the head (2/3 of budget) and the tail, cuts the middle on line boundaries, and inserts one prose line saying how many characters were cut and naming the log that still holds the whole thing. One documented `CAP = 12000` replaces the old 3000-in-`agents.py` / 1500-in-`github.py` split. Both `agents.py` (`_report_of`, feeding the task file and Sessions view) and `github.py` (`_agent_report`, feeding the PR body) route through it.
+
+**What I checked and found good.**
+- **Layering holds.** `reports.py` imports only `config`; `agents.py` and `github.py` both import `reports`, neither reaches sideways. `AGENTS.md`'s module map is updated to match (`config → state / reports → …`).
+- **Overflow and duplication are provably prevented.** The elision line is sized at its longest (`dropped = len(text)`) before the budget is set, so the real line can only be shorter — the result never exceeds the cap. Head and tail are taken from disjoint slices (the tail reads only the remainder *after* the head lines), so no line can be kept twice. `TheWindowsMeet` sweeps caps 200→1200 asserting exactly this.
+- **Markers survive** because the head is kept — `NOT READY:`, `PR REVIEW:`, `ADDRESSED:`, `RELEVANCE REVIEW` all still parse from the first line (`MarkersSurviveTheClip`).
+- **The failure asymmetry is preserved.** `_failure_excerpt` now calls `reports.tail(text, 8000)`, byte-identical to the old `_clean_log(text, 8000)`, still keeping the log's *end* — and a test now asserts it (`FailedRunsStillKeepTheirTail`).
+- **PR body == task file** is enforced by a real integration test that drives `github._agent_report` and `agents._report_of` against one shared log record and asserts equality — not just structural argument.
+- The card-32 regression opens with "Work is committed on…", keeps "nothing has been deployed" and action items 1–2. No other tests reference the removed `_clean_log` / `_agent_log_tail`, so nothing breaks from their removal.
+
+**For a human reviewer to weigh (none are blockers):**
+1. The act-PR / PR-review / relevance paths were previously *uncapped* when their marker was present (kept everything after the marker); they are now capped at 12000. This is the task's intended "one implementation, one cap", and 12000 is generous (~1,800 words), but it is a genuine behavior change on those three paths.
+2. `tests/fixtures/32-work-report.log` is card 32's report **reassembled** — the real log was gitignored state unreachable from the worktree. It's disclosed honestly in the test docstring, byte-sized to the original 3,619, and the real log should drop in without breaking assertions if recovered.
+3. Card 32's own record in `tasks/done/` still carries the truncated report — the task's Notes call for fixing that by hand once this lands; it's out of this PR's code scope but shouldn't be forgotten.
