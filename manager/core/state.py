@@ -23,6 +23,7 @@ BOARD_EVENTS: list[dict] = []              # moves + agent lifecycle
 AGENTS: dict[str, dict] = {}               # agent_id -> launch record
 EXPECTED_MOVES: dict[tuple[str, str], tuple[str, float]] = {}  # (file, to) -> (actor, ts)
 COMMIT_HOOKS: list = []                    # run after a board-made task commit
+COMPLETING: dict[str, dict] = {}           # filename -> {started, step}: merge & clean up in flight
 
 # The port actually being served; board.py sets it from --port at startup so
 # launched agents know where to report events.
@@ -104,8 +105,59 @@ def record_board_event(event: dict) -> None:
     with LOCK:
         BOARD_EVENTS.append(event)
         del BOARD_EVENTS[:-config.BOARD_EVENTS_CAP]
+        # a card being completed says which step it is on, and the steps are
+        # already narrated here — so the registry reads them rather than
+        # asking every caller to report twice
+        claimed = COMPLETING.get(event.get("file"))
+        stepped = bool(claimed) and bool(event.get("summary"))
+        if stepped:
+            claimed["step"] = event["summary"]
     persist("board.jsonl", event)
     broadcast({"type": "board_event", "event": event})
+    if stepped:
+        publish_completing()
+
+
+def completing_public() -> dict:
+    with LOCK:
+        return {filename: dict(record) for filename, record in COMPLETING.items()}
+
+
+def publish_completing() -> None:
+    """The whole registry, every time it changes. It is one entry at most in
+    practice, and a whole map costs nothing to send and cannot go stale in
+    the way a patch can."""
+    broadcast({"type": "completing", "completing": completing_public()})
+
+
+def claim_completing(filename: str, step: str) -> bool:
+    """Claim a card for the long, destructive run behind "merge & clean up".
+
+    The claim is the card's busy state — what it renders instead of looking
+    idle, and what refuses a second request rather than starting a second
+    merge. It lives here, in this board's memory, so it dies with the
+    process: a board that is killed mid-completion leaves no card stuck
+    busy, and every other replica sees the card unchanged until the move
+    arrives (state syncs; reactions don't).
+
+    False when the card is already claimed — the caller refuses and must
+    not release what it did not take.
+    """
+    with LOCK:
+        if filename in COMPLETING:
+            return False
+        COMPLETING[filename] = {"started": time.time(), "step": step}
+    publish_completing()
+    return True
+
+
+def release_completing(filename: str) -> None:
+    """Give the card back — on success, on conflict, on crash alike. A card
+    stuck busy forever is worse than a card that looked idle."""
+    with LOCK:
+        released = COMPLETING.pop(filename, None) is not None
+    if released:
+        publish_completing()
 
 
 def task_committed(filename: str) -> None:

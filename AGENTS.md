@@ -482,6 +482,20 @@ step narrates in the ticker; a merge conflict aborts cleanly and the card
 stays put. Cards without work move silently, and hand-moves on disk are
 never intercepted — the board only asks when you act through it.
 
+That work takes as long as it takes, so **the card wears it** rather than
+sitting there looking idle while its branch is disassembled: from the
+first step to the last it takes the accent border and a breathing
+`completing` pill — the same vocabulary as an agent working, because that
+is what is happening — and carries the latest narrated step on its
+activity line ("parking the drive", "merged task/29-… into main",
+"cleaned up: worktree and local branch removed"). While it does, it has
+no hover actions, no drive or command chips and cannot be dragged, and a
+second `complete` for the same card is refused rather than started. The
+claim lives in this board's memory and is released on every exit —
+merged, conflicted or crashed — so a failure gives the card straight back
+and a board restarted mid-completion leaves nothing stuck. Other replicas
+see the card unchanged until the move itself arrives.
+
 With `BOARD_SYNC` on the merge is made **on origin** instead: the board
 runs `gh pr merge` on the card's PR, cleans up and moves the card, and
 local `main` fast-forwards to the result on the next beat. Replicas

@@ -39,6 +39,9 @@ def state_payload() -> dict:
         "branches": github.task_branches(),
         "commands": config.commands(),
         "commandRuns": commands.public(),
+        # cards this board is midway through merging and cleaning up: the
+        # busy state renders from here, not from what a tab happened to click
+        "completing": state.completing_public(),
         "checks": config.checks(),
         # who this board is, so a card can tell "yours" from "someone
         # else's". Empty outside team mode: nothing claims anything there.

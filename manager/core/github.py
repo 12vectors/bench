@@ -394,12 +394,30 @@ def complete_task(filename: str, stage: str) -> dict:
     the local main and pushes it, exactly as it always did; with
     `BOARD_SYNC` on the merge is made on origin through `gh pr merge`, so
     local main only ever fast-forwards to it — the discipline the whole
-    sync design rests on."""
+    sync design rests on.
+
+    None of it is quick, and all of it is destructive, so the card is
+    claimed before the first step and given back in a `finally` after the
+    last one. The claim is what the card wears while this runs and what
+    refuses a second request; see `state.claim_completing`.
+    """
     if stage not in config.STAGE_DIRS or stage == "done":
         raise ValueError("complete runs on a live-stage card")
     if not (config.TASKS / stage / filename).is_file():
         raise ValueError(f"{filename} is not in {stage}/ — refresh the board")
 
+    if not state.claim_completing(filename, "merging and cleaning up…"):
+        raise ValueError(f"{filename} is already being completed — the card "
+                         f"is showing each step; nothing was started twice")
+    try:
+        return _complete(filename, stage)
+    finally:
+        # every exit: merged, conflicted, on the wrong branch, or crashed
+        state.release_completing(filename)
+
+
+def _complete(filename: str, stage: str) -> dict:
+    """The steps themselves, run under the claim complete_task holds."""
     stem = filename[:-3]
     branch = f"task/{stem}"
 

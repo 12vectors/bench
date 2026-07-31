@@ -161,6 +161,15 @@
   /* the last run on this card died: the same terracotta, worn until the
      next launch replaces it or the card moves stage */
   .card.run-failed{border-color:color-mix(in oklab, var(--alarm) 55%, var(--border))}
+  /* merge & clean up is running on this card: the working vocabulary,
+     because that is what is happening — the board is disassembling its
+     branch. No new colour, no new animation, and nothing to grab: the card
+     is not draggable and carries no actions until it lands in done/. */
+  .card.completing{
+    border-color:color-mix(in oklab, var(--accent) 55%, var(--border));cursor:default;
+  }
+  .card.completing:hover{transform:none;border-color:color-mix(in oklab, var(--accent) 55%, var(--border))}
+  .card .pill.status.breathing{animation:breathe 2.4s ease-in-out infinite}
   /* tool chips: destinations, not statuses — they live in the card's footer,
      never squeezed into the author row */
   .chiprow{
@@ -817,6 +826,11 @@ function connectStream() {
     } else if (msg.type === 'board_event') {
       S.state?.boardEvents.push(msg.event);
       scheduleRender();
+    } else if (msg.type === 'completing') {
+      // the cards this board is merging and cleaning up, and which step
+      // each is on — whole map, so it can never go stale in pieces
+      if (S.state) S.state.completing = msg.completing;
+      scheduleRender();
     }
   };
 }
@@ -968,13 +982,17 @@ function cardFor(task) {
   const working = agent && agent.mode !== 'review';
   const verdict = task.stage === 'review' ? prVerdict(task) : null;
   const failure = failedRun(task);
+  // the server holds this, not the tab that clicked: while merge & clean up
+  // runs, the card is mid-disassembly and hands back none of its actions
+  const completing = (S.state.completing || {})[task.file];
   el.className = 'card'
     + (S.selected && S.selected.file === task.file ? ' selected' : '')
     + (working ? ' running' : '')
     + (verdict === 'green' ? ' verdict-good' : verdict === 'red' ? ' verdict-bad' : '')
     + (failure ? ' run-failed' : '')
+    + (completing ? ' completing' : '')
     + (task.stage === 'done' ? ' done-dim' : '');
-  el.draggable = true;
+  el.draggable = !completing;
 
   let tint = working ? 'var(--accent)' : STAGE_TINT[task.stage];
   let pill = agent && agent.mode === 'review'
@@ -994,14 +1012,21 @@ function cardFor(task) {
              title: failure.excerpt };
     tint = 'var(--alarm)';
   }
+  if (completing) {
+    // live work outranks every settled reading: the branch behind an
+    // 'approved' pill is being merged away as you look at it
+    pill = { text: 'completing', tint: 'var(--accent)', bg: mix('var(--accent)', 16),
+             title: 'merge & clean up is running — the card comes back when it lands in done/' };
+    tint = 'var(--accent)';
+  }
   const high = (task.priority || '').toLowerCase() === 'high';
   const top = [
-    `<span class="mark${working ? ' breathing' : ''}" style="background:${tint}"></span>`,
+    `<span class="mark${working || completing ? ' breathing' : ''}" style="background:${tint}"></span>`,
     `<span class="ref">${task.number ? '#' + esc(task.number) : esc(task.file.slice(0, 10))}</span>`,
     '<span class="spacer"></span>',
     high ? '<span class="high">HIGH</span>' : '',
     task.statusMismatch ? `<span class="pill drift" title="File says ${esc(task.declaredStatus)}">drift</span>` : '',
-    `<span class="pill status" style="background:${pill.bg};color:${pill.tint}"` +
+    `<span class="pill status${completing ? ' breathing' : ''}" style="background:${pill.bg};color:${pill.tint}"` +
       `${pill.title ? ` title="${esc(pill.title)}"` : ''}>${pill.text}</span>`,
   ];
 
@@ -1010,7 +1035,10 @@ function cardFor(task) {
   const stillTrue = { glyph: '◔', label: 'still true?', confirm: 'check it?', busy: 'checking…',
     title: 'A read-only agent checks this task is still true of the codebase',
     run: () => fireAgent(task, '/api/agent/review') };
-  if (agent) {
+  if (completing) {
+    // none, deliberately: an action that looks available and does nothing
+    // is the same lie as a card that looks idle while its branch is deleted
+  } else if (agent) {
     actions.push({ glyph: '‖', label: 'hold', confirm: 'hold it?', busy: 'holding…',
       title: 'Stop this agent — nothing is lost',
       run: () => stopAgent(agent.id) });
@@ -1088,7 +1116,12 @@ function cardFor(task) {
   if (task.type) extras.push(esc(task.type.toLowerCase()));
 
   let liveLine = '';
-  if (agent && agent.session) {
+  if (completing) {
+    // the steps are narrated as board events against this file; the card
+    // wears the latest one instead of leaving the ticker to tell the story
+    liveLine = `<div class="well"><span class="lead">·</span>` +
+      `<span class="wbody">${esc(completing.step || 'completing…')}<span class="caret">▌</span></span></div>`;
+  } else if (agent && agent.session) {
     const run = S.running[agent.session];
     const smeta = sessionMeta(agent.session);
     const last = run || (smeta && smeta.lastSummary ? { summary: smeta.lastSummary, ok: null } : null);
@@ -1129,7 +1162,9 @@ function cardFor(task) {
   }
   if (task.pr) chips.push({ label: 'PR', glyph: '↗', cls: '', href: task.pr, title: detail });
   let driveWell = '';
-  if (task.stage === 'review') {
+  // the drive and the project's commands run against a worktree this card
+  // is in the middle of removing: no chip offers either while it does
+  if (task.stage === 'review' && !completing) {
     const d = S.state.drive;
     if (d && d.task === task.file && (d.status === 'up' || d.status === 'starting')) {
       if (d.status === 'up') chips.push({ label: 'open', glyph: '✳', cls: 'accent',
@@ -1158,7 +1193,7 @@ function cardFor(task) {
     }
   }
   // project commands run against this task's worktree
-  if (hasBranch && ['in-progress', 'review'].includes(task.stage)) {
+  if (hasBranch && !completing && ['in-progress', 'review'].includes(task.stage)) {
     for (const cmd of (S.state.commands || [])) {
       const running = (S.state.commandRuns || []).some(r => r.task === task.file && r.name === cmd.name);
       if (running) {
@@ -1435,7 +1470,7 @@ function completeSheet(task, from) {
   $('#sh-move').addEventListener('click', () => { closeSheet(); rawMove(task.file, from, 'done'); });
   $('#sh-ship').addEventListener('click', async () => {
     closeSheet();
-    toast(`Completing ${task.file} — the ticker narrates each step`);
+    toast(`Completing ${task.file} — the card shows each step`);
     const res = await fetch('/api/task/complete', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ file: task.file, from }),
@@ -1471,7 +1506,9 @@ function renderDrawer() {
   const t = S.selected;
   const agent = agentOnTask(t.file);
   const failure = failedRun(t);
-  const pill = failure
+  const pill = (S.state.completing || {})[t.file]
+    ? { text: 'completing', tint: 'var(--accent)', bg: mix('var(--accent)', 16) }
+    : failure
     ? { text: 'run failed', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16) }
     : agent && agent.mode === 'review'
     ? { text: 'reviewing', tint: 'var(--accent)', bg: mix('var(--accent)', 16) }
