@@ -21,6 +21,13 @@ mkdir .task-manager && curl -L \
 No token, no clone: releases are curated artifacts that never contained
 bench's own cards or settings, so the board starts empty by construction.
 
+The first run asks three questions it cannot answer for you — solo or
+team, which agent adapter, what command runs your tests — and writes
+`manager/local/.env` from the documented example, so every other setting
+is discoverable in your own copy. Bare Enter takes the default
+throughout; with no terminal (CI, a script) it asks nothing and
+`install.py --setup` asks later.
+
 Commit `.task-manager/` into the host repo — core is vendored on purpose,
 so clones work offline and updates show up in the host's own diffs.
 

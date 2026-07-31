@@ -3,6 +3,7 @@
 
     python3 .task-manager/install.py             # apply (idempotent)
     python3 .task-manager/install.py --dry-run   # report only, change nothing
+    python3 .task-manager/install.py --setup     # ask the settings questions again
 
 Vendor-specific wiring belongs to the configured agent adapter: this script
 resolves the adapter (BOARD_AGENT_ADAPTER in manager/local/.env, default
@@ -16,6 +17,18 @@ project — vendored, before manager/local/ has ever been populated —
 clears the stage directories, tasks/archive/, plans/ and reference/
 (keeping task-template.md and .gitkeep files, printing every removal) and
 then stamps manager/local/state/ so the guard is false on every later run.
+
+A project with no manager/local/.env then gets one written, because the
+settings that change what bench *is* — claim-on-move and syncing through
+origin/main — are otherwise invisible to anyone who has not read
+manager/core/.env.example. Setup asks the few questions it cannot answer
+for the project and writes that example file with the answers substituted
+in, so the rest of the settings are discoverable by opening the result.
+It runs after first_boot_clean (writing .env early would flip the
+first-boot guard and leave the distribution's cards in a host project), it
+never asks without a terminal on stdin — install.py sits on the path of
+start.sh, update.sh and anything automated — and an existing .env is never
+touched except by an explicit --setup.
 """
 
 from __future__ import annotations
@@ -108,6 +121,188 @@ def first_boot_clean(dry_run: bool) -> None:
         (LOCAL / "state").mkdir(parents=True, exist_ok=True)
 
 
+# ── First-run settings ────────────────────────────────────────────────
+#
+# Everything not asked about is written at its documented default, so the
+# answers are only the ones no default can be right about: how this
+# project works (solo or team), which agent runs its headless jobs, and
+# what command runs its tests.
+
+ENV_EXAMPLE = CORE / ".env.example"
+ENV_FILE = LOCAL / ".env"
+
+TEAM_NOTE = """\
+  Team mode: moves claim and commit themselves, and boards converge
+  through origin/main. It wants a shared origin, merge rights for whoever
+  merges, and a local main that only ever advances through the board.
+  Solo — today's default — does none of it."""
+
+COMMANDS_NOTE = """\
+  Headless agents may only run the command prefixes named here, so a test
+  runner missing from the list is a test the work agent cannot run.
+  Comma-separate several."""
+
+
+class _Skipped(Exception):
+    """Ctrl-D: stop asking. Answers already given stand, the rest of the
+    file stays at its documented defaults."""
+
+
+def _rel(path: Path) -> str:
+    """A path as a reader would type it, relative to the project root."""
+    try:
+        return str(path.relative_to(PROJECT))
+    except ValueError:
+        return str(path)
+
+
+def env_values(text: str) -> dict[str, str]:
+    """KEY=VALUE lines, # comments, optional quotes — config._load_env's
+    parser, minus the process environment (this is about the file)."""
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip().strip("'\"")
+    return values
+
+
+def env_on(value: str) -> bool:
+    """config.flag's rule: anything but empty/0/false/no/off is on."""
+    return value.strip().lower() not in ("", "0", "false", "no", "off")
+
+
+def substitute(base: str, answers: dict[str, str]) -> str:
+    """`base` with the answered keys rewritten in place — every comment and
+    every other key intact, which is the point: the written file is where
+    the project reads what else it can change. A key the base does not
+    mention is appended rather than lost."""
+    out, placed = [], set()
+    for line in base.splitlines():
+        stripped = line.strip()
+        key = ("" if stripped.startswith("#") or "=" not in stripped
+               else stripped.partition("=")[0].strip())
+        if key in answers:
+            out.append(f"{key}={answers[key]}")
+            placed.add(key)
+        else:
+            out.append(line)
+    for key in [k for k in answers if k not in placed]:
+        out.append(f"{key}={answers[key]}")
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
+def adapter_choices() -> list[str]:
+    """The adapters actually present, core's plus this project's own —
+    enumerated, never hardcoded, so a local/adapters/ entry shows up."""
+    names: list[str] = []
+    for base in (CORE / "adapters", LOCAL / "adapters"):
+        if base.is_dir():
+            for child in sorted(base.iterdir()):
+                if (child / "run").is_file() and child.name not in names:
+                    names.append(child.name)
+    return names
+
+
+def _ask(question: str, default: str, note: str = "") -> str:
+    if note:
+        print(f"\n{note}")
+    try:
+        answer = input(f"  {question} [{default}]: ").strip()
+    except EOFError:
+        print()
+        raise _Skipped from None
+    return answer or default
+
+
+def ask_questions(current: dict[str, str], answers: dict[str, str]) -> None:
+    """Fill `answers` in place — in place because a Ctrl-D part-way through
+    keeps what was already answered."""
+    team = env_on(current.get("BOARD_SYNC", "")) or env_on(
+        current.get("BOARD_COMMIT_MOVES", ""))
+    while True:
+        reply = _ask("solo or team?", "team" if team else "solo",
+                     note=TEAM_NOTE).lower()
+        if reply in ("solo", "s", "team", "t"):
+            break
+        print("  answer solo or team.")
+    team = reply.startswith("t")
+    answers["BOARD_COMMIT_MOVES"] = "1" if team else ""
+    answers["BOARD_SYNC"] = "1" if team else ""
+
+    choices = adapter_choices()
+    default_adapter = current.get("BOARD_AGENT_ADAPTER") or "claude"
+    if choices:
+        allowed = choices + ([default_adapter]
+                             if default_adapter not in choices else [])
+        while True:
+            reply = _ask("which agent adapter?", default_adapter,
+                         note="  Which coding agent runs headless jobs — "
+                              f"here: {', '.join(choices)}.")
+            if reply in allowed:
+                break
+            print(f"  no such adapter here — one of: {', '.join(allowed)}.")
+        answers["BOARD_AGENT_ADAPTER"] = reply
+
+    answers["BOARD_AGENT_COMMANDS"] = _ask(
+        "what command runs this project's tests?",
+        current.get("BOARD_AGENT_COMMANDS", "python3 -m unittest"),
+        note=COMMANDS_NOTE)
+
+
+def setup(dry_run: bool, forced: bool) -> None:
+    """Write manager/local/.env when there is none — or rewrite it, from
+    its own current values, when asked to with --setup. Silent and
+    side-effect-free in every other case."""
+    exists = ENV_FILE.is_file()
+    if (exists and not forced) or not ENV_EXAMPLE.is_file():
+        return
+    verb = "rewrite" if exists else "write"
+    if dry_run:
+        print(f"would ask: solo or team, which agent adapter, the test "
+              f"command — and {verb} {_rel(ENV_FILE)} from "
+              f"{_rel(ENV_EXAMPLE)}.\nDry run — nothing written.\n")
+        return
+    if not sys.stdin.isatty():
+        if exists:
+            print(f"--setup asks questions and there is no terminal to ask "
+                  f"on — {_rel(ENV_FILE)} left as it is.\n")
+        else:
+            print(f"no {_rel(ENV_FILE)} — the defaults in {_rel(ENV_EXAMPLE)} "
+                  f"apply; `python3 {_rel(Path(__file__).resolve())} --setup` "
+                  f"asks the questions that write one.\n")
+        return
+
+    example = ENV_EXAMPLE.read_text(encoding="utf-8")
+    base = ENV_FILE.read_text(encoding="utf-8") if exists else example
+    current = env_values(example)
+    current.update(env_values(base))
+
+    if exists:
+        print(f"Rewriting {_rel(ENV_FILE)} — its current values are the "
+              f"defaults below.")
+    else:
+        print(f"No {_rel(ENV_FILE)} yet — a few questions and bench writes "
+              f"one.")
+    print("Enter takes the default in [brackets]; Ctrl-D skips the rest.")
+
+    answers: dict[str, str] = {}
+    try:
+        ask_questions(current, answers)
+    except _Skipped:
+        print("  skipped — the rest stay at their documented defaults.")
+    except KeyboardInterrupt:
+        print(f"\n\nCancelled — {_rel(ENV_FILE)} not written.\n")
+        return
+
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ENV_FILE.write_text(substitute(base, answers), encoding="utf-8")
+    print(f"\nWrote {_rel(ENV_FILE)} — every other setting is in there, "
+          f"commented; edit it any time.\n")
+
+
 def adapter_name() -> str:
     if os.environ.get("BOARD_AGENT_ADAPTER"):
         return os.environ["BOARD_AGENT_ADAPTER"]
@@ -121,13 +316,19 @@ def adapter_name() -> str:
 
 
 def main() -> int:
-    first_boot_clean(dry_run="--dry-run" in sys.argv[1:])
+    args = sys.argv[1:]
+    # Order is load-bearing: setup writes local/.env, which is one of the
+    # two things first_boot() reads as "this project has been here before".
+    first_boot_clean(dry_run="--dry-run" in args)
+    setup(dry_run="--dry-run" in args, forced="--setup" in args)
     name = adapter_name()
+    passthrough = [a for a in args if a != "--setup"]
+    sys.stdout.flush()   # the wire's output is a child's: keep the order
     for base in (LOCAL / "adapters", CORE / "adapters"):
         wire = base / name / "wire"
         if wire.is_file():
             return subprocess.call(
-                [sys.executable, str(wire), str(PROJECT), *sys.argv[1:]])
+                [sys.executable, str(wire), str(PROJECT), *passthrough])
     print(f"agent adapter '{name}' has no wire script — looked in "
           f"{LOCAL / 'adapters' / name} and {CORE / 'adapters' / name}.")
     return 1
