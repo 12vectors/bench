@@ -39,7 +39,9 @@
   --display:'Zilla Slab',Georgia,'Times New Roman',serif;
 
   /* type scale, straight off the design */
-  --t-hero:52px; --t-title:40px; --t-h2:23px; --t-h3:17px;
+  /* The hero headline sits in a third of the row now, so it takes a
+     smaller step than the design's full-width 52px. */
+  --t-hero:52px; --t-hero-narrow:40px; --t-title:40px; --t-h2:23px; --t-h3:17px;
   --t-lede:17px; --t-body:15px; --t-ui:13.5px; --t-code:12.5px;
   --t-micro:10.5px;
 
@@ -320,9 +322,11 @@ img{max-width:100%;height:auto}
 }
 
 /* ── home layout (1b Dockside) ── */
+/* One third words, two thirds board. The claim this page makes is a
+   board, so the board is what it shows first and shows large. */
 .hero{
-  display:grid;grid-template-columns:1.05fr .95fr;gap:44px;
-  padding:44px 44px 40px;align-items:center;
+  display:grid;grid-template-columns:1fr 2fr;gap:40px;
+  padding:40px 44px 34px;align-items:center;
 }
 .hero-copy{display:flex;flex-direction:column;gap:20px}
 .eyebrow{
@@ -330,7 +334,7 @@ img{max-width:100%;height:auto}
   color:var(--accent);
 }
 .hero h1{
-  margin:0;font:600 var(--t-hero)/1.05 var(--display);
+  margin:0;font:600 var(--t-hero-narrow)/1.08 var(--display);
   letter-spacing:-.025em;text-wrap:balance;
 }
 .lede{
@@ -365,23 +369,33 @@ img{max-width:100%;height:auto}
 .t-muted{color:var(--ink-muted)}
 .t-dim{color:var(--ink-dim)}
 
-/* The board itself, directly under the hero — the claim the copy makes,
-   shown rather than described. Sized so its top edge clears the fold on
-   a laptop, which is what the shortened terminal above it buys. */
-.shot{margin:0;padding:0 44px 30px}
+/* The board itself, in the hero's larger column. */
+.shot{margin:0;padding:0;min-width:0}
 .shot-img{
   display:block;width:100%;height:auto;
   border:1px solid var(--border);border-radius:12px;
   box-shadow:var(--shadow);background:var(--ink);
 }
 .shot-cap{
-  display:flex;gap:12px;align-items:baseline;padding:10px 2px 0;
-  font-size:var(--t-ui);line-height:1.55;color:var(--muted);
+  padding:10px 2px 0;max-width:70ch;
+  font-size:12.5px;line-height:1.55;color:var(--dim);text-wrap:pretty;
 }
-.shot-tag{
-  flex:0 0 auto;font-size:var(--t-micro);letter-spacing:.1em;
-  text-transform:uppercase;color:var(--dim);
+
+/* Half and half: what it takes to start, beside what starting looks
+   like. It carries the terminal the hero used to, which is what lets
+   the hero be one thing rather than two. */
+.install{
+  display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:center;
+  padding:34px 44px;background:var(--sunken);
+  border-top:1px solid var(--border-soft);
+  border-bottom:1px solid var(--border-soft);
 }
+.install-copy{display:flex;flex-direction:column;gap:14px;min-width:0}
+.install-title{
+  margin:0;font:600 var(--t-h2)/1.25 var(--display);letter-spacing:-.01em;
+}
+.install-copy p{margin:0;max-width:52ch;color:var(--muted);text-wrap:pretty}
+.install .terminal{min-width:0}
 
 /* The three sentences between the hero and the doors. Quiet on purpose:
    no cards, no borders, no colour — the doors below are the page's one
@@ -520,11 +534,11 @@ img{max-width:100%;height:auto}
   .gutter{display:none}
   .menu-contents{display:block}
   .hero{grid-template-columns:minmax(0,1fr);gap:28px;padding:32px 24px}
+  .install{grid-template-columns:minmax(0,1fr);gap:26px;padding:28px 24px}
   .doors{grid-template-columns:repeat(2,minmax(0,1fr));padding:0 24px 28px}
   .snags{padding:8px 24px 26px}
   .snag-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
   .strip{padding:18px 24px}
-  .shot{padding:0 24px 26px}
 
   /* Only a code block or a table may scroll sideways, so a token that
      cannot break — a url, a curl one-liner in running text — breaks
@@ -611,8 +625,7 @@ img{max-width:100%;height:auto}
   .doors{padding:0 16px 24px}
   .snags{padding:8px 16px 22px}
   .strip{padding:16px}
-  .shot{padding:0 16px 22px}
-  .shot-cap{flex-direction:column;gap:4px}
+  .install{padding:24px 16px}
   .page-article .prose,.page-reference .prose{padding:20px 16px 32px}
   .menu-summary{padding:9px 14px}
   .footer{padding:18px 14px}

@@ -62,19 +62,53 @@ $nav
   <a class="button" href="$repo_url">GitHub ↗</a>
 </header>
 
+<!-- Text a third, the board two thirds: the page's claim is a board, so
+     the board is the thing shown first and shown large. The terminal
+     that used to sit here has a section of its own below — one hero
+     carrying both was the busy version of this page. -->
 <section class="hero">
   <div class="hero-copy">
     <span class="eyebrow">Documentation</span>
-    <h1>Run a team of coding agents.<br>Stay in control.</h1>
+    <h1>Run a team of coding agents. Stay in control.</h1>
     <p class="lede">Your agents can ship faster than you can keep track.
       bench turns your repo into mission control: every task is a card,
-      every agent works in its own isolated worktree, every change waits
-      as a PR for your review. You see everything. Nothing merges
-      without you.</p>
+      every agent works in its own worktree, every change waits as a PR
+      for your review.</p>
     <div class="hero-actions">
-      <a class="button button-solid button-lg" href="/guides/install/">Install into a repo — running in 2 minutes</a>
+      <a class="button button-solid button-lg" href="/guides/install/">Install into a repo</a>
       <a class="button button-lg" href="$repo_url">bench on GitHub ↗</a>
     </div>
+  </div>
+
+  <!-- The shot is stamped like the stylesheet ($$board_shot carries
+       ?v=<hash>), because /static/* is cached immutable for a year and a
+       screenshot that could never be replaced would be a poor thing to
+       publish. -->
+  <figure class="shot">
+    <img class="shot-img" src="$board_shot" width="1600" height="857"
+         alt="The bench board: cards in backlog, to-do, in-progress, review
+              and done, three agents working, each card showing its branch
+              and the command its agent is running." decoding="async">
+    <figcaption class="shot-cap">bench's own board, on this repo. Three
+      agents at work, each on its own branch — and every one of them stops
+      at review.</figcaption>
+  </figure>
+</section>
+
+<!-- Half and half: what it takes to start, beside what starting looks
+     like. The terminal is abridged and says so in its own title bar;
+     every line in it is one a first run really prints. -->
+<section class="install">
+  <div class="install-copy">
+    <span class="eyebrow">Two minutes</span>
+    <h2 class="install-title">Untar it, run it, open the board.</h2>
+    <p>It goes into <span class="mono">.task-manager/</span> inside the repo
+      it manages. One script wires the project and serves the board on port
+      26071 — pinned, so the url is always the one you bookmarked.</p>
+    <p>Two questions on the first run: solo or team, and which coding agent
+      runs the headless jobs. What runs your tests is read off the project.
+      Everything else is written into a settings file, commented, for when
+      you want it.</p>
     <span class="mono aside-note">no account, no service, no database. it is
       python 3 on your own machine.</span>
   </div>
@@ -98,22 +132,6 @@ Task board for ~/your-repo/.task-manager/tasks
   <span class="t-accent">http://127.0.0.1:26071/</span></pre>
   </div>
 </section>
-
-<!-- What the command above opens. The shot is stamped like the
-     stylesheet ($$board_shot carries ?v=<hash>), because /static/* is
-     cached immutable for a year and a screenshot that could never be
-     replaced would be a poor thing to publish. -->
-<figure class="shot">
-  <img class="shot-img" src="$board_shot" width="1600" height="857"
-       alt="The bench board: cards in backlog, to-do, in-progress, review
-            and done, three agents working, each card showing its branch
-            and the command its agent is running." decoding="async">
-  <figcaption class="shot-cap">
-    <span class="mono shot-tag">the board</span>
-    <span>bench's own, running on this repo. Three agents at work, each on
-      its own branch — and every one of them stops at review.</span>
-  </figcaption>
-</figure>
 
 <!-- Three sentences a reader has said out loud before finding this page.
      Each one is answered by a mechanism rather than a promise, and each
