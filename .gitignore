@@ -4,3 +4,4 @@ __pycache__/
 .worktrees/
 .claude/settings.local.json
 .DS_Store
+site/dist/

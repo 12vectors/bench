@@ -1,0 +1,303 @@
+/* ── Bench docs: the Daylight register of the board's own system ───────
+   The four state tokens are named exactly as manager/core/board.html
+   names them — --accent (surf), --calm (pine), --alarm (terracotta),
+   --idle (driftwood) — because the site and the board are one system,
+   and colour in both only ever means state. Their values are the board's
+   light theme; the neutrals are the docs design's paper register.
+
+   Fonts are self-hosted: reading bench's docs must not require a request
+   to anyone else. site/static/fonts/README.md says which files these
+   @font-face rules want and how to fetch them.
+   ------------------------------------------------------------------- */
+
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:400;font-display:swap;src:url("/static/fonts/IBMPlexSans-Regular.woff2") format("woff2")}
+@font-face{font-family:'IBM Plex Sans';font-style:italic;font-weight:400;font-display:swap;src:url("/static/fonts/IBMPlexSans-Italic.woff2") format("woff2")}
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:500;font-display:swap;src:url("/static/fonts/IBMPlexSans-Medium.woff2") format("woff2")}
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:600;font-display:swap;src:url("/static/fonts/IBMPlexSans-SemiBold.woff2") format("woff2")}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:400;font-display:swap;src:url("/static/fonts/IBMPlexMono-Regular.woff2") format("woff2")}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:500;font-display:swap;src:url("/static/fonts/IBMPlexMono-Medium.woff2") format("woff2")}
+@font-face{font-family:'Zilla Slab';font-style:normal;font-weight:600;font-display:swap;src:url("/static/fonts/ZillaSlab-SemiBold.woff2") format("woff2")}
+
+:root{
+  /* paper */
+  --bg:#c9dde1; --canvas:#eaf3f4; --surface:#ffffff; --sunken:#e0eef1;
+  --border:#c5d7db; --border-soft:#d9e6e9;
+  --text:#12323b; --muted:#4d6e77; --dim:#87a1a8;
+  /* state — the same four the board carries */
+  --accent:#0d6e8c; --calm:#5f7f33; --alarm:#b1543a; --idle:#93a8ac;
+  --on-accent:#ffffff;
+  /* dark ink: code, terminals, chrome */
+  --ink:#0c1a20; --ink-deep:#0a161b; --ink-line:#1c343a;
+  --ink-text:#e9f3f3; --ink-muted:#95afb4; --ink-dim:#62828a;
+  --ink-accent:#56c2d8; --ink-calm:#a6c96f; --ink-alarm:#e08a63;
+  /* tinted callouts, both state colours */
+  --calm-wash:#f4f8e6; --calm-edge:#d6e2a8; --calm-ink:#4a6329;
+  --alarm-wash:#fbf1ec; --alarm-edge:#ecc9b8; --alarm-ink:#7a3c2a;
+
+  --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --display:'Zilla Slab',Georgia,'Times New Roman',serif;
+
+  /* type scale, straight off the design */
+  --t-hero:52px; --t-title:40px; --t-h2:23px; --t-h3:17px;
+  --t-lede:17px; --t-body:15px; --t-ui:13.5px; --t-code:12.5px;
+  --t-micro:10.5px;
+
+  --radius:11px; --shadow:0 20px 50px -34px rgba(18,50,59,.55);
+  --shadow-ink:0 18px 40px -30px rgba(12,26,32,.9);
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--canvas); color:var(--text);
+  font:var(--t-body)/1.68 var(--sans);
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent);text-decoration:none}
+a:hover{color:var(--text);text-decoration:underline}
+::selection{background:var(--accent);color:var(--on-accent)}
+.mono{font-family:var(--mono)}
+.dim{color:var(--dim)}
+.spacer{flex:1}
+.rule{height:1px;background:var(--border-soft);margin:12px 0}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation:none !important;transition:none !important}
+}
+
+/* ── chrome ── */
+.topbar{
+  display:flex;align-items:center;gap:10px;height:30px;padding:0 18px;
+  background:var(--text);color:#a9c4c9;
+  font:11px/1 var(--mono);
+}
+.topbar-org{color:var(--canvas);font-weight:500}
+.topbar-sep{color:var(--muted)}
+.topbar-repo{color:var(--ink-accent)}
+
+.masthead{
+  display:flex;align-items:center;gap:20px;padding:14px 30px;
+  background:var(--surface);border-bottom:1px solid var(--border);
+}
+.masthead-flat{background:var(--canvas);border-bottom:0}
+.wordmark{display:flex;align-items:baseline;gap:9px}
+.wordmark:hover{text-decoration:none}
+.wordmark-name{
+  font:600 21px/1 var(--display);letter-spacing:-.015em;color:var(--text);
+}
+.wordmark-tag{font:12px/1 var(--mono);color:var(--dim)}
+
+.nav{display:flex;gap:18px;font-size:var(--t-ui)}
+.nav-link{color:var(--muted);padding-bottom:2px;border-bottom:2px solid transparent}
+.nav-link:hover{color:var(--text);text-decoration:none}
+.nav-here{color:var(--text);font-weight:600;border-bottom-color:var(--accent)}
+
+.button{
+  display:inline-block;padding:7px 13px;font:500 var(--t-ui)/1.4 var(--sans);
+  color:var(--text);background:transparent;
+  border:1px solid var(--border);border-radius:8px;
+}
+.button:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
+.button-solid{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.button-solid:hover{background:var(--text);border-color:var(--text);color:var(--on-accent)}
+.button-lg{padding:11px 18px;font-size:14px}
+
+.footer{
+  display:flex;align-items:flex-end;gap:26px;padding:22px 26px;
+  background:var(--text);color:#a9c4c9;margin-top:40px;
+}
+.footer-mark{margin:0;font:9.5px/1.25 var(--mono);color:var(--muted)}
+.footer-id{display:flex;flex-direction:column;gap:4px}
+.footer-name{font:600 15px/1 var(--display);color:var(--canvas)}
+.footer-id .mono,.footer-repo{font-size:11px}
+.footer-repo{color:#a9c4c9}
+
+/* ── article layout (1a Harbour) ── */
+.shell{
+  display:grid;grid-template-columns:236px minmax(0,1fr) 208px;
+  background:var(--surface);
+}
+.side{
+  border-right:1px solid var(--border-soft);
+  padding:22px 16px 40px;display:flex;flex-direction:column;gap:22px;
+}
+.side-group{display:flex;flex-direction:column;gap:7px}
+.side-label{
+  font:var(--t-micro)/1 var(--mono);letter-spacing:.1em;
+  text-transform:uppercase;color:var(--dim);padding-left:9px;
+}
+.side-link{font-size:var(--t-ui);color:var(--muted);padding:4px 9px;border-radius:0 6px 6px 0}
+.side-link:hover{color:var(--text);text-decoration:none}
+.side-here{
+  font-weight:600;color:var(--text);background:var(--sunken);
+  border-left:2px solid var(--accent);
+}
+.side-note{
+  display:flex;flex-direction:column;gap:5px;margin-top:6px;
+  padding:11px 12px;background:var(--canvas);
+  border:1px solid var(--border-soft);border-radius:10px;
+  font-size:12.5px;line-height:1.45;color:var(--muted);
+}
+.side-note .mono{font-size:var(--t-micro)}
+
+.gutter{border-left:1px solid var(--border-soft);padding:30px 18px}
+.toc{display:flex;flex-direction:column;gap:9px;position:sticky;top:20px}
+.toc-label{
+  font:var(--t-micro)/1 var(--mono);letter-spacing:.1em;
+  text-transform:uppercase;color:var(--dim);margin-bottom:2px;
+}
+.toc-link{
+  font-size:12.5px;color:var(--muted);
+  border-left:2px solid var(--sunken);padding-left:9px;
+}
+.toc-link:hover{color:var(--accent);border-left-color:var(--accent);text-decoration:none}
+.gutter-link{font-size:12.5px;line-height:1.5;color:var(--muted)}
+.marginalia{
+  margin-top:36px;font:italic 11px/1.55 var(--mono);color:var(--alarm);
+  transform:rotate(-1.2deg);transform-origin:left top;
+}
+.marginalia .mono{font-size:11px}
+
+.crumbs{
+  display:flex;align-items:center;gap:8px;margin-bottom:16px;
+  font:11.5px/1 var(--mono);color:var(--dim);
+}
+.crumb-here{color:var(--muted)}
+
+/* ── generated prose ── */
+.page-article .prose{padding:30px 40px 44px;min-width:0}
+.prose h1{
+  font:600 var(--t-title)/1.1 var(--display);letter-spacing:-.02em;
+  margin:0 0 12px;
+}
+.prose h2{
+  font:600 var(--t-h2)/1.3 var(--display);letter-spacing:-.01em;
+  margin:34px 0 10px;scroll-margin-top:20px;
+}
+.prose h3{font:600 var(--t-h3)/1.4 var(--sans);margin:26px 0 8px}
+.prose h1 + p,.prose > p:first-child{
+  font-size:var(--t-lede);line-height:1.6;color:var(--muted);max-width:60ch;
+}
+.prose p{margin:0 0 16px;color:var(--muted);max-width:64ch;text-wrap:pretty}
+.prose strong{color:var(--text);font-weight:600}
+.prose ul,.prose ol{margin:0 0 18px;padding-left:22px;max-width:64ch;color:var(--muted)}
+.prose li{margin:0 0 7px}
+.prose li > ul,.prose li > ol{margin:7px 0 0}
+.prose hr{border:0;border-top:1px solid var(--border-soft);margin:30px 0}
+.prose blockquote{
+  margin:0 0 20px;padding:14px 16px;background:var(--canvas);
+  border:1px solid var(--border-soft);border-left:3px solid var(--accent);
+  border-radius:0 10px 10px 0;color:var(--text);
+}
+.prose blockquote p:last-child{margin:0}
+
+.prose code{
+  font:var(--t-code)/1.5 var(--mono);
+  background:var(--canvas);border-radius:4px;padding:1px 5px;
+  color:var(--text);
+}
+.prose pre{
+  margin:0 0 24px;padding:16px 18px;overflow-x:auto;
+  background:var(--ink);color:var(--ink-text);
+  font:var(--t-code)/1.75 var(--mono);
+  border-radius:var(--radius);box-shadow:var(--shadow-ink);
+}
+.prose pre code{background:transparent;padding:0;color:inherit;font-size:inherit}
+
+.prose table{
+  border-collapse:separate;border-spacing:0;margin:0 0 26px;width:100%;
+  background:var(--surface);border:1px solid var(--border-soft);
+  border-radius:10px;overflow:hidden;font-size:var(--t-ui);
+}
+.prose th{
+  text-align:left;padding:9px 14px;background:var(--canvas);
+  border-bottom:1px solid var(--border-soft);
+  font:var(--t-micro)/1.4 var(--mono);letter-spacing:.08em;
+  text-transform:uppercase;color:var(--dim);
+}
+.prose td{padding:11px 14px;border-bottom:1px solid var(--canvas);color:var(--muted);vertical-align:top}
+.prose tr:last-child td{border-bottom:0}
+
+/* ── home layout (1b Dockside) ── */
+.hero{
+  display:grid;grid-template-columns:1.05fr .95fr;gap:44px;
+  padding:44px 44px 40px;align-items:center;
+}
+.hero-copy{display:flex;flex-direction:column;gap:20px}
+.eyebrow{
+  font:11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;
+  color:var(--accent);
+}
+.hero h1{
+  margin:0;font:600 var(--t-hero)/1.05 var(--display);
+  letter-spacing:-.025em;text-wrap:balance;
+}
+.lede{
+  margin:0;max-width:44ch;font-size:var(--t-lede);line-height:1.62;
+  color:var(--muted);text-wrap:pretty;
+}
+.hero-actions{display:flex;gap:10px;align-items:center}
+.aside-note{font-size:11.5px;font-style:italic;color:var(--dim)}
+
+.terminal{border-radius:12px;overflow:hidden;box-shadow:0 24px 46px -30px rgba(12,26,32,.85)}
+.terminal-bar{
+  display:flex;align-items:center;gap:8px;padding:9px 14px;
+  background:var(--ink-deep);
+}
+.dot{width:8px;height:8px;border-radius:99px}
+.dot-alarm{background:var(--ink-alarm)}
+.dot-calm{background:var(--ink-calm)}
+.terminal-title{font-size:11px;color:var(--ink-dim);margin-left:6px}
+.terminal-body{
+  margin:0;padding:18px;background:var(--ink);color:var(--ink-text);
+  font:var(--t-code)/1.85 var(--mono);
+  white-space:pre-wrap;word-break:break-all;
+}
+.t-calm{color:var(--ink-calm)}
+.t-accent{color:var(--ink-accent)}
+.t-muted{color:var(--ink-muted)}
+.t-dim{color:var(--ink-dim)}
+
+.generated{padding:0 44px 34px}
+.page-home .prose{
+  background:var(--surface);border:1px solid var(--border-soft);
+  border-radius:12px;padding:28px 32px 12px;
+}
+.generated-heading{margin-top:0 !important}
+.generated-note{
+  margin:0 0 20px;font-size:11px;color:var(--dim);max-width:none;
+}
+
+.doors{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:14px;
+  padding:0 44px 34px;
+}
+.door{
+  display:flex;flex-direction:column;gap:8px;padding:20px;
+  background:var(--surface);border:1px solid var(--border-soft);
+  border-radius:12px;
+}
+.door-dark{background:var(--text);border-color:var(--text);color:var(--canvas)}
+.door-index{font-size:11px;color:var(--dim)}
+.door-dark .door-index{color:#7fa0a8}
+.door-title{font:600 19px/1.2 var(--display)}
+.door-text{font-size:var(--t-ui);line-height:1.6;color:var(--muted)}
+.door-dark .door-text{color:#a9c4c9}
+.door .mono{font-size:var(--t-code)}
+
+/* ── narrow ── */
+@media (max-width:1080px){
+  .shell{grid-template-columns:220px minmax(0,1fr)}
+  .gutter{display:none}
+  .hero{grid-template-columns:1fr;gap:28px;padding:32px 24px}
+  .doors{grid-template-columns:repeat(2,1fr);padding:0 24px 28px}
+  .generated{padding:0 24px 28px}
+}
+@media (max-width:760px){
+  .shell{grid-template-columns:minmax(0,1fr)}
+  .side{display:none}
+  .page-article .prose{padding:24px 22px 36px}
+  .doors{grid-template-columns:1fr}
+  .hero h1{font-size:38px}
+  .masthead{padding:12px 18px;gap:12px}
+}
