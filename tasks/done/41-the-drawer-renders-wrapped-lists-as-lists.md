@@ -1,6 +1,6 @@
 # 41 — The drawer renders a wrapped list item as one item
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/30
 **Assignee:** istos
 **Priority:** High — the drawer is where every card is actually read, and
