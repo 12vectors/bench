@@ -130,6 +130,7 @@ the tarball from the manifest, tags `v<VERSION>` and publishes via `gh`.
 
 ```bash
 python3 .task-manager/install.py             # idempotent; --dry-run to preview
+python3 .task-manager/install.py --setup     # ask the settings questions again
 ```
 
 Checks that the containing directory is a `.claude`-initialised project and
@@ -139,6 +140,33 @@ the adapter's `emit.py`. Fully present → reports "ok" and touches nothing;
 partial, stale (old `.tasks/` paths) or duplicated → repaired in place. Other
 hooks and settings are never touched, so it is safe to run any time — e.g.
 after dropping `.task-manager/` into a new repo.
+
+### The first run writes local/.env
+
+A project with no `manager/local/.env` runs on the documented defaults, so
+the two settings that change what bench *is* — claim-on-move and syncing
+through origin/main — stay invisible to anyone who has not read
+`core/.env.example`. So the first run asks, and writes the file: **solo or
+team** (team turns `BOARD_COMMIT_MOVES` and `BOARD_SYNC` on together, and
+the question says what that costs), **which agent adapter** (enumerated
+from the adapter directories, so a project's own `local/adapters/` entry
+is offered), and **what command runs this project's tests**
+(`BOARD_AGENT_COMMANDS` — the one a headless agent cannot work around).
+Bare Enter takes the default, Ctrl-D skips the rest, and what lands is
+`core/.env.example` with the answers substituted into their lines: every
+other key, every comment, so the written file is where the project reads
+what else it can change. The cost of writing the whole example is that it
+snapshots it — an update that adds a key does not add it to your copy.
+
+It runs **after** the first-boot clean, because `.env` is one of the two
+things the first-boot guard reads. It never asks without a terminal on
+stdin: `install.py` sits on the path of `start.sh`, `update.sh` and every
+hook, so no TTY prints one line (defaults apply, `--setup` asks) and
+carries on rather than blocking a board start with a prompt nobody can
+see. `--dry-run` reports the questions and writes nothing. An existing
+`.env` is never touched — no repair, no merging in new keys — and
+`--setup` is the only way back to the questions, offering the current
+file's values as the defaults and rewriting it in place.
 
 ## Seeing the board
 
@@ -179,8 +207,10 @@ All settings live in `manager/core/.env.example` with their defaults documented 
 the port, the binaries agents launch with, the commands agents may run,
 the worktrees directory, whether moves claim and commit themselves,
 whether boards sync through origin/main and how often, the
-watch interval and the in-memory caps. Copy it to `manager/local/.env`
-(gitignored) to override locally; real environment
+watch interval and the in-memory caps. The first `install.py` copies it to
+`manager/local/.env` (gitignored) with a few answers substituted in — see
+"The first run writes local/.env" above — and that copy is where a project
+overrides anything; real environment
 variables beat `.env`, which beats the defaults. The hook bridge reads the
 same `.env`, so changing `BOARD_PORT` moves the board, the agents and the
 hooks together.
