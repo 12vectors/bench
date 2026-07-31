@@ -37,9 +37,12 @@ def builder():
 BUILDER = builder()
 
 # The files a build reads out of the repo: the two the pages are cut
-# from, and the one the version is read from. A scratch repo needs these
-# and nothing else to build the real manifest.
-SOURCES = ["AGENTS.md", "README.md", "manager/core/VERSION"]
+# from, the one the version is read from, and every file a markdown link
+# inside a slice resolves to — the builder checks those exist, so a
+# scratch repo without them fails for a reason that has nothing to do
+# with the test.
+SOURCES = ["AGENTS.md", "README.md", "manager/core/VERSION",
+           "manager/core/adapters/README.md"]
 
 # A layout with no markup of its own, written into a scratch site when a
 # test wants to exercise the builder rather than a shipped template.
@@ -250,15 +253,20 @@ class DriftStopsTheBuild(ScratchCase):
     break the build, not empty a page."""
 
     def test_a_renamed_heading_names_the_route_and_the_heading(self):
-        self.repo.edit("AGENTS.md", "## Claiming a card",
-                       "## Claiming a task card")
+        """The heading renamed here is one exactly one manifest entry
+        names. A heading that is also the *end* of the page above it —
+        most of them are, the document being a chain — would be reported
+        against whichever route the build reaches first, which is true but
+        makes a poor test of "names the route"."""
+        self.repo.edit("AGENTS.md", "## Agents working the board",
+                       "## Agents at work on the board")
         result = self.repo.build()
 
         self.assertNotEqual(result.returncode, 0,
                             "a renamed heading built cleanly")
-        self.assertIn("/concepts/claiming-a-card/", result.stderr)
+        self.assertIn("/concepts/agents-on-the-board/", result.stderr)
         self.assertIn("AGENTS.md", result.stderr)
-        self.assertIn("## Claiming a card", result.stderr)
+        self.assertIn("## Agents working the board", result.stderr)
 
     def test_a_renamed_heading_emits_no_page_at_all(self):
         """Not "a page with an empty body" — nothing is written. Every

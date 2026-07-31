@@ -18,13 +18,22 @@ one-liner is read out of `README.md`'s "Install into a repo" block and
 the version out of `manager/core/VERSION`, and the template is offered
 them as `$install_block` and `$version`.
 
+An article page authors one sentence of its own — the lede under the
+title — because a slice starts mid-document and a reader arriving from
+the nav is owed a line saying what they are looking at. That is the whole
+allowance. When a section reads badly on the web, the fix is the section:
+edit `AGENTS.md` so it reads well in both places rather than forking the
+prose into this directory.
+
 ```bash
 python3 -m pip install -r site/requirements.txt   # once
-python3 site/fetch-fonts.py                       # once, needs network
 python3 site/build.py                             # → site/dist/
 ```
 
-`site/dist/` is gitignored — it is output, rebuilt on every deploy.
+`site/dist/` is gitignored — it is output, rebuilt on every deploy. The
+woff2 files under `static/fonts/` are not: they are committed, so a
+clean checkout builds the real typography without asking anyone for it,
+and a deploy is the same bytes from any machine.
 
 `site/` never reaches a host repo: releases ship exactly what
 `../manager/core/release-manifest` lists, and it does not list this
@@ -77,13 +86,12 @@ separate decision with a separate cost, and a follow-up card.
 
 ## Deploying
 
-From a clean checkout, four commands. Re-running the whole sequence is
+From a clean checkout, three commands. Re-running the whole sequence is
 safe: the build empties and rewrites `dist/`, and `wrangler deploy`
 replaces the Worker's assets rather than adding to them.
 
 ```bash
 python3 -m pip install -r site/requirements.txt   # once per machine
-python3 site/fetch-fonts.py                       # once per checkout
 python3 site/build.py                             # → site/dist/
 npx wrangler@4 deploy --config site/wrangler.jsonc
 ```
@@ -156,7 +164,7 @@ answers rather than files:
 | `root/` | Copied to the **top** of `dist/` verbatim: `_headers`, which the host reads and never serves |
 | `wrangler.jsonc` | The Worker: assets directory, url handling, 404, custom domain |
 | `requirements.txt` | `markdown-it-py`, pinned. The only dependency |
-| `fetch-fonts.py` | Downloads the self-hosted woff2 files, once |
+| `fetch-fonts.py` | Refetches the committed woff2 files, or adds a face |
 
 ## A manifest entry
 
@@ -178,21 +186,32 @@ answers rather than files:
   written to exactly that path — `/404.html` is the only one, and it
   exists because the host looks for that literal filename.
 - **`layout`** names a file in `templates/`.
-- **`section`** groups the page in the nav and the sidebar. The IA is
-  read out of this file in this file's order — nothing is derived from
-  the directory layout. A `null` section keeps the page out of both,
-  which is how the 404 page stays off the nav.
+- **`section`** groups the page in the nav and the sidebar, and puts it
+  on the reading order prev/next walks. The IA is read out of this file
+  in this file's order — nothing is derived from the directory layout. A
+  `null` section keeps the page out of the nav, the sidebar and the flow,
+  which is how the 404 page stays off all three.
 - **`source`** is repo-relative, or `null` for a landing page whose body
   is authored in its template rather than sliced.
 - **`from`** is the heading the slice starts at. It is matched on the
   heading's text; writing the `#`s (`## Stages`) pins the level too.
-  Headings inside fenced code blocks never match.
+  Headings inside fenced code blocks never match. It is also what
+  "Edit this page on GitHub" anchors to, so the link opens the section
+  rather than the top of a 700-line file.
 - **`to`** is optional. Without it the slice runs to the next heading of
   the same level or shallower.
+- **`description`** is the page's meta description, and doubles as the
+  visible lede under the title.
+- **`lede`** is optional, and only worth setting when the sentence a
+  reader should see differs from the one a search engine should. It is
+  the only prose a page may author.
 
 The `from` heading itself is dropped — the layout renders the page title
 — and what remains is promoted by `level - 1`, so a section's `###`
-sub-headings land as the page's `<h2>`s.
+sub-headings land as the page's `<h2>`s. Promotion stops at `<h2>`: a
+slice that deliberately runs past its own section ("Stages" through
+"Moving a task") carries headings at the `from` level, and those become
+`<h2>` peers rather than a second `<h1>` on a page that already has one.
 
 ## What fails the build
 

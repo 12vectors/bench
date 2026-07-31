@@ -6,7 +6,7 @@
      A phone has room for one of those columns, so the other two are
      written twice: once as the column the design draws, and once as a
      <details> strip that is display:none until the breakpoint which
-     hides its column. The strips carry the same $sidebar and $toc, so
+     hides its column. The strips carry the same $$sidebar and $$toc, so
      there is one source for the links and no way for the folded copy to
      say something the column does not.
 
@@ -70,15 +70,23 @@ $sidebar
     <h1>$title</h1>
     <!-- "On this page", folded under the title. Shown from 1080px down,
          where the gutter that normally carries it is gone. A page whose
-         body has no h2s gets an empty $toc, and the stylesheet drops the
-         strip rather than offering a summary over nothing. -->
+         body has no h2s gets an empty $$toc, and the stylesheet drops the
+         strip rather than offering a summary over nothing. It sits above
+         the lede on purpose: the stylesheet's lede adjacency names
+         .menu-contents + p for exactly this order. -->
     <details class="menu menu-contents">
       <summary class="menu-summary">On this page</summary>
       <nav class="menu-panel">
 $toc
       </nav>
     </details>
+    <!-- The one sentence an article authors. Everything below it is the
+         body placeholder: a heading slice of the file named in the
+         gutter. (Placeholders substitute inside comments too, so this
+         one cannot spell that name out.) -->
+    <p class="prose-lede">$lede</p>
 $body
+$flow
   </article>
 
   <aside class="gutter">

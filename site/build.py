@@ -40,6 +40,13 @@ page emits — a door on the landing page as much as a link inside a slice
 — must resolve to something this build writes, or the build stops
 (`check_links`).
 
+An article page authors exactly one sentence of its own: the lede under
+the title (`$lede`, the manifest's `lede` or its `description`). A slice
+begins mid-document, so a reader arriving from the nav is owed a line
+saying what they are looking at — but that is the whole allowance, and a
+manifest entry that tried to carry a body would still have nowhere to put
+it.
+
 ## What the host needs from the build
 
 Two things here exist for the way the site is served (site/wrangler.jsonc,
@@ -151,13 +158,20 @@ def find_heading(marks: list, value: str, after: int = -1):
 def promote(text: str, by: int) -> str:
     """Shift every heading in a slice `by` levels shallower, so a section
     lifted out of a larger document keeps its internal hierarchy while
-    starting at <h2> under the page's own <h1>."""
+    starting at <h2> under the page's own <h1>.
+
+    Never above <h2>. A slice that runs past the end of its own section —
+    "Stages" through "Moving a task", one page about one idea — carries
+    headings at the `from` heading's own level, and those would promote to
+    a second <h1> on a page that already has one. They land beside the
+    section's children as <h2> instead: on the page they are peers, which
+    is what putting them on one page said."""
     if by <= 0:
         return text
     lines = text.splitlines()
     for index, level, _ in list(headings(text)):
         found = ATX.match(lines[index])
-        lines[index] = "#" * max(1, level - by) + " " + found.group(2).strip()
+        lines[index] = "#" * max(2, level - by) + " " + found.group(2).strip()
     return "\n".join(lines)
 
 
@@ -280,6 +294,17 @@ def repo_facts(repo: Path) -> dict:
 
 
 # ── links ─────────────────────────────────────────────────────────────
+
+def github_anchor(heading: str) -> str:
+    """GitHub's own anchor for a heading, so "Edit this page" lands on the
+    section the page was cut from rather than at the top of a 700-line
+    file. GitHub lowercases, drops punctuation that is not a hyphen or an
+    underscore, and turns spaces into hyphens — which is not quite
+    slugify()'s rule (that one collapses runs), so it is written out here
+    rather than shared."""
+    text = heading.lstrip("#").strip().lower()
+    return re.sub(r"[^\w\- ]", "", text).replace(" ", "-")
+
 
 def rewrite_link(href: str, *, page: dict, source: str, manifest: dict,
                  repo: Path) -> str:
@@ -442,6 +467,43 @@ def render_sidebar(manifest: dict, current: dict) -> str:
     return "\n".join(out)
 
 
+def flow(manifest: dict) -> list:
+    """The pages in reading order — the sidebar, flattened. Prev/next walks
+    this list, so what the arrows do and what the sidebar shows cannot
+    disagree. A page with no section (the landing page, the 404) is not on
+    the flow and gets no arrows."""
+    return [page for group in sections(manifest) for page in group["pages"]]
+
+
+def render_flow(manifest: dict, current: dict) -> str:
+    """The two arrows at the foot of an article. Absent neighbours keep
+    their slot as an empty span, so `next` stays on the right on the first
+    page exactly as it does on every other."""
+    order = flow(manifest)
+    here = next((index for index, page in enumerate(order)
+                 if page["path"] == current["path"]), None)
+    if here is None:
+        return ""
+    neighbours = (
+        (order[here - 1] if here > 0 else None, "prev", "← previous"),
+        (order[here + 1] if here + 1 < len(order) else None, "next", "next →"),
+    )
+    if not any(page for page, _, _ in neighbours):
+        return ""
+    out = ['<nav class="flow">']
+    for page, direction, label in neighbours:
+        if not page:
+            out.append('<span class="spacer"></span>')
+            continue
+        out.append(f'<a class="flow-link flow-{direction}" '
+                   f'href="{page["path"]}">'
+                   f'<span class="mono flow-dir">{label}</span>'
+                   f'<span class="flow-title">{escape(page["title"])}</span>'
+                   f"</a>")
+    out.append("</nav>")
+    return "\n".join(out)
+
+
 def render_contents(contents: list) -> str:
     if not contents:
         return ""
@@ -507,12 +569,31 @@ def render_page(page: dict, manifest: dict, *, site: Path, repo: Path,
     blob = config["blob_base"].rstrip("/") + "/"
     stamps = stamps if stamps is not None else stamp(site)
     facts = facts if facts is not None else repo_facts(repo)
+
+    # "Edit this page" is a promise that the reader lands on the thing that
+    # is wrong. For a sliced page that is the section, not the file: an
+    # anchor built from the same `from` heading the slice starts at, so the
+    # two cannot point at different places.
+    source_url = config["repo_url"]
+    if source:
+        source_url = blob + source
+        anchor = github_anchor(page["from"])
+        if anchor:
+            source_url += "#" + anchor
+
     fields = {
         "stylesheet": stamps["stylesheet"],
         "icon": stamps["icon"],
         "title": escape(page["title"]),
         "description": escape(page.get("description")
                               or config.get("description", "")),
+        # The design's lede. It is the one sentence a page is allowed to
+        # author, because a slice starts mid-document and a reader arriving
+        # from the nav needs to be told what they are looking at; the
+        # manifest's own `description` says that already, so `lede` only
+        # exists for the pages where the two want different words.
+        "lede": escape(page.get("lede") or page.get("description")
+                       or config.get("description", "")),
         "site_title": escape(config["title"]),
         "site_tagline": escape(config.get("tagline", "")),
         "version": escape(facts["version"]),
@@ -521,12 +602,13 @@ def render_page(page: dict, manifest: dict, *, site: Path, repo: Path,
         "toc": render_contents(contents),
         "nav": render_nav(manifest, page),
         "sidebar": render_sidebar(manifest, page),
+        "flow": render_flow(manifest, page),
         "breadcrumb": render_breadcrumb(page),
         "section": escape(page.get("section") or ""),
         "repo_url": config["repo_url"],
         "issues_url": config.get("issues_url", config["repo_url"]),
         "releases_url": config.get("releases_url", config["repo_url"]),
-        "source_url": (blob + source) if source else config["repo_url"],
+        "source_url": source_url,
         "source_path": escape(source or ""),
         "canonical": config.get("base_url", "").rstrip("/") + page["path"],
     }

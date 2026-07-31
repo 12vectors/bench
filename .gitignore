@@ -5,3 +5,5 @@ __pycache__/
 .claude/settings.local.json
 .DS_Store
 site/dist/
+# wrangler's local cache, written by a deploy from this checkout
+.wrangler/

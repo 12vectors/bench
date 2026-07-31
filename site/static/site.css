@@ -171,6 +171,13 @@ a:hover{color:var(--text);text-decoration:underline}
 
 /* ── generated prose ── */
 .page-article .prose{padding:30px 40px 44px;min-width:0}
+/* The lede is the article's own sentence; everything after it is the
+   slice. It reads wider and quieter than body copy, as in the design. */
+.prose-lede{
+  margin:0 0 26px;max-width:60ch;
+  font-size:var(--t-lede);line-height:1.6;color:var(--muted);
+  text-wrap:pretty;
+}
 .prose h1{
   font:600 var(--t-title)/1.1 var(--display);letter-spacing:-.02em;
   margin:0 0 12px;
@@ -230,6 +237,23 @@ a:hover{color:var(--text);text-decoration:underline}
 }
 .prose td{padding:11px 14px;border-bottom:1px solid var(--canvas);color:var(--muted);vertical-align:top}
 .prose tr:last-child td{border-bottom:0}
+
+/* Prev/next along the same order the sidebar shows. An absent neighbour
+   leaves a .spacer in its slot, so `next →` stays right-hand on the first
+   page exactly as it does on every other. */
+.flow{
+  display:flex;gap:14px;margin-top:44px;padding-top:22px;
+  border-top:1px solid var(--border-soft);
+}
+.flow-link{
+  display:flex;flex-direction:column;gap:5px;flex:0 1 auto;max-width:46%;
+  padding:12px 16px;background:var(--surface);
+  border:1px solid var(--border-soft);border-radius:11px;color:var(--text);
+}
+.flow-link:hover{border-color:var(--accent);color:var(--text);text-decoration:none}
+.flow-next{margin-left:auto;text-align:right}
+.flow-dir{font-size:var(--t-micro);letter-spacing:.08em;color:var(--dim)}
+.flow-title{font:600 15px/1.3 var(--display)}
 
 /* ── home layout (1b Dockside) ── */
 .hero{

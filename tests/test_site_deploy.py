@@ -318,9 +318,13 @@ class Scratch(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.root, True)
         shutil.copytree(SITE, self.root / "site",
                         ignore=shutil.ignore_patterns("dist", "__pycache__"))
-        # The markdown the pages are cut from, plus the file the version
-        # shown on them is read from.
-        for name in ("AGENTS.md", "README.md", "manager/core/VERSION"):
+        # The markdown the pages are cut from, the file the version shown
+        # on them is read from, and whatever a link inside a slice points
+        # at. One list, in tests/test_site_build.py — a scratch repo that
+        # is missing one of them fails for a reason no test here is about.
+        from tests.test_site_build import SOURCES
+
+        for name in SOURCES:
             (self.root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(REPO / name, self.root / name)
         self.out = self.root / "site" / "dist"
