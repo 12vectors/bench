@@ -34,6 +34,18 @@ SIDE_HERE = re.compile(r'class="side-link side-here" href="([^"]+)"')
 GUTTER_LINK = re.compile(r'class="gutter-link" href="([^"]+)"')
 DOOR = re.compile(r'class="door[^"]*" href="([^"]+)"')
 LEDE = re.compile(r'<p class="prose-lede">(.*?)</p>', re.S)
+# Both rails are written twice — the column the design draws, and the
+# folded <details> strip that replaces it below the breakpoint. So these
+# assert every rendering, rather than assuming there is one.
+CONTENTS_BLOCK = re.compile(
+    r'<div class="toc">(.*?)</div>|<nav class="menu-panel">(.*?)</nav>', re.S)
+
+
+def contents_lists(html):
+    """The anchors of each rendering of "On this page", in order. The
+    sidebar's own menu-panel carries no toc-links and drops out."""
+    found = [TOC_LINK.findall(a or b) for a, b in CONTENTS_BLOCK.findall(html)]
+    return [links for links in found if links]
 
 
 class BuiltSite(unittest.TestCase):
@@ -123,11 +135,17 @@ class TheSidebarAndTheContentsFollowThePage(BuiltSite):
     the other is the promoted slice's own h2s."""
 
     def test_the_sidebar_marks_exactly_the_page_you_are_on(self):
+        """The rail and its folded strip each mark the current page, so
+        there is more than one marker — and every one of them names this
+        page and no other."""
         for entry in self.articles():
             here = SIDE_HERE.findall(self.page(entry["path"]))
-            self.assertEqual([entry["path"]], here,
-                             f'{entry["path"]} does not mark itself in the '
-                             f"sidebar")
+            self.assertTrue(here,
+                            f'{entry["path"]} does not mark itself in the '
+                            f"sidebar")
+            self.assertEqual({entry["path"]}, set(here),
+                             f'{entry["path"]}: a sidebar rendering marks '
+                             f"some other page as here")
 
     def test_the_sidebar_lists_every_other_page_too(self):
         html = self.page("/concepts/stages/")
@@ -145,9 +163,14 @@ class TheSidebarAndTheContentsFollowThePage(BuiltSite):
         with nobody editing the site."""
         for entry in self.articles():
             html = self.page(entry["path"])
-            self.assertEqual(HEADING_ID.findall(html), TOC_LINK.findall(html),
-                             f'{entry["path"]}: the contents list and the '
-                             f"headings disagree")
+            headings = HEADING_ID.findall(html)
+            renderings = contents_lists(html)
+            self.assertTrue(renderings or not headings,
+                            f'{entry["path"]}: headings but no contents list')
+            for links in renderings:
+                self.assertEqual(headings, links,
+                                 f'{entry["path"]}: a contents rendering and '
+                                 f"the headings disagree")
 
     def test_a_page_with_sub_headings_really_has_a_contents_list(self):
         """Guards the test above against passing on two empty lists."""

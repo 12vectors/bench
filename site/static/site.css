@@ -45,6 +45,11 @@
 
   --radius:11px; --shadow:0 20px 50px -34px rgba(18,50,59,.55);
   --shadow-ink:0 18px 40px -30px rgba(12,26,32,.9);
+
+  /* The smallest thing a finger is asked to hit. It is a token rather
+     than a number typed seven times because it is one decision, and the
+     narrow steps below are where it is spent. */
+  --tap:44px;
 }
 
 *{box-sizing:border-box}
@@ -182,7 +187,11 @@ a:hover{color:var(--text);text-decoration:underline}
   margin:34px 0 10px;scroll-margin-top:20px;
 }
 .prose h3{font:600 var(--t-h3)/1.4 var(--sans);margin:26px 0 8px}
-.prose h1 + p,.prose > p:first-child{
+/* The lede is the body's first paragraph. The collapsed contents strip
+   sits between it and the h1 — display:none at the design's width, but
+   still a sibling — so the adjacency has to name it too, or the lede
+   would quietly become an ordinary paragraph on desktop. */
+.prose h1 + p,.prose .menu-contents + p,.prose > p:first-child{
   font-size:var(--t-lede);line-height:1.6;color:var(--muted);max-width:60ch;
 }
 .prose p{margin:0 0 16px;color:var(--muted);max-width:64ch;text-wrap:pretty}
@@ -197,6 +206,10 @@ a:hover{color:var(--text);text-decoration:underline}
   border-radius:0 10px 10px 0;color:var(--text);
 }
 .prose blockquote p:last-child{margin:0}
+/* No page slices an image today. When one does, it is the only element
+   in generated markdown that arrives with its own intrinsic width, and
+   a 1200px screenshot on a 390px screen would widen the page itself. */
+.prose img{max-width:100%;height:auto}
 
 .prose code{
   font:var(--t-code)/1.5 var(--mono);
@@ -260,7 +273,7 @@ a:hover{color:var(--text);text-decoration:underline}
   margin:0;max-width:44ch;font-size:var(--t-lede);line-height:1.62;
   color:var(--muted);text-wrap:pretty;
 }
-.hero-actions{display:flex;gap:10px;align-items:center}
+.hero-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .aside-note{font-size:11.5px;font-style:italic;color:var(--dim)}
 
 .terminal{border-radius:12px;overflow:hidden;box-shadow:0 24px 46px -30px rgba(12,26,32,.85)}
@@ -343,19 +356,153 @@ a:hover{color:var(--text);text-decoration:underline}
   letter-spacing:-.025em;text-wrap:balance;
 }
 
-/* ── narrow ── */
+/* ── the columns a narrow screen folds away ──
+   The article is drawn with three columns and a phone has room for one.
+   Both of the ones it loses come back as a <details> the page can open:
+   the section nav as a menu under the masthead, the contents as a strip
+   under the title. Each is display:none until the step that hides its
+   column shows it, so at the design's width none of this renders — and
+   because the strips are <details>, one menu that opens and closes cost
+   this site no script at all. */
+.menu{display:none}
+.menu-summary{
+  display:flex;align-items:center;gap:8px;min-height:var(--tap);
+  padding:9px 18px;cursor:pointer;list-style:none;
+  font:500 var(--t-ui)/1.4 var(--sans);color:var(--text);
+  background:var(--surface);border-bottom:1px solid var(--border-soft);
+}
+.menu-summary::-webkit-details-marker{display:none}
+.menu-summary::after{content:"▾";margin-left:auto;font-size:11px;color:var(--dim)}
+.menu[open] > .menu-summary::after{content:"▴"}
+.menu-panel{
+  display:flex;flex-direction:column;gap:4px;
+  max-height:min(62vh,460px);overflow-y:auto;
+  padding:10px 14px 16px;background:var(--surface);
+  border-bottom:1px solid var(--border-soft);
+}
+.menu-panel .side-link,.menu-panel .toc-link{
+  display:flex;align-items:center;min-height:var(--tap);
+}
+.menu-panel .side-group{gap:2px}
+
+/* The contents strip sits inside the prose, so it is a card rather than
+   a bar across the page — and it says "On this page" once: the summary
+   is the label, and $toc's own label folds away underneath it. */
+.menu-contents{
+  margin:0 0 22px;border:1px solid var(--border-soft);
+  border-radius:10px;overflow:hidden;
+}
+.menu-contents .menu-summary{
+  background:var(--canvas);border-bottom:0;padding:9px 14px;
+}
+.menu-contents[open] .menu-summary{border-bottom:1px solid var(--border-soft)}
+.menu-contents .menu-panel{border-bottom:0;padding:8px 14px 12px}
+.menu-contents .toc-label{display:none}
+/* A body with no h2s has no contents: render_contents gives the strip
+   nothing, and a summary over an empty panel is worse than no strip. */
+.menu-contents:not(:has(a)){display:none}
+
+/* ── narrow ──
+   The design is drawn at 1180px and everything below this comment is
+   what happens under it. Three steps, each giving up what no longer
+   fits and handing back a way to reach it: 1080 the contents gutter,
+   760 the section sidebar and the top of the type scale, 480 the last
+   of the desktop's padding. Every query is a max-width at or below
+   1080, so at the design's own width the sheet above is the whole
+   stylesheet. */
 @media (max-width:1080px){
   .shell{grid-template-columns:220px minmax(0,1fr)}
   .gutter{display:none}
-  .hero{grid-template-columns:1fr;gap:28px;padding:32px 24px}
-  .doors{grid-template-columns:repeat(2,1fr);padding:0 24px 28px}
+  .menu-contents{display:block}
+  .hero{grid-template-columns:minmax(0,1fr);gap:28px;padding:32px 24px}
+  .doors{grid-template-columns:repeat(2,minmax(0,1fr));padding:0 24px 28px}
   .strip{padding:18px 24px}
+
+  /* Only a code block or a table may scroll sideways, so a token that
+     cannot break — a url, a curl one-liner in running text — breaks
+     rather than making the page wider than the screen. Fenced code is
+     untouched: white-space:pre forbids wrapping, which is why `pre`
+     carries overflow-x:auto instead. */
+  .prose :not(pre) > code{overflow-wrap:anywhere}
+  .prose h1,.prose h2,.prose h3{overflow-wrap:break-word}
+
+  /* A table is the one block that cannot reflow — its columns are its
+     meaning — so it becomes its own scroller. display:block makes the
+     table element the scroll container; the two edge shadows are
+     painted on the box (scroll) and covered by a patch of surface
+     painted on the content (local), so each one appears only while
+     there really is more that way. The cost is that a table narrower
+     than the column no longer stretches to fill it: the inner table box
+     an unblocked <table> generates sizes to its own content. */
+  .prose table{
+    display:block;width:100%;max-width:100%;overflow-x:auto;
+    background-image:
+      linear-gradient(to right,var(--surface),rgba(255,255,255,0)),
+      linear-gradient(to left,var(--surface),rgba(255,255,255,0)),
+      linear-gradient(to right,rgba(18,50,59,.20),rgba(18,50,59,0)),
+      linear-gradient(to left,rgba(18,50,59,.20),rgba(18,50,59,0));
+    background-position:0 0,100% 0,0 0,100% 0;
+    background-size:26px 100%,26px 100%,13px 100%,13px 100%;
+    background-repeat:no-repeat;
+    background-attachment:local,local,scroll,scroll;
+  }
 }
 @media (max-width:760px){
+  :root{
+    /* The design's 52px hero and 40px title are drawn for a 1180px
+       frame. The step comes down; the voice does not — --display is
+       still Zilla Slab, here and at every width below. */
+    --t-hero:36px; --t-title:30px; --t-h2:21px; --t-h3:16.5px;
+    --t-lede:16.5px;
+  }
   .shell{grid-template-columns:minmax(0,1fr)}
   .side{display:none}
-  .page-article .prose{padding:24px 22px 36px}
-  .doors{grid-template-columns:1fr}
-  .hero h1{font-size:38px}
-  .masthead{padding:12px 18px;gap:12px}
+  .menu{display:block}
+  .page-article .prose{padding:24px 20px 36px}
+  .doors{grid-template-columns:minmax(0,1fr)}
+  .masthead{padding:12px 18px;gap:12px;flex-wrap:wrap}
+  .crumbs{flex-wrap:wrap}
+  .footer{flex-wrap:wrap;gap:16px 20px;padding:20px 18px}
+  /* A spacer holds one end of a row against the other. Once the row
+     wraps there are no two ends, and all it can still do is take a
+     line of its own — so it goes, and the footer stacks. */
+  .footer .spacer{display:none}
+  .lost{padding:48px 20px 64px}
+
+  /* Tap targets: everything a finger has to hit is at least --tap tall.
+     Links inside running prose are the exception, because a line of
+     text cannot be 44px without stopping being a line of text. */
+  .wordmark,.nav-link,.button,.side-link,.toc-link,.strip-link,
+  .footer-repo{
+    display:inline-flex;align-items:center;min-height:var(--tap);
+  }
+  .button{justify-content:center}
+  .nav{gap:4px;flex-wrap:wrap}
+  .nav-link{padding:0 8px}
+  .side-link{padding:0 9px}
+  .toc-link{padding:0 0 0 9px}
+}
+@media (max-width:480px){
+  :root{
+    --t-hero:31px; --t-title:26px; --t-h2:19px;
+    /* Body text goes the other way: 15px is a desktop reading distance
+       and a phone is held closer to nothing. The lede keeps its notch
+       above it, or it stops being a lede. */
+    --t-body:16px; --t-lede:17.5px;
+  }
+  .topbar{padding:0 14px}
+  .masthead{padding:10px 14px;gap:8px 12px}
+  /* As in the footer: with the button no longer held at a far edge,
+     the wordmark, the nav and it share the row until they cannot, and
+     then wrap. */
+  .masthead .spacer{display:none}
+  .hero{padding:26px 16px}
+  .hero-actions{gap:8px}
+  .hero-actions .button{width:100%}
+  .doors{padding:0 16px 24px}
+  .strip{padding:16px}
+  .page-article .prose{padding:20px 16px 32px}
+  .menu-summary{padding:9px 14px}
+  .footer{padding:18px 14px}
+  .lost{padding:40px 16px 56px}
 }

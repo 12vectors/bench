@@ -1,7 +1,11 @@
 # 35 — Make the site read on a phone
 
+<<<<<<<< HEAD:tasks/in-progress/35-the-site-reads-on-a-phone.md
+**Status:** In Progress
+========
 **Status:** Review
 **PR:** https://github.com/12vectors/bench/pull/31
+>>>>>>>> origin/main:tasks/review/35-the-site-reads-on-a-phone.md
 **Assignee:** istos
 **Priority:** Medium — a public URL gets opened on phones whatever the
 design was drawn at

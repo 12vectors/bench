@@ -40,6 +40,34 @@ and a deploy is the same bytes from any machine.
 directory. `tests/test_release_artifact.py` asserts that out loud rather
 than leaving it to inference.
 
+## Below the design's width
+
+The docs design is drawn at a fixed 1180px. Everything narrower is the
+stylesheet's business — three `max-width` steps, no script, and nothing
+that takes effect at or above the width the design defines:
+
+| Step | What goes | What replaces it |
+| --- | --- | --- |
+| 1080px | the contents gutter | "On this page" folds into a `<details>` strip under the title; tables become their own scrollers |
+| 760px | the section sidebar | the same links open from a `<details>` menu under the masthead; the type scale steps down and every tappable thing reaches 44px |
+| 480px | the desktop's padding | the masthead's spacer, so the row wraps; body text goes up a notch |
+
+Two things follow from that and are worth knowing before editing
+`templates/article.html`:
+
+- **The two side columns are written twice** — once as the column, once
+  as the strip — and both are filled from the same `$sidebar` and `$toc`,
+  so the folded copy cannot say something the column does not.
+- **The contents strip is a sibling between the `<h1>` and the body's
+  first paragraph**, even at widths where it is `display:none`. That is
+  why the lede rule in `static/site.css` names `.menu-contents + p` as
+  well as `h1 + p`.
+
+`tests/test_site_responsive.py` holds all of it: that every query is a
+`max-width` below the design, that the step hiding a column is the step
+showing its strip, that a table scrolls inside itself rather than
+widening the page, and that the site still ships no JavaScript.
+
 ## Where the site lives
 
 | | |
