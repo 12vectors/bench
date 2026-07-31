@@ -242,13 +242,22 @@ class TheHeaderPolicyTravelsWithTheBuild(Built):
     def test_no_page_needs_what_the_policy_forbids(self):
         """The CSP carries no 'unsafe-inline', so an inline <script> or a
         style="" attribute is a page that renders right in every test
-        here and wrong in production. The only place that can be caught
-        before a deploy is the build output."""
+        here and wrong in production. A script with a src is fine only
+        if the policy names where it comes from. The only place that can
+        be caught before a deploy is the build output."""
+        allowed = re.findall(r"https://[^\s;]+",
+                             rule("/*")["Content-Security-Policy"])
         for path in sorted(self.out.rglob("*.html")):
             html = path.read_text("utf-8")
             where = path.relative_to(self.out)
-            self.assertNotIn("<script", html.lower(),
-                             f"{where} has a script the CSP would block")
+            for tag in re.findall(r"<script[^>]*>", html, re.I):
+                src = re.search(r'src="([^"]+)"', tag)
+                self.assertIsNotNone(
+                    src, f"{where} has an inline script the CSP would block")
+                self.assertTrue(
+                    src.group(1).startswith("/")
+                    or any(src.group(1).startswith(o) for o in allowed),
+                    f"{where} loads {src.group(1)}, which the CSP forbids")
             self.assertNotRegex(
                 html, r"""\sstyle\s*=\s*["']""",
                 f"{where} has an inline style the CSP would block")
@@ -270,39 +279,44 @@ class EveryResponseCarriesTheBaseline(unittest.TestCase):
                          "preload is a submission to browser vendors, "
                          "not a header to set in passing")
 
-    def test_nothing_third_party_can_load(self):
-        """The site's promise — no analytics, no font CDN — as something
-        the browser enforces rather than something a test asserted once
-        at build time."""
+    def test_only_the_analytics_origin_can_load(self):
+        """The site's promise as something the browser enforces rather
+        than something a test asserted once at build time. Exactly one
+        third party is named — the cookieless analytics — and the day a
+        second one appears, this fails rather than shrugging."""
         policy = self.everything["Content-Security-Policy"]
         self.assertIn("default-src 'none'", policy)
         self.assertNotIn("unsafe-inline", policy)
         self.assertNotIn("unsafe-eval", policy)
         self.assertNotIn("*", policy)
-        self.assertNotIn("//", policy, "the policy names another origin")
+        self.assertEqual({"https://cdn.usefathom.com"},
+                         set(re.findall(r"https://[^\s;]+", policy)),
+                         "the policy names an origin nobody decided on")
+        self.assertNotIn("font-src https", policy,
+                         "the fonts are self-hosted and stay that way")
 
 
 class TheTwoKindsOfFileAreCachedDifferently(unittest.TestCase):
     """The edge case in the task: a stale HTML page must not survive a
     deploy, while the assets it links may live for a year."""
 
-    def test_html_revalidates_on_every_view(self):
-        value = rule("/*")["Cache-Control"]
-        self.assertIn("max-age=0", value)
-        self.assertIn("must-revalidate", value)
-        self.assertNotIn("immutable", value)
-
     def test_fingerprinted_assets_are_kept_for_a_year(self):
         value = rule("/static/*")["Cache-Control"]
         self.assertIn("max-age=31536000", value)
         self.assertIn("immutable", value)
 
-    def test_the_general_rule_comes_first(self):
-        """Order is the whole argument: /static/* overrides /* on
-        Cache-Control, and a host that merged them instead of overriding
-        would land on max-age=0 — the safe side."""
-        patterns = [pattern for pattern, _ in read_headers(HEADERS)]
-        self.assertLess(patterns.index("/*"), patterns.index("/static/*"))
+    def test_exactly_one_rule_sets_cache_control(self):
+        """The host concatenates a header two matching rules both set,
+        it does not override — measured on the live site, where /* and
+        /static/* together produced 'max-age=0, must-revalidate,
+        max-age=31536000, immutable' and the first max-age won. So the
+        year-long rule must be the only one, and HTML takes the host's
+        own revalidating default."""
+        setters = [pattern for pattern, headers in read_headers(HEADERS)
+                   if "Cache-Control" in headers]
+        self.assertEqual(["/static/*"], setters,
+                         "a second Cache-Control rule would concatenate "
+                         "with this one rather than lose to it")
 
 
 # ── fingerprinting ────────────────────────────────────────────────────

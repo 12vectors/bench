@@ -324,15 +324,17 @@ class TheBuiltPagesCarryTheMenus(unittest.TestCase):
                   if "toc-link" in self.CONTENTS.search(html).group(1)]
         self.assertTrue(filled, "no article page's contents strip has links")
 
-    def test_the_site_ships_no_script(self):
-        """One menu that opens and closes is a <details>. Nothing on this
-        site justifies the first line of JavaScript on it — and the
-        Content-Security-Policy in site/root/_headers forbids one."""
+    def test_the_menus_need_no_script(self):
+        """One menu that opens and closes is a <details>. The site ships
+        no JavaScript of its own — the only script on a page is the
+        third-party analytics tag, which no menu, link or word depends
+        on, and the CSP in site/root/_headers names it explicitly."""
         self.assertEqual([], sorted(self.out.rglob("*.js")))
         for entry in self.manifest["pages"]:
             html = BUILDER.target_for(self.out, entry["path"]).read_text("utf-8")
-            self.assertNotIn("<script", html.lower(),
-                             f'{entry["path"]} loads a script')
+            for tag in re.findall(r"<script\b[^>]*>", html, re.I):
+                self.assertIn("cdn.usefathom.com", tag,
+                              f'{entry["path"]} loads a script of its own')
 
     def test_every_built_page_declares_the_viewport(self):
         for entry in self.manifest["pages"]:

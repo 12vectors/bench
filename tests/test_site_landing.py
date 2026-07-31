@@ -190,7 +190,15 @@ class WhatThePageMayNotSay(LandingCase):
         for page in self.manifest["pages"]:
             html_text = text_of(BUILDER.target_for(self.out, page["path"]))
             with self.subTest(page=page["path"]):
-                self.assertNotIn("<script", html_text.lower())
+                # The analytics tag is deferred and nothing reads it back:
+                # every word, link and menu works with scripting off. Any
+                # *other* script would be the page needing one.
+                scripts = re.findall(r"<script\b[^>]*>", html_text, re.I)
+                for tag in scripts:
+                    self.assertIn("cdn.usefathom.com", tag,
+                                  "a script the page would depend on")
+                    self.assertIn("defer", tag,
+                                  "even analytics waits for the page")
                 self.assertNotIn("<noscript", html_text.lower())
                 self.assertIsNone(
                     re.search(r"\son[a-z]+=", html_text, re.IGNORECASE),

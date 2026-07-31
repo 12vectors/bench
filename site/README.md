@@ -77,6 +77,7 @@ widening the page, and that the site still ships no JavaScript.
 | Worker | `bench-site` |
 | Route | `bench.12vectors.com`, a **custom domain** — Cloudflare owns the hostname at the zone level and creates the DNS record itself |
 | Served from | `site/dist/`, uploaded whole on every deploy |
+| Analytics | [Fathom](https://usefathom.com), site `ZPKDEHCV` — cookieless, no personal data, no consent banner. The only third party the pages touch |
 | Config | `site/wrangler.jsonc` (routing) and `site/root/_headers` (caching, security) |
 
 Deploys are run by hand, by a person, exactly as releases are
@@ -129,7 +130,12 @@ answers rather than files:
    page **with a 404 status**, not the landing page with a 200.
 4. `curl -sI https://bench.12vectors.com/` shows
    `x-content-type-options`, `referrer-policy`,
-   `strict-transport-security` and a `cache-control` that revalidates.
+   `strict-transport-security` and a `cache-control` that revalidates —
+   the last one coming from the host's default now, not from `_headers`,
+   which is exactly why it is checked rather than assumed. Then
+   `curl -sI https://bench.12vectors.com/static/site.css` must show
+   `max-age=31536000, immutable` **once**, with no second `max-age`
+   beside it.
 
 ## How it is served
 
@@ -141,17 +147,26 @@ answers rather than files:
   with a 404 status. That page is a normal manifest entry (`/404.html`,
   layout `notfound`) — the site's own design, its own nav, and a link
   back to the landing page.
-- **Two caching policies, because there are two kinds of file.** HTML
-  revalidates on every view, so a deploy is visible on the next reload
-  with nobody clearing anything. Everything under `/static/` is kept for
-  a year and never re-checked, which is only safe because the stylesheet
-  and the icon are linked with a `?v=<hash>` of their own contents:
-  change the file and the url changes with it.
-- **Baseline headers, no third parties.** `nosniff`, a referrer policy,
-  a year of HSTS, `X-Frame-Options`, and a Content-Security-Policy of
-  `default-src 'none'` with `'self'` for styles, fonts and images. The
-  site collects nothing and loads nothing from anywhere else; the CSP is
-  that promise in a form the browser enforces.
+- **One rule sets `Cache-Control`, and it is `/static/*`.** The host
+  *concatenates* a header two matching rules both set — it does not
+  override, whatever the ordering suggests. Measured live: `/*` and
+  `/static/*` each setting `Cache-Control` produced
+  `max-age=0, must-revalidate, max-age=31536000, immutable` on the
+  stylesheet, and the first `max-age` wins in every browser, so the
+  year-long cache never happened. Now only `/static/*` sets it — safe
+  because the stylesheet and the icon are linked with a `?v=<hash>` of
+  their own contents — and HTML takes the host's own revalidating
+  default, which check 4 below confirms after every deploy.
+- **Baseline headers, and one third party by choice.** `nosniff`, a
+  referrer policy, a year of HSTS, `X-Frame-Options`, and a
+  Content-Security-Policy of `default-src 'none'` with `'self'` for
+  styles, fonts and images. The one origin named besides this one is
+  `cdn.usefathom.com`: Fathom serves the analytics script and receives
+  its pageviews. It sets no cookie and collects nothing about a person,
+  which is why the site still needs no consent banner — but it is a
+  third party, and the policy names it rather than opening the door
+  generally. A second one would fail
+  `tests/test_site_deploy.py` rather than slip in.
 
 ## What is where
 

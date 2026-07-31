@@ -194,12 +194,15 @@ class TheRealSiteBuilds(unittest.TestCase):
         self.assertIn('href="/concepts/claiming-a-card/"', article)
         self.assertIn("Concepts", article)
 
-    def test_nothing_the_pages_load_is_third_party(self):
-        """The acceptance criterion, mechanised: every asset a browser
-        would fetch — stylesheet, icon, script, font — is same-origin,
-        and nothing preconnects anywhere. A <link rel=canonical> is a
-        statement about this page, not a fetch, so it is not one of
-        these; anything that makes the browser open a connection is."""
+    def test_the_only_third_party_is_the_one_that_was_chosen(self):
+        """Every asset a browser would fetch — stylesheet, icon, font —
+        is same-origin, and nothing preconnects anywhere. The single
+        exception is the analytics script, named here and in the CSP, so
+        a second third party has to be a deliberate edit to this list
+        rather than something that slipped into a template. A <link
+        rel=canonical> is a statement about this page, not a fetch, so it
+        is not one of these; anything that opens a connection is."""
+        chosen = ("https://cdn.usefathom.com/",)
         fetching = {"stylesheet", "icon", "shortcut icon", "preload",
                     "prefetch", "preconnect", "dns-prefetch", "manifest",
                     "modulepreload"}
@@ -217,7 +220,7 @@ class TheRealSiteBuilds(unittest.TestCase):
                     r"""<(?:script|img|iframe)\b[^>]*\bsrc=["']([^"']+)""",
                     html, re.IGNORECASE):
                 self.assertTrue(
-                    url.startswith("/"),
+                    url.startswith("/") or url.startswith(chosen),
                     f'{entry["path"]} loads {url} from somewhere else')
 
         css = (self.out / "static" / "site.css").read_text("utf-8")
