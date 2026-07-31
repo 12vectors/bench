@@ -1,6 +1,7 @@
 # 30 — Re-cut the docs design on content bench actually has
 
 **Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/25
 **Assignee:** istos
 **Priority:** High — every other site card builds from this design; building
 from turn 1 would ship a documented product that does not exist
