@@ -9,6 +9,16 @@ branch, and an archive that is never a delete. Turn on team mode
 themselves, every board pulls on a beat, and the person who claimed a
 card first keeps it.
 
+**Docs: [bench.12vectors.com](https://bench.12vectors.com)** — guides,
+concepts, and a settings reference, every page of it generated from this
+repository's own markdown, so what the docs say and what bench does
+cannot drift apart.
+
+![The bench board: cards in backlog, to-do, in-progress, review and done, three agents working, each card showing the branch it is on and the command its agent is running.](https://raw.githubusercontent.com/12vectors/bench/main/site/static/board.png)
+
+*bench's own board, running on this repository. Three agents at work,
+each on its own branch — and every one of them stops at review.*
+
 ## Install into a repo
 
 ```bash
@@ -79,8 +89,9 @@ vendor (adapters do: `manager/core/adapters/`), or project
 
 The consequence is what makes an update safe: `update.sh` replaces
 `manager/core/` wholesale, and everything a project taught bench about
-itself lives outside it. Full docs in [AGENTS.md](AGENTS.md); the adapter
-contract in
+itself lives outside it. Full docs in [AGENTS.md](AGENTS.md) — the file
+the docs site is cut from, and the one an agent working in your repo
+reads; the adapter contract in
 [manager/core/adapters/README.md](manager/core/adapters/README.md).
 
 ## License
