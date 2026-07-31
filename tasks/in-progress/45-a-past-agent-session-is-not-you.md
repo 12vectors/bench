@@ -1,6 +1,7 @@
 # 45 — A past agent session is labelled "You", because "You" is what the board says when it does not know
 
-**Status:** Backlog
+**Status:** In Progress
+**Assignee:** istos
 **Priority:** High — the flight recorder misattributes work, and
 misattribution is worse than an absence: the list looks complete
 **Type:** Bug
