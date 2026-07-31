@@ -1,6 +1,6 @@
 # 34 — Generate the guides and concept pages from AGENTS.md
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** High — the doors on the landing page have to open onto
 something
@@ -86,3 +86,25 @@ columns, section nav left, on-this-page right.
 
 If a concept needs a paragraph the brief does not have, that is a signal
 `AGENTS.md` is missing it — write it there and let the site pick it up.
+
+
+---
+
+## Work report — 2026-07-31 14:31 (Skye)
+
+hich the board writes and which nothing documented.
+
+**`tests/test_site_pages.py`** — new, 24 tests over the real built site.
+
+### Two bugs the new pages found (both fixed here)
+
+- `string.Template` substitutes inside HTML comments. A comment in the article template that named the body placeholder emitted the entire body twice and closed itself early on the first `-->` inside it.
+- Heading promotion could produce a second `<h1>`. A slice that deliberately runs past its own section carries headings at the `from` level, which promoted to `<h1>` on a page that already had one. Promotion now stops at `<h2>`.
+
+### For the reviewer
+
+- **Two deviations from the card's route list, both deliberate.** I kept task 33's route names (`/guides/install/`, `/concepts/claiming-a-card/`, …) instead of renaming to `/start`, `/concepts/cards`, `/concepts/reviews`; those URLs are already shipped, linked from the landing page and documented in `site/README.md`, and renaming would 404 anything pointing at them. And the card's `/concepts/cards` and `/concepts/layers` each wanted two non-adjacent `AGENTS.md` sections in one body; since the builder takes one slice per page and reorganising `AGENTS.md` is out of scope, they ship as adjacent sidebar pages instead (`task-files` beside `claiming-a-card`, `adapters` beside `three-layer-law`). All the content the card asked for is on the site; only the grouping differs.
+- **One acceptance criterion is covered differently than written.** The card says a table, a fenced code block and a nested list "appear in Stages, Pull requests and Syncing boards respectively" — they do not. Tables and fences now exist on real pages (the header-field table on `/concepts/task-files/`, command blocks on `/guides/install/` and the stage diagram on `/concepts/stages/`) and are asserted there; no slice contains a nested list, so that one is covered by `ARenderedSliceKeepsItsShape` in `tests/test_site_pages.py`, which builds a slice with all three. I did not invent a nested list in `AGENTS.md` to make the assertion literal.
+- **Two pages have an empty "On this page"** — `/concepts/task-files/` and `/concepts/adapters/`, whose sections have no sub-headings. The TOC works (asserted against every page's own `h2`s); those two simply have none. Adding sub-headings to those `AGENTS.md` sections would fix it and is a one-line judgment call I left to you.
+- **`tests/test_site_build.py`'s `SOURCES` grew and one drift test changed its heading.** `README.md` now links the adapter contract, so scratch repos must copy that file; and `## Claiming a card` is now a slice boundary for two pages, so `test_a_renamed_heading_names_the_route_and_the_heading` renames `## Agents working the board` instead — a heading exactly one route claims. `tests/test_site_deploy.py` imports the one `SOURCES` list rather than keeping a second copy.
+- **Start here:** `git diff main -- AGENTS.md` — the prose changes are the ones that need a human's eye, since the site now publishes them.
