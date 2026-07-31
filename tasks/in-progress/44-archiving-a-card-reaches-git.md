@@ -1,6 +1,7 @@
 # 44 — Archiving a card reaches git, and so does every other write the board makes to a task file
 
-**Status:** Backlog
+**Status:** In Progress
+**Assignee:** istos
 **Priority:** High — an archive silently stalls team-mode sync, and the
 board says nothing about why
 **Type:** Bug
