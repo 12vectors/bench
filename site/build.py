@@ -62,6 +62,7 @@ implemented below:
 """
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -85,6 +86,15 @@ MARKER = ".bench-site"
 # pages it serves — `_headers` is the whole list — and they have to sit
 # at the root because that is where Cloudflare looks for them.
 ROOT = "root"
+
+# Not copied out of static/, because the host uploads the assets
+# directory whole and anything in it becomes a public url. Markdown
+# there is a note to whoever maintains the assets — static/fonts/
+# README.md tells the next person how to refresh the faces — and it is
+# not something a browser should be able to fetch. Licences are .txt and
+# do ship: committing the woff2 files is redistribution, and the OFL
+# asks that its text travel with them.
+STATIC_SKIP = ("*.md", ".DS_Store")
 
 # The assets a template links directly, and the placeholder each one is
 # offered under. See stamp() for why they carry a query string.
@@ -344,8 +354,16 @@ def internal_targets(manifest: dict, site: Path) -> set:
     for base, prefix in ((site / "static", "/static/"), (site / ROOT, "/")):
         if base.is_dir():
             urls.update(prefix + path.relative_to(base).as_posix()
-                        for path in base.rglob("*") if path.is_file())
+                        for path in base.rglob("*")
+                        if path.is_file() and not skipped(path))
     return urls
+
+
+def skipped(path: Path) -> bool:
+    """A file static/ holds but the build does not publish. The link
+    checker has to agree with copy_static, or a link to a skipped file
+    would pass the build and 404 on the site."""
+    return any(fnmatch.fnmatch(path.name, pattern) for pattern in STATIC_SKIP)
 
 
 def check_links(html: str, page: dict, targets: set) -> None:
@@ -710,7 +728,7 @@ def copy_static(site: Path, out: Path) -> None:
     static = site / "static"
     if static.is_dir():
         shutil.copytree(static, out / "static",
-                        ignore=shutil.ignore_patterns(".DS_Store"))
+                        ignore=shutil.ignore_patterns(*STATIC_SKIP))
 
 
 def root_files(site: Path) -> list:

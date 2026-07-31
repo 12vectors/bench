@@ -160,6 +160,19 @@ class TheRealSiteBuilds(unittest.TestCase):
         self.assertTrue((self.out / "static" / "site.css").is_file())
         self.assertTrue((self.out / "static" / "favicon.svg").is_file())
 
+    def test_the_notes_beside_the_assets_stay_out_of_the_build(self):
+        """The host uploads the assets directory whole, so anything left
+        in static/ is a public url. The fonts' README is a note to
+        whoever refreshes them; their licences are not — the OFL asks
+        that its text travel with the files it covers."""
+        self.assertEqual([], sorted(self.out.rglob("*.md")),
+                         "a maintainer's note became a page of the site")
+        fonts = self.out / "static" / "fonts"
+        self.assertTrue((fonts / "IBMPlex.LICENSE.txt").is_file())
+        self.assertTrue((fonts / "ZillaSlab.LICENSE.txt").is_file())
+        self.assertTrue(sorted(fonts.glob("*.woff2")),
+                        "the faces the licences cover are not in the build")
+
     def test_the_article_layout_renders_real_content_from_agents_md(self):
         """Not lorem: the words on the page are the words in the file.
         (The home layout is authored rather than sliced — its own facts
