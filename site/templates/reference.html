@@ -1,0 +1,139 @@
+<!doctype html>
+<!-- Layout "reference" — 1c Logbook from the turn-2 docs design: the
+     article's three columns, with the contents gutter given over to a
+     console pinned beside the page.
+
+     A reference page is not read down, it is scanned for one name, so
+     the console carries every entry on the page in the machine register
+     — for the settings page, each key with the default it actually has.
+     It is the same anchors "On this page" carries, which is what lets
+     the narrow steps fold it away and hand back the contents strip
+     without writing a third copy of anything.
+
+     A page whose body has no entries gets no console and keeps the
+     gutter's links, exactly as an article does. Everything else here is
+     article.html's furniture, deliberately: the sidebar, the folded
+     menus and the prev/next arrows are the site's, not a layout's.
+
+     Placeholders are string.Template's; a literal dollar in the markup
+     would have to be doubled. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>$title · $site_title</title>
+<meta name="description" content="$description">
+<link rel="canonical" href="$canonical">
+<link rel="icon" href="$icon">
+<link rel="stylesheet" href="$stylesheet">
+<!-- Fathom — cookieless analytics: pageviews only, nothing about a
+     person, so no banner. The one third-party request this site makes;
+     root/_headers names cdn.usefathom.com in the CSP for exactly it. -->
+<script src="https://cdn.usefathom.com/script.js" data-site="ZPKDEHCV" defer></script>
+</head>
+<body class="page-reference">
+
+<div class="topbar">
+  <span class="topbar-org">12vectors</span>
+  <span class="topbar-sep">/</span>
+  <span class="topbar-repo">bench</span>
+  <span class="spacer"></span>
+  <span>docs for $version</span>
+</div>
+
+<header class="masthead">
+  <a class="wordmark" href="/">
+    <span class="wordmark-name">$site_title</span>
+    <span class="wordmark-tag">$site_tagline</span>
+  </a>
+  <nav class="nav">
+$nav
+  </nav>
+  <span class="spacer"></span>
+  <a class="button button-solid" href="$repo_url">GitHub ↗</a>
+</header>
+
+<!-- The section nav, folded. Shown from 760px down, where the .side
+     column below is gone. A <details> is the whole mechanism: one menu
+     that opens and closes needs no script, and this site has none. -->
+<details class="menu">
+  <summary class="menu-summary">Documentation</summary>
+  <nav class="menu-panel">
+$sidebar
+  </nav>
+</details>
+
+<div class="shell">
+
+  <aside class="side">
+$sidebar
+    <div class="side-note">
+      <span class="mono dim">$version</span>
+      <span>Generated from the repository's own markdown. What the docs
+      say and what bench does cannot drift apart.</span>
+    </div>
+  </aside>
+
+  <article class="prose">
+    <div class="crumbs">$breadcrumb</div>
+    <h1>$title</h1>
+    <!-- "On this page", folded under the title. Shown from 1080px down,
+         where the gutter that normally carries it is gone — here that is
+         the gutter the console is pinned in, and these are its anchors.
+         It sits above the lede on purpose: the stylesheet's lede
+         adjacency names .menu-contents + p for exactly this order. -->
+    <details class="menu menu-contents">
+      <summary class="menu-summary">On this page</summary>
+      <nav class="menu-panel">
+$toc
+      </nav>
+    </details>
+    <!-- The one sentence a reference page authors. Everything below it
+         is the body placeholder, built out of the file named in the
+         gutter. (Placeholders substitute inside comments too, so this
+         one cannot spell that name out.) -->
+    <p class="prose-lede">$lede</p>
+$body
+$flow
+  </article>
+
+  <aside class="gutter">
+    <div class="console-well">
+      <div class="console">
+        <div class="console-bar">
+          <span class="console-dot"></span>
+          <span class="console-name mono">$source_path</span>
+        </div>
+        <div class="console-body">
+$console
+        </div>
+      </div>
+      <div class="rule"></div>
+      <a class="gutter-link" href="$source_url">Edit this page on GitHub ↗</a>
+      <a class="gutter-link" href="$issues_url">Open an issue ↗</a>
+    </div>
+    <!-- True of a sliced contract page and of the generated settings
+         page alike, and still true on a page with too few entries to
+         pin a console beside. -->
+    <p class="marginalia">← every word and every default on this page is
+      read out of <span class="mono">$source_path</span> on each build</p>
+  </aside>
+
+</div>
+
+<footer class="footer">
+  <pre class="footer-mark">  ___________________
+ |___________________|
+   ||             ||
+   ||             ||</pre>
+  <div class="footer-id">
+    <span class="footer-name">$site_title</span>
+    <span class="footer-line">Put the agents on the bench.</span>
+    <span class="mono">a 12vectors product · built in the open</span>
+  </div>
+  <span class="spacer"></span>
+  <a class="mono footer-repo" href="$repo_url">github.com/12vectors/bench</a>
+</footer>
+
+</body>
+</html>

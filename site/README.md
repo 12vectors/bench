@@ -2,9 +2,11 @@
 
 A static minisite whose content is *generated* from the files that
 already define bench. Nothing here is transcribed prose: every page body
-is a heading slice of `AGENTS.md`, `README.md`,
-`manager/core/.env.example` or `manager/core/adapters/README.md`, and
-`pages.json` is the only place that mapping is written down.
+is a heading slice of `AGENTS.md`, `README.md` or
+`manager/core/adapters/README.md` — or, where the source is not markdown
+at all, built from it by a named generator (`manager/core/.env.example`
+becomes `/reference/settings`) — and `pages.json` is the only place that
+mapping is written down.
 
 That is the point. Rename a section in `AGENTS.md` and this build stops,
 naming the route and the heading it can no longer find. A documented
@@ -223,6 +225,48 @@ answers rather than files:
 - **`lede`** is optional, and only worth setting when the sentence a
   reader should see differs from the one a search engine should. It is
   the only prose a page may author.
+- **`generate`** replaces `from`/`to` when the source is not markdown.
+  It names a generator in `build.py`'s `GENERATORS`; `settings` is the
+  only one, and it turns an env file into a page. A page cannot be both
+  a slice and a generated page, and a `generate` naming nothing stops
+  the build listing what exists.
+
+## The settings page is parsed, not transcribed
+
+`/reference/settings` is `manager/core/.env.example` read on every
+build. The file's own shape is the page's: blocks separated by blank
+lines, a comment block documenting the keys directly under it, a comment
+block with no keys below it kept as a remark. One `##` entry per group —
+so the four `BOARD_AGENT_MODEL*` keys, which share a comment in the
+file, share a heading here — opening with the file's own `NAME=value`
+lines and followed by that group's comment as prose.
+
+Two failures rather than two silences: **a key with no comment above it
+stops the build**, and so does a key set twice. A settings page that
+disagrees with the settings file is worse than no settings page, so
+neither can happen quietly. Generated bodies are also rendered with raw
+HTML off — a comment writes `<git user.name>` meaning a placeholder, and
+a parser honouring HTML would swallow it.
+
+`tests/test_site_reference.py` holds the promise a reader cares about:
+add a key to `.env.example` with its comment, rebuild, and it is on the
+page with its default, with nothing in `site/` edited.
+
+## The reference layout
+
+`/reference/*` renders in `templates/reference.html` (1c Logbook), which
+is the article's three columns with the contents gutter given over to a
+**console**: the page's entries once more in the machine register, each
+linking to its own anchor. On the settings page those are the keys with
+their defaults, one line per key; on a sliced contract page they are its
+headings. Nothing about it is per-page authoring — a page whose body has
+no entries renders no console and keeps the gutter's links.
+
+The console is the same anchors "On this page" carries, which is why the
+1080px step can fold the entire column away: the contents strip already
+hands them back. Everything else on the page — the sidebar, the folded
+menus, prev/next, "Edit this page" — is the site's furniture, not the
+layout's.
 
 The `from` heading itself is dropped — the layout renders the page title
 — and what remains is promoted by `level - 1`, so a section's `###`
@@ -238,6 +282,10 @@ Each of these exits non-zero with a message naming the route:
 - a `source` file that no longer exists;
 - a `from` or `to` heading the source no longer contains;
 - a slice that comes out empty;
+- a `generate` naming no generator, or set on a page that is also a
+  slice or has no source;
+- a setting in `.env.example` with no comment above it, one set twice,
+  or a line there that is neither a comment nor `NAME=value`;
 - a markdown link to a repo path that does not exist, or that escapes
   the repo — a dead relative link must never reach the site;
 - an internal link on any rendered page — a door on the landing page as

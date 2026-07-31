@@ -74,9 +74,11 @@ class BuiltSite(unittest.TestCase):
         return BUILDER.target_for(self.out, route).read_text("utf-8")
 
     def articles(self) -> list:
-        """Every entry on the flow — the guides and the concepts, which
-        are exactly the pages this task built."""
-        return list(self.flow)
+        """Every entry on the flow that renders in the 1a article layout
+        — the guides and the concepts. The reference section rides a
+        layout of its own; tests/test_site_reference.py is its half of
+        this file."""
+        return [page for page in self.flow if page["layout"] == "article"]
 
 
 class EveryRouteRendersInTheArticleLayout(BuiltSite):
@@ -111,14 +113,16 @@ class EveryRouteRendersInTheArticleLayout(BuiltSite):
                               f'{entry["path"]} is missing {furniture}')
 
     def test_no_body_is_authored_twice(self):
-        """Every article names a source file and a heading to cut from.
-        The lede is the single exception, and it is one sentence in the
-        manifest — not a body."""
-        for entry in self.articles():
+        """Every page on the flow names a source file, and either the
+        heading to cut from or the generator that builds the body out of
+        it. The lede is the single exception, and it is one sentence in
+        the manifest — not a body."""
+        for entry in self.flow:
             self.assertTrue(entry.get("source"),
                             f'{entry["path"]} has no source')
-            self.assertTrue(entry.get("from"),
-                            f'{entry["path"]} has no from heading')
+            self.assertTrue(entry.get("from") or entry.get("generate"),
+                            f'{entry["path"]} has neither a from heading '
+                            f"nor a generator")
 
     def test_the_lede_is_present_and_is_the_manifests_own_sentence(self):
         for entry in self.articles():
