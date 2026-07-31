@@ -1,6 +1,6 @@
 # 38 — A card being merged and cleaned up looks like it, and holds still
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** Medium — a daily-path illusion, with a double-fire hazard
 sitting behind it
@@ -124,3 +124,25 @@ happening.
 `complete_task`, including the `raise ValueError` paths for a conflict and
 for a repo on the wrong branch. A `finally` around the body, not a release
 after each failure point.
+
+
+---
+
+## Work report — 2026-07-31 16:57 (Otto)
+
+Done and committed on `task/38-a-card-being-completed-looks-like-it` — three commits, working tree clean, full suite green.
+
+**A card being merged and cleaned up now wears a server-held busy state; committed in three commits and verified with `python3 -m unittest` (617 tests, OK), 23 of them new.**
+
+What changed:
+
+- `manager/core/state.py` — a `COMPLETING` registry (filename → `{started, step}`) with `claim_completing` / `release_completing` / `completing_public` / `publish_completing`. `record_board_event` folds the latest summary narrated against a claimed file into its `step`, so the steps that already reach the ticker become the card's line without any caller reporting twice. It is memory only, so a board killed mid-completion leaves nothing stuck.
+- `manager/core/github.py` — `complete_task` validates, claims, then runs the (unchanged) steps in a new `_complete` helper inside `try/finally`, releasing on every exit. A claim that fails raises before the `try`, so a refused second request never releases the run it lost to. Not one git command changed.
+- `manager/core/httpd.py` — `/api/state` carries `completing`.
+- `manager/core/board.html` — the card takes `.card.completing` (accent border, `cursor:default`), a breathing `completing` pill in the status pill's slot, and the latest step in the activity well. While claimed it builds no hover actions, drops the drive and `$`-command chips, and sets `draggable = false`; the drawer's pill reads `completing` too. A new SSE `completing` message keeps it live between full state loads, and the ship toast now says the card shows each step.
+- `AGENTS.md` — a paragraph under "merge & clean up" describing the state, its scope and its release.
+
+Two things worth a reviewer's eye first:
+
+1. `tests/test_completing_card.py::ACompletionInFlight::test_a_second_request_mid_completion_starts_no_second_merge` — the second `complete_task` is fired re-entrantly from inside the first one's merge, which is the closest an in-process test gets to the real race; it asserts the refusal message, that only one merge ran, and that the first run still finished.
+2. I could not verify this in a browser — no browser tooling is available in this session, so the card face is covered by source-level invariants in `TheCardFace` (the same approach `tests/test_card_actions.py` takes) rather than by looking at it. A human clicking **Merge & clean up** once is the check I did not do.
