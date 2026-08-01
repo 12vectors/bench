@@ -202,6 +202,12 @@
   .chip2.bad{color:var(--alarm);border-color:color-mix(in oklab, var(--alarm) 45%, transparent)}
   .chip2.dim{color:var(--dim);border-style:dashed;cursor:help}
   .chip2.dim:hover{color:var(--dim);border-color:var(--border)}
+  /* the archive chip is the one action in a row of destinations, and the
+     exception is why it sits at the far end: pushed there by margin, and
+     quiet — no border until you are on it — because archiving is a
+     tidy-up, not somewhere the card is asking you to go. Hover, armed and
+     busy all outrank this rule, so it never dulls a live state. */
+  .chip2.arch{margin-left:auto;color:var(--dim);border-color:transparent}
   .card .whorow{display:flex;align-items:center;gap:7px;min-width:0}
   .card .initial{
     display:flex;align-items:center;justify-content:center;width:18px;height:18px;flex:none;
@@ -1092,6 +1098,7 @@ function renderTitle() {
 
 function render() {
   if (!S.state) return;
+  forgetActsOfVanishedCards();
   renderTitle();
   renderChip();
   renderPhases();
@@ -1168,6 +1175,14 @@ function joinablePhases(task) {
   if (!['backlog', 'to-do'].includes(task.stage)) return [];
   const stage = (S.state?.board.stages || []).find(s => s.slug === 'to-do');
   return stage ? stage.tasks.filter(t => t.isPhase) : [];
+}
+
+/* Whether this card may be archived — the server's own ARCHIVE_FROM, sent
+   with the state. The rule (backlog, to-do and done; never a working
+   stage) is written down once, on the side that enforces it, so the chip
+   and the drag-to-the-bar gesture can never offer different cards. */
+function canArchive(task) {
+  return (S.state.archiveFrom || []).includes(task.stage);
 }
 
 function cardFor(task) {
@@ -1448,10 +1463,18 @@ function cardFor(task) {
       }
     }
   }
+  // archiving, on the card instead of the length of the board away: the
+  // tray's own glyph, and only on the stages the tray itself accepts —
+  // a working card is finished or walked back, never tidied away
+  if (canArchive(task)) {
+    chips.push({ label: 'archive', pre: '⌸', cls: 'arch', arch: true,
+      title: 'Archive this card — out of every column, never deleted. ⌘Z brings it back.' });
+  }
   const chipRow = chips.length
     ? '<div class="chiprow">' + chips.map(c => {
         const g = c.glyph ? `<span class="g2">${c.glyph}</span>` : '';
         const p = c.pre ? `<span class="g2">${c.pre}</span>` : '';
+        if (c.arch) return `<button class="chip2 ${c.cls}" data-arch="1" title="${esc(c.title)}">${p}${actLabel(c.label, 'archive it?', 'archiving…')}</button>`;
         if (c.href) return `<a class="chip2 ${c.cls}" href="${esc(c.href)}" target="_blank" rel="noopener" title="${esc(c.title)}">${p}${esc(c.label)}${g}</a>`;
         if (c.act) return `<button class="chip2 ${c.cls}" data-drive="${c.act}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.phase) return `<button class="chip2 ${c.cls}" data-phase="${esc(c.phase)}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
@@ -1480,6 +1503,13 @@ function cardFor(task) {
       e.stopPropagation();
       if (btn.dataset.drive === 'go') startDrive(task); else parkDrive();
     }));
+  el.querySelectorAll('[data-arch]').forEach(btn => {
+    btn.addEventListener('click', (e) => e.stopPropagation());
+    wireAction(btn, `${task.file}::archive`, {
+      label: 'archive', confirm: 'archive it?', busy: 'archiving…',
+      run: () => archiveCard(task.file, task.stage),
+    });
+  });
   el.querySelectorAll('[data-cmd]').forEach(btn => {
     btn.addEventListener('click', (e) => e.stopPropagation());
     const name = btn.dataset.cmd;
@@ -1509,7 +1539,7 @@ function cardFor(task) {
     el.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('application/json', JSON.stringify({ file: task.file, from: task.stage }));
-    if (['backlog', 'to-do', 'done'].includes(task.stage)) {
+    if (canArchive(task)) {
       S.dragging = { file: task.file, from: task.stage };
       renderBar();
     }
@@ -1535,6 +1565,19 @@ function actLabel(rest, confirm, busy) {
   return `<span class="actlbl"><span class="l-rest">${esc(rest)}</span>` +
     (confirm ? `<span class="l-arm">${esc(confirm)}</span>` : '') +
     `<span class="l-busy">${esc(busy || rest)}</span></span>`;
+}
+
+/* An armed window belongs to the card it was opened on. A card can leave
+   the board while one is open — archived from another board, or moved by
+   hand on disk — and the window must go with it, so a card that comes
+   straight back (⌘Z, or a teammate's undo) is never found already armed
+   by a click nobody made against the card as it now stands. Keys are
+   `<file>::<action>`, and a task file never contains `::`. */
+function forgetActsOfVanishedCards() {
+  const live = new Set(allTasks().map(t => t.file));
+  for (const key of Object.keys(S.acts)) {
+    if (!live.has(key.split('::')[0])) delete S.acts[key];
+  }
 }
 
 function wireAction(btn, key, act) {
@@ -2015,6 +2058,7 @@ async function archiveCard(file, from) {
   const data = await res.json();
   toast(res.ok ? `Archived ${file} — ⌘Z brings it back` : (data.error || 'archive failed'), !res.ok);
   await loadState();
+  return res.ok;
 }
 
 async function unarchiveLast() {

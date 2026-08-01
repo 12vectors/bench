@@ -53,6 +53,11 @@ def state_payload() -> dict:
         # else's". Empty outside team mode: nothing claims anything there.
         "me": taskfiles.actor_name() if config.COMMIT_MOVES else "",
         "archivedCount": taskfiles.archived_count(),
+        # which stages an archive may come from — the same set `archive_task`
+        # refuses anything outside, sent so the card's ⌸ chip and the drag
+        # gesture offer exactly what the server will do, from one authority
+        "archiveFrom": sorted(taskfiles.ARCHIVE_FROM,
+                              key=lambda slug: taskfiles.STAGE_ORDER.get(slug, 99)),
         "sync": sync.status(),
         "boardEvents": board_events,
         "now": time.time(),

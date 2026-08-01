@@ -108,6 +108,16 @@ out of every column, never deleted, Status set to `Archived`. The toast says
 without an undo in the same breath. Cards in the working stages
 (in-progress, review) cannot be archived; finish or walk them back first.
 
+The same action sits on the card, for the common tidy-up the length of the
+board is too far to drag: a **⌸** chip at the right-hand end of the footer
+row, wearing the tray's own glyph, arming on the first click and firing on
+the second. It is there on exactly the cards the tray accepts — a working
+card has no chip at all rather than one that refuses — and it is one
+action, not two: the same request, the same ⌘Z toast, the same count on
+the tray. Which stages may be archived from is answered once, by the
+server that enforces it, and sent with the state; the drag gesture and the
+chip both read that answer.
+
 Archiving is a move, so it commits like one: under `BOARD_COMMIT_MOVES`
 the rename into `tasks/archive/` lands in a single `board: <n> → archived
 (<name>)` commit naming both paths, and ⌘Z commits its own way back. That
