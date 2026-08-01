@@ -99,6 +99,18 @@
   /* an author display beats the UA's [hidden] — say it here or the sync
      chip is never hidden */
   .livechip[hidden]{display:none}
+  /* A running phase is the same kind of fact as the agents and the sync
+     chips: what is happening across the board without you. One chip per
+     phase in flight — two phases could in principle run at once, and a
+     chip that showed one of them would be worse than none — so the row
+     gives way before the chips already here do, clipping the names it
+     cannot fit rather than shrinking its neighbours. */
+  .phasechips{display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden}
+  .phasechips[hidden]{display:none}
+  .phasechips .livechip{min-width:0}
+  .phasechips .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .phasechips .mono{white-space:nowrap}
+  .phasechips .halted{color:var(--alarm)}
   .dot{width:7px;height:7px;border-radius:99px;background:var(--idle);flex:none}
   .dot.live{background:var(--accent);animation:breathe 2.4s ease-in-out infinite}
   /* the model chip: which brain did this, beside the name that did it.
@@ -451,6 +463,28 @@
   #drawer .dhead{display:flex;align-items:center;gap:10px}
   /* the dead run's excerpt, above the task itself: machine output, bounded */
   #drawer .well.bad pre{margin:6px 0 4px;white-space:pre-wrap;max-height:220px;overflow-y:auto;color:var(--text)}
+  /* the phase's list, above the card's own text: run order, one row per
+     card, machine facts (position, number, stage, the runner's reading)
+     in mono and the title in the reader's face */
+  #drawer .pmembers{display:flex;flex-direction:column;gap:1px}
+  #drawer .phead{
+    display:flex;align-items:baseline;gap:8px;font-size:12px;font-weight:500;
+    color:var(--muted);padding-bottom:5px;
+  }
+  #drawer .phead .mono{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+  #drawer .prow{
+    display:flex;align-items:baseline;gap:8px;width:100%;text-align:left;
+    padding:5px 8px;border:1px solid transparent;border-radius:7px;
+    background:var(--sunken);font-size:12.5px;color:var(--text);
+  }
+  #drawer .prow:hover{border-color:var(--accent)}
+  #drawer .prow .mono{font-family:var(--mono);font-size:11px;color:var(--dim)}
+  #drawer .prow .pn{width:14px;flex:none;text-align:right}
+  #drawer .prow .pref{flex:none}
+  #drawer .prow .ptitle{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #drawer .prow .pstage{flex:none;color:var(--muted)}
+  #drawer .prow .pstate{flex:none}
+  #drawer .pempty{font-size:12px;color:var(--dim);padding:4px 8px}
   #drawer .dbody{font-size:13px;line-height:1.6}
   #drawer .dbody h1{font-size:19px;line-height:1.3;font-weight:600;letter-spacing:-.01em;margin:0 0 4px;text-wrap:pretty}
   #drawer .dbody h2{font-size:14px;margin:18px 0 6px}
@@ -542,6 +576,7 @@
     <button data-view="focus">Focus</button>
   </nav>
   <span class="spacer"></span>
+  <div class="phasechips" id="phasechips" hidden></div>
   <div class="livechip" id="syncchip" hidden style="cursor:default"></div>
   <div class="livechip" id="livechip" title="open Sessions"></div>
   <button id="themebtn">Daylight</button>
@@ -625,10 +660,10 @@ const STAGE_TINT = { backlog: 'var(--dim)', 'to-do': 'var(--muted)',
 const STAGE_NOTE = { 'to-do': 'next up', review: 'your move' };
 const GLYPHS = { session: '●', end: '○', idle: '…', edit: '✎', read: '◔', search: '⌕',
   command: '$', test: '▶', check: '☑', git: '⎇', plan: '≡', subagent: '⑂', web: '∿',
-  move: '⇢', new: '＋', agent: '⚑', report: '▣', sync: '⇅', other: '·' };
+  move: '⇢', new: '＋', agent: '⚑', report: '▣', sync: '⇅', phase: '⟶', other: '·' };
 const FILTERS = [
   ['all', 'All', null],
-  ['moves', 'Moves', new Set(['move', 'new', 'agent', 'sync'])],
+  ['moves', 'Moves', new Set(['move', 'new', 'agent', 'sync', 'phase'])],
   ['edits', 'Edits', new Set(['edit'])],
   ['reads', 'Reads', new Set(['read', 'search'])],
   ['tests', 'Tests', new Set(['test', 'check'])],
@@ -890,6 +925,82 @@ function renderSync() {
     `<span class="mono">${esc(detail.split(' — ')[0].replace(/^sync[^:]*:\s*/, ''))}</span>`;
 }
 
+/* ── a phase in flight ────────────────────────────────────────────────── */
+
+/* The phases the header has something to say about: one running, or one
+   halted and not yet settled. A phase nobody has started, and one whose
+   card has left in-progress/, are simply not here — with none of them the
+   header is exactly what it was before phases existed.
+
+   A halt leads, because it is the one a person must not scroll past. */
+function phasesInFlight() {
+  return Object.values(S.state?.phases || {})
+    .filter(p => p.running || p.halted)
+    .sort((a, b) => (b.halted ? 1 : 0) - (a.halted ? 1 : 0) ||
+                    a.file.localeCompare(b.file));
+}
+
+/* Where a phase is up to, from the members the last pass read: how many
+   have landed on the phase branch, and which one is in flight — an agent
+   on it, or its checks still running. */
+function phaseProgress(p) {
+  const members = p.members || [];
+  return {
+    done: members.filter(m => m.state === 'merged').length,
+    total: members.length,
+    on: members.find(m => m.state === 'running') ||
+        members.find(m => m.state === 'waiting') || null,
+  };
+}
+
+function clip(text, n) {
+  return text.length > n ? text.slice(0, n - 1) + '…' : text;
+}
+
+/* What the chip says after the name: the halt and where it happened, or
+   the progress and the card in flight. The whole of it is on the title —
+   a header chip is not the place a reason gets to run long. */
+function phaseChipDetail(p) {
+  if (p.halted) {
+    return (p.haltedAt ? `halted at #${p.haltedAt} — ` : 'halted — ') +
+      clip(p.haltedWhy || p.halted, 46);
+  }
+  const at = phaseProgress(p);
+  const rest = at.on ? `on #${at.on.number || at.on.file}`
+    : (p.waitingOn || []).length ? `waiting on #${p.waitingOn[0]}` : '';
+  return `${at.done}/${at.total}` + (rest ? ` · ${rest}` : '');
+}
+
+function renderPhases() {
+  const el = $('#phasechips');
+  const live = phasesInFlight();
+  el.hidden = !live.length;
+  el.innerHTML = live.map(p => {
+    const at = phaseProgress(p);
+    const detail = phaseChipDetail(p);
+    // colour only means state: a run alive breathes in accent, a halt
+    // holds in alarm until the phase is resumed or held
+    const title = (p.halted
+      ? `${p.file} halted${p.haltedAt ? ` at ${p.haltedAt}` : ''} — ` +
+        `${p.haltedWhy || p.halted}. It stays here until the phase is run again or held.`
+      : `${p.file} is running on ${p.branch} — ${at.done} of ${at.total} cards merged`) +
+      ' · click to open the phase card';
+    const dot = p.halted
+      ? '<span class="dot" style="background:var(--alarm)"></span>'
+      : '<span class="dot live"></span>';
+    return `<div class="livechip" data-phasechip="${esc(p.file)}" title="${esc(title)}">` +
+      dot + `<span class="name${p.halted ? ' halted' : ''}">⟶ ${esc(phaseLabel(p))}</span>` +
+      `<span class="mono${p.halted ? ' halted' : ''}">${esc(detail)}</span></div>`;
+  }).join('');
+  el.querySelectorAll('[data-phasechip]').forEach(chip =>
+    chip.addEventListener('click', () => {
+      const task = findTask(chip.dataset.phasechip);
+      if (!task) return;
+      setView('board');
+      showDetail(task);
+    }));
+}
+
 function setView(view) {
   S.view = view;
   document.querySelectorAll('#views button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
@@ -932,6 +1043,7 @@ function render() {
   if (!S.state) return;
   renderTitle();
   renderChip();
+  renderPhases();
   renderSync();
   if (S.view === 'board') renderBoard();
   else if (S.view === 'flight') renderFlight();
@@ -1072,11 +1184,38 @@ function cardFor(task) {
         run: () => askCopilot(task) });
     }
   } else {
-    if (task.stage === 'in-progress') {
-      // someone else's card is never started by accident: the action says
-      // whose it is, and firing it is the deliberate takeover
-      const held = task.assignee && S.state.me && task.assignee !== S.state.me
-        ? task.assignee : null;
+    // someone else's card is never started by accident: the action says
+    // whose it is, and firing it is the deliberate takeover
+    const held = task.assignee && S.state.me && task.assignee !== S.state.me
+      ? task.assignee : null;
+    if (task.stage === 'in-progress' && task.isPhase) {
+      // the phase's own launch, in the slot ▸ start work has on every other
+      // card: moving it here was the commitment, this is the second half
+      const ph = (S.state.phases || {})[task.file];
+      const hold = { glyph: '‖', label: 'hold', confirm: 'hold it?', busy: 'holding…',
+        title: 'Stop the phase — the phase branch, every card already merged '
+             + 'into it and every worktree stay exactly as they are',
+        run: () => holdPhase(task) };
+      const start = held
+        ? { glyph: '▸', label: 'take over', confirm: `take from ${held}?`,
+            busy: 'starting…',
+            title: `${held} holds this phase — running it takes the card over and `
+                 + 'this board becomes the one that advances it',
+            run: () => runPhase(task, { takeover: true }) }
+        : { glyph: '▸', label: 'run phase', confirm: 'run it?', busy: 'starting…',
+            title: ph && ph.halted
+              ? 'Run it again — the halt is cleared and the phase carries on from '
+                + 'where it stopped'
+              : 'A branch of its own, each card in the list run on it in turn, and '
+                + 'one PR into main at the end',
+            run: () => runPhase(task) };
+      // a halt holds until the phase is run again or held: both are here,
+      // because a person who has read it and does not want to carry on
+      // needs a way to say so that is not walking the card backwards
+      if (ph && ph.running) actions.push(hold);
+      else if (ph && ph.halted) actions.push(start, hold);
+      else actions.push(start);
+    } else if (task.stage === 'in-progress') {
       actions.push(held
         ? { glyph: '▸', label: 'take over', confirm: `take from ${held}?`, busy: 'starting…',
             title: `${held} holds this card — starting work takes it over and reassigns it to you`,
@@ -1099,7 +1238,9 @@ function cardFor(task) {
         title: 'Push the branch and open its PR — the board does this when a card '
              + 'enters review, and this is how you ask for it afterwards',
         run: () => openPR(task) });
-    } else {
+    } else if (actions.length < 2) {
+      // two per state is the whole budget, and a halted phase has already
+      // spent it on running it again and holding it
       actions.push(stillTrue);
     }
   }
@@ -1443,6 +1584,35 @@ async function askCopilot(task) {
   return res.ok;
 }
 
+/* Running a phase, and holding it. Both are ordinary POSTs on the one
+   action machine — armed, fired, and honest about failing — because a
+   phase is a card and its actions are card actions. What follows either
+   one is watched in the header chip and narrated in the ticker, so
+   neither says more here than what it just asked for. */
+async function runPhase(task, extra) {
+  const res = await fetch('/api/phase/run', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: task.file, stage: task.stage, ...(extra || {}) }),
+  });
+  const data = await res.json();
+  toast(res.ok ? `Phase ${task.file} running — the header chip follows it`
+               : (data.error || 'the phase did not start'), !res.ok);
+  await loadState();
+  return res.ok;
+}
+
+async function holdPhase(task) {
+  const res = await fetch('/api/phase/stop', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: task.file, stage: task.stage }),
+  });
+  const data = await res.json();
+  toast(res.ok ? 'Held — the phase branch and everything merged into it stay as they are'
+               : (data.error || 'could not hold it'), !res.ok);
+  await loadState();
+  return res.ok;
+}
+
 async function move(file, from, to) {
   // finishing a task with work attached is a decision, not just a drag
   if (to === 'done') {
@@ -1517,6 +1687,52 @@ function showDetail(task) {
   if (changed) $('#drawerbody').scrollTop = 0;
 }
 
+/* The runner's word for a member, in the vocabulary the rest of the board
+   uses. `pending` is the phase simply not having reached it, which the
+   stage beside it already says — so it says nothing. */
+const MEMBER_STATE = { merged: 'merged in', running: 'working',
+  waiting: 'checking', ready: 'ready to merge', halt: 'stopped here' };
+
+/* A phase card answers "where is this up to" on its own face: its members
+   in run order, each with the stage it is in, so the question costs no
+   hunt across five columns. The runner's reading (merged in, working,
+   stopped here) is added only while a phase is in flight, because only
+   then is there one — and only it can tell a card that has run from one
+   the phase has not reached. Each row opens that card. */
+function phaseMembers(t) {
+  if (!t.isPhase) return '';
+  if (!(t.members || []).length) {
+    return `<div class="pmembers"><div class="phead">Cards</div>` +
+      `<div class="pempty">This phase lists no cards yet — a <code>## Cards</code> ` +
+      `section, one task number per line, in the order they run.</div></div>`;
+  }
+  const snap = (S.state.phases || {})[t.file];
+  const read = {};
+  for (const m of ((snap && snap.members) || [])) read[m.file] = m;
+  const rows = t.members.map((m, i) => {
+    const seen = read[m.file];
+    const note = seen ? MEMBER_STATE[seen.state] || '' : '';
+    const tint = seen && seen.state === 'halt' ? 'var(--alarm)'
+      : seen && ['running', 'waiting'].includes(seen.state) ? 'var(--accent)'
+      : seen && seen.state === 'merged' ? 'var(--calm)' : '';
+    return `<button class="prow" data-member="${esc(m.file)}">` +
+      `<span class="pn mono">${i + 1}</span>` +
+      `<span class="pref mono">#${esc(m.number || '')}</span>` +
+      `<span class="ptitle">${esc(m.title)}</span>` +
+      `<span class="pstage mono">${esc(m.stage)}</span>` +
+      (note ? `<span class="pstate mono"${tint ? ` style="color:${tint}"` : ''}` +
+              `${seen.why ? ` title="${esc(seen.why)}"` : ''}>${esc(note)}</span>` : '') +
+      `</button>`;
+  }).join('');
+  const halt = snap && snap.halted
+    ? `<div class="pempty" style="color:var(--alarm)">halted` +
+      `${snap.haltedAt ? ` at #${esc(snap.haltedAt)}` : ''} — ` +
+      `${esc(snap.haltedWhy || snap.halted)}</div>` : '';
+  return `<div class="pmembers"><div class="phead">Cards` +
+    `<span class="mono">${t.members.length} in run order</span></div>` +
+    rows + halt + `</div>`;
+}
+
 function renderDrawer() {
   const panel = $('#drawer');
   const body = $('#drawerbody');
@@ -1557,9 +1773,15 @@ function renderDrawer() {
     `<span class="spacer"></span>` +
     `<button id="closeDrawer">Close</button></div>` +
     failBlock +
+    phaseMembers(t) +
     `<div class="dbody">${md(t.body)}</div>` +
     `<div class="dmeta">${esc(t.stage)}/${esc(t.file)} · ${t.words} words · edited ${esc(when)}</div>`;
   panel.classList.add('open');
+  body.querySelectorAll('[data-member]').forEach(row =>
+    row.addEventListener('click', () => {
+      const member = findTask(row.dataset.member);
+      if (member) showDetail(member);
+    }));
   $('#closeDrawer').addEventListener('click', () => { S.selected = null; renderBoard(); });
 }
 

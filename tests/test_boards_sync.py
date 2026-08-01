@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -709,7 +710,11 @@ class TheSyncChip(unittest.TestCase):
 
     def test_sync_events_have_a_glyph_and_a_filter(self):
         self.assertIn("sync: '⇅'", self.html)
-        self.assertIn("new Set(['move', 'new', 'agent', 'sync'])", self.html)
+        # the board-level kinds share the Moves filter; what matters here is
+        # that sync is one of them, not which others have joined it since
+        moves = re.search(r"\['moves', 'Moves', new Set\((\[[^\]]*\])\)\]", self.html)
+        self.assertIsNotNone(moves, "board.html lost its Moves filter")
+        self.assertIn("'sync'", moves.group(1))
 
 
 if __name__ == "__main__":

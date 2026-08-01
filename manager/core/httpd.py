@@ -35,8 +35,10 @@ def state_payload() -> dict:
         "sessions": sessions,
         "agents": agents.list_public(),
         "prs": github.public_state(),
-        # what the last pass of the phase runner saw: per running phase
-        # card, its branch and each member's state
+        # what the last pass of the phase runner saw: per phase card in
+        # in-progress/, its branch, whether a run is in force or halted (and
+        # why, and where), and each member's state — the header chip and the
+        # phase card's own list are both read from here
         "phases": phases.public_state(),
         "drive": drive.public(),
         "hasDriver": config.driver_path() is not None,
@@ -201,6 +203,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"phase": phases.start_phase(
                     payload["file"], payload["stage"],
                     bool(payload.get("takeover")))})
+            elif path == "/api/phase/stop":
+                payload = self._read_body()
+                # ‖ hold on a phase card: the run stops, nothing is unwound
+                self._json(200, {"phase": phases.stop_phase(payload["file"],
+                                                            payload["stage"])})
             elif path == "/api/pr/open":
                 payload = self._read_body()
                 self._json(200, {"url": github.open_pr_now(payload["file"])})
