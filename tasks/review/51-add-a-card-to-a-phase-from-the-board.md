@@ -126,3 +126,28 @@ A `⟶ phase` action on `backlog/` and `to-do/` cards that are not already in a 
 - The action does not arm before firing: it writes nothing on click, it only opens the sheet, and the sheet's named choice is the confirmation — the same shape as drag-to-`done/`. If the house rule is read as "every action arms", that is the line to argue with.
 
 Nothing in the task's out-of-scope list was built: no removal, no reordering, no adding to a running phase, no phase creation, no multi-select.
+
+
+---
+
+## PR review — 2026-08-01 16:39 (Wren)
+
+PR REVIEW: APPROVE
+
+Work is committed on `task/51-add-a-card-to-a-phase-from-the-board` (`463b35b`) and, per the work report, the full suite (831 tests) passes on that tree; the feature is complete and I found nothing that must change. GitHub refused a formal approval because the PR author and this reviewing account are the same identity, so the verdict was posted as a PR comment instead — the `PR REVIEW: APPROVE` marker above is the record the board parses.
+
+**What I checked**
+- The full diff (`AGENTS.md`, `board.html`, `httpd.py`, `taskfiles.py`, and the new `tests/test_add_to_phase.py`), each change read against the surrounding code.
+- Layering against AGENTS.md, the acceptance list, and the commit/sync path.
+
+**What is good**
+- **Layering is clean.** The write lives in `taskfiles.add_to_phase()` — the only module that touches `tasks/` — with `httpd.py` adding a thin `POST /api/phase/add` route and `board.html` holding the UI (`joinablePhases()`, `phaseSheet()`, `addToPhase()`). Dependencies flow left-to-right as the module map requires.
+- **The write goes through the existing door.** `add_to_phase()` appends via `append_to_section()` (`manager/core/taskfiles.py:453`), so it commits under `BOARD_COMMIT_MOVES` as `board: 40 gained 51 (<name>)`, fires the sync commit hook, and creates a missing `## Cards` section rather than appending loose prose — the two edge-case acceptance items.
+- **Guards are doubled, front and back.** The server refuses a phase outside `to-do/`, a card outside backlog/to-do, a non-phase target, a phase joining a phase (no nesting), a numberless card, a stale filename, and a path where a filename belongs — and `_phase_holding()` re-reads disk to refuse a card any phase already lists, which is exactly what makes the two-boards case produce two lines rather than a lost one. The frontend `joinablePhases()` gates the same states so the action never appears where the server would reject it, and is absent (not present-and-empty) when no phase waits in `to-do/`.
+- **Tests are thorough** (32 cases): line shape and position, the empty- and missing-section cases, the on-disk re-read, every refusal, the commit gate on and off against a real throwaway git repo, plus `board.html` source invariants and a `node --check` parse. Nothing from the out-of-scope list was built.
+
+**For a human reviewer to eyeball (non-blocking, nothing to act on)**
+- The `⟶ phase` action opens the sheet on a single click with no arm-then-fire. This is deliberate and matches the drag-to-`done/` sheet the task pointed at (the named choice is the confirmation) — worth a glance only because the house rule is "actions that cost tokens or stop work arm," and this action does neither.
+- The ticker summary reads `<phase>.md gained <n> — <title>`, i.e. the raw phase filename with its `.md` extension, which is slightly more machine-shaped than neighbouring ticker lines. Cosmetic.
+
+**One thing you should know:** I could not execute the suite myself — this environment's sandbox denied the worktree checkout and the test invocation — so my confidence rests on reading the code and the test file plus the work report's passing count, not on a run I watched.
