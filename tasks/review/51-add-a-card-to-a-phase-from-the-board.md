@@ -1,6 +1,7 @@
 # 51 — Add a card to a phase without opening the file
 
 **Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/43
 **Assignee:** istos
 **Priority:** Low — the convenience path; phase cards mostly arrive with
 their lists already written
