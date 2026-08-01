@@ -1,6 +1,7 @@
 # 37 — Sync resolves its remote like the rest of the board, and says so when it cannot
 
 **Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/39
 **Assignee:** istos
 **Priority:** Medium — team mode's failure is currently indistinguishable
 from team mode working
