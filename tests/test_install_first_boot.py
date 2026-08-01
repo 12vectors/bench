@@ -371,8 +371,8 @@ class FirstRunSettings(unittest.TestCase):
         one other writer, and it must leave the rest of it intact."""
         run_install_tty(self.tm, ["team", "", ""])
         text = (REPO / "start.sh").read_text(encoding="utf-8")
-        snippet = (text.split("Persisting BOARD_PORT", 1)[1]
-                       .split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0])
+        snippet = (text.split('python3 - "$ENV_FILE" "$port" <<\'PY\'\n', 1)[1]
+                       .split("\nPY\n", 1)[0])
         result = subprocess.run(
             [sys.executable, "-c", snippet, str(self.env_file), "26072"],
             capture_output=True, text=True)
