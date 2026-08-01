@@ -643,6 +643,7 @@ const S = {
   diffCache: {},         // agentId -> {at, files, fetching}
   openFolds: new Set(),  // expanded output folds, kept across renders
   fileView: null,        // {dir, name, content} open in the drawer
+  drawerKey: null,       // which document the drawer last painted, for its scroll mark
   logStick: true,        // follow the newest event unless the user scrolled up
   logOpen: localStorage.getItem('bench-log-open') === '1',
   logFilter: 'all',
@@ -877,6 +878,52 @@ function scheduleRender() {
   requestAnimationFrame(() => { renderQueued = false; render(); });
 }
 
+/* ── keeping your place across a redraw ───────────────────────────────── */
+
+/* The page redraws by demolition: every pass throws the DOM away and
+   builds it again, so a scrolling element it rebuilds is a brand-new node
+   and a new node's scrollTop is 0. render() runs on every SSE frame and a
+   working agent emits an event per tool use, so without this you lose your
+   place several times a minute — precisely when you are trying to read.
+
+   The cure is small and paid separately: note where each scroller was
+   before the wipe, put it back once the new nodes are in. Both halves run
+   inside the same synchronous render, so nothing flashes.
+
+   Keys are stable names rather than nodes — the stage slug for a column,
+   the session id for a timeline — because the node itself does not
+   survive. A `v:` prefix marks a key belonging to a view; those are
+   dropped when you switch views, so coming back is a fresh look rather
+   than a stale position from a previous visit. The activity log spans
+   every view, so its key carries no prefix and outlives the switch. */
+const scrollMarks = {};
+
+function markScroll(key, el) {
+  if (!el) return;
+  scrollMarks[key] = { top: el.scrollTop, left: el.scrollLeft };
+}
+
+/* Clamp rather than guess. A column whose cards moved on may be shorter
+   than it was, and an offset past the new bottom should land at the new
+   bottom — not throw, not blank. (Content that changed *above* the
+   viewport still shifts what you are looking at. That is honest, and it is
+   not what this is for.) */
+function restoreScroll(key, el) {
+  const at = scrollMarks[key];
+  // a scroller that was at the top is already where it belongs, and
+  // saying so here is what keeps the common frame free of the layout
+  // flush that reading scrollHeight costs
+  if (!el || !at || (!at.top && !at.left)) return;
+  el.scrollTop = Math.max(0, Math.min(at.top, el.scrollHeight - el.clientHeight));
+  el.scrollLeft = Math.max(0, Math.min(at.left, el.scrollWidth - el.clientWidth));
+}
+
+function forgetViewScroll() {
+  for (const key of Object.keys(scrollMarks)) {
+    if (key.startsWith('v:')) delete scrollMarks[key];
+  }
+}
+
 /* ── header ───────────────────────────────────────────────────────────── */
 
 /* One reading of "an agent is working", shared by the header chip and the
@@ -1002,6 +1049,10 @@ function renderPhases() {
 }
 
 function setView(view) {
+  // leaving a view drops where you were in it: a hidden view's scrollers
+  // read 0 anyway, and coming back with a remembered offset would be
+  // restoring a position from a visit that has since gone stale
+  if (view !== S.view) forgetViewScroll();
   S.view = view;
   document.querySelectorAll('#views button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'view-' + view));
@@ -1056,7 +1107,13 @@ function render() {
 
 function renderBoard() {
   const board = $('#board');
+  // where you were looking, taken before the wipe throws the nodes away:
+  // the columns scroll down, #board itself scrolls sideways
+  markScroll('v:board', board);
+  board.querySelectorAll('.drop[data-stage]').forEach(d =>
+    markScroll('v:col:' + d.dataset.stage, d));
   board.innerHTML = '';
+  const drops = [];
   for (const stage of S.state.board.stages) {
     const col = document.createElement('section');
     col.className = 'kcol';
@@ -1081,7 +1138,11 @@ function renderBoard() {
     });
     col.appendChild(drop);
     board.appendChild(col);
+    drops.push([stage.slug, drop]);
   }
+  // the new nodes are in place: put the page back where it was, same frame
+  restoreScroll('v:board', board);
+  for (const [slug, drop] of drops) restoreScroll('v:col:' + slug, drop);
   if (S.selected) {
     S.selected = allTasks().find(t => t.file === S.selected.file) || null;
   }
@@ -1800,9 +1861,20 @@ function phaseMembers(t) {
     rows + halt + `</div>`;
 }
 
+/* What the drawer is showing, as a key its scroll position can be filed
+   under. Per document, deliberately: a different card is different
+   content, so it has no mark of its own and opens at the top — which is
+   the behaviour showDetail() asks for outright and this must not fight. */
+function drawerKey() {
+  if (S.fileView) return 'v:drawer:file:' + S.fileView.dir + '/' + S.fileView.name;
+  return S.selected ? 'v:drawer:task:' + S.selected.file : null;
+}
+
 function renderDrawer() {
   const panel = $('#drawer');
   const body = $('#drawerbody');
+  if (S.drawerKey) markScroll(S.drawerKey, body);   // the document leaving
+  const key = S.drawerKey = drawerKey();
   if (S.fileView) {
     const f = S.fileView;
     body.innerHTML =
@@ -1810,6 +1882,7 @@ function renderDrawer() {
       `<span class="spacer"></span><button id="closeDrawer">Close</button></div>` +
       `<div class="dbody">${md(f.content)}</div>`;
     panel.classList.add('open');
+    restoreScroll(key, body);
     $('#closeDrawer').addEventListener('click', () => { S.fileView = null; renderDrawer(); });
     return;
   }
@@ -1844,6 +1917,7 @@ function renderDrawer() {
     `<div class="dbody">${md(t.body)}</div>` +
     `<div class="dmeta">${esc(t.stage)}/${esc(t.file)} · ${t.words} words · edited ${esc(when)}</div>`;
   panel.classList.add('open');
+  restoreScroll(key, body);
   body.querySelectorAll('[data-member]').forEach(row =>
     row.addEventListener('click', () => {
       const member = findTask(row.dataset.member);
@@ -1924,8 +1998,12 @@ function renderLog() {
   document.querySelectorAll('#loghead .xfile').forEach(li =>
     li.addEventListener('click', () => openExtra(li.dataset.dir, li.dataset.name)));
   const body = $('#logbody');
+  markScroll('log', body);
   body.innerHTML = events.length ? events.map(evRow).join('')
     : '<div class="ev quiet"><time></time><span class="glyph">·</span><span class="what">Nothing here. Good.</span></div>';
+  restoreScroll('log', body);
+  // and stuck to the bottom stays stuck to the bottom: that reading was
+  // already right, and it outranks the mark
   if (S.logStick) body.scrollTop = body.scrollHeight;
 }
 
@@ -1970,8 +2048,11 @@ function renderFlight() {
       (m.lastSummary ? `<span class="sub">${esc(m.lastSummary)}</span>` : '') +
       `</div>`;
   }).join('');
-  $('#frail').innerHTML = `<div class="label">Sessions</div>` +
+  const rail = $('#frail');
+  markScroll('v:rail', rail);
+  rail.innerHTML = `<div class="label">Sessions</div>` +
     (rows || '<div class="f-empty">None yet. Start an agent, or open a claude session in this repo.</div>');
+  restoreScroll('v:rail', rail);
   document.querySelectorAll('#frail .sess-row').forEach(el =>
     el.addEventListener('click', () => { S.flightSid = el.dataset.sid; render(); }));
 
@@ -2079,8 +2160,14 @@ function renderTimeline(sid, meta, events) {
       }
     } else out.push(tlRow(item));
   }
-  $('#ftl').innerHTML = out.join('') ||
+  // keyed by session, so reading back through a long run survives the
+  // events it is still producing — and picking a different session, being
+  // a different key, opens at the top
+  const tl = $('#ftl');
+  markScroll('v:tl:' + sid, tl);
+  tl.innerHTML = out.join('') ||
     '<div class="f-empty">Nothing matches this filter.</div>';
+  restoreScroll('v:tl:' + sid, tl);
   document.querySelectorAll('#ftl details').forEach(d => {
     d.addEventListener('toggle', () => {
       if (d.open) S.openFolds.add(d.dataset.key); else S.openFolds.delete(d.dataset.key);
@@ -2126,6 +2213,12 @@ function renderFocus() {
   if (sid) loadSession(sid);
   const meta = sessionMeta(sid);
 
+  // the view itself scrolls, and so does the stage strip across the top
+  const view = $('#view-focus'), strip = $('#cstrip');
+  markScroll('v:focus', view);
+  markScroll('v:cstrip', strip);
+  const putBack = () => { restoreScroll('v:focus', view); restoreScroll('v:cstrip', strip); };
+
   const options = (S.state.sessions || []).map(m =>
     `<option value="${esc(m.id)}"${m.id === sid ? ' selected' : ''}>${esc(m.label || m.id.slice(0, 8))}${m.task ? ' — ' + esc(m.task) : ''}</option>`).join('');
   $('#focussel').innerHTML = options || '<option>no sessions yet</option>';
@@ -2140,6 +2233,7 @@ function renderFocus() {
       `<p style="margin:0;color:var(--dim);font-size:12.5px">Nothing yet. Start an agent from a card, ` +
       `or open a claude session in this repo — it shows up here as it works.</p></div>`;
     $('#calso').innerHTML = '';
+    putBack();
     return;
   }
 
@@ -2268,6 +2362,7 @@ function renderFocus() {
       `<span class="pill" style="background:${pill.bg};color:${pill.tint}">${pill.text}</span></div>` +
       `<div class="title">${esc(t.title)}</div></div>`;
   }).join('');
+  putBack();
 }
 
 function findTask(file) { return allTasks().find(t => t.file === file) || null; }
