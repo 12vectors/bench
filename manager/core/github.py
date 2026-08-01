@@ -27,7 +27,8 @@ import config
 import drive as drive_mod
 import reports
 import state
-from taskfiles import STATUS_RE, commit_edit, find_stage_of, move_task, read_task
+from taskfiles import (STATUS_RE, collect, commit_edit, find_stage_of,
+                       move_task, read_task)
 
 PR_STATE: dict[str, dict] = {}   # filename -> {verdict, detail, url, ts}
 _OPENING: set[str] = set()       # filenames with a PR-open in flight
@@ -50,6 +51,75 @@ def gh_available() -> bool:
 
 def _branch_exists(branch: str) -> bool:
     return _run(["git", "rev-parse", "--verify", "--quiet", branch]).returncode == 0
+
+
+def branch_of(filename: str) -> str:
+    """The branch a card's work lives on. Ordinary cards get `task/<stem>`;
+    a phase runs on `phase/<stem>`, its own integration branch (phases.py),
+    and from review/ onwards it is reviewed, driven and completed through
+    the same apparatus as any other card."""
+    phase = f"phase/{filename[:-3]}"
+    return phase if _branch_exists(phase) else f"task/{filename[:-3]}"
+
+
+def _woven(filename: str, stage: str) -> dict:
+    """The card as the board shows it. A card's phase is *derived* across
+    the whole board (`taskfiles.weave_phases`), and both what a PR is based
+    on and what a phase's PR says depend on that reading, so a lone
+    `read_task` is not enough here."""
+    for group in collect()["stages"]:
+        for task in group["tasks"]:
+            if task["file"] == filename:
+                return task
+    return read_task(config.TASKS / stage / filename, stage)
+
+
+def _remote_has_branch(rname: str, branch: str) -> bool:
+    """Whether the remote already carries this branch. Sync only ever
+    fetches origin/main, so a phase branch the running board pushed is not a
+    local ref on any other board even when it is published — asking the
+    remote directly is the only way another board sees it."""
+    return bool(_run(["git", "ls-remote", "--heads", rname, branch],
+                     timeout=30).stdout.strip())
+
+
+def _pr_base(task: dict) -> str:
+    """What a PR is opened against. A phase member's branch was cut from
+    its phase's branch, so that is the only base whose diff is the member's
+    own work — a PR into main would carry the whole phase, and invite a
+    merge into main that this board exists not to make. Everything else,
+    the phase card included, goes into main.
+
+    The phase branch is the board's own and is published as the phase runs,
+    so a board that did not run the phase may know it only through the
+    remote — that still makes it the base, not main."""
+    phase = task.get("phase")
+    if phase:
+        branch = f"phase/{phase['file'][:-3]}"
+        if _branch_exists(branch):
+            return branch
+        rname = remote()
+        if rname and _remote_has_branch(rname, branch):
+            return branch
+    return "main"
+
+
+def _pr_body(filename: str, task: dict) -> str:
+    """The PR's body. A phase's PR is the one a whole run produces, so it
+    says what is in it: the member list, in the order it ran."""
+    if task.get("isPhase"):
+        cards = "\n".join(f"- {m['number']} — {m['title']}"
+                          for m in task.get("members") or [])
+        return (f"Phase: `{filename}` — tracked in `.task-manager/tasks/review/`.\n\n"
+                f"Opened by the board when every card in the phase had been "
+                f"merged into its branch.\n\n## Cards in this phase\n\n"
+                f"{cards or '_none_'}\n")
+    body = (f"Task: `{filename}` — tracked in `.task-manager/tasks/review/`.\n\n"
+            f"Opened by the board when the card moved to review.")
+    summary = _agent_report(filename)
+    if summary:
+        body += f"\n\n## Agent summary\n\n{summary}"
+    return body
 
 
 def _write_pr_line(filename: str, url: str) -> None:
@@ -115,14 +185,14 @@ def open_pr_now(filename: str) -> str:
 
 
 def _open_pr(filename: str) -> str:
-    branch = f"task/{filename[:-3]}"
+    branch = branch_of(filename)
     if not _branch_exists(branch):
         # nothing to publish — a hand-moved card without agent work
         raise _Quiet(f"{filename} has no {branch} branch — nothing to open a PR from")
     stage = find_stage_of(filename)
     if stage != "review":
         raise _Quiet(f"{filename} is not in review/ — PRs open from there")
-    task = read_task(config.TASKS / stage / filename, stage)
+    task = _woven(filename, stage)
     if task.get("pr"):
         raise _Quiet(f"{filename} already has a PR: {task['pr']}")
 
@@ -132,24 +202,29 @@ def _open_pr(filename: str) -> str:
                          ("no git remote configured" if rname is None
                           else "gh is not installed"))
 
-    # The PR's diff is computed against the remote main — refuse to open one
-    # that would drag unpushed main commits along with it.
-    _run(["git", "fetch", rname, "main"], timeout=120)
-    ahead = _run(["git", "rev-list", "--count", f"{rname}/main..main"]).stdout.strip()
-    if ahead.isdigit() and int(ahead) > 0:
-        raise ValueError(f"won't open a PR for {filename}: main is {ahead} commits "
-                         f"ahead of {rname} — push main first, then move the card again")
+    base = _pr_base(task)
+    if base == "main":
+        # The PR's diff is computed against the remote main — refuse to open one
+        # that would drag unpushed main commits along with it.
+        _run(["git", "fetch", rname, "main"], timeout=120)
+        ahead = _run(["git", "rev-list", "--count", f"{rname}/main..main"]).stdout.strip()
+        if ahead.isdigit() and int(ahead) > 0:
+            raise ValueError(f"won't open a PR for {filename}: main is {ahead} commits "
+                             f"ahead of {rname} — push main first, then move the card again")
+    elif _branch_exists(base):
+        # A phase branch is the board's own: publish it so the member's PR
+        # has a base on the remote to be opened against. When only the
+        # remote carries it — a member PR opened from a board that did not
+        # run the phase — it is already there, and there is nothing local
+        # to push.
+        _run(["git", "push", "-u", rname, base], timeout=180)
 
     push = _run(["git", "push", "-u", rname, branch], timeout=180)
     if push.returncode != 0:
         raise ValueError(f"push failed for {branch}: {push.stderr.strip()[:140]}")
 
-    body = (f"Task: `{filename}` — tracked in `.task-manager/tasks/review/`.\n\n"
-            f"Opened by the board when the card moved to review.")
-    summary = _agent_report(filename)
-    if summary:
-        body += f"\n\n## Agent summary\n\n{summary}"
-    result = _run([config.GH_BIN, "pr", "create", "--head", branch, "--base", "main",
+    body = _pr_body(filename, task)
+    result = _run([config.GH_BIN, "pr", "create", "--head", branch, "--base", base,
                    "--title", task["title"], "--body", body], timeout=120)
     if result.returncode != 0:
         # The rare double-fire: two attempts crossed and GitHub already has
@@ -417,7 +492,7 @@ def complete_task(filename: str, stage: str) -> dict:
 def _complete(filename: str, stage: str) -> dict:
     """The steps themselves, run under the claim complete_task holds."""
     stem = filename[:-3]
-    branch = f"task/{stem}"
+    branch = branch_of(filename)   # a phase's own branch, or task/<stem>
 
     # 1. the app must not keep running code that is about to be merged away
     d = drive_mod.DRIVE
@@ -512,11 +587,17 @@ def _merge_on_origin(filename: str, stage: str, branch: str) -> None:
 
 
 def task_branches() -> list[str]:
-    """Stems of all task/* branches — the UI uses this to say honestly
-    whether a review card has work attached."""
+    """Stems of all task/* and phase/* branches — the UI uses this to say
+    honestly whether a card has work attached, and a phase card's work is
+    its own integration branch."""
     result = _run(["git", "for-each-ref", "--format=%(refname:short)",
-                   "refs/heads/task/"])
-    return [ref[len("task/"):] for ref in result.stdout.split() if ref.startswith("task/")]
+                   "refs/heads/task/", "refs/heads/phase/"])
+    stems = []
+    for ref in result.stdout.split():
+        for prefix in ("task/", "phase/"):
+            if ref.startswith(prefix):
+                stems.append(ref[len(prefix):])
+    return stems
 
 
 def reconcile() -> None:

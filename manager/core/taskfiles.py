@@ -450,6 +450,40 @@ def append_to_task(filename: str, stage: str, text: str, what: str) -> bool:
     return True
 
 
+def append_to_section(filename: str, stage: str, heading: str, line: str,
+                      what: str) -> bool:
+    """Add one line under `## <heading>`, creating the section at the end of
+    the card when it is not there yet.
+
+    The third door, and the narrowest: a running record where every entry is
+    one line and belongs under one heading — the phase log. `append_to_task`
+    would scatter those lines through the file as other sections (a work
+    report, a review) landed between them, and the record would stop being
+    readable in the one place a person looks. It commits like every other
+    board-made write.
+    """
+    path = config.TASKS / stage / filename
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    section = re.compile(rf"^##\s+{re.escape(heading)}\s*$(.*?)(?=^##\s|\Z)",
+                         re.MULTILINE | re.DOTALL).search(text)
+    if section:
+        body = section.group(1).strip("\n")
+        updated = f"## {heading}\n\n{body}\n{line}\n\n" if body else \
+                  f"## {heading}\n\n{line}\n\n"
+        text = text[:section.start()] + updated + text[section.end():]
+    else:
+        text = text.rstrip("\n") + f"\n\n## {heading}\n\n{line}\n"
+    try:
+        path.write_text(text, encoding="utf-8")
+    except OSError:
+        return False
+    commit_edit(filename, stage, what)
+    return True
+
+
 def move_task(filename: str, source: str, target: str, actor: str = "you") -> dict:
     """Move a task file between stage directories and fix its Status line.
 

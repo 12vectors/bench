@@ -430,7 +430,7 @@ class ClaimsGateLaunches(Boards):
                              BRANCH).returncode, 1)
 
     def test_the_deliberate_takeover_reassigns_the_card(self):
-        agents._claim_for_launch(FILENAME, "in-progress", True)
+        agents.claim_for_launch(FILENAME, "in-progress", True)
 
         self.assertIn("**Assignee:** elena", self.text(self.elena))
         self.assertEqual(self.text(self.elena).count("**Assignee:**"), 1)
@@ -440,7 +440,7 @@ class ClaimsGateLaunches(Boards):
                             for s in self.summaries()))
 
     def test_the_takeover_reaches_the_other_board(self):
-        agents._claim_for_launch(FILENAME, "in-progress", True)
+        agents.claim_for_launch(FILENAME, "in-progress", True)
         self.assertEqual(sync.push_now(), "ok")
 
         self.use(self.ada)
@@ -450,7 +450,7 @@ class ClaimsGateLaunches(Boards):
     def test_an_unclaimed_card_claims_on_launch(self):
         self.place(self.elena, "in-progress", card("In Progress"), commit=False)
 
-        agents._claim_for_launch(FILENAME, "in-progress", False)
+        agents.claim_for_launch(FILENAME, "in-progress", False)
 
         self.assertIn("**Assignee:** elena", self.text(self.elena))
         self.assertTrue(any("claimed" in s for s in self.summaries()))
@@ -460,7 +460,7 @@ class ClaimsGateLaunches(Boards):
                    commit=False)
         head = git(self.elena, "rev-parse", "HEAD").stdout
 
-        agents._claim_for_launch(FILENAME, "in-progress", False)
+        agents.claim_for_launch(FILENAME, "in-progress", False)
 
         self.assertEqual(git(self.elena, "rev-parse", "HEAD").stdout, head,
                          "nothing to record: it was already yours")
@@ -470,7 +470,7 @@ class ClaimsGateLaunches(Boards):
         a lock — a hand-written line stays decoration."""
         self.patch(SYNC=False, COMMIT_MOVES=False)
 
-        agents._claim_for_launch(FILENAME, "in-progress", False)
+        agents.claim_for_launch(FILENAME, "in-progress", False)
 
         self.assertIn("**Assignee:** ada", self.text(self.elena))
 

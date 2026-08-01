@@ -175,6 +175,11 @@ SYNC_INTERVAL = float(setting("BOARD_SYNC_INTERVAL", "30"))
 # tasks/ stays a hand job.
 COMMIT_MOVES = flag("BOARD_COMMIT_MOVES") or SYNC
 
+# How often the phase runner takes a pass: recompute what each running
+# phase needs and do the one next thing. A beat, not an agent — it costs a
+# handful of git commands and nothing at all when no phase is running.
+PHASE_INTERVAL = float(setting("BOARD_PHASE_INTERVAL", "30"))
+
 WATCH_INTERVAL = float(setting("BOARD_WATCH_INTERVAL", "2"))
 EVENTS_CAP = int(setting("BOARD_EVENTS_CAP", "800"))
 BOARD_EVENTS_CAP = int(setting("BOARD_HISTORY_CAP", "300"))

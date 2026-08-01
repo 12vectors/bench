@@ -44,7 +44,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports → taskfiles → events / github / drive / sync → agents → watch / httpd → board.py
+config → state / reports → taskfiles → events / github / drive / sync → agents → phases → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -57,6 +57,8 @@ config → state / reports → taskfiles → events / github / drive / sync → 
 - `drive.py` — runs the project driver, tracks the one live drive
 - `sync.py` — origin/main as the shared board: push on move, pull on a beat
 - `agents.py` — headless work/review jobs, launched through the adapter
+- `phases.py` — a phase run: its own branch, its cards merged into it one
+  at a time. A beat, not an agent; it holds no registry of where a phase is
 - `watch.py` — 2s disk poller narrating moves made outside the API, and
   the gate that keeps a move a pull applied from triggering anything
 - `httpd.py` — HTTP routes, the SSE stream, serving the page
@@ -468,6 +470,12 @@ resolution commit, and refuses semantic ones, naming the collision for a
 human to settle. GitHub computes mergeability lazily, so an UNKNOWN
 reading keeps the chip's last state rather than flapping.
 
+A phase member's PR is opened against **its phase's branch**, not `main`:
+its branch was cut from there, so that is the only base whose diff is the
+member's own work — and a PR into `main` carrying a whole phase is exactly
+the merge this design refuses to make. Every other card, the phase card
+itself included, opens into `main` as it always did.
+
 The card wears that verdict in the design system's state colours:
 approved → pine (`--calm`) border and an `approved` pill; changes asked →
 terracotta (`--alarm`) and a `changes asked` pill; otherwise it stays the
@@ -475,7 +483,10 @@ neutral `waiting on you`. Tool chips (CI, copilot, PR, drive) are
 destinations, not statuses: they live in the card's footer row, never
 squeezed into the author row — `CI ✓` (pine), `CI ✕` (terracotta), `◌`
 while in flight — with hover actions staying in the status pill's slot.
-Merging remains yours — the board never merges.
+Merging into `main` remains yours — the board never merges into `main`. It
+does merge into a branch of its own: a phase's integration branch is the
+board's, and merging into it is bookkeeping in the same family as
+committing a move (see "A phase runs itself, on a branch of its own").
 
 The agent's first duty is to judge whether the task is actionable. If the
 task still has open questions — unresolved decisions only its author can
@@ -793,7 +804,83 @@ that would otherwise surface later as a runner behaving oddly.
 `**Depends on:**` is the other half, and it guards rather than orders: the
 list says what runs next, a member's dependencies say whether it *may*. The
 board parses the numbers out of the line and shows them; acting on them
-belongs to whatever runs a phase.
+belongs to the runner below.
+
+### A phase runs itself, on a branch of its own
+
+Running a phase works its list into a single integration branch. Starting
+one cuts `phase/<task-stem>` from the newest `origin/main` it can see — the
+same rule and the same timeout a task branch is cut by — and gives it a
+worktree beside the task worktrees. From there each member is branched
+**from the phase's tip**, run headless exactly as **▸ start work** runs any
+card, and merged back into the phase branch when its checks are green;
+then the next one starts. At the end one PR, from the phase branch into
+`main`, for a human.
+
+That is why the branch exists. Members of a phase are related by
+definition, so card two branched from `main` could not see card one's work
+while card one sat unmerged in `review/` — it would conflict, or quietly
+build the same thing twice. Gating on a merge into `main` would fix the
+branch point and destroy the point, because `main` is merged by a person
+and the phase would stall on every card. So the human gate moves from every
+card to the phase boundary, and the promise survives intact: the board
+merges into a branch it created, inside a scope you opened, and `main`
+still waits for your click.
+
+**The runner is a beat, not an agent.** Everything it decides is already
+structured state — a card's stage, a PR's CI verdict, whether one branch is
+contained in another — so an agent paid to poll would be the wrong tool at
+the wrong price. It is a plain thread (`BOARD_PHASE_INTERVAL`, 30s), silent
+when no phase is running.
+
+**The beat is stateless.** Each pass recomputes which members are finished,
+which is first unfinished and what that one needs; it holds no registry of
+where a phase *is*. Two durable things carry the memory instead, and both
+are things the board already writes: **git**, where a member is finished
+when its branch is contained in the phase branch, and **the phase card**,
+which grows a `## Phase log` section the runner adds one line to per
+decision — a run started, a member started, a member merged, a halt. The
+log is the record a person reads, and the only thing that can tell "this
+member has run and it ended badly" from "the phase has not reached it yet";
+without it a restarted board would relaunch a run that died. So a restart
+resumes a phase by looking, and the same logic answers "what now?" whether
+the last event was a launch, a merge or a crash.
+
+**Advance on green.** A member is finished when its card reaches `review/`
+and its checks are not against it. Green is read from the same PR poll the
+board already runs: red halts the phase, running holds it, and a member
+with no checks at all advances — a project without CI must not deadlock
+every phase it runs. A member with no branch at all that is already in
+`review/` or `done/` is simply finished; there is nothing to bring.
+
+**Halt, never skip.** Five conditions stop a phase, each already a visible
+state on the card: a member that exits `NOT READY`, a run that exits
+non-zero, a clean exit that committed nothing, CI red, and a merge into the
+phase branch that is not mechanical. A phase that stepped over a failed
+card would build the rest on a foundation that never landed. The halt is
+written into the log and then held — said once, not once a beat — and
+nothing retries by itself. Running the phase again is a person's decision,
+and it is what appends the line that clears the halt. A member whose
+`**Depends on:**` names something unfinished is a *wait*, not a halt: the
+phase idles until the dependency lands (merged, for a card inside the
+phase; `done/`, for one outside).
+
+**Merges are additive, always.** Nothing here rebases and nothing
+force-pushes. `main` is merged into the phase branch on every beat, so a
+phase that runs for hours does not drift into one enormous conflict at the
+end; a conflict there halts the phase like any other, aborted cleanly, with
+the colliding files named. When every member is in, the branch is pushed, a
+PR into `main` is opened with the member list as its body, the `**PR:**`
+line is written into the phase card and the card moves to `review/` — where
+the existing apparatus applies unchanged: the CI chip, **◔ review PR**,
+**⚑ copilot**, and drag-to-`done/` for **merge & clean up**.
+
+**One board runs it.** State syncs; reactions don't, so the phase card's
+**Assignee** is where "who runs it" is written down — the same claim that
+gates starting work. A replica renders the phase and advances nothing.
+
+Members run one at a time. Running independent members in parallel, and
+any UI beyond the API and the ticker, are separate cards.
 
 An optional **Assignee** line records who holds the card:
 
