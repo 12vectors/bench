@@ -1,6 +1,6 @@
 # 52 — A redraw throws away where you were looking
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** Medium — a papercut that gets worse exactly as the board
 gets busy: every agent event is a redraw, so the more work is running the
@@ -106,3 +106,28 @@ state and animation continuity all suffer from it in the same way — the
 answer is a reconciling render, not a longer and longer list of things
 to save and put back. Worth a card of its own the first time a second
 symptom shows up.
+
+
+---
+
+## Work report — 2026-08-01 17:15 (Ada)
+
+Committed on `task/52-a-redraw-throws-away-where-you-were-looking` as `419daef`, with the full suite green (854 tests, `python3 -m unittest discover -s tests`).
+
+**What changed** — `manager/core/board.html` gains a mark-and-restore pair around every wipe of a scrolling element, plus `tests/test_scroll_kept.py`.
+
+The page redraws by demolition, so a scroller it rebuilds is a new node and a new node's `scrollTop` is 0. Three small helpers (`markScroll` / `restoreScroll` / `forgetViewScroll`, added beside `scheduleRender()`) record an offset before the wipe and put it back once the new nodes are in — both halves inside the same synchronous render, so nothing flashes. Keys are stable names rather than nodes, because the node is what does not survive: `v:col:<slug>` for a column, `v:tl:<sid>` for a timeline, `v:drawer:task:<file>` for the drawer. Restoring clamps against the new geometry, so a column that lost cards lands at its new bottom and one now shorter than its own viewport lands at the top rather than at a negative offset.
+
+Covered: `#board` (horizontal), each column's `.drop`, the session timeline `#ftl`, the sessions rail `#frail`, `#view-focus` and `#cstrip`, `#drawerbody`, and `#logbody`. A `v:` prefix marks a key belonging to a view and `setView()` drops those, so switching away and back is a fresh look rather than a stale position; the activity log spans every view, so its key carries no prefix and survives.
+
+The two behaviours that were already right are untouched and now have tests holding them there: `S.logStick` still runs *after* the restore, so a log stuck to the bottom still follows new lines, and the drawer still opens at the top on a different card — that falls out of keying the drawer per document, so `showDetail()`'s explicit reset never has a mark to fight.
+
+**For the reviewer, in order:**
+
+1. **Click through the acceptance list in a browser.** The helpers run for real under node, but there is no DOM in the test suite, so "scroll a column, watch an agent work, stay put" is unverified by machine. Worth ten seconds on `done/` with something running.
+2. Read `restoreScroll()` in `manager/core/board.html` — the clamp and the early-out for a scroller that was at the top (which also keeps the common frame free of a forced layout flush).
+3. Note the deliberate reading of one acceptance line: *"switching views and back does not restore a stale position"* was taken literally, so a view switch forgets. If you would rather a column keep its place across a trip to Sessions and back, that is a one-line change to `setView()` and its test.
+
+**Also worth knowing:** `tests/test_scroll_kept.py` includes two guards beyond the immediate fix — a check that the whole inline `<script>` parses under `node --check` (this change reached into six renderers in a file with no build step), and one that fails if a new `overflow-*:auto` rule is added to the CSS without a renderer keeping its place. Both skip when node is absent, as `test_drawer_markdown.py` already does.
+
+The reconciling render named in the task's Notes is untouched, as is the coalescing in `scheduleRender()` and scroll anchoring for content inserted above the viewport.
