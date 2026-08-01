@@ -651,6 +651,29 @@ class HandMovesDoNotDoubleLaunch(PhaseCase):
         self.assertEqual(self.stage_of(PHASE), "review")
 
 
+class AnUnwritableLogHalts(PhaseCase):
+    """The log is the durable memory a restart reads; a launch or a merge
+    with no line behind it is exactly what a restarted board would repeat.
+    So a log that will not take the line halts before the action it was
+    meant to precede."""
+
+    def test_a_launch_never_outruns_its_record(self):
+        real = phases._write_log
+        self.addCleanup(setattr, phases, "_write_log", real)
+        # the one line that will not write is the member-started record
+        phases._write_log = lambda phase, entry: (
+            False if entry == "31 started" else real(phase, entry))
+
+        self.start()
+
+        self.assertEqual(
+            [r for r in state.AGENTS.values() if r["task"] == ONE], [],
+            "the member was never launched")
+        self.assertNotIn("31 started", self.log())
+        self.assertTrue(any("halted" in s for s in self.summaries()),
+                        "the phase halts instead of launching blind")
+
+
 class OneBoardRunsIt(PhaseCase):
     """State syncs; reactions don't — the assignee is where "who runs it"
     is written down, and a replica advances nothing."""
@@ -682,6 +705,22 @@ class OneBoardRunsIt(PhaseCase):
         self.assertEqual(self.summaries(), [])
         self.assertEqual([m["state"] for m in snapshot["members"]],
                          ["pending", "pending"], "but it still renders the phase")
+
+    def test_a_board_with_no_git_identity_is_not_gated_out(self):
+        """Team mode with no local git name is the one case that does not
+        gate: `claim_for_launch` cannot write an assignee there and so
+        cannot refuse a launch, and the beat must match it — else a phase
+        starts (branch cut, run recorded) and then advances nowhere."""
+        self.addCleanup(setattr, taskfiles, "actor_name", taskfiles.actor_name)
+        taskfiles.actor_name = lambda: ""
+
+        self.assertTrue(phases._mine({"file": PHASE, "assignee": "elena"}))
+
+    def test_a_named_board_that_is_not_the_assignee_is_gated_out(self):
+        self.addCleanup(setattr, taskfiles, "actor_name", taskfiles.actor_name)
+        taskfiles.actor_name = lambda: "ronald"
+
+        self.assertFalse(phases._mine({"file": PHASE, "assignee": "elena"}))
 
     def test_starting_someone_elses_phase_refuses_and_names_them(self):
         self.write(PHASE, card("40 — Ship the site", status="In Progress",
@@ -744,6 +783,15 @@ class ThePhasePR(PhaseCase):
         self.assertEqual(
             git(self.repo, "rev-parse", f"origin/{PHASE_BRANCH}").returncode, 0,
             "a member's PR needs its base on the remote")
+
+    def test_a_member_pr_bases_on_a_phase_branch_only_the_remote_carries(self):
+        """A board that did not run the phase knows the phase branch only
+        through the remote — sync fetches origin/main and nothing else. That
+        branch is still the base a member's PR opens against, never main."""
+        git(self.repo, "push", "-q", "origin", f"main:refs/heads/{PHASE_BRANCH}")
+
+        self.assertFalse(self.branch_exists(PHASE_BRANCH), "no local phase branch")
+        self.assertEqual(github._pr_base({"phase": {"file": PHASE}}), PHASE_BRANCH)
 
 
 class TheCardsBranchIsFound(PhaseCase):

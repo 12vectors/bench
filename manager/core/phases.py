@@ -114,15 +114,30 @@ def log_entries(text: str) -> list[str]:
     return entries
 
 
-def _record(phase: dict, entry: str) -> None:
+def _write_log(phase: dict, entry: str) -> bool:
     """One line into the log, where it reaches git like every other write
     the board makes to a task file. The stage is asked of the disk: a pass
     that finishes a phase moves the card, and the record is written to
-    wherever the card actually is."""
+    wherever the card actually is. Returns whether the line landed."""
     stage = taskfiles.find_stage_of(phase["file"]) or phase["stage"]
     stamp = time.strftime("%Y-%m-%d %H:%M")
-    taskfiles.append_to_section(phase["file"], stage, LOG_HEADING,
-                                f"- {stamp} · {entry}", "phase log")
+    return taskfiles.append_to_section(phase["file"], stage, LOG_HEADING,
+                                       f"- {stamp} · {entry}", "phase log")
+
+
+def _record(phase: dict, entry: str) -> None:
+    """Record a decision, and refuse to act if it cannot be written down.
+
+    The log is the durable memory a restart reads to tell "this member has
+    already started" from "the phase has not reached it yet". An action that
+    outran its own record — a launch or a merge with no line behind it —
+    is exactly what a restarted board would repeat. So a log that will not
+    take the line is itself a halt, raised here before the action it was
+    meant to precede ever happens. The halt path writes best-effort
+    (`_write_log`) so that recording the halt can never raise in turn."""
+    if not _write_log(phase, entry):
+        raise _Halt("could not write the phase log — refusing to act without "
+                    "the record a restart reads")
 
 
 def _this_run(entries: list[str]) -> list[str]:
@@ -354,11 +369,20 @@ def _freshen(phase: dict) -> None:
 def _mine(phase: dict) -> bool:
     """State syncs; reactions don't. Only the board whose user holds the
     phase card advances it — every replica renders the same phase and
-    launches nothing. Outside team mode there is one board, and it acts."""
+    launches nothing. Outside team mode there is one board, and it acts.
+
+    No local git identity is the one case that does not gate: it is exactly
+    where `agents.claim_for_launch` cannot write an assignee and so cannot
+    refuse a launch either. Gating the beat on it while the launch went
+    through would strand a phase — branch cut, run recorded — that then
+    never advances. So a board with no name is the lone actor here, the same
+    as it is for starting work."""
     if not config.COMMIT_MOVES:
         return True
     me = taskfiles.actor_name()
-    return bool(me) and phase.get("assignee") == me
+    if not me:
+        return True
+    return phase.get("assignee") == me
 
 
 def _unfinished_dependencies(member: dict, snapshot: dict,
@@ -428,7 +452,7 @@ def _halt(phase: dict, member: dict | None, reason: str) -> None:
     """Stop, and say so once. The log holds the halt from here on, so the
     next pass reads it rather than saying the same thing again."""
     at = f" at {member['number']}" if member and member["number"] else ""
-    _record(phase, f"halted{at} — {reason}")
+    _write_log(phase, f"halted{at} — {reason}")   # best effort: never re-raise
     _say(phase["file"], f"{phase['file']} halted{at} — {reason}")
 
 
@@ -570,7 +594,9 @@ def _start(phase: dict, filename: str) -> dict:
         if result.returncode != 0:
             raise ValueError(f"could not cut {branch}: {result.stderr.strip()[:200]}")
         _push_phase(phase)
-    _record(phase, f"run started on {branch}")
+    if not _write_log(phase, f"run started on {branch}"):
+        raise ValueError(f"could not record the run on {filename} — its phase "
+                         f"log must be writable to run the phase safely")
     _say(filename, f"phase {filename} is running on {branch}"
                    + (f" — {note}" if note else ""))
     state.broadcast({"type": "board"})

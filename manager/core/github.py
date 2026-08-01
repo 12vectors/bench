@@ -74,16 +74,32 @@ def _woven(filename: str, stage: str) -> dict:
     return read_task(config.TASKS / stage / filename, stage)
 
 
+def _remote_has_branch(rname: str, branch: str) -> bool:
+    """Whether the remote already carries this branch. Sync only ever
+    fetches origin/main, so a phase branch the running board pushed is not a
+    local ref on any other board even when it is published — asking the
+    remote directly is the only way another board sees it."""
+    return bool(_run(["git", "ls-remote", "--heads", rname, branch],
+                     timeout=30).stdout.strip())
+
+
 def _pr_base(task: dict) -> str:
     """What a PR is opened against. A phase member's branch was cut from
     its phase's branch, so that is the only base whose diff is the member's
     own work — a PR into main would carry the whole phase, and invite a
     merge into main that this board exists not to make. Everything else,
-    the phase card included, goes into main."""
+    the phase card included, goes into main.
+
+    The phase branch is the board's own and is published as the phase runs,
+    so a board that did not run the phase may know it only through the
+    remote — that still makes it the base, not main."""
     phase = task.get("phase")
     if phase:
         branch = f"phase/{phase['file'][:-3]}"
         if _branch_exists(branch):
+            return branch
+        rname = remote()
+        if rname and _remote_has_branch(rname, branch):
             return branch
     return "main"
 
@@ -195,9 +211,12 @@ def _open_pr(filename: str) -> str:
         if ahead.isdigit() and int(ahead) > 0:
             raise ValueError(f"won't open a PR for {filename}: main is {ahead} commits "
                              f"ahead of {rname} — push main first, then move the card again")
-    else:
+    elif _branch_exists(base):
         # A phase branch is the board's own: publish it so the member's PR
-        # has a base on the remote to be opened against.
+        # has a base on the remote to be opened against. When only the
+        # remote carries it — a member PR opened from a board that did not
+        # run the phase — it is already there, and there is nothing local
+        # to push.
         _run(["git", "push", "-u", rname, base], timeout=180)
 
     push = _run(["git", "push", "-u", rname, branch], timeout=180)
