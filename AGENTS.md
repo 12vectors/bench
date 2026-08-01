@@ -333,9 +333,10 @@ stacking on top of it) — at most two per state, only things you'd actually
 do without opening the card: **▸ start work** on in-progress cards (**▸
 take over** when someone else holds them), **‖ hold** while an agent runs,
 **↩ back** on cards waiting on you, **↑ open PR** on review cards whose
-branch has none, **↺ reopen** on done cards, and **◔ still true?**
-everywhere. Actions that cost tokens or stop work arm on first click and
-fire on the second.
+branch has none, **↺ reopen** on done cards, **⟶ phase** on unstarted
+cards a phase in `to-do/` could take, and **◔ still true?** everywhere.
+Actions that cost tokens or stop work arm on first click and fire on the
+second.
 
 Each launched agent wears a short name for its lifetime (Wren, Juno,
 Basil, …) — picked per launch, never shared by two running agents, shown as
@@ -805,6 +806,22 @@ that would otherwise surface later as a runner behaving oddly.
 list says what runs next, a member's dependencies say whether it *may*. The
 board parses the numbers out of the line and shows them; acting on them
 belongs to the runner below.
+
+A phase is normally written whole — members listed and each member's
+dependencies filled in — before anything reaches the board, which is what
+makes it a thing you can read in a diff. For the card you decide belongs
+after all there is **⟶ phase**, on `backlog/` and `to-do/` cards that are
+not already in a phase and are not phase cards themselves. It opens a
+sheet naming the phase cards in `to-do/` and what each already holds, and
+picking one appends `- <n> — <title>` — the way a person writes it — to
+the end of that phase's `## Cards`. Nothing else moves: the card stays in
+its stage, because joining a phase is not a commitment to start it. The
+append goes through the board's own write path, so it commits itself under
+`BOARD_COMMIT_MOVES` and reaches the other boards; an addition that never
+left one working tree is not an addition the phase would run. Only phases
+in `to-do/` are offered — one in `in-progress/` is running, its members
+being worked in the order the list had when it started — and with no phase
+waiting there the action is absent rather than present and empty.
 
 ### A phase runs itself, on a branch of its own
 

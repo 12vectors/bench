@@ -208,6 +208,17 @@ class Handler(BaseHTTPRequestHandler):
                 # ‖ hold on a phase card: the run stops, nothing is unwound
                 self._json(200, {"phase": phases.stop_phase(payload["file"],
                                                             payload["stage"])})
+            elif path == "/api/phase/add":
+                payload = self._read_body()
+                # one line into the phase card, nothing into the card added:
+                # membership lives in one place and joining one is not a move
+                result = taskfiles.add_to_phase(payload["file"], payload["stage"],
+                                                payload["phase"])
+                state.record_board_event({
+                    "kind": "phase", "actor": "you", "file": result["phase"],
+                    "summary": f"{result['phase']} gained {result['entry']}"})
+                state.broadcast({"type": "board"})
+                self._json(200, result)
             elif path == "/api/pr/open":
                 payload = self._read_body()
                 self._json(200, {"url": github.open_pr_now(payload["file"])})

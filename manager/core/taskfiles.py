@@ -39,6 +39,10 @@ CARDS_SECTION_RE = re.compile(r"^##\s+Cards\s*$(.*?)(?=^##\s|\Z)",
                               re.MULTILINE | re.DOTALL)
 CARD_ITEM_RE = re.compile(r"^(?:[-*+]\s+)?#?0*(\d+)\b")
 DEPENDS_ITEM_RE = re.compile(r"#?\s*0*(\d+)")
+# titles are written `51 — Add a card to a phase`, and a member line names
+# the number itself, so the title's own copy of it is dropped — the same
+# cut the chip's label makes
+LEADING_NUMBER_RE = re.compile(r"^\s*\d+\s*[—–-]\s*")
 
 STAGE_ORDER = {slug: index for index, (slug, _) in enumerate(config.STAGES)}
 CLAIM_FROM = {"backlog", "to-do"}   # the unstarted stages: leaving one claims
@@ -482,6 +486,96 @@ def append_to_section(filename: str, stage: str, heading: str, line: str,
         return False
     commit_edit(filename, stage, what)
     return True
+
+
+PHASE_JOIN_FROM = {"backlog", "to-do"}   # a card joins a phase before it starts
+PHASE_HOST = "to-do"                     # and only a phase still waiting accepts it
+
+
+def _member_entry(number: str, title: str) -> str:
+    """`33 — The landing page` — the way a person writes it.
+
+    The section is authored by hand and read by hand, so a line the board
+    adds has to be one you would have typed. Nothing parses what follows
+    the number, which is exactly why it must stay readable. The bullet is
+    left off here so the ticker can say the same thing in prose.
+    """
+    rest = LEADING_NUMBER_RE.sub("", title).strip()
+    return f"{number} — {rest}" if rest else number
+
+
+def _phase_holding(number: str) -> dict | None:
+    """The phase card that already lists this card, read off the disk.
+
+    Membership runs one direction only, so the answer is only ever found by
+    looking at every phase card — and it is looked for here rather than
+    taken from what a tab rendered, because the file may have gained the
+    card since.
+    """
+    for slug in config.STAGE_DIRS:
+        directory = config.TASKS / slug
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("*.md")):
+            task = read_task(path, slug)
+            if task["isPhase"] and number in task["cards"]:
+                return task
+    return None
+
+
+def add_to_phase(filename: str, stage: str, phase_file: str) -> dict:
+    """Append a card to the end of a phase's `## Cards` section.
+
+    The convenience path for the card you decide belongs after all: one
+    line into the phase card, and nothing at all into the card being added
+    — membership lives in one place and this does not move it. It goes out
+    through `append_to_section` like the phase log does, so it commits
+    under the same gate every other board-made write to a task file does;
+    an addition that never left one working tree is not an addition the
+    phase would run.
+
+    Only a phase in `to-do/` takes cards. One in `in-progress/` is
+    running: its branch exists and its members are being worked in the
+    order the list had when it started, so appending mid-flight is a
+    different feature with different questions.
+    """
+    if stage not in PHASE_JOIN_FROM:
+        raise ValueError("a card joins a phase from backlog/ or to-do/ only")
+    for name in (filename, phase_file):
+        if Path(name).name != name or not name.endswith(".md"):
+            raise ValueError("bad filename")
+
+    card_path = config.TASKS / stage / filename
+    phase_path = config.TASKS / PHASE_HOST / phase_file
+    if not card_path.is_file():
+        raise ValueError(f"{filename} is no longer in {stage}/ — refresh the board")
+    if not phase_path.is_file():
+        raise ValueError(f"{phase_file} is no longer in {PHASE_HOST}/ — a phase takes "
+                         "cards while it waits, not while it runs")
+
+    card = read_task(card_path, stage)
+    phase = read_task(phase_path, PHASE_HOST)
+    if not phase["isPhase"]:
+        raise ValueError(f"{phase_file} is not a phase card")
+    if card["isPhase"]:
+        raise ValueError(f"{filename} is a phase — phases do not nest")
+    if not card["number"]:
+        raise ValueError(f"{filename} has no number, and a phase lists its cards by number")
+
+    number = canonical_number(card["number"])
+    holder = _phase_holding(number)
+    if holder is not None:
+        where = ("this phase already" if holder["file"] == phase_file
+                 else f"phase {_phase_name(holder)} already")
+        raise ValueError(f"{where} lists {card['number']}")
+
+    entry = _member_entry(card["number"], card["title"])
+    if not append_to_section(phase_file, PHASE_HOST, "Cards", f"- {entry}",
+                             f"gained {number}"):
+        raise ValueError(f"{phase_file} could not be written")
+    return {"file": filename, "number": card["number"], "title": card["title"],
+            "phase": phase_file, "phaseName": _phase_name(phase),
+            "entry": entry, "line": f"- {entry}"}
 
 
 def move_task(filename: str, source: str, target: str, actor: str = "you") -> dict:
