@@ -1,6 +1,6 @@
 # 50 — The board shows a phase running, and shows it stopping
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** High — a phase that runs unattended is only trustworthy if
 its halt is impossible to miss
