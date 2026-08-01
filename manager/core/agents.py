@@ -22,8 +22,17 @@ import config
 import events
 import reports
 import state
-from taskfiles import (actor_name, append_to_task, find_stage_of, move_task,
-                       read_task, set_assignee)
+from taskfiles import (actor_name, append_to_task, collect, find_stage_of,
+                       move_task, read_task, set_assignee)
+
+# A phase runs on an integration branch of its own — phases.py owns the
+# behaviour, the name lives here because this is where a launch decides
+# what to branch from.
+PHASE_BRANCH_PREFIX = "phase/"
+
+
+def phase_branch(phase_file: str) -> str:
+    return PHASE_BRANCH_PREFIX + phase_file[:-3]
 
 
 def _report_of(record: dict, text: str | None = None) -> str:
@@ -201,7 +210,38 @@ def _fresh_branch_point() -> tuple[str | None, str | None]:
     return "origin/main", None
 
 
-def _claim_for_launch(filename: str, stage: str, takeover: bool) -> None:
+def phase_branch_point(filename: str) -> tuple[str | None, str | None]:
+    """Where a *member of a running phase* branches from: the phase's own
+    branch, not main.
+
+    That is the whole reason a phase has a branch. Related cards run one
+    after another, so card two branched from main could not see card one's
+    work while card one sat unmerged in review/ — it would conflict, or
+    quietly build the same thing twice. Branching from the phase tip is
+    what makes the list add up.
+
+    (None, None) for a card in no phase, or one whose phase has not been
+    started — then the ordinary fresh branch point applies.
+    """
+    phase = None
+    try:
+        for stage in collect()["stages"]:
+            for task in stage["tasks"]:
+                if task["file"] == filename:
+                    phase = task.get("phase")
+    except OSError:
+        return None, None
+    if not phase:
+        return None, None
+    branch = phase_branch(phase["file"])
+    exists = subprocess.run(["git", "-C", str(config.REPO), "rev-parse",
+                             "--verify", "--quiet", branch], capture_output=True)
+    if exists.returncode != 0:
+        return None, None
+    return branch, f"branched from {branch}, the phase's own branch"
+
+
+def claim_for_launch(filename: str, stage: str, takeover: bool = False) -> None:
     """One agent per task is a board-memory rule; across machines the card
     file is the only thing every board can see, so the claim is what gates
     a launch here.
@@ -238,7 +278,7 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     # Moving a card to in-progress is the commitment; only then does work start.
     _validate(filename, stage, {"in-progress"},
               "work starts from in-progress/ — move the card there first")
-    _claim_for_launch(filename, stage, takeover)
+    claim_for_launch(filename, stage, takeover)
 
     stem = filename[:-3]
     branch = f"task/{stem}"
@@ -267,7 +307,11 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
             base = _git("merge-base", "main", branch).stdout.strip()
             result = _git("worktree", "add", str(worktree), branch)
         else:
-            point, base_note = _fresh_branch_point()
+            # A phase member starts from its phase's tip; everything else
+            # from the newest main this checkout can see.
+            point, base_note = phase_branch_point(filename)
+            if point is None:
+                point, base_note = _fresh_branch_point()
             if point:
                 base = _git("rev-parse", point).stdout.strip()
                 result = _git("worktree", "add", "--no-track", "-b", branch,
