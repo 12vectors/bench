@@ -100,3 +100,10 @@ actions and already spent on most of these cards, and the card asks for
 this control to sit bottom-right. If it reads as noise on a full board,
 the fallback is to reveal it on hover like the other actions rather than
 to move it back into the pill.
+
+
+---
+
+## Work report — 2026-08-01 17:27 (Nell)
+
+The suite is still running; I'll wait for the monitor rather than poll further.
