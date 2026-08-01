@@ -24,6 +24,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import config  # noqa: E402
+import github  # noqa: E402
 import state  # noqa: E402
 import sync  # noqa: E402
 import taskfiles  # noqa: E402
@@ -388,14 +389,113 @@ class TwoBoards(unittest.TestCase):
         sync.pull_now()
         self.assertEqual(self.stage_of(self.elena), "to-do")
 
-    def test_no_origin_at_all_is_simply_nothing_to_do(self):
+    # — which remote this board rides (task 37) —
+
+    def test_a_remote_named_otherwise_syncs_exactly_the_same(self):
+        """The bug this card came from: sync hardcoded `origin`, so a
+        checkout whose remote is called anything else synced nothing at
+        all — silently, with a healthy header."""
+        self.use(self.ada)
+        git(self.ada, "remote", "rename", "origin", "upstream")
+
+        self.move(self.ada, "backlog", "to-do")
+        self.assertEqual(sync.push_now(), "ok")
+        self.assertEqual(self.origin_head(), self.head(self.ada))
+        self.assertEqual(sync.status()["state"], "ok")
+        self.assertTrue(any("upstream/main" in s for s in self.summaries()),
+                        "the ticker names the remote it actually rode")
+
+        self.use(self.elena)
+        self.assertEqual(sync.pull_now(), "pulled")
+        self.assertEqual(self.stage_of(self.elena), "to-do")
+
+    def test_the_configured_remote_wins_over_the_first_one_listed(self):
+        """BOARD_GIT_REMOTE is what PRs already honoured; sync honours the
+        same answer, so the two halves of team mode cannot disagree about
+        where this board's work goes."""
+        self.use(self.ada)
+        git(self.ada, "remote", "rename", "origin", "fork")
+        git(self.ada, "remote", "add", "backup", str(self.tmp / "elsewhere.git"))
+        self.patch(GIT_REMOTE="fork")
+
+        self.assertEqual(config.git_remotes()[0], "backup",
+                         "auto-detection alone would pick the wrong one here")
+        self.assertEqual(github.remote(), "fork")
+
+        self.move(self.ada, "backlog", "to-do")
+        self.assertEqual(sync.push_now(), "ok")
+        self.assertEqual(self.origin_head(), self.head(self.ada))
+
+    def test_no_remote_at_all_stalls_the_board_and_names_both_fixes(self):
         self.use(self.ada)
         git(self.ada, "remote", "remove", "origin")
         self.move(self.ada, "backlog", "to-do")
 
-        self.assertEqual(sync.push_now(), "no-origin")
-        self.assertEqual(sync.pull_now(), "no-origin")
+        self.assertEqual(sync.push_now(), "no-remote")
+        self.assertEqual(sync.pull_now(), "no-remote")
+
+        self.assertEqual(sync.status()["state"], "stalled")
+        stalled = [s for s in self.summaries() if "no remote to sync through" in s]
+        self.assertEqual(len(stalled), 1, "narrated once, not once per beat")
+        self.assertIn("git remote add", stalled[0])
+        self.assertIn("BOARD_GIT_REMOTE", stalled[0])
+        self.assertIn(stalled[0], sync.status()["detail"])
+
+    def test_the_stall_clears_when_a_remote_appears(self):
+        self.use(self.ada)
+        git(self.ada, "remote", "remove", "origin")
+        self.move(self.ada, "backlog", "to-do")
+        self.assertEqual(sync.push_now(), "no-remote")
+
+        git(self.ada, "remote", "add", "origin", str(self.origin))
+
+        # never fetched from it, so this is the full converge: fetch, then push
+        self.assertEqual(sync.push_now(), "up-to-date")
+        self.assertEqual(sync.status()["state"], "ok")
+        self.assertTrue(any("converging again" in s for s in self.summaries()),
+                        "the ticker closes the loop, as the offline path does")
+        self.assertEqual(self.origin_head(), self.head(self.ada))
+
+    def test_a_named_remote_that_does_not_exist_stalls_naming_it(self):
+        """A typo in BOARD_GIT_REMOTE is likelier than no remote at all, and
+        quietly using origin instead would hide it."""
+        self.use(self.ada)
+        self.patch(GIT_REMOTE="typo")
+        before = self.origin_head()
+        self.move(self.ada, "backlog", "to-do")
+
+        self.assertEqual(sync.push_now(), "no-remote")
+        self.assertEqual(self.origin_head(), before, "origin was not used behind our back")
+
+        self.assertEqual(sync.status()["state"], "stalled")
+        stalled = [s for s in self.summaries() if "BOARD_GIT_REMOTE names 'typo'" in s]
+        self.assertEqual(len(stalled), 1)
+        self.assertIn("origin", stalled[0], "it says which remotes this checkout has")
+
+    def test_the_missing_remote_is_on_the_header_from_startup(self):
+        """Not on the second beat: the condition is true before the first
+        converge, and a board that never started syncing must not render
+        like one that is."""
+        self.use(self.ada)
+        git(self.ada, "remote", "remove", "origin")
+
+        sync.install()
+
+        self.assertEqual(sync.status()["state"], "stalled")
+        self.assertEqual(len([s for s in self.summaries()
+                              if "no remote to sync through" in s]), 1)
+
+    def test_the_gate_off_says_nothing_about_a_missing_remote(self):
+        self.patch(SYNC=False)
+        self.use(self.ada)
+        git(self.ada, "remote", "remove", "origin")
+
+        sync.install()
+        self.assertEqual(sync.push_now(), "off")
+        self.assertEqual(sync.pull_now(), "off")
+
         self.assertEqual(self.summaries(), [])
+        self.assertEqual(sync.status(), {"enabled": False, "state": "off", "detail": ""})
 
     # — never pulling into a checkout that is not ready —
 
@@ -544,6 +644,41 @@ class TheStrayCommitTest(unittest.TestCase):
     def test_a_commit_merely_mentioning_the_board_is_still_stray(self):
         self.assertEqual(sync._stray(["abc fix the board: really"]),
                          "abc fix the board: really")
+
+
+class TheRemoteResolver(unittest.TestCase):
+    """One answer to "which remote is this board's", in config — the module
+    that already owns the setting. Resolved on demand: config is imported
+    everywhere and must not shell out at import."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="bench-remote-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(self.tmp)],
+                       check=True, capture_output=True)
+        for attr in ("REPO", "GIT_REMOTE"):
+            self.addCleanup(setattr, config, attr, getattr(config, attr))
+        config.REPO, config.GIT_REMOTE = self.tmp, ""
+
+    def test_a_checkout_with_no_remotes_resolves_to_nothing(self):
+        self.assertEqual(config.git_remotes(), [])
+        self.assertIsNone(config.git_remote())
+
+    def test_the_first_remote_when_the_setting_is_empty(self):
+        git(self.tmp, "remote", "add", "upstream", "https://example.invalid/x.git")
+        self.assertEqual(config.git_remotes(), ["upstream"])
+        self.assertEqual(config.git_remote(), "upstream")
+
+    def test_the_setting_wins_and_is_taken_exactly_as_named(self):
+        git(self.tmp, "remote", "add", "origin", "https://example.invalid/x.git")
+        config.GIT_REMOTE = "fork"
+        self.assertEqual(config.git_remote(), "fork",
+                         "a configured name is never swapped for another")
+
+    def test_somewhere_that_is_not_a_repo_answers_without_raising(self):
+        config.REPO = self.tmp / "not-a-checkout"
+        self.assertEqual(config.git_remotes(), [])
+        self.assertIsNone(config.git_remote())
 
 
 class TheSyncChip(unittest.TestCase):
