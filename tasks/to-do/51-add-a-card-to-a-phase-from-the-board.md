@@ -1,6 +1,7 @@
 # 51 — Add a card to a phase without opening the file
 
-**Status:** Backlog
+**Status:** To Do
+**Assignee:** istos
 **Priority:** Low — the convenience path; phase cards mostly arrive with
 their lists already written
 **Type:** Feature
