@@ -104,3 +104,35 @@ Worth checking while building: the header is getting crowded. Agents
 chip, sync chip, phase chip, theme, refresh. If they collide, the phase
 chip is the one that can fold into the agents chip — both answer "what
 is happening without me" — rather than shrinking the ones already there.
+
+
+---
+
+## Work report — 2026-08-01 10:33 (Piper)
+
+**WORK REPORT: the phase's three interface pieces are built, committed on `task/50-the-board-shows-a-phase-running` as `c49f5bd`, with the full suite green (799 tests, `python3 -m unittest discover -s tests`).**
+
+Nothing is blocked and nothing was left out of the card's scope. The out-of-scope neighbours (board filtering, a Focus view for a phase, changes to what the runner decides) were left alone.
+
+## What a reviewer should look at first
+
+- `manager/core/phases.py` — `run_state()` and `stop_phase()`. Everything else follows from those two.
+- Two judgment calls are described under "Decisions worth your eye" below; both are the kind you may want to overrule.
+
+## What changed
+
+- **`manager/core/phases.py`.** A `stopped — held by <name>` entry joins `halted` and `run started` in the phase log, and one reader — `run_state(entries)` — answers where a phase stands from the last line that says anything: `running`, `halted`, `stopped` or `idle`. `_halt_reason` is now a thin wrapper over it, so the log's existing readers are unchanged. `stop_phase(file, stage)` writes that line (which is what makes the next beat stand down), holds the member agent the phase has in flight, and touches no branch, merge or worktree. The snapshot the API carries grew `running`, `stopped`, `haltedAt`, `haltedWhy`, `title` and `number`, so the page infers none of them. A halt now also broadcasts a toast, and `_merge_member` narrates the member coming up green as well as the merge itself.
+- **`manager/core/httpd.py`.** A `/api/phase/stop` route.
+- **`manager/core/board.html`.** `▸ run phase` (`▸ take over` on a card someone else holds) on an `in-progress/` phase card, in the slot `▸ start work` occupies, and `‖ hold` in its place while the phase runs — both on the existing arm-then-fire action machine. A `#phasechips` container in the header renders one chip per phase in flight: breathing `--accent` with the phase's name, its progress and the card in flight (`⟶ Ship the site · 2/5 · on #33`), or `--alarm` and holding when halted (`⟶ Ship the site · halted at #35 — it is not ready`). With nothing in flight the container is hidden, so the header is byte-for-byte what it was. The card sheet lists a phase's members in run order with each one's stage, each row opening that card. Phase events got the `⟶` glyph and joined the Moves filter.
+- **`AGENTS.md`.** A "Watching one run, and watching it stop" section under the phase runner.
+- **`tests/test_phase_watch.py`** (new, 59 tests) and one assertion relaxed in `tests/test_boards_sync.py` — it pinned the Moves filter set literally, and now checks that `sync` is in it rather than which other kinds have joined.
+
+## Decisions worth your eye
+
+1. **`‖ hold` stops the member agent in flight, not just the beat.** "Hold" means "stop work" everywhere else on this board, and a phase that reported itself stopped while its agent kept burning tokens would be lying. The cost: the held member's card is then a run that ended without reaching `review/`, so running the phase again will halt on it until a person settles that card. That is the same reading task 49 already gives a run lost to a restart, and it is stated in the docstring.
+2. **A halted phase can also be held.** The card asks for the alarm to hold "until the phase is resumed or stopped", so a halted phase offers both `▸ run phase` and `‖ hold`; holding settles the alarm without walking the card backwards. That is the one case where a card carries two actions and the relevance check gives way — `◔ still true?` is now only added when the slot has room.
+3. **Two phases get two chips.** The runner already advances every in-progress phase card, so the chip renders all of them, halted ones first. Nothing refuses a second phase.
+
+## To know
+
+The header chip reads the phase runner's snapshot cache, which is refreshed by the beat (`BOARD_PHASE_INTERVAL`, 30s) and immediately by starting or holding a phase. So after a board restart a running or halted phase's chip reappears within one beat rather than on first paint. Making the runner take a pass at startup would close that, but it changes what the runner does, which this card put out of scope.
