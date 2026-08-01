@@ -976,6 +976,14 @@ function renderBoard() {
   renderDrawer();
 }
 
+/* A phase is named by its card, so the chip says what the card says —
+   minus the number it usually opens with (the chip's own tooltip carries
+   that), and clipped to a chip's width. The whole name is one hover away. */
+function phaseLabel(phase) {
+  const name = phase.title ? phase.title.replace(/^\s*\d+\s*[—–-]\s*/, '') : phase.file;
+  return name.length > 22 ? name.slice(0, 21) + '…' : name;
+}
+
 function cardFor(task) {
   const el = document.createElement('article');
   const agent = agentOnTask(task.file);
@@ -1026,6 +1034,10 @@ function cardFor(task) {
     '<span class="spacer"></span>',
     high ? '<span class="high">HIGH</span>' : '',
     task.statusMismatch ? `<span class="pill drift" title="File says ${esc(task.declaredStatus)}">drift</span>` : '',
+    // a phase's list that does not resolve is an authoring mistake, and it
+    // is flagged in the same breath as status drift rather than swallowed
+    (task.phaseDrift || []).length
+      ? `<span class="pill drift" title="${esc(task.phaseDrift.join(' · '))}">phase drift</span>` : '',
     `<span class="pill status${completing ? ' breathing' : ''}" style="background:${pill.bg};color:${pill.tint}"` +
       `${pill.title ? ` title="${esc(pill.title)}"` : ''}>${pill.text}</span>`,
   ];
@@ -1145,6 +1157,14 @@ function cardFor(task) {
   const detail = prState && prState.detail ? prState.detail : 'open the PR';
   const hasBranch = (S.state.branches || []).includes(task.file.replace(/\.md$/, ''));
   const chips = [];
+  // where this card sits in its phase — derived from the phase card's own
+  // list, and a destination like the rest of the row: it opens that card
+  if (task.phase) {
+    chips.push({ label: `${phaseLabel(task.phase)} ${task.phase.index}/${task.phase.total}`,
+      pre: '⟶', cls: '', phase: task.phase.file,
+      title: `Card ${task.phase.index} of ${task.phase.total} in phase `
+           + `${task.phase.number ? '#' + task.phase.number + ' — ' : ''}${task.phase.title}` });
+  }
   if (prState && prState.ci) {
     chips.push({ label: 'CI', glyph: { pass: '✓', fail: '✕', running: '◌' }[prState.ci],
       cls: { pass: 'ok', fail: 'bad', running: 'accent' }[prState.ci], title: detail });
@@ -1208,10 +1228,12 @@ function cardFor(task) {
   const chipRow = chips.length
     ? '<div class="chiprow">' + chips.map(c => {
         const g = c.glyph ? `<span class="g2">${c.glyph}</span>` : '';
-        if (c.href) return `<a class="chip2 ${c.cls}" href="${esc(c.href)}" target="_blank" rel="noopener" title="${esc(c.title)}">${esc(c.label)}${g}</a>`;
-        if (c.act) return `<button class="chip2 ${c.cls}" data-drive="${c.act}" title="${esc(c.title)}">${esc(c.label)}${g}</button>`;
+        const p = c.pre ? `<span class="g2">${c.pre}</span>` : '';
+        if (c.href) return `<a class="chip2 ${c.cls}" href="${esc(c.href)}" target="_blank" rel="noopener" title="${esc(c.title)}">${p}${esc(c.label)}${g}</a>`;
+        if (c.act) return `<button class="chip2 ${c.cls}" data-drive="${c.act}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
+        if (c.phase) return `<button class="chip2 ${c.cls}" data-phase="${esc(c.phase)}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.cmd) return `<button class="chip2 ${c.cls}" data-cmd="${esc(c.cmd)}" title="${esc(c.title)}">${actLabel(c.label, 'run it?', 'running…')}${g}</button>`;
-        return `<span class="chip2 ${c.cls}" title="${esc(c.title)}">${esc(c.label)}${g}</span>`;
+        return `<span class="chip2 ${c.cls}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</span>`;
       }).join('') + '</div>'
     : '';
 
@@ -1224,6 +1246,12 @@ function cardFor(task) {
     chipRow + driveWell + liveLine;
   el.querySelectorAll('a.chip2').forEach(a =>
     a.addEventListener('click', (e) => e.stopPropagation()));
+  el.querySelectorAll('[data-phase]').forEach(btn =>
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const phase = findTask(btn.dataset.phase);
+      if (phase) showDetail(phase);
+    }));
   el.querySelectorAll('[data-drive]').forEach(btn =>
     btn.addEventListener('click', (e) => {
       e.stopPropagation();

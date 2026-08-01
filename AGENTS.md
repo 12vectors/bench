@@ -737,7 +737,7 @@ Every header field, and who writes it:
 | --- | --- | --- | --- |
 | **Status** | yes | `Backlog` · `To Do` · `In Progress` · `Review` · `Done` (`Archived` for a card in `tasks/archive/`) | you, or the board on a move |
 | **Priority** | yes | `High` · `Medium` · `Low`, optionally followed by a short justification | you |
-| **Type** | no | `Discovery` · `Bug` · `Feature` · `Refactor` · `Chore` | you |
+| **Type** | no | `Discovery` · `Bug` · `Feature` · `Refactor` · `Chore` · `Phase` | you |
 | **Assignee** | no | a name, taken from `git config user.name` | the board on a claiming move, or you by hand |
 | **Depends on** | no | task numbers or external preconditions, comma-separated | you |
 | **PR** | no | the pull request url | the board when it opens one |
@@ -751,12 +751,49 @@ An optional **Type** line can record what kind of work the task is, when that
 isn't obvious from the title:
 
 ```markdown
-**Type:** Discovery | Bug | Feature | Refactor | Chore
+**Type:** Discovery | Bug | Feature | Refactor | Chore | Phase
 ```
 
 Type is orthogonal to status. A discovery task — research, scoping, spiking an
 approach — moves through the same five stages as everything else; "discovery"
 describes the work, not where it sits on the board.
+
+### A phase is a card that lists its cards
+
+A **phase** is a group of related tasks meant to run one after another. It is
+not a directory, a stage or a registry — it is a task card like any other,
+marked `**Type:** Phase`, with a `## Cards` section naming its members in the
+order they run:
+
+```markdown
+## Cards
+
+- 31 — Stand up site/ and its build
+- 32 — Serve it from a Cloudflare Worker
+- 33 — The landing page
+```
+
+The name of the phase is the card itself, its number and title, so nothing is
+named twice. Document order is run order. The number is what is parsed — `31`,
+`#31` and `031` are the same card — and whatever follows it is for the reader,
+never matched against anything.
+
+Membership runs one direction only: the phase card lists its members, and a
+member card says nothing about phases. So membership cannot disagree with
+itself, there is exactly one place to edit when it changes, and a member's
+phase and position are *derived* — a `⟶ <phase> 3/5` chip in the card's footer
+row, beside `CI` and `PR ↗`, opening the phase card.
+
+What the list does not resolve is flagged on the card, in the same spirit as
+`status drift`: a number no card has, a card two phase cards both list (both
+are flagged), a card one phase lists twice, a line naming no number, and a
+phase listed by a phase — phases do not nest. Each is an authoring mistake
+that would otherwise surface later as a runner behaving oddly.
+
+`**Depends on:**` is the other half, and it guards rather than orders: the
+list says what runs next, a member's dependencies say whether it *may*. The
+board parses the numbers out of the line and shows them; acting on them
+belongs to whatever runs a phase.
 
 An optional **Assignee** line records who holds the card:
 
@@ -777,7 +814,9 @@ prose asides:
 **Depends on:** 03, 05
 ```
 
-The board does not enforce it; it informs whoever picks the next card.
+The board parses the task numbers out of the line (prose preconditions are
+left for the reader) and nothing enforces them yet: they inform whoever picks
+the next card, and guard what a phase may start.
 
 The rest of the file is freeform — description, research findings, approach,
 open questions, whatever is relevant to the current stage.
