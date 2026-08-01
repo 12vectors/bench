@@ -77,3 +77,31 @@ suspicion, the clobbered pin, the misnamed file) — second field
 report, second time the reporter's analysis survives into the card
 nearly verbatim. The probe/server asymmetry (`allow_reuse_address` on
 one side only) is the one-line root cause.
+
+
+---
+
+## Work report — 2026-08-01 07:35 (Juno)
+
+The work is committed on `task/28-a-pinned-port-stays-pinned` and the full suite passes (636 tests, `python3 -m unittest discover -s tests`, the project's whole definition of done).
+
+## Closing report
+
+**Committed and verified: a restart no longer hops off its pinned port, and a hop that is genuinely warranted now says what it did to `manager/local/.env`.** One commit, `6829136`, touching `start.sh`, `AGENTS.md`, `tests/test_pinned_port.py` (new) and one anchor line in `tests/test_install_first_boot.py`.
+
+What changed:
+
+- **The root cause.** `start.sh`'s `is_free()` probe now sets `SO_REUSEADDR` before binding, matching the board's own `ThreadingHTTPServer` (`manager/core/board.py:51`, which binds `127.0.0.1` with reuse-address on). A socket the just-stopped board left in `TIME_WAIT` no longer reads as occupied, so the reported 26074 → 26075 hop cannot happen.
+- **The belt.** A port that still reads busy gets a brief wait before the walk — five seconds by default, `BOARD_PORT_WAIT` in start.sh's environment overrides it — re-asking `is_our_board` on each beat, so a board that finishes coming up during the wait is opened rather than duplicated. `is_our_board` still short-circuits first, before any probe.
+- **The message.** The hop still persists the new port (hooks and agents read `BOARD_PORT` and must reach the live board), but now prints three lines: that the port is held and which port it took, `Rewriting BOARD_PORT in manager/local/.env: <old> → <new>`, and `To reclaim <old>: free it, then set BOARD_PORT=<old> in manager/local/.env.` The old text misnamed the file as `manager/.env`; so did `AGENTS.md`, and both are fixed.
+- A non-numeric `BOARD_PORT_WAIT` falls back to the default instead of killing the start on `set -e`.
+
+How it was verified — `tests/test_pinned_port.py` runs the real `start.sh` as a subprocess against a scratch host whose `board.py` is a stub recording the port it was launched with, over real sockets: a genuine `TIME_WAIT` remnant (produced by closing the server end of an actual connection first) leaves the pin and the `.env` file untouched; a listener that lets go 1.5s in keeps the pin; a listener that does not is waited on, then walked past, with the `.env` rewritten and the rest of its keys and comments intact; our own board answering short-circuits to "already running" without launching the board or touching `.env`. Each `TIME_WAIT` test first asserts that a plain bind *does* refuse that port and skips otherwise, so it can never pass on a platform where the bug does not reproduce — that assertion is what pins old behaviour against new.
+
+For a reviewer, in order:
+
+- `start.sh:44-58` (the probe) and `start.sh:78-92` (the wait loop) — the whole behaviour change.
+- `tests/test_pinned_port.py:130-146` — `leave_time_wait` / `plain_bind_refuses`, the pair that makes the regression test real rather than vacuous.
+- `tests/test_install_first_boot.py:374` — the pre-existing test that extracts the persist snippet out of `start.sh` was anchored on the old `"Persisting BOARD_PORT"` wording; it is now anchored on the heredoc invocation instead. Same assertions, no coverage lost.
+
+One thing to know, not to act on: `BOARD_PORT_WAIT` is read from the environment only, not from `manager/local/.env`, so it is deliberately absent from `manager/core/.env.example` — adding it there would advertise a `.env` key that nothing reads (the settings reference page on the site is generated from that file). It is documented in the `AGENTS.md` "Seeing the board" section as an environment variable.
