@@ -1,0 +1,146 @@
+# 49 — A phase runs itself, on a branch of its own
+
+**Status:** Backlog
+**Priority:** High — the point of the whole thing: work that continues
+without you until something is genuinely wrong
+**Type:** Feature
+**Depends on:** 48 — the board has to know what a phase is first
+
+Give a phase its own integration branch and work the list into it: each
+card branched from the phase's tip, run headless, merged back when its
+checks are green, and the next one started. One PR at the end, into
+`main`, for a human. The runner is a beat on the board, not an agent —
+everything it decides is already structured state, and an agent paid to
+poll would be the wrong tool at the wrong price.
+
+## Context
+
+The problem this exists to solve, precisely:
+
+- `_fresh_branch_point()` (`manager/core/agents.py:167`) branches every
+  new task worktree from `origin/main`. For *related* tasks — the whole
+  premise of a phase — card two branched from main cannot see card one's
+  work while card one sits unmerged in `review/`. It will conflict, or
+  quietly build the same thing twice.
+- Gating on a merge into `main` would fix the branch point and destroy
+  the point: `main` is merged by a person, so the phase would stall on
+  every card.
+
+So the phase gets **its own branch**, and the human gate moves from every
+card to the phase boundary. The promise bench makes — *nothing merges
+without you* — is about `main`, and it survives intact: the board merges
+into a branch it created, inside a scope you opened, and `main` still
+waits for your click.
+
+What already exists and should be used rather than rebuilt:
+
+- The board reacts to state without an agent: a card entering `review/`
+  opens a PR "mechanically, by the board", and the PR poller is a plain
+  thread checking reviews, CI and mergeable state every 60s.
+- `github.public_state()` (`:378`) exposes `{verdict, ci, copilot,
+  conflicts, url}` per card — the advance condition is readable, not
+  judged.
+- `watch.py` answers *am I the actor?*, and `AGENTS.md` says every future
+  automation hung off a stage transition inherits it.
+- Every failure mode a card can have is already a state it wears:
+  `NOT READY`, `run failed`, a clean exit that committed nothing.
+- `complete_task()` (`manager/core/github.py:387`) is the model for a
+  careful multi-step git operation that narrates and aborts cleanly.
+
+**Affected areas:** a new `manager/core/phases.py` — right of `agents` in
+the module map, since it needs `taskfiles`, `github` and `agents` — plus
+the branch-point change in `agents.py` and a beat wired in `board.py`.
+
+## What to build
+
+- **A phase branch.** Starting a phase cuts `phase/<task-stem>` from the
+  newest `origin/main` it can see, by the same rule and the same timeout
+  a task branch uses.
+- **Members branch from the phase tip**, not from main. This is the one
+  change inside `agents.py`: where a launch is part of a phase, the
+  branch point is the phase branch rather than `origin/main`, and the
+  ticker names it as it already names an unusual branch point.
+- **A stateless beat.** On each pass, recompute: which members are
+  finished, which is first unfinished, what does it need. Hold no
+  registry — a board restart then resumes a phase by looking, and the
+  same logic answers "what now?" whether the last event was a launch, a
+  merge or a crash.
+- **Advance on green.** A member is finished when its card is in
+  `review/` and its CI has passed. Then merge its branch into the phase
+  branch — additively, never rebasing, never force-pushing — and start
+  the next member whose `Depends on` are all finished.
+- **Halt, never skip.** The five conditions, each already a visible state
+  on the card: `NOT READY`; a non-zero exit; a clean exit with no
+  commits; CI red; a merge into the phase branch that is not mechanical.
+  A phase that steps over a failed card builds the rest on a foundation
+  that never landed.
+- **Keep the phase branch fresh.** Merge `main` into it on the beat,
+  additively, so a phase that runs for hours does not drift into one
+  enormous conflict at the end. A conflict there halts the phase like any
+  other.
+- **Finish into a PR.** When every member is finished, push the phase
+  branch, open one PR into `main` with the member list as its body, write
+  the `**PR:**` line into the phase card, and move the phase card to
+  `review/`. From there the existing apparatus applies unchanged — CI
+  chip, `◔ review PR`, `⚑ copilot`, and drag-to-`done/` for **merge &
+  clean up**.
+- **One board runs it.** The actor rule decides; a replica renders the
+  phase and advances nothing.
+
+**Out of scope** — tempting neighbours left alone:
+
+- Running members in parallel where dependencies allow. Sequential
+  first; parallelism is a second card once the sequencing is trusted.
+- Any UI. The header chip, the run and hold actions and the narration
+  are card 50 — this card is reachable through the API and the ticker.
+- Auto-merging anything into `main`, under any condition.
+- Nested phases, and a member belonging to two phases at once (48 flags
+  that as drift; here it simply must not run twice).
+
+## Acceptance
+
+- [ ] Given a phase whose members are unstarted, when it is run, then
+      `phase/<stem>` exists at the newest `origin/main`, and the first
+      member's worktree is branched from it.
+- [ ] Given member one is in `review/` with CI green, when the beat runs,
+      then its branch is merged into the phase branch and member two is
+      launched from the new tip — and member two's worktree contains
+      member one's work.
+- [ ] Given a member whose `Depends on` names an unfinished card, it is
+      not launched even when the list reaches it.
+- [ ] Given a member that exits `NOT READY`, the phase halts, the card
+      walks back as it does today, and no further member starts.
+- [ ] Given a member whose run fails, or exits clean with no commits, or
+      whose CI is red, the phase halts in each case.
+- [ ] When every member is finished, one PR is opened from the phase
+      branch into `main`, the phase card carries its `**PR:**` line, and
+      the card is in `review/`.
+- [ ] Restarting the board mid-phase resumes it without repeating a
+      launch or a merge.
+- [ ] With `BOARD_SYNC` on, a second board shows the phase advancing and
+      launches nothing itself.
+- [ ] Edge case: a phase whose list is empty goes straight to `review/`
+      with nothing to merge, or refuses to start — either, but not a
+      branch left behind and a card stuck in `in-progress/`.
+- [ ] Edge case: a member card moved by hand while the phase is running
+      does not cause a second launch on the same task.
+
+## Notes
+
+**`AGENTS.md` will need a sentence it does not have.** "Merging remains
+yours — the board never merges" is quoted as an absolute. After this it
+needs to say what it always meant: the board never merges into `main`. A
+phase branch is the board's own, and merging into it is bookkeeping in
+the same family as committing a move.
+
+A lever worth considering once this works: run `◔ review PR` on each
+member and require `APPROVE` as well as CI green, with one automatic
+`↻ act on PR` round before halting. That would put an agent's review
+inside the phase and keep the human's for the boundary — more autonomy,
+more tokens, and a bigger change than this card should carry.
+
+**Risks** — this is the third place in the codebase that merges git
+branches, after `complete_task` and `↻ act on PR`'s conflict resolution.
+It must behave like both: abort cleanly, leave no half-merged branch, and
+narrate every step. A phase branch that ends up in a broken state is
+worse than a phase that refuses to start.
