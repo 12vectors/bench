@@ -1,6 +1,7 @@
 # 37 — Sync resolves its remote like the rest of the board, and says so when it cannot
 
-**Status:** Backlog
+**Status:** In Progress
+**Assignee:** istos
 **Priority:** Medium — team mode's failure is currently indistinguishable
 from team mode working
 **Type:** Bug
