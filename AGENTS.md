@@ -879,8 +879,51 @@ the existing apparatus applies unchanged: the CI chip, **◔ review PR**,
 **Assignee** is where "who runs it" is written down — the same claim that
 gates starting work. A replica renders the phase and advances nothing.
 
-Members run one at a time. Running independent members in parallel, and
-any UI beyond the API and the ticker, are separate cards.
+Members run one at a time. Running independent members in parallel is a
+separate card.
+
+### Watching one run, and watching it stop
+
+A phase card is a card, so the PR chip, CI, the review actions and the
+merge-and-clean-up sheet all reach it by inheritance. Three things do not,
+and they are the phase's own interface:
+
+- **▸ run phase**, on an `in-progress/` phase card, in the slot **▸ start
+  work** occupies on an ordinary one — arming and firing like every other
+  launch, and reading **▸ take over** on a card someone else holds. Moving
+  the card to `in-progress/` stays the commitment; this is the second half
+  of it. **‖ hold** replaces it while the phase runs and means what it
+  means everywhere else: the run stops and the member agent in flight
+  stops with it, while the phase branch, every card already merged into it
+  and every worktree are left exactly as they were. A hold is not an undo,
+  and a held member's card keeps its own work — so running the phase again
+  may halt on it, which is the honest reading of a run that ended without
+  reaching `review/`.
+- **A chip in the header while a phase runs**, beside the agents chip and
+  present on the same terms as the sync chip — only when there is
+  something to say. It breathes in `--accent` and names the phase, how far
+  it has got and the card in flight: `⟶ Ship the site · 2/5 · on #33`.
+  Progress is what has landed on the phase branch, which is a different
+  fact from which card is running, so both are there. Two phases could in
+  principle run on one board, and two phases get two chips — a chip that
+  silently showed one of them would be worse than none.
+- **The halt, in `--alarm`, holding.** `⟶ Ship the site · halted at #35 —
+  it is not ready` stays in the header until the phase is run again or
+  held, rather than scrolling away; a toast fires with it, because a halt
+  is rare and actionable; and the ticker keeps the line. The member card
+  wears its own failure independently — a phase you started and stopped
+  watching is only trustworthy if its halt is impossible to miss, so it is
+  told three times at three altitudes, exactly as a dead run is.
+
+Every advance is narrated in the ticker as it happens: the member that
+came up green, the merge into the phase branch, the member starting next.
+And the phase card's sheet lists its members in run order with each one's
+stage — and, while a phase is in flight, the runner's own reading of each
+(merged in, working, checking, stopped here) — so the card answers "where
+is this up to" without a hunt across five columns.
+
+Filtering the board to a phase's cards, and a Focus view for a phase, are
+separate cards.
 
 An optional **Assignee** line records who holds the card:
 

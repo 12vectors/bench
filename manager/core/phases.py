@@ -64,6 +64,7 @@ LOG_LINE_RE = re.compile(r"^-\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+·\s+(.+?)\s*$
 STARTED_RE = re.compile(r"^(\d+) started\b")
 HALTED_RE = re.compile(r"^halted(?: at (\d+))? — (.*)$")
 RUN_RE = re.compile(r"^run started\b")
+STOPPED_RE = re.compile(r"^stopped — (.*)$")
 
 # What the last computed pass saw, for the API to render without paying for
 # a git walk on every request. A display cache, not a decision: nothing here
@@ -161,17 +162,37 @@ def _started(entries: list[str]) -> set[str]:
             (STARTED_RE.match(e) for e in _this_run(entries)) if match}
 
 
-def _halt_reason(entries: list[str]) -> str | None:
-    """The halt still in force, or None. A `run started` line after a halt
-    clears it — that is what running the phase again means."""
+def run_state(entries: list[str]) -> dict:
+    """Where the phase stands, read off its own log — the whole of what a
+    restarted board, and the chip in the header, know about a run.
+
+    Four answers, and the last line that says one of them wins: `running`
+    (a run was started and nothing has ended it), `halted` (with the reason
+    and the member it happened at), `stopped` (a person held it) and `idle`
+    (a card whose phase has never been run). Running it again is what
+    clears a halt or a stop, because that line is the person's decision.
+    """
     for entry in reversed(entries):
         halted = HALTED_RE.match(entry)
         if halted:
-            return (f"{halted.group(1)}: {halted.group(2)}" if halted.group(1)
-                    else halted.group(2))
+            return {"state": "halted", "reason": halted.group(2),
+                    "at": halted.group(1)}
+        stopped = STOPPED_RE.match(entry)
+        if stopped:
+            return {"state": "stopped", "reason": stopped.group(1), "at": None}
         if RUN_RE.match(entry):
-            return None
-    return None
+            return {"state": "running", "reason": "", "at": None}
+    return {"state": "idle", "reason": "", "at": None}
+
+
+def _halt_reason(entries: list[str]) -> str | None:
+    """The halt still in force, as one line — the member it happened at and
+    why, which is what the log's reader and the ticker both want."""
+    where = run_state(entries)
+    if where["state"] != "halted":
+        return None
+    return (f"{where['at']}: {where['reason']}" if where["at"]
+            else where["reason"])
 
 
 # ── reading the board ──────────────────────────────────────────────────
@@ -266,6 +287,7 @@ def _snapshot(phase: dict, by_file: dict[str, dict]) -> dict:
     """The whole phase, recomputed. Nothing is remembered between passes."""
     branch = agents.phase_branch(phase["file"])
     entries = log_entries(phase["body"])
+    where = run_state(entries)
     started = _started(entries)
     members = []
     for listed in phase["members"]:
@@ -280,8 +302,20 @@ def _snapshot(phase: dict, by_file: dict[str, dict]) -> dict:
                         "title": task["title"], "stage": task["stage"],
                         "state": member_state, "why": why,
                         "dependsOn": task["dependsOn"]})
+    halted = where["state"] == "halted"
     return {"file": phase["file"], "branch": branch, "stage": phase["stage"],
-            "members": members, "halted": _halt_reason(entries),
+            "title": phase["title"], "number": phase["number"],
+            "members": members,
+            # the halt as one line for the log's reader, and in its parts for
+            # anything that renders it — the same reading, said twice
+            "halted": _halt_reason(entries),
+            "haltedAt": where["at"] if halted else None,
+            "haltedWhy": where["reason"] if halted else None,
+            # is a run in force? The log answers it, so a restarted board and
+            # the chip in the header read the same thing
+            "running": where["state"] == "running",
+            "stopped": where["state"] == "stopped",
+            "stoppedBy": where["reason"] if where["state"] == "stopped" else None,
             # the branch is the whole of "this phase has been started"
             "started": _branch_exists(branch)}
 
@@ -428,6 +462,11 @@ def _launch(phase: dict, member: dict) -> None:
 def _merge_member(phase: dict, member: dict) -> None:
     branch = f"task/{member['file'][:-3]}"
     phase_branch = agents.phase_branch(phase["file"])
+    # every advance is narrated, and finishing is its own half of one: what
+    # the phase judged green is a different fact from what it then merged,
+    # and a phase nobody can reconstruct afterwards is a phase nobody trusts
+    _say(phase["file"], f"{phase['file']}: {member['number']} — "
+                        f"{member['title']} is green")
     if _branch_exists(branch):
         _merge_into_phase(phase, branch, f"{member['number']}'s branch", member)
         _push_phase(phase)
@@ -449,11 +488,17 @@ def _finish(phase: dict) -> None:
 
 
 def _halt(phase: dict, member: dict | None, reason: str) -> None:
-    """Stop, and say so once. The log holds the halt from here on, so the
-    next pass reads it rather than saying the same thing again."""
+    """Stop, and say so once — at three altitudes, like every other outcome
+    a person must not miss. The log holds the halt from here on (so the next
+    pass reads it rather than saying the same thing again), the ticker keeps
+    the line, and a toast says it to whoever is looking: a halt is rare,
+    actionable, and the whole argument for starting a phase and walking away.
+    """
     at = f" at {member['number']}" if member and member["number"] else ""
     _write_log(phase, f"halted{at} — {reason}")   # best effort: never re-raise
     _say(phase["file"], f"{phase['file']} halted{at} — {reason}")
+    state.broadcast({"type": "toast", "error": True,
+                     "message": f"phase {phase['file']} halted{at} — {reason}"})
 
 
 def _do_pass(phase: dict, snapshot: dict, by_number: dict[str, dict]) -> list[str]:
@@ -490,7 +535,7 @@ def advance(phase: dict, by_file: dict[str, dict],
     """
     snapshot = _snapshot(phase, by_file)
     SNAPSHOTS[phase["file"]] = snapshot
-    if snapshot["halted"] or not snapshot["started"] or not _mine(phase):
+    if not snapshot["running"] or not snapshot["started"] or not _mine(phase):
         return snapshot
     waiting_on: list[str] = []
     try:
@@ -541,30 +586,33 @@ def beat() -> None:
             pass
 
 
-# ── starting one ───────────────────────────────────────────────────────
+# ── starting one, and stopping it ──────────────────────────────────────
+
+
+def _phase_card(filename: str, stage: str) -> dict:
+    """The phase card an action names, or the reason it is not one."""
+    if Path(filename).name != filename or not filename.endswith(".md"):
+        raise ValueError("bad filename")
+    if stage != "in-progress":
+        raise ValueError("a phase runs from in-progress/ — move the card there first")
+    if not (config.TASKS / stage / filename).is_file():
+        raise ValueError(f"{filename} is not in {stage}/ — refresh the board")
+    phase = _cards()[0].get(filename)
+    if phase is None or not phase["isPhase"]:
+        raise ValueError(f"{filename} is not a phase — a phase card is "
+                         f"**Type:** Phase with a ## Cards section")
+    return phase
 
 
 def start_phase(filename: str, stage: str, takeover: bool = False) -> dict:
-    """Run a phase — the first time, or again after a halt.
+    """Run a phase — the first time, or again after a halt or a hold.
 
     Cutting `phase/<stem>` from the newest main is the whole of "starting":
     everything after it is the beat looking at what is there. Running a
     halted phase again is the person's decision that cleared the halt, so
     it appends the line that clears it and takes one pass immediately.
     """
-    if Path(filename).name != filename or not filename.endswith(".md"):
-        raise ValueError("bad filename")
-    if stage != "in-progress":
-        raise ValueError("a phase runs from in-progress/ — move the card there first")
-    path = config.TASKS / stage / filename
-    if not path.is_file():
-        raise ValueError(f"{filename} is not in {stage}/ — refresh the board")
-
-    by_file, by_number = _cards()
-    phase = by_file.get(filename)
-    if phase is None or not phase["isPhase"]:
-        raise ValueError(f"{filename} is not a phase — a phase card is "
-                         f"**Type:** Phase with a ## Cards section")
+    phase = _phase_card(filename, stage)
     if phase["phaseDrift"]:
         raise ValueError(f"{filename} does not resolve: {phase['phaseDrift'][0]} "
                          f"— fix the list before running it")
@@ -603,3 +651,56 @@ def _start(phase: dict, filename: str) -> dict:
 
     by_file, by_number = _cards()         # the log just rewrote the card
     return advance(by_file.get(filename) or phase, by_file, by_number)
+
+
+def _agents_on(files: set[str]) -> list[dict]:
+    with state.LOCK:
+        return [dict(r) for r in state.AGENTS.values()
+                if r["task"] in files and r["status"] == "running"]
+
+
+def stop_phase(filename: str, stage: str) -> dict:
+    """Hold a phase: stop, without unwinding anything.
+
+    `‖ hold` means here what it means on any other card — the work stops
+    and nothing is lost. So the line goes into the log (which is what the
+    beat reads, so the next pass stands down), and the agent the phase has
+    in flight is held exactly as its own card's hold would hold it. The
+    phase branch, every member already merged into it, and every worktree
+    are left precisely as they were: a hold is not an undo, and the only
+    way back to `main` is still the PR at the end.
+
+    A halted phase can be held too, and that is the other half of the
+    halt's promise: it holds until the phase is run again *or* stopped,
+    and a person who has read the halt and does not want to carry on needs
+    a way to say so that is not walking the card backwards.
+
+    A held member's card keeps its own work and its own state, so running
+    the phase again may well halt on it — that is the honest reading of a
+    run that ended without reaching review/, and it is a person's to settle.
+    """
+    phase = _phase_card(filename, stage)
+    with _LOCK:                       # never alongside a pass of the beat
+        where = run_state(log_entries(phase["body"]))
+        if where["state"] not in ("running", "halted"):
+            raise ValueError(f"{filename} is not running — nothing to hold "
+                             f"(its phase log says: {where['state']})")
+        who = taskfiles.actor_name() or "you"
+        if not _write_log(phase, f"stopped — held by {who}"):
+            raise ValueError(f"could not record the hold on {filename} — its "
+                             f"phase log must be writable, or the next beat "
+                             f"would carry on regardless")
+        held = []
+        for record in _agents_on({m["file"] for m in phase["members"]}):
+            try:
+                agents.stop_agent(record["id"])
+            except ValueError:        # it ended between the read and the ask
+                continue
+            held.append(record["task"])
+        _say(filename, f"phase {filename} held by {who}"
+                       + (f" — {', '.join(held)} stopped with it" if held else "")
+                       + f" — {agents.phase_branch(filename)} is left as it is")
+        snapshot = _snapshot(_reread(phase) or phase, _cards()[0])
+        SNAPSHOTS[filename] = snapshot
+    state.broadcast({"type": "board"})
+    return snapshot
