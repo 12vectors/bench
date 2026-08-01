@@ -1,6 +1,7 @@
 # 49 — A phase runs itself, on a branch of its own
 
-**Status:** Backlog
+**Status:** To Do
+**Assignee:** istos
 **Priority:** High — the point of the whole thing: work that continues
 without you until something is genuinely wrong
 **Type:** Feature
