@@ -17,6 +17,7 @@ import config
 import drive
 import events
 import github
+import phases
 import state
 import sync
 import taskfiles
@@ -34,6 +35,9 @@ def state_payload() -> dict:
         "sessions": sessions,
         "agents": agents.list_public(),
         "prs": github.public_state(),
+        # what the last pass of the phase runner saw: per running phase
+        # card, its branch and each member's state
+        "phases": phases.public_state(),
         "drive": drive.public(),
         "hasDriver": config.driver_path() is not None,
         "branches": github.task_branches(),
@@ -190,6 +194,13 @@ class Handler(BaseHTTPRequestHandler):
                 payload = self._read_body()
                 agent = agents.start_pr_fix(payload["file"], payload["stage"])
                 self._json(200, {"agent": agent})
+            elif path == "/api/phase/run":
+                payload = self._read_body()
+                # takeover carries the same meaning it does for a launch:
+                # the deliberate second click on someone else's card
+                self._json(200, {"phase": phases.start_phase(
+                    payload["file"], payload["stage"],
+                    bool(payload.get("takeover")))})
             elif path == "/api/pr/open":
                 payload = self._read_body()
                 self._json(200, {"url": github.open_pr_now(payload["file"])})

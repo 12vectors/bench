@@ -14,6 +14,7 @@ task files, but the tasks work as a plain folder kanban without it. See
     events.py     hook payloads → displayable events, session registry
     sync.py       origin/main as the shared board: push on move, pull on a beat
     agents.py     headless work/review agents: launch, reap, stop, diff
+    phases.py     a phase run: its own branch, its members merged into it
     watch.py      2s disk poller narrating moves made outside the API
     httpd.py      HTTP routes, SSE stream, the page itself
     .prompts/     agent prompt templates (read fresh on every launch)
@@ -34,6 +35,7 @@ import drive
 import events
 import github
 import httpd
+import phases
 import state
 import sync
 import watch
@@ -66,6 +68,7 @@ def main() -> None:
     threading.Thread(target=watch.watcher, daemon=True).start()
     threading.Thread(target=github.poller, daemon=True).start()
     threading.Thread(target=github.reconcile, daemon=True).start()
+    threading.Thread(target=phases.beat, daemon=True).start()
     if config.SYNC:
         # Team mode: board commits publish themselves and a beat pulls what
         # the other boards published. Off, neither thread nor hook exists.
