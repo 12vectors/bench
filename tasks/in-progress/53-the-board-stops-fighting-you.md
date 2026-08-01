@@ -1,6 +1,6 @@
 # 53 — Phase: the board stops fighting you
 
-**Status:** To Do
+**Status:** In Progress
 **Assignee:** istos
 **Priority:** Medium — neither member is urgent alone; together they are
 the difference between watching a busy board and wrestling one
