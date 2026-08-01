@@ -1096,6 +1096,19 @@ function phaseLabel(phase) {
   return name.length > 22 ? name.slice(0, 21) + '…' : name;
 }
 
+/* Which phases this card could join, which is also whether the action is
+   there at all: the phase cards waiting in to-do/, and none whatsoever for
+   a card already in a phase, a phase card itself (they do not nest), or a
+   card with no number for a list to name it by. A phase in in-progress/ is
+   running — its members are being worked in the order the list had when it
+   started — so it is not on offer. The board offers what it can do. */
+function joinablePhases(task) {
+  if (task.phase || task.isPhase || !task.number) return [];
+  if (!['backlog', 'to-do'].includes(task.stage)) return [];
+  const stage = (S.state?.board.stages || []).find(s => s.slug === 'to-do');
+  return stage ? stage.tasks.filter(t => t.isPhase) : [];
+}
+
 function cardFor(task) {
   const el = document.createElement('article');
   const agent = agentOnTask(task.file);
@@ -1229,6 +1242,14 @@ function cardFor(task) {
     } else if (task.stage === 'done') {
       actions.push({ glyph: '↺', label: 'reopen', busy: 'reopening…', title: 'Put it back in the queue',
         run: () => move(task.file, 'done', 'to-do') });
+    } else if (joinablePhases(task).length) {
+      // the small path, on the two stages that have room for it: the card
+      // you decide belongs in a phase after all. It writes one line into
+      // the phase card and moves nothing, so it neither costs tokens nor
+      // stops work — the sheet's named choice is the confirmation.
+      actions.push({ glyph: '⟶', label: 'phase', busy: 'choosing…',
+        title: "Add this card to the end of a phase's list — the phases waiting in to-do/",
+        run: () => { phaseSheet(task); return true; } });
     }
     // work in review with no PR: no board opens one behind your back, so
     // the card offers it instead of the relevance check
@@ -1678,6 +1699,52 @@ function completeSheet(task, from) {
     else toast(data.merged ? `${task.file} merged and cleaned up` : `${task.file} moved to done`);
     await loadState();
   });
+}
+
+/* Joining a phase is a choice between a few named options, so it is put in
+   front of you the way finishing a card with work on it is — a short list
+   of phases, each saying what it already holds, rather than a guess. What
+   it writes is one line at the end of that phase's `## Cards`; the card
+   itself does not move, and says nothing about the phase it joined. */
+function phaseSheet(task) {
+  const phases = joinablePhases(task);
+  if (!phases.length) { toast('no phase is waiting in to-do/', true); return; }
+  const wrap = $('#sheetwrap');
+  wrap.innerHTML =
+    `<div class="sheet">` +
+    `<div class="stitle"><span>${esc(task.title)}</span>` +
+    `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}⟶ phase</span></div>` +
+    `<p>Which phase runs this card? It goes at the end of that phase's list. ` +
+    `The card stays in ${esc(task.stage)}/ — joining a phase is not a commitment to start it.</p>` +
+    `<div class="sbtns">` +
+    phases.map((p, index) => {
+      const held = (p.cards || []).length;
+      return `<button data-pick="${index}">${esc(p.title)}` +
+        `<small>${held ? `holds ${held} card${held === 1 ? '' : 's'} — this one runs after them`
+                       : 'empty so far — this one would be its first card'}</small></button>`;
+    }).join('') +
+    `<button id="sh-nophase">Not now<small>Nothing is written.</small></button>` +
+    `</div></div>`;
+  wrap.classList.add('open');
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+  $('#sh-nophase').addEventListener('click', closeSheet);
+  wrap.querySelectorAll('[data-pick]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      closeSheet();
+      addToPhase(task, phases[+btn.dataset.pick]);
+    }));
+}
+
+async function addToPhase(task, phase) {
+  const res = await fetch('/api/phase/add', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: task.file, stage: task.stage, phase: phase.file }),
+  });
+  const data = await res.json();
+  toast(res.ok ? `${task.file} added to ${data.phaseName}`
+               : (data.error || 'that card did not join'), !res.ok);
+  await loadState();
+  return res.ok;
 }
 
 function showDetail(task) {
