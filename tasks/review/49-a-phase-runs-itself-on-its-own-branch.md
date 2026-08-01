@@ -176,3 +176,22 @@ The beat (`BOARD_PHASE_INTERVAL`, 30s) recomputes everything each pass and holds
 - **Merged member cards stay in `review/`.** Their work is in the phase branch, not in `main`, so calling them `done/` would be a claim the board cannot make; they settle when you merge the phase PR.
 
 Out of scope as the card asked: no parallelism, no UI (the header chip and card actions are card 50), and nothing merges into `main` under any condition.
+
+
+---
+
+## PR update — 2026-08-01 10:03 (Reed)
+
+ADDRESSED: Fixed the three Copilot review points — no-identity beat gating, unwritable phase log, and remote-only phase branch as a member PR base — with four new tests; full suite green (740).
+
+The work is committed on `task/49-a-phase-runs-itself-on-its-own-branch` (commit `1f8f5f6`) and pushed, so PR #41 is updated; `python3 -m unittest discover -s tests` passes at 740 tests (4 new). The PR reported `MERGEABLE`, so there was no conflict to resolve. All three review comments came from Copilot; each was a real robustness gap on a path the normal single-board flow never takes, and each is addressed.
+
+**Review points and what I did:**
+
+- **`_mine()` strands a phase when the checkout has no git name** (`manager/core/phases.py`) — Copilot: in team mode `_mine()` returned `False` when `taskfiles.actor_name()` is empty, yet `agents.claim_for_launch()` still permits the launch there, so a phase could start (branch cut, run recorded) and then advance nowhere. **Fixed:** `_mine()` now treats "no local identity" as the lone actor and returns `True`, matching the launch gate it mirrors. Added two unit tests (no-identity is not gated; a named non-assignee still is).
+
+- **`_record()` ignored whether the log line was written** (`manager/core/phases.py`) — Copilot: if the phase log can't be written the runner could still launch or merge, leaving no durable record and inviting a repeated launch/merge after a restart; treat it as a hard halt without relying on writing the log again. **Fixed:** split out a best-effort `_write_log()`; `_record()` now raises `_Halt` when the write fails, *before* the action it precedes; `_halt()` and `_start()` use `_write_log()` directly so recording a halt (or reporting a failed start via `ValueError`) can never itself raise. Added a test that a member is never launched when its "started" line won't write.
+
+- **`_pr_base()` only recognized a *local* phase branch** (`manager/core/github.py`) — Copilot: a board that didn't run the phase knows the phase branch only through the remote (sync fetches `origin/main` and nothing else), so a member PR could wrongly base on `main`. **Fixed:** `_pr_base()` now also honours a phase branch the remote carries (`git ls-remote`, only consulted when the local branch is absent), and `_open_pr()` only pushes the base when it is a local branch (the remote already has it otherwise). Added a test that `_pr_base` returns the phase branch when only the remote carries it.
+
+One thing worth knowing (no action needed): the specific cross-board scenario Copilot sketched for point three is not actually reachable today — `_open_pr()` bails out earlier because a non-actor board also lacks the member's local `task/<stem>` branch. I still made the change: it's cheap, it removes a latent bug (a base returned but not pushable), and it makes the "member PRs are based on the phase branch" invariant hold regardless of which board opens the PR.
