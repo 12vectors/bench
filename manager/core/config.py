@@ -129,6 +129,33 @@ GH_BIN = setting("BOARD_GH_BIN", "gh")
 GIT_REMOTE = setting("BOARD_GIT_REMOTE", "")
 PR_POLL_INTERVAL = float(setting("BOARD_PR_POLL_INTERVAL", "60"))
 
+
+def git_remotes() -> list[str]:
+    """What `git remote` prints for this checkout, in its order. Asked on
+    demand and never at import — config is imported by everything, hooks
+    included, and none of them should pay for a subprocess to load it."""
+    try:
+        result = subprocess.run(["git", "-C", str(REPO), "remote"],
+                                capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return result.stdout.split() if result.returncode == 0 else []
+
+
+def git_remote() -> str | None:
+    """The one remote this board is a board on: BOARD_GIT_REMOTE when set —
+    as named, never quietly swapped for another — else the first remote the
+    checkout has, else None.
+
+    PRs and sync both ask here, so they can never disagree about where this
+    board's work goes. Whether the name resolves to a remote that actually
+    exists is the caller's business: `git_remotes()` answers that, and sync
+    says so rather than falling back."""
+    if GIT_REMOTE:
+        return GIT_REMOTE
+    names = git_remotes()
+    return names[0] if names else None
+
 # How long a work-agent launch waits for `git fetch origin main` before
 # branching from local HEAD instead. Launching must never be blocked by
 # network weather; this bounds the whole delay.

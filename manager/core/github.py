@@ -39,11 +39,9 @@ def _run(cmd: list[str], cwd: Path | None = None, timeout: int = 60) -> subproce
 
 
 def remote() -> str | None:
-    if config.GIT_REMOTE:
-        return config.GIT_REMOTE
-    result = _run(["git", "remote"])
-    names = result.stdout.split()
-    return names[0] if names else None
+    """Where this board's work goes. Resolved in config, which sync asks
+    too — the two halves of team mode must never name different remotes."""
+    return config.git_remote()
 
 
 def gh_available() -> bool:
