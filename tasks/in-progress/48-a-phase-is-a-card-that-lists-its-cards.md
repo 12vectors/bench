@@ -109,3 +109,30 @@ listed and each member's `Depends on` already filled in, rather than
 assembled on the board. The authoring path (51) is the convenience, not
 the primary one — which is a good reason for the file format to be
 pleasant to write by hand.
+
+
+---
+
+## Work report — 2026-08-01 09:02 (Finch)
+
+Committed on `task/48-a-phase-is-a-card-that-lists-its-cards` (9621437), full suite green.
+
+**What changed**
+
+The model and its rendering are in, and nothing runs. `**Type:** Phase` plus a `## Cards` section is the whole of it:
+
+- `manager/core/taskfiles.py` — reads a phase card's `## Cards` section into an ordered list of numbers (`31`, `#31` and `031` are one card; an indented line is a member's own continuation, neither member nor mistake; the section ends at the next `##`). It also parses `**Depends on:**` at last, into `dependsOn` — task numbers only, prose preconditions left for the reader — and acts on it nowhere.
+- `collect()` now calls a new `weave_phases()`, which resolves every phase card's list against the whole board: the phase gets `members` in document order, and each member gets `phase: {file, number, title, index, total}`. Membership is derived, never stored on the member.
+- Drift is flagged on the card, next to `status drift`: a number no card has, a card two phase cards both list (both are flagged, and so is the member), a card one phase lists twice, plus two I added for the same reason — a line in `## Cards` naming no number, and a phase listing a phase (phases do not nest, so it is refused loudly rather than nested quietly).
+- `manager/core/board.html` — a member card carries `⟶ <phase> 3/5` in the footer chip row beside `CI` and `PR ↗`; clicking it opens the phase card. Phase drift wears a `phase drift` pill in the top row. Chips can now take a leading glyph (`pre`), which is what the `⟶` uses.
+- `AGENTS.md` — `Phase` added to the **Type** row and a new "A phase is a card that lists its cards" subsection under Task file format (it lands on the site's `/concepts/task-files/` page, which slices that section).
+
+**Verification**
+
+`python3 -m unittest` — 677 tests, all passing (672 before). New file `tests/test_phase_cards.py`, 31 tests: parsing and membership run through `taskfiles.collect()` over a throwaway `tasks/` directory — the same read the board does per request — covering every acceptance bullet including the empty-section and number-format edge cases; the chip and drift pill are source-level invariants on `board.html` in the style of `tests/test_card_actions.py`; `phaseLabel()` is lifted out of the page and run under node, as `test_drawer_markdown.py` does with `md()`. That class also parse-checks the page's inline script, since `board.html` has no runner of its own.
+
+**Worth a look first**
+
+- Two judgment calls that are mine, not the card's: a card two phases both list stays with the **first phase by number** (so the member's chip is not a coin toss, and the second phase does not count it as a member), and `dependsOn` is canonicalised the way member numbers are — `**Depends on:** 03, 05` reads as `["3", "5"]`, while a card's own `number` stays `"07"` as the filename spells it. Consumers must canonicalise; `taskfiles.canonical_number()` is the one place that does.
+- The chip's label is the phase card's title with its leading `48 — ` stripped and clipped to 22 characters, with the full name in the tooltip (`manager/core/board.html:979`).
+- No phase card exists in this repo yet, so the chip has been verified by tests and a parse check rather than by clicking a running board. Writing a real phase card is authoring, not this card's job — the first one written will exercise it.
