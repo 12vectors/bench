@@ -209,9 +209,21 @@ serving in the foreground (Ctrl-C stops it). Three cases:
 
 - this project's board already answers on the port → just reopens the browser
 - the port is free → starts on it
-- something else occupies it → takes the next free port **and persists it to
-  `manager/.env`**, so the hooks and agents — which read the same file —
-  follow the board rather than reporting to a port it no longer serves.
+- something else occupies it → waits a few seconds for it to clear, then
+  takes the next free port **and persists it to `manager/local/.env`**, so
+  the hooks and agents — which read the same file — follow the board rather
+  than reporting to a port it no longer serves. Overwriting a port the user
+  pinned is not done quietly: the hop names the file, both ports and how to
+  reclaim the old one.
+
+The probe behind those three cases binds the way the board itself binds —
+`127.0.0.1` with `SO_REUSEADDR`, which `ThreadingHTTPServer` sets — so the
+socket a just-stopped board leaves in `TIME_WAIT` does not read as
+occupied. A probe stricter than its server would hop a restart off its own
+pinned port. The wait on top covers the rest of a predecessor's shutdown —
+five seconds, or whatever `BOARD_PORT_WAIT` says in start.sh's environment
+— because a restart races its own board far more often than a stranger
+takes the port.
 
 Extra arguments pass through to `board.py` (e.g. `./start.sh --no-open`).
 
