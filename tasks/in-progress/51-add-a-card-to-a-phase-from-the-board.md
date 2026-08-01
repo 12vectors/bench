@@ -100,3 +100,28 @@ member's `Depends on` filled in — because that is a thing you can read in
 a diff and reason about before any of it runs. This action is for the
 afterthought, and it should stay small enough not to become the way
 phases are assembled.
+
+
+---
+
+## Work report — 2026-08-01 11:23 (Juno)
+
+Done and committed on `task/51-add-a-card-to-a-phase-from-the-board` as `463b35b`; the full suite (831 tests) passes on exactly that tree.
+
+**What changed**
+
+A `⟶ phase` action on `backlog/` and `to-do/` cards that are not already in a phase and are not phase cards themselves. It opens a sheet naming the phase cards waiting in `to-do/` — each with its number-and-title and how many cards it already holds — and picking one appends `- <n> — <title>` to the end of that phase's `## Cards` section. The card itself is not touched and does not move; the member chip from task 48 appears on it because membership is derived from the phase card's list.
+
+- `manager/core/taskfiles.py` — `add_to_phase()`, which validates and then writes through the existing `append_to_section()` door, so the append commits itself under `BOARD_COMMIT_MOVES` (`board: 40 gained 51 (<name>)`), publishes to sync, creates the `## Cards` section when the phase card has none, and re-reads the phase card off disk rather than off a render. Refusals: a phase outside `to-do/`, a card outside `backlog/`/`to-do/`, a card any phase already lists, a phase card (no nesting), a card with no number, a stale filename, a path where a filename belongs.
+- `manager/core/httpd.py` — `POST /api/phase/add`, narrating a `phase`-kind board event and broadcasting so every open tab re-reads.
+- `manager/core/board.html` — `joinablePhases()` (which is both the candidate list and whether the action exists at all), the action itself, `phaseSheet()` and `addToPhase()`.
+- `AGENTS.md` — the action in the hover-actions list and a paragraph in the phase-membership section.
+- `tests/test_add_to_phase.py` — 32 tests: the line's shape and position, the empty-section and missing-section cases, the two-boards-append case, every refusal, the commit gate on and off against a real throwaway git repo, and board.html source invariants plus a `node --check` parse.
+
+**Worth a reviewer's eye first**
+
+- `_member_entry()` in `manager/core/taskfiles.py:493` drops the number the title usually repeats (`# 51 — Add a card…` → `- 51 — Add a card…`), using the same cut `phaseLabel()` makes in the page. That is the one place a judgement was made about what the written line should read like.
+- The already-in-a-phase guard (`_phase_holding`) scans every task file on every add. That is the same cost `collect()` pays per request, so it is in keeping, but it is a full-board read behind one click.
+- The action does not arm before firing: it writes nothing on click, it only opens the sheet, and the sheet's named choice is the confirmation — the same shape as drag-to-`done/`. If the house rule is read as "every action arms", that is the line to argue with.
+
+Nothing in the task's out-of-scope list was built: no removal, no reordering, no adding to a running phase, no phase creation, no multi-select.
