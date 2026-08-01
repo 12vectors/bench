@@ -1,6 +1,6 @@
 # 49 — A phase runs itself, on a branch of its own
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/41
 **Assignee:** istos
 **Priority:** High — the point of the whole thing: work that continues
