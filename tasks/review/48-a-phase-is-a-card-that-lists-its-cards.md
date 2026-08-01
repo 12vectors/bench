@@ -1,6 +1,7 @@
 # 48 — A phase is a card that lists its cards
 
 **Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/40
 **Assignee:** istos
 **Priority:** High — everything else about phases reads this; get the
 shape wrong and three cards inherit it
