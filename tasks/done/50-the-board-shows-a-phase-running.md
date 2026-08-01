@@ -1,6 +1,6 @@
 # 50 — The board shows a phase running, and shows it stopping
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/42
 **Assignee:** istos
 **Priority:** High — a phase that runs unattended is only trustworthy if
