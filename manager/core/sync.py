@@ -1,5 +1,12 @@
-"""Boards converge through origin/main: push what this board commits, pull
-what the other boards published.
+"""Boards converge through the remote's main: push what this board commits,
+pull what the other boards published.
+
+One remote and one branch, by design — but *which* remote is `config`'s
+answer (`BOARD_GIT_REMOTE`, else the checkout's first remote), the same
+one PR opening already asks for, so the two halves of team mode can never
+publish to different places. A checkout with no remote to sync with, or a
+`BOARD_GIT_REMOTE` naming one it does not have, is not a quiet no-op: it
+is narrated and held on the header like every other condition here.
 
 Gated on `BOARD_SYNC` (which implies `BOARD_COMMIT_MOVES` — a move that
 never commits has nothing to publish). Off, nothing here runs: no fetch,
@@ -38,9 +45,8 @@ import config
 import state
 from taskfiles import NUMBER_RE
 
-REMOTE = "origin"                     # one remote, one branch — by design
-BRANCH = "main"
-UPSTREAM = f"{REMOTE}/{BRANCH}"
+BRANCH = "main"                       # one remote, one branch — by design;
+                                      # the remote is resolved, not assumed
 BOARD_COMMIT = "board: "              # the prefix taskfiles messages its own commits with
 PUSH_TIMEOUT = 120
 REBASE_TIMEOUT = 120
@@ -98,8 +104,38 @@ def _clear(key: str, recovery: str = "") -> None:
 # ── the checkout ───────────────────────────────────────────────────────
 
 
-def _origin_present() -> bool:
-    return REMOTE in _git("remote").stdout.split()
+def _upstream(remote: str) -> str:
+    return f"{remote}/{BRANCH}"
+
+
+def _remote() -> str | None:
+    """The remote this board syncs through, or None with the reason said.
+
+    Resolved in `config`, verified here: a `BOARD_GIT_REMOTE` naming a
+    remote this checkout does not have is a typo, and reaching past it for
+    another one would be exactly the silence this narration exists to end.
+    Team mode with nothing to sync with is a stalled board, not a no-op —
+    it is the likeliest first state of a fresh installation, and the header
+    has to say so.
+    """
+    names = config.git_remotes()
+    name = config.git_remote()
+    if name and name in names:
+        _clear("no-remote",
+               f"sync is converging again: this board rides {_upstream(name)}")
+        return name
+    if name:
+        have = (f"this checkout has {', '.join(names)}" if names
+                else "this checkout has no remotes at all")
+        _note("no-remote", f"sync stalled: BOARD_GIT_REMOTE names '{name}' but {have} "
+                           f"— add that remote, or set BOARD_GIT_REMOTE to one that "
+                           f"exists (sync will not pick another for you)")
+    else:
+        _note("no-remote", "sync stalled: BOARD_SYNC is on and this checkout has no "
+                           "remote to sync through — add one (git remote add origin "
+                           "<url>), or set BOARD_GIT_REMOTE to the remote this board "
+                           "should ride")
+    return None
 
 
 def _head() -> str:
@@ -128,29 +164,29 @@ def _tasks_prefix() -> str:
         return "tasks/"
 
 
-def _fetch() -> bool:
-    result = _git("fetch", REMOTE, BRANCH, timeout=config.FETCH_TIMEOUT)
+def _fetch(remote: str) -> bool:
+    result = _git("fetch", remote, BRANCH, timeout=config.FETCH_TIMEOUT)
     if result.returncode != 0:
         if "couldn't find remote ref" in (result.stderr or "").lower():
-            _note("no-branch", f"sync stalled: {REMOTE} has no {BRANCH} branch — "
-                               f"sync rides {UPSTREAM} and nothing else")
+            _note("no-branch", f"sync stalled: {remote} has no {BRANCH} branch — "
+                               f"sync rides {_upstream(remote)} and nothing else")
             return False
         _note("offline",
-              f"sync is behind: {REMOTE} is unreachable — this board keeps "
+              f"sync is behind: {remote} is unreachable — this board keeps "
               f"working locally and catches up when it returns", "offline")
         return False
     _clear("no-branch")
-    _clear("offline", f"sync caught up: {REMOTE} is reachable again")
+    _clear("offline", f"sync caught up: {remote} is reachable again")
     return True
 
 
 # ── publishing ─────────────────────────────────────────────────────────
 
 
-def _ahead() -> list[str]:
-    """`<short sha> <subject>` for every commit local main has and
-    origin/main does not — newest first."""
-    out = _git("log", "--format=%h %s", f"{UPSTREAM}..{BRANCH}").stdout
+def _ahead(remote: str) -> list[str]:
+    """`<short sha> <subject>` for every commit local main has and the
+    remote's main does not — newest first."""
+    out = _git("log", "--format=%h %s", f"{_upstream(remote)}..{BRANCH}").stdout
     return [line for line in out.splitlines() if line.strip()]
 
 
@@ -165,20 +201,21 @@ def _stray(commits: list[str]) -> str:
     return ""
 
 
-def _publish() -> str:
+def _publish(remote: str) -> str:
     """Push local main if — and only if — everything on it is the board's.
 
     ok | nothing | stray | not-on-main | retry | offline | stalled
     """
+    upstream = _upstream(remote)
     if not _on_main():
         branch = _git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip() or "a detached HEAD"
         _note("branch", f"sync paused: this checkout is on '{branch}', not {BRANCH} — "
                         f"board commits are not landing where sync publishes from")
         return "not-on-main"
     _clear("branch")
-    if _git("rev-parse", "--verify", "--quiet", UPSTREAM).returncode != 0:
+    if _git("rev-parse", "--verify", "--quiet", upstream).returncode != 0:
         return "retry"          # never fetched: converge first, then publish
-    commits = _ahead()
+    commits = _ahead(remote)
     stray = _stray(commits)
     if stray:
         _note("stray", f"not pushing: {stray} is not a board commit — sync will not "
@@ -189,25 +226,25 @@ def _publish() -> str:
     if not commits:
         return "nothing"
 
-    result = _git("push", REMOTE, f"{BRANCH}:{BRANCH}", timeout=PUSH_TIMEOUT)
+    result = _git("push", remote, f"{BRANCH}:{BRANCH}", timeout=PUSH_TIMEOUT)
     if result.returncode == 0:
         _clear("push")
-        _clear("offline", f"sync caught up: {REMOTE} is reachable again")
+        _clear("offline", f"sync caught up: {remote} is reachable again")
         state.record_board_event({
             "kind": "sync", "actor": "sync",
             "summary": f"pushed {len(commits)} board commit"
-                       f"{'s' if len(commits) > 1 else ''} to {UPSTREAM}"})
+                       f"{'s' if len(commits) > 1 else ''} to {upstream}"})
         return "ok"
     stderr = (result.stderr or result.stdout).strip()
     if _rejected(stderr):
         return "retry"
     if _unreachable(stderr):
         _note("offline",
-              f"sync is behind: {REMOTE} is unreachable — this board keeps "
+              f"sync is behind: {remote} is unreachable — this board keeps "
               f"working locally and catches up when it returns", "offline")
         return "offline"
     detail = stderr.splitlines()[-1][:140] if stderr else "git said nothing"
-    _note("push", f"sync could not push to {UPSTREAM}: {detail}")
+    _note("push", f"sync could not push to {upstream}: {detail}")
     return "stalled"
 
 
@@ -248,10 +285,10 @@ def _number(filename: str) -> str:
     return match.group(1) if match else filename[:-3] if filename.endswith(".md") else filename
 
 
-def _lost(filename: str) -> None:
+def _lost(filename: str, remote: str) -> None:
     """The local move lost the race. Say who took the card — the file itself
-    reverts to origin's version when the rebase drops our commit."""
-    who = _author_of(filename, UPSTREAM) or "someone else"
+    reverts to the remote's version when the rebase drops our commit."""
+    who = _author_of(filename, _upstream(remote)) or "someone else"
     message = f"{_number(filename)} claimed by {who} — your move was undone"
     state.record_board_event({"kind": "sync", "actor": "sync", "file": filename,
                               "summary": message})
@@ -259,21 +296,23 @@ def _lost(filename: str) -> None:
     state.broadcast({"type": "board"})
 
 
-def _replay() -> str:
-    """Rebase this board's commits onto origin/main. Conflicts on a task
-    file are resolved by dropping our commit: origin is the linearizer, and
-    a card someone else moved first is theirs. Anything conflicting outside
-    tasks/ is a real collision — abort and wait for a human.
+def _replay(remote: str) -> str:
+    """Rebase this board's commits onto the remote's main. Conflicts on a
+    task file are resolved by dropping our commit: the remote is the
+    linearizer, and a card someone else moved first is theirs. Anything
+    conflicting outside tasks/ is a real collision — abort and wait for a
+    human.
 
     ok | dirty | stalled
     """
+    upstream = _upstream(remote)
     if not _clean():
         _note("dirty", "sync paused: main has uncommitted changes — commit or stash "
                        "them and sync resumes (code work belongs in a worktree)")
         return "dirty"
     _clear("dirty")
 
-    result = _git("rebase", UPSTREAM, timeout=REBASE_TIMEOUT)
+    result = _git("rebase", upstream, timeout=REBASE_TIMEOUT)
     for _ in range(50):                    # bounded: one round per replayed commit
         if result.returncode == 0:
             _clear("replay")
@@ -282,46 +321,47 @@ def _replay() -> str:
         if not conflicted or not all(_is_task_file(p) for p in conflicted):
             _git("rebase", "--abort")
             detail = ", ".join(conflicted[:3]) or (result.stderr or result.stdout).strip()[-140:]
-            _note("replay", f"sync stalled: replaying this board's commits onto {UPSTREAM} "
+            _note("replay", f"sync stalled: replaying this board's commits onto {upstream} "
                             f"collides outside tasks/ ({detail}) — a human has to settle it")
             return "stalled"
         for name in dict.fromkeys(Path(p).name for p in conflicted):
-            _lost(name)
+            _lost(name, remote)
         result = _git("rebase", "--skip", timeout=REBASE_TIMEOUT)
     _git("rebase", "--abort")
-    _note("replay", f"sync stalled: replaying onto {UPSTREAM} did not settle — "
+    _note("replay", f"sync stalled: replaying onto {upstream} did not settle — "
                     f"a human has to settle it")
     return "stalled"
 
 
-def _integrate() -> str:
-    """Bring local main to origin/main without ever merging past a
+def _integrate(remote: str) -> str:
+    """Bring local main to the remote's main without ever merging past a
     divergence.
 
     up-to-date | pulled | not-on-main | dirty | diverged | stalled
     """
-    if _count(f"{BRANCH}..{UPSTREAM}") == 0:
+    upstream = _upstream(remote)
+    if _count(f"{BRANCH}..{upstream}") == 0:
         return "up-to-date"
     if not _on_main():
         branch = _git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip() or "a detached HEAD"
         _note("branch", f"sync paused: this checkout is on '{branch}', not {BRANCH} — "
-                        f"switch back and the board catches up with {UPSTREAM}")
+                        f"switch back and the board catches up with {upstream}")
         return "not-on-main"
     _clear("branch")
 
     # Diverged. The board's own bookkeeping can be replayed on top of what
     # arrived — that is how a lost race resolves. A human's commit cannot,
     # and the guard that refuses to push it refuses to rebase it too.
-    commits = _ahead()
+    commits = _ahead(remote)
     stray = _stray(commits)
     if stray:
-        _note("diverged", f"sync stalled: main and {UPSTREAM} have diverged and "
+        _note("diverged", f"sync stalled: main and {upstream} have diverged and "
                           f"{stray} is not a board commit — pull or rebase it by "
                           f"hand, and this board starts converging again")
         return "diverged"
     _clear("diverged")
     if commits:
-        outcome = _replay()
+        outcome = _replay(remote)
         return "pulled" if outcome == "ok" else outcome
 
     if not _clean():
@@ -329,17 +369,17 @@ def _integrate() -> str:
                        "them and sync resumes (code work belongs in a worktree)")
         return "dirty"
     _clear("dirty")
-    result = _git("merge", "--ff-only", UPSTREAM, timeout=REBASE_TIMEOUT)
+    result = _git("merge", "--ff-only", upstream, timeout=REBASE_TIMEOUT)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip().splitlines()
-        _note("merge", f"sync stalled: fast-forwarding to {UPSTREAM} failed "
+        _note("merge", f"sync stalled: fast-forwarding to {upstream} failed "
                        f"({detail[-1][:140] if detail else 'no detail'})")
         return "stalled"
     _clear("merge")
     return "pulled"
 
 
-def _record_arrivals(before: str) -> None:
+def _record_arrivals(before: str, remote: str) -> None:
     """Attribute what the pull brought: each task file it touched is filed
     under the name of whoever committed it, for the watcher to use instead
     of "disk" when the move surfaces on the next poll."""
@@ -364,7 +404,7 @@ def _record_arrivals(before: str) -> None:
     count = _count(rng)
     state.record_board_event({
         "kind": "sync", "actor": "sync",
-        "summary": f"pulled {count} commit{'s' if count != 1 else ''} from {UPSTREAM}"
+        "summary": f"pulled {count} commit{'s' if count != 1 else ''} from {_upstream(remote)}"
                    + (f" ({', '.join(sorted(authors))})" if authors else "")})
     state.broadcast({"type": "board"})
 
@@ -385,15 +425,16 @@ def arrived_actor(filename: str) -> str:
 
 def _converge() -> str:
     """One full beat: fetch, integrate what arrived, publish what is ours."""
-    if not _origin_present():
-        return "no-origin"
-    if not _fetch():
+    remote = _remote()
+    if remote is None:
+        return "no-remote"
+    if not _fetch(remote):
         return "offline"
     before = _head()
-    outcome = _integrate()
-    _record_arrivals(before)
+    outcome = _integrate(remote)
+    _record_arrivals(before, remote)
     if outcome in ("up-to-date", "pulled"):
-        published = _publish()
+        published = _publish(remote)
         if published in ("stray", "offline", "stalled", "not-on-main"):
             return published
     return outcome
@@ -406,9 +447,10 @@ def push_now() -> str:
     if not config.SYNC:
         return "off"
     with _LOCK:
-        if not _origin_present():
-            return "no-origin"
-        outcome = _publish()
+        remote = _remote()
+        if remote is None:
+            return "no-remote"
+        outcome = _publish(remote)
         if outcome != "retry":
             return outcome
         return _converge()
@@ -432,9 +474,17 @@ def on_commit(filename: str) -> None:
 
 
 def install() -> None:
-    """Wire the push hook. Called once at startup, only with the gate on."""
+    """Wire the push hook, and answer the remote question straight away.
+
+    Called once at startup, only with the gate on. The resolution runs here
+    rather than waiting for the first beat because "there is nothing to
+    sync with" is true before any converge, and the header has to carry it
+    from first paint — a board that never started syncing must not look
+    like one that is."""
     if on_commit not in state.COMMIT_HOOKS:
         state.COMMIT_HOOKS.append(on_commit)
+    if config.SYNC:
+        _remote()
 
 
 def beat(interval: float | None = None) -> None:

@@ -635,6 +635,17 @@ no push, no thread, no behaviour change at all.
 - **Offline is quiet.** An unreachable origin says so once, then works
   locally; commits queue on `main` and go out on the next reachable
   fetch.
+- **Which remote is one answer, not two.** One remote and one branch, by
+  design — but the remote is the one `BOARD_GIT_REMOTE` names, else the
+  checkout's first, resolved in the same place PR opening asks, so the two
+  halves of team mode can never publish to different places. It is used as
+  named: a `BOARD_GIT_REMOTE` this checkout has no remote for stalls
+  saying so rather than reaching past it for another one. A checkout with
+  no remote at all stalls the same way, from startup — team mode syncing
+  nothing is exactly the state a board must not render as healthy, and it
+  is the likeliest first state of a fresh installation. Add a remote (or
+  set the setting) and the chip clears with a line saying sync is
+  converging again.
 
 ### State syncs; reactions don't
 
