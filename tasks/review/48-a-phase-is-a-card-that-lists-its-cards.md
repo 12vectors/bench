@@ -137,3 +137,26 @@ The model and its rendering are in, and nothing runs. `**Type:** Phase` plus a `
 - Two judgment calls that are mine, not the card's: a card two phases both list stays with the **first phase by number** (so the member's chip is not a coin toss, and the second phase does not count it as a member), and `dependsOn` is canonicalised the way member numbers are — `**Depends on:** 03, 05` reads as `["3", "5"]`, while a card's own `number` stays `"07"` as the filename spells it. Consumers must canonicalise; `taskfiles.canonical_number()` is the one place that does.
 - The chip's label is the phase card's title with its leading `48 — ` stripped and clipped to 22 characters, with the full name in the tooltip (`manager/core/board.html:979`).
 - No phase card exists in this repo yet, so the chip has been verified by tests and a parse check rather than by clicking a running board. Writing a real phase card is authoring, not this card's job — the first one written will exercise it.
+
+
+---
+
+## PR review — 2026-08-01 09:05 (Olive)
+
+PR REVIEW: APPROVE
+
+The work is committed on `task/48-a-phase-is-a-card-that-lists-its-cards` (9621437) and complete: the phase model and its rendering are in, nothing runs yet, and every acceptance bullet is satisfied. I read the full PR diff and the surrounding code; the tests read as correct but I could not execute them here (this review sandbox blocks `python3 -m unittest`), so the "677 green" claim rests on the work report — see the one action item below.
+
+**To do (for whoever merges)**
+- Run `python3 -m unittest` locally once before merge — the only check I couldn't perform myself.
+
+**What I verified**
+- **Scope is clean.** The PR changes exactly four files: `manager/core/taskfiles.py`, `manager/core/board.html`, `AGENTS.md`, `tests/test_phase_cards.py`. (`git diff main..branch` shows extra task-file churn, but that is local `main` trailing origin under board sync, not PR content — `gh pr diff` against the real base confirms the four.)
+- **Parsing** (`_listed_cards`, `_depends_on`, `canonical_number`): `#31`, `031` and bare `31` all resolve to one card; `Depends on` takes only whole-number comma items and leaves prose preconditions for the reader; the `## Cards` section ends at the next `##` heading; empty or absent sections read as a phase with no members.
+- **Derivation** (`weave_phases`): membership is computed across the whole board and never stored on the member. Drift is flagged, not swallowed, for every case the task named — an unknown number, a card listed twice by one phase, a card two phases both claim (both phases *and* the member flagged), a line naming no number, and a phase listing a phase (refused, not nested). A contested card deterministically stays with the first phase by number.
+- **Rendering** (`board.html`): the `⟶ <phase> n/total` chip sits in the footer chip row via a new leading-glyph (`pre`) mechanism, opens the phase card through `findTask`/`showDetail` with `stopPropagation`, and phase drift wears a `phase drift` pill beside `status drift`.
+- **Layering and out-of-scope**: derivation runs over already-read in-memory tasks inside `taskfiles.py`; new dict keys are additive, so no existing consumer breaks. Nothing runs, no header chip, no run/hold or add-to-phase actions, no nesting — all correctly deferred to cards 49–51.
+
+**Minor, non-blocking (worth a human's awareness)**
+- `CARDS_SECTION_RE`'s terminator matches only exactly `## ` — a `### Subheading` placed inside a `## Cards` section would not end it. Unlikely in practice.
+- Indented bullet sub-items under a member line are silently treated as continuations and skipped (documented intent), so a nested `  - 32` would not count as a member.
