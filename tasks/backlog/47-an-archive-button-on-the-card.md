@@ -62,7 +62,9 @@ its click handling. No server change: the API and its guard are done.
 - The drag-to-the-bar gesture, which keeps working exactly as it does.
 - Archiving from in-progress or review, by any route.
 - Bulk archive, or archiving from the card sheet.
-- What archiving does in git — that is card 44, and see Notes.
+- What archiving does in git. Card 44 settled that: an archive goes out
+  through `_relocate` like every other board-made write to a task file,
+  attributed and committed under the same gate a move is.
 
 ## Acceptance
 
@@ -83,12 +85,11 @@ its click handling. No server change: the API and its guard are done.
 
 ## Notes
 
-Worth doing after — or at least knowing about — **card 44**: archiving
-does not commit, so in team mode an archive leaves an uncommitted
-deletion, which is precisely the condition `sync` refuses to run over.
-That bug is survivable while archiving costs a deliberate drag across the
-whole board. This card makes it one click on every card in three
-columns, which is the same bug reached far more often.
+Nothing blocks this. **Card 44** already made an archive commit itself,
+which is what makes a one-click archive safe to offer: before it, this
+card would have turned an occasional uncommitted deletion into one a
+click away, and in team mode an uncommitted deletion is what stops sync
+publishing anything at all.
 
 **Risks** — the footer row is described in `AGENTS.md` as carrying tool
 chips, which are "destinations, not statuses", while actions live in the
