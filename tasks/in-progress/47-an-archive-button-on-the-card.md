@@ -1,6 +1,7 @@
 # 47 — An archive button on the card, where the card is
 
-**Status:** Backlog
+**Status:** In Progress
+**Assignee:** istos
 **Priority:** Medium — archiving works, but only by dragging a card the
 length of the board to a tray at the far corner
 **Type:** Feature

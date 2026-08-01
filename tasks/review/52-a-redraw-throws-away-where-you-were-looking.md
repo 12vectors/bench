@@ -1,6 +1,7 @@
 # 52 — A redraw throws away where you were looking
 
 **Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/44
 **Assignee:** istos
 **Priority:** Medium — a papercut that gets worse exactly as the board
 gets busy: every agent event is a redraw, so the more work is running the

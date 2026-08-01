@@ -63,4 +63,6 @@ review or one too many.
 
 - 2026-08-01 17:00 · run started on phase/53-the-board-stops-fighting-you
 - 2026-08-01 17:00 · 52 started
+- 2026-08-01 17:15 · 52 merged into phase/53-the-board-stops-fighting-you
+- 2026-08-01 17:15 · 47 started
 
