@@ -145,3 +145,33 @@ branches, after `complete_task` and `↻ act on PR`'s conflict resolution.
 It must behave like both: abort cleanly, leave no half-merged branch, and
 narrate every step. A phase branch that ends up in a broken state is
 worse than a phase that refuses to start.
+
+
+---
+
+## Work report — 2026-08-01 09:44 (Reed)
+
+The work is committed and the full suite is green.
+
+**Work report**
+
+A phase now runs itself on its own branch: the feature is implemented, tested and committed on `task/49-a-phase-runs-itself-on-its-own-branch` in four reviewable commits, with `python3 -m unittest` passing at 736 tests (59 of them new, in `tests/test_phase_runs.py`). Nothing is blocked.
+
+**What to look at first**
+
+- `manager/core/phases.py` — the new module, and the whole of the runner.
+- Two decisions the card left open that I made and would flag for you: **(1)** a `## Phase log` section on the phase card is where the runner writes down what it has already started, because nothing else on disk can tell "this member has run and it ended badly" from "the phase has not reached it yet" — without it a restarted board would relaunch a run that died. **(2)** a phase member's PR is opened against its phase's branch rather than `main` (`manager/core/github.py`, `_pr_base`), since a member PR into `main` would carry the whole phase and invite exactly the merge this design refuses to make.
+- `AGENTS.md` and `site/templates/home.html` both said "the board never merges" as an absolute; both now say "never merges into `main`", which is what it always meant.
+
+**What it does**
+
+Starting a phase (`POST /api/phase/run`, or `phases.start_phase`) cuts `phase/<stem>` from the newest main it can see, by the same rule and timeout a task branch uses, and gives it a worktree. Members branch from the phase's tip — the one change inside `agents.py` — run as ordinary headless work agents, and are merged back when their card reaches `review/` and its checks are not against it. Merges are additive throughout; `main` is merged into the phase branch on every beat; a conflict aborts, leaves the branch as it was, and halts naming the colliding files. When every member is in, the branch is pushed, one PR into `main` is opened with the member list as its body, the `**PR:**` line is written and the card moves to `review/`.
+
+The beat (`BOARD_PHASE_INTERVAL`, 30s) recomputes everything each pass and holds no registry: git answers what has merged (branch containment), the phase log answers what has been started. Halting is written once and then held; running the phase again is what clears it, and the run is scoped to its own log line so a member whose run died is launchable again. The actor rule is decided by the phase card's `**Assignee:**`, so a replica renders the phase and advances nothing.
+
+**Two rules worth your judgement**
+
+- **CI green means "not against it".** Red halts, running waits, and a member with no checks at all advances — otherwise a project without CI would deadlock every phase it runs.
+- **Merged member cards stay in `review/`.** Their work is in the phase branch, not in `main`, so calling them `done/` would be a claim the board cannot make; they settle when you merge the phase PR.
+
+Out of scope as the card asked: no parallelism, no UI (the header chip and card actions are card 50), and nothing merges into `main` under any condition.
