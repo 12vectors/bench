@@ -58,3 +58,7 @@ rather than walking away from: what the halt conditions feel like in
 practice, whether the `## Phase log` says enough to reconstruct what
 happened, and whether one PR carrying two cards is the right unit for
 review or one too many.
+
+## Phase log
+
+- 2026-08-01 17:00 · run started on phase/53-the-board-stops-fighting-you
