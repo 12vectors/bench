@@ -29,7 +29,16 @@ ASSIGNEE_RE = re.compile(r"^\*\*Assignee:\*\*\s*(.+?)\s*$", re.MULTILINE)
 ASSIGNEE_LINE_RE = re.compile(r"^\*\*Assignee:\*\*[^\n]*\n?", re.MULTILINE)
 PR_RE = re.compile(r"^\*\*PR:\*\*\s*(\S+)\s*$", re.MULTILINE)
 PR_VERDICT_RE = re.compile(r"^PR REVIEW:\s*(APPROVE|REQUEST CHANGES)", re.MULTILINE)
+DEPENDS_RE = re.compile(r"^\*\*Depends on:\*\*\s*(.+?)\s*$", re.MULTILINE)
 NUMBER_RE = re.compile(r"^(\d+)[-_]")
+
+# A phase is a card that lists its cards: `**Type:** Phase` plus a `## Cards`
+# section naming its members, one per line, in the order they run.
+PHASE_TYPE = "phase"
+CARDS_SECTION_RE = re.compile(r"^##\s+Cards\s*$(.*?)(?=^##\s|\Z)",
+                              re.MULTILINE | re.DOTALL)
+CARD_ITEM_RE = re.compile(r"^(?:[-*+]\s+)?#?0*(\d+)\b")
+DEPENDS_ITEM_RE = re.compile(r"#?\s*0*(\d+)")
 
 STAGE_ORDER = {slug: index for index, (slug, _) in enumerate(config.STAGES)}
 CLAIM_FROM = {"backlog", "to-do"}   # the unstarted stages: leaving one claims
@@ -48,6 +57,53 @@ def _split_reason(value: str | None) -> tuple[str | None, str | None]:
     return parts[0].strip(), (parts[1].strip() if len(parts) > 1 else None)
 
 
+def canonical_number(number: str) -> str:
+    """`07`, `7` and `#007` are one card. Numbers are written by hand in
+    prose (a `## Cards` line, a `Depends on:` header) and read against
+    numbers taken from filenames, so both ends canonicalise the same way."""
+    return str(int(number))
+
+
+def _depends_on(text: str) -> list[str]:
+    """The `**Depends on:**` header, parsed at last — into the task numbers
+    it names, and nothing else. The line may also carry external
+    preconditions in prose ("the API key"); those are for the reader, so
+    only comma-separated items that are entirely a number are taken.
+    """
+    line = _first(DEPENDS_RE, text)
+    if not line:
+        return []
+    numbers = []
+    for part in line.split(","):
+        match = DEPENDS_ITEM_RE.fullmatch(part.strip())
+        if match:
+            numbers.append(canonical_number(match.group(1)))
+    return numbers
+
+
+def _listed_cards(text: str) -> tuple[list[str], list[str]]:
+    """A phase card's `## Cards` section: the numbers it lists in document
+    order (which is run order), and the unindented lines that name none.
+
+    The number is what is parsed; whatever follows it is for the reader and
+    is never matched against anything. Indented lines are a member's own
+    continuation, so they are neither members nor mistakes.
+    """
+    section = CARDS_SECTION_RE.search(text)
+    if not section:
+        return [], []
+    numbers, unreadable = [], []
+    for line in section.group(1).splitlines():
+        if not line.strip() or line[:1].isspace():
+            continue
+        match = CARD_ITEM_RE.match(line.strip())
+        if match:
+            numbers.append(canonical_number(match.group(1)))
+        else:
+            unreadable.append(line.strip())
+    return numbers, unreadable
+
+
 def read_task(path: Path, stage: str) -> dict:
     text = path.read_text(encoding="utf-8", errors="replace")
     priority, priority_note = _split_reason(_first(PRIORITY_RE, text))
@@ -55,6 +111,11 @@ def read_task(path: Path, stage: str) -> dict:
     declared = _first(STATUS_RE, text)
     # the latest appended `PR REVIEW:` marker wins — reviews accumulate
     verdicts = PR_VERDICT_RE.findall(text)
+    kind = _split_reason(_first(TYPE_RE, text))[0]
+    is_phase = (kind or "").lower() == PHASE_TYPE
+    # a `## Cards` section means membership on a phase card and nothing at
+    # all anywhere else — one direction, one authority
+    listed, unreadable = _listed_cards(text) if is_phase else ([], [])
     return {
         "pr": _first(PR_RE, text),
         # who holds the card — written by the board when a move claims it
@@ -67,7 +128,19 @@ def read_task(path: Path, stage: str) -> dict:
         "title": _first(TITLE_RE, text) or path.stem,
         "priority": priority,
         "priorityNote": priority_note,
-        "type": _split_reason(_first(TYPE_RE, text))[0],
+        "type": kind,
+        # What runs next is the phase's list; what may run is this line —
+        # parsed here, acted on nowhere yet.
+        "dependsOn": _depends_on(text),
+        # A phase and its members: `cards` is what this card claims (empty
+        # for everything that is not a phase), `members`, `phase` and the
+        # drift between them are derived across the whole board by
+        # `collect` — a member card says nothing about its phase.
+        "isPhase": is_phase,
+        "cards": listed,
+        "members": [],
+        "phase": None,
+        "phaseDrift": [f'"{line}" names no card number' for line in unreadable],
         # Flagged in the UI when the file's own Status line contradicts the
         # directory it is in — the board should never quietly paper over that.
         "declaredStatus": declared,
@@ -77,6 +150,63 @@ def read_task(path: Path, stage: str) -> dict:
         "words": len(text.split()),
         "body": text,
     }
+
+
+def _phase_name(phase: dict) -> str:
+    return f"{phase['number'] or phase['file']} — {phase['title']}"
+
+
+def weave_phases(stages: list[dict]) -> None:
+    """Resolve every phase card's list against the board it sits on.
+
+    Membership is derived, never stored twice: the phase card lists its
+    members and this is where a member learns which phase holds it and
+    where in the run it sits. What cannot be resolved is *flagged* rather
+    than skipped — a number no card has, a card two phases both claim, a
+    card one phase lists twice — because each is an authoring mistake that
+    would otherwise surface much later as a runner behaving oddly.
+    """
+    tasks = [task for stage in stages for task in stage["tasks"]]
+    by_number: dict[str, dict] = {}
+    for task in tasks:
+        if task["number"]:
+            by_number.setdefault(canonical_number(task["number"]), task)
+
+    held: dict[str, dict] = {}   # card number → the phase that already lists it
+    phases = sorted((t for t in tasks if t["isPhase"]),
+                    key=lambda t: (int(t["number"]) if t["number"] else 9999, t["file"]))
+    for phase in phases:
+        members, seen = [], set()
+        for number in phase["cards"]:
+            member = by_number.get(number)
+            if member is None:
+                phase["phaseDrift"].append(f"{number} is listed here but no card has that number")
+                continue
+            if number in seen:
+                phase["phaseDrift"].append(f"{number} is listed twice by this phase")
+                continue
+            seen.add(number)
+            if member["isPhase"]:
+                phase["phaseDrift"].append(f"{number} is itself a phase — phases do not nest")
+                continue
+            owner = held.get(number)
+            if owner is not None:
+                # both phase cards wear it: from either one, the reader can
+                # see the collision without hunting for the other list
+                note = (f"{number} is listed by two phases — "
+                        f"{_phase_name(owner)} and {_phase_name(phase)}")
+                owner["phaseDrift"].append(note)
+                phase["phaseDrift"].append(note)
+                member["phaseDrift"].append(note)
+                continue
+            held[number] = phase
+            members.append(member)
+        phase["members"] = [{"number": m["number"], "file": m["file"],
+                             "title": m["title"], "stage": m["stage"]} for m in members]
+        for index, member in enumerate(members, start=1):
+            member["phase"] = {"file": phase["file"], "number": phase["number"],
+                               "title": phase["title"],
+                               "index": index, "total": len(members)}
 
 
 def collect() -> dict:
@@ -89,6 +219,7 @@ def collect() -> dict:
                 tasks.append(read_task(path, slug))
         tasks.sort(key=lambda t: (int(t["number"]) if t["number"] else 9999, t["file"]))
         stages.append({"slug": slug, "label": label, "tasks": tasks})
+    weave_phases(stages)
 
     extras = {}
     for slug in ("plans", "reference"):
