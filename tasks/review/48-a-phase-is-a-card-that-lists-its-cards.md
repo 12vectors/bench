@@ -1,6 +1,6 @@
 # 48 — A phase is a card that lists its cards
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** High — everything else about phases reads this; get the
 shape wrong and three cards inherit it
