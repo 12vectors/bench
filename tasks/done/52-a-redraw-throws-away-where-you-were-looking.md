@@ -1,6 +1,6 @@
 # 52 — A redraw throws away where you were looking
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/44
 **Assignee:** istos
 **Priority:** Medium — a papercut that gets worse exactly as the board
