@@ -1,6 +1,6 @@
 # 57 — The Phases view: a swimlane each
 
-**Status:** Done
+**Status:** Archived
 **PR:** https://github.com/12vectors/bench/pull/48
 **Assignee:** istos
 **Priority:** High — card 56 takes the members off the Board; this is
