@@ -1,6 +1,6 @@
 # 60 — A phase stacks its pull requests
 
-**Status:** Backlog
+**Status:** Archived
 **Priority:** Medium — it changes what a phase hands you at the end, which
 is the only part of a phase a person actually has to do
 **Type:** Feature
