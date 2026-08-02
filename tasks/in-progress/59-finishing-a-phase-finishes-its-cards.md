@@ -131,3 +131,29 @@ the wrong branch, so a leftover from a finished phase is a trap laid for
 whoever reopens that card. And the accumulation is per member per phase:
 five-card phases leave five checkouts and fifteen branches each time,
 until somebody notices and does it by hand.
+
+
+---
+
+## Work report — 2026-08-02 10:08 (Piper)
+
+WORK REPORT
+
+The task is implemented, tested and committed on `task/59-finishing-a-phase-finishes-its-cards` as one commit (`b690060`). The full suite — `python3 -m unittest discover -s tests`, this project's whole definition of done — passes: 996 tests, including 30 new ones in `tests/test_phase_finishes.py`. Nothing is left uncommitted and nothing is blocked.
+
+**What a reviewer should look at first:** `manager/core/github.py` — `_brought()` decides which cards the ending speaks for, and `_clear_member()` is the one place that deletes work. Everything unrecoverable in this card is in those two functions.
+
+**What changed**
+
+- `manager/core/github.py` — `_complete()` reads the phase's merged members *before* any destructive step (the phase branch is deleted in the middle of it, and containment is the only record of a merge), then sweeps only after the merge into `main` has actually succeeded. `_brought()` requires both halves of the runner's own reading of "merged": the card settled into `review/` or `done/`, and its branch contained in the phase branch (or no branch to bring). `_clear_member()` removes the worktree *without* `--force` — it checks `git status --porcelain` first, and a dirty worktree is reported in the ticker and kept with its branch — then deletes the local branch (`-D` under sync, for the same reason the card's own branch takes it) and the branch on the remote. `_sweep()` emits the single ending line and returns the swept cards, which `complete_task` now reports as `swept` for the toast.
+- `manager/core/taskfiles.py` — new `move_together()`: several cards into one stage, in one commit named `board: 47, 52 → done with phase 53 (<name>)`. `_relocate`/`move_task` gained `commit=` and `quiet=` for it; `_member_entry` became public `member_entry` (github now uses it too).
+- `manager/core/state.py` / `watch.py` — `expect_move(..., quiet=True)` and `claim_move()`: a mover can say it has already narrated a move, so the watcher renders it and skips only the ticker line. Every other side effect of a move still fires. `claim_expected()` remains as the actor-only wrapper.
+- `manager/core/board.html` — the merge sheet on a phase card says how many cards go with it, "just move the card" says they stay, and the toast names how many went.
+- `AGENTS.md` — new section "Finishing a phase finishes its cards", plus pointers from the merge-and-clean-up paragraph and from card 56's un-hiding rule.
+
+**Two decisions worth confirming, both made deliberately**
+
+- **The commit shape is one commit for the sweep, separate from the phase card's own move.** So `git log` reads `board: 31, 32 → done with phase 40 (tester)` followed by `board: 40 → done (tester)`. The card the person dragged still moves as itself; the cards that moved because it did move as one thing.
+- **A member with a dirty worktree still moves to `done/`** — its work is in `main`, so the card is finished; only the workspace is kept, and the ticker says which one and why. If you would rather such a card stayed in `review/`, that is a one-line change in `_sweep()`.
+
+**Not swept, on purpose:** a member that halted, was held or was walked back out of `review/`; a member the phase never reached; every card when the merge conflicts (the existing abort covers the sweep because it runs after the merge). Tests cover each, plus a member hand-moved to `done/` (cleaned, not moved twice), the team-mode path where `main` has not caught up with the merge origin made, and the remote branch actually disappearing from a real bare origin.
