@@ -106,3 +106,24 @@ The thing to get right is not the lane, it is the **crossing**: a person
 on the Board must learn that a phase halted without being on this view,
 and a person here must be able to get back to the card that owns it. Two
 signposts, both cheap, and the feature is untrustworthy without either.
+
+
+---
+
+## Work report — 2026-08-02 08:55 (Ada)
+
+Committed on `task/57-the-phases-view-a-swimlane-each` as `a3388ed`, with the full suite green (939 tests).
+
+**The Phases view is built, tested and committed.** All acceptance items are implemented; the two things a reviewer should judge with their eyes rather than the tests are the lane's visual layout and the switcher mark, because this repo has no frontend test runner (the house convention, which I followed, is node-run rules over a real `taskfiles.collect()` reading plus source-level wiring invariants).
+
+**To do**
+
+- Open the board on a branch with a phase card and look at the lane: the head, the five columns, and the log box under them (`manager/core/board.html`, the `── phases: a swimlane each ──` CSS and JS sections).
+- Decide whether you want the header's phase chip to keep opening the phase card on the Board rather than jumping to its lane — I left that card-55 behaviour alone as out of scope.
+
+**To know**
+
+- One deliberate change outside the new view: a halted phase card on the Board no longer offers **▸ run phase**. The task says run-again belongs in the lane "because clearing a halt should mean having read what caused it", so the card now offers **⟶ phases** (which switches view) alongside **‖ hold**. `tests/test_phase_watch.py::test_a_halt_offers_both_ways_out` was renamed and rewritten to pin the new arrangement.
+- The last column is `Merged in`, not `done/`. Membership in it comes from two sources: the runner's snapshot while a phase runs, and the `## Phase log`'s `<n> merged into <branch>` lines once the phase has left `in-progress/` and the runner stops passing over it. That second source is what makes the "all merged, waiting on its own PR" edge case draw a real lane instead of an empty one — no API change was needed, as the task predicted.
+- Two other tests moved because this work changed what they counted: `tests/test_card_actions.py` (a fourth `wireAction` call site — the lane head, still the one arm-then-fire machine) and `tests/test_scroll_kept.py` (`#view-phases` and `.lstages` are new scrollers, both marked and restored).
+- `AGENTS.md` gained a "The Phases view: a swimlane each" section and the views list now says four, matching how cards 55 and 56 documented themselves.
