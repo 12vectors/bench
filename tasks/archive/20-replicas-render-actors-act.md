@@ -1,6 +1,6 @@
 # 20 — Replica etiquette: the actor's board acts, everyone else renders
 
-**Status:** Done
+**Status:** Archived
 **PR:** https://github.com/12vectors/bench/pull/18
 **Assignee:** istos
 **Priority:** High — without it, task 19 turns every board action into N duplicate side effects
