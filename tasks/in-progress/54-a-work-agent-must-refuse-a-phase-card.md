@@ -117,3 +117,28 @@ phase nobody had started. The gate that was missing is the one on the
 other feature entirely, which is the usual shape of this kind of bug —
 a new capability guards its own front door and leaves the neighbour's
 open.
+
+
+---
+
+## Work report — 2026-08-02 13:32 (Piper)
+
+Committed. Final state of the work:
+
+**What changed**
+
+- `manager/core/agents.py:151-213` — a note stating which headless kinds a phase card may host, plus `is_phase_card()` and a `phase=` argument on `_validate()`. Passing it makes that kind refuse a phase card, naming what to do instead; omitting it is the recorded decision that the kind is allowed.
+- `start_agent()` (`agents.py:360`) passes it: a phase card is refused with a message naming **▸ run phase**, in the same breath as the stage check — ahead of `claim_for_launch` and well ahead of the worktree, so nothing is created and nothing is written.
+- `start_pr_fix()` (`agents.py:702`) refuses too (it is the same work agent with a push), pointing at the member's own card. `start_review()` and `start_pr_review()` are allowed deliberately; `start_pr_review` now names `phase/<stem>` for a phase card, because its prompt asks GitHub for the diff by branch and `task/<stem>` was never cut.
+- `manager/core/board.html` — `phaseFlight()` gained an `idle` reading, so an `in-progress/` phase card that has not been started (or was held) wears a `not started` / `held` pill in the settled `--idle` register with a line saying what **▸ run phase** would do. It is explicitly not work: no accent, no breathing mark, no caret, and a halt or a failed run still outranks it.
+- `AGENTS.md` — both rules written down where the neighbouring behaviour is described.
+
+**How it was verified** — `python3 -m unittest discover -s tests`, the project's whole definition of done: 1031 tests, passing. New file `tests/test_phase_card_refuses_work.py` (23 tests) covers the refusal and that it leaves no branch, worktree or agent record; that it precedes the claim (no `**Assignee:**` written) and survives a takeover; that an ordinary card starts work unchanged; that the two gates are mirror images; that a card retyped `**Type:** Phase` mid-run still reaps and lands in `review/`; each of the four agent kinds; and the card's four visual states through the page's own `phaseFlight()` under node.
+
+**To do / to know**
+
+- One existing test, `tests/test_phase_runs.py:517` (`test_running_it_again_clears_the_halt_and_carries_on`), is flaky — roughly one run in three it finds member 31 still in `in-progress/`. I reproduced it on the unmodified main checkout (`python3 -m unittest discover -s /Users/ronald/Dev/12v/ext/bench/tests -t /Users/ronald/Dev/12v/ext/bench -p test_phase_runs.py -k HaltNeverSkip`), so it is pre-existing and unrelated to this card. It deserves its own card; I have not touched it.
+- `tests/test_phase_members_hidden.py:419` previously asserted that an `in-progress/` phase with no run "has nothing to say" — exactly the behaviour this card reverses. It is rewritten to the new rule rather than deleted, with a second case for `held`.
+- Worth a reviewer's eye first: the decision that **↻ act on PR** refuses a phase card. Review feedback on a phase's PR now has no agent path — it goes to a member's card or to the phase branch by hand. That is a judgment call the task asked for explicitly, and the reasoning sits in the note at `manager/core/agents.py:151`.
+- The unstarted card's pill depends on the runner's snapshot, which the phase beat publishes every `BOARD_PHASE_INTERVAL` (30s default). For up to one beat after a board start the card says nothing rather than guessing — the same latency as every other phase reading.
+- The stray-run gap the task's Notes describe (a 0-byte log, no `run failed` pill) is untouched, as instructed.
