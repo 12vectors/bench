@@ -1,6 +1,7 @@
 # 55 — A headless run gets one turn, and nothing tells the agent that
 
 **Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/51
 **Assignee:** istos
 **Priority:** High — it costs a whole run and everything in it, and the
 condition that triggers it is getting more likely every week
