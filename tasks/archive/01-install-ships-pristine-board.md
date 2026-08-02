@@ -1,6 +1,6 @@
 # 01 — Ship a pristine board on install, not bench's own cards
 
-**Status:** Done
+**Status:** Archived
 **PR:** https://github.com/12vectors/bench/pull/5
 **Priority:** High — every install made after we start dogfooding inherits our cards
 **Type:** Bug
