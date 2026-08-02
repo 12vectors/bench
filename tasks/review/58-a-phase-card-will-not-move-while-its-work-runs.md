@@ -1,6 +1,7 @@
 # 58 — A phase card will not move while its work is running
 
 **Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/49
 **Assignee:** istos
 **Priority:** Medium — the hole is narrow but what falls through it is a
 phase whose card and branch disagree about what is happening
