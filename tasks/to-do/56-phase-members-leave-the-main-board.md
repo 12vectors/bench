@@ -1,6 +1,7 @@
 # 56 — Phase members leave the main board
 
-**Status:** Backlog
+**Status:** To Do
+**Assignee:** istos
 **Priority:** High — the main board is the thing phases currently spoil,
 and every other phase-UI card is downstream of this one
 **Type:** Feature
