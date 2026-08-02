@@ -173,6 +173,9 @@
   /* the last run on this card died: the same terracotta, worn until the
      next launch replaces it or the card moves stage */
   .card.run-failed{border-color:color-mix(in oklab, var(--alarm) 55%, var(--border))}
+  /* a phase halted: the same terracotta, on the card that now stands for
+     every member this view no longer draws */
+  .card.halted{border-color:color-mix(in oklab, var(--alarm) 55%, var(--border))}
   /* merge & clean up is running on this card: the working vocabulary,
      because that is what is happening — the board is disassembling its
      branch. No new colour, no new animation, and nothing to grab: the card
@@ -1112,6 +1115,52 @@ function render() {
 
 /* ── board ────────────────────────────────────────────────────────────── */
 
+/* A phase member is not drawn on the Board view. It keeps its stage, its
+   file, its agent and its actions — this view simply stops listing it,
+   because the phase card stands for it here. The Board goes back to
+   meaning one thing: the work you are personally holding, in five columns
+   that fit.
+
+   Membership is the only thing that hides a card, so *removing* membership
+   is the un-hiding — no sweep, no migration, no second rule. A phase card
+   archived, or a number dropped from its `## Cards` list, stops deriving
+   the membership at all (the server weaves it fresh on every read), and a
+   phase that has reached done/ is over: it holds nothing and hands its
+   cards straight back into the columns they are genuinely in.
+
+   A membership that did not resolve hides nothing either: an authoring
+   mistake must not make work vanish, so a card wearing `phase drift` stays
+   where it can be seen. */
+function heldByPhase(task) {
+  if (!task.phase || (task.phaseDrift || []).length) return false;
+  const card = findTask(task.phase.file);
+  return !!card && card.stage !== 'done';
+}
+
+/* What a column draws, and what its header says about what it does not.
+   The count is the number of cards you can see — true by construction
+   rather than true-with-a-footnote — and `+2 in phases` beside it is a
+   signpost to where the rest went, in the register the existing note uses.
+   It appears only where members are actually hidden, so a board with no
+   phases on it reads exactly as it did before they existed.
+
+   The agents note counts the agents on the cards this column draws;
+   counting every agent anywhere is the header's live chip's job, and that
+   chip still sees an agent working on a hidden member. */
+function columnCards(stage) {
+  return stage.tasks.filter(t => !heldByPhase(t));
+}
+
+function columnNote(stage, shown) {
+  const agentsHere = shown.filter(t => agentOnTask(t.file)).length;
+  const hidden = stage.tasks.length - shown.length;
+  const notes = [];
+  if (agentsHere) notes.push(`${agentsHere} agent${agentsHere > 1 ? 's' : ''}`);
+  else if (STAGE_NOTE[stage.slug]) notes.push(STAGE_NOTE[stage.slug]);
+  if (hidden) notes.push(`+${hidden} in phases`);
+  return notes.join(' · ');
+}
+
 function renderBoard() {
   const board = $('#board');
   // where you were looking, taken before the wipe throws the nodes away:
@@ -1124,17 +1173,19 @@ function renderBoard() {
   for (const stage of S.state.board.stages) {
     const col = document.createElement('section');
     col.className = 'kcol';
-    const agentsHere = stage.tasks.filter(t => agentOnTask(t.file)).length;
-    const note = agentsHere ? `${agentsHere} agent${agentsHere > 1 ? 's' : ''}` : (STAGE_NOTE[stage.slug] || '');
+    const shown = columnCards(stage);
     col.innerHTML =
       `<h2><span class="tickmark" style="background:${STAGE_TINT[stage.slug]}"></span>` +
-      `<span>${stage.label}</span><span class="count">${stage.tasks.length}</span>` +
-      `<span class="note">${esc(note)}</span></h2>`;
+      `<span>${stage.label}</span><span class="count">${shown.length}</span>` +
+      `<span class="note">${esc(columnNote(stage, shown))}</span></h2>`;
     const drop = document.createElement('div');
     drop.className = 'drop';
     drop.dataset.stage = stage.slug;
-    if (!stage.tasks.length) drop.innerHTML = '<div class="empty">Nothing here. Good.</div>';
-    for (const task of stage.tasks) drop.appendChild(cardFor(task));
+    // a column emptied by a phase says so rather than congratulating you
+    if (!shown.length) drop.innerHTML = '<div class="empty">' +
+      (stage.tasks.length ? 'Everything here is in a phase.' : 'Nothing here. Good.') +
+      '</div>';
+    for (const task of shown) drop.appendChild(cardFor(task));
     drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
     drop.addEventListener('dragleave', () => drop.classList.remove('over'));
     drop.addEventListener('drop', (e) => {
@@ -1164,6 +1215,40 @@ function phaseLabel(phase) {
   return name.length > 22 ? name.slice(0, 21) + '…' : name;
 }
 
+/* The phase card is now the only thing standing for its members on this
+   view, so it carries the summary it owes them: how far the run has got.
+   Progress is what has landed on the phase branch, which only a run knows
+   — before there is one the card says how much it holds, which is the
+   honest reading of a phase nobody has started. */
+function phaseSummary(task) {
+  const snap = (S.state.phases || {})[task.file];
+  if (snap) {
+    const at = phaseProgress(snap);
+    return `${at.done} of ${at.total} merged`;
+  }
+  const total = (task.members || []).length;
+  return `${total} card${total === 1 ? '' : 's'}`;
+}
+
+/* …and what it is doing right now: the member in flight while a run is on,
+   the halt while one is held. Null when the phase has no story yet — a
+   phase waiting in to-do/ is just a card. */
+function phaseFlight(task) {
+  const snap = (S.state.phases || {})[task.file];
+  if (!snap) return null;
+  if (snap.halted) {
+    return { bad: true, line: 'halted' + (snap.haltedAt ? ` at #${snap.haltedAt}` : '') +
+      ' — ' + (snap.haltedWhy || snap.halted) };
+  }
+  if (!snap.running) return null;
+  const at = phaseProgress(snap);
+  if (at.on) return { bad: false, line: `on #${at.on.number || at.on.file} — ${at.on.title}` };
+  if ((snap.waitingOn || []).length) {
+    return { bad: false, line: `waiting on #${snap.waitingOn[0]}` };
+  }
+  return { bad: false, line: 'running' };
+}
+
 /* Which phases this card could join, which is also whether the action is
    there at all: the phase cards waiting in to-do/, and none whatsoever for
    a card already in a phase, a phase card itself (they do not nest), or a
@@ -1188,7 +1273,10 @@ function canArchive(task) {
 function cardFor(task) {
   const el = document.createElement('article');
   const agent = agentOnTask(task.file);
-  const working = agent && agent.mode !== 'review';
+  // a running phase has an agent alive on a card this view no longer draws,
+  // so the phase card wears that state on its members' behalf
+  const flight = task.isPhase ? phaseFlight(task) : null;
+  const working = !!(agent && agent.mode !== 'review') || !!(flight && !flight.bad);
   const verdict = task.stage === 'review' ? prVerdict(task) : null;
   const failure = failedRun(task);
   // the server holds this, not the tab that clicked: while merge & clean up
@@ -1199,6 +1287,7 @@ function cardFor(task) {
     + (working ? ' running' : '')
     + (verdict === 'green' ? ' verdict-good' : verdict === 'red' ? ' verdict-bad' : '')
     + (failure ? ' run-failed' : '')
+    + (flight && flight.bad ? ' halted' : '')
     + (completing ? ' completing' : '')
     + (task.stage === 'done' ? ' done-dim' : '');
   el.draggable = !completing;
@@ -1219,6 +1308,13 @@ function cardFor(task) {
     // it outranks a PR verdict from before the run died
     pill = { text: 'run failed', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16),
              title: failure.excerpt };
+    tint = 'var(--alarm)';
+  }
+  if (flight && flight.bad) {
+    // a halt is held, not scrolled past — and on this view the phase card
+    // is where a person meets it, the member that stopped being hidden
+    pill = { text: 'halted', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16),
+             title: flight.line };
     tint = 'var(--alarm)';
   }
   if (completing) {
@@ -1388,6 +1484,12 @@ function cardFor(task) {
     liveLine = `<div class="well bad" title="${esc(failure.excerpt)}">` +
       `<span class="lead">·</span><span class="wbody">rc=${esc(failure.rc)} · ` +
       `${esc(whyFailed(failure))}</span></div>`;
+  } else if (flight) {
+    // the member in flight, on the card that stands for it — the same line
+    // the header chip carries, at the altitude a person is already reading
+    liveLine = `<div class="well${flight.bad ? ' bad' : ''}"><span class="lead">·</span>` +
+      `<span class="wbody">${esc(flight.line)}` +
+      `${flight.bad ? '' : '<span class="caret">▌</span>'}</span></div>`;
   }
 
   // tool chips: destinations, not statuses — they live in the card's footer
@@ -1395,6 +1497,15 @@ function cardFor(task) {
   const detail = prState && prState.detail ? prState.detail : 'open the PR';
   const hasBranch = (S.state.branches || []).includes(task.file.replace(/\.md$/, ''));
   const chips = [];
+  // what the phase card now stands for: its progress, and the way through
+  // to the cards themselves — its own sheet lists them in run order with
+  // the stage each is in, which is where they are read until the Phases
+  // view draws them
+  if (task.isPhase) {
+    chips.push({ label: phaseSummary(task), pre: '⟶', cls: '', phase: task.file,
+      title: 'The cards in this phase, in run order — they are not drawn on '
+           + 'the board while it holds them' });
+  }
   // where this card sits in its phase — derived from the phase card's own
   // list, and a destination like the rest of the row: it opens that card
   if (task.phase) {

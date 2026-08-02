@@ -295,7 +295,10 @@ top of `manager/board.html`.
 
 The board has three views (header switcher):
 
-- **Board** — the kanban, live. Active Claude Code sessions appear as chips in
+- **Board** — the kanban, live, and only what you are holding yourself: a
+  phase's members are drawn elsewhere, with the phase card standing for
+  them and each column saying how many it is not showing (see "A phase's
+  members leave the Board view"). Active Claude Code sessions appear as chips in
   the header; a card an agent is working on carries a live activity line; the
   bottom ticker narrates the latest events and every move is attributed
   (`you` / `agent` / `disk`, or the teammate's git name when a sync brought
@@ -948,6 +951,34 @@ And the phase card's sheet lists its members in run order with each one's
 stage — and, while a phase is in flight, the runner's own reading of each
 (merged in, working, checking, stopped here) — so the card answers "where
 is this up to" without a hunt across five columns.
+
+### A phase's members leave the Board view
+
+The Board is the work you are personally holding, in five columns that
+fit, so a phase's members are **not drawn there**. Nothing is deleted,
+moved or marked: a member keeps its stage, its file, its agent and its
+actions, and the Board simply stops listing it. A column's number is
+therefore the number of cards you can see in it — true by construction
+rather than true-with-a-footnote — with `+2 in phases` beside it saying
+where the rest went, and only where members are actually hidden. A board
+with no phase card on it renders exactly what it always did.
+
+Membership is the only thing that hides a card, so *removing* membership
+is the un-hiding, with no sweep and no second rule: archive the phase
+card, drop a number from its `## Cards` list, or let the phase reach
+`done/` — it holds nothing once it is over — and its former members are
+back in the columns they are genuinely in. A membership that did not
+resolve hides nothing either: a card wearing `phase drift` stays on the
+board, because an authoring mistake must not make work vanish.
+
+That leaves the phase card standing for all of it, so it carries the
+summary it owes: a `⟶ 1 of 2 merged` chip in the footer row that opens
+its own sheet (the member list, in run order, with each one's stage), the
+member in flight on its activity line, and a run that halted worn in
+`--alarm` like any other stopped work. Only the Board hides. Sessions and
+Focus are about runs, not stages, and a phase member's agent is an agent
+like any other — it is counted by the header's live chip and by the tab
+title wherever it is working.
 
 Filtering the board to a phase's cards, and a Focus view for a phase, are
 separate cards.
