@@ -1,6 +1,6 @@
 # 18 — Cards are claimed on move: assignee written, board commits the change
 
-**Status:** Done
+**Status:** Archived
 **PR:** https://github.com/12vectors/bench/pull/15
 **Priority:** High — the ownership primitive every other multi-user piece builds on
 **Type:** Feature
