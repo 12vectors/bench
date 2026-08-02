@@ -68,4 +68,5 @@ review or one too many.
 - 2026-08-01 17:28 · halted at 47 — its run ended without reaching review/
 - 2026-08-02 07:18 · run started on phase/53-the-board-stops-fighting-you
 - 2026-08-02 07:18 · 47 merged into phase/53-the-board-stops-fighting-you
+- 2026-08-02 07:18 · every card merged — opening the phase PR
 
