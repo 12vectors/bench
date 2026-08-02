@@ -193,6 +193,19 @@ in. A wrong guess costs nothing an empty value would not, since a prefix
 that matches nothing denies exactly the same way. An existing value is
 never overwritten, so `--setup` cannot undo a hand-edit.
 
+Empty is honest, but honest and invisible is a board that lets an agent
+discover the problem on your behalf, slowly — so the board says it out
+loud. With `BOARD_AGENT_COMMANDS` holding nothing (unset, whitespace, or
+a lone comma, which is how the adapters read it too) the header carries a
+quiet `no agent commands` chip naming the setting and the file that holds
+it, `manager/local/.env`, and every launch of the two intents that would
+have run those commands — **▸ start work** and **↻ act on PR** — appends
+the same sentence to its line in the ticker. It is a configuration fact,
+not an alarm: it wears the settled register rather than `--alarm`, it
+appears only while the setting is empty, and it never refuses a launch.
+An agent that only edits files is still useful, and bench does not
+decline work because a project is unconfigured.
+
 Bare Enter takes the default, Ctrl-D skips the rest, and what lands is
 `core/.env.example` with the answers substituted into their lines: every
 other key, every comment, so the written file is where the project reads

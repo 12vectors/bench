@@ -105,6 +105,16 @@ ADAPTER = setting("BOARD_AGENT_ADAPTER", "claude")
 # the adapter's own knowledge; this list is the project's half.
 AGENT_COMMANDS = setting("BOARD_AGENT_COMMANDS", "python3 -m unittest")
 
+
+def agent_commands() -> list[str]:
+    """The prefixes as an adapter reads them: comma-separated, blanks
+    dropped — so whitespace, or a lone comma, is exactly nothing
+    configured. The adapters split the same string in their own standalone
+    copies of `split_commands()`; this is core's, and it is what the board
+    asks so the page and the launch can never disagree about *empty*."""
+    return [part.strip() for part in AGENT_COMMANDS.split(",") if part.strip()]
+
+
 # Model per launch intent — an opaque vendor-native name core passes to the
 # adapter untranslated (what names mean anything is vendor knowledge). Empty
 # = inherit the vendor's own default, exactly today's behaviour. A per-intent

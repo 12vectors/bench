@@ -42,6 +42,10 @@ def state_payload() -> dict:
         "phases": phases.public_state(),
         "drive": drive.public(),
         "hasDriver": config.driver_path() is not None,
+        # whether this project gave its headless agents anything to run. The
+        # one setting an agent cannot work around, so the board says it is
+        # missing rather than letting a run discover it — see the header chip
+        "hasAgentCommands": bool(config.agent_commands()),
         "branches": github.task_branches(),
         "commands": config.commands(),
         "commandRuns": commands.public(),

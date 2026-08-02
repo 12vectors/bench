@@ -661,6 +661,7 @@
   <span class="spacer"></span>
   <div class="phasechips" id="phasechips" hidden></div>
   <div class="livechip" id="syncchip" hidden style="cursor:default"></div>
+  <div class="livechip" id="cmdchip" hidden style="cursor:default"></div>
   <div class="livechip" id="livechip" title="open Sessions"></div>
   <button id="themebtn">Daylight</button>
   <button id="refresh">Refresh</button>
@@ -1066,6 +1067,27 @@ function renderSync() {
     `<span class="mono">${esc(detail.split(' — ')[0].replace(/^sync[^:]*:\s*/, ''))}</span>`;
 }
 
+/* The commands a headless agent may run are the one thing it cannot work
+   around: with none configured a work agent still edits and commits, but it
+   can never run this project's tests, and nothing said so until a run had
+   already ended saying it. Same shape as the drive's "no driver" — a quiet
+   statement of what this project has not set up, in the settled register,
+   never `--alarm`: nothing is failing here. A project that set it, by
+   detection or by hand, sees nothing at all. */
+function renderAgentCommands() {
+  const el = $('#cmdchip');
+  const missing = S.state && S.state.hasAgentCommands === false;
+  el.hidden = !missing;
+  if (!missing) return;
+  el.title = 'Headless agents have no project commands to run here, so a ' +
+    "work agent cannot run this project's tests. Set BOARD_AGENT_COMMANDS " +
+    'in manager/local/.env — comma-separated command prefixes, e.g. ' +
+    '"npm test". Work still runs; the agent simply cannot check itself.';
+  el.innerHTML = `<span class="dot" style="background:var(--idle)"></span>` +
+    `<span style="color:var(--muted)">no agent commands</span>` +
+    `<span class="mono">BOARD_AGENT_COMMANDS</span>`;
+}
+
 /* ── a phase in flight ────────────────────────────────────────────────── */
 
 /* The phases the header has something to say about: one running, or one
@@ -1214,6 +1236,7 @@ function render() {
   renderPhases();
   renderViews();
   renderSync();
+  renderAgentCommands();
   if (S.view === 'flight') renderFlight();
   else if (S.view === 'focus') renderFocus();
   else renderCards();
