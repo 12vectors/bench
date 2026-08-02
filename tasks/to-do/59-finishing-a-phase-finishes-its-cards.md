@@ -1,6 +1,7 @@
 # 59 — Finishing a phase finishes its cards, and clears up after them
 
-**Status:** Backlog
+**Status:** To Do
+**Assignee:** istos
 **Priority:** Medium — without it a phase ends by handing you a pile of
 cards you have already judged and a heap of checkouts nobody will
 remember to delete
