@@ -949,6 +949,25 @@ and they are the phase's own interface:
   watching is only trustworthy if its halt is impossible to miss, so it is
   told three times at three altitudes, exactly as a dead run is.
 
+**And the card does not move while its work runs.** A phase card stands
+for cards the Board no longer draws, so dragging it to another stage — or
+onto the archive tray, which is a move like any other — while a member has
+an agent in it would leave the card in one place and a live run, a
+worktree and a branch in another. That move is refused, and the refusal
+names the way through rather than the wall: which member is working, and
+that **‖ hold** stops the phase and the agent it has in flight while
+leaving the phase branch, everything merged into it and every worktree
+exactly as they are. The card stays where it was and the reason is in the
+toast. The answer is the server's — `/api/move`, `/api/archive` and
+merge-and-clean-up all ask it, so a stale page cannot get past a rule the
+drag alone would enforce. What is refused is narrow on purpose: a phase
+*between* members has nothing in flight and moves freely, a halted one has
+nothing running by construction and moves freely — which is exactly when
+walking it back is the thing to do — and "running" is read from the runs
+themselves rather than from what the log says was once started, so a
+member's run that died cannot lock its phase card. An ordinary card never
+reaches the question.
+
 Every advance is narrated in the ticker as it happens: the member that
 came up green, the merge into the phase branch, the member starting next.
 And the phase card's sheet lists its members in run order with each one's

@@ -653,12 +653,6 @@ def _start(phase: dict, filename: str) -> dict:
     return advance(by_file.get(filename) or phase, by_file, by_number)
 
 
-def _agents_on(files: set[str]) -> list[dict]:
-    with state.LOCK:
-        return [dict(r) for r in state.AGENTS.values()
-                if r["task"] in files and r["status"] == "running"]
-
-
 def stop_phase(filename: str, stage: str) -> dict:
     """Hold a phase: stop, without unwinding anything.
 
@@ -691,7 +685,7 @@ def stop_phase(filename: str, stage: str) -> dict:
                              f"phase log must be writable, or the next beat "
                              f"would carry on regardless")
         held = []
-        for record in _agents_on({m["file"] for m in phase["members"]}):
+        for record in agents.working_on({m["file"] for m in phase["members"]}):
             try:
                 agents.stop_agent(record["id"])
             except ValueError:        # it ended between the read and the ask
@@ -704,3 +698,79 @@ def stop_phase(filename: str, stage: str) -> dict:
         SNAPSHOTS[filename] = snapshot
     state.broadcast({"type": "board"})
     return snapshot
+
+
+# ── and not moving it while it works ───────────────────────────────────
+
+
+def _member_name(member: dict) -> str:
+    """`31 — Stand up site/` — the same line the phase's own list would
+    carry, built by the same helper, so the refusal names the member the
+    way the card that holds it does."""
+    if not member.get("number"):
+        return member["file"]
+    return taskfiles._member_entry(member["number"], member["title"])
+
+
+def _joined(parts: list[str]) -> str:
+    return (" and ".join([", ".join(parts[:-1]), parts[-1]])
+            if len(parts) > 1 else (parts[0] if parts else ""))
+
+
+def assert_not_working(filename: str, doing: str = "move the card") -> None:
+    """A phase card does not move while one of its members has an agent in
+    it. Refuse, and say the whole thing.
+
+    The phase card stands for its members (they are not drawn on the Board
+    at all), so moving it — to another stage, or out to `tasks/archive/`,
+    which is a move like any other — while a member is mid-run is a move
+    nobody can mean: the card lands somewhere its branch, its worktree and
+    its live agent are not. The one action that settles it already exists
+    and does exactly the right thing, so the refusal names it rather than
+    just saying no: `‖ hold` stops the run and the agent it has in flight
+    and unwinds nothing.
+
+    What is refused is narrow on purpose. A phase *between* members has
+    nothing to lose and moves freely, and so does a halted one — by
+    construction nothing is running there, which is precisely when walking
+    the card back is the thing to do. And "running" is read from the
+    processes themselves (`agents.working_on`), never from what the log
+    says was once started, so a member's run that died between two beats
+    cannot lock its phase card for the life of the board.
+
+    An ordinary card never reaches the question: the one file is read, it
+    is not a phase, and the move goes through untouched.
+
+    It reads and never writes, so it does not take `_LOCK` — a pass of the
+    beat can spend minutes in a merge, and a move that waited on one would
+    be a worse answer than the sliver it closes. A launch landing between
+    this read and the rename is the same state a `mv` produces, and the
+    runner already knows how to read it: a member walked out from under
+    the phase halts it.
+    """
+    stage = taskfiles.find_stage_of(filename)
+    if stage is None:
+        return
+    card = taskfiles.read_task(config.TASKS / stage / filename, stage)
+    if not card["isPhase"] or not card["cards"]:
+        return
+    # only now the whole board, to resolve the listed numbers to cards
+    phase = _cards()[0].get(filename)
+    if phase is None:
+        return
+    members = {member["file"]: member for member in phase["members"]}
+    working = {record["task"]: record
+               for record in agents.working_on(set(members))}
+    if not working:
+        return
+    parts = [f"{working[file].get('name') or 'an agent'} is on "
+             f"{_member_name(member)}"
+             for file, member in members.items() if file in working]
+    # the phase by name, as the header chip says it — the number it opens
+    # with would be the third one in a sentence that already has two
+    name = taskfiles.LEADING_NUMBER_RE.sub("", phase["title"]).strip()
+    raise ValueError(
+        f"{name or phase['title']} is still working — {_joined(parts)}. ‖ hold stops "
+        f"the phase and the agent it has in flight, and leaves the phase "
+        f"branch, everything merged into it and every worktree exactly as "
+        f"they are. Hold it first, then {doing}.")
