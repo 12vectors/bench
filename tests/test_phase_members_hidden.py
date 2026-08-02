@@ -416,10 +416,24 @@ class ThePhaseCardsSummary(BoardViewCase):
 
         self.assertIsNone(self.flight())
 
-    def test_a_phase_whose_run_ended_has_nothing_to_say(self):
+    def test_a_phase_in_progress_with_no_run_says_it_has_not_started(self):
+        """It said nothing here once, which made a phase nobody had started
+        look exactly like one mid-run — the header chip is absent in both
+        cases. Task 54 gave the card the distinction; it is quiet, and it is
+        not work, so nothing about it breathes."""
         self.a_phase_of_two()
 
-        self.assertIsNone(self.flight(phases=self.snapshot(running=False)))
+        flight = self.flight(phases=self.snapshot(running=False))
+
+        self.assertTrue(flight["idle"])
+        self.assertEqual(flight["pill"], "not started")
+
+    def test_a_phase_that_was_held_says_that_instead(self):
+        self.a_phase_of_two()
+
+        flight = self.flight(phases=self.snapshot(running=False, stopped=True))
+
+        self.assertEqual(flight["pill"], "held")
 
 
 class Wiring(unittest.TestCase):

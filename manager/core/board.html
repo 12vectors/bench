@@ -1347,8 +1347,14 @@ function phaseSummary(task) {
 }
 
 /* …and what it is doing right now: the member in flight while a run is on,
-   the halt while one is held. Null when the phase has no story yet — a
-   phase waiting in to-do/ is just a card. */
+   the halt while one is held — and the quiet case this exists for, that
+   nobody has started it. A phase card sitting in in-progress/ that has not
+   been run used to look exactly like one that is running: the header chip
+   is the only other place that difference is written, and it is absent both
+   when a phase has not started and when there is no phase at all. So the
+   card says it itself. `idle` is not work — it takes no accent, no
+   breathing mark and no caret, because nothing is happening. Null when the
+   phase has no story to tell here: one waiting in to-do/ is just a card. */
 function phaseFlight(task) {
   const snap = (S.state.phases || {})[task.file];
   if (!snap) return null;
@@ -1356,7 +1362,14 @@ function phaseFlight(task) {
     return { bad: true, line: 'halted' + (snap.haltedAt ? ` at #${snap.haltedAt}` : '') +
       ' — ' + (snap.haltedWhy || snap.halted) };
   }
-  if (!snap.running) return null;
+  if (!snap.running) {
+    if (task.stage !== 'in-progress') return null;
+    return snap.stopped
+      ? { idle: true, pill: 'held',
+          line: 'held — ▸ run phase carries on from where it stopped' }
+      : { idle: true, pill: 'not started',
+          line: 'not started — ▸ run phase cuts its branch and starts the first card' };
+  }
   const at = phaseProgress(snap);
   if (at.on) return { bad: false, line: `on #${at.on.number || at.on.file} — ${at.on.title}` };
   if ((snap.waitingOn || []).length) {
@@ -1392,7 +1405,8 @@ function cardFor(task) {
   // a running phase has an agent alive on a card this view no longer draws,
   // so the phase card wears that state on its members' behalf
   const flight = task.isPhase ? phaseFlight(task) : null;
-  const working = !!(agent && agent.mode !== 'review') || !!(flight && !flight.bad);
+  const working = !!(agent && agent.mode !== 'review')
+    || !!(flight && !flight.bad && !flight.idle);
   const verdict = task.stage === 'review' ? prVerdict(task) : null;
   const failure = failedRun(task);
   // the server holds this, not the tab that clicked: while merge & clean up
@@ -1418,6 +1432,15 @@ function cardFor(task) {
   } else if (!agent && verdict === 'red') {
     pill = { text: 'changes asked', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16) };
     tint = 'var(--alarm)';
+  }
+  if (flight && flight.idle) {
+    // the state the card could not tell from a run in flight: a phase in
+    // in-progress/ that nobody has started, or one held. It is the absence
+    // of work, so it wears the settled register — never the accent, which
+    // means an agent is alive.
+    pill = { text: flight.pill, tint: 'var(--idle)', bg: 'var(--sunken)',
+             title: flight.line };
+    tint = 'var(--idle)';
   }
   if (failure) {
     // the newest thing that happened here, and the only actionable one:
@@ -1610,7 +1633,7 @@ function cardFor(task) {
     // the header chip carries, at the altitude a person is already reading
     liveLine = `<div class="well${flight.bad ? ' bad' : ''}"><span class="lead">·</span>` +
       `<span class="wbody">${esc(flight.line)}` +
-      `${flight.bad ? '' : '<span class="caret">▌</span>'}</span></div>`;
+      `${flight.bad || flight.idle ? '' : '<span class="caret">▌</span>'}</span></div>`;
   }
 
   // tool chips: destinations, not statuses — they live in the card's footer
@@ -2503,7 +2526,7 @@ function laneFor(task) {
   // a run in flight, in the same well the cards use for the same fact
   const well = !halted && flight
     ? `<div class="well"><span class="lead">·</span><span class="wbody">${esc(flight.line)}` +
-      `<span class="caret">▌</span></span></div>`
+      `${flight.idle ? '' : '<span class="caret">▌</span>'}</span></div>`
     : '';
 
   el.innerHTML = head + halt + well +
