@@ -202,6 +202,27 @@ class OneLanePerPhase(LaneCase):
         self.assertEqual(self.lanes(phases=self.snapshot()),
                          ["40-the-site.md", "39-earlier.md"])
 
+    def test_a_held_run_sorts_above_a_phase_nobody_has_started(self):
+        """A person held it, so it is theirs to resume — it belongs near the
+        top, not lumped in with the phases nobody has started."""
+        self.a_phase_of_three()
+        self.write("41-the-docs.md", card("41 — Ship the docs", kind="Phase",
+                                          cards="- 33 — The landing page\n",
+                                          status="In Progress"), "in-progress")
+        self.write("39-earlier.md", card("39 — An earlier phase", kind="Phase",
+                                         cards="- 33 — The landing page\n",
+                                         status="To Do"), "to-do")
+        phases = self.snapshot()
+        phases["41-the-docs.md"] = {"file": "41-the-docs.md", "members": [],
+                                    "running": False, "started": True,
+                                    "halted": "", "haltedAt": None,
+                                    "haltedWhy": None, "stopped": True,
+                                    "stoppedBy": "held by ronald"}
+
+        self.assertEqual(self.lanes(phases=phases),
+                         ["40-the-site.md", "41-the-docs.md", "39-earlier.md"],
+                         "running, then the held run, then the unstarted one")
+
     def test_a_finished_phase_sorts_last(self):
         self.a_phase_of_three(phase_stage="done")
         self.write("41-the-docs.md", card("41 — Ship the docs", kind="Phase",

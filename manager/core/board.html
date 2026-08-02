@@ -2303,16 +2303,18 @@ async function unarchiveLast() {
 
 /* Where a lane sits in the stack: a halt first, because it is the one
    thing on this page waiting on a person and it must not be below the
-   fold; then a run in flight; then the phases nobody has started; then the
-   ones that are over. Every phase card draws a lane — a phase whose
-   members are all merged and which is waiting on its own PR still owns
-   them, and a lane that vanished exactly when it needed merging would be
-   a view you could not trust. */
+   fold; then a run in flight; then a run a person held, which is still
+   theirs to resume and so belongs above the phases nobody has started;
+   then the ones that are over. Every phase card draws a lane — a phase
+   whose members are all merged and which is waiting on its own PR still
+   owns them, and a lane that vanished exactly when it needed merging
+   would be a view you could not trust. */
 function laneRank(task) {
   const snap = (S.state.phases || {})[task.file];
   if (snap && snap.halted) return 0;
   if (snap && snap.running) return 1;
-  return task.stage === 'done' ? 3 : 2;
+  if (snap && snap.stopped) return 2;
+  return task.stage === 'done' ? 4 : 3;
 }
 
 function lanePhases() {
