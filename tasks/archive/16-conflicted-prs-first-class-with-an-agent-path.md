@@ -1,6 +1,6 @@
 # 16 — Surface PR conflicts on the card and give act-on-PR the tools to resolve them
 
-**Status:** Done
+**Status:** Archived
 **PR:** https://github.com/12vectors/bench/pull/12
 **Priority:** High — the first real conflict (PR #7, card 14) had no bench path at all; parallel lanes make the next one soon
 **Type:** Feature
