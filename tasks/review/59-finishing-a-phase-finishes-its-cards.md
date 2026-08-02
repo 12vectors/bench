@@ -158,3 +158,26 @@ The task is implemented, tested and committed on `task/59-finishing-a-phase-fini
 - **A member with a dirty worktree still moves to `done/`** — its work is in `main`, so the card is finished; only the workspace is kept, and the ticker says which one and why. If you would rather such a card stayed in `review/`, that is a one-line change in `_sweep()`.
 
 **Not swept, on purpose:** a member that halted, was held or was walked back out of `review/`; a member the phase never reached; every card when the merge conflicts (the existing abort covers the sweep because it runs after the merge). Tests cover each, plus a member hand-moved to `done/` (cleaned, not moved twice), the team-mode path where `main` has not caught up with the merge origin made, and the remote branch actually disappearing from a real bare origin.
+
+
+---
+
+## PR review — 2026-08-02 12:21 (Basil)
+
+PR REVIEW: APPROVE
+
+The work is complete, committed on `task/59-finishing-a-phase-finishes-its-cards` (commit `b690060`) as a single commit, and it satisfies every acceptance criterion for task 59. I reviewed the full diff and the surrounding code; I could not run the test suite myself in this session (see the one action item), but the tests are comprehensive and map cleanly onto the code. GitHub refused a formal `--approve` because the review runs under the same git identity (`istos`) that authored the PR, so I posted the verdict as a PR comment instead.
+
+**What is good**
+- **Ordering is correct and safe.** `_complete` reads the merged members (`_brought`) *before* any destructive step, because the phase branch — the only record of what it merged — is deleted mid-operation. The sweep runs only *after* the merge into `main` has actually succeeded, and both merge paths (`_merge_locally`, `_merge_on_origin`) raise on conflict before the sweep is reached. "Abort together" holds.
+- **"Only what the phase merged" is judged the same way the runner judges it** (`github.py` `_brought`): card in `review/`/`done/` **and** branch contained in the phase branch (or no branch). The stage check is what stops a trivially-contained empty branch from being swept. Halted/held/walked-back members are left untouched — card, worktree and branch.
+- **The one unrecoverable step is guarded** (`_clear_member`): worktree removed **without** `--force`, `git status --porcelain` checked first, a dirty worktree reported in the ticker and kept with its branch.
+- **One ending, told once:** `taskfiles.move_together` moves all swept cards in a single `board: … → done with phase N` commit that carries the `board:` prefix (so team-mode sync publishes it) and fires the commit hook; the moves are marked `quiet` so `watch.narrate` still runs every side effect but suppresses the per-file ticker lines.
+- Renames (`_member_entry → member_entry`, `claim_expected → claim_move`) are consistent across `taskfiles.py`/`phases.py`/`state.py`/`watch.py`, with `claim_expected` kept as a wrapper. No layering violations. `tests/test_phase_finishes.py` covers every acceptance item, including the `BOARD_SYNC` origin-merge path and the dirty-worktree / hand-moved-to-done / merge-conflict / merged-nothing edges.
+
+**To do (one item for the human)**
+- Confirm the test suite is green via CI or a local `python3 -m unittest discover -s tests`. The work report claims 996 tests pass (30 new); the sandbox here declined the commands that would run them, so I verified the tests statically only.
+
+**To know (minor, non-blocking — no change requested)**
+- The completion sheet's "N cards this phase merged" count is computed frontend-side by `mergedIn()` (runner snapshot + phase log), while the backend sweep uses git containment (`_brought`). They should agree in practice, and the toast reports the real swept count, so nothing user-facing is wrong.
+- The ending summary counts `brought` ("2 cards merged … went to done/") even when one member was already hand-moved to `done/` and so wasn't re-moved. Cosmetic only.
