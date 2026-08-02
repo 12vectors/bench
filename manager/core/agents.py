@@ -254,6 +254,21 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str, log
     return proc, log_file, model
 
 
+def _no_commands_note() -> str | None:
+    """What a launch owes the ticker when the project configured nothing for
+    its agents to run: this run can edit and commit, but it cannot check its
+    own work. Only the two intents that would have run the commands say it
+    (work and act-pr); a read-only kind never had them.
+
+    A note, never a refusal — an agent that only edits files is still
+    useful, and bench does not decline work because a project is
+    unconfigured. The header says the same thing standing still."""
+    if config.agent_commands():
+        return None
+    return ("no project commands configured, so it cannot run this project's "
+            "tests — set BOARD_AGENT_COMMANDS in manager/local/.env")
+
+
 def _fresh_branch_point() -> tuple[str | None, str | None]:
     """Where a brand-new task branch should start: the newest main that
     exists. With an `origin` remote, fetch its main (bounded by
@@ -429,8 +444,9 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     summary = (f"{name} is back on {filename} — continuing branch {branch}"
                if continuing else
                f"{name} started on {filename} (branch {branch})")
-    if base_note:
-        summary += f" — {base_note}"
+    for note in (base_note, _no_commands_note()):
+        if note:
+            summary += f" — {note}"
     state.record_board_event({
         "kind": "agent", "actor": "agent", "file": filename,
         "summary": summary,
@@ -739,9 +755,13 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
+    summary = f"{name} is acting on the review of {filename}'s PR"
+    note = _no_commands_note()
+    if note:
+        summary += f" — {note}"
     state.record_board_event({
         "kind": "agent", "actor": "agent", "file": filename,
-        "summary": f"{name} is acting on the review of {filename}'s PR",
+        "summary": summary,
     })
     threading.Thread(target=_reap_pr_fix, args=(agent_id, proc, log_file),
                      daemon=True).start()
