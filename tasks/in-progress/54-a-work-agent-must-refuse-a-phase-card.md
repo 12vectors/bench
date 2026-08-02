@@ -1,6 +1,7 @@
 # 54 — A work agent must refuse a phase card
 
-**Status:** Backlog
+**Status:** In Progress
+**Assignee:** istos
 **Priority:** High — it already happened, and what it produces is an agent
 implementing a card whose entire content is a list of other cards
 **Type:** Bug
