@@ -375,14 +375,13 @@ def _number(filename: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _commit_move(filename: str, target: str, src: Path, dst: Path, who: str,
-                 number: str | None) -> None:
-    """The move and the claim in one commit.
+def _move_spec(src: Path, dst: Path) -> list[str]:
+    """The paths one move's commit names.
 
-    Both paths are named, so git records a rename rather than a delete and
-    an add — and a card git has never seen (a brand-new backlog file) names
-    only its destination, since a pathspec matching nothing in HEAD would
-    fail the commit outright.
+    Both ends, so git records a rename rather than a delete and an add —
+    and a card git has never seen (a brand-new backlog file) names only its
+    destination, since a pathspec matching nothing in HEAD would fail the
+    commit outright.
     """
     spec = [str(dst)]
     try:
@@ -391,12 +390,19 @@ def _commit_move(filename: str, target: str, src: Path, dst: Path, who: str,
             spec.insert(0, str(src))   # git knew the old path: record its removal
     except (subprocess.SubprocessError, OSError):
         pass
+    return spec
+
+
+def _commit_move(filename: str, target: str, src: Path, dst: Path, who: str,
+                 number: str | None) -> None:
+    """The move and the claim in one commit."""
     _commit(filename, f"board: {number or filename[:-3]} → {target} ({who or 'board'})",
-            spec, f"{filename} moved, but committing it failed")
+            _move_spec(src, dst), f"{filename} moved, but committing it failed")
 
 
 def _relocate(filename: str, src: Path, dst: Path, text: str, target: str,
-              actor: str, who: str | None = None) -> None:
+              actor: str, who: str | None = None, commit: bool = True,
+              quiet: bool = False) -> None:
     """The one door out of a directory under tasks/: register who is doing
     it, write the file, move it, commit it.
 
@@ -406,12 +412,16 @@ def _relocate(filename: str, src: Path, dst: Path, text: str, target: str,
     and the commit message call the destination (a stage slug, or
     `archived`), and `who` is this checkout's git name when the caller has
     already paid for it.
+
+    `commit` and `quiet` are what a batch of moves turns off: several cards
+    that moved as one thing are committed as one thing and narrated as one
+    thing (`move_together`), and both would be wrong done per file.
     """
-    state.expect_move(filename, target, actor)
+    state.expect_move(filename, target, actor, quiet=quiet)
     dst.parent.mkdir(parents=True, exist_ok=True)
     src.write_text(text, encoding="utf-8")
     shutil.move(str(src), str(dst))
-    if config.COMMIT_MOVES:
+    if config.COMMIT_MOVES and commit:
         _commit_move(filename, target, src, dst,
                      actor_name() if who is None else who, _number(filename))
 
@@ -492,7 +502,7 @@ PHASE_JOIN_FROM = {"backlog", "to-do"}   # a card joins a phase before it starts
 PHASE_HOST = "to-do"                     # and only a phase still waiting accepts it
 
 
-def _member_entry(number: str, title: str) -> str:
+def member_entry(number: str, title: str) -> str:
     """`33 — The landing page` — the way a person writes it.
 
     The section is authored by hand and read by hand, so a line the board
@@ -569,7 +579,7 @@ def add_to_phase(filename: str, stage: str, phase_file: str) -> dict:
                  else f"phase {_phase_name(holder)} already")
         raise ValueError(f"{where} lists {card['number']}")
 
-    entry = _member_entry(card["number"], card["title"])
+    entry = member_entry(card["number"], card["title"])
     if not append_to_section(phase_file, PHASE_HOST, "Cards", f"- {entry}",
                              f"gained {number}"):
         raise ValueError(f"{phase_file} could not be written")
@@ -578,12 +588,16 @@ def add_to_phase(filename: str, stage: str, phase_file: str) -> dict:
             "entry": entry, "line": f"- {entry}"}
 
 
-def move_task(filename: str, source: str, target: str, actor: str = "you") -> dict:
+def move_task(filename: str, source: str, target: str, actor: str = "you",
+              commit: bool = True, quiet: bool = False) -> dict:
     """Move a task file between stage directories and fix its Status line.
 
     With `BOARD_COMMIT_MOVES` on, the move also claims the card (an
     **Assignee:** line, this checkout's git name) or releases it when the
     card is walked back to backlog, and commits the whole change.
+
+    `commit` and `quiet` belong to `move_together` below — a lone move
+    commits itself and narrates itself, as it always has.
     """
     if source not in config.STAGE_DIRS or target not in config.STAGE_DIRS:
         raise ValueError("unknown stage")
@@ -612,5 +626,46 @@ def move_task(filename: str, source: str, target: str, actor: str = "you") -> di
         elif name and claims(source, target):
             text = _set_assignee(text, name)
 
-    _relocate(filename, src, dst, text, target, actor, who=name)
+    _relocate(filename, src, dst, text, target, actor, who=name,
+              commit=commit, quiet=quiet)
     return read_task(dst, target)
+
+
+def move_together(moves: list[tuple[str, str]], target: str, note: str,
+                  actor: str = "you") -> list[dict]:
+    """Move several cards into one stage as one thing.
+
+    A phase's ending is one event that happens to move five files, so the
+    record it leaves should be one too: one commit naming every card that
+    moved, rather than five `board: NN → done` lines in a row that a
+    reader of `git log` has to reassemble into the thing that happened.
+    The message still says what moved — the numbers are in it — and it
+    carries the `board: ` prefix, so in team mode it reaches the other
+    boards on the same push every other move rides.
+
+    The moves are quiet for the same reason (see `state.expect_move`): the
+    caller narrates the ending, and the ticker does not also scroll the
+    parts. Each takes `moves` as `(filename, source stage)`.
+
+    A card that cannot be moved — gone, or already in `target` — is
+    skipped rather than failing the rest. This runs after work that has
+    already landed in `main`, and finishing four cards beats abandoning
+    the sweep over the fifth.
+    """
+    moved, spec = [], []
+    for filename, source in moves:
+        src = config.TASKS / source / filename
+        dst = config.TASKS / target / filename
+        try:
+            moved.append(move_task(filename, source, target, actor=actor,
+                                   commit=False, quiet=True))
+        except (ValueError, OSError):
+            continue
+        spec += _move_spec(src, dst)
+    if moved and config.COMMIT_MOVES:
+        numbers = ", ".join(task["number"] or task["file"][:-3] for task in moved)
+        _commit(moved[0]["file"],
+                f"board: {numbers} → {target}" + (f" {note}" if note else "")
+                + f" ({actor_name() or 'board'})",
+                spec, f"{len(moved)} cards moved, but committing them failed")
+    return moved

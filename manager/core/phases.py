@@ -709,7 +709,7 @@ def _member_name(member: dict) -> str:
     way the card that holds it does."""
     if not member.get("number"):
         return member["file"]
-    return taskfiles._member_entry(member["number"], member["title"])
+    return taskfiles.member_entry(member["number"], member["title"])
 
 
 def _joined(parts: list[str]) -> str:

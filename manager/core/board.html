@@ -2002,6 +2002,11 @@ function closeSheet() { $('#sheetwrap').classList.remove('open'); $('#sheetwrap'
 function completeSheet(task, from) {
   const d = S.state.drive;
   const driving = d && d.task === task.file && ['starting', 'up'].includes(d.status);
+  // A phase card stands for cards the Board does not draw, so the sheet
+  // has to say what merging it does to them: the ones it merged go to
+  // done/ with it and their workspaces go too. Counted the way the lane
+  // counts them, from the runner's reading and the phase's own log.
+  const swept = task.isPhase ? mergedIn(task).size : 0;
   const wrap = $('#sheetwrap');
   wrap.innerHTML =
     `<div class="sheet">` +
@@ -2010,13 +2015,15 @@ function completeSheet(task, from) {
     `<p>This task has ${task.pr ? 'a PR and ' : ''}a branch with work on it. What should happen?</p>` +
     `<div class="sbtns">` +
     `<button id="sh-keep">Keep it where it is<small>Nothing moves, nothing changes.</small></button>` +
-    `<button id="sh-move">Just move the card<small>The branch${task.pr ? ', PR' : ''} and worktree stay as they are.</small></button>` +
+    `<button id="sh-move">Just move the card<small>The branch${task.pr ? ', PR' : ''} and worktree stay as they are` +
+    `${task.isPhase ? ", and so does every card in the phase" : ''}.</small></button>` +
     // team mode merges on origin: the board never makes a merge commit of
     // its own, so every replica's main keeps fast-forwarding
     `<button id="sh-ship" class="shipit">Merge &amp; clean up<small>${driving ? 'Park the drive, then m' : 'M'}erge ` +
     ((S.state.sync || {}).enabled
       ? `the PR on GitHub, remove the worktree and branches, move the card — local main fast-forwards on the next sync beat.`
       : `the branch into main, push${task.pr ? ' (marks the PR merged)' : ''}, remove the worktree and branches, move the card.`) +
+    (swept ? ` The ${swept} card${swept === 1 ? '' : 's'} this phase merged go to done/ with it, and their worktrees and branches go too.` : '') +
     `</small></button>` +
     `</div></div>`;
   wrap.classList.add('open');
@@ -2032,7 +2039,12 @@ function completeSheet(task, from) {
     });
     const data = await res.json();
     if (!res.ok) { toast(data.error || 'completion failed — the card stays', true); }
-    else toast(data.merged ? `${task.file} merged and cleaned up` : `${task.file} moved to done`);
+    else {
+      const went = (data.swept || []).length;
+      toast(data.merged ? `${task.file} merged and cleaned up` +
+              (went ? ` — ${went} card${went === 1 ? '' : 's'} went to done/ with it` : '')
+            : `${task.file} moved to done`);
+    }
     await loadState();
   });
 }

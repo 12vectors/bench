@@ -30,20 +30,25 @@ def _board_sig() -> dict[str, set[str]]:
     return sig
 
 
-def _actor(filename: str, stage: str) -> tuple[str, bool]:
-    """Who did this, and whether it happened somewhere else.
+def _actor(filename: str, stage: str) -> tuple[str, bool, bool]:
+    """Who did this, whether it happened somewhere else, and whether it has
+    already been narrated.
 
     A move this board made is claimed from the expectations; one a pull
     brought carries its commit author's name and is *remote* — this board
     is only rendering it; a plain mv on this disk is nobody in particular,
     but it is still this board's own disk, so it acts.
+
+    *Quiet* is the mover saying it has told this story already: a phase
+    ending sweeps its whole list into done/ and reports one ending. The
+    line is skipped; nothing else about the move is.
     """
-    actor = state.claim_expected(filename, stage)
+    actor, quiet = state.claim_move(filename, stage)
     if actor == "disk":
         who = sync.arrived_actor(filename)
         if who:
-            return who, True
-    return actor, False
+            return who, True, False
+    return actor, False, quiet
 
 
 def narrate(prev: dict[str, set[str]], cur: dict[str, set[str]]) -> None:
@@ -52,12 +57,13 @@ def narrate(prev: dict[str, set[str]], cur: dict[str, set[str]]) -> None:
     cur_loc = {f: s for s, files in cur.items() for f in files}
     for f, stage in sorted(cur_loc.items()):
         if f in prev_loc and prev_loc[f] != stage:
-            actor, remote = _actor(f, stage)
-            state.record_board_event({
-                "kind": "move", "file": f, "from": prev_loc[f], "to": stage,
-                "actor": actor, "remote": remote,
-                "summary": f"{f} moved {prev_loc[f]} → {stage} ({actor})",
-            })
+            actor, remote, quiet = _actor(f, stage)
+            if not quiet:
+                state.record_board_event({
+                    "kind": "move", "file": f, "from": prev_loc[f], "to": stage,
+                    "actor": actor, "remote": remote,
+                    "summary": f"{f} moved {prev_loc[f]} → {stage} ({actor})",
+                })
             # a failed run is worn by the card in the stage it died in —
             # wherever the card goes next, it arrives without the alarm
             agents.forget_failure(f)
@@ -67,7 +73,9 @@ def narrate(prev: dict[str, set[str]], cur: dict[str, set[str]]) -> None:
                 # per replica
                 github.open_pr_async(f)
         elif f not in prev_loc:
-            actor, remote = _actor(f, stage)
+            actor, remote, quiet = _actor(f, stage)
+            if quiet:
+                continue
             state.record_board_event({
                 "kind": "new", "file": f, "to": stage, "actor": actor,
                 "remote": remote,
