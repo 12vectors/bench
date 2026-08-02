@@ -1,6 +1,6 @@
 # 58 — A phase card will not move while its work is running
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** Medium — the hole is narrow but what falls through it is a
 phase whose card and branch disagree about what is happening
