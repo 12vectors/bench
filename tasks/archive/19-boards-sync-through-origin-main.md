@@ -1,6 +1,6 @@
 # 19 — Boards sync through origin/main: push on move, pull on a beat
 
-**Status:** Done
+**Status:** Archived
 **PR:** https://github.com/12vectors/bench/pull/17
 **Assignee:** istos
 **Priority:** High — this is the multi-user feature; 18 without it is bookkeeping
