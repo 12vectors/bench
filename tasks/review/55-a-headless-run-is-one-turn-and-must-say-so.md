@@ -127,3 +127,24 @@ The work is committed and the full suite is green. Here is the closing report.
 - `TodoWrite` was not available in this session, so the board had no live plan to display for this run. Nothing else about the run was affected.
 
 **What a reviewer should look at first:** the block itself in `manager/core/prompts/work.md:7-24` — it is prose an agent must act on, so its wording is the whole change. Everything else is that same text repeated and a test holding the four copies together.
+
+
+---
+
+## PR review — 2026-08-02 13:07 (Ada)
+
+PR REVIEW: APPROVE
+
+The work is committed on `task/55-a-headless-run-is-one-turn-and-must-say-so` (`f676c9f`) and is ready to merge; I posted the verdict as a GitHub **comment** rather than a formal approval because GitHub refuses to let the review identity (`istos`) approve a PR the same identity authored — the board still reads the `PR REVIEW: APPROVE` marker below.
+
+**What I checked**
+- The shared "this run is a single non-interactive turn" block is byte-identical across all four templates (`work.md`, `act-pr.md`, `review.md`, `review-pr.md`) and sits before the `--- TASK ---` body in each. It states the run is one turn, the process exits when the reply ends, uncommitted work is lost, and names the card-47 trap directly (don't background a command and end the turn to wait — no monitor, no resume).
+- Per-template follow-through is right: `work.md` commits early/before long commands; `act-pr.md` adds that an unpushed commit never reaches the PR; `review-pr.md` posts the verdict inside the turn; `review.md` writes its report inside the turn.
+- Marker lines survive: `NOT READY` / `ADDRESSED` / `PR REVIEW` / `RELEVANCE REVIEW` all still parse and sit after the new block. In `work.md`, `FIRST line` appears exactly once and after `--- END TASK ---`, and the block itself contains no `NOT READY` / `FIRST line` text — so the acceptance edge case (nothing competes for "the first line") holds.
+- No braces in the block, so `str.format` still renders every template. The existing `tests/test_prompt_report_contract.py` keys off a sentinel near EOF whose block is unchanged (the addition is above it), so that test still passes.
+
+**Good beyond the ask:** the block was also added to `review-pr.md`, which the task didn't name. That's the correct reading — `review-pr.md` is the prompt that actually posts a `gh pr review` verdict, and all four are one-shot headless runs. Sensible superset, justified in the work report.
+
+**For a human to note (no action needed):**
+- The agent reported one flaky failure (`tests/test_phase_runs.py::HaltNeverSkip`, a timing race in `settle()`) that passed on rerun and cannot be reached by this markdown-only diff. Own card if it recurs.
+- I could not execute the suite in this review session (unittest wasn't permitted here), so I verified every assertion by reading the templates and both test files; the work report states the full 1007-test definition-of-done suite passed.
