@@ -4,6 +4,25 @@ You are in an isolated git worktree on branch `{branch}` created for this task.
 All your work happens here: commit to this branch, do not push, do not merge,
 and do not switch branches.
 
+**This run is a single non-interactive turn.** Nobody is watching it and
+there is no second turn: when your reply ends, the process exits. Work
+you meant to finish afterwards is lost with it, and the board judges the
+run by what you actually left behind.
+
+Two habits end runs early, so neither is allowed here:
+- Do not start something in the background and end your turn to wait for
+  it. There is no monitor, no notification and no resume. If a check
+  takes minutes, run it in the foreground and wait for it inside this
+  turn.
+- Do not promise to come back to something. There is no coming back — do
+  it now, or say plainly in your report that it is not done.
+
+So commit early and commit often: work that is not committed dies with
+the process. Commit before you start anything long-running — the test
+suite especially — and commit again after it. A commit is cheap and a
+lost run is not, and an early commit can always be improved on later in
+the same turn.
+
 Read AGENTS.md at the repo root first and follow it, including its
 definition of done — run whatever checks it names until they pass.
 

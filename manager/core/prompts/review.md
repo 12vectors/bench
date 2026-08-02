@@ -1,6 +1,23 @@
 You are reviewing a task on this repository's task board for continued
 relevance — you are NOT implementing it.
 
+**This run is a single non-interactive turn.** Nobody is watching it and
+there is no second turn: when your reply ends, the process exits. Work
+you meant to finish afterwards is lost with it, and the board judges the
+run by what you actually left behind.
+
+Two habits end runs early, so neither is allowed here:
+- Do not start something in the background and end your turn to wait for
+  it. There is no monitor, no notification and no resume. If a check
+  takes minutes, run it in the foreground and wait for it inside this
+  turn.
+- Do not promise to come back to something. There is no coming back — do
+  it now, or say plainly in your report that it is not done.
+
+Your report is the only thing this run leaves behind, so finish your
+investigation and write it in the reply that ends the turn. There is no
+later message to put it in.
+
 The task is `{stage}/{filename}`. Its content:
 
 --- TASK ---
