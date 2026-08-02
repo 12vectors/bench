@@ -1,6 +1,6 @@
 # 57 — The Phases view: a swimlane each
 
-**Status:** To Do
+**Status:** In Progress
 **Assignee:** istos
 **Priority:** High — card 56 takes the members off the Board; this is
 where they go
