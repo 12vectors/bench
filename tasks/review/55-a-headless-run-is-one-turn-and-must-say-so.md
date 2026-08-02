@@ -1,6 +1,7 @@
 # 55 — A headless run gets one turn, and nothing tells the agent that
 
-**Status:** In Progress
+**Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/51
 **Assignee:** istos
 **Priority:** High — it costs a whole run and everything in it, and the
 condition that triggers it is getting more likely every week
@@ -100,3 +101,29 @@ change how an agent behaves is a problem that gets worse quietly: the
 prompt fix stops the agent walking away from it, but it does not make the
 wait shorter, and the next agent will still spend four minutes of its run
 watching a suite that mostly tests things it did not touch.
+
+
+---
+
+## Work report — 2026-08-02 12:51 (Otto)
+
+The work is committed and the full suite is green. Here is the closing report.
+
+---
+
+**The change is committed on `task/55-a-headless-run-is-one-turn-and-must-say-so` as `f676c9f`, and the full definition-of-done suite passes: 1007 tests, OK.** All four core prompt templates now open with an identical block saying a headless run is one non-interactive turn, and each one follows it with the instruction that turn shape implies for its own kind of run.
+
+**What changed**
+
+- `manager/core/prompts/work.md`, `act-pr.md`, `review.md` and `review-pr.md` each gained the same block, placed before the task body: the run is a single non-interactive turn, the process exits when the reply ends, work meant for afterwards is lost with it, and the board judges the run by what was actually left behind. It then names the trap directly — do not background a command and end the turn to wait for it (there is no monitor, no notification, no resume; run a slow check in the foreground), and do not promise to come back to something.
+- Each template then says what its own run loses. `work.md`: commit early and often, commit before anything long-running and again after it, because a commit is cheap and a lost run is not. `act-pr.md`: the same, plus that an unpushed commit never reaches the PR. `review-pr.md`: post the verdict to GitHub inside the turn, before the reply that ends it. `review.md`: the report is all the run leaves behind, so it goes in the reply that ends the turn.
+- `tests/test_prompt_one_turn.py` is new: it asserts the block is byte-identical across the four templates, that it precedes `--- TASK ---` in each, that it names the background-and-wait trap, that it carries no braces (so `str.format` still renders every template), and that each template keeps its own follow-through instruction. A `MarkersUndisturbed` class covers the acceptance edge case: every marker line still sits after the new block, `work.md` contains `FIRST line` exactly once and still after `--- END TASK ---`, and the block itself mentions neither `FIRST line` nor `NOT READY`.
+
+**A note on scope, since it differs slightly from the acceptance wording.** The task named `act-pr.md` and `review.md`; I added the block to `review-pr.md` too. All four are headless one-shot runs, and `review-pr.md` is the one whose side effect (`gh pr review`) is lost if the turn ends early — the task's phrase "`review` posts a verdict" describes it rather than the relevance reviewer. The identical-block test now holds all four together the way the existing report-contract test does.
+
+**Two things to know, neither requiring action**
+
+- The first full-suite run had one failure, `tests/test_phase_runs.py::HaltNeverSkip::test_running_it_again_clears_the_halt_and_carries_on` (`'in-progress' != 'review'`). It passed when the module was run alone and passed again in a second full run. It is a timing race in the test's `settle()` helper, which waits a bounded time for a real launched agent to be reaped, and nothing in this change can reach it — the diff is four markdown files and one test that only reads them. Worth its own card if it recurs.
+- `TodoWrite` was not available in this session, so the board had no live plan to display for this run. Nothing else about the run was affected.
+
+**What a reviewer should look at first:** the block itself in `manager/core/prompts/work.md:7-24` — it is prose an agent must act on, so its wording is the whole change. Everything else is that same text repeated and a test holding the four copies together.
