@@ -119,3 +119,25 @@ A phase card is now refused a move while any of its members has a live agent, on
 1. Two judgement calls worth confirming: I guarded `/api/task/complete` as well as the two endpoints the task names — merge & clean up ends in a move to `done/`, and doing it with a member still working would take the phase branch to `main` without that member's work. Drop that line if you read it as out of scope.
 2. Dragging a phase card with a branch or PR to `done/` still opens the merge-and-clean-up sheet first (that interception is client-side); the refusal lands on whichever button you then press. Pre-empting it would mean a second copy of the rule in the page, which is why I left it.
 3. `assert_not_working` does not take the runner's `_LOCK` — a beat can sit in a 180s merge, and a move that waited on one would be a worse answer than the sliver it closes. The reasoning is in its docstring.
+
+
+---
+
+## PR review — 2026-08-02 09:29 (Nell)
+
+PR REVIEW: APPROVE
+
+Task 58 asked for one thing: a phase card must refuse to move (drag, archive, or complete) while any of its members has a live agent, on the server, with a refusal that names the working member and **‖ hold**. The PR does exactly that, and its edges are the ones the task and acceptance list called out.
+
+**What is good**
+- `phases.assert_not_working` (`manager/core/phases.py:706`) short-circuits cheaply for ordinary/empty-phase cards (one file read) before reading the whole board, and reads liveness from the process (`agents.working_on` → `_alive` via `proc.poll()`) rather than the registry status — so a run that died but was not yet reaped does not lock the card. That was an explicit acceptance criterion and it is tested.
+- The guard sits before the write on `/api/move`, `/api/archive` **and** `/api/task/complete` (`manager/core/httpd.py`), so a stale page or hand `POST` is refused too. Client failure paths already toast the server's words and reload, so the card snaps back with the reason visible.
+- Legitimate moves are untouched: between-members, halted, member cards, and ordinary cards all still move (each tested), and the phase runner moves cards directly via `taskfiles.move_task`, so it never trips its own guard.
+- Layering, AGENTS.md doc, and a well-structured 455-line test file (unit + real-socket server + one real-run end-to-end) are all in order.
+
+**For a human to confirm (none blocking)**
+1. Guarding `/api/task/complete` is beyond the two endpoints the task literally names — I judge it correct (merging a phase mid-member would drag its branch to `main` without that member's work); confirm you want it.
+2. The guard deliberately does not take the runner's `_LOCK`, leaving a small read-to-rename window; documented, and the runner halts on a hand-moved member anyway.
+3. `working_on` counts any running agent on a member, including a `◔ still true?` relevance check — matches the task's wording, minor wording awkwardness only.
+
+**Caveat on verification:** I reviewed the diff in full against the surrounding code but could not execute the test suite (`python3 -m unittest` is denied by the sandbox in the worktree path). The work report claims 966 tests pass, 26 new; the tests read as thorough and correct. The branch's code is current with `main` — the only `main`-ahead commits are board bookkeeping for this task.
