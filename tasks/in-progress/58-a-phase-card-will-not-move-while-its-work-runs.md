@@ -92,3 +92,29 @@ Worth phrasing the refusal as an instruction rather than a prohibition —
 "hold the phase first, then move it" reads as help, and "cannot be moved
 while running" reads as a wall. The board's other refusals already do
 this: work starts from `in-progress/` *— move the card there first*.
+
+
+---
+
+## Work report — 2026-08-02 09:23 (Skye)
+
+Done — committed on `task/58-a-phase-card-will-not-move-while-its-work-runs`, full suite green.
+
+**WORK REPORT**
+
+A phase card is now refused a move while any of its members has a live agent, on the server, with a refusal that names the working member and **‖ hold**. Committed as `8fbfc10`; `python3 -m unittest discover -s tests` passes (966 tests, 26 of them new).
+
+**What changed**
+
+- `manager/core/phases.py` — new `assert_not_working(filename, doing)`. It reads the one task file first (an ordinary card is answered in one `read_task` and never reaches the phase logic), then resolves the phase's `## Cards` list to member files and asks what is actually running. The refusal reads, verbatim: *"Ship the site is still working — Juno is on 31 — Stand up site/. ‖ hold stops the phase and the agent it has in flight, and leaves the phase branch, everything merged into it and every worktree exactly as they are. Hold it first, then move the card."* (`archive it` / `merge it` close the other two callers.) The old private `_agents_on` is gone; `stop_phase` reads the new shared helper.
+- `manager/core/agents.py` — `working_on(files)` plus `_alive(record)`: liveness is asked of the process (`proc.poll()`), not of the registry's `status`, which the reaper flips a moment after a run ends. That is the acceptance list's "died but not reaped" edge — a rule that only refuses must not hold a card hostage to a run that is already gone. The runner's own `_running_on` is deliberately left conservative, since it gates *acting* on a card rather than refusing.
+- `manager/core/httpd.py` — the guard runs before the write on `/api/move`, `/api/archive` and `/api/task/complete`.
+- `manager/core/board.html` — no copy of the rule in the page; the existing `rawMove`/`archiveCard` failure paths already toast the server's words and reload, so the card stays put with the reason on screen. What did change is the toast itself: bounded to the viewport, wrapping (rounded rect over pill past 90 characters), and up for as long as its text takes to read (capped at 9s). A refusal you cannot finish reading is the wall this card was written against.
+- `AGENTS.md` — a paragraph in "Watching one run, and watching it stop" recording the rule and its edges.
+- `tests/test_phase_card_moves.py` — the refusal and its wording (pinned verbatim), archiving, the held/halted/between-members cases that must still move, ordinary and member cards, the unreaped-death case, `POST /api/move` and `/api/archive` through a real `ThreadingHTTPServer`, and one end-to-end case on the `test_phase_runs` harness: a real phase, a real member launched on a sleeping adapter, refused, then `‖ hold` and the card moves.
+
+**For the reviewer, in order**
+
+1. Two judgement calls worth confirming: I guarded `/api/task/complete` as well as the two endpoints the task names — merge & clean up ends in a move to `done/`, and doing it with a member still working would take the phase branch to `main` without that member's work. Drop that line if you read it as out of scope.
+2. Dragging a phase card with a branch or PR to `done/` still opens the merge-and-clean-up sheet first (that interception is client-side); the refusal lands on whichever button you then press. Pre-empting it would mean a second copy of the rule in the page, which is why I left it.
+3. `assert_not_working` does not take the runner's `_LOCK` — a beat can sit in a 180s merge, and a move that waited on one would be a worse answer than the sliver it closes. The reasoning is in its docstring.
