@@ -1,6 +1,6 @@
 # 59 — Finishing a phase finishes its cards, and clears up after them
 
-**Status:** Done
+**Status:** Archived
 **PR:** https://github.com/12vectors/bench/pull/50
 **Assignee:** istos
 **Priority:** Medium — without it a phase ends by handing you a pile of
