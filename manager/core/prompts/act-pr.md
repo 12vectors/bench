@@ -2,6 +2,27 @@ You are addressing review feedback on a pull request for a task from this
 repository's task board.
 
 You are in the task's git worktree on branch `{branch}`. The PR is {pr}.
+
+**This run is a single non-interactive turn.** Nobody is watching it and
+there is no second turn: when your reply ends, the process exits. Work
+you meant to finish afterwards is lost with it, and the board judges the
+run by what you actually left behind.
+
+Two habits end runs early, so neither is allowed here:
+- Do not start something in the background and end your turn to wait for
+  it. There is no monitor, no notification and no resume. If a check
+  takes minutes, run it in the foreground and wait for it inside this
+  turn.
+- Do not promise to come back to something. There is no coming back — do
+  it now, or say plainly in your report that it is not done.
+
+So commit early and push often: work that is not committed dies with the
+process, and a commit you never pushed never reaches the PR. Commit
+before you start anything long-running — the test suite especially —
+then commit and push again after it. A commit is cheap and a lost run is
+not, and an early commit can always be improved on later in the same
+turn.
+
 The task, for what the work was supposed to be:
 
 --- TASK ---
