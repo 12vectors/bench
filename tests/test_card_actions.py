@@ -167,10 +167,10 @@ class OneSlotBuilderTests(unittest.TestCase):
         cls.html = BOARD.read_text(encoding="utf-8")
 
     def test_hover_actions_and_command_chips_share_the_machine(self):
-        self.assertEqual(len(re.findall(r"(?<!function )wireAction\(btn,", self.html)), 3,
-                         "exactly three call sites: the slot builder, the "
-                         "$-command chips and the ⌸ archive chip — all on "
-                         "the one machine")
+        self.assertEqual(len(re.findall(r"(?<!function )wireAction\(btn,", self.html)), 4,
+                         "exactly four call sites: the slot builder, the "
+                         "$-command chips, the ⌸ archive chip and a phase "
+                         "lane's head — all on the one machine")
         self.assertNotIn("btn.firstChild.textContent", self.html,
                          "the old per-chip label swap is the fork this kills")
         self.assertNotIn("btn.lastElementChild.textContent", self.html)
