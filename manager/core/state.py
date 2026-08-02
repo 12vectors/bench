@@ -21,7 +21,7 @@ SESSIONS: dict[str, dict] = {}             # session_id -> meta
 EVENTS: dict[str, list[dict]] = {}         # session_id -> slim events
 BOARD_EVENTS: list[dict] = []              # moves + agent lifecycle
 AGENTS: dict[str, dict] = {}               # agent_id -> launch record
-EXPECTED_MOVES: dict[tuple[str, str], tuple[str, float]] = {}  # (file, to) -> (actor, ts)
+EXPECTED_MOVES: dict[tuple[str, str], tuple[str, float, bool]] = {}  # (file, to) -> (actor, ts, quiet)
 COMMIT_HOOKS: list = []                    # run after a board-made task commit
 COMPLETING: dict[str, dict] = {}           # filename -> {started, step}: merge & clean up in flight
 
@@ -173,17 +173,30 @@ def task_committed(filename: str) -> None:
             pass
 
 
-def expect_move(filename: str, target: str, actor: str) -> None:
-    """Tell the watcher who is about to move a file so it can attribute it."""
+def expect_move(filename: str, target: str, actor: str, quiet: bool = False) -> None:
+    """Tell the watcher who is about to move a file so it can attribute it.
+
+    `quiet` adds the other half of that: the mover has already narrated
+    this one, so the watcher renders it and says nothing. A phase ending
+    moves every card it merged at once and reports it as the one thing it
+    is; five identical move lines scrolling behind that would be the same
+    fact told badly. It suppresses the ticker line only — the move is
+    still a move, and everything the board hangs off one still happens.
+    """
     with LOCK:
-        EXPECTED_MOVES[(filename, target)] = (actor, time.time())
+        EXPECTED_MOVES[(filename, target)] = (actor, time.time(), quiet)
+
+
+def claim_move(filename: str, target: str) -> tuple[str, bool]:
+    """Who moved this, and whether they already said so."""
+    with LOCK:
+        expected = EXPECTED_MOVES.pop((filename, target), None)
+        # forget stale expectations while we're here
+        cutoff = time.time() - 30
+        for key in [k for k, (_, ts, _) in EXPECTED_MOVES.items() if ts < cutoff]:
+            EXPECTED_MOVES.pop(key, None)
+    return (expected[0], expected[2]) if expected else ("disk", False)
 
 
 def claim_expected(filename: str, target: str) -> str:
-    with LOCK:
-        actor_ts = EXPECTED_MOVES.pop((filename, target), None)
-        # forget stale expectations while we're here
-        cutoff = time.time() - 30
-        for key in [k for k, (_, ts) in EXPECTED_MOVES.items() if ts < cutoff]:
-            EXPECTED_MOVES.pop(key, None)
-    return actor_ts[0] if actor_ts else "disk"
+    return claim_move(filename, target)[0]

@@ -530,8 +530,10 @@ changes), **just move the card** (branch, PR and worktree stay), or
 branch into main, push (which marks the PR merged) and delete the remote
 branch, remove the worktree and local branch, then move the card. Every
 step narrates in the ticker; a merge conflict aborts cleanly and the card
-stays put. Cards without work move silently, and hand-moves on disk are
-never intercepted — the board only asks when you act through it.
+stays put. On a phase card the same action also finishes the cards the
+phase merged — see "Finishing a phase finishes its cards". Cards without
+work move silently, and hand-moves on disk are never intercepted — the
+board only asks when you act through it.
 
 That work takes as long as it takes, so **the card wears it** rather than
 sitting there looking idle while its branch is disassembled: from the
@@ -975,6 +977,51 @@ stage — and, while a phase is in flight, the runner's own reading of each
 (merged in, working, checking, stopped here) — so the card answers "where
 is this up to" without a hunt across five columns.
 
+### Finishing a phase finishes its cards
+
+A member stops at `review/` on purpose: `done/` has always meant *merged
+into `main`*, and merged into a phase branch is not that. **Merge & clean
+up** on the phase card is the moment it becomes that. The phase's PR goes
+into `main`, so every card the phase carried is in `main` too — and since
+a phase reaching `done/` releases its members back onto the Board, the
+alternative is handing back three or five cards you have already judged,
+in the column whose note is "your move".
+
+So the merge sweeps. After it has actually succeeded — never before, and
+never if it conflicts — every member the phase merged moves to `done/`,
+and each one's workspace is cleared exactly as completing an ordinary card
+clears its own: the worktree removed, the local branch deleted, the branch
+on the remote deleted. That half is not cosmetic. A stale worktree is a
+trap laid for whoever reopens the card, since a work launch refuses a card
+whose worktree already exists, and the accumulation is per member per
+phase.
+
+Four rules keep it honest:
+
+- **Only what the phase merged.** A member is swept when its card settled
+  into `review/` or `done/` *and* its branch is contained in the phase
+  branch — the same pair the runner reads a member as `merged` by, and a
+  member with no branch at all was finished before the phase reached it.
+  One that halted, was held or was walked back is neither moved nor
+  cleared: there is work in its worktree and its branch, and it is the
+  reason a person will look at this phase afterwards.
+- **Nothing uncommitted is thrown away.** A member's worktree comes out
+  without `--force`, so one with uncommitted changes in it is reported in
+  the ticker and kept, with its branch. Removing a worktree with work in
+  it is the one unrecoverable step in the ending.
+- **One ending, told once.** The cards move together in a single commit
+  naming all of them (`board: 47, 52 → done with phase 53`), and the
+  ticker gets one line — the phase, how many cards went with it, and how
+  many it never merged and left where they are — instead of five moves
+  scrolling past. In team mode that commit publishes like any other.
+- **Only merging sweeps.** "Just move the card" leaves the work alone,
+  including the members'. Archiving the phase card, or dropping a number
+  from its `## Cards`, releases the members to the Board in whatever stage
+  they are genuinely in (that is card 56's rule, and it is unchanged) —
+  neither one says anything is done, because neither one puts anything in
+  `main`. The members' own PRs are closed by their own merges into the
+  phase branch and are not touched here.
+
 ### A phase's members leave the Board view
 
 The Board is the work you are personally holding, in five columns that
@@ -990,9 +1037,12 @@ Membership is the only thing that hides a card, so *removing* membership
 is the un-hiding, with no sweep and no second rule: archive the phase
 card, drop a number from its `## Cards` list, or let the phase reach
 `done/` — it holds nothing once it is over — and its former members are
-back in the columns they are genuinely in. A membership that did not
-resolve hides nothing either: a card wearing `phase drift` stays on the
-board, because an authoring mistake must not make work vanish.
+back in the columns they are genuinely in. Which, when the phase got
+there by being merged, is `done/`: the merge moved them (see "Finishing a
+phase finishes its cards"). The other two endings move nothing, so the
+cards they release are wherever they actually were. A membership that did
+not resolve hides nothing either: a card wearing `phase drift` stays on
+the board, because an authoring mistake must not make work vanish.
 
 That leaves the phase card standing for all of it, so it carries the
 summary it owes: a `⟶ 1 of 2 merged` chip in the footer row that opens

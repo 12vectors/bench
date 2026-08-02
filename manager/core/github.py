@@ -28,7 +28,7 @@ import drive as drive_mod
 import reports
 import state
 from taskfiles import (STATUS_RE, collect, commit_edit, find_stage_of,
-                       move_task, read_task)
+                       member_entry, move_task, move_together, read_task)
 
 PR_STATE: dict[str, dict] = {}   # filename -> {verdict, detail, url, ts}
 _OPENING: set[str] = set()       # filenames with a PR-open in flight
@@ -51,6 +51,13 @@ def gh_available() -> bool:
 
 def _branch_exists(branch: str) -> bool:
     return _run(["git", "rev-parse", "--verify", "--quiet", branch]).returncode == 0
+
+
+def _contains(branch: str, tip: str) -> bool:
+    """Is `branch` already in `tip`? The same question phases.py asks of a
+    member — a merge leaves no record but this one, and it is the only
+    thing that can say a phase's ending speaks for a particular card."""
+    return _run(["git", "merge-base", "--is-ancestor", branch, tip]).returncode == 0
 
 
 def branch_of(filename: str) -> str:
@@ -493,6 +500,11 @@ def _complete(filename: str, stage: str) -> dict:
     """The steps themselves, run under the claim complete_task holds."""
     stem = filename[:-3]
     branch = branch_of(filename)   # a phase's own branch, or task/<stem>
+    task = _woven(filename, stage)
+    # Read before anything is destroyed and acted on only after the merge
+    # lands: the phase branch is deleted in the middle of this, and it is
+    # the only thing that can say which members it carried.
+    brought = _brought(task, branch) if task.get("isPhase") else []
 
     # 1. the app must not keep running code that is about to be merged away
     d = drive_mod.DRIVE
@@ -504,6 +516,7 @@ def _complete(filename: str, stage: str) -> dict:
             time.sleep(0.5)
 
     merged = False
+    swept: list[dict] = []
     if _branch_exists(branch):
         if config.SYNC:
             _merge_on_origin(filename, stage, branch)
@@ -522,9 +535,129 @@ def _complete(filename: str, stage: str) -> dict:
             "kind": "agent", "actor": "board", "file": filename,
             "summary": f"cleaned up: worktree and local branch for {stem} removed"})
 
+        # the merge succeeded, so the members' work is in main too
+        swept = _sweep(filename, task, brought)
+
     move_task(filename, stage, "done", actor="you")
     state.broadcast({"type": "board"})
-    return {"merged": merged}
+    return {"merged": merged, "swept": [card["file"] for card in swept]}
+
+
+def _brought(task: dict, phase_branch: str) -> list[dict]:
+    """The members a phase actually merged — the only cards its ending
+    speaks for.
+
+    Two things have to be true, and they are the same pair phases.py reads
+    a member as `merged` by: the card settled into `review/` or `done/`,
+    and its branch is contained in the phase branch — or there was never a
+    branch to bring, which is a member finished before the phase reached
+    it. Containment alone is not enough, for the reason it is not enough
+    there either: a run that exits without committing leaves an empty
+    branch that is trivially contained.
+
+    A member that halted, was held or was walked back satisfies neither.
+    Its card stays where it is and so do its worktree and its branch:
+    there is work in them, and it is the reason a person will look at this
+    phase afterwards. Removing a worktree with work in it is the one
+    unrecoverable thing here.
+    """
+    brought = []
+    for member in task.get("members") or []:
+        if member.get("stage") not in ("review", "done"):
+            continue
+        branch = f"task/{member['file'][:-3]}"
+        if _branch_exists(branch) and not _contains(branch, phase_branch):
+            continue
+        brought.append(member)
+    return brought
+
+
+def _clear_member(member: dict) -> str:
+    """One merged member's workspace, cleared exactly as completing an
+    ordinary card clears its own: the worktree, the local branch, the
+    branch on the remote. Returns what to say when something was kept.
+
+    The worktree comes out without `--force`, which is the whole
+    difference from the card's own cleanup above. A member's work is in
+    `main` by the time this runs, so nothing in there is *needed* — but
+    that is a judgement about committed files, and an uncommitted change
+    is exactly what it does not cover. A dirty worktree is reported and
+    kept, with its branch, rather than forced: this is the one
+    unrecoverable step in the ending, and it is asked before it is taken
+    rather than left to git to refuse.
+    """
+    stem = member["file"][:-3]
+    branch = f"task/{stem}"
+    worktree = config.WORKTREES / stem
+    try:
+        if worktree.exists():
+            dirty = _run(["git", "-C", str(worktree), "status",
+                          "--porcelain"]).stdout.split("\n")
+            dirty = [line for line in dirty if line.strip()]
+            if dirty:
+                return (f"{stem}: worktree kept — {len(dirty)} uncommitted "
+                        f"change{'' if len(dirty) == 1 else 's'} in it")
+            removed = _run(["git", "worktree", "remove", str(worktree)])
+            if removed.returncode != 0:
+                detail = (removed.stderr.strip() or removed.stdout.strip()
+                          or "git would not remove it")
+                return f"{stem}: worktree kept — {detail.splitlines()[-1][:120]}"
+        if _branch_exists(branch):
+            # -D under sync for the same reason the card's own branch takes
+            # it: main here has not caught up with the merge origin made.
+            _run(["git", "branch", "-D" if config.SYNC else "-d", branch])
+            rname = remote()
+            if rname:
+                _run(["git", "push", rname, "--delete", branch], timeout=60)
+    except (subprocess.SubprocessError, OSError) as exc:
+        return f"{stem}: workspace kept — {str(exc)[:120]}"
+    PR_STATE.pop(member["file"], None)
+    return ""
+
+
+def _sweep(filename: str, task: dict, brought: list[dict]) -> list[dict]:
+    """Finish the cards the phase finished.
+
+    A member stops at `review/` on purpose — `done/` has always meant
+    merged into `main`, and merged into a phase branch is not that. This
+    is the moment it becomes that: the phase's PR is in `main`, so every
+    card it carried is too, and leaving them in the column whose note is
+    "your move" would hand back a pile of work already judged.
+
+    One ending, so it is told as one: the cards move together in a single
+    commit (`taskfiles.move_together`) and the ticker gets one line naming
+    the phase and how many went with it, rather than five moves scrolling
+    past. What was *not* swept is named too — a phase that left cards
+    behind is a phase somebody still has to look at.
+    """
+    members = task.get("members") or []
+    if not members:                      # a phase card listing nobody
+        return []
+    kept = [note for note in (_clear_member(member) for member in brought) if note]
+    moved = move_together([(member["file"], member["stage"]) for member in brought
+                           if member["stage"] != "done"],
+                          "done", f"with phase {task['number'] or filename[:-3]}")
+    left = len(members) - len(brought)
+    name = (member_entry(task["number"], task["title"]) if task["number"]
+            else task["title"])
+    summary = f"phase {name} finished — "
+    summary += (f"{_cards(len(brought))} merged into it went to done/, worktrees "
+                f"and branches cleaned up" if brought
+                else "it had merged nothing, so no card went with it")
+    if left:
+        summary += (f" · {_cards(left)} it never merged "
+                    + ("stays where it is" if left == 1 else "stay where they are"))
+    state.record_board_event({"kind": "phase", "actor": "board",
+                              "file": filename, "summary": summary})
+    for note in kept:
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": f"{note} — nothing uncommitted is thrown away"})
+    return moved
+
+
+def _cards(count: int) -> str:
+    return f"{count} card{'' if count == 1 else 's'}"
 
 
 def _merge_locally(filename: str, branch: str) -> None:
