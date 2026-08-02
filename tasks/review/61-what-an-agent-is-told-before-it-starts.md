@@ -1,6 +1,6 @@
 # 61 — Phase: what an agent is told before it starts
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** High — every card in it is a hole that has already cost a
 run, and two of them cost one this week
