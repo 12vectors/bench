@@ -143,3 +143,30 @@ Committed. Final state of the work:
 - Worth a reviewer's eye first: the decision that **↻ act on PR** refuses a phase card. Review feedback on a phase's PR now has no agent path — it goes to a member's card or to the phase branch by hand. That is a judgment call the task asked for explicitly, and the reasoning sits in the note at `manager/core/agents.py:151`.
 - The unstarted card's pill depends on the runner's snapshot, which the phase beat publishes every `BOARD_PHASE_INTERVAL` (30s default). For up to one beat after a board start the card says nothing rather than guessing — the same latency as every other phase reading.
 - The stray-run gap the task's Notes describe (a 0-byte log, no `run failed` pill) is untouched, as instructed.
+
+
+---
+
+## PR review — 2026-08-02 16:51 (Basil)
+
+PR REVIEW: APPROVE
+
+The work is committed, merged into its phase branch (`phase/61-…`), and correct against every acceptance criterion. This card added the server-side gate that phases shipped without — a mirror of the `▸ run phase` guard that already refuses non-phase cards.
+
+**What I checked (all against the branch, since local `main` doesn't carry the change yet)**
+- `_validate()` gains an optional `phase=` kwarg; when passed and `is_phase_card()` is true it raises *before* `_assert_no_running_agent` — ahead of the claim and the worktree, so a refusal creates nothing (acceptance #1). `start_agent` and `start_pr_fix` pass it; `start_review` and `start_pr_review` deliberately omit it, each documented in the note at `manager/core/agents.py:151`.
+- `is_phase_card()` reads `isPhase` via `read_task` — the same `**Type:** Phase` reading `phases._phase_card` uses, so the two gates cannot disagree; an empty `## Cards` list still counts as a phase card. OSError-guarded, reached only after the file-exists check.
+- `start_pr_review` names `phase_branch(filename)` for a phase card (its prompt asks GitHub for the diff by branch; `task/<stem>` was never cut). Same-module helper, no new import needed.
+- `board.html` `phaseFlight()` gains an `idle` reading for an unstarted/held `in-progress/` phase (`not started` vs `held`, keyed on `snap.stopped`, which the runner does publish at `phases.py:317`), rendered in the settled `--idle` register — no accent, no breathing mark, no caret — with halt and failure still outranking it (acceptance #4, #5).
+
+**Good**
+- Doctrine ("file-carried gates exist because a UI can be stale") restored and written into AGENTS.md beside the behaviour it guards.
+- 23 new tests in `tests/test_phase_card_refuses_work.py` cover the refusal leaving no branch/worktree/record, precedence over the claim, takeover, the two gates as mirror images, all four agent kinds, the mid-run retype edge (acceptance #6), and the card's four visual states via node. `test_phase_members_hidden.py` was rewritten to the new rule rather than deleted.
+- Out-of-scope neighbours (the stray-run 0-byte-log gap; teaching a work agent to coordinate) correctly left untouched.
+
+**To know (no action required to merge, but worth a human eye)**
+- The explicit judgment call the task asked for: **↻ act on PR** refuses a phase card, so review feedback on a phase's PR now has no agent path — it goes to a member's card or the phase branch by hand. Reasoning at `manager/core/agents.py:151`; it reads correctly to me, but it's a policy choice, not a mechanical one.
+- I could not run the suite locally — this checkout is `main` (which does not yet carry the change) and creating a throwaway worktree was blocked by the sandbox, so I verified by reading. The report's claim of 1031+23 passing rests on that. The disclosed flaky `test_phase_runs.py:517` reproduces on unmodified `main` and is unrelated to this card.
+- Note this PR merged into `phase/61-…`, not `main` — correct for a phase member; `main` still waits on phase 61's own PR.
+
+The GitHub verdict is posted as a review **comment** rather than an approval because the authenticated `gh` user (istos) authored the PR and GitHub refuses self-approval — the marker line above is the authoritative APPROVE for the board.
