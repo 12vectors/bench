@@ -128,3 +128,18 @@ Committed on `task/57-the-phases-view-a-swimlane-each` as `a3388ed`, with the fu
 - The last column is `Merged in`, not `done/`. Membership in it comes from two sources: the runner's snapshot while a phase runs, and the `## Phase log`'s `<n> merged into <branch>` lines once the phase has left `in-progress/` and the runner stops passing over it. That second source is what makes the "all merged, waiting on its own PR" edge case draw a real lane instead of an empty one — no API change was needed, as the task predicted.
 - Two other tests moved because this work changed what they counted: `tests/test_card_actions.py` (a fourth `wireAction` call site — the lane head, still the one arm-then-fire machine) and `tests/test_scroll_kept.py` (`#view-phases` and `.lstages` are new scrollers, both marked and restored).
 - `AGENTS.md` gained a "The Phases view: a swimlane each" section and the views list now says four, matching how cards 55 and 56 documented themselves.
+
+
+---
+
+## PR update — 2026-08-02 09:06 (Ada)
+
+ADDRESSED: Held (stopped) phases now sort just below running phases in the Phases view instead of tying with unstarted ones; committed as `99fb248` and pushed, full suite green (940 tests).
+
+- **Copilot review comment (`laneRank()` treats a held/stopped phase like an unstarted one)** — Confirmed valid: the phase snapshot does carry `snap.stopped` (`phases.py:317`), but `laneRank()` returned rank 2 for both a held run and a phase nobody has started, so an actionable "stopped — held by …" lane could sort below unstarted phases. Fixed in `manager/core/board.html`: a held run now gets its own rank (`snap.stopped → 2`) just below running (`1`), with unstarted and done pushed to `3`/`4`. Updated the explanatory comment to describe the new order, and added `test_a_held_run_sorts_above_a_phase_nobody_has_started` in `tests/test_phases_view.py` to pin it (running → held → unstarted).
+
+To know:
+- The PR is `MERGEABLE` — no conflict with `main`, so no merge commit was needed.
+- The overall Copilot review state was `COMMENTED` (not requesting changes); this was its single inline point, now addressed. The rest of its overview was a neutral summary with no further asks.
+
+No action items for the reviewer.
