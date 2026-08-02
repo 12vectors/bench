@@ -1,6 +1,7 @@
 # 46 — A board whose agents cannot run anything says so
 
-**Status:** In Progress
+**Status:** Review
+**PR:** https://github.com/12vectors/bench/pull/53
 **Assignee:** istos
 **Priority:** Medium — the failure is silent until an agent has already
 spent a run finding out
@@ -92,3 +93,29 @@ guarantees only a *right* answer when it recognises the project. Empty is
 the honest outcome for everything else — but honest and invisible is
 still a board that lets an agent discover the problem on the user's
 behalf, slowly.
+
+
+---
+
+## Work report — 2026-08-02 13:43 (Reed)
+
+Implemented and committed on `task/46-a-board-with-no-test-command-says-so` (commit `64f3e2b`); the full suite passes (1050 tests, `python3 -m unittest discover -s tests`), including 19 new cases in `tests/test_no_agent_commands.py`.
+
+**What changed**
+
+An empty `BOARD_AGENT_COMMANDS` is now said in two places, neither of which blocks anything:
+
+- **The header, standing still.** `manager/core/httpd.py` sends `hasAgentCommands` beside the existing `hasDriver`, and `manager/core/board.html` grows a `#cmdchip` next to the sync chip: a `no agent commands` chip in the settled register (`--idle` dot, `--muted` text, the setting name in mono), whose tooltip names `manager/local/.env` and gives an example value. It is drawn only when the server says the setting is empty — a payload that does not mention it (an older server, the first frame) shows nothing rather than guessing.
+- **The launch, at the moment it matters.** This is the design decision the card left open: it is a **note in the ticker**, appended to the launch's own line, rather than anything on the `▸ start work` action. It fires for the two intents that would have run the commands — work (`start_agent`, which phase members go through too) and act-pr (`start_pr_fix`) — and not for read-only kinds, which never had those commands. The launch itself is untouched: the card still runs, commits and lands in `review/`.
+- **One answer to "what is empty".** `config.agent_commands()` splits the setting the way the adapters' standalone `split_commands()` does, so whitespace and a lone comma are nothing configured everywhere. A test asserts core and both shipped adapters agree over the same table of inputs.
+- `AGENTS.md` (the install-detection passage) and `manager/core/.env.example` now describe the indicator where the trade that created it is already explained.
+
+**To know**
+
+- The chip's visible text names the setting; the file that holds it is in the tooltip, following the "no driver" chip's precedent of explaining the fix on hover.
+- Nothing writes to `.env` and nothing guesses a command — the board still only reads settings.
+
+**Worth a reviewer's first look**
+
+- `manager/core/board.html:1070` — `renderAgentCommands()`, its wording and colour choice (no `--alarm`, no `--accent`).
+- `manager/core/agents.py:257` — `_no_commands_note()` and its two call sites, if you disagree that the ticker (rather than the action) is the right channel at launch.
