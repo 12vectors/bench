@@ -64,3 +64,7 @@ Card 46's own card notes the trade it comes from: detection replaced the
 install question, so a project the detector does not recognise starts
 with an empty allowlist. That is the honest outcome, and this is the
 card that stops it being a silent one.
+
+## Phase log
+
+- 2026-08-02 12:35 · run started on phase/61-what-an-agent-is-told-before-it-starts
