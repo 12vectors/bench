@@ -616,13 +616,19 @@
   .sheet .sbtns button.shipit small{color:color-mix(in oklab, var(--on-calm) 75%, transparent)}
   .sheet .sbtns button.shipit:hover{border-color:var(--calm);color:var(--on-calm);filter:brightness(1.06)}
 
-  /* ── toast ── */
+  /* ── toast ──
+     A refusal has to say the whole thing — which member is working, and
+     that ‖ hold stops it — so the pill wraps and stays on the screen
+     rather than running off both ends of it. */
   #toast{
     position:fixed;left:50%;bottom:44px;transform:translateX(-50%);z-index:40;display:none;
     align-items:center;gap:10px;padding:11px 16px;font-size:13px;color:var(--text);
     background:var(--raised);border:1px solid var(--border);border-radius:99px;
     box-shadow:0 16px 34px -22px rgba(0,0,0,.8);animation:rise .18s ease;
+    max-width:min(620px, calc(100vw - 48px));line-height:1.5;
   }
+  #toast.wrapped{border-radius:16px;align-items:flex-start}
+  #toast.wrapped .dot{margin-top:6px}
   #toast.show{display:flex}
   #toast .dot{background:var(--calm)}
   #toast.err .dot{background:var(--alarm)}
@@ -800,13 +806,19 @@ function sessionElapsed(meta) {
 }
 
 let toastTimer = null;
+/* A refusal that names what to do instead is longer than "07 → done/", and
+   a message you cannot finish reading is a wall however politely it is
+   worded. So the pill takes the shape its text needs and stays up for as
+   long as that text takes to read, up to a ceiling. */
 function toast(message, isError = false) {
   const el = $('#toast');
   $('#toastmsg').textContent = message;
   el.classList.toggle('err', isError);
+  el.classList.toggle('wrapped', message.length > 90);
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+  toastTimer = setTimeout(() => el.classList.remove('show'),
+                          Math.min(9000, 3200 + message.length * 28));
 }
 
 function applyTheme() {

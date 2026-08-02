@@ -119,6 +119,35 @@ def _assert_no_running_agent(filename: str) -> None:
                 raise ValueError(f"an agent is already working on {filename}")
 
 
+def _alive(record: dict) -> bool:
+    """Is this run actually running, or only recorded as running?
+
+    The registry's status is flipped by the reaper thread, a moment after
+    the process it waits on has gone. Anything that *acts* on a card should
+    keep out through that moment — the reaper is about to move the card. A
+    rule that only *refuses* must not: a run that died between two reads
+    would otherwise lock the card it died on for as long as the board
+    lives. So this asks the process rather than the record.
+    """
+    proc = record.get("proc")
+    if proc is None:            # nothing to ask: the registry's word stands
+        return True
+    try:
+        return proc.poll() is None
+    except (OSError, ValueError):
+        return False
+
+
+def working_on(files: set[str]) -> list[dict]:
+    """The runs alive on these cards, right now — copies, never the
+    registry itself. `[]` is "nothing is running here", read from what is
+    actually running rather than from what was once started."""
+    with state.LOCK:
+        records = [dict(record) for record in state.AGENTS.values()
+                   if record["task"] in files and record["status"] == "running"]
+    return [record for record in records if _alive(record)]
+
+
 def _validate(filename: str, stage: str, allowed: set[str], why: str | None = None) -> None:
     if Path(filename).name != filename or not filename.endswith(".md"):
         raise ValueError("bad filename")

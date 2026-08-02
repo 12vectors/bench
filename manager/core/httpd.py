@@ -177,6 +177,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/move":
                 payload = self._read_body()
+                # a phase card stands for cards this view no longer draws,
+                # so it does not move while one of them has an agent in it
+                # — the refusal names ‖ hold, which stops both
+                phases.assert_not_working(payload["file"])
                 task = taskfiles.move_task(payload["file"], payload["from"], payload["to"])
                 self._json(200, {"task": task})
             elif path == "/api/events":
@@ -233,9 +237,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"url": url})
             elif path == "/api/task/complete":
                 payload = self._read_body()
+                # merge & clean up ends with a move to done/, so the same
+                # guard: a phase whose member is still working would take
+                # its branch to main without that member's work in it
+                phases.assert_not_working(payload["file"], "merge it")
                 self._json(200, github.complete_task(payload["file"], payload["from"]))
             elif path == "/api/archive":
                 payload = self._read_body()
+                # archiving is a move, so it takes the same guard — and it
+                # is the likeliest one: a phase you have given up on is
+                # exactly the one you would tidy away mid-run
+                phases.assert_not_working(payload["file"], "archive it")
                 result = taskfiles.archive_task(payload["file"], payload["from"])
                 with state.LOCK:
                     state.LAST_ARCHIVED = result
