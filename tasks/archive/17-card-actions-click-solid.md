@@ -1,6 +1,6 @@
 # 17 — Make card actions click-solid: stable targets, instant feedback
 
-**Status:** Done
+**Status:** Archived
 **PR:** https://github.com/12vectors/bench/pull/13
 **Priority:** Medium — the actions are the board's hands; every launch goes through this wobble
 **Type:** Bug
