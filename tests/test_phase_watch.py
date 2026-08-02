@@ -504,8 +504,15 @@ class TheCardsActions(unittest.TestCase):
         self.assertIn("label: 'hold'", self.block)
         self.assertIn("confirm: 'hold it?'", self.block)
 
-    def test_a_halt_offers_both_ways_out(self):
-        self.assertIn("ph.halted) actions.push(start, hold)", self.block)
+    def test_a_halt_offers_the_way_out_and_the_way_to_the_reason(self):
+        """A halt still holds until the phase is run again or held, and
+        holding is here. Running it again moved to the Phases view with
+        card 57: it sits under the reason the phase stopped, because
+        clearing a halt should mean having read what caused it. So this
+        card carries ⟶ phases instead — the way to that reading."""
+        self.assertIn("ph.halted) actions.push(room, hold)", self.block)
+        self.assertIn("setView('phases')", self.block)
+        self.assertNotIn("ph.halted) actions.push(start", self.block)
 
     def test_the_slot_never_holds_three(self):
         self.assertIn("else if (actions.length < 2) {", self.html,

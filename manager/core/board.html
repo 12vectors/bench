@@ -91,6 +91,12 @@
   .views button{padding:5px 12px;border:1px solid transparent;border-radius:6px;font-size:12.5px;font-weight:500;color:var(--muted)}
   .views button:hover{color:var(--text);border-color:transparent}
   .views button.on{background:var(--surface);border-color:var(--border);color:var(--text)}
+  /* the crossing: a phase halting is learned from whatever view you are on,
+     so the switcher carries how many are running and whether one stopped */
+  .views button{display:flex;align-items:center;gap:6px}
+  .views .vcount{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+  .views button.on .vcount{color:var(--accent)}
+  .views .vhalt{width:6px;height:6px;border-radius:99px;background:var(--alarm);flex:none}
   .livechip{
     display:flex;align-items:center;gap:9px;padding:5px 12px 5px 10px;cursor:pointer;
     background:var(--surface);border:1px solid var(--border);border-radius:99px;font-size:12.5px;
@@ -241,14 +247,16 @@
   .card.has-acts:has(.hoveracts .armed) .toprow .high,
   .card.has-acts:has(.hoveracts .busy) .toprow .pill.status,
   .card.has-acts:has(.hoveracts .busy) .toprow .high{display:none}
-  .hoveracts button{
+  /* the lane head's own controls wear this too: a phase's actions are card
+     actions, and one look is what says so */
+  .lacts button,.hoveracts button{
     position:relative;display:flex;align-items:center;gap:4px;
     padding:4px 10px;min-height:24px;
     background:var(--raised);border:1px solid var(--border);border-radius:99px;
     font-size:11px;color:var(--muted);
   }
-  .hoveracts button:hover{border-color:var(--accent);color:var(--accent)}
-  .hoveracts button .g{font-family:var(--mono);font-size:10px}
+  .lacts button:hover,.hoveracts button:hover{border-color:var(--accent);color:var(--accent)}
+  .lacts button .g,.hoveracts button .g{font-family:var(--mono);font-size:10px}
   /* every state's label occupies the same grid cell, so the button is
      born as wide as its widest state and never reshapes under the cursor */
   .actlbl{display:inline-grid;justify-items:center}
@@ -258,14 +266,14 @@
   button.armed .actlbl .l-arm{visibility:visible}
   button.busy .actlbl .l-busy{visibility:visible}
   /* armed = alarm, and the disarm window drains visibly along the bottom */
-  .hoveracts button.armed,button.chip2.armed{color:var(--alarm);border-color:var(--alarm)}
+  .lacts button.armed,.hoveracts button.armed,button.chip2.armed{color:var(--alarm);border-color:var(--alarm)}
   button.armed::after{
     content:"";position:absolute;left:9px;right:9px;bottom:2px;height:2px;
     border-radius:99px;background:var(--alarm);transform-origin:left;
     animation:drain 5s linear var(--arm-delay,0s) forwards;
   }
   /* busy = the request is away: breathe until the redraw or the timeout */
-  .hoveracts button.busy,button.chip2.busy{color:var(--accent);border-color:var(--accent);cursor:default}
+  .lacts button.busy,.hoveracts button.busy,button.chip2.busy{color:var(--accent);border-color:var(--accent);cursor:default}
   button.busy .g,button.busy .g2{animation:breathe 2.4s ease-in-out infinite}
 
   /* ── the activity bar: log drawer + latest line + archive tray ── */
@@ -455,6 +463,63 @@
   .also .card{flex:1 1 240px;cursor:default}
   .also .card:hover{transform:none;border-color:var(--border-soft)}
 
+  /* ── phases: a swimlane each ── */
+  /* The room the five columns could never spare. One lane per phase, the
+     same five stages left to right, and the cards are the cards — full
+     fidelity is the whole advantage a view buys over a rail or a band. */
+  #view-phases{flex-direction:column;overflow-y:auto}
+  #lanes{display:flex;flex-direction:column;gap:14px;padding:14px 18px;flex:1}
+  .lane{
+    display:flex;flex-direction:column;gap:11px;padding:14px;
+    background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    box-shadow:var(--shadow);
+  }
+  /* colour only means state, here as everywhere: a run alive, a run stopped */
+  .lane.running{border-color:color-mix(in oklab, var(--accent) 45%, var(--border))}
+  .lane.halted{border-color:color-mix(in oklab, var(--alarm) 55%, var(--border))}
+  .lhead{display:flex;align-items:center;gap:9px;min-width:0;flex-wrap:wrap}
+  .lhead .mark{width:7px;height:7px;border-radius:2px;flex:none;background:var(--idle)}
+  .lhead .mark.breathing{animation:breathe 2.4s ease-in-out infinite}
+  .lhead .lref{font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .lhead .ltitle{
+    padding:0;border:none;background:none;border-radius:0;
+    font-size:15px;font-weight:600;letter-spacing:-.01em;color:var(--text);
+  }
+  .lhead .ltitle:hover{color:var(--accent);border:none}
+  .lhead .lprog{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+  /* the phase's own controls, in the head that owns them; they wear the
+     card actions' look because they are card actions in every other way */
+  .lacts{display:flex;align-items:center;gap:6px;margin-left:auto}
+  .lhalt{
+    display:flex;align-items:center;gap:10px;padding:9px 11px;background:var(--sunken);
+    border-left:2px solid var(--alarm);border-radius:0 7px 7px 0;font-size:12.5px;
+  }
+  .lhalt .lglyph{color:var(--alarm);font-family:var(--mono);font-size:12px;flex:none}
+  .lhalt .lwhy{flex:1;min-width:0;color:var(--muted);overflow-wrap:anywhere}
+  .lhalt .lwhy b{color:var(--alarm);font-weight:500}
+  .lstages{display:flex;gap:var(--gap);align-items:flex-start;overflow-x:auto}
+  .lcol{flex:1 1 0;min-width:var(--col-min);display:flex;flex-direction:column;gap:8px}
+  .lcol > h3{
+    margin:0;display:flex;align-items:center;gap:8px;padding:0 4px 2px;
+    font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
+  }
+  .lcol > h3 .tickmark{width:6px;height:6px;border-radius:2px;flex:none}
+  .lcol > h3 .count{font-family:var(--mono);font-size:11px;font-weight:400;color:var(--dim)}
+  .lcol > h3 .note{margin-left:auto;font-weight:400;letter-spacing:0;text-transform:none;font-size:11px;color:var(--dim)}
+  .lcards{display:flex;flex-direction:column;gap:var(--gap)}
+  .lcol .empty{padding:14px 10px;font-size:11.5px}
+  /* the runner's decisions, in the order it wrote them — the only thing
+     that can tell "not reached yet" from "started and ended badly" */
+  .plog{display:flex;flex-direction:column;gap:4px;padding-top:10px;border-top:1px solid var(--line)}
+  .plog .phead{display:flex;align-items:baseline;gap:8px;font-size:12px;font-weight:500;color:var(--muted)}
+  .plog .phead .mono{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+  .plog .plines{display:flex;flex-direction:column;gap:2px;max-height:160px;overflow-y:auto}
+  .plog .pline{display:flex;gap:9px;font-family:var(--mono);font-size:11.5px;line-height:1.5}
+  .plog .pline .stamp{color:var(--dim);flex:none}
+  .plog .pline .what{color:var(--muted);min-width:0;overflow-wrap:anywhere}
+  .plog .pline.bad .what{color:var(--alarm)}
+  .plog .pempty{font-size:12px;color:var(--dim)}
+
   /* ── drawer ── */
   #drawer{
     position:fixed;top:0;right:0;bottom:0;width:min(460px,92vw);z-index:20;display:none;
@@ -581,6 +646,9 @@
   </div>
   <nav class="views" id="views">
     <button data-view="board" class="on">Board</button>
+    <!-- the label is written by renderViews(): the running count, and the
+         mark that says a phase halted while you were somewhere else -->
+    <button data-view="phases">Phases</button>
     <button data-view="flight">Sessions</button>
     <button data-view="focus">Focus</button>
   </nav>
@@ -596,6 +664,11 @@
   <!-- board -->
   <div class="view on" id="view-board">
     <div id="board"></div>
+  </div>
+
+  <!-- phases: one swimlane each -->
+  <div class="view" id="view-phases">
+    <div id="lanes"></div>
   </div>
 
   <!-- sessions -->
@@ -1057,6 +1130,28 @@ function renderPhases() {
     }));
 }
 
+/* The crossing this feature stands on, seen from the other side: a phase
+   halts while you are on the Board, and the switcher says so without you
+   having to go and look. The count is the phases running; the mark is a
+   halt, in the alarm every other stopped thing wears. A board with no
+   phase in flight has a switcher that reads exactly as it always did. */
+function renderViews() {
+  const btn = document.querySelector('#views button[data-view="phases"]');
+  if (!btn) return;
+  const all = Object.values(S.state?.phases || {});
+  const running = all.filter(p => p.running).length;
+  const halted = all.filter(p => p.halted);
+  btn.innerHTML = 'Phases' +
+    (running ? `<span class="vcount">${running}</span>` : '') +
+    (halted.length ? '<span class="vhalt"></span>' : '');
+  btn.title = halted.length
+    ? halted.map(p => `${p.file} halted${p.haltedAt ? ` at ${p.haltedAt}` : ''} — ` +
+        `${p.haltedWhy || p.halted}`).join(' · ') + ' — open Phases to read it and run it again'
+    : running
+      ? `${running} phase${running > 1 ? 's' : ''} running — a swimlane each`
+      : 'One swimlane per phase: its cards, its log, its controls';
+}
+
 function setView(view) {
   // leaving a view drops where you were in it: a hidden view's scrollers
   // read 0 anyway, and coming back with a remembered offset would be
@@ -1079,7 +1174,7 @@ function setView(view) {
    narrowed to a few characters still shows it. It is the in-flight glyph
    the CI and copilot chips already use, not an emoji, and a quiet board
    is the plain title, byte for byte. */
-const VIEW_TITLES = { board: 'bench', flight: 'sessions', focus: 'focus' };
+const VIEW_TITLES = { board: 'bench', phases: 'phases', flight: 'sessions', focus: 'focus' };
 const WORKING_MARK = '◌';
 
 function tabTitle(project, view, working) {
@@ -1105,12 +1200,21 @@ function render() {
   renderTitle();
   renderChip();
   renderPhases();
+  renderViews();
   renderSync();
-  if (S.view === 'board') renderBoard();
-  else if (S.view === 'flight') renderFlight();
-  else renderFocus();
+  if (S.view === 'flight') renderFlight();
+  else if (S.view === 'focus') renderFocus();
+  else renderCards();
   renderBar();
   renderLog();
+}
+
+/* Two views draw cards, and they draw the same cards: the Board's columns
+   and a phase lane's. Anything that changes what a card looks like —
+   selecting one, closing the drawer — redraws whichever of them you are
+   on, rather than assuming the Board. */
+function renderCards() {
+  if (S.view === 'phases') renderLanes(); else renderBoard();
 }
 
 /* ── board ────────────────────────────────────────────────────────────── */
@@ -1388,17 +1492,22 @@ function cardFor(task) {
                  + 'this board becomes the one that advances it',
             run: () => runPhase(task, { takeover: true }) }
         : { glyph: '▸', label: 'run phase', confirm: 'run it?', busy: 'starting…',
-            title: ph && ph.halted
-              ? 'Run it again — the halt is cleared and the phase carries on from '
-                + 'where it stopped'
+            title: ph && ph.stopped
+              ? 'Run it again — the phase carries on from where it was held'
               : 'A branch of its own, each card in the list run on it in turn, and '
                 + 'one PR into main at the end',
             run: () => runPhase(task) };
-      // a halt holds until the phase is run again or held: both are here,
-      // because a person who has read it and does not want to carry on
-      // needs a way to say so that is not walking the card backwards
+      // A halt holds until the phase is run again or held. Holding is here,
+      // because a person who does not want to carry on needs a way to say
+      // so that is not walking the card backwards — but running it again is
+      // not: clearing a halt should mean having read what caused it, and
+      // the reason is in the lane, under the halt. So this points there.
+      const room = { glyph: '⟶', label: 'phases', busy: 'opening…',
+        title: 'Open the Phases view — this phase\'s lane, the halt that stopped it '
+             + 'and ▸ run again beneath it',
+        run: () => { setView('phases'); return true; } };
       if (ph && ph.running) actions.push(hold);
-      else if (ph && ph.halted) actions.push(start, hold);
+      else if (ph && ph.halted) actions.push(room, hold);
       else actions.push(start);
     } else if (task.stage === 'in-progress') {
       actions.push(held
@@ -1965,7 +2074,7 @@ async function addToPhase(task, phase) {
 function showDetail(task) {
   const changed = !S.selected || S.selected.file !== task.file;
   S.selected = task;
-  renderBoard();
+  renderCards();
   if (changed) $('#drawerbody').scrollTop = 0;
 }
 
@@ -2077,7 +2186,7 @@ function renderDrawer() {
       const member = findTask(row.dataset.member);
       if (member) showDetail(member);
     }));
-  $('#closeDrawer').addEventListener('click', () => { S.selected = null; renderBoard(); });
+  $('#closeDrawer').addEventListener('click', () => { S.selected = null; renderCards(); });
 }
 
 function allRecentEvents() {
@@ -2177,6 +2286,291 @@ async function unarchiveLast() {
   const data = await res.json();
   toast(res.ok ? `${data.file} brought back to ${data.to}/` : (data.error || 'nothing to bring back'), !res.ok);
   await loadState();
+}
+
+/* ── phases: a swimlane each ──────────────────────────────────────────────
+
+   The Board draws the work you are personally holding; this draws what the
+   phases are holding. One lane per phase card, the same five stages left to
+   right, and the cards are the cards — the very nodes cardFor() builds for
+   the Board, agent line, chips and hover actions intact. That fidelity is
+   the whole reason this is a view and not a rail squeezed into five
+   columns that could never spare the width.
+
+   Nothing here ends a phase. Merging is a board move on the phase card, so
+   there is exactly one place where work leaves the board, and it is not
+   this one. */
+
+/* Where a lane sits in the stack: a halt first, because it is the one
+   thing on this page waiting on a person and it must not be below the
+   fold; then a run in flight; then the phases nobody has started; then the
+   ones that are over. Every phase card draws a lane — a phase whose
+   members are all merged and which is waiting on its own PR still owns
+   them, and a lane that vanished exactly when it needed merging would be
+   a view you could not trust. */
+function laneRank(task) {
+  const snap = (S.state.phases || {})[task.file];
+  if (snap && snap.halted) return 0;
+  if (snap && snap.running) return 1;
+  return task.stage === 'done' ? 3 : 2;
+}
+
+function lanePhases() {
+  return allTasks().filter(t => t.isPhase).sort((a, b) =>
+    laneRank(a) - laneRank(b) ||
+    (+a.number || 0) - (+b.number || 0) ||
+    a.file.localeCompare(b.file));
+}
+
+/* `07`, `7` and `#007` are one card, on this side of the wire too —
+   taskfiles.canonical_number, in the language the page is written in. */
+function canonicalNumber(number) {
+  const n = parseInt(number, 10);
+  return Number.isNaN(n) ? String(number ?? '') : String(n);
+}
+
+/* The phase log: the `- <date> <time> · <entry>` lines the runner appends
+   to a `## Phase log` section on the phase card, read here exactly as
+   phases.py writes them. It is the record of every decision a run made,
+   and the only thing that can tell "the phase has not reached this card"
+   from "it started it and it ended badly" — until this view it had
+   nowhere to be shown. */
+const PHASE_LOG_LINE = /^-\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s+·\s+(.+?)\s*$/;
+
+function phaseLog(task) {
+  const lines = (task.body || '').split('\n');
+  const start = lines.findIndex(line => /^##\s+Phase log\s*$/.test(line));
+  if (start < 0) return [];
+  const entries = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^##\s/.test(line)) break;
+    const match = PHASE_LOG_LINE.exec(line.trim());
+    if (match) entries.push({ at: match[1], text: match[2] });
+  }
+  return entries;
+}
+
+/* Which members the phase branch already holds. While a run is on, the
+   runner's last pass has just read it off git; once the phase leaves
+   in-progress/ there are no more passes — and the log, written by the same
+   runner as it merged them, still remembers. Two durable sources for one
+   fact, which is what keeps a phase in review/ from drawing a lane where
+   nothing ever landed. */
+function mergedIn(task) {
+  const merged = new Set();
+  const snap = (S.state.phases || {})[task.file];
+  for (const m of ((snap && snap.members) || [])) {
+    if (m.state === 'merged' && m.number) merged.add(canonicalNumber(m.number));
+  }
+  for (const entry of phaseLog(task)) {
+    const match = /^(\d+) merged into /.exec(entry.text);
+    if (match) merged.add(canonicalNumber(match[1]));
+  }
+  return merged;
+}
+
+/* The columns a lane runs. The first four are the board's own stages, named
+   by the server that names them everywhere else. The last one is the
+   phase's own and it is deliberately not done/: a member merged into the
+   phase branch is finished as far as the phase is concerned, and is not in
+   main yet — main waits on the phase's own PR, at the end, for a person.
+   So the column is named for what it actually holds. */
+function laneColumns() {
+  const stages = ((S.state.board || {}).stages || []).filter(s => s.slug !== 'done');
+  return [...stages.map(s => ({ slug: s.slug, label: s.label, tint: STAGE_TINT[s.slug] })),
+          { slug: 'merged', label: 'Merged in', tint: 'var(--calm)',
+            note: 'on the phase branch' }];
+}
+
+/* Where one member is drawn: the stage it is actually in, unless the phase
+   branch already holds it — then it is in the lane's last column whatever
+   its card says, because within the phase that work has landed. A card in
+   done/ is finished by any reading. */
+function laneColumnOf(task, merged) {
+  if (task.number && merged.has(canonicalNumber(task.number))) return 'merged';
+  return task.stage === 'done' ? 'merged' : task.stage;
+}
+
+/* Every card the phase lists, in run order, each with the column it is
+   drawn in. The card itself is the whole of what is known about it — this
+   only says where in the lane it goes. A listed number that resolves to no
+   card is not here: the phase card wears `phase drift` for that, as it
+   already did. */
+function laneMembers(task) {
+  const merged = mergedIn(task);
+  const members = [];
+  (task.members || []).forEach((listed, index) => {
+    const card = findTask(listed.file);
+    if (!card) return;
+    members.push({ pos: index + 1, task: card, column: laneColumnOf(card, merged) });
+  });
+  return members;
+}
+
+/* What the head says it has got through, counted off the same placement
+   the columns draw by — so the head and the last column can never
+   disagree about how far the phase has got. */
+function laneProgress(members) {
+  return { done: members.filter(m => m.column === 'merged').length,
+           total: members.length };
+}
+
+function laneLog(task) {
+  const entries = phaseLog(task);
+  const lines = entries.map(entry =>
+    `<div class="pline${/^halted\b/.test(entry.text) ? ' bad' : ''}">` +
+    `<span class="stamp">${esc(entry.at)}</span>` +
+    `<span class="what">${esc(entry.text)}</span></div>`).join('');
+  return `<div class="plog"><div class="phead">Phase log` +
+    `<span class="mono">${entries.length ? entries.length + ' in the order they were made'
+                                         : 'nothing yet'}</span></div>` +
+    (entries.length
+      ? `<div class="plines" data-phase="${esc(task.file)}">${lines}</div>`
+      : `<div class="pempty">The runner writes a line here for every decision it makes — ` +
+        `a run started, a card started, a card merged, a halt.</div>`) +
+    `</div>`;
+}
+
+function laneFor(task) {
+  const el = document.createElement('section');
+  const snap = (S.state.phases || {})[task.file];
+  const members = laneMembers(task);
+  const at = laneProgress(members);
+  const halted = !!(snap && snap.halted);
+  const running = !!(snap && snap.running);
+  el.className = 'lane' + (halted ? ' halted' : running ? ' running' : '');
+  el.dataset.phase = task.file;
+
+  const branch = (snap && snap.branch) || 'phase/' + task.file.replace(/\.md$/, '');
+  // the branch is only claimed to be missing when the runner has just
+  // looked; without a pass to read, the name is offered without a verdict
+  const uncut = !!(snap && !snap.started);
+  const flight = phaseFlight(task);
+  const head =
+    `<div class="lhead">` +
+    `<span class="mark${running ? ' breathing' : ''}" style="background:${
+      halted ? 'var(--alarm)' : running ? 'var(--accent)' : STAGE_TINT[task.stage]}"></span>` +
+    (task.number ? `<span class="lref">#${esc(task.number)}</span>` : '') +
+    `<button class="ltitle" data-open="1" title="Open the phase card — its text, ` +
+      `its list and its PR">${esc(task.title)}</button>` +
+    `<span class="lprog">${at.total ? `${at.done} of ${at.total} merged`
+                                    : 'no cards listed'} · ${esc(task.stage)}</span>` +
+    `<button class="chip2" data-open="1" title="Open the phase card">card<span class="g2">↗</span></button>` +
+    `<span class="chip2${uncut ? ' dim' : ''}" title="${uncut
+      ? 'The phase branch has not been cut yet — running the phase cuts it from the newest main'
+      : "The phase's integration branch: every member is branched from its tip and merged back into it"
+      }">${esc(branch)}</span>` +
+    `<span class="lacts"></span></div>`;
+
+  // the card the phase stopped on, named rather than left as a number
+  const stoppedOn = halted && snap.haltedAt
+    ? members.find(m => m.task.number &&
+        canonicalNumber(m.task.number) === canonicalNumber(snap.haltedAt))
+    : null;
+  const halt = halted
+    ? `<div class="lhalt"><span class="lglyph">✕</span><span class="lwhy">` +
+      `<b>halted${snap.haltedAt ? ` at #${esc(snap.haltedAt)}` : ''}</b>` +
+      `${stoppedOn ? ' · ' + esc(stoppedOn.task.title) : ''} — ` +
+      `${esc(snap.haltedWhy || snap.halted)}</span>` +
+      `<span class="lacts"></span></div>`
+    : '';
+  // a run in flight, in the same well the cards use for the same fact
+  const well = !halted && flight
+    ? `<div class="well"><span class="lead">·</span><span class="wbody">${esc(flight.line)}` +
+      `<span class="caret">▌</span></span></div>`
+    : '';
+
+  el.innerHTML = head + halt + well +
+    `<div class="lstages" data-phase="${esc(task.file)}"></div>` + laneLog(task);
+
+  const stages = el.querySelector('.lstages');
+  for (const col of laneColumns()) {
+    const here = members.filter(m => m.column === col.slug);
+    const box = document.createElement('div');
+    box.className = 'lcol';
+    box.innerHTML = `<h3><span class="tickmark" style="background:${col.tint}"></span>` +
+      `<span>${esc(col.label)}</span><span class="count">${here.length}</span>` +
+      `<span class="note">${esc(col.note || '')}</span></h3>`;
+    const cards = document.createElement('div');
+    cards.className = 'lcards';
+    if (!here.length) cards.innerHTML = '<div class="empty">—</div>';
+    // the cards are the cards: same builder, same actions, same chips —
+    // including the ⟶ chip that says where each one sits in the run
+    for (const m of here) cards.appendChild(cardFor(m.task));
+    box.appendChild(cards);
+    stages.appendChild(box);
+  }
+
+  el.querySelectorAll('[data-open]').forEach(btn =>
+    btn.addEventListener('click', () => showDetail(task)));
+
+  // ▸ run again lives here and nowhere else: clearing a halt should mean
+  // having read what caused it, and the reason is the line above it
+  if (halted) {
+    laneAction(el.querySelector('.lhalt .lacts'), task,
+      { glyph: '▸', label: 'run again', confirm: 'run it again?', busy: 'starting…',
+        title: 'Clear the halt and carry on from where it stopped — every card already '
+             + 'merged into the phase branch stays merged',
+        run: () => runPhase(task) });
+  }
+  // ‖ hold means here what it means everywhere: the run stops, the member
+  // agent in flight stops with it, and nothing is unwound
+  if (running || halted) {
+    laneAction(el.querySelector('.lhead .lacts'), task,
+      { glyph: '‖', label: 'hold', confirm: 'hold it?', busy: 'holding…',
+        title: 'Stop the phase and the agent it has in flight — the phase branch, every '
+             + 'card already merged into it and every worktree stay exactly as they are',
+        run: () => holdPhase(task) });
+  }
+  return el;
+}
+
+/* A phase's controls are card actions in every way that matters, so they
+   go through the one arm-then-fire machine, keyed like every other. */
+function laneAction(slot, task, act) {
+  if (!slot) return;
+  const btn = document.createElement('button');
+  btn.innerHTML = `<span class="g">${act.glyph}</span>${actLabel(act.label, act.confirm, act.busy)}`;
+  btn.title = act.title;
+  wireAction(btn, `${task.file}::${act.label}`, act);
+  slot.appendChild(btn);
+}
+
+function renderLanes() {
+  const view = $('#view-phases'), wrap = $('#lanes');
+  // where you were looking, taken before the wipe throws the nodes away:
+  // the page scrolls down, each lane's stages scroll sideways, each log
+  // scrolls in its own box
+  markScroll('v:phases', view);
+  wrap.querySelectorAll('.lstages').forEach(el =>
+    markScroll('v:lanestages:' + el.dataset.phase, el));
+  wrap.querySelectorAll('.plines').forEach(el =>
+    markScroll('v:phaselog:' + el.dataset.phase, el));
+  wrap.innerHTML = '';
+  const phases = lanePhases();
+  if (!phases.length) {
+    // an empty grid of five columns would be a room pretending to be full
+    wrap.innerHTML = '<div class="empty">No phases yet. A phase is an ordinary card ' +
+      'marked <b>Type: Phase</b> with a <code>## Cards</code> section listing the cards ' +
+      'it runs, in the order they run.</div>';
+  } else {
+    for (const task of phases) wrap.appendChild(laneFor(task));
+  }
+  restoreScroll('v:phases', view);
+  wrap.querySelectorAll('.lstages').forEach(el =>
+    restoreScroll('v:lanestages:' + el.dataset.phase, el));
+  wrap.querySelectorAll('.plines').forEach(el => {
+    // a log you have not touched opens on its newest line, which is the one
+    // that says where the phase is; once you have scrolled it, that is where
+    // it stays through every redraw
+    const key = 'v:phaselog:' + el.dataset.phase;
+    if (scrollMarks[key]) restoreScroll(key, el);
+    else el.scrollTop = el.scrollHeight;
+  });
+  if (S.selected) {
+    S.selected = allTasks().find(t => t.file === S.selected.file) || null;
+  }
+  renderDrawer();
 }
 
 /* ── sessions ─────────────────────────────────────────────────────────── */
@@ -2671,7 +3065,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if ($('#sheetwrap').classList.contains('open')) { closeSheet(); }
   else if (S.fileView) { S.fileView = null; renderDrawer(); }
-  else if (S.selected) { S.selected = null; renderBoard(); }
+  else if (S.selected) { S.selected = null; renderCards(); }
 });
 
 /* the drawer: drag its left edge to widen */

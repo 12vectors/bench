@@ -293,7 +293,7 @@ an agent is working; a blinking caret means output is still arriving. Night
 theme by default; the header button switches to Daylight. Tokens live at the
 top of `manager/board.html`.
 
-The board has three views (header switcher):
+The board has four views (header switcher):
 
 - **Board** — the kanban, live, and only what you are holding yourself: a
   phase's members are drawn elsewhere, with the phase card standing for
@@ -306,6 +306,10 @@ The board has three views (header switcher):
   appears — when sync stops converging, saying whether it is behind
   (origin unreachable, self-healing) or stalled on something only a human
   can settle.
+- **Phases** — a swimlane each: where the members the Board stopped drawing
+  actually live (see "The Phases view: a swimlane each"). The switcher
+  itself carries how many phases are running and a mark when one has
+  halted, so a halt is learned from whichever view you are on.
 - **Sessions** — a flight recorder per session: a chronological timeline of
   reads, edits, test runs, commits and card moves, with filters and expandable
   output. Sessions persist to `local/state/sessions/<id>.jsonl`, so past ones
@@ -980,8 +984,62 @@ Focus are about runs, not stages, and a phase member's agent is an agent
 like any other — it is counted by the header's live chip and by the tab
 title wherever it is working.
 
-Filtering the board to a phase's cards, and a Focus view for a phase, are
-separate cards.
+Where they are drawn instead is the next section. Filtering the board to a
+phase's cards, and a Focus view for a phase, remain separate cards.
+
+### The Phases view: a swimlane each
+
+Where the members went. A fourth view beside Board, Sessions and Focus,
+holding **one lane per phase card** — every phase there is, not only the
+running ones, because a phase whose cards are all merged and which is
+waiting on its own PR still owns them, and a lane that vanished exactly
+when it needed merging would be a view you could not trust. Lanes are
+ordered so a halt is never below the fold: halted, then running, then the
+phases nobody has started, then the ones that are over. With no phase
+anywhere the view says so in a sentence rather than drawing an empty grid.
+
+A lane is a head, five stage columns and the phase's log:
+
+- **The head** — the phase, its progress (`2 of 3 merged`), the member in
+  flight on the same activity line a card would use, and its own controls:
+  **‖ hold**, the phase branch, and the phase card, which opens in the
+  drawer. Those are all of them. Nothing here ends a phase — merging is a
+  board move on the phase card, and there is exactly one place where work
+  leaves the board.
+- **Five columns, and the last one is the phase's own.** Four are the
+  board's stages; the fifth is `Merged in`, not `done/`, because a member
+  merged into the phase branch is finished as far as the phase is
+  concerned and is not in `main` yet. A member is drawn in the stage it is
+  actually in until the phase branch holds it, and then in that last
+  column whatever its card says. Which members the branch holds is the
+  runner's last pass while a phase is running, and the phase log once
+  there are no more passes — the same fact, written down by the same
+  runner, which is what keeps a phase in `review/` from drawing a lane
+  where nothing ever landed.
+- **The cards are the cards.** `cardFor()` builds them here exactly as it
+  builds them for the Board: the live agent line, the CI and PR chips, the
+  `⟶ <phase> 2/3` chip that says where each sits in the run, and the same
+  hover actions. Nothing is shrunk to a token — that fidelity is the whole
+  advantage a room of its own buys.
+- **The phase log, under the lane** — the runner's decisions in the order
+  it made them, read off the `## Phase log` section of the phase card
+  itself. It is the only thing that can tell "the phase has not reached
+  this card" from "it started it and it ended badly", and until this view
+  it had nowhere to be shown.
+
+**A halted lane says so at the top of itself**: the reason, the card it
+stopped on, and **▸ run again** beneath them. That action lives here and
+not on the Board, because clearing a halt should mean having read what
+caused it — the Board's halted phase card offers **⟶ phases** in its place,
+and **‖ hold**, which needs nothing read.
+
+The crossing matters more than the lane: a person on the Board has to
+learn that a phase halted without being on this view, and a person here
+has to be able to get back to the card that owns it. So the switcher
+carries the running count and, in `--alarm`, a mark when something has
+halted — on every view, holding until the phase is run again or held,
+alongside the toast and the ticker line that already fire. And the lane
+head's title and its `card ↗` chip open the phase card.
 
 An optional **Assignee** line records who holds the card:
 

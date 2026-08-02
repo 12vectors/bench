@@ -375,6 +375,8 @@ class RenderersKeepPlaceTests(unittest.TestCase):
             ".tl": "markScroll('v:tl:'",             # #ftl, a session timeline
             ".f-rail": "markScroll('v:rail'",        # #frail, the sessions list
             "#view-focus": "markScroll('v:focus'",
+            "#view-phases": "markScroll('v:phases'",   # the lanes, down
+            ".lstages": "markScroll('v:lanestages:'",  # one lane, sideways
             ".c-strip": "markScroll('v:cstrip'",     # #cstrip, the stage strip
             "#logbody": "markScroll('log'",
             "#drawerbody": "markScroll(S.drawerKey",
