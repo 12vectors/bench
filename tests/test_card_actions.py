@@ -167,16 +167,18 @@ class OneSlotBuilderTests(unittest.TestCase):
         cls.html = BOARD.read_text(encoding="utf-8")
 
     def test_hover_actions_and_command_chips_share_the_machine(self):
-        self.assertEqual(len(re.findall(r"(?<!function )wireAction\(btn,", self.html)), 2,
-                         "exactly two call sites: the slot builder and the "
-                         "$-command chips — both on the one machine")
+        self.assertEqual(len(re.findall(r"(?<!function )wireAction\(btn,", self.html)), 3,
+                         "exactly three call sites: the slot builder, the "
+                         "$-command chips and the ⌸ archive chip — all on "
+                         "the one machine")
         self.assertNotIn("btn.firstChild.textContent", self.html,
                          "the old per-chip label swap is the fork this kills")
         self.assertNotIn("btn.lastElementChild.textContent", self.html)
 
     def test_every_action_declares_its_participle(self):
         for word in ("starting…", "holding…", "checking…", "reviewing…",
-                     "acting…", "asking…", "moving…", "reopening…", "running…"):
+                     "acting…", "asking…", "moving…", "reopening…", "running…",
+                     "archiving…"):
             self.assertIn(word, self.html, f"busy label {word!r} missing")
 
     def test_misses_die_at_the_slot(self):
