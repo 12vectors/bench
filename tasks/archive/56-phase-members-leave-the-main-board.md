@@ -1,6 +1,6 @@
 # 56 — Phase members leave the main board
 
-**Status:** Done
+**Status:** Archived
 **PR:** https://github.com/12vectors/bench/pull/47
 **Assignee:** istos
 **Priority:** High — the main board is the thing phases currently spoil,
