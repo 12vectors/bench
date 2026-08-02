@@ -1,6 +1,6 @@
 # 47 — An archive button on the card, where the card is
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/45
 **Assignee:** istos
 **Priority:** Medium — archiving works, but only by dragging a card the
