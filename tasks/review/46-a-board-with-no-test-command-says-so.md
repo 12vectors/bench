@@ -1,6 +1,6 @@
 # 46 — A board whose agents cannot run anything says so
 
-**Status:** In Progress
+**Status:** Review
 **Assignee:** istos
 **Priority:** Medium — the failure is silent until an agent has already
 spent a run finding out
