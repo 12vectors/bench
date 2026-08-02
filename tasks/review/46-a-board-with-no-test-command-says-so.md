@@ -119,3 +119,28 @@ An empty `BOARD_AGENT_COMMANDS` is now said in two places, neither of which bloc
 
 - `manager/core/board.html:1070` — `renderAgentCommands()`, its wording and colour choice (no `--alarm`, no `--accent`).
 - `manager/core/agents.py:257` — `_no_commands_note()` and its two call sites, if you disagree that the ticker (rather than the action) is the right channel at launch.
+
+
+---
+
+## PR review — 2026-08-02 16:52 (Sage)
+
+PR REVIEW: APPROVE
+
+The work is committed on `task/46-a-board-with-no-test-command-says-so` (commit `64f3e2b`) and ready to merge; it does what task 46 asked and stays in scope. I reviewed the full diff and read the surrounding code in context.
+
+**What it does**
+An empty `BOARD_AGENT_COMMANDS` is now announced in two non-blocking channels: a quiet `no agent commands` header chip (next to the sync chip) and a note appended to the launch's own ticker line for the two intents that would have run the commands (`▸ start work` and `↻ act on PR`).
+
+**What I checked and found good**
+- `config.py:agent_commands()` splits the setting exactly as both shipped adapters' `split_commands()` do, so whitespace and a lone comma count as empty everywhere — the edge case the acceptance list names. A test asserts core and both adapters agree over one input table.
+- `httpd.py` sends `hasAgentCommands` beside `hasDriver` — the same "thing this project hasn't set up" shape the task said to borrow. Layering is respected (httpd and agents read down into config; no upward dependency).
+- `board.html:renderAgentCommands()` draws only when `S.state.hasAgentCommands === false`, so a payload missing the key (older server, first frame) shows nothing rather than guessing. Colour is `--idle` dot / `--muted` text — settled register, never `--alarm`.
+- `agents.py:_no_commands_note()` returns `None` when configured; fires for `start_agent`/`start_pr_fix` and not read-only kinds. `base_note` is initialised to `None` (agents.py:322) so the new append loop is safe, and `name` is bound (agents.py:654) before the modified summary in `start_pr_fix`.
+- The launch is never refused — note only.
+- Docs (AGENTS.md, `.env.example`) describe the indicator where the trade is already explained; nothing writes to `.env`. Out-of-scope neighbours left alone.
+
+**To know (for the human deciding this card)**
+- I could not run the test suite in this review session — the permission sandbox blocked executing it. I verified correctness by inspection; the work report claims all 1050 tests pass, including 19 new cases in `tests/test_no_agent_commands.py` (splitter, payload, header chip run under node, launch behaviour, docs). Worth a local `python3 -m unittest discover -s tests` before merge if you want the confirmation I couldn't produce here.
+- Minor judgement call: `--idle` (the design system's "done" driftwood) is reused for "unconfigured". It satisfies the not-alarm requirement and reads as neutral, but if you want a token that doesn't overload "done" that's the one thing to eyeball.
+- The header chip names the setting in visible text and the file (`manager/local/.env`) only on hover, mirroring the existing "no driver" chip; the file is named inline in the launch ticker note, so the "name the setting and the file" acceptance is met across the two channels rather than in the chip alone.
