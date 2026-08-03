@@ -18,7 +18,7 @@ tests are about — the assertion reads that file and fails. CI has no
   a dict and then does `values.update(os.environ)`. Process environment
   beats the file, and the file beats the defaults. That precedence is
   right and documented; what follows from it is not obvious.
-- `tests/test_boards_sync.py:481-496` — `TheGateImpliesCommitMoves.reload()`
+- `tests/test_boards_sync.py:598-613` — `TheGateImpliesCommitMoves.reload()`
   **pops** `BOARD_SYNC` and `BOARD_COMMIT_MOVES` from `os.environ` and
   reloads `config`, to stand for a machine that has set neither. Popping
   removes the only layer that was overriding `local/.env`, so the reload
@@ -52,8 +52,8 @@ tests, `tests/test_boards_sync.py` first.
   `tests/__init__.py`, which every run imports — that sets the override
   before `config` is first imported, so no individual test has to
   remember. Note that several test modules import `config` at module
-  scope (`test_boards_sync.py:27`), so wherever this lands it has to
-  happen first.
+  scope (`tests/test_boards_sync.py:27`), so wherever this lands it has
+  to happen first.
 - **Say it where it will be read.** One line in the `_load_env()`
   docstring: the process environment is the only layer above the file,
   so removing a variable does not reveal the default, it reveals the

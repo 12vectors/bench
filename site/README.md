@@ -127,7 +127,9 @@ answers rather than files:
 1. `https://bench.12vectors.com/` serves the landing page over TLS.
 2. `https://bench.12vectors.com/concepts/claiming-a-card` redirects to
    the same path with a trailing slash, and no url anywhere ends in
-   `.html`.
+   `.html`. Measured, the redirect is a **307** — the host's choice, not
+   a setting this repo holds, so check that it redirects at all rather
+   than which code it picks.
 3. A path that does not exist — `/nope/` — renders the site's own 404
    page **with a 404 status**, not the landing page with a 200.
 4. `curl -sI https://bench.12vectors.com/` shows

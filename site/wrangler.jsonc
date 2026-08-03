@@ -19,7 +19,7 @@
     // so a deploy from a clean checkout builds first.
     "directory": "./dist",
 
-    // /concepts/claiming-a-card -> 301 -> /concepts/claiming-a-card/,
+    // /concepts/claiming-a-card -> 307 -> /concepts/claiming-a-card/,
     // which is the url the pages link and the one <link rel=canonical>
     // names. One page, one address: the slashless form redirects rather
     // than serving a second copy, and no url ever ends in .html.
