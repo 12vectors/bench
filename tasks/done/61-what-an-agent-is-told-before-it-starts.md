@@ -1,6 +1,6 @@
 # 61 — Phase: what an agent is told before it starts
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/54
 **Assignee:** istos
 **Priority:** High — every card in it is a hole that has already cost a
