@@ -78,6 +78,39 @@
       "description": "A card entering review gets a PR opened for it by the board; then review PR, copilot and act on PR, until it settles.",
       "source": "AGENTS.md",
       "from": "## Pull requests",
+      "to": "## Phases"
+    },
+    {
+      "path": "/concepts/phases/",
+      "title": "Phases",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "A phase is a card that lists its cards: Type: Phase, a ## Cards section in run order, and membership that runs one direction only.",
+      "lede": "The model, before anything runs: what a phase card is made of, how membership is written down, why it runs one direction only, and what the board flags when the list does not resolve.",
+      "source": "AGENTS.md",
+      "from": "## Phases",
+      "to": "### A phase runs itself, on a branch of its own"
+    },
+    {
+      "path": "/concepts/running-a-phase/",
+      "title": "Running a phase",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "Each member branches from the phase's tip, runs headless, and merges back on green. Halt, never skip — and one PR into main at the end.",
+      "lede": "Everything between starting a phase and the one PR it ends with: where each member's branch is cut, what advances the run and what stops it, how a restarted board picks the phase back up, and what merging it does to the cards it carried.",
+      "source": "AGENTS.md",
+      "from": "### A phase runs itself, on a branch of its own",
+      "to": "### A phase's members leave the Board view"
+    },
+    {
+      "path": "/concepts/phases-on-the-board/",
+      "title": "Where a phase is drawn",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "The Board stops listing a phase's members and the phase card stands for them; the Phases view gives every phase a swimlane of its own.",
+      "lede": "A phase card stands for cards the kanban no longer lists. What the columns say instead, what the phase card owes in return, and the view that gives every phase a lane of its own.",
+      "source": "AGENTS.md",
+      "from": "### A phase's members leave the Board view",
       "to": "## Stages"
     },
     {

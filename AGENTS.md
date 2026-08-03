@@ -587,235 +587,14 @@ without a PR is refused with a pointer to **↑ open PR** — there is nothing
 for origin to merge otherwise. Single-player merges locally, exactly as
 above.
 
-## Stages
+## Phases
 
-The flow is linear:
-
-```
-backlog → to-do → in-progress → review → done
-```
-
-### backlog/
-Where new tasks are written and where they wait. A backlog task may be rough,
-incomplete, or fully specified — what it has in common with its neighbours is
-that nobody is working on it. Most tasks live here for most of their life.
-
-### to-do/
-Picked up and queued to work on next. Moving a task from `backlog/` to `to-do/`
-is a commitment to do it soon, so keep this directory short — a long `to-do/` is
-just a second backlog.
-
-### in-progress/
-Actively being worked on right now. Anything here should have someone (or an
-agent session) attached to it. If work stalls, move it back to `to-do/` or
-`backlog/` rather than leaving it parked — a stale `in-progress/` makes the board
-lie about what is happening.
-
-Implementation plans (created via Claude Code's plan mode) are stored in `plans/`
-and can be referenced from the task file.
-
-### review/
-The work is built and awaits judgment: tests written and passing, a PR open
-(see "Pull requests"), behaviour checked in the running app, edge cases
-probed. A task sitting here has code but not yet confidence. If review turns
-up problems, move it back to `in-progress/`.
-
-### done/
-Finished and merged. Completed task files are kept as a record of what was built
-and why — they are the closest thing we have to design history, so don't delete
-or trim them.
-
-### reference/ (beside tasks/, not a stage)
-Supporting documents that tasks can link to — external specs, API documentation,
-research notes, screenshots, competitive analysis, regulatory references, etc.
-These don't move through the workflow; they're stable resources. Reference them
-from task files using relative links — two levels up from a stage directory
-(e.g. `[the payments API spec](../../reference/payments-api.md)`).
-
-## Moving a task
-
-When moving a task between stages:
-1. Update the **Status** field in the task file header
-2. Move the file to the new directory
-3. Add any notes about why it's moving (e.g. "approach agreed, starting build")
-
-Moves are not always forward. Going back a stage is normal and expected —
-verification failing, or an approach not surviving contact with the code, should
-move the task backwards rather than being worked around in place.
-
-## Claiming a card
-
-**Claiming is moving.** Taking a card out of `backlog/` or `to-do/` towards
-work is the commitment, so that is where ownership is recorded: the board
-writes an `**Assignee:** <name>` line into the header, taken from this
-checkout's `git config user.name` — the identity git history already shows,
-no new concept. The first claim sticks: a card that already names an
-assignee keeps it when someone else moves it on. Walking a card all the way
-back to `backlog/` clears the line — nobody holds it again.
-
-The assignee is who launches agents on the card and whose judgment the
-review waits for. It gates exactly one thing — starting work, which
-another board refuses until you take the card over deliberately (see
-"State syncs; reactions don't"). Everything else is convention: reading,
-reviewing and moving are open to anyone, and git history is the audit.
-
-Two consequences worth knowing:
-
-- **Hand-moves bypass the claim.** A plain `mv` between stage directories
-  is still a first-class move (the watcher narrates it), but nothing writes
-  the assignee — update the line yourself in the same edit as **Status**.
-- **Identity is git's, so it collides like git's.** Two machines both
-  configured `user.name = ronald` are one person as far as the board is
-  concerned. Teams that share a git history already share that assumption.
-
-With `BOARD_COMMIT_MOVES` on, board-made moves also **commit themselves**:
-the move and the claim land in one commit touching only that task file,
-messaged `board: <number> → <stage> (<name>)`, staged by pathspec so
-unrelated staged work is neither committed nor unstaged (hooks are skipped —
-this is bookkeeping, not code). Pushing is not part of it: those commits sit
-on your local `main` until you push it (or until `BOARD_SYNC` pushes them —
-see "Syncing boards"), which the guard in "Pull requests" will tell you
-about if you forget. The setting is off by default: a single-player
-board neither writes nor clears the assignee and makes no commits, and
-`tasks/` is committed by hand. The gate governs only whether
-a *move* writes the line — an **Assignee:** added to a file by hand is still
-read and shown on the card whether the gate is on or off.
-
-## Syncing boards
-
-`BOARD_SYNC=1` makes `origin/main` the truth and every board a converging
-replica. It implies `BOARD_COMMIT_MOVES` — a move that never commits has
-nothing to publish — and off (the default) nothing below runs: no fetch,
-no push, no thread, no behaviour change at all.
-
-- **Push is event-driven.** The commit a move makes is pushed as soon as
-  it lands. A rejected push means another board got there first, so the
-  board fetches, replays its own commits on top and pushes again.
-- **Pull is a beat.** Every `BOARD_SYNC_INTERVAL` (30s by default) and
-  once at startup: fetch, then fast-forward. The watcher narrates what
-  arrived, attributed to the commit's author rather than `disk`.
-- **Losing a race is a toast, not a mystery.** When replaying collides
-  with a card someone else already moved, origin wins: the local move is
-  dropped, the file reverts to origin's version and the board says
-  `07 claimed by elena — your move was undone`.
-- **A human's unpushed commit is never published.** Before any auto-push
-  every local-ahead commit on `main` must be `board: `-prefixed. One
-  that isn't stops the push (and the replay), names itself in the ticker
-  and holds the header's `sync stalled` chip until you push it yourself
-  or move it off main.
-- **Offline is quiet.** An unreachable origin says so once, then works
-  locally; commits queue on `main` and go out on the next reachable
-  fetch.
-- **Which remote is one answer, not two.** One remote and one branch, by
-  design — but the remote is the one `BOARD_GIT_REMOTE` names, else the
-  checkout's first, resolved in the same place PR opening asks, so the two
-  halves of team mode can never publish to different places. It is used as
-  named: a `BOARD_GIT_REMOTE` this checkout has no remote for stalls
-  saying so rather than reaching past it for another one. A checkout with
-  no remote at all stalls the same way, from startup — team mode syncing
-  nothing is exactly the state a board must not render as healthy, and it
-  is the likeliest first state of a fresh installation. Add a remote (or
-  set the setting) and the chip clears with a line saying sync is
-  converging again.
-
-### State syncs; reactions don't
-
-The board does not only render state, it reacts to it: a card entering
-review opens a PR. With N replicas watching one truth, a reaction must
-fire on exactly one of them, so **only the board whose user made the move
-acts on it**. A move a pull applied renders and narrates — attributed to
-its author — and triggers nothing. `watch.py` answers the question, since
-that is where the attribution already lives, and every future automation
-hung off a stage transition inherits it: am I the actor?
-
-The file-carried gates stay in place behind that rule, so the rare double
-is harmless rather than loud: the `**PR:**` line before `gh pr create`
-(and a create that races anyway adopts the open PR), an existing branch
-and worktree before a work launch. Both layers, deliberately — the
-actor-only rule prevents the duplication, idempotency survives it.
-
-Two consequences you can see:
-
-- **A half-done side effect is nobody's to finish automatically.** The
-  actor's board can die between moving a card and opening its PR; no
-  other board picks that up, and in team mode the startup catch-up stands
-  down for the same reason. The card wears **↑ open PR** instead — a
-  person decides.
-- **Ownership gates work launches.** A card someone else holds refuses
-  **▸ start work**, naming them, and offers **▸ take over** as the
-  deliberate second path. Shared liveness is not part of this: a
-  teammate's running agent is a static "in-progress, assigned to them" on
-  your board, because agent registries stay in each board's own memory.
-
-Two disciplines make this safe, and team mode assumes both:
-
-- **Local `main` advances only through the board and origin.** Code work
-  lives in worktrees and PRs — that is what keeps the main checkout clean
-  and fast-forwardable. Uncommitted changes to tracked files, a checkout
-  sitting on another branch, or a divergence the guard won't replay all
-  stall sync rather than risking your work; each one is narrated once and
-  shown as a chip in the header until it clears.
-- **Sync never merges.** It fast-forwards, or rebases the board's own
-  bookkeeping commits. Nothing here force-pushes, and nothing reacts to
-  what it pulled beyond narrating it.
-
-One board fetches twice a minute at the default interval; N boards make
-N times that. Against GitHub this is nothing, but on a rate-limited or
-metered remote raise `BOARD_SYNC_INTERVAL`.
-
-## Task file format
-
-Each task is a markdown file with a descriptive filename
-(e.g. `01-document-handling-review.md`). Numbers are allocated in creation order
-and stay with the file for life — they do not renumber when a task moves stage.
-
-Start new tasks from `tasks/task-template.md` — copy it into `backlog/` and
-fill it in. Its sections earn their keep: Context and What-to-build are what
-a work agent gets as its brief, Acceptance is what reviews judge against,
-and a non-empty Open-questions section makes an agent refuse the task
-(`NOT READY`) rather than guess. The template itself is never listed on the
-board (only stage directories are read).
-
-The file should have at minimum:
-
-```markdown
-# Task title
-
-**Status:** Backlog | To Do | In Progress | Review | Done
-**Priority:** High | Medium | Low
-```
-
-Use those exact status values — nothing else (not "Not started", "WIP", etc.) —
-and keep the status in step with the directory the file sits in. Priority may
-carry a short justification after the level
-(e.g. `Medium — foundational for any real environment`).
-
-Every header field, and who writes it:
-
-| Field | Required | Value | Written by |
-| --- | --- | --- | --- |
-| **Status** | yes | `Backlog` · `To Do` · `In Progress` · `Review` · `Done` (`Archived` for a card in `tasks/archive/`) | you, or the board on a move |
-| **Priority** | yes | `High` · `Medium` · `Low`, optionally followed by a short justification | you |
-| **Type** | no | `Discovery` · `Bug` · `Feature` · `Refactor` · `Chore` · `Phase` | you |
-| **Assignee** | no | a name, taken from `git config user.name` | the board on a claiming move, or you by hand |
-| **Depends on** | no | task numbers or external preconditions, comma-separated | you |
-| **PR** | no | the pull request url | the board when it opens one |
-
-**Status** is the field the board holds you to: a header that disagrees
-with the directory the file sits in is flagged `status drift`.
-**Assignee** and **PR** it writes and reads itself. The rest are for
-whoever picks the next card.
-
-An optional **Type** line can record what kind of work the task is, when that
-isn't obvious from the title:
-
-```markdown
-**Type:** Discovery | Bug | Feature | Refactor | Chore | Phase
-```
-
-Type is orthogonal to status. A discovery task — research, scoping, spiking an
-approach — moves through the same five stages as everything else; "discovery"
-describes the work, not where it sits on the board.
+Some work is a run of related cards rather than one card: three that have
+to land in order, each building on the one before it. A phase is how
+bench holds that — a card that lists its cards, an integration branch of
+its own, a beat that works the list one member at a time, and a single PR
+into `main` at the end. Everything else on the board reaches it by
+inheritance, because a phase card is a card.
 
 ### A phase is a card that lists its cards
 
@@ -1148,6 +927,236 @@ carries the running count and, in `--alarm`, a mark when something has
 halted — on every view, holding until the phase is run again or held,
 alongside the toast and the ticker line that already fire. And the lane
 head's title and its `card ↗` chip open the phase card.
+
+## Stages
+
+The flow is linear:
+
+```
+backlog → to-do → in-progress → review → done
+```
+
+### backlog/
+Where new tasks are written and where they wait. A backlog task may be rough,
+incomplete, or fully specified — what it has in common with its neighbours is
+that nobody is working on it. Most tasks live here for most of their life.
+
+### to-do/
+Picked up and queued to work on next. Moving a task from `backlog/` to `to-do/`
+is a commitment to do it soon, so keep this directory short — a long `to-do/` is
+just a second backlog.
+
+### in-progress/
+Actively being worked on right now. Anything here should have someone (or an
+agent session) attached to it. If work stalls, move it back to `to-do/` or
+`backlog/` rather than leaving it parked — a stale `in-progress/` makes the board
+lie about what is happening.
+
+Implementation plans (created via Claude Code's plan mode) are stored in `plans/`
+and can be referenced from the task file.
+
+### review/
+The work is built and awaits judgment: tests written and passing, a PR open
+(see "Pull requests"), behaviour checked in the running app, edge cases
+probed. A task sitting here has code but not yet confidence. If review turns
+up problems, move it back to `in-progress/`.
+
+### done/
+Finished and merged. Completed task files are kept as a record of what was built
+and why — they are the closest thing we have to design history, so don't delete
+or trim them.
+
+### reference/ (beside tasks/, not a stage)
+Supporting documents that tasks can link to — external specs, API documentation,
+research notes, screenshots, competitive analysis, regulatory references, etc.
+These don't move through the workflow; they're stable resources. Reference them
+from task files using relative links — two levels up from a stage directory
+(e.g. `[the payments API spec](../../reference/payments-api.md)`).
+
+## Moving a task
+
+When moving a task between stages:
+1. Update the **Status** field in the task file header
+2. Move the file to the new directory
+3. Add any notes about why it's moving (e.g. "approach agreed, starting build")
+
+Moves are not always forward. Going back a stage is normal and expected —
+verification failing, or an approach not surviving contact with the code, should
+move the task backwards rather than being worked around in place.
+
+## Claiming a card
+
+**Claiming is moving.** Taking a card out of `backlog/` or `to-do/` towards
+work is the commitment, so that is where ownership is recorded: the board
+writes an `**Assignee:** <name>` line into the header, taken from this
+checkout's `git config user.name` — the identity git history already shows,
+no new concept. The first claim sticks: a card that already names an
+assignee keeps it when someone else moves it on. Walking a card all the way
+back to `backlog/` clears the line — nobody holds it again.
+
+The assignee is who launches agents on the card and whose judgment the
+review waits for. It gates exactly one thing — starting work, which
+another board refuses until you take the card over deliberately (see
+"State syncs; reactions don't"). Everything else is convention: reading,
+reviewing and moving are open to anyone, and git history is the audit.
+
+Two consequences worth knowing:
+
+- **Hand-moves bypass the claim.** A plain `mv` between stage directories
+  is still a first-class move (the watcher narrates it), but nothing writes
+  the assignee — update the line yourself in the same edit as **Status**.
+- **Identity is git's, so it collides like git's.** Two machines both
+  configured `user.name = ronald` are one person as far as the board is
+  concerned. Teams that share a git history already share that assumption.
+
+With `BOARD_COMMIT_MOVES` on, board-made moves also **commit themselves**:
+the move and the claim land in one commit touching only that task file,
+messaged `board: <number> → <stage> (<name>)`, staged by pathspec so
+unrelated staged work is neither committed nor unstaged (hooks are skipped —
+this is bookkeeping, not code). Pushing is not part of it: those commits sit
+on your local `main` until you push it (or until `BOARD_SYNC` pushes them —
+see "Syncing boards"), which the guard in "Pull requests" will tell you
+about if you forget. The setting is off by default: a single-player
+board neither writes nor clears the assignee and makes no commits, and
+`tasks/` is committed by hand. The gate governs only whether
+a *move* writes the line — an **Assignee:** added to a file by hand is still
+read and shown on the card whether the gate is on or off.
+
+## Syncing boards
+
+`BOARD_SYNC=1` makes `origin/main` the truth and every board a converging
+replica. It implies `BOARD_COMMIT_MOVES` — a move that never commits has
+nothing to publish — and off (the default) nothing below runs: no fetch,
+no push, no thread, no behaviour change at all.
+
+- **Push is event-driven.** The commit a move makes is pushed as soon as
+  it lands. A rejected push means another board got there first, so the
+  board fetches, replays its own commits on top and pushes again.
+- **Pull is a beat.** Every `BOARD_SYNC_INTERVAL` (30s by default) and
+  once at startup: fetch, then fast-forward. The watcher narrates what
+  arrived, attributed to the commit's author rather than `disk`.
+- **Losing a race is a toast, not a mystery.** When replaying collides
+  with a card someone else already moved, origin wins: the local move is
+  dropped, the file reverts to origin's version and the board says
+  `07 claimed by elena — your move was undone`.
+- **A human's unpushed commit is never published.** Before any auto-push
+  every local-ahead commit on `main` must be `board: `-prefixed. One
+  that isn't stops the push (and the replay), names itself in the ticker
+  and holds the header's `sync stalled` chip until you push it yourself
+  or move it off main.
+- **Offline is quiet.** An unreachable origin says so once, then works
+  locally; commits queue on `main` and go out on the next reachable
+  fetch.
+- **Which remote is one answer, not two.** One remote and one branch, by
+  design — but the remote is the one `BOARD_GIT_REMOTE` names, else the
+  checkout's first, resolved in the same place PR opening asks, so the two
+  halves of team mode can never publish to different places. It is used as
+  named: a `BOARD_GIT_REMOTE` this checkout has no remote for stalls
+  saying so rather than reaching past it for another one. A checkout with
+  no remote at all stalls the same way, from startup — team mode syncing
+  nothing is exactly the state a board must not render as healthy, and it
+  is the likeliest first state of a fresh installation. Add a remote (or
+  set the setting) and the chip clears with a line saying sync is
+  converging again.
+
+### State syncs; reactions don't
+
+The board does not only render state, it reacts to it: a card entering
+review opens a PR. With N replicas watching one truth, a reaction must
+fire on exactly one of them, so **only the board whose user made the move
+acts on it**. A move a pull applied renders and narrates — attributed to
+its author — and triggers nothing. `watch.py` answers the question, since
+that is where the attribution already lives, and every future automation
+hung off a stage transition inherits it: am I the actor?
+
+The file-carried gates stay in place behind that rule, so the rare double
+is harmless rather than loud: the `**PR:**` line before `gh pr create`
+(and a create that races anyway adopts the open PR), an existing branch
+and worktree before a work launch. Both layers, deliberately — the
+actor-only rule prevents the duplication, idempotency survives it.
+
+Two consequences you can see:
+
+- **A half-done side effect is nobody's to finish automatically.** The
+  actor's board can die between moving a card and opening its PR; no
+  other board picks that up, and in team mode the startup catch-up stands
+  down for the same reason. The card wears **↑ open PR** instead — a
+  person decides.
+- **Ownership gates work launches.** A card someone else holds refuses
+  **▸ start work**, naming them, and offers **▸ take over** as the
+  deliberate second path. Shared liveness is not part of this: a
+  teammate's running agent is a static "in-progress, assigned to them" on
+  your board, because agent registries stay in each board's own memory.
+
+Two disciplines make this safe, and team mode assumes both:
+
+- **Local `main` advances only through the board and origin.** Code work
+  lives in worktrees and PRs — that is what keeps the main checkout clean
+  and fast-forwardable. Uncommitted changes to tracked files, a checkout
+  sitting on another branch, or a divergence the guard won't replay all
+  stall sync rather than risking your work; each one is narrated once and
+  shown as a chip in the header until it clears.
+- **Sync never merges.** It fast-forwards, or rebases the board's own
+  bookkeeping commits. Nothing here force-pushes, and nothing reacts to
+  what it pulled beyond narrating it.
+
+One board fetches twice a minute at the default interval; N boards make
+N times that. Against GitHub this is nothing, but on a rate-limited or
+metered remote raise `BOARD_SYNC_INTERVAL`.
+
+## Task file format
+
+Each task is a markdown file with a descriptive filename
+(e.g. `01-document-handling-review.md`). Numbers are allocated in creation order
+and stay with the file for life — they do not renumber when a task moves stage.
+
+Start new tasks from `tasks/task-template.md` — copy it into `backlog/` and
+fill it in. Its sections earn their keep: Context and What-to-build are what
+a work agent gets as its brief, Acceptance is what reviews judge against,
+and a non-empty Open-questions section makes an agent refuse the task
+(`NOT READY`) rather than guess. The template itself is never listed on the
+board (only stage directories are read).
+
+The file should have at minimum:
+
+```markdown
+# Task title
+
+**Status:** Backlog | To Do | In Progress | Review | Done
+**Priority:** High | Medium | Low
+```
+
+Use those exact status values — nothing else (not "Not started", "WIP", etc.) —
+and keep the status in step with the directory the file sits in. Priority may
+carry a short justification after the level
+(e.g. `Medium — foundational for any real environment`).
+
+Every header field, and who writes it:
+
+| Field | Required | Value | Written by |
+| --- | --- | --- | --- |
+| **Status** | yes | `Backlog` · `To Do` · `In Progress` · `Review` · `Done` (`Archived` for a card in `tasks/archive/`) | you, or the board on a move |
+| **Priority** | yes | `High` · `Medium` · `Low`, optionally followed by a short justification | you |
+| **Type** | no | `Discovery` · `Bug` · `Feature` · `Refactor` · `Chore` · `Phase` | you |
+| **Assignee** | no | a name, taken from `git config user.name` | the board on a claiming move, or you by hand |
+| **Depends on** | no | task numbers or external preconditions, comma-separated | you |
+| **PR** | no | the pull request url | the board when it opens one |
+
+**Status** is the field the board holds you to: a header that disagrees
+with the directory the file sits in is flagged `status drift`.
+**Assignee** and **PR** it writes and reads itself. The rest are for
+whoever picks the next card.
+
+An optional **Type** line can record what kind of work the task is, when that
+isn't obvious from the title:
+
+```markdown
+**Type:** Discovery | Bug | Feature | Refactor | Chore | Phase
+```
+
+Type is orthogonal to status. A discovery task — research, scoping, spiking an
+approach — moves through the same five stages as everything else; "discovery"
+describes the work, not where it sits on the board.
 
 An optional **Assignee** line records who holds the card:
 
