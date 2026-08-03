@@ -193,6 +193,19 @@ in. A wrong guess costs nothing an empty value would not, since a prefix
 that matches nothing denies exactly the same way. An existing value is
 never overwritten, so `--setup` cannot undo a hand-edit.
 
+Empty is honest, but honest and invisible is a board that lets an agent
+discover the problem on your behalf, slowly — so the board says it out
+loud. With `BOARD_AGENT_COMMANDS` holding nothing (unset, whitespace, or
+a lone comma, which is how the adapters read it too) the header carries a
+quiet `no agent commands` chip naming the setting and the file that holds
+it, `manager/local/.env`, and every launch of the two intents that would
+have run those commands — **▸ start work** and **↻ act on PR** — appends
+the same sentence to its line in the ticker. It is a configuration fact,
+not an alarm: it wears the settled register rather than `--alarm`, it
+appears only while the setting is empty, and it never refuses a launch.
+An agent that only edits files is still useful, and bench does not
+decline work because a project is unconfigured.
+
 Bare Enter takes the default, Ctrl-D skips the rest, and what lands is
 `core/.env.example` with the answers substituted into their lines: every
 other key, every comment, so the written file is where the project reads
@@ -377,6 +390,21 @@ card someone else holds, naming them; the action reads **▸ take over**
 there, and firing it is the deliberate reassignment. An unclaimed card
 claims itself on launch. One agent per task at a time, and a work agent's
 worktree must not already exist when it starts.
+
+It also refuses a **phase card**, and the refusal names **▸ run phase** —
+a phase card's body is a list of other cards, so a work agent handed one
+implements the table of contents. The board's own page offers one action
+or the other and never both, but a UI layer can be stale or bypassed, so
+the rule lives where every other launch refusal lives: with the stage
+check, ahead of the claim and well ahead of the worktree, costing nothing
+and leaving nothing to clean up. Which headless kinds a phase card may
+host is decided rather than left to omission: **▸ start work** and **↻ act
+on PR** refuse it (both are work agents, and a phase's work belongs to its
+members' cards), while the read-only pair — **◔ still true?** and **◔
+review PR**, the latter told the phase's own branch — are allowed. The
+guard is about *starting*: a card that gains `**Type:** Phase` while an
+ordinary run is in flight is left alone, and that run ends as it would
+have.
 
 1. The board creates a git worktree at `.worktrees/<task-stem>/` on a new
    branch `task/<task-stem>` from the newest main it can see: with an
@@ -950,6 +978,17 @@ and they are the phase's own interface:
   wears its own failure independently — a phase you started and stopped
   watching is only trustworthy if its halt is impossible to miss, so it is
   told three times at three altitudes, exactly as a dead run is.
+
+**And the card itself says which state it is in.** The header chip only
+appears while there is something to say, so it cannot tell "the phase has
+not been started" from "there is no phase here at all" — which left an
+`in-progress/` phase card nobody had run looking exactly like one mid-run.
+So the card carries the distinction quietly, in the pill and the line
+under it: `not started` (`▸ run phase` cuts its branch and starts the
+first card), `held`, the accent and the member in flight while it runs,
+and `halted` in `--alarm`. Only a run wears the working vocabulary — the
+breathing mark, the accent border, the caret — because only a run is work
+happening.
 
 **And the card does not move while its work runs.** A phase card stands
 for cards the Board no longer draws, so dragging it to another stage — or

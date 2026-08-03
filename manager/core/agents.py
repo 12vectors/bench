@@ -148,13 +148,65 @@ def working_on(files: set[str]) -> list[dict]:
     return [record for record in records if _alive(record)]
 
 
-def _validate(filename: str, stage: str, allowed: set[str], why: str | None = None) -> None:
+# ── what a phase card may host ─────────────────────────────────────────
+#
+# A phase card is a list of other cards. Handed to a work agent as a brief
+# it reads as a table of contents, and the agent does what it is told —
+# which is how one run once implemented two cards at once in a worktree
+# nobody was watching. `▸ run phase` already guards its own door (a card
+# that is not a phase is refused there); this is the other half of that
+# gate, and it is decided kind by kind rather than left to omission:
+#
+# - **▸ start work** (`start_agent`) refuses. A phase is run with ▸ run
+#   phase, which works its list into a branch of its own; its members are
+#   worked on their own cards.
+# - **↻ act on PR** (`start_pr_fix`) refuses. It is the same work agent
+#   with a push, and the phase's PR carries its members' commits — review
+#   feedback on it belongs on the member's own card, or on the phase
+#   branch by hand.
+# - **◔ still true?** (`start_review`) is allowed. Read-only, no worktree:
+#   asking whether a phase is still worth running is a fair question, and
+#   the report is appended to the card like any other.
+# - **◔ review PR** (`start_pr_review`) is allowed. Read-only, and the PR
+#   into `main` is the one thing the whole run exists to produce — the
+#   launch just has to name the phase's own branch rather than a
+#   `task/<stem>` that was never cut.
+#
+# It is about *starting*: a card that gains `**Type:** Phase` while an
+# ordinary run is in flight is left alone, and the run ends as it would
+# have.
+PHASE_RUNS_WITH = ("a list of other cards, not a brief. Run it with ▸ run "
+                   "phase, which cuts a branch of its own and works the list "
+                   "into it; its members are worked on their own cards")
+
+
+def is_phase_card(filename: str, stage: str) -> bool:
+    """Is this card a phase card? `**Type:** Phase` is the whole of it —
+    the same reading `phases._phase_card` refuses a non-phase by, so the
+    two gates cannot disagree. A phase card whose list is empty or unwritten
+    is still a coordinator, and still no brief for a work agent."""
+    try:
+        return bool(read_task(config.TASKS / stage / filename, stage)["isPhase"])
+    except OSError:
+        return False
+
+
+def _validate(filename: str, stage: str, allowed: set[str], why: str | None = None,
+              *, phase: str | None = None) -> None:
+    """The refusals every launch shares, before anything exists to clean up.
+
+    `phase` is what a phase card should do instead — pass it and this kind
+    refuses one, naming that; omit it and the kind is one a phase card may
+    host. See the note above for which is which and why.
+    """
     if Path(filename).name != filename or not filename.endswith(".md"):
         raise ValueError("bad filename")
     if stage not in allowed:
         raise ValueError(why or f"agents cannot start from {stage}/")
     if not (config.TASKS / stage / filename).is_file():
         raise ValueError(f"{filename} is not in {stage}/ — refresh the board")
+    if phase and is_phase_card(filename, stage):
+        raise ValueError(f"{filename} is a phase card — {phase}")
     _assert_no_running_agent(filename)
 
 
@@ -200,6 +252,21 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str, log
         log_file.close()
         raise ValueError(f"could not launch adapter {adapter}: {exc}")
     return proc, log_file, model
+
+
+def _no_commands_note() -> str | None:
+    """What a launch owes the ticker when the project configured nothing for
+    its agents to run: this run can edit and commit, but it cannot check its
+    own work. Only the two intents that would have run the commands say it
+    (work and act-pr); a read-only kind never had them.
+
+    A note, never a refusal — an agent that only edits files is still
+    useful, and bench does not decline work because a project is
+    unconfigured. The header says the same thing standing still."""
+    if config.agent_commands():
+        return None
+    return ("no project commands configured, so it cannot run this project's "
+            "tests — set BOARD_AGENT_COMMANDS in manager/local/.env")
 
 
 def _fresh_branch_point() -> tuple[str | None, str | None]:
@@ -304,9 +371,12 @@ def claim_for_launch(filename: str, stage: str, takeover: bool = False) -> None:
 
 
 def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
-    # Moving a card to in-progress is the commitment; only then does work start.
+    # Moving a card to in-progress is the commitment; only then does work
+    # start — and a phase card is refused here, in the same breath and ahead
+    # of the claim, so the refusal costs nothing and leaves nothing behind.
     _validate(filename, stage, {"in-progress"},
-              "work starts from in-progress/ — move the card there first")
+              "work starts from in-progress/ — move the card there first",
+              phase=PHASE_RUNS_WITH)
     claim_for_launch(filename, stage, takeover)
 
     stem = filename[:-3]
@@ -374,8 +444,9 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     summary = (f"{name} is back on {filename} — continuing branch {branch}"
                if continuing else
                f"{name} started on {filename} (branch {branch})")
-    if base_note:
-        summary += f" — {base_note}"
+    for note in (base_note, _no_commands_note()):
+        if note:
+            summary += f" — {note}"
     state.record_board_event({
         "kind": "agent", "actor": "agent", "file": filename,
         "summary": summary,
@@ -386,7 +457,11 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
 
 
 def start_review(filename: str, stage: str) -> dict:
-    """Fire a read-only agent that checks the task against the codebase."""
+    """Fire a read-only agent that checks the task against the codebase.
+
+    Every stage, and a phase card too: no `phase=` here is the deliberate
+    answer, not an omission. Nothing is written but the report.
+    """
     _validate(filename, stage, config.STAGE_DIRS)
 
     task = read_task(config.TASKS / stage / filename, stage)
@@ -593,14 +668,21 @@ def _reap_agent(agent_id: str, proc: subprocess.Popen, log_file) -> None:
 
 def start_pr_review(filename: str, stage: str) -> dict:
     """Fire a read-only agent that reviews the task's PR and posts the
-    verdict to GitHub as well as back to the board."""
+    verdict to GitHub as well as back to the board.
+
+    A phase card is allowed here, deliberately: the PR into `main` is what
+    the whole run exists to produce, and reading it writes nothing.
+    """
     _validate(filename, stage, {"review"},
               "PR reviews run on cards in review/")
     task = read_task(config.TASKS / stage / filename, stage)
     if not task.get("pr"):
         raise ValueError(f"{filename} has no PR yet — nothing to review")
 
-    branch = f"task/{filename[:-3]}"
+    # …but it must be told the branch its PR is actually from: the prompt
+    # asks GitHub for the diff by branch, and a phase's is its own.
+    branch = (phase_branch(filename) if task["isPhase"]
+              else f"task/{filename[:-3]}")
     name = _pick_name(filename)
     agent_id = f"review-pr-{filename[:-3]}-{time.strftime('%H%M%S')}"
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
@@ -632,7 +714,10 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     working in the task's existing worktree (recreated from the branch if it
     was cleaned up), committing and pushing to update the PR."""
     _validate(filename, stage, {"review"},
-              "acting on a PR happens from review/")
+              "acting on a PR happens from review/",
+              phase="↻ act on PR is a work agent, and a phase's PR carries "
+                    "its members' commits — address the review on the member's "
+                    "own card, or on the phase branch by hand")
     task = read_task(config.TASKS / stage / filename, stage)
     if not task.get("pr"):
         raise ValueError(f"{filename} has no PR to act on")
@@ -670,9 +755,13 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
+    summary = f"{name} is acting on the review of {filename}'s PR"
+    note = _no_commands_note()
+    if note:
+        summary += f" — {note}"
     state.record_board_event({
         "kind": "agent", "actor": "agent", "file": filename,
-        "summary": f"{name} is acting on the review of {filename}'s PR",
+        "summary": summary,
     })
     threading.Thread(target=_reap_pr_fix, args=(agent_id, proc, log_file),
                      daemon=True).start()
