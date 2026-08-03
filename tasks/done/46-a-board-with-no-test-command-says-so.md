@@ -1,6 +1,6 @@
 # 46 — A board whose agents cannot run anything says so
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/53
 **Assignee:** istos
 **Priority:** Medium — the failure is silent until an agent has already

@@ -1,6 +1,6 @@
 # 54 — A work agent must refuse a phase card
 
-**Status:** Review
+**Status:** Done
 **PR:** https://github.com/12vectors/bench/pull/52
 **Assignee:** istos
 **Priority:** High — it already happened, and what it produces is an agent
