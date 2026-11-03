@@ -181,6 +181,19 @@ class TheRepositoryDocumentsBothInstalls(unittest.TestCase):
                                   f"not a setting in "
                                   f"manager/core/.env.example")
 
+    def test_the_pr_automation_is_told_apart_from_a_ticket_commit(self):
+        """The confusion worth preventing: a `board:` commit is not a
+        push of the application, and the automatic PR belongs to the
+        board whose user moved the card — so the fallback action and the
+        replica rule are named where the commits are explained."""
+        body = section("agents")
+        paragraph = body[body.index("None of the three is a push"):]
+        paragraph = paragraph[:paragraph.index("\n\n")]
+        for promised in ("↑ open PR", "local-only", "BOARD_APP_MERGE",
+                         "replica"):
+            with self.subTest(promised=promised):
+                self.assertIn(promised, paragraph)
+
     def test_each_git_identity_is_named_with_its_own_remote_and_base(self):
         """The failure this documentation exists to prevent is reading a
         ticket commit as an application push. Both halves have to be on

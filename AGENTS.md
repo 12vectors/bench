@@ -344,11 +344,16 @@ because each is a different promise:
   repository it converges.
 
 None of the three is a push of the application. What pushes a branch and
-opens a PR is a card entering `review/`, in application git, exactly as
-"Pull requests" describes it — and merging into the application's base is
-still a person's click in both modes. So "the board committed" and "the
-branch was pushed" are two events in two repositories, and the split
-exists so that neither can be read as the other.
+opens a PR is a card entering `review/`, in application git, on the
+board whose user moved it and nowhere else: a replica renders that move
+and triggers nothing, so no PR is opened twice, and **↑ open PR** is the
+action that asks for one after the fact. A board with no remote or no
+`gh` cannot open it at all — the plan reads `local-only` and names the
+missing capability, and the run goes ahead anyway. Merging into the
+application's base stays a person's click under either value of
+`BOARD_APP_MERGE`. So "the board committed" and "the branch was pushed"
+are two events in two repositories, and the split exists so that neither
+can be read as the other.
 
 **What stays out of shared ticket history.** The work state holds what a
 teammate should read: the tickets, the implementation plans in `plans/`,
