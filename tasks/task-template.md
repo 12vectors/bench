@@ -21,6 +21,14 @@ it ship only with fresh installs, so local edits are yours to keep.
 **Type:** Feature
 **Depends on:** 03, 05 — task numbers or external preconditions that must
 land first, for whoever sequences the board; delete when nothing blocks this
+**Base branch:** task/56-some-prerequisite — the application branch this
+card's work starts from, when it is not the board's default. Validated
+before anything is created: a branch that cannot be reached refuses the
+launch rather than falling back. Delete unless this card really is stacked
+on another branch, and delete it on a phase member, which inherits its
+phase's branch instead
+**PR base:** task/56-some-prerequisite — the branch this card's PR targets.
+It defaults to **Base branch**, so delete this line unless the two differ
 
 One paragraph for someone — human or agent — who has the codebase but not
 the conversation: what this task changes, and why it is worth doing.

@@ -68,6 +68,17 @@
       "description": "Start work makes a worktree and a branch, runs the agent headless, and moves the card on the way it exits.",
       "source": "AGENTS.md",
       "from": "## Agents working the board",
+      "to": "## Execution plans"
+    },
+    {
+      "path": "/concepts/execution-plans/",
+      "title": "Execution plans",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "Which branch a card's work starts from and which branch its PR targets, resolved and validated before anything is created, then recorded with the run.",
+      "lede": "Bench owns the git lifecycle, so it decides it once: where a card's work starts, what its PR targets, what selected each, what refuses before a branch or a worktree exists, and why the answer stops moving after the launch.",
+      "source": "AGENTS.md",
+      "from": "## Execution plans",
       "to": "## Pull requests"
     },
     {
