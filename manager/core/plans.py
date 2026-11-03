@@ -221,7 +221,7 @@ def _resolve_branch(branch: str, *, fetch: bool = True) -> dict:
                 "note": (None if not remote else
                          f"{branch} is local-only — it is not on {remote}"),
                 "problem": None}
-    where = f" on {remote}" if remote else ""
+    where = f" or on {remote}" if remote else ""
     return {"ref": None, "commit": "", "branch": branch, "note": None,
             "problem": (f"{branch} does not exist in this checkout{where} — "
                         f"create it, or fix the card's base")}

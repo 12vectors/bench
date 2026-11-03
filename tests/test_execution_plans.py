@@ -660,6 +660,80 @@ class AStackedCardIsNotMergedIntoTheDefault(PlanCase):
         self.assertIn("replan", str(caught.exception))
 
 
+class ActingOnTheReviewValidatesTheSameTarget(PlanCase):
+    """Acceptance: the target is validated through review and fix too — a
+    run that pushes to a PR must not resolve conflicts against a base
+    nobody chose."""
+
+    def setUp(self):
+        super().setUp()
+        self.write(card("57 — Document it", base=PREREQ, pr_base=PREREQ))
+        self.run_agent()
+        github.open_pr_now(CARD)
+
+    def fix_and_wait(self) -> None:
+        record = agents.start_pr_fix(CARD, "review")
+        marks = len(state.BOARD_EVENTS)
+        self.assertTrue(wait_for(
+            lambda: state.AGENTS[record["id"]]["status"] != "running"))
+        self.assertTrue(wait_for(lambda: len(state.BOARD_EVENTS) > marks))
+
+    def test_the_run_is_told_the_recorded_base(self):
+        self.adapter_is(ECHOES_PROMPT)
+        self.fix_and_wait()
+        brief = (config.WORKTREES / STEM / "prompt.txt").read_text(encoding="utf-8")
+        self.assertIn(f"git merge origin/{PREREQ}", brief)
+        self.assertNotIn("git merge origin/main", brief)
+
+    def test_a_base_that_vanished_refuses_the_run(self):
+        """The prerequisite merged and was deleted while this card sat in
+        review. The run that would push to the PR does not start, and the
+        refusal names the branch rather than quietly resolving against
+        whatever the default happens to be."""
+        git(self.repo, "branch", "-D", PREREQ)
+        git(self.repo, "push", "-q", "origin", "--delete", PREREQ)
+        with self.assertRaises(ValueError) as caught:
+            agents.start_pr_fix(CARD, "review")
+        message = str(caught.exception)
+        self.assertIn(PREREQ, message)
+        self.assertIn("does not exist", message)
+        self.assertEqual(agents.working_on({CARD}), [],
+                         "a refused act-pr left a run behind")
+
+    def test_a_changed_requirement_refuses_the_run(self):
+        # the headers are edited in place, so the **PR:** line the board
+        # wrote survives — this is the card changing under its own PR
+        path = self.tasks / "review" / CARD
+        path.write_text(path.read_text(encoding="utf-8").replace(PREREQ, "main"),
+                        encoding="utf-8")
+        with self.assertRaises(ValueError) as caught:
+            agents.start_pr_fix(CARD, "review")
+        self.assertIn("replan", str(caught.exception))
+        self.assertEqual(agents.working_on({CARD}), [])
+
+
+class NothingAboutAPlanReachesSharedHistory(PlanCase):
+    """Acceptance: machine-local paths and runtime details stay out of
+    shared ticket history — which is also what stops a replica repeating
+    a side effect it can see no record of."""
+
+    def test_the_record_lives_under_local_state_and_not_in_tasks(self):
+        self.write(card("57 — Document it", base=PREREQ, pr_base=PREREQ))
+        self.run_agent()
+        self.assertTrue(plans.plan_path(CARD).is_file())
+        self.assertEqual(plans.plan_path(CARD).parent, config.PLANS_DIR)
+        self.assertNotIn(str(self.tasks), str(config.PLANS_DIR))
+
+    def test_the_task_file_gains_no_plan_of_its_own(self):
+        self.write(card("57 — Document it", base=PREREQ, pr_base=PREREQ))
+        self.run_agent()
+        text = (self.tasks / "review" / CARD).read_text(encoding="utf-8")
+        self.assertNotIn(str(self.tmp), text)
+        self.assertNotIn("**Plan:**", text)
+        # the headers the author wrote are untouched
+        self.assertIn(f"**Base branch:** {PREREQ}", text)
+
+
 # ── resuming, and the one way to retarget ─────────────────────────────
 
 

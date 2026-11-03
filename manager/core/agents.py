@@ -731,13 +731,11 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     worktree = config.WORKTREES / stem
     # The same plan the work was launched on, revalidated before the run
     # that will push to the PR: a card whose requirements changed under it,
-    # or whose target has disappeared, needs a person rather than a run
-    # that resolves conflicts against a base nobody chose.
-    plan = plans.require(plans.preflight(filename, stage, task=task))
-    gone = plans.target_problem(filename, plan["prBase"])
-    if gone:
-        raise ValueError(gone)
-    plan = plans.record(plan)
+    # or whose base or target has disappeared, needs a person rather than a
+    # run that resolves conflicts against a base nobody chose. Preflight is
+    # the whole check — it resolves both branches by name and refuses when
+    # either is gone — so there is no second reading here to disagree with.
+    plan = plans.record(plans.require(plans.preflight(filename, stage, task=task)))
     if not worktree.exists():
         if subprocess.run(["git", "-C", str(plans.app_repo()), "rev-parse", "--verify",
                            "--quiet", branch], capture_output=True).returncode != 0:
