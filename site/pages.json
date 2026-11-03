@@ -26,9 +26,20 @@
       "title": "Install and first run",
       "layout": "article",
       "section": "Guides",
-      "description": "Untar bench into .task-manager/, run start.sh, and answer the three questions the first run asks.",
+      "description": "Untar bench into .task-manager/, run start.sh, and answer the two questions the first run asks.",
       "source": "README.md",
       "from": "## Install into a repo",
+      "to": "## Install outside the repo"
+    },
+    {
+      "path": "/guides/outside-the-application/",
+      "title": "Install outside the application",
+      "layout": "article",
+      "section": "Guides",
+      "description": "The other install: the tool in one directory, the tickets in a repository of their own, and the application untouched except by the code the agents write.",
+      "lede": "The same board, installed beside the application instead of inside it — what to run, which flags there are, and which of the two git identities each thing belongs to.",
+      "source": "README.md",
+      "from": "## Install outside the repo",
       "to": "## Update"
     },
     {
@@ -133,6 +144,28 @@
       "source": "AGENTS.md",
       "from": "## Syncing boards",
       "to": "## Task file format"
+    },
+    {
+      "path": "/concepts/external-workspaces/",
+      "title": "External workspaces",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "Four roots named separately and two git identities kept apart: the tool, the application, the work state and the worktrees, with tickets that never reach the application's history.",
+      "lede": "What changes when bench stops living in the repository it manages: which of the four locations holds what, which repository each operation belongs to, how far the tickets are versioned, and where a card's branch is planned.",
+      "source": "AGENTS.md",
+      "from": "## Running outside the application",
+      "to": "### Validation fails closed"
+    },
+    {
+      "path": "/concepts/external-operations/",
+      "title": "Operating an external install",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "A layout that does not hold together is refused before anything is written; hooks reach an agent without a tracked file; and start, stop and update know which board is theirs.",
+      "lede": "The operational half: what fails closed and why there are no fallbacks, how live-session hooks work with nothing written into the application, what the record says about where things are, and running a candidate bench from a stable operator install.",
+      "source": "AGENTS.md",
+      "from": "### Validation fails closed",
+      "to": "## Seeing the board"
     },
     {
       "path": "/concepts/three-layer-law/",

@@ -253,6 +253,19 @@ into the application**. Nothing else changes: with neither setting, every
 path resolves exactly as it always did, so a vendored installation needs
 no migration and reads no differently.
 
+Four flags decide a layout, and there are no others. `--app` and `--work`
+name the application and the work state, both as absolute paths —
+bench resolves nothing against a working directory it cannot see.
+`--worktrees` moves the task branches' checkouts off the default beside
+the application. `--app-hooks` opts into writing the application's own
+local settings file, and refuses if git tracks it (see "Hooks without a
+tracked file"). `--dry-run` reports what any of them would do and writes
+nothing, and `--setup` asks the first-run questions again. Each of the
+three roots is a plain setting underneath — `BOARD_APP_ROOT`,
+`BOARD_WORK_ROOT`, `BOARD_WORKTREES` in `manager/local/.env`, every one
+of them documented in `core/.env.example` — so an install already made is
+retargeted by editing that file rather than by installing again.
+
 ### Four roots, named separately
 
 They were one directory tree with one git identity, derived from where
@@ -301,6 +314,87 @@ decision now, and it defaults to the answer the old behaviour gave
 (see `core/.env.example`). When origin makes the merge and no sync beat
 watches the application, the board fetches and fast-forwards the
 application's base itself, because otherwise nothing would.
+
+### Tickets local only, versioned, or shared
+
+The work state is a repository bench reads and writes but does not
+insist on. Three arrangements, and the board behaves differently in each
+because each is a different promise:
+
+- **No repository at all.** A work root `git init` has never been run in
+  is still a working board: cards move, agents run, branches are cut,
+  PRs open. What it cannot do is commit, so `BOARD_COMMIT_MOVES` or
+  `BOARD_SYNC` turned on there is refused by name with `git init` as the
+  way forward. Tickets are yours alone, and nothing is quietly committed
+  to the application instead.
+- **A repository of its own, pushed by hand.** With
+  `BOARD_COMMIT_MOVES` on, every write the board makes to a task file —
+  the move, the claim, the `**PR:**` line, an agent's closing report —
+  lands as a `board: …` commit in the *work state's* repository and
+  stays there until you push it.
+- **Shared through a remote.** `BOARD_SYNC` adds the event-driven push
+  and the pull beat on top, through `BOARD_STATE_GIT_REMOTE` and
+  `BOARD_STATE_BASE` — the work state's own answers, resolved
+  independently of `BOARD_GIT_REMOTE` and `BOARD_APP_BASE`. Everything
+  in "Syncing boards" applies as written; the only difference is which
+  repository it converges.
+
+None of the three is a push of the application. What pushes a branch and
+opens a PR is a card entering `review/`, in application git, exactly as
+"Pull requests" describes it — and merging into the application's base is
+still a person's click in both modes. So "the board committed" and "the
+branch was pushed" are two events in two repositories, and the split
+exists so that neither can be read as the other.
+
+**What stays out of shared ticket history.** The work state holds what a
+teammate should read: tickets, the plans written in plan mode,
+`reference/`. Everything machine-local stays with the tool and out of
+it — agent logs, drive and command logs, session timelines, the
+generated hook settings, and the recorded execution plans under
+`manager/local/state/plans/`, which hold this machine's worktree paths.
+`manager/local/.env` is gitignored and belongs there too: it names the
+roots on *this* disk and the binaries on this PATH. An absolute path out
+of somebody's home directory, a credential, or a log that means nothing
+on another machine has no business in a repository other people pull,
+which is why none of it is written where one could reach it.
+
+### A card's branch belongs to the application
+
+Execution plans and external workspaces answer different halves of one
+question, so they compose rather than overlap: the plan decides *which
+branch* a card's work starts from and targets, and the layout decides
+*which repository* that branch is in. It is always the application's.
+
+- **The default needs no metadata.** A card with no `**Base branch:**`,
+  no `**PR base:**` and no phase resolves to `BOARD_APP_BASE` — `main`
+  unless the operator changed it. That is as true externally as it ever
+  was vendored, and it is the whole of "no new metadata keeps
+  established behaviour".
+- **The optional headers name application branches.** `**Base branch:**`
+  selects the branch the work is cut from and `**PR base:**` the branch
+  its PR targets, defaulting to the first. Neither has anything to say
+  about the work state: a ticket's own history is not a branch a card can
+  be based on.
+- **Preflight refuses rather than falls back.** Everything is resolved
+  and validated in application git before a branch, a worktree, a claim
+  or an agent exists, and a named base that cannot be reached is refused
+  instead of being swapped for the default. Under an external layout that
+  matters more, not less — the fallback would be a different repository.
+- **The recorded plan outranks the setting.** The validated plan is
+  written with the run, and everything afterwards reads it, so changing
+  a shared operator default retargets the next launch and never one
+  already under way. The record is machine-local for the reason above;
+  the portable half — branch names and a commit — travels through the
+  ticker, the agent's brief and the PR body.
+- **Prose chooses nothing.** `**Depends on:**` guards whether a card may
+  run. It has never been an instruction to stack a branch or merge a
+  prerequisite, and a plan always names the structured input that
+  selected it, so a requirement that exists only in prose is visible as
+  exactly that.
+
+"Execution plans" above is the whole of it, including `plan drift`,
+**⌖ replan** and what preflight will not do. Nothing in it changes
+because the tickets moved out of the checkout.
 
 ### Validation fails closed
 
@@ -379,6 +473,37 @@ roots themselves survive by construction; the first-boot clean, which
 exists to clear the distribution's own cards out of a vendored install,
 never runs externally — an external work root is a board of its own whose
 cards are nobody's residue.
+
+### An operator install, and the bench under test
+
+Bench does not manage itself. `BOARD_APP_ROOT` naming the git repository
+the tool itself sits in is one of the refusals above, and it is the
+refusal that shapes how bench is developed with bench: an application
+that is *a* bench checkout is fine, the one serving the board is not.
+
+So developing bench this way means two of them, and the separation is
+the point:
+
+- **The operator** — the install you actually run the board from. It
+  serves the cards, launches the agents and does not change under you
+  while a run is in flight.
+- **The candidate** — the bench checkout named as `BOARD_APP_ROOT`, which
+  is where the cards' work happens. Agents branch it, commit in it and
+  open its PRs like any other application.
+
+A run that breaks the candidate therefore breaks nothing you are standing
+on, and the same is true of a card that rewrites `manager/core/`.
+Promotion is a deliberate, separate act and nothing does it by itself:
+bring the tested code into the operator install the way that install is
+maintained — `update.sh` for one unpacked from a release, git for a clone
+— then `install.py` to re-wire and a restart to pick it up. Until then
+the board is running the old code on purpose, and the card that changed
+the new code is just a card in `review/`.
+
+The two can share one work state or keep separate ones, and either way
+`start.sh` and `stop.sh` tell their boards apart by the triple above, so
+a candidate board opened for a look does not reopen or stop the
+operator's.
 
 ## Seeing the board
 

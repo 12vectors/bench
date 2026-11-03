@@ -53,6 +53,56 @@ name coding agents read natively — with `CLAUDE.md` beside it as a one-line
 compatibility pointer. Both live inside `.task-manager/`, so a host repo's
 own root `AGENTS.md` is never touched.
 
+## Install outside the repo
+
+Bench does not have to live in the repository it manages. Name an
+application and a work state of its own and nothing of bench — not the
+tool, not a task file, not one bookkeeping commit — ever appears in that
+application's history. Four locations, each named separately:
+
+```text
+workspace/                       # a grouping directory, not a repo
+├── app/        BOARD_APP_ROOT   # the application + its own origin
+├── bench/                       # this install: tool and configuration
+├── work/       BOARD_WORK_ROOT  # tasks/, plans/, reference/ — its own repo
+└── worktrees/  BOARD_WORKTREES  # the application's task branches
+```
+
+```bash
+mkdir -p /ws/bench && curl -L \
+  https://github.com/12vectors/bench/releases/latest/download/bench.tar.gz \
+  | tar -xz -C /ws/bench
+python3 /ws/bench/install.py --app /ws/app --work /ws/work
+/ws/bench/start.sh
+```
+
+`--app` and `--work` must be absolute: bench resolves nothing against a
+working directory it cannot see. The install writes both into
+`manager/local/.env`, builds the work state's skeleton and wires the
+agent adapter — and refuses the whole layout, with the reason, rather
+than falling back to a repository nobody named. `--worktrees` moves the
+task branches' checkouts; `--app-hooks` additionally writes the
+application's *local* settings file, and refuses if git tracks it.
+`--dry-run` reports and writes nothing.
+
+Two git identities, and they never cross. Branches, worktrees, pushes and
+code PRs are the application's; creating, moving and archiving a ticket
+is the work state's. The tickets are local-only until you `git init`
+their root, versioned by the board once `BOARD_COMMIT_MOVES` is on, and
+shared with `BOARD_SYNC` through the work state's own
+`BOARD_STATE_GIT_REMOTE` and `BOARD_STATE_BASE`. A card moving columns
+cannot commit on the application's base, a code PR cannot target the
+work-state remote, and merging into the application's base is still your
+click. Runtime state — agent logs, session timelines, the generated
+hooks, the recorded execution plans and their machine-local paths —
+stays with the tool and is committed nowhere.
+
+The whole of it, including the fail-closed validation, external hook
+wiring, how a card's branch is planned in the application's repository
+and how a stable operator install manages a candidate bench checkout, is
+the "Running outside the application" section of
+[AGENTS.md](AGENTS.md) — and on the docs site, which is cut from it.
+
 ## Update
 
 ```bash
