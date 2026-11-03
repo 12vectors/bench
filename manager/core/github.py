@@ -570,13 +570,15 @@ def _complete(filename: str, stage: str) -> dict:
     swept: list[dict] = []
     if _branch_exists(branch):
         # The same target the whole card has used, validated once more
-        # before the one irreversible step. A card stacked on another
-        # branch must not land in the application default by accident, and
-        # a target that has disappeared is a changed situation rather than
-        # a licence to pick a new one.
-        gone = plans.target_problem(filename, plans.pr_base(filename, task))
+        # before the one irreversible step: a target that has disappeared
+        # is a changed situation rather than a licence to pick a new one,
+        # and a card stacked on another branch is not this action's to
+        # finish at all.
+        target = plans.pr_base(filename, task)
+        gone = plans.target_problem(filename, target)
         if gone:
             raise ValueError(gone)
+        _assert_lands_in_the_base(filename, target)
         if config.SYNC:
             _merge_on_origin(filename, stage, branch)
         else:
@@ -723,24 +725,39 @@ def _cards(count: int) -> str:
     return f"{count} card{'' if count == 1 else 's'}"
 
 
+def _assert_lands_in_the_base(filename: str, target: str) -> None:
+    """`done/` has always meant merged into the application base, and a
+    stacked card merged into its prerequisite is not that — exactly as a
+    phase member merged into its phase branch is not that.
+
+    So **merge & clean up** refuses a stacked card in both modes, and for
+    one reason rather than two: not because the local path cannot do it
+    (it cannot — it merges into whatever this checkout has out, which is
+    how a stacked card's work lands in the default with nobody deciding
+    it should) but because finishing it is not this action's to do. The
+    stack lands when its prerequisite's own PR lands; then this card's
+    target has gone, the board says so, and a replan onto the base is the
+    person's decision that makes it finishable.
+    """
+    if target == config.APP_BASE:
+        return
+    raise ValueError(
+        f"{filename} is stacked on {target}, not {config.APP_BASE} — merge & "
+        f"clean up would finish it without its work reaching "
+        f"{config.APP_BASE}. Land its PR into {target} first; once {target} "
+        f"itself has merged, retarget the card (⌖ replan) and finish it here")
+
+
 def _merge_locally(filename: str, branch: str) -> None:
     """Single-player: merge into the checkout's own base branch and push it.
 
     The target is the card's recorded PR target, asked here rather than
     passed in so this function and the PR that was opened can never read
-    different answers. A card stacked on another branch is refused rather
-    than merged: the local path merges into whatever this checkout has
-    checked out, and that is exactly how a stacked card's work lands in the
-    application default without anyone deciding it should. Its
-    prerequisite's own PR is what moves it onwards.
+    different answers. `_complete` has already refused anything but the
+    application base (see `_assert_lands_in_the_base`); reading it again
+    rather than assuming it is what keeps the branch names below honest.
     """
     target = plans.pr_base(filename)
-    if target != config.APP_BASE:
-        raise ValueError(
-            f"{filename} is stacked on {target}, not {config.APP_BASE} — the "
-            f"local merge would land it in {config.APP_BASE} without anyone "
-            f"deciding it should. Merge its PR into {target} on GitHub, or "
-            f"retarget the card (⌖ replan) once {target} has landed")
     current = _run(["git", "branch", "--show-current"]).stdout.strip()
     if current != target:
         raise ValueError(f"the repo is on '{current}', not {target} — switch first")

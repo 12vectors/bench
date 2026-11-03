@@ -517,18 +517,25 @@ def _resume(plan: dict, task: dict, *, ignore_recorded: bool = False) -> None:
         plan["provenance"] = saved.get("provenance") or "planned"
         return
 
-    # No recorded plan: a run from before plans existed.
-    explicit = bool(task.get("baseBranch") or task.get("prBase")
-                    or task.get("phase"))
+    # No recorded plan: a run from before plans existed, or a branch made
+    # by hand. What can honestly be said about what it was cut from is
+    # whatever git still shows, and that differs by what the card claims.
     resolved = plan["startCommit"]
     built_on = bool(resolved and tip and _contains(resolved, branch))
-    if explicit and not built_on:
+    stacked = plan["startBranch"] != config.APP_BASE
+    if stacked and not built_on:
+        # The ambiguous case, and the only one: the card says this work is
+        # stacked on another branch, and the branch does not contain that
+        # branch at all. Being *behind* a base is the normal condition of
+        # every branch whose base moved on, so it is never this — which is
+        # why the default base is waved through below rather than refused
+        # for the same arithmetic.
         plan["blockers"].append(
-            f"{branch} has no recorded plan and was not cut from "
-            f"{plan['startBranch']}, which is what {plan['task']} now asks for — "
-            f"bench will not guess what it was based on and will not rebase it. "
-            f"Replan the card, or finish this branch and start the new base on a "
-            f"fresh one")
+            f"{branch} has no recorded plan and does not contain "
+            f"{plan['startBranch']}, which is what {plan['task']} now asks it to "
+            f"be stacked on — bench will not guess what it was based on and will "
+            f"not rebase it. Replan the card, or finish this branch and start the "
+            f"new base on a fresh one")
         return
     plan["provenance"] = "planned" if built_on else "adopted"
     if not built_on:

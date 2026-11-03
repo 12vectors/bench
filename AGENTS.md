@@ -566,9 +566,15 @@ end. Three consequences follow, and they are the reason the record exists:
   still goes where it was planned to go. The next launch gets the new
   default; this one keeps its own.
 - **A stacked card is not merged into the application default by
-  accident.** `merge & clean up` validates the target once more, and a
-  card aimed at another branch is refused there with the reason — its
-  prerequisite's own PR is what moves it onwards.
+  accident.** `done/` has always meant merged into the application base,
+  and a card merged into its prerequisite is not that — exactly as a
+  phase member merged into its phase branch is not that. So **merge &
+  clean up** validates the target and refuses a stacked card, in both
+  modes and for that reason rather than for what the local merge happens
+  to be able to do. The way through is the stack's own: land this card's
+  PR into its prerequisite, and when the prerequisite itself merges the
+  card's target is gone — the board says so, and a **⌖ replan** onto the
+  base is the decision that makes the card finishable here.
 - **A contradiction is reported, never resolved by guessing.** A PR
   already open against a branch the card does not target is neither
   duplicated nor retargeted: the card wears it, the ticker says it, and a
@@ -584,11 +590,14 @@ which records a new plan or refuses — and refuses the one thing it cannot
 honestly do, claiming a branch is based on something it does not contain.
 
 Work that predates plans keeps a path through. A branch with no recorded
-plan, under a card still on the defaults, is **adopted**: its base is read
-back out of git and recorded as adopted, so legacy runs keep working and
-nothing invents a provenance they never had. A legacy branch under a card
-that *does* name a base it was not cut from is the ambiguous case, and it
-gets the refusal rather than a guess.
+plan, under a card on the application base, is **adopted**: its base is
+read back out of git and recorded as adopted, so legacy runs keep working
+and nothing invents a provenance they never had. Falling behind a base is
+the normal condition of every branch whose base moved on, so that is never
+read as "cut from somewhere else". The one ambiguous case is a card that
+says its work is stacked on another branch while the branch does not
+contain that branch at all, and that gets the refusal rather than a guess
+— bench will not rebase a branch to make a claim true.
 
 Two git identities live in this design and the plan keeps them apart:
 **application git**, the repository a branch is cut in and a PR is opened

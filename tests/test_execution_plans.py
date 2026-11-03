@@ -629,7 +629,7 @@ class AStackedCardIsNotMergedIntoTheDefault(PlanCase):
     """Acceptance: do not merge a stacked card into the application
     default by accident."""
 
-    def test_the_local_merge_refuses_and_names_the_target(self):
+    def test_merge_and_clean_up_refuses_and_names_the_target(self):
         self.write(card("57 — Document it", base=PREREQ, pr_base=PREREQ))
         self.run_agent()
         with self.assertRaises(ValueError) as caught:
@@ -638,6 +638,40 @@ class AStackedCardIsNotMergedIntoTheDefault(PlanCase):
         self.assertEqual(taskfiles.find_stage_of(CARD), "review",
                          "the card moved on a merge that never happened")
         self.assertIn(BRANCH, self.branches())
+
+    def test_team_mode_refuses_it_for_the_same_reason(self):
+        """`done/` means merged into the application base in both modes, so
+        the refusal is about what finishing a card means rather than about
+        what the local merge can do."""
+        self.patch(SYNC=True, COMMIT_MOVES=True)
+        self.write(card("57 — Document it", base=PREREQ, pr_base=PREREQ))
+        self.run_agent()
+        github.open_pr_now(CARD)
+        with self.assertRaises(ValueError) as caught:
+            github.complete_task(CARD, "review")
+        self.assertIn("without its work reaching main", str(caught.exception))
+        self.assertEqual([c for c in self.gh_calls() if c[:2] == ["pr", "merge"]],
+                         [], "origin was asked to merge it anyway")
+
+    def test_once_the_prerequisite_lands_a_replan_makes_it_finishable(self):
+        """The documented way through: the stack lands by its own PR, the
+        card's target goes with it, and a replan onto the base is the
+        person's decision that lets this action finish the card."""
+        self.write(card("57 — Document it", base=PREREQ, pr_base=PREREQ))
+        self.run_agent()
+        git(self.repo, "checkout", "-q", "main")
+        git(self.repo, "merge", "-q", "--no-edit", PREREQ)
+        git(self.repo, "push", "-q", "origin", "main")
+        git(self.repo, "branch", "-D", PREREQ)
+        git(self.repo, "push", "-q", "origin", "--delete", PREREQ)
+        with self.assertRaises(ValueError):
+            github.complete_task(CARD, "review")
+        path = self.tasks / "review" / CARD
+        path.write_text(path.read_text(encoding="utf-8").replace(PREREQ, "main"),
+                        encoding="utf-8")
+        plans.replan(CARD, "review")
+        self.assertTrue(github.complete_task(CARD, "review")["merged"])
+        self.assertEqual(taskfiles.find_stage_of(CARD), "done")
 
     def test_an_ordinary_card_still_merges_as_it_always_did(self):
         self.write(card("57 — Document it"))
@@ -864,6 +898,20 @@ class ARunFromBeforePlansExisted(PlanCase):
         with self.assertRaises(ValueError):
             agents.start_agent(CARD, "in-progress")
         self.assertTrue((self.worktree / "legacy.txt").exists())
+
+    def test_being_behind_the_default_base_is_not_ambiguous(self):
+        """Every branch falls behind its base the moment the base moves,
+        so that arithmetic must never read as "cut from somewhere else" —
+        a legacy run on the default keeps working either way."""
+        git(self.repo, "checkout", "-q", "main")
+        (self.repo / "later.txt").write_text("after\n", encoding="utf-8")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "later")
+        git(self.repo, "push", "-q", "origin", "main")
+        self.write(card("57 — Document it", base="main"))
+        plan = self.plan()
+        self.assertEqual(plan["blockers"], [])
+        self.assertEqual(plan["provenance"], "adopted")
 
     def test_opening_a_pr_on_legacy_work_pins_its_target(self):
         self.write(card("57 — Document it"))
