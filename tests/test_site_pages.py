@@ -93,6 +93,7 @@ class EveryRouteRendersInTheArticleLayout(BuiltSite):
                       "/concepts/task-files/",
                       "/concepts/claiming-a-card/",
                       "/concepts/agents-on-the-board/",
+                      "/concepts/execution-plans/",
                       "/concepts/pull-requests/",
                       "/concepts/team-mode/",
                       "/concepts/three-layer-law/",

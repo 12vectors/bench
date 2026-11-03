@@ -109,7 +109,8 @@ class PhaseCardCase(unittest.TestCase):
         for slug in (*config.STAGE_DIRS, "archive"):
             (self.tasks / slug).mkdir(parents=True)
         self.patch(REPO=self.repo, TASKS=self.tasks, TM_ROOT=self.repo,
-                   WORKTREES=self.tmp / "worktrees", COMMIT_MOVES=False, SYNC=False)
+                   WORKTREES=self.tmp / "worktrees", PLANS_DIR=self.tmp / "plans",
+                   COMMIT_MOVES=False, SYNC=False)
 
         for registry in (state.AGENTS, state.BOARD_EVENTS, state.EXPECTED_MOVES,
                          github.PR_STATE, phases.SNAPSHOTS):

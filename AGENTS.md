@@ -44,7 +44,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports → taskfiles → events / github / drive / sync → agents → phases → watch / httpd → board.py
+config → state / reports → taskfiles → plans → events / github / drive / sync → agents → phases → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -52,6 +52,10 @@ config → state / reports → taskfiles → events / github / drive / sync → 
 - `reports.py` — what the record keeps of an agent's closing report: one
   cap, one clip, for the task file and the PR body alike
 - `taskfiles.py` — reading and moving task files; the only code touching tasks/
+- `plans.py` — one card's execution plan: which application branch its work
+  starts from, which branch its PR targets, what selected each, and the
+  preflight that validates all of it before a branch, a worktree or an
+  agent exists
 - `events.py` — ingests NORMALIZED events (the adapter contract), session registry
 - `github.py` — PR opening, Copilot requests, review/CI polling
 - `drive.py` — runs the project driver, tracks the one live drive
@@ -615,6 +619,146 @@ outage would make auto-retry a thundering herd — but the way is cleared for
 the human: a failed run that committed nothing has its worktree and empty
 branch removed, exactly as a decline does, so **▸ start work** is one click
 again. A failed run *with* commits keeps its worktree; there is work in it.
+
+## Execution plans
+
+Bench owns the git lifecycle. The coding agent implements inside the
+checkout bench prepared and never chooses a different one — so *which*
+checkout that is has to be decided once, written down, and read back by
+everything downstream. A launch used to answer "where does this branch
+from" and "what does its PR target" separately, at different moments and
+from different code, which left no way for a card to say it belonged on a
+branch other than the default and no way for the board to refuse when
+that branch could not be reached. One recorded **execution plan** is the
+answer to both.
+
+A plan says, for one card: the application branch the work starts from and
+the commit that resolved to, the branch the work lives on and where its
+worktree goes, the branch its PR targets, which structured input selected
+each of those, what this board can actually deliver, and what stops it if
+anything.
+
+### Where a plan comes from
+
+Three structured inputs, in this order, and nothing else:
+
+1. **Phase membership.** A member inherits its phase's branch and targets
+   it — that is what a phase's branch is for. A member card that *also*
+   names a base of its own is two instructions for one decision, so both
+   cards wear `plan drift` and the launch refuses, rather than one source
+   silently winning.
+2. **The card's own headers** — `**Base branch:**` and `**PR base:**`. An
+   explicit base selects the application branch to start from, and the PR
+   target defaults to that same branch unless `**PR base:**` says
+   otherwise. Both are validated where the task file is read: these values
+   end up in an argument list, so anything that is not a branch name is
+   refused by the parser rather than by the process that would have run
+   it.
+3. **The application default** — `BOARD_APP_BASE`, `main` unless the
+   operator changed it. A card with neither header and no phase resolves
+   exactly as it always did, which is the whole of "no new metadata keeps
+   established behaviour".
+
+A `**Depends on:**` list is deliberately *not* one of them. It guards
+whether a card may run; it has never been an instruction to stack a branch
+or to merge a prerequisite, and reading prose as one is how a run ends up
+on code nobody chose. So the plan always names which structured input
+selected it, and a requirement that exists only in prose is visible as
+exactly that.
+
+### Preflight: before any git or agent side effect
+
+Everything above is resolved and validated **before** a branch is cut, a
+worktree is made, a card is claimed or a coding agent is launched — and
+again immediately before the committed start, since the claim is itself a
+write. Preflight reads, fetches (bounded by `BOARD_FETCH_TIMEOUT`) and
+answers; it creates nothing. So every refusal costs one read and leaves
+the card precisely as it was: no branch, no worktree, no claim, and
+nothing on the board claiming to be running.
+
+What it refuses: a base no branch has, locally or on the remote; a PR
+target that does not exist; headers that are not branch names; a conflict
+with phase membership; a directory sitting where the worktree goes that
+git does not know as a worktree of this repository; and a resumption whose
+recorded plan disagrees with the card as it now stands. An explicitly
+required base that cannot be resolved or fetched is **never** swapped for
+the application default — falling back is the failure this exists to stop.
+
+Local-only work stays available, and stays honest about itself. A board
+with no remote, or without `gh`, cannot open the PR a card asked for, so
+the plan reads `local-only` and says which capability is missing; the run
+itself goes ahead, because an agent that only edits files is still useful.
+What the board will not do is report full delivery readiness while the
+capability that would deliver it is absent.
+
+The plan is on the board before you launch: a `⌖` chip in the card's
+footer row, beside `CI` and `PR ↗`, saying where the work starts and what
+it targets (`⌖ task/56-external-workspaces`), with the structured input
+that chose it on hover. It appears only on cards that have something to
+say — a board of ordinary cards on the default has no such chip anywhere.
+The chip opens the preflight itself, which lists the whole resolved plan
+or the one blocking reason, and the drawer carries the same two facts.
+Headers that do not add up wear `plan drift` in the same breath as
+`status drift` and `phase drift`.
+
+### One plan, for the whole of the work
+
+The validated plan — including the commit the branch was actually cut
+from and the PR target — is recorded with the run before work begins, in
+`manager/local/state/plans/<stem>.json`. It is machine-local on purpose:
+it holds this machine's worktree path. Shared ticket history gets the
+portable half — branch names and a commit — through the ticker, the
+agent's brief and the PR body, and never a path from somebody's disk.
+
+Everything after the launch reads that record rather than resolving its
+own answer: the automatic PR opened by the move into `review/`, the
+explicit **↑ open PR**, **↻ act on PR**, the PR poll, and the merge at the
+end. Three consequences follow, and they are the reason the record exists:
+
+- **A global setting change does not retarget work already under way.**
+  Change `BOARD_APP_BASE` between a launch and its review and the card
+  still goes where it was planned to go. The next launch gets the new
+  default; this one keeps its own.
+- **A stacked card is not merged into the application default by
+  accident.** `done/` has always meant merged into the application base,
+  and a card merged into its prerequisite is not that — exactly as a
+  phase member merged into its phase branch is not that. So **merge &
+  clean up** validates the target and refuses a stacked card, in both
+  modes and for that reason rather than for what the local merge happens
+  to be able to do. The way through is the stack's own: land this card's
+  PR into its prerequisite, and when the prerequisite itself merges the
+  card's target is gone — the board says so, and a **⌖ replan** onto the
+  base is the decision that makes the card finishable here.
+- **A contradiction is reported, never resolved by guessing.** A PR
+  already open against a branch the card does not target is neither
+  duplicated nor retargeted: the card wears it, the ticker says it, and a
+  person settles which reading is right. A target that has disappeared —
+  a prerequisite merged and deleted — is the same shape of fact.
+
+Resuming works the same way. An existing worktree or branch is validated
+against the recorded plan, and nothing is reset, rebased or removed to
+make it fit: uncommitted edits and untracked files are exactly what a
+"repair" would cost. A card whose requirements changed under a running
+branch needs the one deliberate action that retargets work, **⌖ replan**,
+which records a new plan or refuses — and refuses the one thing it cannot
+honestly do, claiming a branch is based on something it does not contain.
+
+Work that predates plans keeps a path through. A branch with no recorded
+plan, under a card on the application base, is **adopted**: its base is
+read back out of git and recorded as adopted, so legacy runs keep working
+and nothing invents a provenance they never had. Falling behind a base is
+the normal condition of every branch whose base moved on, so that is never
+read as "cut from somewhere else". The one ambiguous case is a card that
+says its work is stacked on another branch while the branch does not
+contain that branch at all, and that gets the refusal rather than a guess
+— bench will not rebase a branch to make a claim true.
+
+Two git identities live in this design and the plan keeps them apart:
+**application git**, the repository a branch is cut in and a PR is opened
+from, and **work-state git**, the checkout holding `tasks/`, where a move
+commits itself and sync fast-forwards `main`. One layout answers both with
+the same checkout, and asking through separate doors is what keeps
+filesystem layout from changing branch-selection semantics.
 
 ## Pull requests
 
@@ -1294,12 +1438,17 @@ Every header field, and who writes it:
 | **Type** | no | `Discovery` · `Bug` · `Feature` · `Refactor` · `Chore` · `Phase` | you |
 | **Assignee** | no | a name, taken from `git config user.name` | the board on a claiming move, or you by hand |
 | **Depends on** | no | task numbers or external preconditions, comma-separated | you |
+| **Base branch** | no | the application branch this card's work starts from | you |
+| **PR base** | no | the branch this card's PR targets (defaults to **Base branch**) | you |
 | **PR** | no | the pull request url | the board when it opens one |
 
 **Status** is the field the board holds you to: a header that disagrees
 with the directory the file sits in is flagged `status drift`.
-**Assignee** and **PR** it writes and reads itself. The rest are for
-whoever picks the next card.
+**Assignee** and **PR** it writes and reads itself. **Base branch** and
+**PR base** it holds you to in the same way as Status — a value that is
+not a branch name, or one that contradicts the card's phase, is flagged
+`plan drift` and refuses the launch. The rest are for whoever picks the
+next card.
 
 An optional **Type** line can record what kind of work the task is, when that
 isn't obvious from the title:
@@ -1333,7 +1482,27 @@ prose asides:
 
 The board parses the task numbers out of the line (prose preconditions are
 left for the reader) and nothing enforces them yet: they inform whoever picks
-the next card, and guard what a phase may start.
+the next card, and guard what a phase may start. It is explicitly *not* an
+instruction to stack a branch or merge a prerequisite — a card that needs to
+be built on another branch says so with **Base branch** below.
+
+The optional **Base branch** and **PR base** lines are how a card that
+belongs on a branch other than the application default says so, in
+machinery rather than in prose:
+
+```markdown
+**Base branch:** task/56-external-workspaces
+**PR base:** task/56-external-workspaces
+```
+
+**Base branch** selects the application branch the work starts from; the
+PR target defaults to it, so **PR base** is only needed when the two
+differ. Both are resolved and validated before anything is created, and a
+named base that cannot be reached refuses the launch rather than quietly
+reverting to the default — see "Execution plans" for the whole of it.
+Omit both and the card behaves exactly as every card did before they
+existed. A phase member must omit both: it inherits its phase's branch and
+targets it.
 
 The rest of the file is freeform — description, research findings, approach,
 open questions, whatever is relevant to the current stage.

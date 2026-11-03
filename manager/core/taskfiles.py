@@ -42,7 +42,16 @@ ASSIGNEE_LINE_RE = re.compile(r"^\*\*Assignee:\*\*[^\n]*\n?", re.MULTILINE)
 PR_RE = re.compile(r"^\*\*PR:\*\*\s*(\S+)\s*$", re.MULTILINE)
 PR_VERDICT_RE = re.compile(r"^PR REVIEW:\s*(APPROVE|REQUEST CHANGES)", re.MULTILINE)
 DEPENDS_RE = re.compile(r"^\*\*Depends on:\*\*\s*(.+?)\s*$", re.MULTILINE)
+BASE_BRANCH_RE = re.compile(r"^\*\*Base branch:\*\*\s*(.+?)\s*$", re.MULTILINE)
+PR_BASE_RE = re.compile(r"^\*\*PR base:\*\*\s*(.+?)\s*$", re.MULTILINE)
 NUMBER_RE = re.compile(r"^(\d+)[-_]")
+
+# A branch name as a card may write one. Deliberately narrower than
+# `git check-ref-format`: this value selects what a launch branches from
+# and what a PR targets, so it is read as data and never as a shell
+# fragment — and a card that tried to smuggle one in is refused by the
+# parser rather than by the process that would have run it.
+REF_CHARS_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 
 # A phase is a card that lists its cards: `**Type:** Phase` plus a `## Cards`
 # section naming its members, one per line, in the order they run.
@@ -97,6 +106,52 @@ def _depends_on(text: str) -> list[str]:
     return numbers
 
 
+def ref_problem(value: str) -> str | None:
+    """Why this is not a branch name a card may name, or None if it is.
+
+    The two execution headers are the only place a person types a git ref
+    into a task file, and both of them end up in an argument list. So the
+    syntax is checked where the file is read — once, before anything has
+    been created or fetched — and the reason is the reader's, not git's.
+    """
+    if not value:
+        return "names no branch"
+    if len(value) > 200:
+        return "is too long to be a branch name"
+    if not REF_CHARS_RE.match(value):
+        return ("may only use letters, digits and . _ / - "
+                "(it is a branch name, not a command)")
+    if value.startswith("-") or value.startswith("/") or value.endswith("/"):
+        return "is not a usable branch name (leading '-' or '/', or a trailing '/')"
+    if value.endswith(".lock") or value.endswith("."):
+        return "is not a usable branch name (git refuses a trailing '.' or '.lock')"
+    if ".." in value or "//" in value or "@{" in value:
+        return "is not a usable branch name (it contains '..', '//' or '@{')"
+    if any(part in ("", ".") for part in value.split("/")):
+        return "is not a usable branch name (an empty or '.' path segment)"
+    return None
+
+
+def _ref_header(pattern: re.Pattern[str], label: str, text: str,
+                drift: list[str]) -> str | None:
+    """One execution header, read and validated. A value that is not a
+    branch name is dropped *and* flagged: the card wears the mistake rather
+    than the board quietly reverting to its default, because reverting is
+    exactly how card 58's wrong-base launch happened in the first place.
+
+    Like **Priority** and **Depends on**, the value may carry a note after
+    ` — `; a branch name holds no whitespace, so the split cannot cut one."""
+    value, _note = _split_reason(_first(pattern, text))
+    if value is None:
+        return None
+    value = value.strip().strip("`")
+    problem = ref_problem(value)
+    if problem:
+        drift.append(f"**{label}:** {problem}")
+        return None
+    return value
+
+
 def _listed_cards(text: str) -> tuple[list[str], list[str]]:
     """A phase card's `## Cards` section: the numbers it lists in document
     order (which is run order), and the unindented lines that name none.
@@ -132,6 +187,12 @@ def read_task(path: Path, stage: str) -> dict:
     # a `## Cards` section means membership on a phase card and nothing at
     # all anywhere else — one direction, one authority
     listed, unreadable = _listed_cards(text) if is_phase else ([], [])
+    # The two execution headers, validated as they are read. What they
+    # *resolve to* is plans.py's question; this is only "did the author
+    # write a branch name", answered before any git command exists to run.
+    plan_drift: list[str] = []
+    base_branch = _ref_header(BASE_BRANCH_RE, "Base branch", text, plan_drift)
+    pr_base = _ref_header(PR_BASE_RE, "PR base", text, plan_drift)
     return {
         "pr": _first(PR_RE, text),
         # who holds the card — written by the board when a move claims it
@@ -148,6 +209,16 @@ def read_task(path: Path, stage: str) -> dict:
         # What runs next is the phase's list; what may run is this line —
         # parsed here, acted on nowhere yet.
         "dependsOn": _depends_on(text),
+        # Explicit execution metadata: which application branch this card's
+        # work starts from, and which branch its PR targets. `None` on both
+        # is the established default — the application base — and that is
+        # what keeps a card written before any of this existed unchanged.
+        "baseBranch": base_branch,
+        "prBase": pr_base,
+        # Why the headers do not add up, in the same spirit as `status
+        # drift` and `phase drift`: flagged on the card, never guessed
+        # around. `plans.preflight` adds what only git can answer.
+        "planDrift": plan_drift,
         # A phase and its members: `cards` is what this card claims (empty
         # for everything that is not a phase), `members`, `phase` and the
         # drift between them are derived across the whole board by
@@ -216,6 +287,19 @@ def weave_phases(stages: list[dict]) -> None:
                 member["phaseDrift"].append(note)
                 continue
             held[number] = phase
+            # A phase member inherits the phase's branch and targets it —
+            # that is the whole reason the phase has one. A card that also
+            # names its own base is two instructions for one decision, so
+            # it is rejected rather than silently resolved either way.
+            for label, value in (("Base branch", member["baseBranch"]),
+                                 ("PR base", member["prBase"])):
+                if value:
+                    note = (f"**{label}:** {value} conflicts with membership of "
+                            f"phase {_phase_name(phase)} — a member inherits the "
+                            f"phase branch and targets it; drop the header or the "
+                            f"card from the phase")
+                    member["planDrift"].append(note)
+                    phase["planDrift"].append(note)
             members.append(member)
         phase["members"] = [{"number": m["number"], "file": m["file"],
                              "title": m["title"], "stage": m["stage"]} for m in members]

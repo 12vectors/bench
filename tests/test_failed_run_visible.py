@@ -121,6 +121,7 @@ class Launches(unittest.TestCase):
                    WORKTREES=self.tmp / "worktrees",
                    AGENT_DIR=self.tmp / "agent",
                    SESSIONS_DIR=self.tmp / "sessions",
+                   PLANS_DIR=self.tmp / "plans",
                    COMMIT_MOVES=False, SYNC=False)
 
         state.AGENTS.clear()

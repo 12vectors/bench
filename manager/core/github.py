@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 import threading
 import time
@@ -31,6 +30,7 @@ from pathlib import Path
 
 import config
 import drive as drive_mod
+import plans
 import reports
 import state
 from taskfiles import (STATUS_RE, collect, commit_edit, find_stage_of,
@@ -76,7 +76,9 @@ def remote() -> str | None:
 
 
 def gh_available() -> bool:
-    return shutil.which(config.GH_BIN) is not None
+    """One reading, in config, so what preflight promises and what this
+    module then attempts can never disagree about `gh`."""
+    return config.gh_available()
 
 
 def _branch_exists(branch: str) -> bool:
@@ -114,35 +116,21 @@ def _woven(filename: str, stage: str) -> dict:
     return read_task(config.TASKS / stage / filename, stage)
 
 
-def _remote_has_branch(rname: str, branch: str) -> bool:
-    """Whether the remote already carries this branch. Sync only ever
-    fetches the work state's own branch, so a phase branch the running
-    board pushed is not a local ref on any other board even when it is
-    published — asking the
-    remote directly is the only way another board sees it."""
-    return bool(_run(["git", "ls-remote", "--heads", rname, branch],
-                     timeout=30).stdout.strip())
-
-
 def _pr_base(task: dict) -> str:
-    """What a PR is opened against. A phase member's branch was cut from
-    its phase's branch, so that is the only base whose diff is the member's
-    own work — a PR into main would carry the whole phase, and invite a
-    merge into main that this board exists not to make. Everything else,
-    the phase card included, goes into main.
+    """What a PR is opened against — the card's recorded execution plan, or
+    what its structured inputs say when no plan was ever recorded.
 
-    The phase branch is the board's own and is published as the phase runs,
-    so a board that did not run the phase may know it only through the
-    remote — that still makes it the base, not main."""
-    phase = task.get("phase")
-    if phase:
-        branch = f"phase/{phase['file'][:-3]}"
-        if _branch_exists(branch):
-            return branch
-        rname = remote()
-        if rname and _remote_has_branch(rname, branch):
-            return branch
-    return config.APP_BASE
+    The recorded plan is the load-bearing part: the automatic open on the
+    move into `review/` and the explicit **↑ open PR** read the same
+    answer, and an operator who changes the application default between
+    launch and review does not retarget work already under way. `plans`
+    holds the whole of that reasoning, the phase-member rule included — a
+    member's branch was cut from its phase's branch, so that is the only
+    base whose diff is the member's own work, and a phase branch this
+    board knows only through the remote is still the base rather than the
+    application default.
+    """
+    return plans.pr_base(task.get("file") or "", task)
 
 
 def _task_location(stage: str = "review") -> str:
@@ -258,6 +246,20 @@ def _open_pr(filename: str) -> str:
                           else "gh is not installed"))
 
     base = _pr_base(task)
+    gone = plans.target_problem(filename, base)
+    if gone:
+        raise ValueError(gone)
+    # A PR GitHub already has, and what it is aimed at. A target that
+    # disagrees with this card's own is reported, never retargeted and
+    # never duplicated: one of the two readings is wrong, and which is a
+    # person's call.
+    open_already = _existing_pr_info(branch)
+    if open_already and open_already.get("base") and open_already["base"] != base:
+        raise ValueError(
+            f"{filename} already has a PR into {open_already['base']} "
+            f"({open_already['url']}), and its plan targets {base} — nothing was "
+            f"opened or retargeted. Settle which base is right (⌖ replan, or "
+            f"change the PR on GitHub)")
     if base == config.APP_BASE:
         # The PR's diff is computed against the remote base — refuse to open
         # one that would drag unpushed base commits along with it.
@@ -292,6 +294,7 @@ def _open_pr(filename: str) -> str:
             raise ValueError(f"PR creation failed for {branch}: "
                              f"{result.stderr.strip()[:140]}")
         _write_pr_line(filename, adopted)
+        plans.remember_target(filename, branch, base)
         state.record_board_event({
             "kind": "agent", "actor": "board", "file": filename,
             "summary": f"{filename}'s PR was already open — adopted it: {adopted}"})
@@ -300,9 +303,12 @@ def _open_pr(filename: str) -> str:
         return adopted
     url = next((l.strip() for l in result.stdout.splitlines() if "/pull/" in l), result.stdout.strip())
     _write_pr_line(filename, url)
+    # Work that reached GitHub without a plan gets one now, so the target
+    # stops moving: the merge at the end reads this, not the setting.
+    plans.remember_target(filename, branch, base)
     state.record_board_event({
         "kind": "agent", "actor": "board", "file": filename,
-        "summary": f"PR opened for {filename}: {url}"})
+        "summary": f"PR opened for {filename} into {base}: {url}"})
     state.broadcast({"type": "board"})
     _poll_pr(filename, url)  # first CI/review snapshot without waiting a cycle
     return url
@@ -312,12 +318,29 @@ def _already_exists(result: subprocess.CompletedProcess) -> bool:
     return "already exists" in (result.stderr + result.stdout).lower()
 
 
+def _existing_pr_info(branch: str) -> dict | None:
+    """The PR GitHub already has for this branch: its url and the branch it
+    targets. `None` when there is none, or when gh cannot say — a reading
+    this cannot make is never read as agreement."""
+    if not gh_available():
+        return None
+    found = _gh_pr("view", branch, "--json", "url,baseRefName", timeout=60)
+    if found.returncode != 0:
+        return None
+    try:
+        data = json.loads(found.stdout)
+    except json.JSONDecodeError:
+        return None
+    url = str(data.get("url") or "")
+    if "/pull/" not in url:
+        return None
+    return {"url": url, "base": str(data.get("baseRefName") or "")}
+
+
 def _existing_pr(branch: str) -> str:
     """The url of the PR already open for this branch, if gh can name it."""
-    found = _gh_pr("view", branch, "--json", "url", "--jq", ".url", timeout=60)
-    if found.returncode != 0:
-        return ""
-    return next((l.strip() for l in found.stdout.splitlines() if "/pull/" in l), "")
+    info = _existing_pr_info(branch)
+    return info["url"] if info else ""
 
 
 def _agent_report(filename: str) -> str:
@@ -392,9 +415,17 @@ def _conflict_state(data: dict, prev: dict) -> bool | None:
     return prev.get("conflicts")
 
 
-def _fold(data: dict, prev: dict) -> dict:
+def _fold(data: dict, prev: dict, base: str | None = None) -> dict:
     """One gh pr-view payload + the previous snapshot → the new snapshot.
-    Pure fold: fetching, events and broadcasts stay in _poll_pr."""
+    Pure fold: fetching, events and broadcasts stay in _poll_pr.
+
+    `base` is the card's own recorded PR target. The PR's actual
+    `baseRefName` is folded against it, so a PR that is open against
+    something other than what this card planned is a reading the board
+    carries rather than a surprise at merge time. Omitted = the
+    application default, which is what every card targeted before cards
+    could name a target of their own.
+    """
     reviews = data.get("reviews") or []
     checks = data.get("statusCheckRollup") or []
     changes = any(r.get("state") == "CHANGES_REQUESTED" for r in reviews)
@@ -421,10 +452,15 @@ def _fold(data: dict, prev: dict) -> dict:
           else "pass" if states else None)
 
     conflicts = _conflict_state(data, prev)
+    want = base or config.APP_BASE
+    actual = str(data.get("baseRefName") or "") or None
+    mismatch = actual if (actual and actual != want) else None
 
     # A conflict is changes-needed-by-you, not a CI failure: it beats any
-    # approval but leaves the CI chip telling its own story.
-    verdict = ("red" if (changes or ci == "fail" or conflicts)
+    # approval but leaves the CI chip telling its own story. A PR aimed at
+    # the wrong branch is the same shape of fact: it needs a person, so it
+    # beats an approval too.
+    verdict = ("red" if (changes or ci == "fail" or conflicts or mismatch)
                else "green" if approved else "pending")
     detail_bits = []
     if reviews:
@@ -433,20 +469,24 @@ def _fold(data: dict, prev: dict) -> dict:
         detail_bits.append({"fail": "checks failing", "running": "checks running",
                             "pass": "checks ok"}[ci])
     if conflicts:
-        detail_bits.append("conflicts with main")
+        detail_bits.append(f"conflicts with {want}")
+    if mismatch:
+        detail_bits.append(f"open against {mismatch}, not {want}")
     if copilot:
         detail_bits.append("copilot " + {"asked": "asked", "approved": "approved",
                                          "changes": "asked for changes",
                                          "commented": "commented"}[copilot])
     return {"verdict": verdict, "ci": ci, "copilot": copilot,
-            "conflicts": conflicts, "detail": " · ".join(detail_bits)}
+            "conflicts": conflicts, "base": actual, "wantBase": want,
+            "baseMismatch": mismatch, "detail": " · ".join(detail_bits)}
 
 
 def _poll_pr(filename: str, url: str) -> None:
     number = url.rstrip("/").rsplit("/", 1)[-1]
     result = _gh_pr("view", number,
                     "--json",
-                    "reviews,reviewRequests,statusCheckRollup,state,mergeable",
+                    "reviews,reviewRequests,statusCheckRollup,state,mergeable"
+                    ",baseRefName",
                     timeout=60)
     if result.returncode != 0:
         return
@@ -455,9 +495,16 @@ def _poll_pr(filename: str, url: str) -> None:
     except json.JSONDecodeError:
         return
     prev = PR_STATE.get(filename, {})
-    entry = _fold(data, prev)
+    entry = _fold(data, prev, plans.pr_base(filename))
     entry.update({"url": url, "ts": time.time()})
     PR_STATE[filename] = entry
+    if prev.get("baseMismatch") != entry["baseMismatch"] and entry["baseMismatch"]:
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": f"{filename}'s PR is open against {entry['baseMismatch']}, "
+                       f"not {entry['wantBase']} — nothing was retargeted; "
+                       f"settle which base is right before merging"})
+        state.broadcast({"type": "board"})
     verdict, ci, copilot = entry["verdict"], entry["ci"], entry["copilot"]
     if prev.get("copilot") in (None, "asked") and copilot in ("approved", "changes", "commented"):
         word = {"approved": "approved it", "changes": "asked for changes",
@@ -469,9 +516,11 @@ def _poll_pr(filename: str, url: str) -> None:
     if bool(prev.get("conflicts")) != bool(entry["conflicts"]):
         state.record_board_event({
             "kind": "agent", "actor": "board", "file": filename,
-            "summary": (f"{filename}'s PR conflicts with main — ↻ act on PR "
-                        f"can attempt the resolution" if entry["conflicts"]
-                        else f"{filename}'s PR no longer conflicts with main")})
+            "summary": (f"{filename}'s PR conflicts with {entry['wantBase']} — "
+                        f"↻ act on PR can attempt the resolution"
+                        if entry["conflicts"] else
+                        f"{filename}'s PR no longer conflicts with "
+                        f"{entry['wantBase']}")})
         state.broadcast({"type": "board"})
     elif prev.get("verdict") != verdict and verdict != "pending":
         word = "approved" if verdict == "green" else "changes asked"
@@ -506,7 +555,9 @@ def poller() -> None:
 
 
 def public_state() -> dict:
-    return {f: {k: v.get(k) for k in ("verdict", "ci", "copilot", "conflicts", "detail", "url")}
+    return {f: {k: v.get(k) for k in ("verdict", "ci", "copilot", "conflicts",
+                                      "base", "wantBase", "baseMismatch",
+                                      "detail", "url")}
             for f, v in PR_STATE.items()}
 
 
@@ -568,6 +619,16 @@ def _complete(filename: str, stage: str) -> dict:
     merged = False
     swept: list[dict] = []
     if _branch_exists(branch):
+        # The same target the whole card has used, validated once more
+        # before the one irreversible step: a target that has disappeared
+        # is a changed situation rather than a licence to pick a new one,
+        # and a card stacked on another branch is not this action's to
+        # finish at all.
+        target = plans.pr_base(filename, task)
+        gone = plans.target_problem(filename, target)
+        if gone:
+            raise ValueError(gone)
+        _assert_lands_in_the_base(filename, target)
         on_origin = config.app_merge_on_origin()
         if on_origin:
             _merge_on_origin(filename, stage, branch)
@@ -601,6 +662,12 @@ def _complete(filename: str, stage: str) -> dict:
             # -D when origin made the merge: the base here has not caught
             # up yet, so the safe delete would refuse something landed.
             _run(["git", "branch", "-D" if on_origin else "-d", branch])
+            # The plan described work that is now in the base, on a branch
+            # that has just gone. Keeping it would make a reopened card
+            # resume against a branch no longer there — but a workspace
+            # *kept* keeps its plan, because the branch it names is still
+            # the one holding the work.
+            plans.forget(filename)
             state.record_board_event({
                 "kind": "agent", "actor": "board", "file": filename,
                 "summary": f"cleaned up: worktree and local branch for {stem} removed"})
@@ -684,6 +751,7 @@ def _clear_member(member: dict) -> str:
     except (subprocess.SubprocessError, OSError) as exc:
         return f"{stem}: workspace kept — {str(exc)[:120]}"
     PR_STATE.pop(member["file"], None)
+    plans.forget(member["file"])
     return ""
 
 
@@ -732,12 +800,49 @@ def _cards(count: int) -> str:
     return f"{count} card{'' if count == 1 else 's'}"
 
 
+def _assert_lands_in_the_base(filename: str, target: str) -> None:
+    """`done/` has always meant merged into the application base, and a
+    stacked card merged into its prerequisite is not that — exactly as a
+    phase member merged into its phase branch is not that.
+
+    So **merge & clean up** refuses a stacked card in both modes, and for
+    one reason rather than two: not because the local path cannot do it
+    (it cannot — it merges into whatever this checkout has out, which is
+    how a stacked card's work lands in the default with nobody deciding
+    it should) but because finishing it is not this action's to do. The
+    stack lands when its prerequisite's own PR lands; then this card's
+    target has gone, the board says so, and a replan onto the base is the
+    person's decision that makes it finishable.
+
+    The application base is the one the work was planned against, read
+    from the record: a card launched on `main` before the operator moved
+    `BOARD_APP_BASE` to `trunk` is not stacked on `main`, and finishing it
+    into `main` is exactly what it was planned to do.
+    """
+    saved = plans.recorded(filename)
+    app_base = (saved or {}).get("appBase") or config.APP_BASE
+    if target == app_base:
+        return
+    raise ValueError(
+        f"{filename} is stacked on {target}, not {app_base} — merge & "
+        f"clean up would finish it without its work reaching "
+        f"{app_base}. Land its PR into {target} first; once {target} "
+        f"itself has merged, retarget the card (⌖ replan) and finish it here")
+
+
 def _merge_locally(filename: str, branch: str) -> None:
-    """Single-player: merge into the application's own base branch and push."""
-    base = config.APP_BASE
+    """Single-player: merge into the application's own base branch and push.
+
+    The target is the card's recorded PR target, asked here rather than
+    passed in so this function and the PR that was opened can never read
+    different answers. `_complete` has already refused anything but the
+    application base (see `_assert_lands_in_the_base`); reading it again
+    rather than assuming it is what keeps the branch names below honest.
+    """
+    target = plans.pr_base(filename)
     current = _run(["git", "branch", "--show-current"]).stdout.strip()
-    if current != base:
-        raise ValueError(f"the repo is on '{current}', not {base} — switch first")
+    if current != target:
+        raise ValueError(f"the repo is on '{current}', not {target} — switch first")
     result = _run(["git", "merge", "--no-edit", branch], timeout=120)
     if result.returncode != 0:
         _run(["git", "merge", "--abort"])
@@ -745,21 +850,21 @@ def _merge_locally(filename: str, branch: str) -> None:
         raise ValueError(f"merge conflict — resolve by hand ({detail})")
     state.record_board_event({
         "kind": "agent", "actor": "board", "file": filename,
-        "summary": f"merged {branch} into {base}"})
+        "summary": f"merged {branch} into {target}"})
 
     rname = remote()
     if rname:
-        push = _run(["git", "push", rname, base], timeout=180)
+        push = _run(["git", "push", rname, target], timeout=180)
         if push.returncode != 0:
             state.record_board_event({
                 "kind": "agent", "actor": "board", "file": filename,
-                "summary": f"merged locally but the push failed — push {base} "
+                "summary": f"merged locally but the push failed — push {target} "
                            f"yourself ({push.stderr.strip()[:100]})"})
         else:
             _run(["git", "push", rname, "--delete", branch], timeout=60)
             state.record_board_event({
                 "kind": "agent", "actor": "board", "file": filename,
-                "summary": f"pushed {base} (PR marked merged) and deleted "
+                "summary": f"pushed {target} (PR marked merged) and deleted "
                            f"{branch} on {rname}"})
 
 
@@ -781,6 +886,16 @@ def _merge_on_origin(filename: str, stage: str, branch: str) -> None:
         raise ValueError("gh is not installed — this board merges the "
                         "application on origin (BOARD_APP_MERGE)")
     number = url.rstrip("/").rsplit("/", 1)[-1]
+    # origin merges the PR into whatever the PR targets, so the one thing
+    # worth checking is that the PR targets what this card planned. A
+    # contradiction is reported, never resolved by retargeting.
+    target = plans.pr_base(filename, task)
+    actual = (_existing_pr_info(branch) or {}).get("base")
+    if actual and actual != target:
+        raise ValueError(
+            f"{filename}'s PR is open against {actual}, and the card's plan "
+            f"targets {target} — nothing was merged. Settle which base is right "
+            f"(⌖ replan, or change the PR on GitHub) first")
     result = _gh_pr("merge", number, "--merge", timeout=180)
     if result.returncode != 0:
         detail = (result.stderr.strip() or result.stdout.strip())[-160:]

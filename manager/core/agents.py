@@ -6,10 +6,16 @@ Two kinds:
 - review agents (start_review) are read-only, run in the main checkout, and
   their relevance report is appended to the task file by the board.
 
-Every git command here runs against `config.REPO` — the **application**
-repository — and every worktree under `config.WORKTREES`. The task file
-the board writes afterwards may live in a different repository entirely
-(task 56); `taskfiles` owns that half.
+Every git command here runs against the **application** repository —
+asked through `plans.app_repo()`, which is `config.REPO` — and every
+worktree under `config.WORKTREES`. The task file the board writes
+afterwards may live in a different repository entirely (task 56);
+`taskfiles` owns that half.
+
+Which branch a launch starts from and what its PR targets are not decided
+here either: `plans` resolves and validates one execution plan before any
+branch, worktree, claim or process exists, and everything after the
+launch reads that record (task 58).
 
 Prompts live in .prompts/ and are read fresh on every launch.
 """
@@ -25,10 +31,11 @@ from pathlib import Path
 
 import config
 import events
+import plans
 import reports
 import state
-from taskfiles import (actor_name, append_to_task, collect, find_stage_of,
-                       move_task, read_task, set_assignee)
+from taskfiles import (actor_name, append_to_task, collect, commit_edit,
+                       find_stage_of, move_task, read_task, set_assignee)
 
 # A phase runs on an integration branch of its own — phases.py owns the
 # behaviour, the name lives here because this is where a launch decides
@@ -275,8 +282,9 @@ def _no_commands_note() -> str | None:
 
 
 def _fresh_branch_point() -> tuple[str | None, str | None]:
-    """Where a brand-new task branch should start: the newest base branch
-    that exists, in the **application** repository.
+    """Where a brand-new task branch starts when nothing on the card says
+    otherwise: the newest base branch that exists, in the **application**
+    repository.
 
     Which remote and which branch are `config`'s answers, resolved
     independently of the work state's (task 56) — and the remote one is
@@ -294,9 +302,14 @@ def _fresh_branch_point() -> tuple[str | None, str | None]:
     Returns (start point, ticker note); (None, …) means HEAD. The note is
     non-None whenever the branch point deserves a mention — the remote
     base ahead of this checkout, or a fetch that had to be skipped.
+
+    This is the *default* path, and the one card 58 deliberately left
+    alone: a card that names its own base is resolved by `plans`, which
+    refuses rather than falling back, because falling back is the failure
+    it exists to stop.
     """
     def _git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", "-C", str(config.REPO), *args],
+        return subprocess.run(["git", "-C", str(plans.app_repo()), *args],
                               capture_output=True, text=True)
 
     rname = config.app_branch_remote()
@@ -306,7 +319,7 @@ def _fresh_branch_point() -> tuple[str | None, str | None]:
     upstream = f"{rname}/{base}"
     try:
         fetched = subprocess.run(
-            ["git", "-C", str(config.REPO), "fetch", rname, base],
+            ["git", "-C", str(plans.app_repo()), "fetch", rname, base],
             capture_output=True, text=True, timeout=config.FETCH_TIMEOUT)
     except subprocess.TimeoutExpired:
         return None, f"fetch of {upstream} timed out; branched from local HEAD"
@@ -347,7 +360,7 @@ def phase_branch_point(filename: str) -> tuple[str | None, str | None]:
     if not phase:
         return None, None
     branch = phase_branch(phase["file"])
-    exists = subprocess.run(["git", "-C", str(config.REPO), "rev-parse",
+    exists = subprocess.run(["git", "-C", str(plans.app_repo()), "rev-parse",
                              "--verify", "--quiet", branch], capture_output=True)
     if exists.returncode != 0:
         return None, None
@@ -394,52 +407,50 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     _validate(filename, stage, {"in-progress"},
               "work starts from in-progress/ — move the card there first",
               phase=PHASE_RUNS_WITH)
+    # Preflight, before the claim: a plan that does not resolve must leave
+    # the card exactly as it was — unclaimed, no branch, no worktree, no
+    # run. Then once more after the claim, because the claim is a write and
+    # the committed start action revalidates what it is about to act on.
+    plans.require(plans.preflight(filename, stage))
+    card_path = config.TASKS / stage / filename
+    unclaimed = card_path.read_text(encoding="utf-8")
     claim_for_launch(filename, stage, takeover)
+    try:
+        plan = plans.require(plans.preflight(filename, stage))
+    except ValueError:
+        # The second reading refused — a fetch that failed between the two,
+        # a branch deleted in the gap. A launch that did not happen claims
+        # nothing, so the card goes back to what it said before the claim,
+        # committed the same way the claim was.
+        if card_path.read_text(encoding="utf-8") != unclaimed:
+            card_path.write_text(unclaimed, encoding="utf-8")
+            commit_edit(filename, stage, "claim released: launch refused")
+        raise
 
     stem = filename[:-3]
-    branch = f"task/{stem}"
-    worktree = config.WORKTREES / stem
+    branch = plan["branch"]
+    worktree = Path(plan["worktree"])
 
     def _git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", "-C", str(config.REPO), *args],
+        return subprocess.run(["git", "-C", str(plans.app_repo()), *args],
                               capture_output=True, text=True)
 
-    branch_exists = _git("rev-parse", "--verify", "--quiet", branch).returncode == 0
-    continuing = worktree.exists()
-    base_note = None
-    if continuing:
-        # earlier work exists — the agent continues on it rather than
-        # refusing. But *whose* work: a matching branch name says nothing
-        # about which repository the checkout belongs to.
-        mismatch = config.worktree_mismatch(worktree)
-        if mismatch:
-            raise ValueError(mismatch)
-        current = subprocess.run(
-            ["git", "-C", str(worktree), "branch", "--show-current"],
-            capture_output=True, text=True).stdout.strip()
-        if current != branch:
-            raise ValueError(
-                f"worktree {worktree} is on '{current}', not {branch} — fix it by hand")
-        base = _git("merge-base", config.APP_BASE, branch).stdout.strip() \
-            or _git("rev-parse", "HEAD").stdout.strip()
-    else:
+    # Earlier work, a foreign checkout sitting where the worktree goes, a
+    # branch that is not built on what the card now names: all of it was
+    # answered by the preflight above, which refused before the claim
+    # rather than here — including the repository-identity question every
+    # other consumer of a worktree asks (`config.worktree_mismatch`).
+    continuing = bool(plan["continuing"])
+    base = plan["startCommit"]
+    if not worktree.exists():
         config.WORKTREES.mkdir(parents=True, exist_ok=True)
-        if branch_exists:
-            base = _git("merge-base", config.APP_BASE, branch).stdout.strip()
+        if continuing:                     # the branch is there, its worktree is not
             result = _git("worktree", "add", str(worktree), branch)
+        elif plan["startRef"]:
+            result = _git("worktree", "add", "--no-track", "-b", branch,
+                          str(worktree), plan["startRef"])
         else:
-            # A phase member starts from its phase's tip; everything else
-            # from the newest main this checkout can see.
-            point, base_note = phase_branch_point(filename)
-            if point is None:
-                point, base_note = _fresh_branch_point()
-            if point:
-                base = _git("rev-parse", point).stdout.strip()
-                result = _git("worktree", "add", "--no-track", "-b", branch,
-                              str(worktree), point)
-            else:
-                base = _git("rev-parse", "HEAD").stdout.strip()
-                result = _git("worktree", "add", "-b", branch, str(worktree))
+            result = _git("worktree", "add", "-b", branch, str(worktree))
         if result.returncode != 0:
             raise ValueError(f"git worktree add failed: {result.stderr.strip()[:300]}")
 
@@ -449,8 +460,14 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Recorded before the run begins, so every later step — resuming, the
+    # PR this card's move into review/ opens, acting on its reviews, the
+    # merge at the end — reads one target rather than resolving its own.
+    plan = plans.record(plan)
+
     prompt = config.prompt("work.md").format(
         branch=branch, filename=filename, body=task["body"],
+        plan=plans.brief(plan),
         **config.prompt_fields(filename, "in-progress"))
     proc, log_file, model = _launch("work", prompt, worktree, agent_id, filename, log_path)
 
@@ -460,14 +477,15 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
         "worktree": str(worktree), "base": base, "status": "running",
         "rc": None, "started": time.time(), "session": None,
         "log": str(log_path), "proc": proc, "origin": stage, "mode": "work",
-        "name": name, "model": model or None,
+        "name": name, "model": model or None, "plan": plans.portable(plan),
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
     summary = (f"{name} is back on {filename} — continuing branch {branch}"
                if continuing else
                f"{name} started on {filename} (branch {branch})")
-    for note in (base_note, _no_commands_note()):
+    summary += f" — {plans.line(plan)}"
+    for note in (*plan["notes"], _no_commands_note()):
         if note:
             summary += f" — {note}"
     state.record_board_event({
@@ -552,6 +570,10 @@ def _discard_untouched_worktree(record: dict) -> tuple[bool, str]:
     uncommitted changes and untracked files both keep it, the removal
     runs without `--force`, and a git that refuses anyway is reported
     rather than assumed to have succeeded.
+
+    And the recorded plan is forgotten only when the branch it described
+    really went: a worktree kept because there is work in it keeps its
+    plan too, because the work is still on the branch the plan names.
     """
     if not _no_new_commits(record):
         return False, "it has commits"
@@ -561,14 +583,16 @@ def _discard_untouched_worktree(record: dict) -> tuple[bool, str]:
         return False, (f"{len(dirty)} uncommitted change"
                        f"{'' if len(dirty) == 1 else 's'} in it")
     removed = subprocess.run(
-        ["git", "-C", str(config.REPO), "worktree", "remove", worktree],
+        ["git", "-C", str(plans.app_repo()), "worktree", "remove", worktree],
         capture_output=True, text=True)
     if removed.returncode != 0:
         detail = (removed.stderr.strip() or removed.stdout.strip()
                   or "git would not remove it")
         return False, detail.splitlines()[-1][:120]
-    subprocess.run(["git", "-C", str(config.REPO), "branch", "-D", record["branch"]],
+    subprocess.run(["git", "-C", str(plans.app_repo()), "branch", "-D", record["branch"]],
                    capture_output=True)
+    # The branch it described is gone, so the plan would describe nothing.
+    plans.forget(record["task"])
     return True, ""
 
 
@@ -772,16 +796,25 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     stem = filename[:-3]
     branch = f"task/{stem}"
     worktree = config.WORKTREES / stem
-    mismatch = config.worktree_mismatch(worktree)
-    if mismatch:
-        raise ValueError(mismatch)
+    # The same plan the work was launched on, revalidated before the run
+    # that will push to the PR: a card whose requirements changed under it,
+    # or whose base or target has disappeared, needs a person rather than a
+    # run that resolves conflicts against a base nobody chose. Preflight is
+    # the whole check — it resolves both branches by name and refuses when
+    # either is gone — so there is no second reading here to disagree with.
+    # Preflight reads the card woven, not `task` above: phase membership is
+    # derived across the board, and a member read alone looks like an
+    # ordinary card on the application default. It carries the
+    # repository-identity refusal with it: a foreign checkout sitting where
+    # this card's worktree goes is a blocker there, not a second check here.
+    plan = plans.record(plans.require(plans.preflight(filename, stage)))
     if not worktree.exists():
-        if subprocess.run(["git", "-C", str(config.REPO), "rev-parse", "--verify",
+        if subprocess.run(["git", "-C", str(plans.app_repo()), "rev-parse", "--verify",
                            "--quiet", branch], capture_output=True).returncode != 0:
             raise ValueError(f"branch {branch} does not exist locally — nothing to act in")
         config.WORKTREES.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
-            ["git", "-C", str(config.REPO), "worktree", "add", str(worktree), branch],
+            ["git", "-C", str(plans.app_repo()), "worktree", "add", str(worktree), branch],
             capture_output=True, text=True)
         if result.returncode != 0:
             raise ValueError(f"could not recreate the worktree: {result.stderr.strip()[:200]}")
@@ -793,6 +826,8 @@ def start_pr_fix(filename: str, stage: str) -> dict:
 
     prompt = config.prompt("act-pr.md").format(
         filename=filename, branch=branch, pr=task["pr"], body=task["body"],
+        base=plan["prBase"], remote=plan.get("appRemote") or "origin",
+        plan=plans.brief(plan),
         **config.prompt_fields(filename, stage))
     # act-pr is the one intent allowed to push: the PR must update.
     proc, log_file, model = _launch("act-pr", prompt, worktree, agent_id, filename, log_path)
@@ -802,7 +837,7 @@ def start_pr_fix(filename: str, stage: str) -> dict:
         "worktree": str(worktree), "base": None, "status": "running",
         "rc": None, "started": time.time(), "session": None,
         "log": str(log_path), "proc": proc, "origin": stage, "mode": "work",
-        "name": name, "model": model or None,
+        "name": name, "model": model or None, "plan": plans.portable(plan),
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -46,6 +47,7 @@ SESSIONS_DIR = STATE / "sessions"                  # per-session event logs, JSO
 AGENT_DIR = STATE / "agent"                        # headless-agent stdout logs
 DRIVES_DIR = STATE / "drives"                      # driver stdout logs
 HOOKS_DIR = STATE / "hooks"                        # generated agent hook config
+PLANS_DIR = STATE / "plans"                        # recorded execution plans
 
 # Ordered — this is the column order on the board.
 STAGES = [
@@ -335,6 +337,42 @@ def _resolve_remote(configured: str, names: list[str]) -> str | None:
     return names[0] if names else None
 
 
+# ── the application's git, and the board's own ─────────────────────────
+#
+# Two git identities live in this design, and keeping them apart is what
+# lets a card name a branch without the board guessing which repository it
+# meant. **Work-state git** is `state_repo()`: the checkout holding
+# `tasks/`, where a move commits itself and where sync fast-forwards the
+# state's base. **Application git** is where the code a card is implemented
+# against lives — the repository a task branch is cut in, a worktree is put
+# on, and a PR is opened from, which is `REPO`.
+#
+# Vendored, the two are one checkout; externally they are not, and the
+# functions below are the named door rather than a path each module
+# reinvents: a branch-selection question asks `app_repo()` and
+# `app_remote()`, a task-state question asks `state_repo()` and
+# `state_git_remote()`. Filesystem layout must not change branch-selection
+# semantics, and an application question must never be answered by the
+# state's git.
+
+
+def app_repo() -> Path:
+    """The checkout a task's code is written in. One answer, asked by every
+    branch/worktree/PR decision so none of them can pick a different one —
+    and never the work state's repository, even where they coincide."""
+    return REPO
+
+
+def app_remote() -> str | None:
+    """The remote the application's branches are published to and fetched
+    from: `BOARD_GIT_REMOTE` when set — as named, never quietly swapped —
+    else the application checkout's first remote, else None.
+
+    The board's own bookkeeping asks `state_git_remote()` instead, so the
+    two halves can never publish to each other's remote."""
+    return git_remote()
+
+
 def git_remotes() -> list[str]:
     """The application checkout's remotes."""
     return _remotes_of(REPO)
@@ -443,6 +481,14 @@ def app_merge_on_origin() -> bool:
     if APP_MERGE in ("local", "checkout"):
         return False
     return SYNC and _one_repository()
+
+
+def gh_available() -> bool:
+    """Is the GitHub CLI on the path? Asked by `github` before it reaches
+    for it and by `plans` when it answers whether a run can actually
+    deliver a PR — one reading, so the preflight and the attempt can never
+    disagree about what this machine can do."""
+    return shutil.which(GH_BIN) is not None
 
 
 def gh_repo() -> str | None:
@@ -557,12 +603,20 @@ def worktree_mismatch(path: Path) -> str | None:
     command in it would act on the wrong code and commit to the wrong
     history. git answers the question properly: two checkouts of one
     repository share a git directory.
+
+    The question asked is always "is this a worktree of this
+    application", and each answer says which way it failed — a directory
+    that is no checkout at all, or a checkout of something else — because
+    the two need different things done about them. Every caller shows the
+    sentence as it stands: a preflight blocker, an agent's refusal, a
+    driver's and a local command's all read the same.
     """
     if not path.exists():
         return None
     theirs = _common_git_dir(path)
     if theirs is None:
-        return (f"{path} already exists and is not a git checkout — move it "
+        return (f"{path} already exists and is not a git worktree of this "
+                f"repository — it is not a git checkout at all. Move it "
                 f"aside, or point BOARD_WORKTREES at a directory bench owns")
     ours = _common_git_dir(REPO)
     if ours is not None and theirs != ours:

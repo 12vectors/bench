@@ -137,6 +137,7 @@ class ACompletionInFlight(unittest.TestCase):
 
         self.patch(REPO=self.board, TASKS=self.board / "tasks",
                    WORKTREES=self.tmp / "worktrees", SESSIONS_DIR=self.tmp / "sessions",
+                   PLANS_DIR=self.tmp / "plans",
                    SYNC=False, COMMIT_MOVES=False)
         self.worktree = config.WORKTREES / STEM
         git(self.board, "worktree", "add", "-q", "-b", BRANCH, str(self.worktree))

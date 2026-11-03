@@ -27,7 +27,10 @@ FIELDS = {"branch": "task/x", "stage": "backlog", "filename": "x.md",
           "body": "content", "pr": "https://example.test/pr/1",
           "task_path": "/work/tasks/backlog/x.md",
           "guidance": "Read AGENTS.md.",
-          "guidance_read_only": "Read AGENTS.md."}
+          "guidance_read_only": "Read AGENTS.md.",
+          # the execution plan the board resolved before the launch, and
+          # the base it recorded for the card's PR (task 58)
+          "base": "main", "remote": "origin", "plan": "- Branch: `task/x`"}
 
 
 def _tail(name: str) -> str:

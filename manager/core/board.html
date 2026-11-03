@@ -552,6 +552,12 @@
     background:var(--sunken);font-size:12.5px;color:var(--text);
   }
   #drawer .prow:hover{border-color:var(--accent)}
+  /* the plan's rows are facts, not doors: no member card to open, so no
+     hover that implies one */
+  #drawer .prow.flat:hover{border-color:var(--line)}
+  #drawer .prow.bad{border-color:var(--alarm);color:var(--alarm)}
+  #drawer .prow.bad:hover{border-color:var(--alarm)}
+  #drawer .prow.bad .pstage{color:var(--alarm)}
   #drawer .prow .mono{font-family:var(--mono);font-size:11px;color:var(--dim)}
   #drawer .prow .pn{width:14px;flex:none;text-align:right}
   #drawer .prow .pref{flex:none}
@@ -609,6 +615,17 @@
   .sheet .stitle{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:600}
   .sheet .stitle .mono{font-size:11.5px;font-weight:400;color:var(--dim)}
   .sheet p{margin:0;font-size:12.5px;line-height:1.55;color:var(--muted)}
+  /* the preflight's own rows: what the board resolved, what said so */
+  .sheet p.bad{color:var(--alarm)}
+  .sheet .prows{display:flex;flex-direction:column;gap:1px}
+  .sheet .prows .prow{
+    display:flex;align-items:baseline;gap:9px;padding:6px 8px;
+    border:1px solid var(--line);border-radius:7px;background:var(--sunken);
+    font-size:12.5px}
+  .sheet .prows .k{flex:none;width:86px;color:var(--muted)}
+  .sheet .prows .v{font-family:var(--mono);font-size:11.5px;color:var(--ink);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sheet .prows .why{margin-left:auto;flex:none;font-size:11.5px;color:var(--dim)}
   .sheet .sbtns{display:flex;flex-direction:column;gap:6px;margin-top:2px}
   .sheet .sbtns button{text-align:left;padding:10px 12px;font-size:13px}
   .sheet .sbtns button small{display:block;font-size:11.5px;color:var(--dim);margin-top:2px}
@@ -1407,6 +1424,114 @@ function phaseFlight(task) {
    card with no number for a list to name it by. A phase in in-progress/ is
    running — its members are being worked in the order the list had when it
    started — so it is not on offer. The board offers what it can do. */
+
+/* Where a card's work starts and what its PR targets, as a chip.
+
+   Two branch names and an arrow, which is the whole of what a person
+   needs at card altitude: `⌖ task/56 → task/56` reads as "cut from the
+   prerequisite, aimed back at it". When the two agree — the usual stacked
+   case — the arrow is redundant, so only one name is drawn. */
+function planChipLabel(p) {
+  if ((p.drift || []).length) return 'plan drift';
+  return p.startBranch === p.prBase ? p.startBranch
+    : `${p.startBranch} → ${p.prBase}`;
+}
+
+function planChipTitle(p) {
+  if ((p.drift || []).length) return p.drift.join(' · ');
+  const bits = [`Starts from ${p.startBranch} (${p.source})`,
+                `Its PR targets ${p.prBase} (${p.prSource})`];
+  if (p.recorded) {
+    bits.push(p.startCommit
+      ? `Recorded when the run began, at ${p.startCommit.slice(0, 9)} — a later `
+        + 'change to the board\'s default does not retarget it'
+      : 'Recorded when the run began');
+    if (p.provenance === 'adopted')
+      bits.push('Adopted: this branch predates its recorded plan, so its base '
+                + 'was read back out of git rather than planned');
+    if (p.delivery === 'local-only')
+      bits.push('Local-only: this board cannot open the PR automatically');
+  } else {
+    bits.push('Not recorded yet — resolved from the card as it stands. '
+              + 'Click for the full preflight.');
+  }
+  return bits.join('. ') + '.';
+}
+
+/* The preflight itself, on demand: everything the board resolved and
+   validated, or the one reason it does not resolve. It is read-only — the
+   server fetches and answers, and creates no branch, no worktree and no
+   run — so opening it before a launch costs nothing and is the point.
+
+   `⌖ replan` is the one button here, and it is the only thing in the whole
+   design that retargets work already under way. It records a new plan or
+   refuses; it never resets, rebases or removes anything. */
+async function planSheet(task) {
+  const wrap = $('#sheetwrap');
+  wrap.innerHTML = `<div class="sheet"><div class="stitle"><span>${esc(task.title)}</span>` +
+    `<span class="mono">⌖ preflight</span></div><p>Resolving…</p></div>`;
+  wrap.classList.add('open');
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+  const res = await fetch('/api/plan?file=' + encodeURIComponent(task.file) +
+                          '&stage=' + encodeURIComponent(task.stage));
+  const data = await res.json();
+  if (!res.ok || !data.plan) {
+    wrap.innerHTML = `<div class="sheet"><div class="stitle"><span>${esc(task.title)}</span>` +
+      `<span class="mono">⌖ preflight</span></div>` +
+      `<p>${esc(data.error || 'the plan could not be resolved')}</p>` +
+      `<div class="sbtns"><button id="sh-noplan">Close<small>Nothing was started.</small></button>` +
+      `</div></div>`;
+    $('#sh-noplan').addEventListener('click', closeSheet);
+    return;
+  }
+  const p = data.plan;
+  const rows = [
+    ['Starts from', (p.startRef || p.startBranch) +
+      (p.startCommit ? ` · ${p.startCommit.slice(0, 9)}` : ''), p.source],
+    ['Branch', p.branch, p.continuing ? 'already exists — the run continues on it'
+                                      : 'cut by the board when the run starts'],
+    ['PR targets', p.prBase, p.prSource],
+    ['Delivery', p.delivery === 'pr' ? 'a PR is opened automatically' : 'local-only',
+      p.delivery === 'pr' ? `${p.appRemote} and gh are both available`
+                          : 'the work itself is unaffected'],
+  ];
+  const blocked = (p.blockers || []).length;
+  wrap.innerHTML =
+    `<div class="sheet"><div class="stitle"><span>${esc(task.title)}</span>` +
+    `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}⌖ preflight</span></div>` +
+    (blocked
+      ? `<p class="bad">This card will not start: ${esc(p.blockers[0])}</p>`
+      : `<p>Resolved and validated. Nothing has been created — a branch, a ` +
+        `worktree and a run follow the launch, not this.</p>`) +
+    `<div class="prows">` +
+    rows.map(([k, v, why]) => `<div class="prow"><span class="k">${esc(k)}</span>` +
+      `<span class="v">${esc(v)}</span><span class="why">${esc(why || '')}</span></div>`).join('') +
+    `</div>` +
+    ((p.notes || []).length
+      ? `<p>${p.notes.map(n => esc(n)).join('<br>')}</p>` : '') +
+    `<div class="sbtns">` +
+    `<button id="sh-replan">⌖ Replan<small>Resolve this card afresh and record the ` +
+    `result. Nothing is reset, rebased or removed — a branch that is not built on the ` +
+    `new base is refused instead.</small></button>` +
+    `<button id="sh-noplan">Close<small>Nothing is written.</small></button>` +
+    `</div></div>`;
+  $('#sh-noplan').addEventListener('click', closeSheet);
+  $('#sh-replan').addEventListener('click', () => { closeSheet(); replan(task); });
+}
+
+async function replan(task) {
+  const res = await fetch('/api/plan/replan', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: task.file, stage: task.stage }),
+  });
+  const data = await res.json();
+  toast(res.ok
+    ? `${task.file} replanned — from ${data.plan.startBranch}, PR into ${data.plan.prBase}`
+    : (data.error || 'the card was not replanned'), !res.ok);
+  await loadState();
+  return res.ok;
+}
+
 function joinablePhases(task) {
   if (task.phase || task.isPhase || !task.number) return [];
   if (!['backlog', 'to-do'].includes(task.stage)) return [];
@@ -1497,6 +1622,11 @@ function cardFor(task) {
     // is flagged in the same breath as status drift rather than swallowed
     (task.phaseDrift || []).length
       ? `<span class="pill drift" title="${esc(task.phaseDrift.join(' · '))}">phase drift</span>` : '',
+    // and so is a **Base branch:** / **PR base:** header that is not a
+    // branch name, or one that contradicts the card's phase. The board
+    // never guesses around it: a launch refuses until it is settled.
+    (task.planDrift || []).length
+      ? `<span class="pill drift" title="${esc(task.planDrift.join(' · '))}">plan drift</span>` : '',
     `<span class="pill status${completing ? ' breathing' : ''}" style="background:${pill.bg};color:${pill.tint}"` +
       `${pill.title ? ` title="${esc(pill.title)}"` : ''}>${pill.text}</span>`,
   ];
@@ -1681,13 +1811,32 @@ function cardFor(task) {
       title: `Card ${task.phase.index} of ${task.phase.total} in phase `
            + `${task.phase.number ? '#' + task.phase.number + ' — ' : ''}${task.phase.title}` });
   }
+  // where this card's work starts and what its PR targets, when that is
+  // not simply the application default — a destination like the rest of
+  // the row, opening the preflight itself. A board of ordinary cards on
+  // the default has no such chip anywhere.
+  const planned = (S.state.plans || {})[task.file];
+  if (planned) {
+    chips.push({ label: planChipLabel(planned), pre: '⌖',
+      cls: (planned.drift || []).length ? 'bad' : '', plan: true,
+      title: planChipTitle(planned) });
+  }
   if (prState && prState.ci) {
     chips.push({ label: 'CI', glyph: { pass: '✓', fail: '✕', running: '◌' }[prState.ci],
       cls: { pass: 'ok', fail: 'bad', running: 'accent' }[prState.ci], title: detail });
   }
   if (prState && prState.conflicts) {
+    const into = prState.wantBase || 'main';
     chips.push({ label: 'conflicts', glyph: '✕', cls: 'bad',
-      title: 'GitHub cannot merge this into main — ↻ act on PR can attempt a resolution merge' });
+      title: `GitHub cannot merge this into ${into} — ↻ act on PR can attempt a resolution merge` });
+  }
+  // a PR open against a branch this card never planned: reported, never
+  // retargeted, because which of the two readings is right needs a person
+  if (prState && prState.baseMismatch) {
+    chips.push({ label: `into ${prState.baseMismatch}`, glyph: '✕', cls: 'bad',
+      title: `This PR is open against ${prState.baseMismatch}, and the card's `
+           + `recorded plan targets ${prState.wantBase}. Nothing was retargeted — `
+           + 'settle which base is right before merging.' });
   }
   if (prState && prState.copilot) {
     chips.push({ label: 'copilot',
@@ -1756,6 +1905,7 @@ function cardFor(task) {
         if (c.href) return `<a class="chip2 ${c.cls}" href="${esc(c.href)}" target="_blank" rel="noopener" title="${esc(c.title)}">${p}${esc(c.label)}${g}</a>`;
         if (c.act) return `<button class="chip2 ${c.cls}" data-drive="${c.act}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.phase) return `<button class="chip2 ${c.cls}" data-phase="${esc(c.phase)}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
+        if (c.plan) return `<button class="chip2 ${c.cls}" data-plan="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.cmd) return `<button class="chip2 ${c.cls}" data-cmd="${esc(c.cmd)}" title="${esc(c.title)}">${actLabel(c.label, 'run it?', 'running…')}${g}</button>`;
         return `<span class="chip2 ${c.cls}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</span>`;
       }).join('') + '</div>'
@@ -1776,6 +1926,8 @@ function cardFor(task) {
       const phase = findTask(btn.dataset.phase);
       if (phase) showDetail(phase);
     }));
+  el.querySelectorAll('[data-plan]').forEach(btn =>
+    btn.addEventListener('click', (e) => { e.stopPropagation(); planSheet(task); }));
   el.querySelectorAll('[data-drive]').forEach(btn =>
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2160,6 +2312,32 @@ const MEMBER_STATE = { merged: 'merged in', running: 'working',
    stopped here) is added only while a phase is in flight, because only
    then is there one — and only it can tell a card that has run from one
    the phase has not reached. Each row opens that card. */
+/* The card's execution plan in the drawer: where its work starts, what
+   its PR targets, and what said so. Drawn only for a card that has
+   something to say — a card on the application default has nothing here,
+   which is also what keeps the drawer unchanged for every board that has
+   never named a base. Drift is drawn in `--alarm` and says the whole
+   thing, because a launch is going to refuse until it is settled. */
+function planBlock(t) {
+  const p = (S.state.plans || {})[t.file];
+  if (!p) return '';
+  const drift = (p.drift || []).length;
+  const rows = drift
+    ? p.drift.map(d => ['does not resolve', d, ''])
+    : [['starts from', p.startBranch + (p.startCommit ? ` · ${p.startCommit.slice(0, 9)}` : ''),
+        p.source],
+       ['PR targets', p.prBase, p.prSource]];
+  return `<div class="pmembers"><div class="phead">Execution plan` +
+    `<span class="mono">${p.recorded ? (p.provenance === 'adopted'
+      ? 'recorded with the run · adopted' : 'recorded with the run')
+      : 'not recorded yet'}</span></div>` +
+    rows.map(([k, v, why]) => `<div class="prow flat${drift ? ' bad' : ''}">` +
+      `<span class="pstage">${esc(k)}</span>` +
+      `<span class="ptitle mono">${esc(v)}</span>` +
+      `<span class="pstage">${esc(why)}</span></div>`).join('') +
+    `</div>`;
+}
+
 function phaseMembers(t) {
   if (!t.isPhase) return '';
   if (!(t.members || []).length) {
@@ -2246,6 +2424,7 @@ function renderDrawer() {
     `<span class="spacer"></span>` +
     `<button id="closeDrawer">Close</button></div>` +
     failBlock +
+    planBlock(t) +
     phaseMembers(t) +
     `<div class="dbody">${md(t.body)}</div>` +
     `<div class="dmeta">${esc(t.stage)}/${esc(t.file)} · ${t.words} words · edited ${esc(when)}</div>`;
