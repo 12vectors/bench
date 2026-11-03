@@ -23,8 +23,8 @@ import events
 import plans
 import reports
 import state
-from taskfiles import (actor_name, append_to_task, collect, find_stage_of,
-                       move_task, read_task, set_assignee)
+from taskfiles import (actor_name, append_to_task, collect, commit_edit,
+                       find_stage_of, move_task, read_task, set_assignee)
 
 # A phase runs on an integration branch of its own — phases.py owns the
 # behaviour, the name lives here because this is where a launch decides
@@ -391,8 +391,20 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     # run. Then once more after the claim, because the claim is a write and
     # the committed start action revalidates what it is about to act on.
     plans.require(plans.preflight(filename, stage))
+    card_path = config.TASKS / stage / filename
+    unclaimed = card_path.read_text(encoding="utf-8")
     claim_for_launch(filename, stage, takeover)
-    plan = plans.require(plans.preflight(filename, stage))
+    try:
+        plan = plans.require(plans.preflight(filename, stage))
+    except ValueError:
+        # The second reading refused — a fetch that failed between the two,
+        # a branch deleted in the gap. A launch that did not happen claims
+        # nothing, so the card goes back to what it said before the claim,
+        # committed the same way the claim was.
+        if card_path.read_text(encoding="utf-8") != unclaimed:
+            card_path.write_text(unclaimed, encoding="utf-8")
+            commit_edit(filename, stage, "claim released: launch refused")
+        raise
 
     stem = filename[:-3]
     branch = plan["branch"]
@@ -757,7 +769,8 @@ def start_pr_fix(filename: str, stage: str) -> dict:
 
     prompt = config.prompt("act-pr.md").format(
         filename=filename, branch=branch, pr=task["pr"], body=task["body"],
-        base=plan["prBase"], plan=plans.brief(plan))
+        base=plan["prBase"], remote=plan.get("appRemote") or "origin",
+        plan=plans.brief(plan))
     # act-pr is the one intent allowed to push: the PR must update.
     proc, log_file, model = _launch("act-pr", prompt, worktree, agent_id, filename, log_path)
 

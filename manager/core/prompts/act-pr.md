@@ -46,7 +46,7 @@ Do this properly:
   silently ignore it — leave it unchanged and say why in your summary.
 - If the PR conflicts with its base `{base}` (check `gh pr view {branch}
   --json mergeable` — CONFLICTING means yes), resolve it mechanically:
-  - `git fetch origin {base}`, then `git merge origin/{base}` in this
+  - `git fetch {remote} {base}`, then `git merge {remote}/{base}` in this
     worktree. Never rebase and never force-push: the branch is public,
     so the resolution must be additive. Merge only `{base}` — the base
     the board recorded for this card — and nothing else.

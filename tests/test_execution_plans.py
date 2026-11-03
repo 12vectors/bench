@@ -528,6 +528,32 @@ class WhatPreflightRefuses(PlanCase):
         self.assertIsNone(self.read()["assignee"],
                           "a blocked preflight claimed the card anyway")
 
+    def test_a_refusal_after_the_claim_releases_it(self):
+        """The second preflight can refuse what the first allowed — a fetch
+        that failed in between. The launch did not happen, so the claim it
+        made is given back."""
+        self.patch(COMMIT_MOVES=True)
+        self.write(card("57 — Document it", base=PREREQ))
+        calls = []
+        real = plans.preflight
+
+        def flaky(*args, **kwargs):
+            plan = real(*args, **kwargs)
+            calls.append(plan)
+            if len(calls) == 2:
+                plan["blockers"].append("the fetch went away in between")
+            return plan
+
+        plans.preflight = flaky
+        self.addCleanup(setattr, plans, "preflight", real)
+        with self.assertRaises(ValueError) as caught:
+            agents.start_agent(CARD, "in-progress")
+        self.assertIn("went away", str(caught.exception))
+        self.assertEqual(len(calls), 2)
+        self.assertIsNone(self.read()["assignee"],
+                          "a launch that never happened kept its claim")
+        self.assertNothingStarted()
+
     def test_a_foreign_directory_at_the_worktree_path_is_refused(self):
         self.write(card("57 — Document it"))
         squatter = config.WORKTREES / STEM
@@ -1307,8 +1333,15 @@ class ThePromptsCarryThePlan(unittest.TestCase):
 
     def test_act_pr_resolves_against_the_recorded_base_not_main(self):
         text = (self.PROMPTS / "act-pr.md").read_text(encoding="utf-8")
-        self.assertIn("git merge origin/{base}", text)
+        self.assertIn("git merge {remote}/{base}", text)
         self.assertIn("Merge only `{base}`", text)
+
+    def test_act_pr_fetches_from_the_remote_the_plan_resolved(self):
+        """`BOARD_GIT_REMOTE` picks the remote plans resolve bases through,
+        so the run merges from that one rather than a literal `origin`."""
+        text = (self.PROMPTS / "act-pr.md").read_text(encoding="utf-8")
+        self.assertNotIn("git fetch origin", text)
+        self.assertIn("git fetch {remote} {base}", text)
 
 
 if __name__ == "__main__":
