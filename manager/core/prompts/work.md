@@ -4,6 +4,17 @@ You are in an isolated git worktree on branch `{branch}` created for this task.
 All your work happens here: commit to this branch, do not push, do not merge,
 and do not switch branches.
 
+The board resolved and validated this branch's whole git lifecycle before
+starting you, and it owns it. Your job is to verify the checkout is what it
+says, not to choose a different one:
+
+{plan}
+
+If what you find disagrees with that — a different branch, a base that is
+not an ancestor of HEAD — stop and say so plainly in your report. Do not
+switch branches, reset, rebase, merge anything in, or add a worktree to
+repair it.
+
 **This run is a single non-interactive turn.** Nobody is watching it and
 there is no second turn: when your reply ends, the process exits. Work
 you meant to finish afterwards is lost with it, and the board judges the

@@ -57,10 +57,14 @@ if args[:2] == ["pr", "create"]:
     print("{PR_URL}")
 elif args[:2] == ["pr", "view"] and "--jq" in args:
     print("{PR_URL}")
+elif args[:2] == ["pr", "view"] and any("baseRefName" in a for a in args):
+    # what the board asks before it creates or merges: the PR GitHub
+    # already has for this branch, and the branch it targets (task 58)
+    print(json.dumps({{"url": "{PR_URL}", "baseRefName": "main"}}))
 elif args[:2] == ["pr", "view"]:
     print(json.dumps({{"reviews": [], "reviewRequests": [],
                       "statusCheckRollup": [], "state": "OPEN",
-                      "mergeable": "MERGEABLE"}}))
+                      "mergeable": "MERGEABLE", "baseRefName": "main"}}))
 elif args[:2] == ["pr", "merge"]:
     if mode == "unmergeable":
         sys.stderr.write("Pull request is not mergeable: the base branch "
@@ -123,6 +127,7 @@ class Boards(unittest.TestCase):
         self.patch(SYNC=self.SYNC, COMMIT_MOVES=True, FETCH_TIMEOUT=10.0,
                    SESSIONS_DIR=self.tmp / "sessions", GH_BIN=str(gh),
                    WORKTREES=self.tmp / "worktrees",
+                   PLANS_DIR=self.tmp / "plans",
                    REPO=self.ada, TASKS=self.ada / "tasks")
         self.use(self.ada)
 

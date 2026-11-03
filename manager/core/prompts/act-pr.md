@@ -3,6 +3,15 @@ repository's task board.
 
 You are in the task's git worktree on branch `{branch}`. The PR is {pr}.
 
+The board chose this branch's whole git lifecycle before the run started,
+and it owns it. Verify the checkout matches; never change it:
+
+{plan}
+
+If any of that does not match what you find, stop and say so in your
+report rather than switching branches, resetting, rebasing or adding
+worktrees.
+
 **This run is a single non-interactive turn.** Nobody is watching it and
 there is no second turn: when your reply ends, the process exits. Work
 you meant to finish afterwards is lost with it, and the board judges the
@@ -35,11 +44,12 @@ Do this properly:
   repos/{{owner}}/{{repo}}/pulls/<number>/comments`.
 - Address each point in the code. If you disagree with a point, do not
   silently ignore it — leave it unchanged and say why in your summary.
-- If the PR conflicts with main (check `gh pr view {branch} --json
-  mergeable` — CONFLICTING means yes), resolve it mechanically:
-  - `git fetch origin main`, then `git merge origin/main` in this
+- If the PR conflicts with its base `{base}` (check `gh pr view {branch}
+  --json mergeable` — CONFLICTING means yes), resolve it mechanically:
+  - `git fetch origin {base}`, then `git merge origin/{base}` in this
     worktree. Never rebase and never force-push: the branch is public,
-    so the resolution must be additive.
+    so the resolution must be additive. Merge only `{base}` — the base
+    the board recorded for this card — and nothing else.
   - Resolve each conflicted file honouring both sides' intent, and run
     the project's tests until they pass.
   - Put the resolution in its own commit — never folded into other
@@ -47,8 +57,8 @@ Do this properly:
     made in each.
   - Cover the resolution explicitly in your closing report: which files
     conflicted and what you chose.
-  - If both intents cannot hold at once — main has made this branch's
-    premise false — resolve nothing: run `git merge --abort`, leave the
+  - If both intents cannot hold at once — `{base}` has made this
+    branch's premise false — resolve nothing: run `git merge --abort`, leave the
     branch as it was, and state in your report that a human must
     decide, naming the specific collision. Guessing at a semantic
     conflict is the one forbidden move.

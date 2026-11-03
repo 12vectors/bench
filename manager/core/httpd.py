@@ -18,6 +18,7 @@ import drive
 import events
 import github
 import phases
+import plans
 import state
 import sync
 import taskfiles
@@ -29,9 +30,16 @@ def state_payload() -> dict:
             (dict(m) for m in state.SESSIONS.values()),
             key=lambda m: m.get("last") or m.get("started") or 0, reverse=True)
         board_events = list(state.BOARD_EVENTS[-80:])
+    collected = taskfiles.collect()
     return {
-        "board": taskfiles.collect(),
+        "board": collected,
         "project": config.PROJECT,
+        # where each card's work starts and what its PR targets, for the
+        # cards where that is not simply the application default — read
+        # from the card's own headers, its phase, and the plan recorded
+        # when its run began. Empty on a board of ordinary cards.
+        "plans": plans.board(collected),
+        "appBase": config.APP_BASE,
         "sessions": sessions,
         "agents": agents.list_public(),
         "prs": github.public_state(),
@@ -111,6 +119,19 @@ class Handler(BaseHTTPRequestHandler):
             with state.LOCK:
                 meta = dict(state.SESSIONS.get(sid) or {})
             self._json(200, {"meta": meta, "events": events.session_events(sid)})
+        elif path == "/api/plan":
+            # The preflight itself, on demand: the whole resolved plan or
+            # the reason it does not resolve, before anything is started.
+            # Read-only — it fetches (bounded) and answers, and creates no
+            # branch, no worktree and no run.
+            query = parse_qs(url.query)
+            name = (query.get("file") or [""])[0]
+            stage = (query.get("stage") or [""])[0] \
+                or (taskfiles.find_stage_of(name) or "")
+            try:
+                self._json(200, {"plan": plans.preflight(name, stage)})
+            except (ValueError, OSError) as exc:
+                self._json(409, {"error": str(exc)})
         elif path == "/api/diff":
             agent_id = (parse_qs(url.query).get("agent") or [""])[0]
             try:
@@ -230,6 +251,19 @@ class Handler(BaseHTTPRequestHandler):
                 state.record_board_event({
                     "kind": "phase", "actor": "you", "file": result["phase"],
                     "summary": f"{result['phase']} gained {result['entry']}"})
+                state.broadcast({"type": "board"})
+                self._json(200, result)
+            elif path == "/api/plan/replan":
+                payload = self._read_body()
+                # ⌖ replan: the person's decision that retargets this
+                # card's work. It records a new plan or refuses; it never
+                # resets, rebases or removes anything.
+                name = payload["file"]
+                stage = payload.get("stage") or taskfiles.find_stage_of(name)
+                result = plans.replan(name, stage)
+                state.record_board_event({
+                    "kind": "agent", "actor": "you", "file": name,
+                    "summary": f"{name} replanned — {plans.line(result['plan'])}"})
                 state.broadcast({"type": "board"})
                 self._json(200, result)
             elif path == "/api/pr/open":

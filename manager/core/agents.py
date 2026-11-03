@@ -20,6 +20,7 @@ from pathlib import Path
 
 import config
 import events
+import plans
 import reports
 import state
 from taskfiles import (actor_name, append_to_task, collect, find_stage_of,
@@ -377,47 +378,33 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     _validate(filename, stage, {"in-progress"},
               "work starts from in-progress/ — move the card there first",
               phase=PHASE_RUNS_WITH)
+    # Preflight, before the claim: a plan that does not resolve must leave
+    # the card exactly as it was — unclaimed, no branch, no worktree, no
+    # run. Then once more after the claim, because the claim is a write and
+    # the committed start action revalidates what it is about to act on.
+    plans.require(plans.preflight(filename, stage))
     claim_for_launch(filename, stage, takeover)
+    plan = plans.require(plans.preflight(filename, stage))
 
     stem = filename[:-3]
-    branch = f"task/{stem}"
-    worktree = config.WORKTREES / stem
+    branch = plan["branch"]
+    worktree = Path(plan["worktree"])
 
     def _git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", "-C", str(config.REPO), *args],
+        return subprocess.run(["git", "-C", str(plans.app_repo()), *args],
                               capture_output=True, text=True)
 
-    branch_exists = _git("rev-parse", "--verify", "--quiet", branch).returncode == 0
-    continuing = worktree.exists()
-    base_note = None
-    if continuing:
-        # earlier work exists — the agent continues on it rather than refusing
-        current = subprocess.run(
-            ["git", "-C", str(worktree), "branch", "--show-current"],
-            capture_output=True, text=True).stdout.strip()
-        if current != branch:
-            raise ValueError(
-                f"worktree {worktree} is on '{current}', not {branch} — fix it by hand")
-        base = _git("merge-base", "main", branch).stdout.strip() \
-            or _git("rev-parse", "HEAD").stdout.strip()
-    else:
-        config.WORKTREES.mkdir(exist_ok=True)
-        if branch_exists:
-            base = _git("merge-base", "main", branch).stdout.strip()
+    continuing = bool(plan["continuing"])
+    base = plan["startCommit"]
+    if not worktree.exists():
+        config.WORKTREES.mkdir(parents=True, exist_ok=True)
+        if continuing:                     # the branch is there, its worktree is not
             result = _git("worktree", "add", str(worktree), branch)
+        elif plan["startRef"]:
+            result = _git("worktree", "add", "--no-track", "-b", branch,
+                          str(worktree), plan["startRef"])
         else:
-            # A phase member starts from its phase's tip; everything else
-            # from the newest main this checkout can see.
-            point, base_note = phase_branch_point(filename)
-            if point is None:
-                point, base_note = _fresh_branch_point()
-            if point:
-                base = _git("rev-parse", point).stdout.strip()
-                result = _git("worktree", "add", "--no-track", "-b", branch,
-                              str(worktree), point)
-            else:
-                base = _git("rev-parse", "HEAD").stdout.strip()
-                result = _git("worktree", "add", "-b", branch, str(worktree))
+            result = _git("worktree", "add", "-b", branch, str(worktree))
         if result.returncode != 0:
             raise ValueError(f"git worktree add failed: {result.stderr.strip()[:300]}")
 
@@ -427,8 +414,14 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Recorded before the run begins, so every later step — resuming, the
+    # PR this card's move into review/ opens, acting on its reviews, the
+    # merge at the end — reads one target rather than resolving its own.
+    plan = plans.record(plan)
+
     prompt = config.prompt("work.md").format(
-        branch=branch, filename=filename, body=task["body"])
+        branch=branch, filename=filename, body=task["body"],
+        plan=plans.brief(plan))
     proc, log_file, model = _launch("work", prompt, worktree, agent_id, filename, log_path)
 
     name = _pick_name(stem)
@@ -437,14 +430,15 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
         "worktree": str(worktree), "base": base, "status": "running",
         "rc": None, "started": time.time(), "session": None,
         "log": str(log_path), "proc": proc, "origin": stage, "mode": "work",
-        "name": name, "model": model or None,
+        "name": name, "model": model or None, "plan": plans.portable(plan),
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
     summary = (f"{name} is back on {filename} — continuing branch {branch}"
                if continuing else
                f"{name} started on {filename} (branch {branch})")
-    for note in (base_note, _no_commands_note()):
+    summary += f" — {plans.line(plan)}"
+    for note in (*plan["notes"], _no_commands_note()):
         if note:
             summary += f" — {note}"
     state.record_board_event({
@@ -725,13 +719,22 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     stem = filename[:-3]
     branch = f"task/{stem}"
     worktree = config.WORKTREES / stem
+    # The same plan the work was launched on, revalidated before the run
+    # that will push to the PR: a card whose requirements changed under it,
+    # or whose target has disappeared, needs a person rather than a run
+    # that resolves conflicts against a base nobody chose.
+    plan = plans.require(plans.preflight(filename, stage, task=task))
+    gone = plans.target_problem(filename, plan["prBase"])
+    if gone:
+        raise ValueError(gone)
+    plan = plans.record(plan)
     if not worktree.exists():
-        if subprocess.run(["git", "-C", str(config.REPO), "rev-parse", "--verify",
+        if subprocess.run(["git", "-C", str(plans.app_repo()), "rev-parse", "--verify",
                            "--quiet", branch], capture_output=True).returncode != 0:
             raise ValueError(f"branch {branch} does not exist locally — nothing to act in")
-        config.WORKTREES.mkdir(exist_ok=True)
+        config.WORKTREES.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
-            ["git", "-C", str(config.REPO), "worktree", "add", str(worktree), branch],
+            ["git", "-C", str(plans.app_repo()), "worktree", "add", str(worktree), branch],
             capture_output=True, text=True)
         if result.returncode != 0:
             raise ValueError(f"could not recreate the worktree: {result.stderr.strip()[:200]}")
@@ -742,7 +745,8 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     prompt = config.prompt("act-pr.md").format(
-        filename=filename, branch=branch, pr=task["pr"], body=task["body"])
+        filename=filename, branch=branch, pr=task["pr"], body=task["body"],
+        base=plan["prBase"], plan=plans.brief(plan))
     # act-pr is the one intent allowed to push: the PR must update.
     proc, log_file, model = _launch("act-pr", prompt, worktree, agent_id, filename, log_path)
 
@@ -751,7 +755,7 @@ def start_pr_fix(filename: str, stage: str) -> dict:
         "worktree": str(worktree), "base": None, "status": "running",
         "rc": None, "started": time.time(), "session": None,
         "log": str(log_path), "proc": proc, "origin": stage, "mode": "work",
-        "name": name, "model": model or None,
+        "name": name, "model": model or None, "plan": plans.portable(plan),
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record

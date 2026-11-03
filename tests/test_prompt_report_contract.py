@@ -23,7 +23,10 @@ SENTINEL = "Whatever the outcome, write the report itself for its reader"
 
 # Dummy values for every placeholder any template uses.
 FIELDS = {"branch": "task/x", "stage": "backlog", "filename": "x.md",
-          "body": "content", "pr": "https://example.test/pr/1"}
+          "body": "content", "pr": "https://example.test/pr/1",
+          # the execution plan the board resolved before the launch, and
+          # the base it recorded for the card's PR (task 58)
+          "base": "main", "plan": "- Branch: `task/x`"}
 
 
 def _tail(name: str) -> str:

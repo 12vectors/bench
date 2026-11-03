@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -23,6 +24,7 @@ STATE = LOCAL / "state"                            # runtime data (gitignored)
 SESSIONS_DIR = STATE / "sessions"                  # per-session event logs, JSONL
 AGENT_DIR = STATE / "agent"                        # headless-agent stdout logs
 DRIVES_DIR = STATE / "drives"                      # driver stdout logs
+PLANS_DIR = STATE / "plans"                        # recorded execution plans
 
 # Ordered — this is the column order on the board.
 STAGES = [
@@ -166,9 +168,56 @@ def git_remote() -> str | None:
     names = git_remotes()
     return names[0] if names else None
 
-# How long a work-agent launch waits for `git fetch origin main` before
-# branching from local HEAD instead. Launching must never be blocked by
-# network weather; this bounds the whole delay.
+def gh_available() -> bool:
+    """Is the GitHub CLI on the path? Asked by `github` before it reaches
+    for it and by `plans` when it answers whether a run can actually
+    deliver a PR — one reading, so the preflight and the attempt can never
+    disagree about what this machine can do."""
+    return shutil.which(GH_BIN) is not None
+
+
+# ── the application's git, and the board's own ─────────────────────────
+#
+# Two git identities live in this design, and keeping them apart is what
+# lets a card name a branch without the board guessing which repository it
+# meant. **Work-state git** is `REPO`: the checkout holding `tasks/`, where
+# a move commits itself and where sync fast-forwards `main`. **Application
+# git** is where the code a card is implemented against lives — the
+# repository a task branch is cut in, a worktree is put on, and a PR is
+# opened from.
+#
+# In this layout they are the same checkout, and the functions below say so
+# rather than letting every caller assume it: a branch-selection question
+# asks `app_repo()` and `app_remote()`, a task-state question asks `REPO`
+# and `git_remote()`. Filesystem layout must not change branch-selection
+# semantics, so the split is a named door rather than a path that each
+# module reinvents.
+
+
+def app_repo() -> Path:
+    """The checkout a task's code is written in. One answer, asked by every
+    branch/worktree/PR decision so none of them can pick a different one."""
+    return REPO
+
+
+def app_remote() -> str | None:
+    """The remote the application's branches are published to. Resolved
+    exactly as the board's own remote is (BOARD_GIT_REMOTE, else the
+    checkout's first, else None) — the two are one remote in this layout,
+    and the separate door is what keeps the *question* separate."""
+    return git_remote()
+
+
+# The application branch everything defaults to: where a fresh task branch
+# is cut from and what a PR is opened against when nothing on the card says
+# otherwise. A card may name its own with `**Base branch:**` / `**PR base:**`
+# (see plans.py), and a recorded plan then outranks this setting for the
+# life of that work — changing it must never retarget work already under way.
+APP_BASE = setting("BOARD_APP_BASE", "main").strip() or "main"
+
+# How long a work-agent launch waits for `git fetch origin <app base>`
+# before branching from local HEAD instead. Launching must never be blocked
+# by network weather; this bounds the whole delay.
 FETCH_TIMEOUT = float(setting("BOARD_FETCH_TIMEOUT", "10"))
 
 # Team mode's second half: origin/main is the shared truth and every board

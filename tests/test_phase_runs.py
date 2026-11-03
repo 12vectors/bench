@@ -168,6 +168,7 @@ class PhaseCase(unittest.TestCase):
         self.patch(REPO=self.repo, TASKS=self.tasks, TM_ROOT=self.repo,
                    LOCAL=local, WORKTREES=self.tmp / "worktrees",
                    AGENT_DIR=self.tmp / "agent", SESSIONS_DIR=self.tmp / "sessions",
+                   PLANS_DIR=self.tmp / "plans",
                    GH_BIN=str(gh), COMMIT_MOVES=False, SYNC=False,
                    FETCH_TIMEOUT=10.0)
 
