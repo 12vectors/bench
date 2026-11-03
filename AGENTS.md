@@ -44,7 +44,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports → taskfiles → events / github / drive / sync → agents → phases → watch / httpd → board.py
+config → state / reports → taskfiles → plans → events / github / drive / sync → agents → phases → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -52,6 +52,10 @@ config → state / reports → taskfiles → events / github / drive / sync → 
 - `reports.py` — what the record keeps of an agent's closing report: one
   cap, one clip, for the task file and the PR body alike
 - `taskfiles.py` — reading and moving task files; the only code touching tasks/
+- `plans.py` — one card's execution plan: which application branch its work
+  starts from, which branch its PR targets, what selected each, and the
+  preflight that validates all of it before a branch, a worktree or an
+  agent exists
 - `events.py` — ingests NORMALIZED events (the adapter contract), session registry
 - `github.py` — PR opening, Copilot requests, review/CI polling
 - `drive.py` — runs the project driver, tracks the one live drive
