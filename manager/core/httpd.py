@@ -260,7 +260,7 @@ class Handler(BaseHTTPRequestHandler):
                 # resets, rebases or removes anything.
                 name = payload["file"]
                 stage = payload.get("stage") or taskfiles.find_stage_of(name)
-                result = plans.replan(name, stage)
+                result = plans.replan(name, stage or "")
                 state.record_board_event({
                     "kind": "agent", "actor": "you", "file": name,
                     "summary": f"{name} replanned — {plans.line(result['plan'])}"})

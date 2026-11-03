@@ -167,6 +167,25 @@ def _fetch(remote: str, branch: str) -> bool:
 # ── resolving one named branch ─────────────────────────────────────────
 
 
+def _divergence(branch: str, ref: str, local: str, commit: str) -> str | None:
+    """What to say when this checkout's copy of a base is not the remote's.
+
+    The published tip is what the work is started from either way: it is
+    the commit the PR's diff will be computed against, which is the only
+    reading a reviewer can check. So the note explains rather than offers
+    a choice — and says which direction the two differ in, because
+    "origin is ahead" and "you have commits origin has not seen" call for
+    completely different things from the person reading it.
+    """
+    if not local or local == commit:
+        return None
+    if _git("merge-base", "--is-ancestor", commit, local).returncode == 0:
+        return (f"this checkout has commits on {branch} that are not published "
+                f"— started from {ref}, the published tip, so the PR's diff is "
+                f"against what a reviewer can see")
+    return f"{branch} on the remote is ahead of this checkout's copy — started from {ref}"
+
+
 def _resolve_branch(branch: str, *, fetch: bool = True) -> dict:
     """A branch name → the ref to start from, the commit it is, and why.
 
@@ -182,12 +201,9 @@ def _resolve_branch(branch: str, *, fetch: bool = True) -> dict:
             ref = f"{remote}/{branch}"
             commit = _ref_commit(ref)
             if commit:
-                note = None
-                if local and local != commit:
-                    note = (f"{branch} on {remote} is ahead of this checkout's "
-                            f"copy — started from {ref}")
                 return {"ref": ref, "commit": commit, "branch": branch,
-                        "note": note, "problem": None}
+                        "note": _divergence(branch, ref, local, commit),
+                        "problem": None}
         elif local:
             return {"ref": branch, "commit": local, "branch": branch,
                     "note": (f"could not fetch {branch} from {remote} — started "
@@ -543,6 +559,10 @@ def preflight(filename: str, stage: str, *, fetch: bool = True,
     """
     if Path(filename).name != filename or not filename.endswith(".md"):
         raise ValueError("bad filename")
+    if stage not in config.STAGE_DIRS:
+        # Asked about a card that is not in a stage directory — an archived
+        # one, or a page that went stale. There is no work to plan.
+        raise ValueError(f"{filename} is not on the board — nothing to plan")
     card = task if task is not None else _woven(filename, stage)
     shape = declared(card)
     stem = filename[:-3]

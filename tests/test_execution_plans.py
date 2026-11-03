@@ -471,6 +471,28 @@ class WhatPreflightRefuses(PlanCase):
         self.assertNotEqual(plan["startBranch"], "main")
         self.assertNothingStarted()
 
+    def test_unpublished_commits_on_the_base_are_named_not_silently_used(self):
+        """The published tip is what a reviewer's diff is against, so that
+        is what the work starts from — and the note says which way the two
+        copies differ rather than leaving it to be discovered."""
+        git(self.repo, "worktree", "add", "-q", str(self.tmp / "pre"), PREREQ)
+        (self.tmp / "pre" / "unpushed.txt").write_text("local only\n", encoding="utf-8")
+        git(self.tmp / "pre", "add", "-A")
+        git(self.tmp / "pre", "-c", "user.email=t@t", "-c", "user.name=t",
+            "commit", "-q", "-m", "not published")
+        self.write(card("57 — Document it", base=PREREQ))
+        plan = self.plan()
+        self.assertEqual(plan["blockers"], [])
+        self.assertEqual(plan["startCommit"], self.prereq_tip)
+        self.assertTrue(any("not published" in n for n in plan["notes"]))
+
+    def test_a_base_the_remote_has_moved_on_is_fetched_and_said_so(self):
+        git(self.repo, "push", "-q", "origin", f"{self.main_tip}:{PREREQ}", "--force")
+        self.write(card("57 — Document it", base=PREREQ))
+        plan = self.plan()
+        self.assertEqual(plan["startCommit"], self.main_tip)
+        self.assertTrue(any("ahead of this checkout" in n for n in plan["notes"]))
+
     def test_a_base_only_the_remote_has_is_fetched_rather_than_refused(self):
         git(self.repo, "branch", "-D", PREREQ)
         self.write(card("57 — Document it", base=PREREQ))
