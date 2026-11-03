@@ -253,19 +253,22 @@ into the application**. Nothing else changes: with neither setting, every
 path resolves exactly as it always did, so a vendored installation needs
 no migration and reads no differently.
 
-Four flags decide a layout, and there are no others. `--app` and `--work`
-name the application and the work state, both as absolute paths —
-bench resolves nothing against a working directory it cannot see.
-`--worktrees` moves the task branches' checkouts off the default beside
-the application. `--app-hooks` opts into writing the application's own
-local settings file, and refuses if git tracks it (see "Hooks without a
-tracked file"). `--dry-run` reports what any of them would do and writes
-nothing, and `--setup` asks the first-run questions again. Each of the
-three roots is a plain setting underneath — `BOARD_APP_ROOT`,
-`BOARD_WORK_ROOT`, `BOARD_WORKTREES` in `manager/local/.env`, every one
-of them documented in
-[`core/.env.example`](manager/core/.env.example) — so an install already
-made is retargeted by editing that file rather than by installing again.
+The installer takes six flags and no others. Four shape an external
+install: `--app` and `--work` name the application and the work state,
+both as absolute paths — bench resolves nothing against a working
+directory it cannot see; `--worktrees` moves the task branches'
+checkouts off the default beside the application; and `--app-hooks` opts
+into writing the application's own local settings file, refusing if git
+tracks it (see "Hooks without a tracked file"). Two apply to any
+install: `--dry-run` reports what the rest would do and writes nothing,
+and `--setup` asks the first-run questions again.
+
+Each of the three roots is a plain setting underneath —
+`BOARD_APP_ROOT`, `BOARD_WORK_ROOT` and `BOARD_WORKTREES` in
+`manager/local/.env`, every one of them documented in
+[`core/.env.example`](manager/core/.env.example). So an install already
+made is retargeted by editing that file and re-running `install.py`,
+which is idempotent, rather than by installing from scratch.
 
 ### Four roots, named separately
 
@@ -348,7 +351,7 @@ branch was pushed" are two events in two repositories, and the split
 exists so that neither can be read as the other.
 
 **What stays out of shared ticket history.** The work state holds what a
-teammate should read: tickets, the plans written in plan mode,
+teammate should read: the tickets, the implementation plans in `plans/`,
 `reference/`. Everything machine-local stays with the tool and out of
 it — agent logs, drive and command logs, session timelines, the
 generated hook settings, and the recorded execution plans under
@@ -356,8 +359,9 @@ generated hook settings, and the recorded execution plans under
 `manager/local/.env` is gitignored and belongs there too: it names the
 roots on *this* disk and the binaries on this PATH. An absolute path out
 of somebody's home directory, a credential, or a log that means nothing
-on another machine has no business in a repository other people pull,
-which is why none of it is written where one could reach it.
+on the machine that did not write it has no business in a repository
+other people pull — which is why none of it is written anywhere a pull
+could carry it.
 
 ### A card's branch belongs to the application
 
@@ -393,11 +397,11 @@ branch* a card's work starts from and targets, and the layout decides
   selected it, so a requirement that exists only in prose is visible as
   exactly that.
 
-None of that is restated here. **"Execution plans"** is the reference for
+The rest is not repeated here. **"Execution plans"** is the reference for
 it — a section of its own, listed beside this one, holding `plan drift`,
 **⌖ replan** and preflight's whole list of refusals — and nothing in it
-changes because the tickets moved out of the checkout. The two meet at
-one question only, the one above: which repository the branch is in.
+changes because the tickets moved out of the checkout. The two features
+meet at one question, the one above: which repository the branch is in.
 
 ### Validation fails closed
 
@@ -500,8 +504,8 @@ Promotion is a deliberate, separate act and nothing does it by itself:
 bring the tested code into the operator install the way that install is
 maintained — `update.sh` for one unpacked from a release, git for a clone
 — then `install.py` to re-wire and a restart to pick it up. Until then
-the board is running the old code on purpose, and the card that changed
-the new code is just a card in `review/`.
+the board runs the old code on purpose, and the card that changed it is
+a card in `review/` like any other.
 
 The two can share one work state or keep separate ones, and either way
 `start.sh` and `stop.sh` tell their boards apart by the triple above, so

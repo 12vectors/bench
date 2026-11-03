@@ -74,7 +74,8 @@ ENV_KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=", re.MULTILINE)
 # calls counts the questions. The detected test command is deliberately
 # not one of them, which is the whole point of the count.
 ASKED = re.compile(r"^\s*(?:reply = )?_ask\(", re.MULTILINE)
-COUNT_WORD = {1: "one", 2: "two", 3: "three", 4: "four"}
+COUNT_WORD = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
+              6: "six", 7: "seven"}
 
 
 def text_of(path: Path) -> str:
@@ -149,18 +150,23 @@ class TheRepositoryDocumentsBothInstalls(unittest.TestCase):
                               f"does not read")
 
     def test_the_reference_names_every_flag_and_invents_none(self):
-        """AGENTS.md says four flags decide a layout and that there are
-        no others, so that paragraph is the one place a reader counts
-        them. It has to name each of the four, every other flag the
-        installer accepts, and nothing the installer does not."""
+        """AGENTS.md says how many flags the installer takes and that
+        there are no others, so that paragraph is the one place a reader
+        counts them. It has to name each of the four that shape an
+        external install, every other flag the installer accepts, and
+        nothing the installer does not — and the count it claims has to
+        be the number it then lists."""
         body = section("agents")
-        paragraph = body[body.index("Four flags decide a layout"):]
+        paragraph = body[body.index("The installer takes"):]
         paragraph = paragraph[:paragraph.index("\n\n")]
         named = set(LONG_FLAG.findall(paragraph))
         self.assertLessEqual({"--app", "--work", "--worktrees",
                               "--app-hooks"}, named,
                              "one of the four layout flags is unnamed")
         self.assertEqual(flags_install_py_reads(), named)
+        self.assertIn(f"takes {COUNT_WORD[len(named)]} flags", paragraph,
+                      f"the paragraph lists {len(named)} flags and says "
+                      f"another number")
 
     def test_every_setting_the_external_docs_name_is_a_real_setting(self):
         """A key that is not in the settings example is a key nothing
