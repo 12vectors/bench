@@ -271,40 +271,48 @@ def _no_commands_note() -> str | None:
 
 
 def _fresh_branch_point() -> tuple[str | None, str | None]:
-    """Where a brand-new task branch should start: the newest main that
-    exists. With an `origin` remote, fetch its main (bounded by
-    FETCH_TIMEOUT) and branch from origin/main — never touching the main
-    checkout itself, the fetched ref is only the branch point. No remote,
-    a failed fetch or a timeout all mean today's behaviour: branch from
-    HEAD, because launching must never be blocked by network weather.
+    """Where a brand-new task branch starts when nothing on the card says
+    otherwise: the newest application base that exists. With an `origin`
+    remote, fetch that base (bounded by FETCH_TIMEOUT) and branch from
+    origin/<base> — never touching the main checkout itself, the fetched
+    ref is only the branch point. No remote, a failed fetch or a timeout
+    all mean today's behaviour: branch from HEAD, because launching must
+    never be blocked by network weather.
 
     Returns (start point, ticker note); (None, …) means HEAD. The note is
-    non-None whenever the branch point deserves a mention — origin/main
+    non-None whenever the branch point deserves a mention — origin/<base>
     ahead of this checkout, or a fetch that had to be skipped.
+
+    This is the *default* path, and the one card 58 deliberately left
+    alone: a card that names its own base is resolved by `plans`, which
+    refuses rather than falling back, because falling back is the failure
+    it exists to stop.
     """
+    base = config.APP_BASE
+
     def _git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", "-C", str(config.REPO), *args],
+        return subprocess.run(["git", "-C", str(plans.app_repo()), *args],
                               capture_output=True, text=True)
 
     if "origin" not in _git("remote").stdout.split():
         return None, None
     try:
         fetched = subprocess.run(
-            ["git", "-C", str(config.REPO), "fetch", "origin", "main"],
+            ["git", "-C", str(plans.app_repo()), "fetch", "origin", base],
             capture_output=True, text=True, timeout=config.FETCH_TIMEOUT)
     except subprocess.TimeoutExpired:
-        return None, "fetch of origin/main timed out; branched from local HEAD"
+        return None, f"fetch of origin/{base} timed out; branched from local HEAD"
     if fetched.returncode != 0 or \
-            _git("rev-parse", "--verify", "--quiet", "origin/main").returncode != 0:
-        return None, "fetch of origin/main failed; branched from local HEAD"
-    # Counted against HEAD, not main: HEAD is the fallback base, so this is
-    # exactly what launching would have missed — accurate even when the
-    # board checkout sits on another branch.
-    ahead = _git("rev-list", "--count", "HEAD..origin/main").stdout.strip()
+            _git("rev-parse", "--verify", "--quiet", f"origin/{base}").returncode != 0:
+        return None, f"fetch of origin/{base} failed; branched from local HEAD"
+    # Counted against HEAD, not the base branch: HEAD is the fallback base,
+    # so this is exactly what launching would have missed — accurate even
+    # when the board checkout sits on another branch.
+    ahead = _git("rev-list", "--count", f"HEAD..origin/{base}").stdout.strip()
     if ahead.isdigit() and int(ahead) > 0:
-        return "origin/main", (f"branched from origin/main, "
-                               f"{ahead} ahead of this checkout")
-    return "origin/main", None
+        return f"origin/{base}", (f"branched from origin/{base}, "
+                                  f"{ahead} ahead of this checkout")
+    return f"origin/{base}", None
 
 
 def phase_branch_point(filename: str) -> tuple[str | None, str | None]:
@@ -331,7 +339,7 @@ def phase_branch_point(filename: str) -> tuple[str | None, str | None]:
     if not phase:
         return None, None
     branch = phase_branch(phase["file"])
-    exists = subprocess.run(["git", "-C", str(config.REPO), "rev-parse",
+    exists = subprocess.run(["git", "-C", str(plans.app_repo()), "rev-parse",
                              "--verify", "--quiet", branch], capture_output=True)
     if exists.returncode != 0:
         return None, None
@@ -514,10 +522,12 @@ def _discard_untouched_worktree(record: dict) -> bool:
     """Remove worktree + branch, but only if the agent committed nothing."""
     if not _no_new_commits(record):
         return False
-    subprocess.run(["git", "-C", str(config.REPO), "worktree", "remove", "--force",
+    subprocess.run(["git", "-C", str(plans.app_repo()), "worktree", "remove", "--force",
                     record["worktree"]], capture_output=True)
-    subprocess.run(["git", "-C", str(config.REPO), "branch", "-D", record["branch"]],
+    subprocess.run(["git", "-C", str(plans.app_repo()), "branch", "-D", record["branch"]],
                    capture_output=True)
+    # The branch it described is gone, so the plan would describe nothing.
+    plans.forget(record["task"])
     return True
 
 
