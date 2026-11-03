@@ -552,7 +552,11 @@
     background:var(--sunken);font-size:12.5px;color:var(--text);
   }
   #drawer .prow:hover{border-color:var(--accent)}
+  /* the plan's rows are facts, not doors: no member card to open, so no
+     hover that implies one */
+  #drawer .prow.flat:hover{border-color:var(--line)}
   #drawer .prow.bad{border-color:var(--alarm);color:var(--alarm)}
+  #drawer .prow.bad:hover{border-color:var(--alarm)}
   #drawer .prow.bad .pstage{color:var(--alarm)}
   #drawer .prow .mono{font-family:var(--mono);font-size:11px;color:var(--dim)}
   #drawer .prow .pn{width:14px;flex:none;text-align:right}
@@ -1420,6 +1424,7 @@ function phaseFlight(task) {
    card with no number for a list to name it by. A phase in in-progress/ is
    running — its members are being worked in the order the list had when it
    started — so it is not on offer. The board offers what it can do. */
+
 /* Where a card's work starts and what its PR targets, as a chip.
 
    Two branch names and an arrow, which is the whole of what a person
@@ -2326,7 +2331,7 @@ function planBlock(t) {
     `<span class="mono">${p.recorded ? (p.provenance === 'adopted'
       ? 'recorded with the run · adopted' : 'recorded with the run')
       : 'not recorded yet'}</span></div>` +
-    rows.map(([k, v, why]) => `<div class="prow${drift ? ' bad' : ''}">` +
+    rows.map(([k, v, why]) => `<div class="prow flat${drift ? ' bad' : ''}">` +
       `<span class="pstage">${esc(k)}</span>` +
       `<span class="ptitle mono">${esc(v)}</span>` +
       `<span class="pstage">${esc(why)}</span></div>`).join('') +
