@@ -110,6 +110,59 @@ class FreshBranchPoint(unittest.TestCase):
     def test_origin_in_sync_is_used_without_narration(self):
         self.assertEqual(agents._fresh_branch_point(), ("origin/main", None))
 
+    # — what an explicit configuration may widen it to (task 56) —
+
+    def test_a_named_remote_is_fetched_where_an_unnamed_one_is_not(self):
+        """`origin`-only is the *default*, not the rule: an operator who
+        says which remote the application rides gets that one."""
+        _git(self.local, "remote", "rename", "origin", "upstream")
+        _commit(self.upstream, "landed elsewhere")
+        self.addCleanup(setattr, config, "GIT_REMOTE", config.GIT_REMOTE)
+        config.GIT_REMOTE = "upstream"
+
+        point, note = agents._fresh_branch_point()
+
+        self.assertEqual(point, "upstream/main")
+        self.assertEqual(note, "branched from upstream/main, "
+                               "1 ahead of this checkout")
+
+    def test_an_external_layout_resolves_the_remote_rather_than_assuming(self):
+        """Externally the application is named rather than inferred, so
+        its remote is something the operator has thought about."""
+        _git(self.local, "remote", "rename", "origin", "upstream")
+        _commit(self.upstream, "landed elsewhere")
+        self.addCleanup(setattr, config, "EXTERNAL", config.EXTERNAL)
+        config.EXTERNAL = True
+
+        self.assertEqual(agents._fresh_branch_point()[0], "upstream/main")
+
+    def test_a_configured_base_branch_is_the_one_fetched(self):
+        _git(self.upstream, "branch", "-m", "main", "trunk")
+        self.addCleanup(setattr, config, "APP_BASE", config.APP_BASE)
+        config.APP_BASE = "trunk"
+
+        point, _ = agents._fresh_branch_point()
+
+        self.assertEqual(point, "origin/trunk")
+        self.assertEqual(_git(self.local, "rev-parse", "origin/trunk"),
+                         _git(self.upstream, "rev-parse", "trunk"))
+
+    def test_a_hanging_named_remote_is_still_bounded(self):
+        """Widening which remote is fetched must not widen how long a
+        launch can be blocked."""
+        _git(self.local, "remote", "rename", "origin", "upstream")
+        self._hang_remote("upstream")
+        self.addCleanup(setattr, config, "GIT_REMOTE", config.GIT_REMOTE)
+        config.GIT_REMOTE = "upstream"
+        config.FETCH_TIMEOUT = 0.5
+
+        started = time.monotonic()
+        point, note = agents._fresh_branch_point()
+
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertIsNone(point)
+        self.assertIn("timed out", note)
+
     def test_unreachable_origin_falls_back_to_head_and_says_so(self):
         _git(self.local, "remote", "set-url", "origin",
              str(Path(self._tmp.name) / "gone"))

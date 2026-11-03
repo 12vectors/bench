@@ -15,7 +15,7 @@ not come through here: for a run that died, the *end* is the story.
 Sits left of both consumers in the module map (config → state →
 taskfiles → events / github / … → agents), so agents.py and github.py
 clip identically instead of reaching sideways for each other's helper.
-Depends on config alone, for the repo root a log path is named against.
+Depends on config alone, for the tool root a log path is named against.
 """
 
 from __future__ import annotations
@@ -96,13 +96,16 @@ def _elision(dropped: int, cap: int, log_path: str | None) -> str:
 
 
 def _log_reference(log_path: str | None) -> str:
-    """Where the unclipped report still is, repo-relative when it can be."""
+    """Where the unclipped report still is, named relative to the tool
+    install — which is where logs live, in every layout. It used to be
+    named relative to the application, and externally the two are
+    different directories entirely (task 56)."""
     logs = "manager/local/state/agent/logs/"
     if not log_path:
         return f"this run's log under `{logs}`"
     path = Path(log_path)
     try:
-        return f"`{path.resolve().relative_to(config.REPO)}`"
+        return f"`{path.resolve().relative_to(config.TM_ROOT.resolve())}`"
     except (ValueError, OSError):
         return f"`{logs}{path.name}`"
 

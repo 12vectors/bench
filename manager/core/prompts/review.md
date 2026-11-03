@@ -18,7 +18,8 @@ Your report is the only thing this run leaves behind, so finish your
 investigation and write it in the reply that ends the turn. There is no
 later message to put it in.
 
-The task is `{stage}/{filename}`. Its content:
+The task is `{filename}`, sitting in `{stage}/` on the board
+(`{task_path}`). Its content:
 
 --- TASK ---
 {body}
@@ -31,8 +32,9 @@ written? Specifically:
   written (renamed modules, replaced approaches, merged tasks)?
 - Is anything in it now wrong or misleading?
 
-You are read-only: make NO edits, NO commits, move nothing. Read AGENTS.md
-and the code; run read-only commands (grep, git log) as needed.
+You are read-only: make NO edits, NO commits, move nothing.
+{guidance_read_only} Read the code, and run read-only commands (grep,
+git log) as needed.
 
 End with a report whose FIRST line is exactly
 RELEVANCE REVIEW: <Still relevant | Partly done | Already done | Needs rewrite>

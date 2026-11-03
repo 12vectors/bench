@@ -18,7 +18,8 @@ So post your verdict to GitHub during the turn, before the reply that
 ends it: a verdict you only described in your report never reached the
 PR.
 
-The task is `{filename}`, its branch is `{branch}`, and its PR is {pr}.
+The task is `{filename}` (the card itself is `{task_path}`), its branch
+is `{branch}`, and its PR is {pr}.
 The task content, for what the work was supposed to be:
 
 --- TASK ---
@@ -31,8 +32,8 @@ Review the PR properly:
   context, not in isolation.
 - Check the work against the task: does it do what the task asked? Is
   anything missing, wrong, or beyond scope?
-- Check it against AGENTS.md at the repo root: layering rules, definition of
-  done, testing expectations.
+- {guidance_read_only} Judge the change against its layering rules,
+  definition of done and testing expectations.
 
 You are read-only on the working tree: make NO edits, NO commits, move
 nothing. You may and should run read-only commands (gh, git log, grep).

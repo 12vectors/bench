@@ -34,11 +34,56 @@ def _txt(value, cap=600):
     return value[:cap] if isinstance(value, str) else ""
 
 
+def _setting(key):
+    """A BOARD_* setting: the process environment, else local/.env — the
+    same ladder core reads, in a standalone copy (this bridge must not
+    import anything of the board's). Must never raise."""
+    value = os.environ.get(key)
+    if value:
+        return value
+    try:
+        for line in (MANAGER / "local" / ".env").read_text().splitlines():
+            name, _, raw = line.strip().partition("=")
+            if name.strip() == key and raw.strip():
+                value = raw.strip().strip("'\"")
+    except Exception:
+        pass
+    return value or ""
+
+
+def _worktrees():
+    """Where this board puts worktrees, absolute. A launch carries it
+    (BOARD_WORKTREES_DIR, set by the board); a person's own session reads
+    local/.env. Empty when nothing says."""
+    direct = _setting("BOARD_WORKTREES_DIR")
+    if direct:
+        return direct
+    configured = _setting("BOARD_WORKTREES")
+    if configured and os.path.isabs(configured):
+        return configured
+    app = _setting("BOARD_APP_ROOT")
+    if app:
+        return os.path.join(app, configured or ".worktrees")
+    return ""
+
+
 def _relpath(path):
+    """A file path as a reader of the board wants it: relative to the
+    checkout it is in. The worktrees directory is configurable and may
+    sit anywhere (task 56), so it is read rather than assumed — the
+    `.worktrees` pattern below stays as the fallback for a session that
+    knows nothing about this board."""
     if not isinstance(path, str):
         return ""
+    trees = _worktrees()
+    if trees:
+        prefix = trees.rstrip("/") + "/"
+        if path.startswith(prefix):
+            rest = path[len(prefix):]
+            path = rest.split("/", 1)[1] if "/" in rest else rest
     path = re.sub(r"^.*?/\.worktrees/[^/]+/", "", path)
-    root = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    root = (os.environ.get("CLAUDE_PROJECT_DIR")
+            or _setting("BOARD_APP_ROOT") or os.getcwd())
     if path.startswith(root):
         path = path[len(root):].lstrip("/")
     return path
@@ -167,18 +212,7 @@ def classify(hook, tool, tool_input, resp):
 
 
 def board_port():
-    port = os.environ.get("BOARD_PORT")
-    if port:
-        return port
-    try:
-        env_file = MANAGER / "local" / ".env"
-        for line in env_file.read_text().splitlines():
-            key, _, value = line.strip().partition("=")
-            if key.strip() == "BOARD_PORT":
-                port = value.strip().strip("'\"")
-    except Exception:
-        pass
-    return port or "26071"
+    return _setting("BOARD_PORT") or "26071"
 
 
 def main():

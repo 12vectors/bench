@@ -31,15 +31,71 @@ ENV_FILE="$MANAGER/local/.env"
 busy_wait="${BOARD_PORT_WAIT:-5}"
 case "$busy_wait" in ''|*[!0-9]*) busy_wait=5 ;; esac
 
+# Who this install is: the tasks directory it serves, the application it
+# manages, and the tool it is. The work state can live outside the tool
+# entirely (task 56), so "$TM/tasks" is no longer the answer on its own —
+# and two boards can share one work state while managing different
+# applications, which is exactly the pair that must not adopt or stop one
+# another. Printed as three tab-separated fields; a stripped install tree
+# with no config.py falls back to the tasks path alone, which is all that
+# layout ever meant.
+board_identity() {
+  python3 - "$CORE" "$TM/tasks" "$TM" <<'RESOLVE'
+import sys
+sys.path.insert(0, sys.argv[1])
+try:
+    import config
+    print("\t".join([str(config.TASKS), str(config.REPO), str(config.TM_ROOT)]))
+except Exception:
+    print("\t".join([sys.argv[2], "", sys.argv[3]]))
+RESOLVE
+}
+
+# Every reason the configured layout cannot be served. Empty is fine, and
+# so is "config is not importable here" — that is a stripped tree, not a
+# broken layout.
+layout_problems() {
+  python3 - "$CORE" <<'RESOLVE'
+import sys
+sys.path.insert(0, sys.argv[1])
+try:
+    import config
+except Exception:
+    raise SystemExit(0)
+for problem in config.problems():
+    print(problem)
+RESOLVE
+}
+
 port="${BOARD_PORT:-}"
 if [ -z "$port" ] && [ -f "$ENV_FILE" ]; then
   port="$(sed -n 's/^[[:space:]]*BOARD_PORT[[:space:]]*=[[:space:]]*//p' "$ENV_FILE" | tail -1 | tr -d "'\"")"
 fi
 port="${port:-26071}"
 
-# Idempotent project wiring; a project without .claude/ still gets the board.
+# Idempotent project wiring; a project without .claude/ still gets the board,
+# so a failed wire is tolerated on purpose.
 python3 "$TM/install.py" || true
 echo
+
+# A failed wire is not the same thing as a layout that cannot be served,
+# and `|| true` above would have swallowed both. This is the fail-closed
+# half: asked after the wire, because that run may have just written the
+# layout, and asked before the port dance, because hopping ports and
+# launching a board that will refuse to serve is a worse way to be told.
+problems="$(layout_problems)"
+if [ -n "$problems" ]; then
+  echo "This board cannot serve the layout it is configured with:" >&2
+  printf '  - %s\n' "$problems" >&2
+  echo >&2
+  echo "Settings live in $ENV_FILE." >&2
+  exit 2
+fi
+
+IDENTITY="$(board_identity)"
+TASKS_ROOT="$(printf '%s' "$IDENTITY" | cut -f1)"
+APP_ROOT="$(printf '%s' "$IDENTITY" | cut -f2)"
+TOOL_ROOT="$(printf '%s' "$IDENTITY" | cut -f3)"
 
 is_free() {
   python3 - "$1" <<'PY'
@@ -58,6 +114,12 @@ PY
 }
 
 is_our_board() {
+  # All three identities, not just the tasks root: two operators can share
+  # one work state while managing different applications, and a preview
+  # install of the same board is a different tool root. Either of those
+  # adopted as "ours" would reopen — or, in stop.sh, kill — somebody
+  # else's board. A field the server does not report (an older board) is
+  # not compared rather than assumed to differ.
   python3 -c '
 import json, sys, urllib.request
 try:
@@ -65,8 +127,15 @@ try:
         data = json.load(r)
 except Exception:
     sys.exit(1)
+layout = data.get("layout") or {}
+pairs = [(data.get("board", {}).get("root"), sys.argv[2]),
+         (layout.get("app"), sys.argv[3]),
+         (layout.get("tool"), sys.argv[4])]
+for served, wanted in pairs:
+    if wanted and served is not None and served != wanted:
+        sys.exit(1)
 sys.exit(0 if data.get("board", {}).get("root") == sys.argv[2] else 1)
-' "$1" "$TM/tasks"
+' "$1" "$TASKS_ROOT" "$APP_ROOT" "$TOOL_ROOT"
 }
 
 open_board() {

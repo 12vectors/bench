@@ -23,8 +23,7 @@ suite especially — and commit again after it. A commit is cheap and a
 lost run is not, and an early commit can always be improved on later in
 the same turn.
 
-Read AGENTS.md at the repo root first and follow it, including its
-definition of done — run whatever checks it names until they pass.
+{guidance}
 
 The task is `{filename}`. Its content:
 
@@ -46,8 +45,9 @@ questions that change what should be built count — implementation details
 you can decide yourself by reading the codebase and AGENTS.md do not.
 
 Rules:
-- Do NOT move, rename or edit the task file itself — the board manages its
-  stage and status line from outside this worktree.
+- Do NOT move, rename or edit the task file itself. It is
+  `{task_path}`, outside this worktree, and the board manages its stage
+  and status line from there.
 - Use the TodoWrite tool to keep a step-by-step plan up to date while you work
   (the board displays it live).
 - Implement the task, cover new behaviour with tests, and run the relevant

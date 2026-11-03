@@ -41,11 +41,36 @@ import sync
 import watch
 
 
+def refuse_broken_layout() -> None:
+    """A layout that does not hold together is a refusal, not a warning.
+
+    Every fallback available from here leads to the wrong repository — the
+    tool's own, or the application's — so the board says what is wrong and
+    does not serve. `config.problems()` is the one authority; install.py
+    prints the same list (task 56).
+    """
+    problems = config.problems()
+    if not problems:
+        return
+    layout = config.layout()
+    print("This board cannot serve the layout it is configured with:\n")
+    for problem in problems:
+        print(f"  - {problem}")
+    print(f"\n  tool        {layout['tool']}"
+          f"\n  application {layout['app']}"
+          f"\n  work state  {layout['work']}"
+          f"\n  worktrees   {layout['worktrees']}"
+          f"\n\nSettings live in {config.LOCAL / '.env'} "
+          f"(defaults in {config.CORE / '.env.example'}).")
+    raise SystemExit(2)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=config.PORT)
     parser.add_argument("--no-open", action="store_true", help="don't open a browser")
     args = parser.parse_args()
+    refuse_broken_layout()
     state.serve_port = args.port
 
     url = f"http://127.0.0.1:{args.port}/"
@@ -76,7 +101,17 @@ def main() -> None:
         threading.Thread(target=sync.beat, daemon=True).start()
     drive.adopt()
 
-    print(f"Task board for {config.TASKS}\n  {url}\n  Ctrl-C to stop")
+    print(f"Task board for {config.TASKS}")
+    if config.EXTERNAL:
+        # Three roots are a thing a person should be able to check at a
+        # glance, and the one moment they are all certainly on screen is
+        # the line that says the board is up.
+        print(f"  application {config.REPO}\n"
+              f"  work state  {config.work_root()}"
+              + (f" (git: {config.state_repo()})" if config.state_repo()
+                 else " (no git — the board commits nothing)") + "\n"
+              f"  worktrees   {config.WORKTREES}")
+    print(f"  {url}\n  Ctrl-C to stop")
     if not args.no_open:
         webbrowser.open(url)
     try:

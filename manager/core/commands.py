@@ -4,7 +4,8 @@ Core knows nothing about what any command does — the project does
 (local/commands/<name>, executables the project owns and evolves). The
 contract:
 
-  - env in: CMD_WORKTREE, CMD_BRANCH, CMD_TASK, CMD_REPO (+ BOARD_*)
+  - env in: CMD_WORKTREE, CMD_BRANCH, CMD_TASK, CMD_REPO (the
+    application's root) (+ BOARD_*, including the resolved layout)
   - stdout/stderr → a log under local/state/commands/
   - exit 0 = done; anything else = failed — either way the ticker narrates
     the ending with the log's last line
@@ -43,13 +44,17 @@ def run(name: str, filename: str) -> dict:
             raise ValueError(f"{name} is already running on {filename}")
 
     stem = filename[:-3]
-    branch = f"task/{stem}"
+    # A phase card runs on phase/<stem>; one answer, in config.
+    branch = config.branch_for(stem)
     worktree = config.WORKTREES / stem
+    mismatch = config.worktree_mismatch(worktree)
+    if mismatch:
+        raise ValueError(mismatch)
     if not worktree.exists():
         if subprocess.run(["git", "-C", str(config.REPO), "rev-parse", "--verify",
                            "--quiet", branch], capture_output=True).returncode != 0:
             raise ValueError(f"no worktree and no branch {branch} — nothing to run against")
-        config.WORKTREES.mkdir(exist_ok=True)
+        config.WORKTREES.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
             ["git", "-C", str(config.REPO), "worktree", "add", str(worktree), branch],
             capture_output=True, text=True)

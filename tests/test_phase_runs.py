@@ -179,6 +179,7 @@ class PhaseCase(unittest.TestCase):
         self.sent: list[dict] = []
         self.addCleanup(setattr, state, "broadcast", state.broadcast)
         state.broadcast = self.sent.append
+        self.reaped: dict[int, dict] = {}
 
         self.write_cards()
 
@@ -216,16 +217,28 @@ class PhaseCase(unittest.TestCase):
     def settle(self) -> None:
         """Wait for any agent the pass launched to be fully reaped — the
         reaper's last act is the agents broadcast, so that is the honest
-        signal that the card has landed wherever it lands."""
+        signal that the card has landed wherever it lands.
+
+        One broadcast per launch, so the count has to be per launch — and
+        a launch is not an id. Agent ids carry a one-second clock
+        (`<stem>-<HHMMSS>`), so relaunching one card inside the same
+        second replaces its record in `state.AGENTS` instead of adding
+        one. Counting ids, or live records, therefore stops growing while
+        the broadcasts keep coming, and the barrier turns into a no-op
+        the *previous* run's broadcast already satisfied — which is the
+        window between the reaper flipping the status and the reaper
+        moving the card. So launches are counted by record identity, and
+        each record is kept referenced here so no address is recycled
+        under us."""
         self.assertTrue(
             wait_for(lambda: not any(r["status"] == "running"
                                      for r in state.AGENTS.values())),
             "an agent the phase launched never ended")
-        running = [r for r in state.AGENTS.values() if r.get("mode") == "work"]
-        if running:
-            self.assertTrue(wait_for(
-                lambda: self.sent.count({"type": "agents"}) >= len(running)),
-                "the reaper never announced the ending")
+        for record in state.AGENTS.values():
+            self.reaped.setdefault(id(record), record)
+        self.assertTrue(wait_for(
+            lambda: self.sent.count({"type": "agents"}) >= len(self.reaped)),
+            "the reaper never announced the ending")
 
     # — reading the world back —
 

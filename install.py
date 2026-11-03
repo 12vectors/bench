@@ -1,9 +1,31 @@
 #!/usr/bin/env python3
-"""Wire the task manager into the project it sits in.
+"""Wire the task manager into the project it manages.
 
     python3 .task-manager/install.py             # apply (idempotent)
     python3 .task-manager/install.py --dry-run   # report only, change nothing
     python3 .task-manager/install.py --setup     # ask the settings questions again
+
+    python3 bench/install.py --app /ws/app --work /ws/work
+                                                 # an external layout: the
+                                                 # tool here, the application
+                                                 # there, the work state in a
+                                                 # third place (task 56)
+
+`--app` and `--work` record the external layout in manager/local/.env,
+build the work-state skeleton (tasks/ with its stages, plans/,
+reference/) and wire the adapter so that **nothing of bench is written
+into the application**: the hook settings are generated under the tool's
+own local state and handed to launches from there. `--worktrees` names
+where application worktrees go; it defaults to `worktrees` beside the
+application, because an external install must not leave directories in a
+checkout nobody asked it to touch. `--app-hooks` is the opt-in extra that
+also writes the application's *local* settings file, and refuses if git
+tracks it.
+
+A layout that does not hold together is refused before anything is
+written — `config.problems()` is the one authority, the same list the
+board prints when it declines to serve (fail closed: every fallback
+available here leads to the wrong repository).
 
 Vendor-specific wiring belongs to the configured agent adapter: this script
 resolves the adapter (BOARD_AGENT_ADAPTER in manager/local/.env, default
@@ -45,14 +67,32 @@ CORE = TM / "manager" / "core"
 
 STAGE_DIRS = ["backlog", "to-do", "in-progress", "review", "done"]
 KEEP = {".gitkeep", "task-template.md"}
+LAYOUT_FLAGS = {"--app": "BOARD_APP_ROOT", "--work": "BOARD_WORK_ROOT",
+                "--worktrees": "BOARD_WORKTREES"}
 
 
-def _project_root() -> Path:
-    """The host project's root: the git toplevel seen from the manager's
-    directory (same resolution as config._repo_root). Vendored installs
-    drop .task-manager/.git at clone time, so this finds the host repo;
-    when the manager IS the repo (self-hosted), it finds that repo itself.
-    No git → fall back to the vendored-layout assumption, the parent."""
+def _setting(key: str) -> str:
+    """A BOARD_* setting as config reads it: the process environment, then
+    manager/local/.env. A standalone copy on purpose — install.py has to
+    answer this before manager/core is on the path at all."""
+    value = os.environ.get(key)
+    if value:
+        return value.strip()
+    env_file = LOCAL / ".env"
+    if env_file.is_file():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            name, _, raw = line.strip().partition("=")
+            if name.strip() == key and raw.strip():
+                value = raw.strip().strip("'\"")
+    return (value or "").strip()
+
+
+def _derived_project_root() -> Path:
+    """Where the application is when nobody said: the git toplevel seen
+    from the manager's directory (same resolution as config's). Vendored
+    installs drop .task-manager/.git at clone time, so this finds the host
+    repo; when the manager IS the repo (self-hosted), it finds that repo
+    itself. No git → fall back to the vendored-layout assumption."""
     try:
         out = subprocess.check_output(
             ["git", "-C", str(TM), "rev-parse", "--show-toplevel"],
@@ -65,7 +105,42 @@ def _project_root() -> Path:
     return TM.parent
 
 
+def _project_root() -> Path:
+    """The application this install manages — named explicitly when it is
+    external, derived as above when it is not."""
+    explicit = _setting("BOARD_APP_ROOT")
+    return Path(explicit).expanduser() if explicit else _derived_project_root()
+
+
 PROJECT = _project_root()
+
+
+def _work_root() -> Path:
+    """Where the work state lives: tasks/, plans/, reference/."""
+    explicit = _setting("BOARD_WORK_ROOT")
+    return Path(explicit).expanduser() if explicit else TM
+
+
+def _external() -> bool:
+    return bool(_setting("BOARD_APP_ROOT") or _setting("BOARD_WORK_ROOT"))
+
+
+def load_core_config():
+    """manager/core/config.py, for the one answer that must not be given
+    twice: what the layout resolves to and whether it holds together.
+
+    None when core is not on disk beside this script — a stripped install
+    tree, which is exactly what the wiring tests build. Then install.py
+    does what it always did and validates nothing, because there is
+    nothing here that could."""
+    if not (CORE / "config.py").is_file():
+        return None
+    sys.path.insert(0, str(CORE))
+    try:
+        import config
+        return config
+    except Exception:          # noqa: BLE001 — a broken core must not stop wiring
+        return None
 
 
 def _content_dirs(tm: Path) -> list[Path]:
@@ -343,6 +418,109 @@ def setup(dry_run: bool, forced: bool) -> None:
           f"commented; edit it any time.\n")
 
 
+# ── the external layout ───────────────────────────────────────────────
+
+
+def flag_value(args: list[str], name: str) -> str | None:
+    if name not in args:
+        return None
+    index = args.index(name)
+    return args[index + 1] if index + 1 < len(args) else None
+
+
+def layout_answers(args: list[str]) -> dict[str, str]:
+    """The layout keys named on the command line, with the one default
+    that is not a plain pass-through: `--worktrees` left unsaid in an
+    external layout means `worktrees` beside the application, never
+    `.worktrees` inside it."""
+    answers: dict[str, str] = {}
+    for option, key in LAYOUT_FLAGS.items():
+        value = flag_value(args, option)
+        if value:
+            answers[key] = str(Path(value).expanduser()) \
+                if Path(value).expanduser().is_absolute() else value
+    if ("BOARD_APP_ROOT" in answers or "BOARD_WORK_ROOT" in answers) \
+            and "BOARD_WORKTREES" not in answers \
+            and not _setting("BOARD_WORKTREES"):
+        app = Path(answers.get("BOARD_APP_ROOT") or PROJECT).expanduser()
+        answers["BOARD_WORKTREES"] = str(app.parent / "worktrees")
+    return answers
+
+
+def apply_to_environment(answers: dict[str, str]) -> None:
+    """Put the answers where config will read them, so the layout is
+    validated as it will actually resolve — before a line is written."""
+    for key, value in answers.items():
+        os.environ[key] = value
+
+
+def write_layout_env(answers: dict[str, str], dry_run: bool) -> bool:
+    """Record the layout in manager/local/.env, from the documented
+    example when there is no file yet — so every other setting arrives
+    commented beside it, exactly as `setup()` leaves one. Returns whether
+    anything changed; a second identical run writes nothing."""
+    if not answers:
+        return False
+    base = ""
+    if ENV_FILE.is_file():
+        base = ENV_FILE.read_text(encoding="utf-8")
+    elif ENV_EXAMPLE.is_file():
+        base = ENV_EXAMPLE.read_text(encoding="utf-8")
+    updated = substitute(base, answers)
+    if base == updated:
+        return False
+    if not dry_run:
+        ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ENV_FILE.write_text(updated, encoding="utf-8")
+    return True
+
+
+WORK_SKELETON = ([Path("tasks") / slug for slug in STAGE_DIRS]
+                 + [Path("tasks") / "archive", Path("plans"),
+                    Path("reference")])
+
+
+def make_work_skeleton(work: Path, dry_run: bool) -> list[str]:
+    """tasks/ with its stage directories, plans/ and reference/ — and the
+    task template, so a new board starts from something. Anything already
+    there is left exactly as it is: an external work root is very often a
+    repository that already holds a board."""
+    created: list[str] = []
+    for relative in WORK_SKELETON:
+        path = work / relative
+        if path.is_dir():
+            continue
+        created.append(relative.as_posix() + "/")
+        if not dry_run:
+            path.mkdir(parents=True, exist_ok=True)
+    template, destination = (TM / "tasks" / "task-template.md",
+                             work / "tasks" / "task-template.md")
+    if template.is_file() and not destination.exists():
+        created.append("tasks/task-template.md")
+        if not dry_run:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(template, destination)
+    return created
+
+
+def report_problems(problems: list[str]) -> None:
+    print("This layout cannot be served:\n")
+    for problem in problems:
+        print(f"  - {problem}")
+    print(f"\nNothing was written. Settings live in {ENV_FILE} "
+          f"(defaults in {ENV_EXAMPLE}).")
+
+
+def print_layout(config) -> None:
+    layout = config.layout()
+    print(f"tool:     {layout['tool']}")
+    print(f"app:      {layout['app']}")
+    print(f"work:     {layout['work']}"
+          + ("" if layout["stateRepo"]
+             else "  (no git here — the board commits nothing)"))
+    print(f"trees:    {layout['worktrees']}\n")
+
+
 def adapter_name() -> str:
     if os.environ.get("BOARD_AGENT_ADAPTER"):
         return os.environ["BOARD_AGENT_ADAPTER"]
@@ -356,13 +534,83 @@ def adapter_name() -> str:
 
 
 def main() -> int:
+    global PROJECT
     args = sys.argv[1:]
+    dry_run = "--dry-run" in args
+    app_hooks = "--app-hooks" in args
+
+    answers = layout_answers(args)
+    apply_to_environment(answers)
+    PROJECT = _project_root()
+    external = _external()
+
+    # Validation belongs to a *configured* layout. Vendored, every root is
+    # derived from where this script sits, so there is nothing a person
+    # could have got wrong — and refusing to wire over it would be a new
+    # way to fail at something that always worked. The board refuses a
+    # broken layout either way.
+    config = load_core_config() if external else None
+    if config is not None:
+        # Before anything is written, and without requiring the work root
+        # or the skeleton this run may be about to create: neither may be
+        # built under a layout these checks would refuse.
+        problems = config.problems(require_tasks=False, require_work=False)
+        if problems:
+            report_problems(problems)
+            return 1
+
     # Order is load-bearing: setup writes local/.env, which is one of the
     # two things first_boot() reads as "this project has been here before".
-    first_boot_clean(dry_run="--dry-run" in args)
-    setup(dry_run="--dry-run" in args, forced="--setup" in args)
+    # It never runs externally — it exists to clear the *distribution's*
+    # shipped cards out of a vendored install, and an external work root
+    # is a board of its own whose cards are nobody's residue.
+    if not external:
+        first_boot_clean(dry_run=dry_run)
+
+    if answers:
+        verb = "would record" if dry_run else "recorded"
+        work = _work_root()
+        if not dry_run and answers.get("BOARD_WORK_ROOT") \
+                and not work.exists() and work.parent.is_dir():
+            # `--work` names where the work state goes, so creating that
+            # directory is part of answering it. Only after the checks
+            # above have passed, and only one level: a parent that is not
+            # there is a path the person has not thought through.
+            work.mkdir()
+        if write_layout_env(answers, dry_run):
+            print(f"{verb} the layout in {ENV_FILE}:")
+            for key in sorted(answers):
+                print(f"  {key}={answers[key]}")
+            print()
+        created = make_work_skeleton(work, dry_run)
+        if created:
+            print(f"{'would create' if dry_run else 'created'} the work "
+                  f"state under {work}:")
+            for entry in created:
+                print(f"  {entry}")
+            print()
+
+    setup(dry_run=dry_run, forced="--setup" in args)
+
+    if config is not None:
+        problems = config.problems(require_tasks=not dry_run,
+                                   require_work=not dry_run)
+        if problems:
+            report_problems(problems)
+            return 1
+        print_layout(config)
+
     name = adapter_name()
-    passthrough = [a for a in args if a != "--setup"]
+    passthrough = ["--dry-run"] if dry_run else []
+    if external and config is not None:
+        # Generated, not installed: the application gets nothing, and the
+        # same document the headless launches build is written where a
+        # person's own session can be pointed at it.
+        passthrough += ["--generated",
+                        str(LOCAL / "state" / "hooks" / name / "settings.json"),
+                        "--plans", str(_work_root() / "plans")]
+    if app_hooks:
+        passthrough.append("--app-hooks")
     sys.stdout.flush()   # the wire's output is a child's: keep the order
     for base in (LOCAL / "adapters", CORE / "adapters"):
         wire = base / name / "wire"

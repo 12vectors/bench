@@ -34,10 +34,49 @@ def shim_text(target: Path) -> str:
     )
 
 
+def _flag_value(args: list[str], name: str) -> str | None:
+    if name not in args:
+        return None
+    index = args.index(name)
+    return args[index + 1] if index + 1 < len(args) else None
+
+
 def main() -> int:
-    args = [a for a in sys.argv[1:] if a != "--dry-run"]
-    dry_run = "--dry-run" in sys.argv[1:]
+    argv = sys.argv[1:]
+    dry_run = "--dry-run" in argv
+    generated = _flag_value(argv, "--generated")
+    taken = {"--dry-run", "--app-hooks", "--generated", "--plans", generated,
+             _flag_value(argv, "--plans")}
+    args = [a for a in argv if a not in taken and not a.startswith("--")]
     project = Path(args[0]).resolve() if args else Path.cwd()
+
+    if generated:
+        # Refused, not quietly degraded. opencode loads project plugins
+        # from the checkout it is run in, so the only way its sessions
+        # (and its headless jobs, which run in worktrees of that
+        # checkout) report events is a file inside the application —
+        # exactly what an external install exists not to write. Falling
+        # back to writing it anyway would be the silent in-app wiring
+        # this flag was added to prevent, and pretending success would
+        # leave a board that renders no live sessions for no stated
+        # reason. So the install says so and fails.
+        print("adapter:  opencode\n")
+        print(f"  external wiring   unsupported")
+        print(f"\nopencode discovers plugins under the project it runs in "
+              f"(.opencode/plugin/), so there is nowhere outside "
+              f"{project} to install the board's event bridge. An external "
+              f"install cannot wire opencode without writing into the "
+              f"application.\n"
+              f"\nTwo ways forward:\n"
+              f"  - set BOARD_AGENT_ADAPTER=claude, whose whole settings "
+              f"document is generated per launch and needs nothing in the "
+              f"application;\n"
+              f"  - or vendor bench into {project} and run it there, where "
+              f"the plugin shim is the project's own file.\n"
+              f"\nHeadless jobs would still run, but no session would "
+              f"report an event — so this is a refusal rather than a "
+              f"warning.")
+        return 1
 
     if not project.is_dir():
         print(f"{project} is not a directory — nothing to wire.")

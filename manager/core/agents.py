@@ -6,6 +6,11 @@ Two kinds:
 - review agents (start_review) are read-only, run in the main checkout, and
   their relevance report is appended to the task file by the board.
 
+Every git command here runs against `config.REPO` — the **application**
+repository — and every worktree under `config.WORKTREES`. The task file
+the board writes afterwards may live in a different repository entirely
+(task 56); `taskfiles` owns that half.
+
 Prompts live in .prompts/ and are read fresh on every launch.
 """
 
@@ -28,7 +33,7 @@ from taskfiles import (actor_name, append_to_task, collect, find_stage_of,
 # A phase runs on an integration branch of its own — phases.py owns the
 # behaviour, the name lives here because this is where a launch decides
 # what to branch from.
-PHASE_BRANCH_PREFIX = "phase/"
+PHASE_BRANCH_PREFIX = config.PHASE_BRANCH_PREFIX
 
 
 def phase_branch(phase_file: str) -> str:
@@ -270,40 +275,52 @@ def _no_commands_note() -> str | None:
 
 
 def _fresh_branch_point() -> tuple[str | None, str | None]:
-    """Where a brand-new task branch should start: the newest main that
-    exists. With an `origin` remote, fetch its main (bounded by
-    FETCH_TIMEOUT) and branch from origin/main — never touching the main
-    checkout itself, the fetched ref is only the branch point. No remote,
-    a failed fetch or a timeout all mean today's behaviour: branch from
-    HEAD, because launching must never be blocked by network weather.
+    """Where a brand-new task branch should start: the newest base branch
+    that exists, in the **application** repository.
+
+    Which remote and which branch are `config`'s answers, resolved
+    independently of the work state's (task 56) — and the remote one is
+    `app_branch_remote()`, not `git_remote()`: with nothing configured
+    only `origin` counts, exactly as before, because branching is on the
+    launch path and a board must not start fetching a remote nobody
+    named. An explicit setting or an external layout widens it.
+
+    With a remote, fetch its base (bounded by FETCH_TIMEOUT) and branch
+    from `<remote>/<base>` — never touching the checkout itself, the
+    fetched ref is only the branch point. No remote, a failed fetch or a
+    timeout all mean today's behaviour: branch from HEAD, because
+    launching must never be blocked by network weather.
 
     Returns (start point, ticker note); (None, …) means HEAD. The note is
-    non-None whenever the branch point deserves a mention — origin/main
-    ahead of this checkout, or a fetch that had to be skipped.
+    non-None whenever the branch point deserves a mention — the remote
+    base ahead of this checkout, or a fetch that had to be skipped.
     """
     def _git(*args: str) -> subprocess.CompletedProcess:
         return subprocess.run(["git", "-C", str(config.REPO), *args],
                               capture_output=True, text=True)
 
-    if "origin" not in _git("remote").stdout.split():
+    rname = config.app_branch_remote()
+    if not rname or rname not in _git("remote").stdout.split():
         return None, None
+    base = config.APP_BASE
+    upstream = f"{rname}/{base}"
     try:
         fetched = subprocess.run(
-            ["git", "-C", str(config.REPO), "fetch", "origin", "main"],
+            ["git", "-C", str(config.REPO), "fetch", rname, base],
             capture_output=True, text=True, timeout=config.FETCH_TIMEOUT)
     except subprocess.TimeoutExpired:
-        return None, "fetch of origin/main timed out; branched from local HEAD"
+        return None, f"fetch of {upstream} timed out; branched from local HEAD"
     if fetched.returncode != 0 or \
-            _git("rev-parse", "--verify", "--quiet", "origin/main").returncode != 0:
-        return None, "fetch of origin/main failed; branched from local HEAD"
-    # Counted against HEAD, not main: HEAD is the fallback base, so this is
-    # exactly what launching would have missed — accurate even when the
+            _git("rev-parse", "--verify", "--quiet", upstream).returncode != 0:
+        return None, f"fetch of {upstream} failed; branched from local HEAD"
+    # Counted against HEAD, not the base: HEAD is the fallback base, so this
+    # is exactly what launching would have missed — accurate even when the
     # board checkout sits on another branch.
-    ahead = _git("rev-list", "--count", "HEAD..origin/main").stdout.strip()
+    ahead = _git("rev-list", "--count", f"HEAD..{upstream}").stdout.strip()
     if ahead.isdigit() and int(ahead) > 0:
-        return "origin/main", (f"branched from origin/main, "
-                               f"{ahead} ahead of this checkout")
-    return "origin/main", None
+        return upstream, (f"branched from {upstream}, "
+                          f"{ahead} ahead of this checkout")
+    return upstream, None
 
 
 def phase_branch_point(filename: str) -> tuple[str | None, str | None]:
@@ -391,19 +408,24 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     continuing = worktree.exists()
     base_note = None
     if continuing:
-        # earlier work exists — the agent continues on it rather than refusing
+        # earlier work exists — the agent continues on it rather than
+        # refusing. But *whose* work: a matching branch name says nothing
+        # about which repository the checkout belongs to.
+        mismatch = config.worktree_mismatch(worktree)
+        if mismatch:
+            raise ValueError(mismatch)
         current = subprocess.run(
             ["git", "-C", str(worktree), "branch", "--show-current"],
             capture_output=True, text=True).stdout.strip()
         if current != branch:
             raise ValueError(
                 f"worktree {worktree} is on '{current}', not {branch} — fix it by hand")
-        base = _git("merge-base", "main", branch).stdout.strip() \
+        base = _git("merge-base", config.APP_BASE, branch).stdout.strip() \
             or _git("rev-parse", "HEAD").stdout.strip()
     else:
-        config.WORKTREES.mkdir(exist_ok=True)
+        config.WORKTREES.mkdir(parents=True, exist_ok=True)
         if branch_exists:
-            base = _git("merge-base", "main", branch).stdout.strip()
+            base = _git("merge-base", config.APP_BASE, branch).stdout.strip()
             result = _git("worktree", "add", str(worktree), branch)
         else:
             # A phase member starts from its phase's tip; everything else
@@ -428,7 +450,8 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     prompt = config.prompt("work.md").format(
-        branch=branch, filename=filename, body=task["body"])
+        branch=branch, filename=filename, body=task["body"],
+        **config.prompt_fields(filename, "in-progress"))
     proc, log_file, model = _launch("work", prompt, worktree, agent_id, filename, log_path)
 
     name = _pick_name(stem)
@@ -470,7 +493,8 @@ def start_review(filename: str, stage: str) -> dict:
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     prompt = config.prompt("review.md").format(
-        stage=stage, filename=filename, body=task["body"])
+        stage=stage, filename=filename, body=task["body"],
+        **config.prompt_fields(filename, stage))
     proc, log_file, model = _launch("review", prompt, config.REPO, agent_id, filename, log_path)
 
     name = _pick_name(filename)
@@ -516,15 +540,36 @@ def _no_new_commits(record: dict) -> bool:
     return head.returncode == 0 and head.stdout.strip() == record["base"]
 
 
-def _discard_untouched_worktree(record: dict) -> bool:
-    """Remove worktree + branch, but only if the agent committed nothing."""
+def _discard_untouched_worktree(record: dict) -> tuple[bool, str]:
+    """Remove worktree + branch, but only when there is provably nothing
+    in them. Returns (removed, why it was kept).
+
+    An unchanged HEAD is *not* the same as a clean checkout. A run that
+    edited files and never committed — a permission failure, an API error
+    mid-edit, a decline after some exploration — leaves exactly that: no
+    commits, and work on disk. Forcing the worktree out threw it away,
+    and it is the one unrecoverable thing in this whole module. So
+    uncommitted changes and untracked files both keep it, the removal
+    runs without `--force`, and a git that refuses anyway is reported
+    rather than assumed to have succeeded.
+    """
     if not _no_new_commits(record):
-        return False
-    subprocess.run(["git", "-C", str(config.REPO), "worktree", "remove", "--force",
-                    record["worktree"]], capture_output=True)
+        return False, "it has commits"
+    worktree = record["worktree"]
+    dirty = config.dirty_files(worktree)
+    if dirty:
+        return False, (f"{len(dirty)} uncommitted change"
+                       f"{'' if len(dirty) == 1 else 's'} in it")
+    removed = subprocess.run(
+        ["git", "-C", str(config.REPO), "worktree", "remove", worktree],
+        capture_output=True, text=True)
+    if removed.returncode != 0:
+        detail = (removed.stderr.strip() or removed.stdout.strip()
+                  or "git would not remove it")
+        return False, detail.splitlines()[-1][:120]
     subprocess.run(["git", "-C", str(config.REPO), "branch", "-D", record["branch"]],
                    capture_output=True)
-    return True
+    return True, ""
 
 
 def _failure_excerpt(log_path: str | None, lines: int = 6, cap: int = 600) -> str:
@@ -630,9 +675,10 @@ def _reap_agent(agent_id: str, proc: subprocess.Popen, log_file) -> None:
                 move_task(filename, "in-progress", back_to, actor="agent")
             except ValueError:
                 pass
-        cleaned = _discard_untouched_worktree(record)
+        cleaned, kept = _discard_untouched_worktree(record)
         summary = (f"{name} declined {filename} — not ready: {declined}"
-                   + ("" if cleaned else f" (worktree {record['worktree']} kept: it has commits)"))
+                   + ("" if cleaned else
+                      f" (worktree {record['worktree']} kept: {kept})"))
     elif rc == 0 and not stopped:
         report = _report_of(record)
         _file_report(record, "Work report", report)
@@ -657,10 +703,10 @@ def _reap_agent(agent_id: str, proc: subprocess.Popen, log_file) -> None:
         # and names what the log's tail said. A run that committed nothing
         # also leaves nothing worth keeping, so the worktree goes and
         # ▸ start work is one click again — same reasoning as a decline.
-        cleaned = _discard_untouched_worktree(record)
+        cleaned, kept = _discard_untouched_worktree(record)
         summary = (f"{name} exited on {filename} rc={rc} — {_why(record)}"
                    + (" (worktree cleared — relaunch when you have read it)" if cleaned
-                      else f" (worktree {record['worktree']} kept: it has commits)"))
+                      else f" (worktree {record['worktree']} kept: {kept})"))
     state.record_board_event({"kind": "agent", "actor": "agent", "file": filename,
                               "summary": summary})
     state.broadcast({"type": "agents"})
@@ -689,7 +735,8 @@ def start_pr_review(filename: str, stage: str) -> dict:
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     prompt = config.prompt("review-pr.md").format(
-        filename=filename, pr=task["pr"], branch=branch, body=task["body"])
+        filename=filename, pr=task["pr"], branch=branch, body=task["body"],
+        **config.prompt_fields(filename, stage))
     proc, log_file, model = _launch("review", prompt, config.REPO, agent_id, filename, log_path)
 
     record = {
@@ -725,11 +772,14 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     stem = filename[:-3]
     branch = f"task/{stem}"
     worktree = config.WORKTREES / stem
+    mismatch = config.worktree_mismatch(worktree)
+    if mismatch:
+        raise ValueError(mismatch)
     if not worktree.exists():
         if subprocess.run(["git", "-C", str(config.REPO), "rev-parse", "--verify",
                            "--quiet", branch], capture_output=True).returncode != 0:
             raise ValueError(f"branch {branch} does not exist locally — nothing to act in")
-        config.WORKTREES.mkdir(exist_ok=True)
+        config.WORKTREES.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
             ["git", "-C", str(config.REPO), "worktree", "add", str(worktree), branch],
             capture_output=True, text=True)
@@ -742,7 +792,8 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     prompt = config.prompt("act-pr.md").format(
-        filename=filename, branch=branch, pr=task["pr"], body=task["body"])
+        filename=filename, branch=branch, pr=task["pr"], body=task["body"],
+        **config.prompt_fields(filename, stage))
     # act-pr is the one intent allowed to push: the PR must update.
     proc, log_file, model = _launch("act-pr", prompt, worktree, agent_id, filename, log_path)
 

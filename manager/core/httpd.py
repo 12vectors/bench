@@ -32,6 +32,10 @@ def state_payload() -> dict:
     return {
         "board": taskfiles.collect(),
         "project": config.PROJECT,
+        # the resolved roots: which application this board manages, where
+        # its work state lives, and which repository the bookkeeping goes
+        # to — so a board can say what it is driving rather than implying it
+        "layout": config.layout(),
         "sessions": sessions,
         "agents": agents.list_public(),
         "prs": github.public_state(),
@@ -141,7 +145,7 @@ class Handler(BaseHTTPRequestHandler):
         if "/" in name or ".." in name or name.startswith("."):
             self._send(404, b"not found", "text/plain")
             return
-        file_path = config.TM_ROOT / parts[2] / name
+        file_path = config.work_root() / parts[2] / name
         if not file_path.is_file():
             self._send(404, b"not found", "text/plain")
             return

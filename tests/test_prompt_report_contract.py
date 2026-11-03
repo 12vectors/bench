@@ -21,9 +21,13 @@ TEMPLATES = ("work.md", "review.md", "review-pr.md", "act-pr.md")
 # every template.
 SENTINEL = "Whatever the outcome, write the report itself for its reader"
 
-# Dummy values for every placeholder any template uses.
+# Dummy values for every placeholder any template uses. The layout-
+# dependent three come from config.prompt_fields() at launch (task 56).
 FIELDS = {"branch": "task/x", "stage": "backlog", "filename": "x.md",
-          "body": "content", "pr": "https://example.test/pr/1"}
+          "body": "content", "pr": "https://example.test/pr/1",
+          "task_path": "/work/tasks/backlog/x.md",
+          "guidance": "Read AGENTS.md.",
+          "guidance_read_only": "Read AGENTS.md."}
 
 
 def _tail(name: str) -> str:

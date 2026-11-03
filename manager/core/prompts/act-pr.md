@@ -52,11 +52,10 @@ Do this properly:
     branch as it was, and state in your report that a human must
     decide, naming the specific collision. Guessing at a semantic
     conflict is the one forbidden move.
-- Follow repo AGENTS.md: layering rules, definition of done. Run the tests
-  that cover what you changed until they pass.
+- {guidance}
 - Commit in clear, reviewable commits and push the branch (`git push`) so
   the PR updates.
-- Do NOT move, rename or edit the task file itself.
+- Do NOT move, rename or edit the task file itself (`{task_path}`).
 
 End your reply with a report whose FIRST line is exactly
 ADDRESSED: <one line on what changed>

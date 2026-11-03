@@ -1,22 +1,42 @@
 #!/usr/bin/env python3
 """Claude adapter: wire live-session visibility into the host project.
 
-Contract (same for every adapter): called by install.py with the project
-root as argv[1] (and optionally --dry-run). Idempotently ensures the
-project's own sessions report events to the board; prints a report; exit 0
-on ok/fixed, 1 on a project that cannot be wired.
+Contract (same for every adapter): called by install.py with the
+application root as argv[1]. Idempotently ensures sessions report events
+to the board; prints a report; exit 0 on ok/fixed, 1 on a project that
+cannot be wired.
 
-For Claude Code that means .claude/settings.json: plansDirectory pointing
-at the task manager's plans, and the five event hooks running this
-adapter's emit.py. Fully present → "ok", touches nothing. Partial, stale
-(old .tasks/ or manager/hooks paths) or duplicated → repaired in place.
-Other hooks and settings are never touched.
+    wire <app-root> [--dry-run] [--plans <dir>]
+                    [--generated <file>] [--app-hooks]
+
+For Claude Code the settings document is `plansDirectory` plus the five
+event hooks running this adapter's emit.py. Where it is written depends on
+the layout (task 56):
+
+- by default, `<app>/.claude/settings.json` — the vendored behaviour,
+  byte for byte: the manager is inside the project, so the paths are
+  project-relative and the file is the project's own;
+- with `--generated <file>`, the whole document is written **there** —
+  under the tool's own local state — and the application is not touched
+  at all. That is what makes an external install possible: headless
+  launches already pass their settings with `--settings`, and this is the
+  same document for the operator's own sessions to use the same way;
+- `--app-hooks` additionally writes `.claude/settings.local.json`, the
+  designated *local* override, for an operator who wants a plain `claude`
+  in the application checkout to report. It refuses outright if git
+  tracks that path, so no bench hook configuration can become a tracked
+  file in the application even by accident.
+
+Fully present → "ok", touches nothing. Partial, stale (old .tasks/ or
+manager/hooks paths) or duplicated → repaired in place. Other hooks and
+settings are never touched.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -44,8 +64,9 @@ EVENT_MATCHERS = {
 
 def _is_ours(hook) -> bool:
     """Any hook invoking one of our emit.py locations is ours — including
-    the legacy .tasks/hooks and manager/hooks paths, and the old hardcoded
-    .task-manager path in a layout that no longer uses it; all repaired."""
+    the legacy .tasks/hooks and manager/hooks paths, the old hardcoded
+    .task-manager path in a layout that no longer uses it, and the
+    absolute path an external install writes; all repaired."""
     cmd = str(hook.get("command", "")) if isinstance(hook, dict) else ""
     return "emit.py" in cmd and (
         ".task-manager" in cmd or ".tasks" in cmd
@@ -95,37 +116,22 @@ def _fix_event(hooks_cfg: dict, event: str, matcher: str | None, emit_cmd: str) 
         {"type": "command", "command": emit_cmd, "timeout": 5})
 
 
-def main() -> int:
-    args = [a for a in sys.argv[1:] if a != "--dry-run"]
-    dry_run = "--dry-run" in sys.argv[1:]
-    project = Path(args[0]).resolve() if args else Path.cwd()
-    claude_dir = project / ".claude"
-    settings_path = claude_dir / "settings.json"
+def _load(path: Path) -> tuple[dict | None, str]:
+    """The settings document at `path`, or (None, reason)."""
+    if not path.is_file():
+        return {}, ""
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except json.JSONDecodeError as exc:
+        return None, f"error: {path} is not valid JSON ({exc}) — fix it first."
+    if not isinstance(settings, dict):
+        return None, f"error: {path} does not contain a JSON object."
+    return settings, ""
 
-    prefix = _tm_prefix(project)
-    plans_dir = f"./{prefix}plans"
-    emit_cmd = (f'python3 "$CLAUDE_PROJECT_DIR/{prefix}'
-                f'manager/core/adapters/claude/emit.py"')
 
-    if not claude_dir.is_dir():
-        print(f"{project} is not a .claude-initialised project "
-              f"(no .claude/ directory) — the claude adapter has nothing to wire.")
-        return 1
-    if not (HERE / "emit.py").is_file():
-        print(f"error: {HERE / 'emit.py'} is missing — the adapter looks broken.")
-        return 1
-
-    settings: dict = {}
-    if settings_path.is_file():
-        try:
-            settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            print(f"error: {settings_path} is not valid JSON ({exc}) — fix it first.")
-            return 1
-        if not isinstance(settings, dict):
-            print(f"error: {settings_path} does not contain a JSON object.")
-            return 1
-
+def _apply(settings: dict, plans_dir: str, emit_cmd: str) -> tuple[list[str], bool]:
+    """Bring one settings document up to date in place. Returns the
+    report lines and whether anything changed."""
     report: list[str] = []
     changed = False
 
@@ -133,7 +139,8 @@ def main() -> int:
         report.append("plansDirectory              ok")
     else:
         old = settings.get("plansDirectory")
-        report.append(f"plansDirectory              {'set' if old is None else f'fixed (was {old!r})'}")
+        report.append(f"plansDirectory              "
+                      f"{'set' if old is None else f'fixed (was {old!r})'}")
         settings["plansDirectory"] = plans_dir
         changed = True
 
@@ -149,22 +156,111 @@ def main() -> int:
         if status == "ok":
             report.append(f"hook {label:<22} ok")
         else:
-            report.append(f"hook {label:<22} {'added' if status == 'missing' else 'repaired'}")
+            report.append(f"hook {label:<22} "
+                          f"{'added' if status == 'missing' else 'repaired'}")
             _fix_event(hooks_cfg, event, matcher, emit_cmd)
             changed = True
+    return report, changed
 
-    print(f"adapter:  claude\nsettings: {settings_path}\n")
-    print("\n".join(f"  {line}" for line in report))
 
-    if not changed:
+def _tracked(project: Path, path: Path) -> bool:
+    """Does git track this path in the application? The one question
+    `--app-hooks` must answer before writing: bench adds no tracked file
+    to a project it only manages."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project), "ls-files", "--error-unmatch", "--",
+             str(path)], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _write(path: Path, settings: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+
+
+def _flag_value(args: list[str], name: str) -> str | None:
+    if name not in args:
+        return None
+    index = args.index(name)
+    return args[index + 1] if index + 1 < len(args) else None
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    dry_run = "--dry-run" in argv
+    app_hooks = "--app-hooks" in argv
+    generated = _flag_value(argv, "--generated")
+    plans = _flag_value(argv, "--plans")
+    taken = {"--dry-run", "--app-hooks", "--generated", "--plans",
+             generated, plans}
+    positional = [a for a in argv if a not in taken and not a.startswith("--")]
+    project = Path(positional[0]).resolve() if positional else Path.cwd()
+
+    if not (HERE / "emit.py").is_file():
+        print(f"error: {HERE / 'emit.py'} is missing — the adapter looks broken.")
+        return 1
+
+    if generated or app_hooks:
+        # Nothing of bench exists in the application, so the hook names
+        # emit.py by its own absolute path rather than through
+        # $CLAUDE_PROJECT_DIR, which points at whatever project the
+        # session opened.
+        emit_cmd = f'python3 "{HERE / "emit.py"}"'
+        plans_dir = plans or str(TM / "plans")
+    else:
+        prefix = _tm_prefix(project)
+        emit_cmd = (f'python3 "$CLAUDE_PROJECT_DIR/{prefix}'
+                    f'manager/core/adapters/claude/emit.py"')
+        plans_dir = plans or f"./{prefix}plans"
+
+    targets: list[tuple[str, Path, bool]] = []
+    if generated:
+        targets.append(("generated", Path(generated), False))
+    if app_hooks:
+        targets.append(("project (local)", project / ".claude"
+                        / "settings.local.json", True))
+    if not targets:
+        claude_dir = project / ".claude"
+        if not claude_dir.is_dir():
+            print(f"{project} is not a .claude-initialised project "
+                  f"(no .claude/ directory) — the claude adapter has "
+                  f"nothing to wire.")
+            return 1
+        targets.append(("project", claude_dir / "settings.json", False))
+
+    print(f"adapter:  claude")
+    changed_any = False
+    for label, path, in_app in targets:
+        if in_app and _tracked(project, path):
+            print(f"\nerror: git tracks {path} in the application. Bench "
+                  f"will not write a tracked settings file into a project "
+                  f"it only manages — untrack it (git rm --cached), or "
+                  f"drop --app-hooks and use the generated settings "
+                  f"instead.")
+            return 1
+        settings, failure = _load(path)
+        if settings is None:
+            print(f"\n{failure}")
+            return 1
+        report, changed = _apply(settings, plans_dir, emit_cmd)
+        print(f"settings: {path}  [{label}]\n")
+        print("\n".join(f"  {line}" for line in report))
+        if changed and not dry_run:
+            _write(path, settings)
+        changed_any = changed_any or changed
+
+    if generated:
+        print(f"\nHeadless launches generate their own settings. For your own "
+              f"sessions against this board:\n  claude --settings {generated}")
+    if not changed_any:
         print("\nEverything already in place — nothing to do.")
         return 0
     if dry_run:
         print("\nDry run — no changes written.")
         return 0
-
-    settings_path.parent.mkdir(exist_ok=True)
-    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     print("\nWrote settings. Note: running Claude sessions snapshot their hooks "
           "at startup — restart them to pick this up.")
     return 0

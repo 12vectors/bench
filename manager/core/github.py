@@ -1,6 +1,12 @@
 """GitHub plumbing: opening PRs from agent worktree branches, requesting
 Copilot reviews, and polling PR state for cards sitting in review/.
 
+Every git and gh command here runs in `config.REPO` — **the application**
+— against the remote `config.git_remote()` names and the base branch
+`config.APP_BASE` names. Those are resolved independently of the work
+state's own remote and branch (task 56): a code PR must never target the
+work-state remote.
+
 All of it is mechanical `git` + `gh` — no Claude involvement. The PR url is
 written into the task file (`**PR:** <url>`), keeping the file the single
 source of truth; only the volatile review/check state lives in memory.
@@ -39,6 +45,30 @@ def _run(cmd: list[str], cwd: Path | None = None, timeout: int = 60) -> subproce
                           capture_output=True, text=True, timeout=timeout)
 
 
+def _gh_pr(*args: str, timeout: int = 60) -> subprocess.CompletedProcess:
+    """`gh pr <verb> …` against **this board's** application repository.
+
+    gh otherwise infers the repository from the checkout's remotes, and
+    with more than one — a fork, a backup, an upstream somebody added —
+    that inference can act on a different repository than the one the
+    board rides. `--repo` removes the guess, and goes right after the
+    verb so the command still reads `gh pr create …`. A remote whose url
+    is not an owner/name on a host (every test's local bare upstream)
+    leaves gh to infer exactly as it did before."""
+    slug = config.gh_repo()
+    head = [config.GH_BIN, "pr", args[0]]
+    if slug:
+        head += ["--repo", slug]
+    return _run(head + list(args[1:]), timeout=timeout)
+
+
+def _api_repo() -> str:
+    """The owner/repo for a `gh api` path. gh has no --repo there, so the
+    slug goes into the path; `{owner}/{repo}` is gh's own placeholder
+    expansion, the behaviour when there is nothing better to name."""
+    return config.gh_repo() or "{owner}/{repo}"
+
+
 def remote() -> str | None:
     """Where this board's work goes. Resolved in config, which sync asks
     too — the two halves of team mode must never name different remotes."""
@@ -64,9 +94,12 @@ def branch_of(filename: str) -> str:
     """The branch a card's work lives on. Ordinary cards get `task/<stem>`;
     a phase runs on `phase/<stem>`, its own integration branch (phases.py),
     and from review/ onwards it is reviewed, driven and completed through
-    the same apparatus as any other card."""
-    phase = f"phase/{filename[:-3]}"
-    return phase if _branch_exists(phase) else f"task/{filename[:-3]}"
+    the same apparatus as any other card.
+
+    `config.branch_for` is the one answer — drivers and local commands
+    ask it too, so nothing can disagree about which branch a phase
+    card's work is on."""
+    return config.branch_for(filename[:-3])
 
 
 def _woven(filename: str, stage: str) -> dict:
@@ -83,8 +116,9 @@ def _woven(filename: str, stage: str) -> dict:
 
 def _remote_has_branch(rname: str, branch: str) -> bool:
     """Whether the remote already carries this branch. Sync only ever
-    fetches origin/main, so a phase branch the running board pushed is not a
-    local ref on any other board even when it is published — asking the
+    fetches the work state's own branch, so a phase branch the running
+    board pushed is not a local ref on any other board even when it is
+    published — asking the
     remote directly is the only way another board sees it."""
     return bool(_run(["git", "ls-remote", "--heads", rname, branch],
                      timeout=30).stdout.strip())
@@ -108,20 +142,34 @@ def _pr_base(task: dict) -> str:
         rname = remote()
         if rname and _remote_has_branch(rname, branch):
             return branch
-    return "main"
+    return config.APP_BASE
+
+
+def _task_location(stage: str = "review") -> str:
+    """Where the card actually is, in words a reader of this PR can act on.
+
+    A path only when the tasks genuinely live in this repository; when
+    they are kept outside it — the point of an external workspace — the
+    body says so rather than naming a `.task-manager/tasks/…` that does
+    not exist here (task 56, issue requirement 6)."""
+    rel = config.tasks_relative_to_app()
+    if rel:
+        return f"tracked in `{rel}/{stage}/`"
+    return "tracked outside this repository, on the bench board"
 
 
 def _pr_body(filename: str, task: dict) -> str:
     """The PR's body. A phase's PR is the one a whole run produces, so it
     says what is in it: the member list, in the order it ran."""
+    where = _task_location()
     if task.get("isPhase"):
         cards = "\n".join(f"- {m['number']} — {m['title']}"
                           for m in task.get("members") or [])
-        return (f"Phase: `{filename}` — tracked in `.task-manager/tasks/review/`.\n\n"
+        return (f"Phase: `{filename}` — {where}.\n\n"
                 f"Opened by the board when every card in the phase had been "
                 f"merged into its branch.\n\n## Cards in this phase\n\n"
                 f"{cards or '_none_'}\n")
-    body = (f"Task: `{filename}` — tracked in `.task-manager/tasks/review/`.\n\n"
+    body = (f"Task: `{filename}` — {where}.\n\n"
             f"Opened by the board when the card moved to review.")
     summary = _agent_report(filename)
     if summary:
@@ -210,14 +258,16 @@ def _open_pr(filename: str) -> str:
                           else "gh is not installed"))
 
     base = _pr_base(task)
-    if base == "main":
-        # The PR's diff is computed against the remote main — refuse to open one
-        # that would drag unpushed main commits along with it.
-        _run(["git", "fetch", rname, "main"], timeout=120)
-        ahead = _run(["git", "rev-list", "--count", f"{rname}/main..main"]).stdout.strip()
+    if base == config.APP_BASE:
+        # The PR's diff is computed against the remote base — refuse to open
+        # one that would drag unpushed base commits along with it.
+        _run(["git", "fetch", rname, base], timeout=120)
+        ahead = _run(["git", "rev-list", "--count",
+                      f"{rname}/{base}..{base}"]).stdout.strip()
         if ahead.isdigit() and int(ahead) > 0:
-            raise ValueError(f"won't open a PR for {filename}: main is {ahead} commits "
-                             f"ahead of {rname} — push main first, then move the card again")
+            raise ValueError(f"won't open a PR for {filename}: {base} is {ahead} "
+                             f"commits ahead of {rname} — push {base} first, then "
+                             f"move the card again")
     elif _branch_exists(base):
         # A phase branch is the board's own: publish it so the member's PR
         # has a base on the remote to be opened against. When only the
@@ -231,8 +281,8 @@ def _open_pr(filename: str) -> str:
         raise ValueError(f"push failed for {branch}: {push.stderr.strip()[:140]}")
 
     body = _pr_body(filename, task)
-    result = _run([config.GH_BIN, "pr", "create", "--head", branch, "--base", base,
-                   "--title", task["title"], "--body", body], timeout=120)
+    result = _gh_pr("create", "--head", branch, "--base", base,
+                    "--title", task["title"], "--body", body, timeout=120)
     if result.returncode != 0:
         # The rare double-fire: two attempts crossed and GitHub already has
         # the PR. Adopt it — one PR still exists, and the card learns its
@@ -264,8 +314,7 @@ def _already_exists(result: subprocess.CompletedProcess) -> bool:
 
 def _existing_pr(branch: str) -> str:
     """The url of the PR already open for this branch, if gh can name it."""
-    found = _run([config.GH_BIN, "pr", "view", branch, "--json", "url",
-                  "--jq", ".url"], timeout=60)
+    found = _gh_pr("view", branch, "--json", "url", "--jq", ".url", timeout=60)
     if found.returncode != 0:
         return ""
     return next((l.strip() for l in found.stdout.splitlines() if "/pull/" in l), "")
@@ -300,7 +349,7 @@ def request_copilot(filename: str) -> str:
         raise ValueError(f"{filename} has no PR yet")
     number = url.rstrip("/").rsplit("/", 1)[-1]
     result = _run([config.GH_BIN, "api", "-X", "POST",
-                   f"repos/{{owner}}/{{repo}}/pulls/{number}/requested_reviewers",
+                   f"repos/{_api_repo()}/pulls/{number}/requested_reviewers",
                    "-f", "reviewers[]=copilot-pull-request-reviewer[bot]"], timeout=60)
     if result.returncode != 0:
         raise ValueError(f"Copilot said no: {result.stderr.strip()[:160]}")
@@ -395,9 +444,10 @@ def _fold(data: dict, prev: dict) -> dict:
 
 def _poll_pr(filename: str, url: str) -> None:
     number = url.rstrip("/").rsplit("/", 1)[-1]
-    result = _run([config.GH_BIN, "pr", "view", number,
-                   "--json", "reviews,reviewRequests,statusCheckRollup,state,mergeable"],
-                  timeout=60)
+    result = _gh_pr("view", number,
+                    "--json",
+                    "reviews,reviewRequests,statusCheckRollup,state,mergeable",
+                    timeout=60)
     if result.returncode != 0:
         return
     try:
@@ -518,22 +568,43 @@ def _complete(filename: str, stage: str) -> dict:
     merged = False
     swept: list[dict] = []
     if _branch_exists(branch):
-        if config.SYNC:
+        on_origin = config.app_merge_on_origin()
+        if on_origin:
             _merge_on_origin(filename, stage, branch)
         else:
             _merge_locally(filename, branch)
         merged = True
 
+        # Nothing uncommitted is thrown away — the same rule a merged
+        # phase member's workspace is cleared under. The work is in the
+        # base branch by now, so nothing in there is *needed*; that is a
+        # judgement about committed files, and an uncommitted change is
+        # exactly what it does not cover.
         worktree = config.WORKTREES / stem
+        kept = ""
         if worktree.exists():
-            _run(["git", "worktree", "remove", "--force", str(worktree)])
-        # -D under sync: main here has not merged the branch yet (origin
-        # did), so the safe delete would refuse something already landed.
-        _run(["git", "branch", "-D" if config.SYNC else "-d", branch])
+            dirty = config.dirty_files(worktree)
+            if dirty:
+                kept = (f"{len(dirty)} uncommitted change"
+                        f"{'' if len(dirty) == 1 else 's'} in it")
+            else:
+                removed = _run(["git", "worktree", "remove", str(worktree)])
+                if removed.returncode != 0:
+                    kept = ((removed.stderr.strip() or removed.stdout.strip()
+                             or "git would not remove it").splitlines()[-1][:120])
+        if kept:
+            state.record_board_event({
+                "kind": "agent", "actor": "board", "file": filename,
+                "summary": f"worktree for {stem} kept — {kept}; the branch "
+                           f"is kept with it"})
+        else:
+            # -D when origin made the merge: the base here has not caught
+            # up yet, so the safe delete would refuse something landed.
+            _run(["git", "branch", "-D" if on_origin else "-d", branch])
+            state.record_board_event({
+                "kind": "agent", "actor": "board", "file": filename,
+                "summary": f"cleaned up: worktree and local branch for {stem} removed"})
         PR_STATE.pop(filename, None)
-        state.record_board_event({
-            "kind": "agent", "actor": "board", "file": filename,
-            "summary": f"cleaned up: worktree and local branch for {stem} removed"})
 
         # the merge succeeded, so the members' work is in main too
         swept = _sweep(filename, task, brought)
@@ -603,9 +674,10 @@ def _clear_member(member: dict) -> str:
                           or "git would not remove it")
                 return f"{stem}: worktree kept — {detail.splitlines()[-1][:120]}"
         if _branch_exists(branch):
-            # -D under sync for the same reason the card's own branch takes
-            # it: main here has not caught up with the merge origin made.
-            _run(["git", "branch", "-D" if config.SYNC else "-d", branch])
+            # -D when origin made the merge, for the same reason the
+            # card's own branch takes it: the base here has not caught up.
+            _run(["git", "branch",
+                  "-D" if config.app_merge_on_origin() else "-d", branch])
             rname = remote()
             if rname:
                 _run(["git", "push", rname, "--delete", branch], timeout=60)
@@ -661,10 +733,11 @@ def _cards(count: int) -> str:
 
 
 def _merge_locally(filename: str, branch: str) -> None:
-    """Single-player: merge into the checkout's own main and push it."""
+    """Single-player: merge into the application's own base branch and push."""
+    base = config.APP_BASE
     current = _run(["git", "branch", "--show-current"]).stdout.strip()
-    if current != "main":
-        raise ValueError(f"the repo is on '{current}', not main — switch first")
+    if current != base:
+        raise ValueError(f"the repo is on '{current}', not {base} — switch first")
     result = _run(["git", "merge", "--no-edit", branch], timeout=120)
     if result.returncode != 0:
         _run(["git", "merge", "--abort"])
@@ -672,21 +745,22 @@ def _merge_locally(filename: str, branch: str) -> None:
         raise ValueError(f"merge conflict — resolve by hand ({detail})")
     state.record_board_event({
         "kind": "agent", "actor": "board", "file": filename,
-        "summary": f"merged {branch} into main"})
+        "summary": f"merged {branch} into {base}"})
 
     rname = remote()
     if rname:
-        push = _run(["git", "push", rname, "main"], timeout=180)
+        push = _run(["git", "push", rname, base], timeout=180)
         if push.returncode != 0:
             state.record_board_event({
                 "kind": "agent", "actor": "board", "file": filename,
-                "summary": f"merged locally but the push failed — push main "
+                "summary": f"merged locally but the push failed — push {base} "
                            f"yourself ({push.stderr.strip()[:100]})"})
         else:
             _run(["git", "push", rname, "--delete", branch], timeout=60)
             state.record_board_event({
                 "kind": "agent", "actor": "board", "file": filename,
-                "summary": f"pushed main (PR marked merged) and deleted {branch} on {rname}"})
+                "summary": f"pushed {base} (PR marked merged) and deleted "
+                           f"{branch} on {rname}"})
 
 
 def _merge_on_origin(filename: str, stage: str, branch: str) -> None:
@@ -701,22 +775,63 @@ def _merge_on_origin(filename: str, stage: str, branch: str) -> None:
     url = task.get("pr")
     if not url:
         raise ValueError(
-            f"{filename} has no PR, and with BOARD_SYNC on the merge is made on "
+            f"{filename} has no PR, and this board merges the application on "
             f"origin — open a PR for {branch} first (↑ open PR on the card)")
     if not gh_available():
-        raise ValueError("gh is not installed — with BOARD_SYNC on the merge runs on origin")
+        raise ValueError("gh is not installed — this board merges the "
+                        "application on origin (BOARD_APP_MERGE)")
     number = url.rstrip("/").rsplit("/", 1)[-1]
-    result = _run([config.GH_BIN, "pr", "merge", number, "--merge"], timeout=180)
+    result = _gh_pr("merge", number, "--merge", timeout=180)
     if result.returncode != 0:
         detail = (result.stderr.strip() or result.stdout.strip())[-160:]
         raise ValueError(f"origin would not merge the PR — resolve it on GitHub ({detail})")
     state.record_board_event({
         "kind": "agent", "actor": "board", "file": filename,
-        "summary": f"merged {filename}'s PR on origin — local main fast-forwards "
-                   f"on the next sync beat"})
+        "summary": f"merged {filename}'s PR on origin"})
     rname = remote()
     if rname:
         _run(["git", "push", rname, "--delete", branch], timeout=60)
+    _catch_up_base(filename)
+
+
+def _catch_up_base(filename: str) -> None:
+    """Bring the application's own base branch to the merge origin made.
+
+    Vendored, the sync beat does this — it fetches and fast-forwards the
+    one repository both identities share. With the state in a repository
+    of its own, *nothing* does: sync never touches the application, and
+    the checkout would sit behind a base it has never seen. New task
+    branches are cut from `<remote>/<base>` after a fetch, so they are
+    right either way; this is about the checkout a person reads and a
+    driver runs in.
+
+    Best effort, and narrated honestly: a checkout on another branch or
+    with uncommitted changes is left exactly as it is.
+    """
+    base, rname = config.APP_BASE, remote()
+    if not rname or config.SYNC and config._one_repository():
+        return                      # the sync beat owns this checkout
+    _run(["git", "fetch", rname, base], timeout=120)
+    current = _run(["git", "branch", "--show-current"]).stdout.strip()
+    if current != base:
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": f"the application checkout is on '{current}', not "
+                       f"{base} — it stays behind the merge origin made "
+                       f"until you switch back and pull"})
+        return
+    result = _run(["git", "merge", "--ff-only", f"{rname}/{base}"], timeout=120)
+    if result.returncode != 0:
+        detail = (result.stderr.strip() or result.stdout.strip()
+                  or "git gave no detail").splitlines()[-1][:140]
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": f"could not fast-forward {base} to {rname}/{base} "
+                       f"after the merge ({detail}) — pull it yourself"})
+        return
+    state.record_board_event({
+        "kind": "agent", "actor": "board", "file": filename,
+        "summary": f"fast-forwarded {base} to {rname}/{base}"})
 
 
 def task_branches() -> list[str]:

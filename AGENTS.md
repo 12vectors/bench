@@ -222,6 +222,160 @@ see. `--dry-run` reports the questions and writes nothing. An existing
 `--setup` is the only way back to the questions, offering the current
 file's values as the defaults and rewriting it in place.
 
+## Running outside the application
+
+Everything above assumes bench lives in the repository it manages. It
+does not have to. An existing application can be worked with bench
+without the tool, its task files or its bookkeeping ever appearing in
+that application's history — the tool in one directory, the tickets in a
+git repository of their own, the application untouched except by the code
+the agents write.
+
+```text
+workspace/                       # a grouping directory, not a repo
+├── app/        BOARD_APP_ROOT   # the application + its own origin
+├── bench/                       # this install: tool and configuration
+├── work/       BOARD_WORK_ROOT  # tasks/, plans/, reference/ — its own repo
+└── worktrees/  BOARD_WORKTREES  # the application's task branches
+```
+
+```bash
+python3 bench/install.py --app /ws/app --work /ws/work
+```
+
+That writes the two roots into `manager/local/.env`, builds the work
+state's skeleton, and wires the agent adapter **without putting anything
+into the application**. Nothing else changes: with neither setting, every
+path resolves exactly as it always did, so a vendored installation needs
+no migration and reads no differently.
+
+### Four roots, named separately
+
+They were one directory tree with one git identity, derived from where
+`manager/` sat on disk. Now each is its own answer:
+
+| Root | What it holds | Default |
+| --- | --- | --- |
+| the tool | `manager/core`, `manager/local`, prompts, adapters, runtime state | where `install.py` sits |
+| **the application** | code, branches, worktrees, PRs | the git repository the install sits in |
+| **the work state** | `tasks/`, `plans/`, `reference/` | the install itself |
+| the worktrees | the application's task branches | `.worktrees` inside it, or `worktrees` beside an external one |
+
+Runtime state stays with the tool in every layout — agent logs, drive
+logs, command logs, session timelines, the generated hook settings. None
+of it is shared, none of it is committed, and none of it belongs to
+either repository.
+
+### Two git identities
+
+| Operation | Repository |
+| --- | --- |
+| branch, worktree, commit code, push, open/review/merge a code PR | the application |
+| create/edit/move/archive a ticket, record an outcome, commit and sync board state | the work state |
+
+The work state's repository is *derived*, not configured: it is the
+repository holding the work root. Vendored, that is the application's own
+— `tasks/` genuinely lives inside it, and pretending otherwise would
+change behaviour nobody asked to change. Externally it is a repository of
+its own, and a work root in **no** repository is a work root bench will
+not commit to rather than a reason to reach for the application's
+history.
+
+Each identity resolves its remote and its base branch independently:
+`BOARD_GIT_REMOTE` and `BOARD_APP_BASE` for the code,
+`BOARD_STATE_GIT_REMOTE` and `BOARD_STATE_BASE` for the board. So a card
+moving columns cannot produce a bookkeeping commit on the application's
+`main`, and a code PR cannot target the work-state remote. `gh` is told
+which repository it is acting on rather than inferring it from a checkout
+that may have several remotes.
+
+One consequence is worth saying out loud, because it used to be wrong:
+**`BOARD_SYNC` is about the board's state and nothing else.** It decided
+how the *application* was merged too — fine while the two were one
+repository, meaningless once they are not. `BOARD_APP_MERGE` is that
+decision now, and it defaults to the answer the old behaviour gave
+(see `core/.env.example`). When origin makes the merge and no sync beat
+watches the application, the board fetches and fast-forwards the
+application's base itself, because otherwise nothing would.
+
+### Validation fails closed
+
+Every fallback available to a broken external layout leads to the wrong
+repository, so there are none. `config.problems()` is the single
+authority; the board prints its answers and refuses to serve, `start.sh`
+refuses before it touches a port, and `install.py` refuses before it
+writes a line. It rejects a relative or missing root, an application that
+is not the top level of a git checkout, the two roots naming one
+directory or containing one another (including through a symlink, which
+git resolves where paths do not), bench's own repository as the
+application, a worktrees directory inside the work state, and
+`BOARD_COMMIT_MOVES` or `BOARD_SYNC` turned on with no work-state
+repository to commit to — naming `git init` rather than quietly
+committing somewhere else.
+
+### Hooks without a tracked file
+
+Headless launches were always external-safe: the claude adapter builds
+its whole settings document per launch and passes it with `--settings`,
+so hooks reach an agent without anything existing in the application.
+What `wire` does is give the operator's *own* sessions the same
+visibility, and externally it writes that document under the tool's local
+state instead of into the application, printing the
+`claude --settings <path>` to use it with. `--app-hooks` is the opt-in
+convenience that also writes `.claude/settings.local.json` — the
+designated local override — and it **refuses if git tracks that path**,
+so no bench hook configuration can become a tracked file in the
+application even by accident. Unrelated hooks and settings keys are
+preserved exactly.
+
+An adapter that cannot do this says so. opencode discovers plugins under
+the project it runs in, so there is nowhere outside the application to
+put its event bridge; external wiring is refused with both ways forward
+named, rather than quietly writing into the application or reporting a
+success that would render no live sessions.
+
+### What the record says about where things are
+
+A PR body named `.task-manager/tasks/review/` whatever the truth was. It
+now names the card's real location — a path relative to the application
+when the tickets genuinely live there, and otherwise that they are kept
+outside the repository, on the board. Clipped reports name their log
+relative to the tool install, never by an absolute path that means
+nothing on anyone else's machine. And the prompts tell a run where its
+workflow brief actually is: the application's own `AGENTS.md` when it has
+one, plus any brief that lives outside the checkout, by absolute path —
+so an agent is told where to read the rules without a bench file being
+added to the application for it to find.
+
+### Nothing uncommitted is thrown away
+
+Worth its own line because it was the one unrecoverable thing here. A run
+that edits files and never commits leaves work on disk, and an unchanged
+HEAD said "empty" about exactly that case — so the worktree was forced
+out from under it. Now uncommitted changes and untracked files both keep
+the worktree and its branch, the removal runs without `--force`, and a
+git that refuses anyway is reported rather than assumed to have worked.
+The same rule covers merge-and-clean-up, which already applied it to a
+phase's members and now applies it to the card's own workspace.
+
+And a worktree is identified by its repository, not by its name:
+`<worktrees>/<stem>` is a path two things can want, so an agent, a
+driver, a local command or a phase refuses a directory that is a checkout
+of something else instead of acting on the wrong code.
+
+### Lifecycle
+
+`start.sh` and `stop.sh` identify "our board" by the triple it serves —
+tasks root, application, tool — not by the tasks root alone. Two
+operators sharing one work state while managing different applications,
+or a preview install beside an operator one, must not reopen or stop each
+other's board. Updates replace `manager/core/` and the top-level scripts
+under the tool and reach nothing else, so tickets, configuration and the
+roots themselves survive by construction; the first-boot clean, which
+exists to clear the distribution's own cards out of a vendored install,
+never runs externally — an external work root is a board of its own whose
+cards are nobody's residue.
+
 ## Seeing the board
 
 ```bash

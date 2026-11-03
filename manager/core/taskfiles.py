@@ -9,6 +9,18 @@ that changes which directory a card sits in, `append_to_task`/`commit_edit`
 for anything written into it where it stands — and both commit under the
 `COMMIT_MOVES` gate. That is deliberate: committing is a property of
 writing to a task file, not something each caller has to remember.
+
+And they commit to one repository: `config.state_repo()`, the work-state
+repository. Vendored that is the application's own, because tasks/ lives
+inside it; externally it is the repository holding the work root, and a
+card moving columns must never produce a bookkeeping commit on the
+application's base branch (task 56).
+
+And they write *under tasks/* — not through a link out of it. A card, or
+the stage directory it was dropped into, can point anywhere on disk, and
+each of these doors would otherwise edit whatever it points at. Both are
+refused here, per write, because `config.problems()` answers for the
+layout at startup and a ticket arrives whenever someone writes one.
 """
 
 from __future__ import annotations
@@ -227,7 +239,8 @@ def collect() -> dict:
 
     extras = {}
     for slug in ("plans", "reference"):
-        directory = config.TM_ROOT / slug
+        # beside tasks/, wherever the work state lives — not in the tool
+        directory = config.work_root() / slug
         extras[slug] = (
             sorted(p.name for p in directory.iterdir() if not p.name.startswith("."))
             if directory.is_dir()
@@ -240,6 +253,49 @@ def find_stage_of(filename: str) -> str | None:
     for slug in config.STAGE_DIRS:
         if (config.TASKS / slug / filename).is_file():
             return slug
+    return None
+
+
+def _escape(path: Path) -> str | None:
+    """Why this is not a card bench will write to, or None.
+
+    A file in a stage directory can be a symlink out of tasks/, and every
+    door in this module writes *through* one: `_relocate` rewrites the
+    Status line before it renames, `append_to_task` opens the target in
+    append mode, a claim rewrites the header. A ticket pointing at the
+    application's README is a board-made edit landing in the
+    application's own files — exactly what `config.problems()` refuses a
+    layout for, asked again per file because a card (or the stage
+    directory it is dropped into) can appear long after the board started.
+    """
+    real = config.escapes_tasks(path)
+    if real is None:
+        return None
+    return (f"{path.name} in {path.parent.name}/ is a link to {real}, "
+            f"outside {config.TASKS} — bench does not write a card through "
+            f"a link out of the board's own state")
+
+
+def _refuse_escape(*paths: Path) -> None:
+    """The raising flavour, for the doors a caller already handles a
+    `ValueError` from — the move, the archive, the claim."""
+    for path in paths:
+        reason = _escape(path)
+        if reason:
+            raise ValueError(reason)
+
+
+def _writable(filename: str, stage: str) -> Path | None:
+    """The narrating flavour: the card's path, or None with the refusal in
+    the ticker. The append doors answer *whether* they wrote rather than
+    raising, and a report that cannot be recorded is narrated like any
+    other write that did not happen."""
+    path = config.TASKS / stage / filename
+    reason = _escape(path)
+    if reason is None:
+        return path
+    state.record_board_event({"kind": "agent", "actor": "board",
+                              "file": filename, "summary": reason})
     return None
 
 
@@ -296,13 +352,23 @@ def archived_count() -> int:
 
 
 def _git(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(config.REPO), *args],
+    """git in the **work-state** repository — never the application's.
+
+    No work-state repository is not an error to raise: it is a failed run
+    like any other, so every caller's existing narration covers it (and
+    `_commit` says the useful version of it)."""
+    root = config.state_repo()
+    if root is None:
+        return subprocess.CompletedProcess(args, 128, "",
+                                           "no work-state repository")
+    return subprocess.run(["git", "-C", str(root), *args],
                           capture_output=True, text=True, timeout=timeout)
 
 
 def actor_name() -> str:
-    """Who this checkout is: `git config user.name`, the identity git history
-    already shows. Empty when git has no name — then nothing is claimed."""
+    """Who this board is: `git config user.name` in the work-state
+    repository, which is the history the board's own commits appear in.
+    Empty when git has no name — then nothing is claimed."""
     try:
         result = _git("config", "user.name", timeout=10)
     except (subprocess.SubprocessError, OSError):
@@ -335,6 +401,7 @@ def set_assignee(filename: str, stage: str, name: str) -> None:
     the new owner travels to the other boards.
     """
     path = config.TASKS / stage / filename
+    _refuse_escape(path)
     text = path.read_text(encoding="utf-8")
     updated = (ASSIGNEE_RE.sub(f"**Assignee:** {name}", text, count=1)
                if ASSIGNEE_RE.search(text) else _set_assignee(text, name))
@@ -352,7 +419,21 @@ def _commit(filename: str, message: str, spec: list[str], failure: str) -> bool:
     unstaged. Hooks are skipped: this is the board's bookkeeping, not a code
     change. Anything going wrong is narrated — what the commit records has
     already happened on disk, which is the source of truth.
+
+    No work-state repository at all is narrated as the configuration fact
+    it is rather than as a git failure. `config.problems()` refuses this
+    layout at startup, so reaching here means something bypassed it — and
+    the one thing that must not happen is committing to the application
+    instead.
     """
+    if config.state_repo() is None:
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": (f"{filename}: nothing was committed — the work root "
+                        f"{config.work_root()} is in no work-state "
+                        f"repository, and bench does not commit the board's "
+                        f"bookkeeping to the application instead")})
+        return False
     try:
         result = _git("add", "-A", "--", *spec)
         if result.returncode == 0:
@@ -416,7 +497,12 @@ def _relocate(filename: str, src: Path, dst: Path, text: str, target: str,
     `commit` and `quiet` are what a batch of moves turns off: several cards
     that moved as one thing are committed as one thing and narrated as one
     thing (`move_together`), and both would be wrong done per file.
+
+    Being the one door, it is also where a move is refused for leaving
+    tasks/ — both ends, before anything is registered or written, so a
+    linked card and a linked destination are the same answer.
     """
+    _refuse_escape(src, dst)
     state.expect_move(filename, target, actor, quiet=quiet)
     dst.parent.mkdir(parents=True, exist_ok=True)
     src.write_text(text, encoding="utf-8")
@@ -454,7 +540,9 @@ def append_to_task(filename: str, stage: str, text: str, what: str) -> bool:
     tree. Returns whether the text was written (the commit is the gate's
     business, and is narrated if it fails).
     """
-    path = config.TASKS / stage / filename
+    path = _writable(filename, stage)
+    if path is None:
+        return False
     try:
         with path.open("a", encoding="utf-8") as fh:
             fh.write(text)
@@ -476,7 +564,9 @@ def append_to_section(filename: str, stage: str, heading: str, line: str,
     readable in the one place a person looks. It commits like every other
     board-made write.
     """
-    path = config.TASKS / stage / filename
+    path = _writable(filename, stage)
+    if path is None:
+        return False
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:

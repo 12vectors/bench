@@ -11,14 +11,36 @@
 set -euo pipefail
 
 TM="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CORE="$TM/manager/core"
 ENV_FILE="$TM/manager/local/.env"
 FORCE="${1:-}"
+
+# Who this install is: tasks root, application, tool. Same resolution and
+# the same fallback as start.sh's — and the same reason for all three:
+# stopping is the one place where adopting somebody else's board as ours
+# does real damage, so a preview install of the same work state, or an
+# operator managing a different application, must not match (task 56).
+board_identity() {
+  python3 - "$CORE" "$TM/tasks" "$TM" <<'RESOLVE'
+import sys
+sys.path.insert(0, sys.argv[1])
+try:
+    import config
+    print("\t".join([str(config.TASKS), str(config.REPO), str(config.TM_ROOT)]))
+except Exception:
+    print("\t".join([sys.argv[2], "", sys.argv[3]]))
+RESOLVE
+}
 
 port="${BOARD_PORT:-}"
 if [ -z "$port" ] && [ -f "$ENV_FILE" ]; then
   port="$(sed -n 's/^[[:space:]]*BOARD_PORT[[:space:]]*=[[:space:]]*//p' "$ENV_FILE" | tail -1 | tr -d "'\"")"
 fi
 port="${port:-26071}"
+IDENTITY="$(board_identity)"
+TASKS_ROOT="$(printf '%s' "$IDENTITY" | cut -f1)"
+APP_ROOT="$(printf '%s' "$IDENTITY" | cut -f2)"
+TOOL_ROOT="$(printf '%s' "$IDENTITY" | cut -f3)"
 
 # One probe answers both questions: is this our board, and are agents running?
 probe="$(python3 -c '
@@ -31,12 +53,17 @@ except urllib.error.HTTPError:
     print("foreign"); sys.exit(0)   # something HTTP answered, but not our API
 except Exception:
     print("none"); sys.exit(0)
+layout = data.get("layout") or {}
 if data.get("board", {}).get("root") != sys.argv[2]:
     print("foreign"); sys.exit(0)
+for served, wanted in ((layout.get("app"), sys.argv[3]),
+                       (layout.get("tool"), sys.argv[4])):
+    if wanted and served is not None and served != wanted:
+        print("foreign"); sys.exit(0)
 running = [a for a in data.get("agents", []) if a.get("status") == "running"]
 print("ours " + ",".join(
     "%s on %s" % (a.get("name") or "an agent", a.get("task", "?")) for a in running))
-' "$port" "$TM/tasks")"
+' "$port" "$TASKS_ROOT" "$APP_ROOT" "$TOOL_ROOT")"
 
 case "$probe" in
   none)

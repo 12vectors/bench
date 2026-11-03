@@ -29,6 +29,10 @@ memory, and both are durable:
   phase has not reached this member yet". Without it a restart would
   silently relaunch a run that died.
 
+Every git command here runs against `config.REPO` — the application —
+cut from `config.APP_BASE`; the phase log it writes goes to the task file,
+which `taskfiles` commits to the work-state repository (task 56).
+
 **Halt, never skip.** Five conditions stop a phase, each of them already a
 visible state on the card: a member that declined (`NOT READY`), a run that
 exited non-zero, a clean exit that committed nothing, CI red, and a merge
@@ -343,6 +347,9 @@ def _worktree(phase: dict) -> Path:
     it was cleaned up."""
     branch = agents.phase_branch(phase["file"])
     path = config.WORKTREES / phase["file"][:-3]
+    mismatch = config.worktree_mismatch(path)
+    if mismatch:
+        raise _Halt(mismatch)
     if path.exists():
         return path
     config.WORKTREES.mkdir(parents=True, exist_ok=True)
@@ -392,7 +399,7 @@ def _freshen(phase: dict) -> None:
     for hours does not drift into one enormous conflict at the end. A
     conflict here halts the phase like any other."""
     point, _ = agents._fresh_branch_point()
-    if _merge_into_phase(phase, point or "main", "main"):
+    if _merge_into_phase(phase, point or config.APP_BASE, config.APP_BASE):
         _say(phase["file"], f"merged main into {agents.phase_branch(phase['file'])}")
         _push_phase(phase)
 
@@ -630,6 +637,12 @@ def _start(phase: dict, filename: str) -> dict:
     """Cut the branch (once), record the run, and take the first pass."""
     branch = agents.phase_branch(filename)
     note = ""
+    # Before the branch is cut: the path the phase's worktree wants may
+    # already hold a checkout of something else, and git's own refusal
+    # would arrive as an unreadable "fatal: ... already exists".
+    mismatch = config.worktree_mismatch(config.WORKTREES / filename[:-3])
+    if mismatch:
+        raise ValueError(mismatch)
     if not _branch_exists(branch):
         # The same rule and the same timeout a task branch is cut by: the
         # newest main this checkout can see, and never a wait on the network.

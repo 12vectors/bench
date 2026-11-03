@@ -1,12 +1,18 @@
-"""Boards converge through the remote's main: push what this board commits,
-pull what the other boards published.
+"""Boards converge through the work state's remote: push what this board
+commits, pull what the other boards published.
+
+The repository is `config.state_repo()` — the **work-state** repository,
+which vendored is the application's own and externally is a repository of
+its own (task 56). Nothing here ever touches the application's history:
+a card moving columns must not produce a bookkeeping commit on the code's
+base branch, and a code PR must not target the work-state remote.
 
 One remote and one branch, by design — but *which* remote is `config`'s
-answer (`BOARD_GIT_REMOTE`, else the checkout's first remote), the same
-one PR opening already asks for, so the two halves of team mode can never
-publish to different places. A checkout with no remote to sync with, or a
-`BOARD_GIT_REMOTE` naming one it does not have, is not a quiet no-op: it
-is narrated and held on the header like every other condition here.
+answer (`BOARD_STATE_GIT_REMOTE`, falling back to `BOARD_GIT_REMOTE` when
+the two repositories are one, else the state checkout's first remote), and
+which branch is `BOARD_STATE_BASE`. A checkout with no remote to sync
+with, or a configured remote it does not have, is not a quiet no-op: it is
+narrated and held on the header like every other condition here.
 
 Gated on `BOARD_SYNC` (which implies `BOARD_COMMIT_MOVES` — a move that
 never commits has nothing to publish). Off, nothing here runs: no fetch,
@@ -45,8 +51,6 @@ import config
 import state
 from taskfiles import NUMBER_RE
 
-BRANCH = "main"                       # one remote, one branch — by design;
-                                      # the remote is resolved, not assumed
 BOARD_COMMIT = "board: "              # the prefix taskfiles messages its own commits with
 PUSH_TIMEOUT = 120
 REBASE_TIMEOUT = 120
@@ -58,10 +62,21 @@ ARRIVED: dict[str, tuple[str, float]] = {}   # filename -> (author, ts) from the
 _NOTES: dict[str, tuple[str, str]] = {}      # key -> (summary, level) already narrated
 
 
+def _branch() -> str:
+    """One branch, by design — the work state's own base, resolved rather
+    than assumed, so it can differ from the application's."""
+    return config.STATE_BASE
+
+
 def _git(*args: str, timeout: float = 30) -> subprocess.CompletedProcess:
-    """Never raises: a timeout or a missing binary is just a failed run."""
+    """git in the work-state repository. Never raises: a timeout, a missing
+    binary or no state repository at all is just a failed run."""
+    root = config.state_repo()
+    if root is None:
+        return subprocess.CompletedProcess(args, 128, "",
+                                           "no work-state repository")
     try:
-        return subprocess.run(["git", "-C", str(config.REPO), *args],
+        return subprocess.run(["git", "-C", str(root), *args],
                               capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(args, 128, "", "timed out")
@@ -105,36 +120,38 @@ def _clear(key: str, recovery: str = "") -> None:
 
 
 def _upstream(remote: str) -> str:
-    return f"{remote}/{BRANCH}"
+    return f"{remote}/{_branch()}"
 
 
 def _remote() -> str | None:
     """The remote this board syncs through, or None with the reason said.
 
-    Resolved in `config`, verified here: a `BOARD_GIT_REMOTE` naming a
-    remote this checkout does not have is a typo, and reaching past it for
-    another one would be exactly the silence this narration exists to end.
-    Team mode with nothing to sync with is a stalled board, not a no-op —
-    it is the likeliest first state of a fresh installation, and the header
-    has to say so.
+    Resolved in `config` against the **work-state** checkout, verified
+    here: a configured remote the state checkout does not have is a typo,
+    and reaching past it for another one — or for the application's —
+    would be exactly the silence this narration exists to end. Team mode
+    with nothing to sync with is a stalled board, not a no-op: it is the
+    likeliest first state of a fresh installation, and the header has to
+    say so.
     """
-    names = config.git_remotes()
-    name = config.git_remote()
+    names = config.state_git_remotes()
+    name = config.state_git_remote()
+    which = config.state_remote_setting()
     if name and name in names:
         _clear("no-remote",
                f"sync is converging again: this board rides {_upstream(name)}")
         return name
     if name:
-        have = (f"this checkout has {', '.join(names)}" if names
-                else "this checkout has no remotes at all")
-        _note("no-remote", f"sync stalled: BOARD_GIT_REMOTE names '{name}' but {have} "
-                           f"— add that remote, or set BOARD_GIT_REMOTE to one that "
+        have = (f"the work-state checkout has {', '.join(names)}" if names
+                else "the work-state checkout has no remotes at all")
+        _note("no-remote", f"sync stalled: {which} names '{name}' but {have} "
+                           f"— add that remote, or set {which} to one that "
                            f"exists (sync will not pick another for you)")
     else:
-        _note("no-remote", "sync stalled: BOARD_SYNC is on and this checkout has no "
-                           "remote to sync through — add one (git remote add origin "
-                           "<url>), or set BOARD_GIT_REMOTE to the remote this board "
-                           "should ride")
+        _note("no-remote", f"sync stalled: BOARD_SYNC is on and the work-state "
+                           f"checkout has no remote to sync through — add one "
+                           f"(git remote add origin <url>), or set {which} to "
+                           f"the remote this board should ride")
     return None
 
 
@@ -143,7 +160,7 @@ def _head() -> str:
 
 
 def _on_main() -> bool:
-    return _git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == BRANCH
+    return _git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == _branch()
 
 
 def _clean() -> bool:
@@ -158,17 +175,19 @@ def _count(rng: str) -> int:
 
 
 def _tasks_prefix() -> str:
+    """Where the task files sit inside the work-state repository."""
+    root = config.state_repo()
     try:
-        return config.TASKS.resolve().relative_to(config.REPO.resolve()).as_posix() + "/"
-    except ValueError:
+        return config.TASKS.resolve().relative_to(root.resolve()).as_posix() + "/"
+    except (ValueError, OSError, AttributeError):
         return "tasks/"
 
 
 def _fetch(remote: str) -> bool:
-    result = _git("fetch", remote, BRANCH, timeout=config.FETCH_TIMEOUT)
+    result = _git("fetch", remote, _branch(), timeout=config.FETCH_TIMEOUT)
     if result.returncode != 0:
         if "couldn't find remote ref" in (result.stderr or "").lower():
-            _note("no-branch", f"sync stalled: {remote} has no {BRANCH} branch — "
+            _note("no-branch", f"sync stalled: {remote} has no {_branch()} branch — "
                                f"sync rides {_upstream(remote)} and nothing else")
             return False
         _note("offline",
@@ -186,7 +205,7 @@ def _fetch(remote: str) -> bool:
 def _ahead(remote: str) -> list[str]:
     """`<short sha> <subject>` for every commit local main has and the
     remote's main does not — newest first."""
-    out = _git("log", "--format=%h %s", f"{_upstream(remote)}..{BRANCH}").stdout
+    out = _git("log", "--format=%h %s", f"{_upstream(remote)}..{_branch()}").stdout
     return [line for line in out.splitlines() if line.strip()]
 
 
@@ -209,8 +228,9 @@ def _publish(remote: str) -> str:
     upstream = _upstream(remote)
     if not _on_main():
         branch = _git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip() or "a detached HEAD"
-        _note("branch", f"sync paused: this checkout is on '{branch}', not {BRANCH} — "
-                        f"board commits are not landing where sync publishes from")
+        _note("branch", f"sync paused: this checkout is on '{branch}', not "
+                        f"{_branch()} — board commits are not landing where "
+                        f"sync publishes from")
         return "not-on-main"
     _clear("branch")
     if _git("rev-parse", "--verify", "--quiet", upstream).returncode != 0:
@@ -226,7 +246,7 @@ def _publish(remote: str) -> str:
     if not commits:
         return "nothing"
 
-    result = _git("push", remote, f"{BRANCH}:{BRANCH}", timeout=PUSH_TIMEOUT)
+    result = _git("push", remote, f"{_branch()}:{_branch()}", timeout=PUSH_TIMEOUT)
     if result.returncode == 0:
         _clear("push")
         _clear("offline", f"sync caught up: {remote} is reachable again")
@@ -307,8 +327,9 @@ def _replay(remote: str) -> str:
     """
     upstream = _upstream(remote)
     if not _clean():
-        _note("dirty", "sync paused: main has uncommitted changes — commit or stash "
-                       "them and sync resumes (code work belongs in a worktree)")
+        _note("dirty", f"sync paused: {_branch()} has uncommitted changes — "
+                       f"commit or stash them and sync resumes (code work "
+                       f"belongs in a worktree)")
         return "dirty"
     _clear("dirty")
 
@@ -340,12 +361,13 @@ def _integrate(remote: str) -> str:
     up-to-date | pulled | not-on-main | dirty | diverged | stalled
     """
     upstream = _upstream(remote)
-    if _count(f"{BRANCH}..{upstream}") == 0:
+    if _count(f"{_branch()}..{upstream}") == 0:
         return "up-to-date"
     if not _on_main():
         branch = _git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip() or "a detached HEAD"
-        _note("branch", f"sync paused: this checkout is on '{branch}', not {BRANCH} — "
-                        f"switch back and the board catches up with {upstream}")
+        _note("branch", f"sync paused: this checkout is on '{branch}', not "
+                        f"{_branch()} — switch back and the board catches up "
+                        f"with {upstream}")
         return "not-on-main"
     _clear("branch")
 
@@ -355,7 +377,7 @@ def _integrate(remote: str) -> str:
     commits = _ahead(remote)
     stray = _stray(commits)
     if stray:
-        _note("diverged", f"sync stalled: main and {upstream} have diverged and "
+        _note("diverged", f"sync stalled: {_branch()} and {upstream} have diverged and "
                           f"{stray} is not a board commit — pull or rebase it by "
                           f"hand, and this board starts converging again")
         return "diverged"
@@ -365,8 +387,9 @@ def _integrate(remote: str) -> str:
         return "pulled" if outcome == "ok" else outcome
 
     if not _clean():
-        _note("dirty", "sync paused: main has uncommitted changes — commit or stash "
-                       "them and sync resumes (code work belongs in a worktree)")
+        _note("dirty", f"sync paused: {_branch()} has uncommitted changes — "
+                       f"commit or stash them and sync resumes (code work "
+                       f"belongs in a worktree)")
         return "dirty"
     _clear("dirty")
     result = _git("merge", "--ff-only", upstream, timeout=REBASE_TIMEOUT)

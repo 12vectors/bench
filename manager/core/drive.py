@@ -4,7 +4,8 @@ Core knows nothing about how any app starts — the project's driver does
 (local/driver/start, an executable the project owns and evolves). The
 contract:
 
-  - env in: DRIVE_WORKTREE, DRIVE_BRANCH, DRIVE_TASK, DRIVE_REPO
+  - env in: DRIVE_WORKTREE, DRIVE_BRANCH, DRIVE_TASK, DRIVE_REPO (the
+    application's root, which is not the tool's and not the work state's)
   - exit non-zero quickly and whatever was printed becomes the refusal
     shown in the ticker ("port 5176 is yours", "branch has migrations")
   - print `DRIVE URL: <url>` when the app is up — the card links there
@@ -108,13 +109,19 @@ def start(filename: str) -> dict:
             raise ValueError(f"already driving {DRIVE['task']} — park it first")
 
     stem = filename[:-3] if filename.endswith(".md") else filename
-    branch = f"task/{stem}"
+    # A phase card's work is its own integration branch, not task/<stem>
+    # — one answer, in config, so this cannot drive a branch that was
+    # never cut (task 56).
+    branch = config.branch_for(stem)
     worktree = config.WORKTREES / stem
+    mismatch = config.worktree_mismatch(worktree)
+    if mismatch:
+        raise ValueError(mismatch)
     if not worktree.exists():
         if subprocess.run(["git", "-C", str(config.REPO), "rev-parse", "--verify",
                            "--quiet", branch], capture_output=True).returncode != 0:
             raise ValueError(f"no worktree and no branch {branch} — nothing to drive")
-        config.WORKTREES.mkdir(exist_ok=True)
+        config.WORKTREES.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
             ["git", "-C", str(config.REPO), "worktree", "add", str(worktree), branch],
             capture_output=True, text=True)
