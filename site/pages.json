@@ -153,20 +153,20 @@
       "layout": "article",
       "section": "Concepts",
       "description": "Four roots named separately and two git identities kept apart: the tool, the application, the work state and the worktrees, with tickets that never reach the application's history.",
-      "lede": "What changes when bench stops living in the repository it manages: which of the four locations holds what, which repository each operation belongs to, how far the tickets are versioned, and where a card's branch is planned.",
+      "lede": "What changes when bench stops living in the repository it manages: which of the four locations holds what, which repository each operation belongs to, how far the tickets are versioned, where a card's branch is planned, and why a layout that does not hold together is refused rather than worked around.",
       "source": "AGENTS.md",
       "from": "## Running outside the application",
-      "to": "### Validation fails closed"
+      "to": "### Hooks without a tracked file"
     },
     {
       "path": "/concepts/external-operations/",
       "title": "Operating an external install",
       "layout": "article",
       "section": "Concepts",
-      "description": "A layout that does not hold together is refused before anything is written; hooks reach an agent without a tracked file; and start, stop and update know which board is theirs.",
-      "lede": "The operational half: what fails closed and why there are no fallbacks, how live-session hooks work with nothing written into the application, what the record says about where things are, and running a candidate bench from a stable operator install.",
+      "description": "Hooks that reach an agent without a tracked file, a record that names where things really are, and start, stop and update each knowing which board is theirs.",
+      "lede": "Living with an external install: giving your own sessions live visibility without writing into the application, what the record says about where the tickets are, what is never thrown away, and running a candidate bench from a stable operator install.",
       "source": "AGENTS.md",
-      "from": "### Validation fails closed",
+      "from": "### Hooks without a tracked file",
       "to": "## Seeing the board"
     },
     {

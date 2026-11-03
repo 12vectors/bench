@@ -97,11 +97,14 @@ click. Runtime state — agent logs, session timelines, the generated
 hooks, the recorded execution plans and their machine-local paths —
 stays with the tool and is committed nowhere.
 
-The whole of it, including the fail-closed validation, external hook
-wiring, how a card's branch is planned in the application's repository
-and how a stable operator install manages a candidate bench checkout, is
-the "Running outside the application" section of
-[AGENTS.md](AGENTS.md) — and on the docs site, which is cut from it.
+The whole of it is the "Running outside the application" section of
+[AGENTS.md](AGENTS.md), which is where these docs cut their two pages on
+it from: **External workspaces** — the four roots, the two git
+identities, how far the tickets are versioned, where a card's branch is
+planned, and what a layout that does not hold together is refused with —
+and **Operating an external install**, for hook wiring without a tracked
+file, what the record says about where things are, start/stop/update, and
+running a candidate bench from a stable operator install.
 
 ## Update
 

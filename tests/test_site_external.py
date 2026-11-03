@@ -336,9 +336,17 @@ class TheSiteOffersBothInstalls(unittest.TestCase):
                       "the sidebar does not reach the plans reference from "
                       "the external guide")
 
-    def test_the_operations_page_carries_the_refusals_and_the_hooks(self):
+    def test_the_refusals_are_on_the_page_that_describes_the_layout(self):
+        """Fail-closed validation is a property of the roots, so it ends
+        the page about them — and `git init` is the way out of the one
+        refusal a reader is most likely to meet."""
+        html = self.page(WORKSPACES)
+        self.assertIn("Validation fails closed", html)
+        self.assertIn("git init", html)
+
+    def test_the_operations_page_carries_the_hooks_and_the_lifecycle(self):
         html = self.page(OPERATIONS)
-        for promised in ("git init", "settings.local.json", "opencode",
+        for promised in ("settings.local.json", "opencode",
                          "start.sh", "stop.sh"):
             with self.subTest(promised=promised):
                 self.assertIn(promised, html)
@@ -351,6 +359,18 @@ class TheSiteOffersBothInstalls(unittest.TestCase):
         self.assertIn("operator", html.lower())
         self.assertIn("candidate", html.lower())
         self.assertIn("does not manage itself", html)
+
+    def test_the_guide_names_the_pages_it_hands_the_reader_on_to(self):
+        """A slice cannot author an internal site link — links out of a
+        source file go to the repository or to a mapped file route — so
+        the guide names the two pages by the titles the sidebar shows,
+        and those titles have to be the manifest's own."""
+        guide = self.page(EXTERNAL)
+        for route in (WORKSPACES, OPERATIONS):
+            with self.subTest(route=route):
+                self.assertIn(self.entry(route)["title"], guide)
+                self.assertIn(f'href="{route}"', guide,
+                              "named but not reachable from this page")
 
     def test_each_new_page_has_a_lede_of_its_own(self):
         for route in (EXTERNAL, WORKSPACES, OPERATIONS):
@@ -387,19 +407,19 @@ class DriftOnTheExternalPages(ScratchCase):
         self.assertFalse(self.repo.out.exists())
 
     def test_losing_the_boundary_between_the_two_concept_pages_is_named(self):
-        """`### Validation fails closed` ends one page and begins the
-        next, so it is the heading whose loss would silently merge
+        """`### Hooks without a tracked file` ends one page and begins
+        the next, so it is the heading whose loss would silently merge
         them."""
-        self.repo.edit("AGENTS.md", "### Validation fails closed",
-                       "### Fail closed")
+        self.repo.edit("AGENTS.md", "### Hooks without a tracked file",
+                       "### Hooks")
         result = self.repo.build()
         self.assertNotEqual(0, result.returncode)
-        self.assertIn("### Validation fails closed", result.stderr)
+        self.assertIn("### Hooks without a tracked file", result.stderr)
 
     def test_an_empty_external_section_is_not_a_page(self):
         text = (self.repo.root / "AGENTS.md").read_text("utf-8")
         start = text.index("## Running outside the application")
-        end = text.index("### Validation fails closed")
+        end = text.index("### Hooks without a tracked file")
         (self.repo.root / "AGENTS.md").write_text(
             text[:start] + "## Running outside the application\n\n"
             + text[end:], encoding="utf-8")
