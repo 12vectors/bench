@@ -84,11 +84,18 @@ class EveryRouteRendersInTheArticleLayout(BuiltSite):
     """Acceptance: the routes render in 1a, and every body on them is a
     slice rather than something a person typed into the site."""
 
-    def test_the_seven_concepts_and_the_install_guide_are_all_there(self):
+    def test_the_concepts_and_both_install_guides_are_all_there(self):
         """Named one by one rather than counted: a route quietly dropped
-        from the manifest is exactly the failure this catches."""
+        from the manifest is exactly the failure this catches.
+
+        The two guides are the two ways to install bench — vendored
+        inside the repository it manages, and beside it — and
+        tests/test_site_external.py is the rest of that pair's story."""
         routes = {page["path"] for page in self.articles()}
         for route in ("/guides/install/",
+                      "/guides/outside-the-application/",
+                      "/concepts/external-workspaces/",
+                      "/concepts/external-operations/",
                       "/concepts/stages/",
                       "/concepts/task-files/",
                       "/concepts/claiming-a-card/",

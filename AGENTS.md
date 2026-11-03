@@ -263,8 +263,9 @@ tracked file"). `--dry-run` reports what any of them would do and writes
 nothing, and `--setup` asks the first-run questions again. Each of the
 three roots is a plain setting underneath — `BOARD_APP_ROOT`,
 `BOARD_WORK_ROOT`, `BOARD_WORKTREES` in `manager/local/.env`, every one
-of them documented in `core/.env.example` — so an install already made is
-retargeted by editing that file rather than by installing again.
+of them documented in
+[`core/.env.example`](manager/core/.env.example) — so an install already
+made is retargeted by editing that file rather than by installing again.
 
 ### Four roots, named separately
 
@@ -392,9 +393,11 @@ branch* a card's work starts from and targets, and the layout decides
   selected it, so a requirement that exists only in prose is visible as
   exactly that.
 
-"Execution plans" above is the whole of it, including `plan drift`,
-**⌖ replan** and what preflight will not do. Nothing in it changes
-because the tickets moved out of the checkout.
+None of that is restated here. **"Execution plans"** is the reference for
+it — a section of its own, listed beside this one, holding `plan drift`,
+**⌖ replan** and preflight's whole list of refusals — and nothing in it
+changes because the tickets moved out of the checkout. The two meet at
+one question only, the one above: which repository the branch is in.
 
 ### Validation fails closed
 

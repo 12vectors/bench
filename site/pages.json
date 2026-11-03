@@ -10,7 +10,9 @@
     "blob_base": "https://github.com/12vectors/bench/blob/main/"
   },
 
-  "link_routes": {},
+  "link_routes": {
+    "manager/core/.env.example": "/reference/settings/"
+  },
 
   "pages": [
     {
