@@ -951,5 +951,145 @@ class TaskFiftySevensWrongBase(PlanCase):
                          "one card changed the board's default for every card")
 
 
+# ── what the agent is told, and what the board shows ─────────────────
+
+
+# A stub that writes down the brief it was handed instead of doing work,
+# so a test can read exactly what a real launch passes the vendor.
+ECHOES_PROMPT = """#!/usr/bin/env python3
+import os
+open(os.path.join(os.environ["AGENT_CWD"], "prompt.txt"), "w").write(
+    os.environ["AGENT_PROMPT"])
+print("WORK REPORT: wrote the brief down")
+"""
+
+
+class TheAgentIsToldThePlan(PlanCase):
+    """Acceptance: the resolved context reaches the coding agent so it can
+    verify the checkout rather than choose a lifecycle of its own."""
+
+    def test_the_brief_states_the_branch_the_base_and_the_pr_target(self):
+        self.write(card("57 — Document it", base=PREREQ, pr_base=PREREQ))
+        self.adapter_is(ECHOES_PROMPT)
+        self.run_agent()
+        brief = (config.WORKTREES / STEM / "prompt.txt").read_text(encoding="utf-8")
+        self.assertIn(BRANCH, brief)
+        self.assertIn(PREREQ, brief)
+        self.assertIn(self.prereq_tip[:12], brief)
+        self.assertIn("the card's **Base branch:** header", brief)
+
+    def test_the_brief_forbids_repairing_the_checkout(self):
+        self.write(card("57 — Document it"))
+        self.adapter_is(ECHOES_PROMPT)
+        self.run_agent()
+        brief = (config.WORKTREES / STEM / "prompt.txt").read_text(encoding="utf-8")
+        self.assertIn("The board resolved and validated this branch's whole git "
+                      "lifecycle", brief)
+        for forbidden in ("switch branches", "rebase", "add a worktree"):
+            self.assertIn(forbidden, brief)
+
+    def test_the_brief_carries_no_path_from_this_machine(self):
+        self.write(card("57 — Document it", base=PREREQ))
+        self.adapter_is(ECHOES_PROMPT)
+        self.run_agent()
+        brief = (config.WORKTREES / STEM / "prompt.txt").read_text(encoding="utf-8")
+        plan_block = brief.split("- Branch:", 1)[1].split("\n\n", 1)[0]
+        self.assertNotIn(str(self.tmp), plan_block)
+
+
+class TheBoardShowsThePlanBeforeTheLaunch(PlanCase):
+    """Acceptance: the resolved plan or the blocking reason is on the board
+    before anything starts — including the starting branch and PR target."""
+
+    def test_the_state_payload_carries_a_plan_for_a_stacked_card(self):
+        import httpd                                  # noqa: PLC0415
+        self.write(card("57 — Document it", base=PREREQ, pr_base=PREREQ))
+        payload = httpd.state_payload()
+        self.assertEqual(payload["appBase"], "main")
+        shape = payload["plans"][CARD]
+        self.assertEqual(shape["startBranch"], PREREQ)
+        self.assertEqual(shape["prBase"], PREREQ)
+        self.assertFalse(shape["recorded"])
+
+    def test_an_ordinary_card_puts_nothing_in_the_payload(self):
+        import httpd                                  # noqa: PLC0415
+        self.write(card("57 — Document it"))
+        self.assertEqual(httpd.state_payload()["plans"], {},
+                         "a board of ordinary cards must render as it always did")
+
+    def test_a_drifting_header_reaches_the_payload_as_drift(self):
+        import httpd                                  # noqa: PLC0415
+        self.write(card("57 — Document it", base="not a branch"))
+        shape = httpd.state_payload()["plans"][CARD]
+        self.assertTrue(shape["drift"])
+        self.assertIn("Base branch", shape["drift"][0])
+
+    def test_the_recorded_plan_is_what_the_payload_shows_afterwards(self):
+        import httpd                                  # noqa: PLC0415
+        self.write(card("57 — Document it", base=PREREQ, pr_base=PREREQ))
+        self.run_agent()
+        shape = httpd.state_payload()["plans"][CARD]
+        self.assertTrue(shape["recorded"])
+        self.assertEqual(shape["startCommit"], self.prereq_tip)
+        self.assertEqual(shape["provenance"], "planned")
+
+
+class ThePageReadsTheSameAnswer(unittest.TestCase):
+    """board.html has no frontend runner, so these are source-level
+    invariants: the chip, the drift pill, the read-only preflight and the
+    one action that retargets work all have to exist and read from the
+    server's answer rather than inventing their own."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = (REPO / "manager" / "core" / "board.html").read_text(
+            encoding="utf-8")
+
+    def test_the_chip_reads_the_servers_per_card_plan(self):
+        self.assertIn("(S.state.plans || {})[task.file]", self.html)
+        self.assertIn("planChipLabel", self.html)
+        self.assertIn("data-plan", self.html)
+
+    def test_a_card_with_no_plan_gets_no_chip(self):
+        """The guard, literally: `if (planned)`. Without it every card
+        would grow a chip saying `main`."""
+        self.assertIn("if (planned) {", self.html)
+
+    def test_plan_drift_is_flagged_beside_status_and_phase_drift(self):
+        self.assertIn("task.planDrift", self.html)
+        self.assertIn(">plan drift</span>", self.html)
+
+    def test_the_preflight_is_a_get_and_the_replan_a_post(self):
+        self.assertIn("fetch('/api/plan?file='", self.html)
+        self.assertIn("'/api/plan/replan'", self.html)
+        replan = self.html.split("async function replan(task)", 1)[1][:400]
+        self.assertIn("method: 'POST'", replan)
+
+    def test_a_mismatched_pr_target_is_worn_rather_than_fixed(self):
+        self.assertIn("prState.baseMismatch", self.html)
+        self.assertIn("Nothing was retargeted", self.html)
+
+    def test_the_conflicts_chip_names_the_base_the_card_targets(self):
+        self.assertIn("prState.wantBase", self.html)
+
+
+class ThePromptsCarryThePlan(unittest.TestCase):
+    """The placeholder has to be in the template, or the board would fill
+    a brief that says nothing about the lifecycle it just resolved."""
+
+    PROMPTS = REPO / "manager" / "core" / "prompts"
+
+    def test_work_and_act_pr_both_take_the_plan(self):
+        for name in ("work.md", "act-pr.md"):
+            with self.subTest(name=name):
+                self.assertIn("{plan}", (self.PROMPTS / name).read_text(
+                    encoding="utf-8"))
+
+    def test_act_pr_resolves_against_the_recorded_base_not_main(self):
+        text = (self.PROMPTS / "act-pr.md").read_text(encoding="utf-8")
+        self.assertIn("git merge origin/{base}", text)
+        self.assertIn("Merge only `{base}`", text)
+
+
 if __name__ == "__main__":
     unittest.main()

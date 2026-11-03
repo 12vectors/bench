@@ -76,6 +76,19 @@ class ClaudeAllowRules(unittest.TestCase):
             self.assertNotIn("deny",
                              hook_settings.settings(mode, COMMANDS)["permissions"])
 
+    def test_no_intent_may_reshape_the_lifecycle_bench_prepared(self):
+        """Task 58's half of the permission story: bench resolves and
+        validates the branch, the worktree and the PR target before a run
+        starts, so no run is handed the tools to repair a bad launch by
+        changing any of them. The plan says "verify this checkout"; these
+        are the commands that would let it choose another."""
+        for mode in ("work", "act-pr", "review"):
+            joined = " ".join(hook_settings.allow_rules(mode, COMMANDS))
+            for forbidden in ("git worktree", "git reset", "git checkout",
+                              "git switch", "git branch", "git update-ref"):
+                with self.subTest(mode=mode, forbidden=forbidden):
+                    self.assertNotIn(forbidden, joined)
+
     def test_review_posts_verdicts_but_writes_nothing_locally(self):
         rules = hook_settings.allow_rules("review", COMMANDS)
         for prefix in ["gh pr review", "gh pr comment", "gh pr view",
@@ -107,6 +120,17 @@ class OpencodeConfig(unittest.TestCase):
             self.assertEqual(bash[prefix], "allow")
             self.assertEqual(bash[f"{prefix} *"], "allow")
         self.assertNotIn("git push *", bash)
+
+    def test_no_intent_may_reshape_the_lifecycle_bench_prepared(self):
+        """The same guarantee in opencode's syntax: nothing is granted the
+        commands that would let a run pick a different branch, worktree or
+        base than the one bench planned and recorded."""
+        for mode in ("work", "act-pr", "review"):
+            bash = permission_config.build_config(mode, COMMANDS)["permission"]["bash"]
+            for forbidden in ("git worktree", "git reset", "git checkout",
+                              "git switch", "git branch", "git update-ref"):
+                with self.subTest(mode=mode, forbidden=forbidden):
+                    self.assertNotIn(forbidden, " ".join(bash))
 
     def test_act_pr_adds_push(self):
         bash = permission_config.build_config("act-pr", COMMANDS)["permission"]["bash"]
