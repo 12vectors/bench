@@ -738,13 +738,20 @@ def _assert_lands_in_the_base(filename: str, target: str) -> None:
     stack lands when its prerequisite's own PR lands; then this card's
     target has gone, the board says so, and a replan onto the base is the
     person's decision that makes it finishable.
+
+    The application base is the one the work was planned against, read
+    from the record: a card launched on `main` before the operator moved
+    `BOARD_APP_BASE` to `trunk` is not stacked on `main`, and finishing it
+    into `main` is exactly what it was planned to do.
     """
-    if target == config.APP_BASE:
+    saved = plans.recorded(filename)
+    app_base = (saved or {}).get("appBase") or config.APP_BASE
+    if target == app_base:
         return
     raise ValueError(
-        f"{filename} is stacked on {target}, not {config.APP_BASE} — merge & "
+        f"{filename} is stacked on {target}, not {app_base} — merge & "
         f"clean up would finish it without its work reaching "
-        f"{config.APP_BASE}. Land its PR into {target} first; once {target} "
+        f"{app_base}. Land its PR into {target} first; once {target} "
         f"itself has merged, retarget the card (⌖ replan) and finish it here")
 
 

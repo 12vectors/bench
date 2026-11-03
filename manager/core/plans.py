@@ -489,6 +489,22 @@ def _resume(plan: dict, task: dict, *, ignore_recorded: bool = False) -> None:
 
     tip = _ref_commit(f"refs/heads/{branch}")
 
+    if saved and _follows_default(saved) and _follows_default(plan):
+        # Recorded on the application default, and the card still names
+        # nothing of its own: the record governs, not today's setting. An
+        # operator who changes `BOARD_APP_BASE` mid-flight has changed what
+        # the *next* launch starts from — this card's requirements did not
+        # change, so there is nothing to replan and nothing to refuse.
+        if (saved.get("startBranch") != plan["startBranch"]
+                or saved.get("prBase") != plan["prBase"]):
+            plan["notes"].append(
+                f"recorded on {saved.get('startBranch')} → {saved.get('prBase')}; "
+                f"the application default is now {config.APP_BASE}, which "
+                f"applies to the next launch, not to this work")
+        for key in ("startBranch", "prBase", "source", "prSource", "appBase"):
+            if saved.get(key):
+                plan[key] = saved[key]
+
     if saved:
         changed = []
         if saved.get("startBranch") and saved["startBranch"] != plan["startBranch"]:
@@ -549,6 +565,14 @@ def _resume(plan: dict, task: dict, *, ignore_recorded: bool = False) -> None:
         plan["notes"].append(
             f"adopted an existing {branch}: its base was read back out of git "
             f"rather than planned, and its PR still targets {plan['prBase']}")
+
+
+def _follows_default(plan: dict) -> bool:
+    """Was this plan chosen by the application default alone — no header of
+    the card's own and no phase? Such a plan has no requirement of its own
+    to drift from, only a setting that may since have moved."""
+    return not (plan.get("explicitBase") or plan.get("explicitTarget")
+                or plan.get("phase"))
 
 
 def _contains(commit: str, tip: str) -> bool:

@@ -289,6 +289,25 @@ class TheTwoHeaders(PlanCase):
         self.write(card("57 — Document it", base=f"`{PREREQ}`"))
         self.assertEqual(self.read()["baseBranch"], PREREQ)
 
+    def test_a_note_after_the_value_is_for_the_reader(self):
+        """The template's own shape — `value — note`, as **Priority** and
+        **Depends on** take it — must not read as plan drift."""
+        self.write(card("57 — Document it",
+                        base=f"{PREREQ} — needs the workspace code",
+                        pr_base=f"`{PREREQ}` - lands with it"))
+        task = self.read()
+        self.assertEqual(task["baseBranch"], PREREQ)
+        self.assertEqual(task["prBase"], PREREQ)
+        self.assertEqual(task["planDrift"], [])
+
+    def test_the_templates_example_parses(self):
+        template = (Path(__file__).resolve().parent.parent / "tasks"
+                    / "task-template.md").read_text(encoding="utf-8")
+        self.write(template)
+        task = self.read()
+        self.assertEqual(task["planDrift"], [])
+        self.assertEqual(task["baseBranch"], "task/56-some-prerequisite")
+
     def test_a_value_that_is_not_a_branch_name_is_dropped_and_flagged(self):
         for bad in ("main; rm -rf /", "--upload-pack=evil", "a..b",
                     "$(whoami)", "main.lock", "ends/", "has space"):
@@ -694,6 +713,44 @@ class AStackedCardIsNotMergedIntoTheDefault(PlanCase):
         self.assertIn("replan", str(caught.exception))
 
 
+class ACardOnTheDefaultWhenTheDefaultMoves(PlanCase):
+    """Acceptance: a global-base change between launch and review does not
+    retarget existing work — for an ordinary card too, whose plan the
+    application default chose. The card's requirements did not change, so
+    nothing refuses it and nothing asks for a replan."""
+
+    def setUp(self):
+        super().setUp()
+        git(self.repo, "branch", "trunk", "main")
+        git(self.repo, "push", "-q", "origin", "trunk")
+        self.write(card("57 — Document it"))
+        self.run_agent()
+        github.open_pr_now(CARD)
+        self.patch(APP_BASE="trunk")
+
+    def test_resuming_keeps_the_recorded_plan(self):
+        plan = plans.preflight(CARD, "review")
+        self.assertEqual(plan["blockers"], [])
+        self.assertEqual(plan["startBranch"], "main")
+        self.assertEqual(plan["prBase"], "main")
+        self.assertTrue(any("next launch" in note for note in plan["notes"]))
+
+    def test_acting_on_the_pr_still_resolves_against_the_recorded_base(self):
+        self.adapter_is(ECHOES_PROMPT)
+        record = agents.start_pr_fix(CARD, "review")
+        self.assertTrue(wait_for(
+            lambda: state.AGENTS[record["id"]]["status"] != "running"))
+        brief = (config.WORKTREES / STEM / "prompt.txt").read_text(encoding="utf-8")
+        self.assertIn("git merge origin/main", brief)
+        self.assertNotIn("origin/trunk", brief)
+        self.assertEqual(plans.recorded(CARD)["prBase"], "main")
+
+    def test_merge_and_clean_up_finishes_it_into_what_it_was_planned_on(self):
+        result = github.complete_task(CARD, "review")
+        self.assertTrue(result["merged"])
+        self.assertEqual(taskfiles.find_stage_of(CARD), "done")
+
+
 class ActingOnTheReviewValidatesTheSameTarget(PlanCase):
     """Acceptance: the target is validated through review and fix too — a
     run that pushes to a PR must not resolve conflicts against a base
@@ -987,6 +1044,25 @@ class APhaseMemberInheritsItsPhase(PlanCase):
         self.assertEqual(plan["startCommit"], tip)
         self.assertEqual(plan["prBase"], self.PHASE_BRANCH)
         self.assertIn("membership of phase 40", plan["source"])
+
+    def test_acting_on_a_members_pr_keeps_the_phase_branch(self):
+        """↻ act on PR reads the card woven: a member read on its own looks
+        like an ordinary card on `main`, which would refuse every member the
+        runner launched as "the plan has changed", or tell the run to merge
+        `main` into a branch whose PR targets the phase."""
+        self.start_the_phase()
+        self.write(card("57 — Document it"))
+        self.run_agent()
+        self.assertEqual(plans.recorded(CARD)["prBase"], self.PHASE_BRANCH)
+        github.open_pr_now(CARD)
+        self.adapter_is(ECHOES_PROMPT)
+        record = agents.start_pr_fix(CARD, "review")
+        self.assertTrue(wait_for(
+            lambda: state.AGENTS[record["id"]]["status"] != "running"))
+        brief = (config.WORKTREES / STEM / "prompt.txt").read_text(encoding="utf-8")
+        self.assertIn(self.PHASE_BRANCH, brief)
+        self.assertNotIn("git merge origin/main", brief)
+        self.assertEqual(plans.recorded(CARD)["prBase"], self.PHASE_BRANCH)
 
     def test_a_member_of_an_unstarted_phase_falls_back_to_the_default(self):
         """Unchanged behaviour: a phase with no branch has nothing to

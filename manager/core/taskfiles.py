@@ -125,8 +125,11 @@ def _ref_header(pattern: re.Pattern[str], label: str, text: str,
     """One execution header, read and validated. A value that is not a
     branch name is dropped *and* flagged: the card wears the mistake rather
     than the board quietly reverting to its default, because reverting is
-    exactly how card 58's wrong-base launch happened in the first place."""
-    value = _first(pattern, text)
+    exactly how card 58's wrong-base launch happened in the first place.
+
+    Like **Priority** and **Depends on**, the value may carry a note after
+    ` — `; a branch name holds no whitespace, so the split cannot cut one."""
+    value, _note = _split_reason(_first(pattern, text))
     if value is None:
         return None
     value = value.strip().strip("`")

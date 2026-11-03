@@ -735,7 +735,10 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     # run that resolves conflicts against a base nobody chose. Preflight is
     # the whole check — it resolves both branches by name and refuses when
     # either is gone — so there is no second reading here to disagree with.
-    plan = plans.record(plans.require(plans.preflight(filename, stage, task=task)))
+    # Preflight reads the card woven, not `task` above: phase membership is
+    # derived across the board, and a member read alone looks like an
+    # ordinary card on the application default.
+    plan = plans.record(plans.require(plans.preflight(filename, stage)))
     if not worktree.exists():
         if subprocess.run(["git", "-C", str(plans.app_repo()), "rev-parse", "--verify",
                            "--quiet", branch], capture_output=True).returncode != 0:
