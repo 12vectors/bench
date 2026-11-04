@@ -329,13 +329,23 @@ def child_env(root: Path, home: Path, tmp: Path, evidence_id: str,
               check: str) -> tuple[dict, list[str]]:
     """The environment the check runs in, and the names taken out of it.
 
-    Built rather than inherited. Three things leave: **publication
+    Built rather than inherited. Four things leave: **publication
     credentials**, by name, because a test suite has no business being
     able to push or publish and the only reliable way to say so is for the
     token not to be there; the **launch environment** (`AGENT_*`), because
-    a check has no business reading the prompt or the resolved policy; and
-    the board's **own address** (`BOARD_PORT`, `BOARD_AGENT_ID`), so a
-    check cannot turn round and ask bench for another verification.
+    a check has no business reading the prompt or the resolved policy; the
+    board's **own address** (`BOARD_PORT`, `BOARD_AGENT_ID`), so a check
+    cannot turn round and ask bench for another verification; and the
+    **resolved layout** (`BOARD_APP_ROOT` and the rest), which is the same
+    rule applied to the same kind of fact — which application this board
+    manages and where its tickets live is bookkeeping, not configuration
+    for the suite under test.
+
+    That last one is not hypothetical. A check runs *in* the root bench
+    gave it and is told so (`BENCH_VERIFY_ROOT`), so it needs none of
+    them; a project whose own code reads the board's roots at import —
+    bench itself, as it happens — would otherwise resolve the operator's
+    application while being verified against a checkout of its own.
 
     Three things arrive: `HOME`, `TMPDIR` and the cache variables, pointed
     into directories made for this, and `BENCH_VERIFY*`, so a check that
@@ -347,6 +357,8 @@ def child_env(root: Path, home: Path, tmp: Path, evidence_id: str,
     for name, value in config.child_env().items():
         if name in denied or name.startswith("AGENT_") \
                 or name in ("BOARD_PORT", "BOARD_AGENT_ID", "BOARD_TASK",
+                            "BOARD_APP_ROOT", "BOARD_WORK_ROOT",
+                            "BOARD_TASKS_DIR", "BOARD_WORKTREES_DIR",
                             "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
             removed.append(name)
             continue

@@ -712,6 +712,15 @@ class VerifyingFromThePinnedCheckout(ReviewCase):
         self.assertNotIn("AGENT_PROMPT", env)
         self.assertNotIn("BOARD_PORT", env)
         self.assertIn("GH_TOKEN", found["env"]["removed"])
+        # and the board's resolved layout, which is the same kind of fact
+        # as its address: a check runs in the root bench gave it and is
+        # told so, and a project that reads these at import — bench
+        # itself — would otherwise resolve the operator's application
+        # while being verified against a checkout of its own
+        for name in ("BOARD_APP_ROOT", "BOARD_WORK_ROOT", "BOARD_TASKS_DIR",
+                     "BOARD_WORKTREES_DIR"):
+            self.assertNotIn(name, env)
+        self.assertEqual(env["BENCH_VERIFY_ROOT"], self.invocations()[0]["cwd"])
         # artifacts are directed into bench's own place, not the reviewer's
         # checkout and not the person's home
         self.assertTrue(Path(env["HOME"]).resolve().is_relative_to(
