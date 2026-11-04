@@ -346,9 +346,22 @@ def _run_process(argv: list[str], root: Path, env: dict, log,
     terminating the one process bench can see, and a cancellation that
     leaves children behind is a cancellation that did not happen.
     """
+    started = time.time()
+    # Cancelled before this child existed — while a slot was being waited
+    # for, or between two steps. There is nothing to kill, so the check is
+    # simply never started: a cancellation that arrived a moment early
+    # must not become a 600-second run nobody is waiting for.
+    with state.LOCK:
+        early = record.get("cancelling")
+    if early:
+        log.write(f"\nbench: cancelled before `{shlex.join(argv)}` was "
+                  f"started\n".encode("utf-8"))
+        log.flush()
+        return {"rc": None, "started": started, "ended": time.time(),
+                "outcome": "cancelled", "reason": early,
+                "why": REASONS[early]}
     log.write(f"\n$ {shlex.join(argv)}\n".encode("utf-8"))
     log.flush()
-    started = time.time()
     try:
         proc = subprocess.Popen(
             argv, cwd=str(root), env=env, stdout=log,
@@ -364,6 +377,13 @@ def _run_process(argv: list[str], root: Path, env: dict, log,
     with state.LOCK:
         record["proc"] = proc
         record["phase"] = phase
+        # The other half of the early check above: a cancellation that
+        # landed between it and the launch read a `proc` of None and so
+        # killed nothing. Asked again now the process is on the record,
+        # which closes the window in the only direction that matters.
+        late = record.get("cancelling")
+    if late:
+        _kill(proc)
     try:
         rc = proc.wait(timeout=timeout)
         timed_out = False

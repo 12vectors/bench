@@ -639,13 +639,54 @@ GIT_RESHAPING = {
 }
 
 
+# What a check's own command line may not contain. The grant list, minus
+# the two quote characters — and the difference is the point. A *grant* is
+# rendered into a prefix allow-rule, and a rule cannot see through a
+# quote, so a quoted argument there would widen what it matched. A
+# **check** is never rendered into a rule: bench splits it once, here,
+# and hands the result to `execve`. So a path with spaces in it is
+# expressible exactly the way a shell expresses one, and the things that
+# would still make one command line into two are still refused.
+CHECK_BREAKERS = tuple(c for c in SHELL_BREAKERS if c not in ("'", '"'))
+
+
 def _runnable_problem(name: str, what: str, run: str) -> str | None:
-    """What bench refuses to *run itself*, over and above what it refuses
-    to let a run launch. Two things, and both are about the fact that
-    bench holds the argv here: a git subcommand that reshapes the
-    repository, and an argument that names a file reading as a credential.
+    """Why bench cannot run this command line itself.
+
+    Everything a command grant is held to except the quoting ban (see
+    `CHECK_BREAKERS`), plus the two refusals that exist only because bench
+    is the one running it: a git subcommand that reshapes the repository,
+    and an argument that names a file reading as a credential.
     """
-    parts = shlex.split(run)
+    run = run.strip()
+    if not run:
+        return f"the {what} '{name}' has no \"run\" — there is nothing to run"
+    for breaker in CHECK_BREAKERS:
+        if breaker in run:
+            return (f"the {what} '{name}' contains {breaker!r} in its \"run\" "
+                    f"— a check is one executable and fixed arguments, not a "
+                    f"shell line: compound commands, pipelines, redirections, "
+                    f"globs and substitutions are refused because bench runs "
+                    f"it with no shell and there is nothing to expand them")
+    try:
+        parts = shlex.split(run)
+    except ValueError as exc:
+        return f"the {what} '{name}' does not parse as a command line ({exc})"
+    if not parts:
+        return f"the {what} '{name}' has an empty \"run\""
+    if shlex.join(parts) != run:
+        return (f"the {what} '{name}' is written {run!r}, which normalises to "
+                f"{shlex.join(parts)!r} — write it in the normalised form so "
+                f"the document and the argument list read alike")
+    executable = parts[0]
+    if ".." in Path(executable).parts:
+        return (f"the {what} '{name}' names the executable {executable!r}, "
+                f"which climbs out of its own path with '..'")
+    if "/" in executable and not executable.startswith("/"):
+        return (f"the {what} '{name}' names the executable {executable!r} — "
+                f"give a bare name resolved on PATH, or an absolute path; a "
+                f"relative one depends on a working directory the document "
+                f"cannot pin")
     if Path(parts[0]).name == "git":
         subcommand = next((p for p in parts[1:] if not p.startswith("-")), "")
         if subcommand in GIT_RESHAPING:
@@ -687,14 +728,7 @@ def _check_problem(raw: dict, known_prepare: set[str]) -> str | None:
         return (f"a check is named {name!r} — a check's name is what a run "
                 f"asks for and what its evidence is filed under, so it must "
                 f"match [a-z0-9][a-z0-9._-]*")
-    # The executable and its fixed arguments are a command grant's problem
-    # exactly, so they are asked the same question — including the shell
-    # breakers, which matter more here: bench runs this itself.
-    probe = {"name": name, "run": raw.get("run"), "root": "worktree"}
-    problem = _grant_problem(probe, {"worktree": "/"})
-    if problem:
-        return problem.replace(f"command grant '{name}'", f"check '{name}'")
-    problem = _runnable_problem(name, "check", str(raw.get("run")).strip())
+    problem = _runnable_problem(name, "check", str(raw.get("run") or ""))
     if problem:
         return problem
     root = str(raw.get("root") or "worktree")
@@ -752,13 +786,8 @@ def _step_problem(raw: dict) -> str | None:
     if not NAME_RE.match(name):
         return (f"a preparation step is named {name!r} — names match "
                 f"[a-z0-9][a-z0-9._-]*")
-    probe = {"name": name, "run": raw.get("run"), "root": "worktree"}
-    problem = _grant_problem(probe, {"worktree": "/"})
-    if problem:
-        return problem.replace(f"command grant '{name}'",
-                               f"preparation step '{name}'")
     return _runnable_problem(name, "preparation step",
-                             str(raw.get("run")).strip())
+                             str(raw.get("run") or ""))
 
 
 def _check_revision(name: str, run: str, root: str, scopes: dict,
