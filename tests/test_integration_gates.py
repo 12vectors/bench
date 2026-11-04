@@ -215,6 +215,7 @@ class GateCase(unittest.TestCase):
     def gated(self, *, scope: str = "acceptance", check: str = "unit",
               body: str = PASSES, review: str = "none",
               overrides: dict | None = None, root: str = "worktree",
+              scopes_for_check: dict | None = None,
               intents=("work", "review")) -> dict:
         """A document with one declared check and one gate requiring it."""
         gate: dict = {"checks": [check]} if check else {}
@@ -223,10 +224,13 @@ class GateCase(unittest.TestCase):
         block: dict = {scope: gate}
         if overrides is not None:
             block["overrides"] = overrides
+        declared = {"name": check, "run": str(self.executable(check, body)),
+                    "root": root}
+        if scopes_for_check:
+            declared["scopes"] = scopes_for_check
         document = {
             "v": 1,
-            "checks": [{"name": check, "run": str(self.executable(check, body)),
-                        "root": root}] if check else [],
+            "checks": [declared] if check else [],
             "profiles": {intent: {"verify": [check] if check else []}
                          for intent in intents},
             "gates": block,
@@ -363,6 +367,40 @@ class ThePolicyIsOneReader(GateCase):
         self.assertIn("parses no policy document itself", seams["evaluates"])
         self.assertIn("reads COMMENTED as an approval", seams["never"])
 
+    def test_a_gate_infers_nothing_from_how_the_board_syncs(self):
+        """`BOARD_SYNC` is about the board's state, `BOARD_APP_MERGE` is
+        about how the application is merged, and neither has anything to
+        say about whether a merge is *allowed*. Reading either here is how
+        a ticket-sync setting would silently change a merge policy, so the
+        module does not."""
+        self.longMessage = False
+        for setting in ("config.SYNC", "config.APP_MERGE",
+                        "config.COMMIT_MOVES", "config.GIT_REMOTE",
+                        "app_merge_on_origin", "gh_available"):
+            with self.subTest(setting=setting):
+                self.assertNotIn(setting, self.source(),
+                                 f"gates.py reads {setting}, which says "
+                                 f"nothing about whether a merge is allowed")
+
+    def test_a_gate_publishes_nothing_and_reaches_no_remote(self):
+        """Card 63's publication safety is untouched: a gate decides
+        whether something may be published and never publishes. It starts
+        no process of its own — the one question it asks git goes through
+        `config`'s own reader — and it imports nothing that could."""
+        self.longMessage = False
+        source = self.source()
+        for forbidden in ("import subprocess", "subprocess.", "import github",
+                          "import agents", "import sync", "import drive"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, source,
+                                 f"gates.py contains {forbidden!r}, and a "
+                                 f"gate neither runs processes nor publishes")
+        self.assertIn("reaches a remote", " ".join(gates.seams()["never"]))
+
+    def source(self) -> str:
+        return (REPO / "manager" / "core" / "gates.py").read_text(
+            encoding="utf-8")
+
 
 # ── evidence satisfies a gate only while it is about the commit ────────
 
@@ -496,6 +534,66 @@ class EvidenceIsBoundToTheCommit(GateCase):
         found = self.decide()
         self.assertEqual(found["decision"], "blocked")
         self.assertEqual(found["unmet"][0]["reason"], "cancelled")
+
+    def test_editing_the_check_invalidates_the_evidence_for_it(self):
+        """The policy carries the check's own definition, so an operator
+        who edits what `unit` means has evidence about a command that no
+        longer bears that name."""
+        self.gated()
+        self.commit_in(self.wt)
+        self.manifest()
+        self.assertEqual(self.ask()["outcome"], "passed")
+        self.assertEqual(self.decide()["decision"], "allowed")
+        # the definition, not the file's bytes: what `unit` *means* in the
+        # document is what a check's identity is digested from
+        document = self.gated()
+        document["checks"][0]["run"] += " --and-now-something-else"
+        self.declares(document)
+        verify.forget_cached()
+        gates.forget_cached()
+        found = self.decide()
+        self.assertEqual(found["decision"], "blocked")
+        self.assertEqual(found["unmet"][0]["reason"], "stale")
+        self.assertIn("Run the check again", found["unmet"][0]["remedy"])
+
+    def test_changing_the_approved_context_invalidates_it_too(self):
+        """A run's approved inputs are part of the policy it rode, so a
+        pass recorded under one set of pinned inputs is not a pass under
+        another."""
+        (self.work / "reference").mkdir(parents=True, exist_ok=True)
+        brief = self.work / "reference" / "brief.md"
+        brief.write_text("the brief\n", encoding="utf-8")
+        document = self.gated()
+        document["context"] = [{"name": "brief",
+                                "path": "work:reference/brief.md"}]
+        self.declares(document)
+        self.commit_in(self.wt)
+        self.manifest()
+        self.assertEqual(self.ask()["outcome"], "passed")
+        self.assertEqual(self.decide()["decision"], "allowed")
+        brief.write_text("the brief, rewritten\n", encoding="utf-8")
+        verify.forget_cached()
+        gates.forget_cached()
+        found = self.decide()
+        self.assertEqual(found["decision"], "blocked")
+        self.assertEqual(found["unmet"][0]["reason"], "stale")
+
+    def test_a_scope_is_part_of_what_the_evidence_is_about(self):
+        """A gate requires the check, and a scoped run of it is a run of
+        a different argument list — so it satisfies the gate only if the
+        operator declared the gate against that scope's own check."""
+        self.gated(scopes_for_check={"fast": ["-k", "fast"]})
+        self.commit_in(self.wt)
+        self.manifest()
+        found = self.ask(scope="fast")
+        self.assertEqual(found["outcome"], "passed")
+        self.assertEqual(found["scopeArgs"], ["-k", "fast"])
+        decision = self.decide()
+        # the record is for the check the gate names, and the gate says
+        # which scope it was — so a reader can see what was actually run
+        self.assertEqual(decision["decision"], "allowed")
+        row = decision["requirements"][0]
+        self.assertEqual(row["history"][0]["scope"], "fast")
 
     def test_every_unmet_reason_carries_a_remedy_of_its_own(self):
         for reason in gates.REASONS:
@@ -827,6 +925,22 @@ class AnOverrideIsNeverAPass(GateCase):
                            reason="just in case, for later")
         self.assertIn("nothing to override", str(caught.exception))
 
+    def test_an_override_never_reaches_the_shared_ticket_history(self):
+        """It names this machine's reading of a remote and this machine's
+        paths, so it lives with the tool — the law every other record
+        under state/ follows. A teammate pulling the tickets pulls no
+        override."""
+        self.gated(overrides={"allow": True})
+        before = sorted(str(p.relative_to(self.work))
+                        for p in self.work.rglob("*") if p.is_file())
+        gates.override(CARD, "acceptance", actor="istos",
+                       reason="the check runner is down, demo at 5")
+        after = sorted(str(p.relative_to(self.work))
+                       for p in self.work.rglob("*") if p.is_file())
+        self.assertEqual(before, after, "nothing was written to the work state")
+        self.assertTrue((self.state / "gates").is_dir())
+        self.assertTrue(list((self.state / "gates").glob("*.overrides.json")))
+
     def test_overrides_are_refused_while_the_policy_does_not_resolve(self):
         self.declares({"v": 1, "gates": {"acceptance": {"checks": ["nope"]},
                                          "overrides": {"allow": True}}})
@@ -910,6 +1024,55 @@ class TheBackendIsTheAuthority(GateCase):
         self.assertIn(shown["unmet"][0]["why"], str(caught.exception))
 
     def test_an_ungated_board_merges_exactly_as_it_always_did(self):
+        result = github.complete_task(CARD, "review")
+        self.assertTrue(result["merged"])
+
+    def test_a_push_between_the_two_readings_is_a_refusal(self):
+        """The window the second read closes. The gate is asked before the
+        drive is parked — which takes as long as it takes — and again
+        immediately before the merge; a commit landing in between is a
+        different commit, and the first reading no longer speaks for it.
+
+        The push is injected at a seam between the two asks rather than
+        raced, so the case is deterministic and about the ordering rather
+        than about timing."""
+        self.gated()
+        self.manifest(worktree=self.wt)
+        self.assertEqual(self.ask(filename=CARD, stage="review")["outcome"],
+                         "passed")
+        self.assertEqual(gates.evaluate(CARD, "acceptance")["decision"],
+                         "allowed")
+        landed: list[str] = []
+        original = github._assert_lands_in_the_base
+
+        def push_lands(filename, target):
+            original(filename, target)
+            if not landed:
+                landed.append(self.commit_in(self.wt, "a late push\n"))
+                verify.forget_cached()
+                gates.forget_cached()
+
+        self.addCleanup(setattr, github, "_assert_lands_in_the_base", original)
+        github._assert_lands_in_the_base = push_lands
+
+        with self.assertRaises(ValueError) as caught:
+            github.complete_task(CARD, "review")
+        self.assertIn("the merge is blocked", str(caught.exception))
+        self.assertNotEqual(
+            0, git(self.repo, "merge-base", "--is-ancestor", landed[0],
+                   "main").returncode,
+            "the late commit must not have reached the application base")
+        self.assertEqual(self.stage_of(CARD), "review")
+
+    def test_the_two_scopes_are_not_each_others(self):
+        """An acceptance gate is not a member gate: a card is guarded by
+        the one that is actually in its way."""
+        self.gated(scope="member")
+        self.assertEqual(gates.evaluate(CARD, "acceptance")["decision"],
+                         "ungated")
+        self.assertEqual(gates.evaluate(CARD, "member")["decision"],
+                         "blocked")
+        # and acceptance is what merge & clean up asks for an ordinary card
         result = github.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
 

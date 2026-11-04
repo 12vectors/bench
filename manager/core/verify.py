@@ -1342,7 +1342,8 @@ def freshness(record: dict) -> dict:
                       "changed since it ran, so it did not run against this "
                       "code")
     frozen_policy = record.get("policyRevision")
-    if frozen_policy:
+    frozen_context = record.get("contextIds")
+    if frozen_policy or frozen_context:
         intent = record.get("intent") or "work"
         task = record.get("task") or ""
         try:
@@ -1358,10 +1359,28 @@ def freshness(record: dict) -> dict:
                         else None))
         except ValueError:
             current = None
-        if current is not None and current["revision"] != frozen_policy:
+        if (current is not None and frozen_policy
+                and current["revision"] != frozen_policy):
             moved("policy-changed",
                   "the execution policy — which carries the check's own "
                   "definition — has changed since it ran")
+        # The third binding, and the one that was named here before it was
+        # compared: a context identity is `name@<content hash>`, so an
+        # edited approved input is a different identity rather than the
+        # same one with new bytes. A pass recorded under inputs the run
+        # was *given* is not a pass under different ones — and the policy
+        # revision cannot stand in for it, because that digests which
+        # files were selected and not what is in them.
+        if current is not None and frozen_context:
+            now = {i.get("contextId") for i in current.get("context") or []
+                   if i.get("contextId")}
+            gone = [i for i in frozen_context if i not in now]
+            if gone:
+                moved("context-changed",
+                      f"{len(gone)} approved input"
+                      f"{'' if len(gone) == 1 else 's'} this ran with "
+                      f"{'has' if len(gone) == 1 else 'have'} changed or gone "
+                      f"since — it did not run with the inputs in force now")
     return {"fresh": not changed, "changed": changed, "reasons": reasons,
             "stale": bool(changed) and record.get("outcome") == "passed"}
 
