@@ -746,7 +746,8 @@ def _review_requirement(filename: str, policy: str, head: dict) -> dict:
 
 def evaluate(filename: str, scope: str, *, task: dict | None = None,
              tips: dict[str, str] | None = None,
-             policy: dict | None = None) -> dict:
+             policy: dict | None = None,
+             records: list[dict] | None = None) -> dict:
     """May this mutation happen? One reading, and it changes nothing.
 
     Everything is resolved here: the requirements from the policy
@@ -756,6 +757,14 @@ def evaluate(filename: str, scope: str, *, task: dict | None = None,
     immediately before the irreversible step, with this function's own
     answer, which is how a push that lands in between becomes a refusal
     rather than a stale-evidence window.
+
+    `tips`, `policy` and `records` are the same reads, hoisted: a caller
+    asking about a whole board passes them once rather than paying a
+    branch walk, a document read and a scan of every evidence file per
+    card. They are inputs to the same comparison and never a different
+    one — a decision made from a hoisted read is the decision the
+    mutation makes, which is why `board()` may share them and why the
+    guarded paths deliberately do not.
     """
     if scope not in profiles.GATE_SCOPES:
         raise ValueError(f"unknown gate scope '{scope}' — one of "
@@ -803,8 +812,9 @@ def evaluate(filename: str, scope: str, *, task: dict | None = None,
         })
         return found
 
-    records = verify.for_task(filename)
-    rows = [_check_requirement(filename, check, head, records)
+    mine = ([r for r in records if r.get("task") == filename]
+            if records is not None else verify.for_task(filename))
+    rows = [_check_requirement(filename, check, head, mine)
             for check in entry["checks"]]
     rows.append(_review_requirement(filename, entry["review"], head))
     rows = [r for r in rows if not (r["kind"] == "review"
@@ -1075,6 +1085,11 @@ def board(collected: dict) -> dict:
     if _BOARD is not None and _BOARD[0] == stamp and _BOARD[1] == files:
         return _BOARD[2]
     tips = _tips()
+    # One branch walk, one document read and one scan of the evidence for
+    # the whole board, rather than one of each per card: this runs on
+    # every state load, and a per-card subprocess is what makes a payload
+    # expensive enough that somebody caches a *decision* instead.
+    records = verify.all_evidence()
     found: dict = {}
     for task in tasks:
         scope = scope_for(task)
@@ -1084,7 +1099,7 @@ def board(collected: dict) -> dict:
         if task.get("phase") and not task.get("isPhase"):
             scope = "member"
         decision = evaluate(task["file"], scope, task=task, tips=tips,
-                            policy=policy)
+                            policy=policy, records=records)
         if decision["decision"] == "ungated" and not policy["blockers"]:
             continue
         found[task["file"]] = {
