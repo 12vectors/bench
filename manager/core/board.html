@@ -1823,6 +1823,163 @@ function verifyChip(task) {
   };
 }
 
+/* ── where a PR review ran, and what it was of ─────────────────────────
+
+   A review used to be a verdict with no location and no revision: it ran
+   in the live application checkout, at whatever that happened to hold.
+   Now it runs in a checkout bench pinned to the exact head the pull
+   request proposed, and these two read that record back.
+
+   The one thing this must never do is imply currency it does not have. A
+   verdict is about the commit it was pinned to, so a head that has moved
+   makes it `superseded` and a merged PR makes it `historical` — and
+   neither is drawn in the colour of a pass. */
+
+const REVIEW_LABELS = {
+  current: ['', 'reviewed', 'this is the head the pull request still proposes'],
+  superseded: ['bad', 'superseded',
+               "the PR's head has moved since — this says nothing about the "
+               + 'code there now'],
+  historical: ['dim', 'historical',
+               'the pull request is merged or closed — a record of what it '
+               + 'proposed, not a validation of what is in its base now'],
+  none: ['', 'reviewed', ''],
+};
+
+const REVIEW_TARGETS = {
+  member: "one card's own pull request",
+  integration: "a phase's integration branch",
+};
+
+function reviewChip(task) {
+  const r = (S.state.reviews || {})[task.file];
+  if (!r) return null;
+  const [cls, word, why] = REVIEW_LABELS[r.label] || REVIEW_LABELS.none;
+  const head = (r.head || '').slice(0, 12);
+  return {
+    label: `${word} ${head}`, pre: '⌾', review: true,
+    // accent means an agent is alive in it; otherwise the state's own
+    // colour, and never the colour of a pass — a pinned review is a
+    // location and a revision, not a verdict
+    cls: r.live ? 'accent' : cls,
+    title: `A PR review ran in a checkout bench pinned for it, detached at `
+         + `${r.head || 'an unrecorded commit'}`
+         + (r.base ? `, which PR #${r.number} proposes into ${r.base}` : '')
+         + `. ${why}. Opening this runs nothing.`,
+  };
+}
+
+function reviewPanel(record, evidence, current) {
+  const fresh = record.freshness || {};
+  const word = (REVIEW_LABELS[record.label] || REVIEW_LABELS.none)[1];
+  const head = (record.head || {}).commit || '';
+  const base = record.base || {};
+  const rows = (evidence || []).filter(e => e.agent === record.agent);
+  const checks = rows.length
+    ? rows.map(e => {
+        const [c, glyph, said] = verifyState((e.outcome === 'passed'
+          && (fresh.stale || fresh.historical)) ? 'stale' : e.outcome);
+        // preparation apart from the check it prepared, as the evidence
+        // sheet draws it: "the dependencies would not install" and "the
+        // tests failed" are different things to go and do
+        const prep = (e.prepare || []).map(p => {
+          const ok = p.outcome === 'prepared';
+          return `<div class="check-row ${ok ? 'pass' : 'fail'}" ` +
+            `style="padding-left:18px"><span class="glyph">${ok ? '✓' : '✕'}</span>` +
+            `<span class="name">prepare · ${esc(p.name)}</span>` +
+            `<span class="state">${esc(ok ? 'prepared' : (p.outcome || 'failed'))}` +
+            `</span></div>`;
+        }).join('');
+        return `<div class="check-row ${c}" title="${esc(e.why || '')}">` +
+          `<span class="glyph">${glyph}</span>` +
+          `<span class="name">${esc(e.check)}</span>` +
+          `<span class="state">${esc(said)} · in the pinned checkout` +
+          `${e.duration ? ' · ' + fmtSecs(e.duration) : ''}</span></div>` + prep;
+      }).join('')
+    : `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no checks ran here</span>` +
+      `<span class="state">this review executed nothing bench recorded` +
+      `</span></div>`;
+  const row = (glyph, name, value, kls) =>
+    `<div class="check-row ${kls || ''}"><span class="glyph">${glyph}</span>` +
+    `<span class="name">${esc(name)}</span>` +
+    `<span class="state">${esc(value)}</span></div>`;
+  const where = record.removed
+    ? `${record.path} — removed when the review ended`
+    : record.kept ? record.kept
+    : record.released ? `${record.path} — ${record.released}`
+    : `${record.path} — held by this run`;
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">${esc(word)}</span>` +
+    `<span class="r">${esc(record.reviewId || record.agent)}</span></div>` +
+    row('⌾', 'reviewed head', `${head || 'unknown'} (${(record.head || {}).authority || 'unknown'} authority)`) +
+    row('→', 'proposed into', `${base.ref || 'unknown'}${base.commit ? ' at ' + base.commit.slice(0, 12) : ''}`) +
+    row('·', 'pull request', `#${record.number} · ${String(record.state || 'state unknown').toLowerCase()} · ${(REVIEW_TARGETS[record.target] || record.target || '')}`) +
+    row('·', 'checkout', where, record.kept ? 'fail' : '') +
+    checks +
+    ((fresh.changed || []).length
+      ? (fresh.changed || []).map(c => row('✕', 'not current', c, 'fail')).join('')
+      : row('✓', 'still current',
+            `the pull request is still at ${(current && current.commit || head).slice(0, 12)}`,
+            'pass')) +
+    // a caveat is not a change: a head read from the local branch has not
+    // been superseded by anything, it was never bound — said in the
+    // settled register rather than the alarm
+    (fresh.caveats || []).map(c => row('·', 'unbound', c)).join('') +
+    (record.notes || []).map(n => row('·', 'note', n)).join('') +
+    `</div>`;
+}
+
+/* The detail panel. A GET of records and of what the PR poll last saw:
+   it provisions nothing, fetches nothing from GitHub and starts no
+   validation — opening a historical review must not be a way to set
+   anything running against an integration branch it never judged. */
+async function reviewSheet(task) {
+  const wrap = $('#sheetwrap');
+  const head = (tail) =>
+    `<div class="stitle"><span>${esc(task.title)}</span>` +
+    `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}` +
+    `⌾ ${esc(tail)}</span></div>`;
+  wrap.innerHTML = `<div class="sheet">${head('pr review')}<p>Reading the record…</p></div>`;
+  wrap.classList.add('open');
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+
+  const res = await fetch('/api/review?file=' + encodeURIComponent(task.file) +
+                          '&stage=' + encodeURIComponent(task.stage));
+  const data = res.ok ? await res.json() : {};
+  const records = data.reviews || [];
+  const current = data.head || null;
+
+  wrap.innerHTML =
+    `<div class="sheet">${head('pr review')}` +
+    `<p>A PR review does not run in the application checkout. Bench resolves ` +
+    `the pull request's head, checks that one commit out into a directory it ` +
+    `owns for the run, and removes it afterwards — so a review reads the ` +
+    `proposed code at a revision that cannot change under it.</p>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">The pull request now</span>` +
+    `<span class="r">${esc(current && current.source === 'poll' ? 'from the PR poll' : 'last read')}</span></div>` +
+    `<div class="check-row"><span class="glyph">·</span>` +
+    `<span class="name">head</span><span class="state">` +
+    `${esc(current && current.commit ? current.commit : 'bench has not read it')}` +
+    `${current && current.state ? ' · ' + esc(String(current.state).toLowerCase()) : ''}` +
+    `</span></div></div>` +
+    (records.length
+      ? records.map(r => reviewPanel(r, data.evidence, current)).join('')
+      : `<div class="panel"><div class="check-row none"><span class="glyph">—</span>` +
+        `<span class="name">no review has been pinned</span>` +
+        `<span class="state">◔ review PR pins a checkout of the head</span>` +
+        `</div></div>`) +
+    `<p class="why">Reading this ran nothing: no checkout was made, nothing ` +
+    `was fetched and no check was started. A superseded or historical ` +
+    `review stays exactly what it was — the judgement of one revision — ` +
+    `and validating what is in a base branch now is that branch's own card, ` +
+    `never this panel.</p>` +
+    `<div class="sbtns"><button id="sh-norev">Close<small>Nothing was run.` +
+    `</small></button></div></div>`;
+  $('#sh-norev').addEventListener('click', closeSheet);
+}
+
 async function fetchVerifyLog(evidenceId, into) {
   into.innerHTML = '<pre>reading the log…</pre>';
   try {
@@ -2262,6 +2419,11 @@ function cardFor(task) {
   // some, so a board nobody declared one on has no such chip anywhere.
   const verified = verifyChip(task);
   if (verified) chips.push(verified);
+  // where a PR review of this card ran and which revision it was of — a
+  // destination like the rest of the row, opening the record. Present
+  // only on cards bench has pinned a checkout for.
+  const reviewed = reviewChip(task);
+  if (reviewed) chips.push(reviewed);
   if (prState && prState.ci) {
     chips.push({ label: 'CI', glyph: { pass: '✓', fail: '✕', running: '◌' }[prState.ci],
       cls: { pass: 'ok', fail: 'bad', running: 'accent' }[prState.ci], title: detail });
@@ -2349,6 +2511,7 @@ function cardFor(task) {
         if (c.plan) return `<button class="chip2 ${c.cls}" data-plan="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.profile) return `<button class="chip2 ${c.cls}" data-profile="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.verify) return `<button class="chip2 ${c.cls}" data-verify="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
+        if (c.review) return `<button class="chip2 ${c.cls}" data-review="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.cmd) return `<button class="chip2 ${c.cls}" data-cmd="${esc(c.cmd)}" title="${esc(c.title)}">${actLabel(c.label, 'run it?', 'running…')}${g}</button>`;
         return `<span class="chip2 ${c.cls}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</span>`;
       }).join('') + '</div>'
@@ -2375,6 +2538,8 @@ function cardFor(task) {
     btn.addEventListener('click', (e) => { e.stopPropagation(); profileSheet(task); }));
   el.querySelectorAll('[data-verify]').forEach(btn =>
     btn.addEventListener('click', (e) => { e.stopPropagation(); verifySheet(task); }));
+  el.querySelectorAll('[data-review]').forEach(btn =>
+    btn.addEventListener('click', (e) => { e.stopPropagation(); reviewSheet(task); }));
   el.querySelectorAll('[data-drive]').forEach(btn =>
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2526,7 +2691,10 @@ async function fireAgent(task, url, extra) {
   toast(url.endsWith('act-pr')
     ? `${who} is acting on the review of ${task.file}'s PR`
     : url.endsWith('review-pr')
-      ? `${who} is reviewing ${task.file}'s PR`
+      // which revision, because that is what the verdict will be about and
+      // the click is the moment it was decided
+      ? `${who} is reviewing ${task.file}'s PR at ` +
+        `${((data.agent.review || {}).head || 'an unrecorded commit').slice(0, 12)}`
       : data.agent.mode === 'review'
         ? `${who} is checking ${task.file} is still true of the codebase`
         : `${who} is on it — branch ${data.agent.branch}`);
@@ -3496,6 +3664,7 @@ function permissionsPanel(agent) {
   const pub = found.publication || {};
   const may = ['commit', 'push', 'publish'].filter(k => pub[k]);
   return head(esc(`${found.intent} · ${found.cwd.policy}`)) +
+    reviewRows(found) +
     grantRows(found) +
     inputRows(found) +
     `<div class="check-row"><span class="glyph">↑</span>` +
@@ -3511,6 +3680,25 @@ function permissionsPanel(agent) {
     `<pre>${esc(profileDetail(found) +
       (fresh.changed || []).map(c => `\nsince:      ${c}`).join(''))}</pre></details>` +
     `</div>`;
+}
+
+/* Where a PR review ran, read off the same frozen manifest as the rest of
+   this panel: the revision it was pinned to and the checkout bench owned
+   for it. Nothing at all for every other kind — a work run has its card's
+   own worktree and a relevance check is pinned nothing, and inventing a
+   row for them would suggest a location neither has. */
+function reviewRows(found) {
+  const r = found.review;
+  if (!r) return '';
+  const head = (r.head || {}).commit || '';
+  const base = (r.base || {}).ref || 'unknown';
+  return `<div class="check-row"><span class="glyph">⌾</span>` +
+    `<span class="name">reviewing</span>` +
+    `<span class="state">${esc(head.slice(0, 12) || 'unknown')} → ${esc(base)}` +
+    `${r.historical ? ' · historical' : ''}</span></div>` +
+    `<div class="check-row"><span class="glyph">·</span>` +
+    `<span class="name">pinned checkout</span>` +
+    `<span class="state">${esc(r.path || '—')}</span></div>`;
 }
 
 function renderFocus() {

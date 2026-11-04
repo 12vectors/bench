@@ -83,6 +83,7 @@ from pathlib import Path
 
 import config
 import profiles
+import reviews
 import state
 import taskfiles
 
@@ -137,6 +138,10 @@ REASONS = {
     "never-asked": "nothing asked for it",
     "source-changed": "the source it ran against has changed since",
     "policy-changed": "the policy or the check's definition has changed since",
+    "head-changed": "the pull request's head has moved on since, so the "
+                    "result is about an earlier revision",
+    "pr-ended": "the pull request has been merged or closed since, so the "
+                "result is historical rather than current",
 }
 
 # Which outcome a check's own exit status means. Separate from everything
@@ -324,13 +329,23 @@ def child_env(root: Path, home: Path, tmp: Path, evidence_id: str,
               check: str) -> tuple[dict, list[str]]:
     """The environment the check runs in, and the names taken out of it.
 
-    Built rather than inherited. Three things leave: **publication
+    Built rather than inherited. Four things leave: **publication
     credentials**, by name, because a test suite has no business being
     able to push or publish and the only reliable way to say so is for the
     token not to be there; the **launch environment** (`AGENT_*`), because
-    a check has no business reading the prompt or the resolved policy; and
-    the board's **own address** (`BOARD_PORT`, `BOARD_AGENT_ID`), so a
-    check cannot turn round and ask bench for another verification.
+    a check has no business reading the prompt or the resolved policy; the
+    board's **own address** (`BOARD_PORT`, `BOARD_AGENT_ID`), so a check
+    cannot turn round and ask bench for another verification; and the
+    **resolved layout** (`BOARD_APP_ROOT` and the rest), which is the same
+    rule applied to the same kind of fact — which application this board
+    manages and where its tickets live is bookkeeping, not configuration
+    for the suite under test.
+
+    That last one is not hypothetical. A check runs *in* the root bench
+    gave it and is told so (`BENCH_VERIFY_ROOT`), so it needs none of
+    them; a project whose own code reads the board's roots at import —
+    bench itself, as it happens — would otherwise resolve the operator's
+    application while being verified against a checkout of its own.
 
     Three things arrive: `HOME`, `TMPDIR` and the cache variables, pointed
     into directories made for this, and `BENCH_VERIFY*`, so a check that
@@ -342,6 +357,8 @@ def child_env(root: Path, home: Path, tmp: Path, evidence_id: str,
     for name, value in config.child_env().items():
         if name in denied or name.startswith("AGENT_") \
                 or name in ("BOARD_PORT", "BOARD_AGENT_ID", "BOARD_TASK",
+                            "BOARD_APP_ROOT", "BOARD_WORK_ROOT",
+                            "BOARD_TASKS_DIR", "BOARD_WORKTREES_DIR",
                             "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
             removed.append(name)
             continue
@@ -646,8 +663,17 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
 
     manifest = frozen
     if manifest is None:
+        # A person's request, so the profile resolves fresh — with the
+        # review checkout this card is still holding, if it is one. Without
+        # that the reading would offer a review's checks and then refuse
+        # them by name, which is the one thing a rerun affordance must not
+        # do. Nothing is provisioned to make it available.
+        held = reviews.live_for_task(task) if intent == "review" else None
         try:
-            manifest = profiles.manifest(intent, task, stage)
+            manifest = profiles.manifest(
+                intent, task, stage,
+                review=(held or {}).get("path") or None,
+                review_record=held)
         except (ValueError, OSError) as exc:
             return _refuse(_request_shell(check, task, scope, intent, agent,
                                           actor, stage, None),
@@ -767,6 +793,11 @@ def _request_shell(check: str, task: str, scope: str | None, intent: str,
         "policyRevision": (manifest or {}).get("revision"),
         "policySource": ((manifest or {}).get("source") or {}).get("kind"),
         "contextIds": context,
+        # which revision a PR review was pinned to, when the run asking is
+        # one. It closes the chain: policy, context, request, review and
+        # evidence are all named in one record, so "what did this check
+        # actually run against" is answerable from the evidence alone.
+        "reviewId": ((manifest or {}).get("review") or {}).get("reviewId"),
         "adapter": ((manifest or {}).get("adapter") or {}).get("name"),
         # evidence is machine-local, like the manifest and the plan: it
         # names this disk's paths, and nothing here is ever committed
@@ -783,17 +814,24 @@ def _request_shell(check: str, task: str, scope: str | None, intent: str,
 
 def _execution_root(check: dict, task: str,
                     manifest: dict) -> tuple[Path, bool, str | None]:
-    """Where this check runs, and whether bench made it for the occasion.
+    """Where this check runs, and whether *this verification* made it.
 
-    Two answers, and the application checkout is not one of them. A
+    Three answers, and the application checkout is not one of them. A
     `worktree` check runs in the card's own checkout — which bench
     created, for this card, and which a request for another card can never
     name because the path is derived from the task. A `source` check runs
     in a detached checkout of one exact commit that bench adds here and
-    removes afterwards, which is the only root a read-only run has: a
-    review must never run a test suite in the live application.
+    removes afterwards. A `review` check runs in the checkout bench pinned
+    for the PR review that asked, which bench made and owns for that run's
+    whole life rather than for this one verification — so `owned` is False
+    for it, and `_cleanup` leaves it to `reviews.release`.
+
+    A review must never run a test suite in the live application, and the
+    `review` root is how it runs one against the *proposed* code instead.
     """
     stem = task[:-3]
+    if check["root"] == "review":
+        return _review_root(check, task, manifest)
     if check["root"] == "worktree":
         root = config.WORKTREES / stem
         mismatch = config.worktree_mismatch(root)
@@ -830,6 +868,52 @@ def _execution_root(check: dict, task: str,
             f"bench could not check {branch} out for the check "
             f"'{check['name']}': {(added.stderr or added.stdout).strip()[:200]}")
     return root, True, f"bench checked {branch} out at {sha[:12]} for this"
+
+
+def _review_root(check: dict, task: str,
+                 manifest: dict) -> tuple[Path, bool, str | None]:
+    """The pinned PR-review checkout the asking run holds.
+
+    Read off the frozen manifest, which is where the launch recorded it —
+    so a check runs against the revision that run was pinned to, and not
+    against whatever the branch has since become. A person's rerun has no
+    manifest of its own, so it falls to the record still held for the
+    card; with none, the check is refused rather than run somewhere else.
+
+    Nothing is provisioned here. Checking a PR out is a review launch's
+    side effect, with the ownership record that goes with it, and a
+    verification that quietly made a second one would own a checkout
+    nobody could account for.
+    """
+    record = (manifest or {}).get("review") or reviews.live_for_task(task)
+    if not record or not record.get("path"):
+        raise ValueError(
+            f"the check '{check['name']}' runs in the checkout bench pins for "
+            f"a PR review, and the run asking holds none — ◔ review PR pins "
+            f"one for the reviewed head, and a relevance check is pinned "
+            f"nothing. Declare the check with \"root\": \"source\" to have "
+            f"bench check this card's branch out instead")
+    root = Path(str(record["path"]))
+    mismatch = config.worktree_mismatch(root)
+    if mismatch:
+        raise ValueError(mismatch)
+    if not root.is_dir():
+        raise ValueError(
+            f"the review checkout {root} this run was pinned is gone, so the "
+            f"check '{check['name']}' has nothing to run against — nothing "
+            f"was re-checked-out in its place")
+    pinned = str((record.get("head") or {}).get("commit") or "")
+    head = _git(root, "rev-parse", "HEAD")
+    at = head.stdout.strip() if head.returncode == 0 else ""
+    if pinned and at != pinned:
+        raise ValueError(
+            f"the review checkout {root} is at {at[:12] or 'an unknown commit'} "
+            f"and this run was pinned to {pinned[:12]} — bench will not verify "
+            f"a revision the review is not of, and resets nothing to make it "
+            f"match")
+    return root, False, (f"bench's own checkout of PR "
+                         f"#{record.get('number')} at {pinned[:12]}, pinned "
+                         f"for this review")
 
 
 def _execute(record: dict, check: dict, root: Path, owned: bool) -> dict:
@@ -1134,15 +1218,50 @@ def freshness(record: dict) -> dict:
     nothing.
     """
     changed: list[str] = []
+    # The same findings as slugs, in the same order, so a consumer branches
+    # on data rather than on the prose beside it — the law `REASONS` was
+    # written under, applied to the one place that had grown a string
+    # match instead.
+    reasons: list[str] = []
+
+    def moved(slug: str, text: str) -> None:
+        reasons.append(slug)
+        changed.append(text)
+
     if not record:
-        return {"fresh": True, "changed": [], "stale": False}
+        return {"fresh": True, "changed": [], "reasons": [], "stale": False}
     source = record.get("source") or {}
     where = record.get("root") or {}
     root = Path(where.get("path") or "")
     if not source.get("bound"):
-        changed.append(source.get("why") or
-                       "the source this ran against was never bound, so the "
-                       "result cannot be reused")
+        moved("source-changed",
+              source.get("why") or
+              "the source this ran against was never bound, so the "
+              "result cannot be reused")
+    elif where.get("policy") == "review":
+        # A `review` check ran in a checkout bench pinned to one commit —
+        # the head a pull request proposed — and then removed when the
+        # review ended, on purpose. So the checkout being gone says
+        # nothing, exactly as it says nothing for a `source` check. The
+        # binding is the reviewed head, and the question is whether the
+        # pull request still proposes it: a push that lands after the
+        # check makes this evidence history rather than the new head's
+        # pass. Read from what the PR poll last saw, so asking costs no
+        # call to GitHub (`reviews.observe`).
+        now = reviews.observed(record.get("task") or "") or {}
+        current = str(now.get("commit") or "")
+        if current and current != source.get("commit"):
+            moved("head-changed",
+                  f"the pull request's head has moved on — this ran against "
+                  f"{str(source.get('commit') or '')[:12]} and the PR is now "
+                  f"at {current[:12]}, so it says nothing about the code "
+                  f"there now")
+        elif str(now.get("state") or "").upper() in ("MERGED", "CLOSED"):
+            moved("pr-ended",
+                  f"the pull request has been "
+                  f"{str(now.get('state')).lower()} since this ran, so it is "
+                  f"a historical record of what was proposed rather than a "
+                  f"current result")
     elif where.get("policy") == "source":
         # A `source` check ran in a *detached checkout of one commit* that
         # bench made and then removed on purpose, so the checkout being
@@ -1155,42 +1274,54 @@ def freshness(record: dict) -> dict:
         now = _git(config.app_repo(), "rev-parse", "--verify",
                    f"{branch}^{{commit}}") if branch else None
         if now is None or now.returncode != 0:
-            changed.append(f"the branch this ran against ({branch or 'unknown'}) "
-                           f"no longer exists, so what it covered cannot be "
-                           f"checked")
+            moved("source-changed",
+                  f"the branch this ran against ({branch or 'unknown'}) no "
+                  f"longer exists, so what it covered cannot be checked")
         elif now.stdout.strip() != source.get("commit"):
-            changed.append(
-                f"the branch has moved on — it ran against "
-                f"{str(source.get('commit') or '')[:12]} and {branch} is now "
-                f"at {now.stdout.strip()[:12]}")
+            moved("source-changed",
+                  f"the branch has moved on — it ran against "
+                  f"{str(source.get('commit') or '')[:12]} and {branch} is "
+                  f"now at {now.stdout.strip()[:12]}")
     elif not root.is_dir():
-        changed.append(f"the checkout it ran in ({root}) is gone, so what it "
-                       f"ran against can no longer be checked")
+        moved("source-changed",
+              f"the checkout it ran in ({root}) is gone, so what it ran "
+              f"against can no longer be checked")
     else:
         now = source_identity(root)
         if now.get("sourceId") != source.get("sourceId"):
             if now.get("commit") != source.get("commit"):
-                changed.append(
-                    f"the source has moved on — it ran against "
-                    f"{str(source.get('commit') or '')[:12]} and the checkout "
-                    f"is now at {str(now.get('commit') or '')[:12]}")
+                moved("source-changed",
+                      f"the source has moved on — it ran against "
+                      f"{str(source.get('commit') or '')[:12]} and the "
+                      f"checkout is now at "
+                      f"{str(now.get('commit') or '')[:12]}")
             else:
-                changed.append("tracked or untracked files in the checkout "
-                               "have changed since it ran, so it did not run "
-                               "against this code")
+                moved("source-changed",
+                      "tracked or untracked files in the checkout have "
+                      "changed since it ran, so it did not run against this "
+                      "code")
     frozen_policy = record.get("policyRevision")
     if frozen_policy:
+        intent = record.get("intent") or "work"
+        task = record.get("task") or ""
         try:
+            # Asked the way the launch asked it: a review's policy was
+            # resolved with the checkout it was pinned and no worktree, so
+            # re-resolving it with the other roots would report bench's own
+            # question as "the policy changed".
             current = profiles.resolve(
-                record.get("intent") or "work",
-                worktree=(config.WORKTREES / record["task"][:-3])
-                if record.get("task", "").endswith(".md") else None)
+                intent,
+                worktree=(config.WORKTREES / task[:-3])
+                if task.endswith(".md") and intent != "review" else None,
+                review=(where.get("path") if where.get("policy") == "review"
+                        else None))
         except ValueError:
             current = None
         if current is not None and current["revision"] != frozen_policy:
-            changed.append("the execution policy — which carries the check's "
-                           "own definition — has changed since it ran")
-    return {"fresh": not changed, "changed": changed,
+            moved("policy-changed",
+                  "the execution policy — which carries the check's own "
+                  "definition — has changed since it ran")
+    return {"fresh": not changed, "changed": changed, "reasons": reasons,
             "stale": bool(changed) and record.get("outcome") == "passed"}
 
 
@@ -1211,7 +1342,7 @@ def outcome_now(record: dict) -> dict:
     if record.get("outcome") != "passed":
         return {"outcome": record.get("outcome"), "reason": record.get("reason"),
                 "why": record.get("why"),
-                "freshness": {"fresh": True, "changed": []},
+                "freshness": {"fresh": True, "changed": [], "reasons": []},
                 "recorded": record.get("outcome")}
     key = record.get("id") or ""
     cached = _FRESH.get(key)
@@ -1228,9 +1359,12 @@ def outcome_now(record: dict) -> dict:
 def _outcome_now(record: dict) -> dict:
     fresh = freshness(record)
     if fresh["stale"]:
-        return {"outcome": "stale", "reason": "source-changed"
-                if any("source" in c or "files" in c for c in fresh["changed"])
-                else "policy-changed",
+        # The first finding's own slug, rather than a guess from its
+        # wording: "the head moved" and "the policy moved" are different
+        # things to do next, and a reader branching on the reason must
+        # not have them collapse.
+        return {"outcome": "stale",
+                "reason": (fresh.get("reasons") or ["source-changed"])[0],
                 "why": fresh["changed"][0], "freshness": fresh,
                 "recorded": record.get("outcome")}
     return {"outcome": record.get("outcome"), "reason": record.get("reason"),
@@ -1242,7 +1376,7 @@ def _outcome_now(record: dict) -> dict:
 
 PUBLIC = ("v", "id", "runner", "task", "stage", "agent", "actor", "intent",
           "check", "scope", "requested", "requestId", "policyId",
-          "policyRevision", "policySource", "contextIds", "adapter",
+          "policyRevision", "policySource", "contextIds", "reviewId", "adapter",
           "location", "log", "logBytes", "logTruncated", "prepare", "argv",
           "command", "scopeArgs", "root", "source", "env", "outcome",
           "reason", "why", "rc", "started", "ended", "duration", "timeout",
@@ -1306,7 +1440,8 @@ def rollup(filename: str, manifest: dict | None = None) -> dict:
             "outcome": "not-run", "reason": "never-asked",
             "why": (f"the check '{check['name']}' is available to this run and "
                     f"nothing has asked for it"),
-            "recorded": None, "freshness": {"fresh": True, "changed": []},
+            "recorded": None,
+            "freshness": {"fresh": True, "changed": [], "reasons": []},
             "command": check["run"], "rootPolicy": check["root"],
             "required": check["required"], "live": False,
             "scopes": sorted(check["scopes"]), "help": check["help"],

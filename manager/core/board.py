@@ -13,6 +13,7 @@ task files, but the tasks work as a plain folder kanban without it. See
     taskfiles.py  reading/moving task files (the only code touching tasks/)
     events.py     hook payloads → displayable events, session registry
     sync.py       origin/main as the shared board: push on move, pull on a beat
+    reviews.py    the pinned, run-owned checkout a PR review runs in
     verify.py     named checks bench runs itself, and the evidence they leave
     agents.py     headless work/review agents: launch, reap, stop, diff
     phases.py     a phase run: its own branch, its members merged into it
@@ -37,6 +38,7 @@ import events
 import github
 import httpd
 import phases
+import reviews
 import state
 import sync
 import verify
@@ -97,6 +99,12 @@ def main() -> None:
     # verification drifting towards "passed" because nobody closed it.
     # Nothing is re-run: asking again is a person's decision.
     verify.recover()
+    # And a review checkout a dead board left holding one: the record is
+    # the only thing that can say who owned it, so an unreleased record
+    # from another process is released here — removing the checkout only
+    # under every guard `reviews.release` applies, and never one with
+    # uncommitted work in it. Nothing is reviewed again.
+    reviews.recover()
     threading.Thread(target=watch.watcher, daemon=True).start()
     threading.Thread(target=github.poller, daemon=True).start()
     threading.Thread(target=github.reconcile, daemon=True).start()

@@ -32,6 +32,7 @@ import config
 import drive as drive_mod
 import plans
 import reports
+import reviews
 import state
 from taskfiles import (STATUS_RE, collect, commit_edit, find_stage_of,
                        member_entry, move_task, move_together, read_task)
@@ -462,6 +463,13 @@ def _fold(data: dict, prev: dict, base: str | None = None) -> dict:
     # beats an approval too.
     verdict = ("red" if (changes or ci == "fail" or conflicts or mismatch)
                else "green" if approved else "pending")
+    # Which revision the PR currently proposes, and whether it is still
+    # open. Not a verdict and not a chip of its own: it is what tells a
+    # recorded review whether it still speaks for the pull request
+    # (`reviews.freshness`), read off the poll that was already happening
+    # rather than from a call per card.
+    head = str(data.get("headRefOid") or "") or None
+    status = str(data.get("state") or "").upper() or None
     detail_bits = []
     if reviews:
         detail_bits.append(f"{len(reviews)} review{'s' if len(reviews) > 1 else ''}")
@@ -478,7 +486,9 @@ def _fold(data: dict, prev: dict, base: str | None = None) -> dict:
                                          "commented": "commented"}[copilot])
     return {"verdict": verdict, "ci": ci, "copilot": copilot,
             "conflicts": conflicts, "base": actual, "wantBase": want,
-            "baseMismatch": mismatch, "detail": " · ".join(detail_bits)}
+            "baseMismatch": mismatch, "head": head, "prState": status,
+            "merged": status == "MERGED" or bool(data.get("mergedAt")),
+            "detail": " · ".join(detail_bits)}
 
 
 def _poll_pr(filename: str, url: str) -> None:
@@ -486,7 +496,7 @@ def _poll_pr(filename: str, url: str) -> None:
     result = _gh_pr("view", number,
                     "--json",
                     "reviews,reviewRequests,statusCheckRollup,state,mergeable"
-                    ",baseRefName",
+                    ",baseRefName,headRefOid,mergedAt",
                     timeout=60)
     if result.returncode != 0:
         return
@@ -498,6 +508,13 @@ def _poll_pr(filename: str, url: str) -> None:
     entry = _fold(data, prev, plans.pr_base(filename))
     entry.update({"url": url, "ts": time.time()})
     PR_STATE[filename] = entry
+    # One authority for "what is the head now", fed by this beat: a
+    # recorded review asks `reviews` rather than GitHub, so the freshness
+    # of every pinned review costs a dictionary lookup.
+    if entry.get("head") or entry.get("prState"):
+        reviews.observe(filename, head=entry.get("head"),
+                        base=entry.get("base") or entry.get("wantBase"),
+                        status=entry.get("prState") or "")
     if prev.get("baseMismatch") != entry["baseMismatch"] and entry["baseMismatch"]:
         state.record_board_event({
             "kind": "agent", "actor": "board", "file": filename,
@@ -557,6 +574,7 @@ def poller() -> None:
 def public_state() -> dict:
     return {f: {k: v.get(k) for k in ("verdict", "ci", "copilot", "conflicts",
                                       "base", "wantBase", "baseMismatch",
+                                      "head", "prState", "merged",
                                       "detail", "url")}
             for f, v in PR_STATE.items()}
 

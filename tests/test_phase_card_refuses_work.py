@@ -234,6 +234,7 @@ class WhichKindsAPhaseCardMayHost(LaunchCase):
         self.adapter_is(REPORTS)
         self.with_pr(PHASE, "40 — Ship the site", "review", kind="Phase",
                      cards="- 31 — Stand up site/\n")
+        git(self.repo, "branch", PHASE_BRANCH)
 
         agent = agents.start_pr_review(PHASE, "review")
         self.assertTrue(wait_for(lambda: not self.running()))
@@ -243,11 +244,28 @@ class WhichKindsAPhaseCardMayHost(LaunchCase):
     def test_an_ordinary_cards_pr_review_still_names_its_task_branch(self):
         self.adapter_is(REPORTS)
         self.with_pr(ONE, "31 — Stand up site/", "review")
+        git(self.repo, "branch", f"task/{ONE[:-3]}")
 
         agent = agents.start_pr_review(ONE, "review")
         self.assertTrue(wait_for(lambda: not self.running()))
 
         self.assertEqual(agent["branch"], f"task/{ONE[:-3]}")
+
+    def test_a_pr_review_with_no_revision_to_pin_is_refused(self):
+        """A review runs in a checkout of the reviewed head (task 69), so a
+        card whose PR bench cannot resolve a commit for — no branch here,
+        and a gh that names no head — is refused rather than run in the
+        live application checkout. It used to launch in `config.REPO`."""
+        self.adapter_is(REPORTS)
+        self.with_pr(ONE, "31 — Stand up site/", "review")
+
+        with self.assertRaises(ValueError) as caught:
+            agents.start_pr_review(ONE, "review")
+
+        self.assertIn("which revision", str(caught.exception))
+        self.assertEqual(state.AGENTS, {}, "nothing was launched")
+        self.assertFalse((config.REVIEWS_DIR / "src").exists(),
+                         "and nothing was checked out")
 
     def test_acting_on_a_phase_pr_is_refused_and_says_where_it_belongs(self):
         """↻ act on PR is the same work agent with a push, and a phase's PR
