@@ -16,7 +16,7 @@ was compiled into permission rules for `work` and `act-pr` only, and
 *point* at a workflow brief outside the checkout, but nothing checked the
 file was there, nothing recorded which revision of it the run saw, and
 nothing stopped the content changing under a run already in flight. So
-three questions had no answer at all:
+three things had no answer at all:
 
 - what, exactly, is this run allowed to run — by name, not by a
   configured/unconfigured boolean,

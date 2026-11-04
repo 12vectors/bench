@@ -1295,6 +1295,96 @@ class TheLaunchRecordsWhatItRode(ProfileCase):
 # ── what the board serves ──────────────────────────────────────────────
 
 
+def _write_stub(directory: Path, name: str, script: str) -> Path:
+    stub = directory / name
+    stub.write_text(script, encoding="utf-8")
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return stub
+
+
+class ThePolicyReachesTheVendor(unittest.TestCase):
+    """The last seam: `AGENT_PROFILE` has to survive the `run` script and
+    land in the generated permission document, or every refusal above is
+    bookkeeping. Exercised against stub binaries — the same
+    BOARD_CLAUDE_BIN / BOARD_OPENCODE_BIN seam a live board uses."""
+
+    POLICY = {
+        "v": 1, "intent": "work", "policyId": "profile:work@deadbeefcafe",
+        "cwd": {"policy": "worktree", "path": "/tmp/wt"},
+        "commands": [{"name": "lint", "prefix": "ruff check",
+                      "root": "worktree"}],
+        "deny": ["push", "publish", "reshape-lifecycle"],
+        "publication": {"commit": True, "push": False, "publish": False},
+        "requires": [],
+    }
+
+    def _env(self, tmp: Path, **extra) -> dict:
+        env = dict(os.environ)
+        env.pop("AGENT_MODEL", None)
+        env.pop("AGENT_PROFILE", None)
+        env.update({"AGENT_PROMPT": "do the task", "AGENT_MODE": "work",
+                    "AGENT_COMMANDS": "python3 -m unittest"})
+        env.update(extra)
+        return env
+
+    def test_the_claude_launch_carries_the_named_grant_and_the_denials(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            capture = Path(tmp) / "args.json"
+            stub = _write_stub(Path(tmp), "claude-stub",
+                               "#!/usr/bin/env python3\n"
+                               "import json, sys\n"
+                               f"open({str(capture)!r}, 'w')"
+                               ".write(json.dumps(sys.argv[1:]))\n")
+            wrapper = _write_stub(Path(tmp), "bin",
+                                  f"#!/usr/bin/env bash\nexec python3 {stub} \"$@\"\n")
+            result = subprocess.run(
+                ["bash", str(CLAUDE / "run")],
+                env=self._env(Path(tmp), BOARD_CLAUDE_BIN=str(wrapper),
+                              AGENT_PROFILE=json.dumps(self.POLICY)),
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            args = json.loads(capture.read_text(encoding="utf-8"))
+            perms = json.loads(args[args.index("--settings") + 1])["permissions"]
+            # the profile's named grant replaced the legacy prefix list
+            self.assertIn("Bash(ruff check:*)", perms["allow"])
+            self.assertNotIn("Bash(python3 -m unittest:*)", perms["allow"])
+            # and the denials beat the allows
+            for prefix in ("git push", "gh pr merge", "git worktree"):
+                self.assertIn(f"Bash({prefix}:*)", perms["deny"])
+
+    def test_the_opencode_launch_carries_the_same_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            capture = Path(tmp) / "capture.json"
+            stub = _write_stub(
+                Path(tmp), "opencode-stub",
+                "#!/usr/bin/env python3\n"
+                "import json, os, sys\n"
+                "payload = {'argv': sys.argv[1:],\n"
+                "           'config': json.load(open(os.environ['OPENCODE_CONFIG']))}\n"
+                f"open({str(capture)!r}, 'w').write(json.dumps(payload))\n")
+            wrapper = _write_stub(Path(tmp), "bin",
+                                  f"#!/usr/bin/env bash\nexec python3 {stub} \"$@\"\n")
+            result = subprocess.run(
+                ["bash", str(OPENCODE / "run")],
+                env=self._env(Path(tmp), BOARD_OPENCODE_BIN=str(wrapper),
+                              AGENT_PROFILE=json.dumps(self.POLICY)),
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            bash = json.loads(capture.read_text(encoding="utf-8")
+                              )["config"]["permission"]["bash"]
+            self.assertEqual(bash["ruff check *"], "allow")
+            self.assertNotIn("python3 -m unittest *", bash)
+            self.assertEqual(bash["git push *"], "deny")
+
+    def test_a_malformed_policy_is_not_read_as_an_empty_deny_list(self):
+        """A value that does not parse means "no profile", which is the
+        pre-profile stance — never "nothing is denied"."""
+        for raw in ("{not json", "[]", "   "):
+            with self.subTest(raw=raw):
+                self.assertIsNone(hook_settings.load_profile(raw))
+                self.assertIsNone(permission_config.load_profile(raw))
+
+
 class TheApiServesOneResolver(ProfileCase):
     def test_the_state_payload_names_the_policy_in_force(self):
         self.declares({"v": 1, "profiles": {"work": {}}})

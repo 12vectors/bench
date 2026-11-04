@@ -9,13 +9,15 @@ implementations: `claude/` (the default) and `opencode/`. Select with
 
 ## The contract
 
-An adapter is a directory with two executables:
+An adapter is a directory with two executables, and may declare one file
+(`capabilities.json`, below).
 
 ### `run` — execute one headless job to completion
 
 - env in: `AGENT_PROMPT` (the full prompt), `AGENT_MODE` (the launch
   intent, below), `AGENT_COMMANDS` (the project's allowed command
-  prefixes, below), `AGENT_MODEL` (optional, below), `AGENT_CWD`, and
+  prefixes, below), `AGENT_MODEL` (optional, below), `AGENT_PROFILE` and
+  `AGENT_CONTEXT` (optional, below), `AGENT_CWD`, and
   the `BOARD_*` passthrough (`BOARD_AGENT_ID`, `BOARD_TASK`,
   `BOARD_PORT`) which your event bridge must forward with every event.
 - stdout is captured by the board as the job log. The prompts instruct the
@@ -76,6 +78,62 @@ through untranslated (claude → `--model "$AGENT_MODEL"`, opencode → the
 generated config's `model` key). Never send your vendor an empty value:
 the board only sets the variable when a model is actually configured
 (`BOARD_AGENT_MODEL` and its per-intent overrides in `local/.env`).
+
+### The resolved profile (`AGENT_PROFILE` / `AGENT_CONTEXT`) — optional
+
+`AGENT_COMMANDS` above is the whole of what an adapter has ever needed,
+and it is still set to exactly what it always was. These two are
+additions, and both are **narrowings**: an adapter that ignores them is
+correct and keeps working, and one that reads them can only end up
+granting less.
+
+`AGENT_PROFILE` is the launch's resolved execution profile as JSON
+(`core/profiles.py`):
+
+    {"v": 1, "intent": "work", "policyId": "profile:work@…",
+     "cwd": {"policy": "worktree", "path": "…"},
+     "commands": [{"name": "unit-tests", "prefix": "python3 -m unittest",
+                   "root": "worktree"}],
+     "deny": ["push", "publish", "force-push", "rebase",
+              "reshape-lifecycle"],
+     "publication": {"commit": true, "push": false, "publish": false},
+     "requires": []}
+
+`commands` is the same project prefix list `AGENT_COMMANDS` carries, named
+and validated — render `prefix` as you render those. `deny` is the half
+worth adding: each word is a capability that must be denied outright,
+rendered as rules that beat your allows (both shipped adapters map them in
+`DENY_CAPABILITY_PREFIXES` / `DENY_CAPABILITY_PATTERNS`). Never widen from
+it: a profile may turn a side effect off for an intent and may never turn
+one on.
+
+`AGENT_CONTEXT` is the read-only inputs bench pinned for the run — `[{"name",
+"path", "source", "sha256", "access": "read-only"}]`, paths and hashes
+only, never content. The prompt already names them; an adapter that can
+grant reads narrowly may also use the list.
+
+### `capabilities.json` — what you can actually enforce
+
+Beside your `run`, optionally, a declaration in four words core
+understands: `enforced`, `prefix-allowlist` (a prefix match over the
+command line — narrowing, **not** a sandbox), `prompt-only`, `pending`.
+
+    {"v": 1, "adapter": "claude", "version": "1",
+     "capabilities": {"command-allowlist": "prefix-allowlist",
+                      "command-denylist": "prefix-allowlist",
+                      "read-only-tools": "enforced",
+                      "model-selection": "enforced"},
+     "unsupported": {"filesystem-sandbox": "why not, in one sentence"}}
+
+This is not a grant and it changes no rule. It is what lets a profile's
+`requires` list **refuse** a launch rather than report a guarantee the
+vendor cannot make, and what lets the board show who answers for each one.
+Declaring nothing is honest and costs nothing: a legacy board requires
+nothing, so it runs through such an adapter unchanged — only an operator
+who wrote a `requires` list gets the refusal. Claiming `enforced` for
+something you merely ask for in a system prompt is the one thing that
+makes the whole display a lie, so say `prompt-only`, or put it in
+`unsupported` with the reason.
 
 ### `wire` — wire live-session visibility into the host project
 
