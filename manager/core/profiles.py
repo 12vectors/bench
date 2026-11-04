@@ -140,7 +140,8 @@ ID_PREFIXES = {
     "policy": "profile",        # which policy a run rode
     "context": "ctx",           # which input, at which content
     "request": "req",           # which launch asked
-    "evidence": "ev",           # what a later gate checked (pending)
+    "check": "check",           # which named check, at which definition
+    "evidence": "ev",           # what a verification actually found
 }
 
 
@@ -172,10 +173,18 @@ def request_id(intent: str, filename: str, when: float | None = None) -> str:
             f"@{_digest(intent, filename, stamp)[:12]}")
 
 
-# What a later member will record against a request, and what it is for.
-# Listed rather than implemented: card 67 defines the vocabulary so the
-# runner, the doctor and the gate do not each invent one. Everything here
-# is `pending` and the manifest says so.
+def check_id(name: str, revision: str) -> str:
+    """Which named check, at which definition. The revision is a digest of
+    the check's whole resolved shape — executable, argument list, execution
+    root, scopes, preparation — so an operator who edits a check gets a new
+    identity rather than old evidence that claims to be about the new
+    definition."""
+    return f"{ID_PREFIXES['check']}:{name}@{revision[:12]}"
+
+
+# What a verification records against a request, and what it is for.
+# `verify.py` produces the first three; a merge gate is still a later
+# member and `verified-outputs` says so.
 EVIDENCE_KINDS = {
     "command-run": "a named command grant was actually run, and how it exited",
     "context-read": "a pinned input was actually read by the run",
@@ -185,9 +194,9 @@ EVIDENCE_KINDS = {
 
 
 def evidence_id(kind: str, request: str, detail: str = "") -> str:
-    """The identity a later member stamps its findings with. Defined here
-    so every consumer computes it the same way; nothing in this card
-    produces evidence."""
+    """The identity a verification stamps its findings with. Defined here
+    so every consumer — the runner, the UI, a later gate — computes it the
+    same way."""
     if kind not in EVIDENCE_KINDS:
         raise ValueError(f"unknown evidence kind '{kind}' — one of "
                          f"{', '.join(sorted(EVIDENCE_KINDS))}")
@@ -232,6 +241,32 @@ BENCH_CAPABILITIES = {
                          "root, or naming a directory, is refused rather "
                          "than pinned — so an approved document cannot stand "
                          "in for an unapproved one"),
+    "named-verification": ("enforced",
+                           "a run asks for a check by name. Bench builds the "
+                           "argument list itself from the operator's document "
+                           "and runs it with no shell, so a name is the whole "
+                           "of what a run can choose — not a command line"),
+    "prepared-inputs": ("enforced",
+                        "bench runs each declared preparation step before the "
+                        "check that needs it, in the same isolated root, and "
+                        "records how it exited. A required step that fails "
+                        "stops the check rather than letting it fail for the "
+                        "wrong reason"),
+    "verification-evidence": ("enforced",
+                              "the outcome on record is the runner's own exit "
+                              "status, written to disk before the asking run "
+                              "is told anything. A model cannot attest that a "
+                              "check passed, and an agent exiting zero never "
+                              "makes one passing"),
+    "isolated-environment": ("enforced",
+                             "a check's environment is built by bench rather "
+                             "than inherited: publication credentials are "
+                             "removed by name, and HOME, TMPDIR and the cache "
+                             "variables point into a directory made for this "
+                             "verification. That is where its writes are "
+                             "*directed*, not a boundary they are held inside "
+                             "— filesystem-sandbox is the capability that "
+                             "would be, and nothing enforces it"),
 }
 
 # What an adapter may declare in `capabilities.json` beside its `run`.
@@ -248,14 +283,18 @@ ADAPTER_CAPABILITIES = {
 # refused — that refusal is the feature. Resolving it to a sentence in a
 # prompt would be the failure.
 PENDING_CAPABILITIES = {
-    "filesystem-sandbox": ("no shipped adapter can confine a run's reads to "
-                           "a named set of files; the pinned bundle is a "
-                           "guaranteed *input*, not a boundary on reading"),
-    "prepared-inputs": ("preparation requirements are declared and surfaced; "
-                        "nothing runs them before a launch yet"),
-    "verified-outputs": ("verification requirements are declared; the gate "
-                         "that insists on them is a later member"),
-    "network-policy": "no adapter exposes a network boundary bench could set",
+    "filesystem-sandbox": ("no shipped adapter or verification backend can "
+                           "confine a run's reads to a named set of files; "
+                           "the pinned bundle is a guaranteed *input*, not a "
+                           "boundary on reading, and an isolated execution "
+                           "root is a directory rather than a jail"),
+    "verified-outputs": ("verifications run and their evidence is recorded; "
+                         "the merge gate that *insists* on a named check "
+                         "having passed is a later member"),
+    "network-policy": ("neither an adapter nor bench exposes a network "
+                       "boundary a profile could set, so a preparation step "
+                       "that needs the network has whatever network this "
+                       "machine has"),
 }
 
 
@@ -433,7 +472,13 @@ def document() -> dict:
            "documentVersion": version,
            "requires": data.get("requires") or [],
            "context": data.get("context") or [],
-           "commands": data.get("commands") or []}
+           "commands": data.get("commands") or [],
+           # The two *definition* lists. Top-level and nowhere else: a
+           # check reviewed once is the same check whichever intent asks
+           # for it, and an intent's own `verify`/`prepare` are names.
+           "checks": data.get("checks") or [],
+           "prepare": data.get("prepare") or [],
+           "verify": data.get("verify") or []}
     if version != PROFILE_VERSION:
         out["problem"] = (
             f"the profile document {out['identity']} declares "
@@ -553,6 +598,377 @@ def _legacy_grants(intent: str, available: dict) -> tuple[list[dict], list[str]]
         grants.append(_grant(raw, source="BOARD_AGENT_COMMANDS",
                              available=available))
     return grants, problems
+
+
+# ── named checks, and the preparation they need ────────────────────────
+#
+# A command grant says what the *run* may launch. A **check** says what
+# *bench* will run on the run's behalf, and the difference is the whole
+# point: a grant is a prefix a model composes a command line against, and
+# a check is a name. The run asks for `unit-tests`; bench builds the
+# argument list from the operator's document, runs it with no shell, and
+# records how it exited. Nothing a model writes reaches an argv.
+#
+# Which is why a check is validated harder than a grant. It is resolved
+# here — in the policy layer, beside the grants and the inputs, and ahead
+# of any process — and `verify.py` only ever executes what this returned.
+
+# Where a check may run. Deliberately *not* the four root words: a check
+# never runs in the application checkout, because that is the live code
+# and services the machine is actually using. `worktree` is the card's own
+# checkout, which bench made; `source` is a detached checkout of one exact
+# commit that bench makes for this verification and owns.
+CHECK_ROOTS = ("worktree", "source")
+
+# The longest a check may be allowed to run, whatever the document says.
+# A per-check `timeout` narrows the board's setting and never widens it.
+MAX_CHECK_TIMEOUT = 6 * 60 * 60
+
+# A check verifies; it does not reshape the repository it verifies in. The
+# execution root is a real checkout sharing its git metadata with the
+# application, so these subcommands are refused where the document is
+# read — an operator cannot declare a "check" that pushes, rewrites
+# history, moves a branch or edits the git configuration every other
+# worktree shares. (`git` itself is fine: `git diff --check`, `git
+# ls-files` and the rest are exactly the sort of thing a check is.)
+GIT_RESHAPING = {
+    "push", "worktree", "reset", "checkout", "switch", "branch", "remote",
+    "update-ref", "config", "clean", "rebase", "filter-branch", "gc",
+    "prune", "submodule", "clone", "init", "am", "cherry-pick", "revert",
+    "merge", "commit", "tag", "notes", "replace", "stash", "restore",
+}
+
+
+# What a check's own command line may not contain. The grant list, minus
+# the two quote characters — and the difference is the point. A *grant* is
+# rendered into a prefix allow-rule, and a rule cannot see through a
+# quote, so a quoted argument there would widen what it matched. A
+# **check** is never rendered into a rule: bench splits it once, here,
+# and hands the result to `execve`. So a path with spaces in it is
+# expressible exactly the way a shell expresses one, and the things that
+# would still make one command line into two are still refused.
+CHECK_BREAKERS = tuple(c for c in SHELL_BREAKERS if c not in ("'", '"'))
+
+
+def _runnable_problem(name: str, what: str, run: str) -> str | None:
+    """Why bench cannot run this command line itself.
+
+    Everything a command grant is held to except the quoting ban (see
+    `CHECK_BREAKERS`), plus the two refusals that exist only because bench
+    is the one running it: a git subcommand that reshapes the repository,
+    and an argument that names a file reading as a credential.
+    """
+    run = run.strip()
+    if not run:
+        return f"the {what} '{name}' has no \"run\" — there is nothing to run"
+    for breaker in CHECK_BREAKERS:
+        if breaker in run:
+            return (f"the {what} '{name}' contains {breaker!r} in its \"run\" "
+                    f"— a check is one executable and fixed arguments, not a "
+                    f"shell line: compound commands, pipelines, redirections, "
+                    f"globs and substitutions are refused because bench runs "
+                    f"it with no shell and there is nothing to expand them")
+    try:
+        parts = shlex.split(run)
+    except ValueError as exc:
+        return f"the {what} '{name}' does not parse as a command line ({exc})"
+    if not parts:
+        return f"the {what} '{name}' has an empty \"run\""
+    if shlex.join(parts) != run:
+        return (f"the {what} '{name}' is written {run!r}, which normalises to "
+                f"{shlex.join(parts)!r} — write it in the normalised form so "
+                f"the document and the argument list read alike")
+    executable = parts[0]
+    if ".." in Path(executable).parts:
+        return (f"the {what} '{name}' names the executable {executable!r}, "
+                f"which climbs out of its own path with '..'")
+    if "/" in executable and not executable.startswith("/"):
+        return (f"the {what} '{name}' names the executable {executable!r} — "
+                f"give a bare name resolved on PATH, or an absolute path; a "
+                f"relative one depends on a working directory the document "
+                f"cannot pin")
+    if Path(parts[0]).name == "git":
+        subcommand = next((p for p in parts[1:] if not p.startswith("-")), "")
+        if subcommand in GIT_RESHAPING:
+            return (f"the {what} '{name}' runs `git {subcommand}`, which "
+                    f"reshapes the repository rather than reading it — the "
+                    f"execution root shares its git metadata with every other "
+                    f"worktree of the application, and bench will not run "
+                    f"something that rewrites it in the name of verifying")
+    for token in parts[1:]:
+        if SECRET_NAMES.search(Path(token).name):
+            return (f"the {what} '{name}' names {token!r}, whose basename reads "
+                    f"as a credential — a check is not how a secret gets read, "
+                    f"and bench refuses the argument rather than the file")
+    return None
+
+
+def _tokens_problem(name: str, what: str, tokens: list) -> str | None:
+    """Why this argument list cannot be used. The tokens are an operator's,
+    not a model's, and they never meet a shell — so a metacharacter in one
+    is a literal argument rather than a hazard. What is refused is a token
+    that is not a string, and one that climbs out of the root the check
+    runs in."""
+    for token in tokens:
+        if not isinstance(token, str):
+            return (f"{what} of the check '{name}' holds {token!r}, which is "
+                    f"not a string — an argument list is strings, not "
+                    f"structure")
+        if ".." in Path(token).parts:
+            return (f"{what} of the check '{name}' holds {token!r}, which "
+                    f"climbs out of the root the check runs in with '..'")
+    return None
+
+
+def _check_problem(raw: dict, known_prepare: set[str]) -> str | None:
+    """Why this check cannot be offered, or None. One sentence, naming the
+    check, because it is shown beside it."""
+    name = str(raw.get("name") or "").strip()
+    if not NAME_RE.match(name):
+        return (f"a check is named {name!r} — a check's name is what a run "
+                f"asks for and what its evidence is filed under, so it must "
+                f"match [a-z0-9][a-z0-9._-]*")
+    problem = _runnable_problem(name, "check", str(raw.get("run") or ""))
+    if problem:
+        return problem
+    root = str(raw.get("root") or "worktree")
+    if root not in CHECK_ROOTS:
+        return (f"the check '{name}' names the execution root {root!r} — one "
+                f"of {', '.join(CHECK_ROOTS)}. A check never runs in the "
+                f"application checkout: that is the live code and the live "
+                f"services, and verifying in it is how a test suite takes a "
+                f"working tree down with it")
+    raw_scopes = raw.get("scopes")
+    if raw_scopes is not None and not isinstance(raw_scopes, dict):
+        return (f"the check '{name}' declares \"scopes\" that are not an "
+                f"object — write {{\"<name>\": [\"<argument>\", …]}}, so a run "
+                f"selects a scope by name and never by writing arguments")
+    for key, tokens in (raw_scopes or {}).items():
+        if not NAME_RE.match(str(key)):
+            return (f"the check '{name}' declares the scope {key!r} — a scope "
+                    f"is selected by name, so it must match "
+                    f"[a-z0-9][a-z0-9._-]*")
+        if not isinstance(tokens, list):
+            return (f"the scope '{key}' of the check '{name}' is not a list of "
+                    f"arguments")
+        trouble = _tokens_problem(name, f"the scope '{key}'", tokens)
+        if trouble:
+            return trouble
+        for token in tokens:
+            if SECRET_NAMES.search(Path(str(token)).name):
+                return (f"the scope '{key}' of the check '{name}' names "
+                        f"{token!r}, whose basename reads as a credential")
+    raw_prepare = raw.get("prepare")
+    if raw_prepare is not None and not isinstance(raw_prepare, list):
+        return (f"the check '{name}' declares \"prepare\" that is not a list "
+                f"of preparation-step names")
+    for step in raw_prepare or []:
+        if str(step) not in known_prepare:
+            return (f"the check '{name}' needs the preparation step "
+                    f"{str(step)!r}, which the document does not declare — add "
+                    f"it to the document's top-level \"prepare\" list, or drop "
+                    f"the reference; bench will not run a step it cannot read")
+    timeout = raw.get("timeout")
+    if timeout is not None:
+        try:
+            value = float(timeout)
+        except (TypeError, ValueError):
+            return f"the check '{name}' declares a \"timeout\" that is not a number"
+        if value <= 0 or value > MAX_CHECK_TIMEOUT:
+            return (f"the check '{name}' declares a timeout of {timeout} — give "
+                    f"a number of seconds between 1 and {MAX_CHECK_TIMEOUT}")
+    return None
+
+
+def _step_problem(raw: dict) -> str | None:
+    """The same question for one preparation step."""
+    name = str(raw.get("name") or "").strip()
+    if not NAME_RE.match(name):
+        return (f"a preparation step is named {name!r} — names match "
+                f"[a-z0-9][a-z0-9._-]*")
+    return _runnable_problem(name, "preparation step",
+                             str(raw.get("run") or ""))
+
+
+def _check_revision(name: str, run: str, root: str, scopes: dict,
+                    prepare: list[str], timeout: float) -> str:
+    return _digest(name, run, root,
+                   json.dumps(scopes, sort_keys=True),
+                   json.dumps(prepare), f"{timeout:.0f}")
+
+
+def _step(raw: dict, *, source: str) -> dict:
+    """One validated preparation step, as the manifest carries it."""
+    parts = shlex.split(str(raw.get("run")))
+    network = raw.get("network", False) is True
+    return {
+        "name": str(raw.get("name")).strip(),
+        "run": shlex.join(parts),
+        "executable": parts[0],
+        "argv": parts[1:],
+        "required": raw.get("required", True) is not False,
+        "network": network,
+        "networkEnforcement": "pending" if network else None,
+        "help": str(raw.get("help") or "").strip() or None,
+        "source": source,
+        "status": "available",
+        "enforcement": "enforced",
+    }
+
+
+def _check(raw: dict, steps: dict, *, source: str, scale: float) -> dict:
+    """One validated check, as the manifest carries it and as `verify`
+    executes it. `argv` and every scope's arguments are already split: the
+    runner never parses a string, which is what keeps a command line from
+    being something a model could compose."""
+    parts = shlex.split(str(raw.get("run")))
+    scopes = {str(k): [str(t) for t in v]
+              for k, v in (raw.get("scopes") or {}).items()}
+    prepare = [str(s) for s in (raw.get("prepare") or [])]
+    root = str(raw.get("root") or "worktree")
+    timeout = min(float(raw["timeout"]) if raw.get("timeout") is not None
+                  else scale, scale)
+    revision = _check_revision(str(raw.get("name")).strip(), shlex.join(parts),
+                               root, scopes, prepare, timeout)
+    return {
+        "name": str(raw.get("name")).strip(),
+        "run": shlex.join(parts),
+        "executable": parts[0],
+        "argv": parts[1:],
+        "root": root,
+        "scopes": scopes,
+        "prepare": [steps[n] for n in prepare],
+        "timeout": timeout,
+        "required": raw.get("required", True) is not False,
+        "help": str(raw.get("help") or "").strip() or None,
+        "source": source,
+        "status": "available",
+        "revision": revision,
+        "checkId": check_id(str(raw.get("name")).strip(), revision),
+        "enforcement": "enforced",
+    }
+
+
+# The one grant bench adds of its own accord, and the executable behind
+# it: the shim a run invokes to *ask* for a check. It takes a check name
+# and an optional scope name, talks to this board over the loopback, and
+# prints what the runner found. It is present in a resolved profile only
+# where that intent has a check to ask for.
+VERIFY_GRANT = "bench-verify"
+
+
+def verify_shim() -> Path:
+    """Where the asking shim lives. Beside the rest of core, so it travels
+    with an update and is found by absolute path from any worktree."""
+    return config.CORE / "bench-verify"
+
+
+def document_steps(doc: dict) -> tuple[dict, list[str]]:
+    """The document's preparation steps, by name, and why any of them
+    cannot be used. A step that does not validate is a blocker rather than
+    a step quietly left out: the check that names it would otherwise run
+    unprepared and fail for the wrong reason."""
+    steps: dict[str, dict] = {}
+    trouble: list[str] = []
+    if doc["kind"] != "file":
+        return steps, trouble
+    raw = doc.get("prepare")
+    for entry in raw if isinstance(raw, list) else []:
+        if not isinstance(entry, dict):
+            trouble.append(f"a preparation step is not an object: {entry!r}")
+            continue
+        problem = _step_problem(entry)
+        if problem:
+            trouble.append(problem)
+            continue
+        name = str(entry["name"]).strip()
+        if name in steps:
+            trouble.append(f"the preparation step '{name}' is declared twice "
+                           f"— a step's name is its identity")
+            continue
+        steps[name] = _step(entry, source=doc["identity"] or "the document")
+    return steps, trouble
+
+
+def promoted_checks(grants: list[dict],
+                    declared: dict) -> tuple[dict, list[str]]:
+    """This intent's command grants, as checks bench could run itself.
+
+    The documented compatibility path. A grant and a check are the same
+    shape — one executable, fixed arguments, a named root — so a `verify`
+    entry that names a grant resolves to a check built from it rather than
+    refusing. Two things still refuse, because they are the two a check is
+    held to and a grant is not: a root a check may not use (the
+    application checkout), and a command line that reshapes the repository
+    instead of reading it.
+
+    A name the document declares as a check wins: an explicit definition
+    is never shadowed by a grant that happens to share its name.
+    """
+    out: dict = {}
+    trouble: list[str] = []
+    for grant in grants:
+        name = grant["name"]
+        if name in declared or name == VERIFY_GRANT:
+            continue
+        raw = {"name": name, "run": grant["run"], "root": grant["root"],
+               "help": grant["help"]}
+        problem = _check_problem(raw, set())
+        if problem:
+            # Not a blocker on its own: a grant that cannot be a check is
+            # perfectly fine as a grant, and only an intent that actually
+            # asks for it by name has a problem. `_named` says so there.
+            trouble_name = name
+            out[trouble_name] = {"name": name, "status": "unavailable",
+                                 "why": problem}
+            continue
+        out[name] = _check(raw, {}, source=f"{grant['source']} (a command "
+                                           f"grant, promoted)",
+                           scale=config.VERIFY_TIMEOUT)
+    return out, trouble
+
+
+def _step_from_grant(check: dict) -> dict:
+    """The same promotion for a preparation step — a grant named in an
+    intent's `prepare` list runs before its checks."""
+    if check.get("status") != "available":
+        return check
+    return {
+        "name": check["name"], "run": check["run"],
+        "executable": check["executable"], "argv": list(check["argv"]),
+        "required": True, "network": False, "networkEnforcement": None,
+        "help": check["help"], "source": check["source"],
+        "status": "available", "enforcement": "enforced",
+    }
+
+
+def document_checks(doc: dict, steps: dict) -> tuple[dict, list[str]]:
+    """The document's named checks, by name, and why any of them cannot be
+    offered. Resolved once per document rather than once per intent, so
+    two intents asking for `unit-tests` are asking for the same thing."""
+    checks: dict[str, dict] = {}
+    trouble: list[str] = []
+    if doc["kind"] != "file":
+        return checks, trouble
+    raw = doc.get("checks")
+    for entry in raw if isinstance(raw, list) else []:
+        if not isinstance(entry, dict):
+            trouble.append(f"a check is not an object: {entry!r}")
+            continue
+        problem = _check_problem(entry, set(steps))
+        if problem:
+            trouble.append(problem)
+            continue
+        name = str(entry["name"]).strip()
+        if name in checks:
+            trouble.append(f"the check '{name}' is declared twice — a check's "
+                           f"name is what a run asks for, and two commands "
+                           f"cannot share one")
+            continue
+        checks[name] = _check(entry, steps,
+                              source=doc["identity"] or "the document",
+                              scale=config.VERIFY_TIMEOUT)
+    return checks, trouble
 
 
 # ── approved context ───────────────────────────────────────────────────
@@ -997,32 +1413,109 @@ def resolve(intent: str, *, worktree: Path | str | None = None) -> dict:
     if any(i["status"] == "resolved" for i in context):
         configured.append("pinned-context")
 
-    # — preparation and verification: declared, not yet enforced —
-    def _declared_list(key: str, capability: str) -> list[dict]:
+    # — named checks, and the preparation they need —
+    #
+    # The document declares them once, at the top level, and each intent
+    # names which of them it may run. One definition, several intents: a
+    # check reviewed once is the same check whichever intent asks for it,
+    # and `review` gaining the right to *ask* is not `review` gaining the
+    # right to commit.
+    steps, step_trouble = document_steps(doc)
+    blockers += step_trouble
+    available_checks, check_trouble = document_checks(doc, steps)
+    blockers += check_trouble
+
+    # The compatibility path, and it is the whole of it: a `verify` or
+    # `prepare` entry naming one of this intent's own **command grants**
+    # resolves to a check built from that grant. A grant is already one
+    # executable and fixed arguments validated exactly as a check is, so
+    # the promotion adds nothing and refuses the two things a check
+    # refuses extra — a root a check may not use, and a command line that
+    # reshapes the repository. A document written before bench could run
+    # anything therefore keeps working, and its declared requirement
+    # becomes a real run rather than staying a note.
+    promotable, promotion_trouble = promoted_checks(grants, available_checks)
+    blockers += promotion_trouble
+    available_checks = {**available_checks, **promotable}
+    steps = {**steps, **{n: _step_from_grant(c) for n, c in promotable.items()}}
+
+    def _named(key: str, known: dict, what: str) -> list[dict]:
         raw = declared.get(key) if isinstance(declared, dict) else None
-        out = []
+        # A document-level `verify` is the shared default — one set of
+        # checks every intent may ask for. There is deliberately no such
+        # fallback for `prepare`: the top-level list is the step
+        # *definitions*, and an intent's preparation is what its checks
+        # name plus what it names itself.
+        if raw is None and key == "verify" and doc["kind"] == "file":
+            raw = doc.get("verify")
+        out, seen = [], set()
         for entry in raw if isinstance(raw, list) else []:
-            if isinstance(entry, str):
-                entry = {"name": entry}
-            if not isinstance(entry, dict):
-                continue
-            name = str(entry.get("name") or "").strip()
+            if isinstance(entry, dict):
+                entry = entry.get("name")
+            name = str(entry or "").strip()
             if not NAME_RE.match(name):
-                blockers.append(f"a {key} requirement for '{intent}' is named "
-                                f"{name!r} — names match [a-z0-9][a-z0-9._-]*")
+                blockers.append(f"'{intent}' names the {what} {name!r} — "
+                                f"names match [a-z0-9][a-z0-9._-]*")
                 continue
-            out.append({"name": name, "status": "pending",
-                        "capability": capability,
-                        "why": PENDING_CAPABILITIES[capability],
-                        "help": str(entry.get("help") or "").strip() or None})
+            if name in seen:
+                continue
+            seen.add(name)
+            if name not in known:
+                blockers.append(
+                    f"'{intent}' asks for the {what} '{name}', which this "
+                    f"document declares neither as a {what} nor as one of this "
+                    f"intent's command grants. Declare it in the top-level "
+                    f"\"{'checks' if what == 'check' else 'prepare'}\" list — "
+                    f"bench will not run something it cannot read, and a "
+                    f"requirement naming nothing is how a board reports a "
+                    f"check that never ran as one that passed")
+                continue
+            if known[name].get("status") != "available":
+                blockers.append(
+                    f"'{intent}' asks for the {what} '{name}', and the command "
+                    f"grant of that name cannot be run as one: "
+                    f"{known[name].get('why')}")
+                continue
+            out.append(known[name])
         return out
 
-    prepare = _declared_list("prepare", "prepared-inputs")
-    verify = _declared_list("verify", "verified-outputs")
-    if prepare or verify:
-        prompt_only.append("the preparation and verification requirements below "
-                           "are declared, surfaced and recorded; no runner "
-                           "enforces them yet")
+    verify = _named("verify", available_checks, "check")
+    prepare = _named("prepare", steps, "preparation step")
+    if verify:
+        configured.append("named-verification")
+        configured.append("verification-evidence")
+    if prepare or any(c["prepare"] for c in verify):
+        configured.append("prepared-inputs")
+    if verify:
+        configured.append("isolated-environment")
+    for step in [*prepare, *(s for c in verify for s in c["prepare"])]:
+        if step["network"]:
+            notes.append(
+                f"the preparation step '{step['name']}' is declared as needing "
+                f"the network, and bench enforces no network boundary "
+                f"({PENDING_CAPABILITIES['network-policy']}) — it runs with "
+                f"whatever this machine has, and the evidence says so")
+    # Asking bench to run a check is itself something the run must be
+    # allowed to launch, so it is a grant like any other — bench's own,
+    # named, and present only where there is a check to ask for. It is one
+    # executable with no arguments of its own, so the prefix rule an
+    # adapter renders covers exactly `bench-verify <name> [<scope>]` and
+    # nothing that could be composed from it.
+    if verify:
+        shim = {"name": VERIFY_GRANT, "run": str(verify_shim()),
+                "root": cwd_word, "help": "ask bench to run a named check"}
+        problem = _grant_problem(shim, available)
+        if problem:
+            blockers.append(problem)
+        elif any(g["name"] == VERIFY_GRANT for g in grants):
+            blockers.append(f"a command grant is named '{VERIFY_GRANT}', which "
+                            f"is bench's own — rename it")
+        else:
+            grant = _grant(shim, source="bench", available=available)
+            grant["why"] = ("the run asks for a check by name; bench builds "
+                            "the argument list and runs it")
+            grants.append(grant)
+            configured.append("command-allowlist")
 
     # — denied capabilities —
     deny_words = list(baseline["deny"])
@@ -1085,7 +1578,12 @@ def resolve(intent: str, *, worktree: Path | str | None = None) -> dict:
         json.dumps(deny_words, sort_keys=True),
         json.dumps(publication, sort_keys=True),
         json.dumps([(s.get("name"), s.get("path")) for s in selections],
-                   sort_keys=True, default=str))
+                   sort_keys=True, default=str),
+        # A check the operator edits is a different policy, so evidence
+        # recorded under the old one reads as stale rather than as being
+        # about the command that now bears its name.
+        json.dumps([c["revision"] for c in verify]),
+        json.dumps([s["run"] for s in prepare]))
 
     return {
         "v": PROFILE_VERSION,
@@ -1317,6 +1815,9 @@ def summary(found: dict | None) -> dict | None:
         "commands": len(found.get("commands") or []),
         "inputs": len(context),
         "readable": len([i for i in context if i.get("readable")]),
+        # the named checks this run may ask bench to run, which is a
+        # different fact from the command prefixes it may launch itself
+        "checks": [c["name"] for c in found.get("verify") or []],
         "denied": len(found.get("denied") or []),
         "blockers": list(found.get("blockers") or []),
         "pending": list((found.get("guarantees") or {}).get("pending") or []),
@@ -1387,6 +1888,61 @@ def prompt_block(found: dict | None) -> str:
     return "\n".join(lines)
 
 
+def verification_block(found: dict | None) -> str:
+    """What the run is told about the checks bench will run for it.
+
+    Empty string when the profile declares none, so a board that
+    configured nothing renders the prompt it always did, byte for byte.
+
+    Where there *are* checks, the wording is deliberate on one point: the
+    run is told that the evidence is already on the board, so reporting a
+    pass the shim did not print is a claim the record contradicts. That is
+    prose, and prose persuades rather than enforces — which is exactly why
+    the enforcement lives in the runner and not here.
+    """
+    if not found:
+        return ""
+    checks = found.get("verify") or []
+    if not checks:
+        return ""
+    shim = str(verify_shim())
+    lines = [
+        "This board runs the project's checks itself. You do not run them "
+        "and you are not asked to vouch for them: you ask for one by name, "
+        "bench builds the command line from the operator's own policy, runs "
+        "it, and records the outcome — the exit status of its own child "
+        "process — before telling you anything.",
+        "",
+        f"    {shim}                 list the checks you may ask for",
+        f"    {shim} <check>         run one",
+        f"    {shim} <check> <scope> run one over a declared scope",
+        "",
+        "Available to this run:",
+    ]
+    for check in checks:
+        scopes = ", ".join(sorted(check["scopes"]))
+        lines.append(f"- `{check['name']}` — runs `{check['run']}` in the "
+                     f"{check['root']} root"
+                     + (f"; scopes: {scopes}" if scopes else "")
+                     + (f". {check['help']}" if check["help"] else ""))
+        for step in check["prepare"]:
+            lines.append(f"  - prepared first by `{step['name']}`, which bench "
+                         f"also runs")
+    lines += [
+        "",
+        "Its exit status says which kind of answer came back: 0 passed, 1 the "
+        "check itself said no, 2 refused, 3 preparation failed, 4 no verdict "
+        "was reached. Only 1 is a test failure — treat the rest as what they "
+        "are rather than as a failing suite.",
+        "",
+        "The evidence is already on the board by the time you read the "
+        "output, so your report should say what it said. Reporting a check as "
+        "passing when the runner printed otherwise is a claim the record "
+        "contradicts, and a reviewer reads the record.",
+    ]
+    return "\n".join(lines)
+
+
 # ── the seams later members plug into ──────────────────────────────────
 
 
@@ -1407,16 +1963,16 @@ def seams() -> dict:
         "evidenceKinds": dict(EVIDENCE_KINDS),
         "pending": dict(PENDING_CAPABILITIES),
         "extend": {
-            "a runner": ("read `prepare` off the recorded manifest and run each "
-                         "named requirement before the launch; declare "
-                         "'prepared-inputs' in the adapter's capabilities.json "
-                         "once it really does it"),
+            "a runner": ("`verify.py` — it reads `verify` and `prepare` off the "
+                         "recorded manifest, runs each named check itself with "
+                         "no shell, and files the evidence under "
+                         "evidence_id('verification', requestId, …)"),
             "a doctor": ("call resolve() for each of profiles.INTENTS and report "
                          "`blockers` and `guarantees.pending` — it needs no "
                          "second parser and must not grow one"),
-            "a gate": ("read `verify` off the recorded manifest, stamp its "
-                       "findings with evidence_id('verification', requestId, …) "
-                       "and declare 'verified-outputs'"),
+            "a gate": ("read the evidence `verify.for_task()` returns, insist on "
+                       "a `passed` that `verify.freshness()` calls fresh, and "
+                       "declare 'verified-outputs'"),
             "a reviewer": ("read the frozen manifest for the run under review "
                            "and `freshness()` for what has moved since"),
         },

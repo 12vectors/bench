@@ -13,6 +13,7 @@ task files, but the tasks work as a plain folder kanban without it. See
     taskfiles.py  reading/moving task files (the only code touching tasks/)
     events.py     hook payloads → displayable events, session registry
     sync.py       origin/main as the shared board: push on move, pull on a beat
+    verify.py     named checks bench runs itself, and the evidence they leave
     agents.py     headless work/review agents: launch, reap, stop, diff
     phases.py     a phase run: its own branch, its members merged into it
     watch.py      2s disk poller narrating moves made outside the API
@@ -38,6 +39,7 @@ import httpd
 import phases
 import state
 import sync
+import verify
 import watch
 
 
@@ -90,6 +92,11 @@ def main() -> None:
     config.SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
     config.AGENT_DIR.mkdir(parents=True, exist_ok=True)
     events.load_disk_sessions()
+    # Evidence a dead board left marked `running` is evidence this board
+    # does not own, and the one thing that must never happen is a
+    # verification drifting towards "passed" because nobody closed it.
+    # Nothing is re-run: asking again is a person's decision.
+    verify.recover()
     threading.Thread(target=watch.watcher, daemon=True).start()
     threading.Thread(target=github.poller, daemon=True).start()
     threading.Thread(target=github.reconcile, daemon=True).start()

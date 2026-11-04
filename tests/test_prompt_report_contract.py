@@ -34,7 +34,12 @@ FIELDS = {"branch": "task/x", "stage": "backlog", "filename": "x.md",
           # the approved readable inputs the board pinned for the run, as
           # `profiles.prompt_block` renders them — "" on a board that
           # selected none, which is every board by default (task 67)
-          "context": ""}
+          "context": "",
+          # the named checks bench will run for the run, as
+          # `profiles.verification_block` renders them — "" on a board
+          # whose profile declares none, which is every board by default
+          # (task 68)
+          "verification": ""}
 
 
 def _tail(name: str) -> str:

@@ -1020,26 +1020,63 @@ class FourSeparateQuestions(ProfileCase):
         self.assertNotIn("reseed", self.grants(found))
         self.assertNotIn("reseed", " ".join(self.prefixes(found)))
 
-    def test_a_verification_requirement_is_a_gate_not_a_grant(self):
-        self.declares({"v": 1, "profiles": {"work": {
-            "verify": [{"name": "unit-tests",
-                        "help": "a later gate insists this passed"}]}}})
+    def test_a_verification_requirement_is_a_check_not_a_grant(self):
+        """Card 68 made `verify` real, and the separation survived it: a
+        check is something *bench* runs, and declaring one still grants
+        the run nothing but the shim that asks for it."""
+        self.declares({"v": 1,
+                       "checks": [{"name": "unit-tests",
+                                   "run": "python3 -m unittest",
+                                   "help": "the definition of done"}],
+                       "profiles": {"work": {"verify": ["unit-tests"]}}})
         found = self.resolve("work")
         self.assertEqual(found["blockers"], [])
         self.assertEqual([v["name"] for v in found["verify"]], ["unit-tests"])
-        self.assertEqual(found["verify"][0]["status"], "pending")
-        self.assertEqual(found["verify"][0]["capability"], "verified-outputs")
-        self.assertNotIn("unit-tests", self.grants(found),
-                         "declaring a check is not granting it")
+        self.assertEqual(found["verify"][0]["status"], "available")
+        self.assertEqual(found["verify"][0]["enforcement"], "enforced")
+        self.assertEqual(self.grants(found), ["bench-verify"],
+                         "declaring a check grants the shim that asks for "
+                         "it, and not the command itself")
+        self.assertNotIn("python3 -m unittest", " ".join(self.prefixes(found)))
 
-    def test_a_preparation_requirement_is_declared_not_run(self):
+    def test_a_verification_naming_nothing_refuses(self):
+        """The one behaviour 67 could not have: a requirement that names
+        nothing used to resolve `pending`, which is indistinguishable from
+        a check that will never run."""
         self.declares({"v": 1, "profiles": {"work": {
-            "prepare": ["migrate"]}}})
+            "verify": ["coverage"]}}})
         found = self.resolve("work")
-        self.assertEqual([p["name"] for p in found["prepare"]], ["migrate"])
-        self.assertEqual(found["prepare"][0]["status"], "pending")
-        self.assertIn("declared, surfaced and recorded",
-                      " ".join(found["guarantees"]["promptOnly"]))
+        self.assertTrue(found["blockers"])
+        self.assertIn("coverage", found["blockers"][0])
+        self.assertIn("never ran", found["blockers"][0])
+
+    def test_a_preparation_requirement_is_run_before_the_check(self):
+        self.declares({"v": 1,
+                       "prepare": [{"name": "migrate",
+                                    "run": "python3 -c pass"}],
+                       "checks": [{"name": "unit-tests",
+                                   "run": "python3 -m unittest",
+                                   "prepare": ["migrate"]}],
+                       "profiles": {"work": {"verify": ["unit-tests"]}}})
+        found = self.resolve("work")
+        self.assertEqual(found["blockers"], [])
+        self.assertEqual([p["name"] for p in found["verify"][0]["prepare"]],
+                         ["migrate"])
+        self.assertIn("prepared-inputs", found["guarantees"]["enforced"])
+
+    def test_a_grant_may_be_promoted_to_a_check_by_name(self):
+        """The documented compatibility path, which is what keeps a
+        document written for 67 working: a `verify` entry naming one of
+        the intent's own command grants resolves to a check built from
+        it."""
+        self.declares({"v": 1, "profiles": {"work": {
+            "commands": [{"name": "unit-tests", "run": "python3 -m unittest"}],
+            "verify": [{"name": "unit-tests"}]}}})
+        found = self.resolve("work")
+        self.assertEqual(found["blockers"], [])
+        self.assertEqual([v["name"] for v in found["verify"]], ["unit-tests"])
+        self.assertIn("promoted", found["verify"][0]["source"])
+        self.assertEqual(found["verify"][0]["argv"], ["-m", "unittest"])
 
     def test_a_pending_requirement_is_never_reported_as_a_guarantee(self):
         self.declares({"v": 1, "profiles": {"work": {
@@ -1275,7 +1312,9 @@ class TheLaunchRecordsWhatItRode(ProfileCase):
         record = self.run_agent()
         public = [a for a in agents.list_public() if a["id"] == record["id"]][0]
         self.assertEqual(public["profile"]["intent"], "work")
-        self.assertEqual(public["profile"]["commands"], 1)
+        # the project's own grant, and bench's shim for the declared check
+        self.assertEqual(public["profile"]["commands"], 2)
+        self.assertEqual(public["profile"]["checks"], ["unit-tests"])
         self.assertEqual(public["profile"]["readable"], 1)
         self.assertNotIn("manifest", public,
                          "the whole manifest belongs behind /api/manifest, "
@@ -1287,7 +1326,8 @@ class TheLaunchRecordsWhatItRode(ProfileCase):
         policy = json.loads(env["AGENT_PROFILE"])
         self.assertEqual(policy["intent"], "work")
         self.assertEqual([g["prefix"] for g in policy["commands"]],
-                         ["python3 -m unittest"])
+                         ["python3 -m unittest",
+                          str(profiles.verify_shim())])
         self.assertIn("push", policy["deny"])
         handed = json.loads(env["AGENT_CONTEXT"])
         self.assertEqual([i["name"] for i in handed], ["design"])
@@ -1313,7 +1353,7 @@ class TheLaunchRecordsWhatItRode(ProfileCase):
         self.run_agent()
         summaries = " ".join(e.get("summary", "") for e in state.BOARD_EVENTS)
         self.assertIn("profile profile:work@", summaries)
-        self.assertIn("1 named command grant", summaries)
+        self.assertIn("2 named command grants", summaries)
         self.assertIn("1 pinned input", summaries)
 
     def test_a_legacy_board_says_nothing_about_policy_in_the_ticker(self):
@@ -1329,7 +1369,8 @@ class TheLaunchRecordsWhatItRode(ProfileCase):
             {"name": "lint", "run": "ruff check"}]}}})
         again = profiles.recorded(record["id"])
         self.assertEqual(again["revision"], frozen["revision"])
-        self.assertEqual([g["name"] for g in again["commands"]], ["unit-tests"])
+        self.assertEqual([g["name"] for g in again["commands"]],
+                         ["unit-tests", "bench-verify"])
         self.assertFalse(profiles.freshness(again)["fresh"])
 
     def test_a_manifest_outlives_the_card_until_someone_drops_it(self):

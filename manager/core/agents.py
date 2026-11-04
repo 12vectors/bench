@@ -44,6 +44,7 @@ import plans
 import profiles
 import reports
 import state
+import verify
 from taskfiles import (actor_name, append_to_task, collect, commit_edit,
                        find_stage_of, move_task, read_task, set_assignee)
 
@@ -569,6 +570,7 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     prompt = config.prompt("work.md").format(
         branch=branch, filename=filename, body=task["body"],
         plan=plans.brief(plan), context=profiles.prompt_block(manifest),
+        verification=profiles.verification_block(manifest),
         **config.prompt_fields(filename, "in-progress"))
     proc, log_file, model = _launch("work", prompt, worktree, agent_id,
                                     filename, log_path, manifest)
@@ -623,6 +625,7 @@ def start_review(filename: str, stage: str) -> dict:
     prompt = config.prompt("review.md").format(
         stage=stage, filename=filename, body=task["body"],
         context=profiles.prompt_block(manifest),
+        verification=profiles.verification_block(manifest),
         **config.prompt_fields(filename, stage))
     proc, log_file, model = _launch("review", prompt, config.REPO, agent_id,
                                     filename, log_path, manifest)
@@ -784,6 +787,10 @@ def forget_failure(filename: str) -> bool:
 def _finish(agent_id: str, proc: subprocess.Popen, log_file) -> tuple[dict, bool, int]:
     rc = proc.wait()
     log_file.close()
+    # A run that has gone cannot be waiting on a check, and evidence for a
+    # run that ended mid-verification must say so rather than arriving
+    # afterwards as though the run had seen it.
+    verify.cancel_for_agent(agent_id)
     with state.LOCK:
         record = state.AGENTS[agent_id]
         stopped = record["status"] == "stopped"
@@ -876,6 +883,7 @@ def start_pr_review(filename: str, stage: str) -> dict:
     prompt = config.prompt("review-pr.md").format(
         filename=filename, pr=task["pr"], branch=branch, body=task["body"],
         context=profiles.prompt_block(manifest),
+        verification=profiles.verification_block(manifest),
         **config.prompt_fields(filename, stage))
     proc, log_file, model = _launch("review", prompt, config.REPO, agent_id,
                                     filename, log_path, manifest)
@@ -952,6 +960,7 @@ def start_pr_fix(filename: str, stage: str) -> dict:
         filename=filename, branch=branch, pr=task["pr"], body=task["body"],
         base=plan["prBase"], remote=plan.get("appRemote") or "origin",
         plan=plans.brief(plan), context=profiles.prompt_block(manifest),
+        verification=profiles.verification_block(manifest),
         **config.prompt_fields(filename, stage))
     # act-pr is the one intent allowed to push: the PR must update.
     proc, log_file, model = _launch("act-pr", prompt, worktree, agent_id,
@@ -1077,6 +1086,12 @@ def stop_agent(agent_id: str) -> dict:
         record["status"] = "stopped"
         proc = record["proc"]
     proc.terminate()
+    # And whatever bench was running *for* it. Ownership, not tidiness: a
+    # check still running on a card whose run has been held is work
+    # nobody is waiting for, and letting it finish would file evidence
+    # attributed to a run that had already stopped. It is recorded as
+    # cancelled — never as a failure.
+    verify.cancel_for_agent(agent_id)
     return _agent_public(record)
 
 

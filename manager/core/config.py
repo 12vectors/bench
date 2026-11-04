@@ -50,6 +50,8 @@ HOOKS_DIR = STATE / "hooks"                        # generated agent hook config
 PLANS_DIR = STATE / "plans"                        # recorded execution plans
 MANIFESTS_DIR = STATE / "manifests"                # per-run execution manifests
 CONTEXT_DIR = STATE / "context"                    # pinned read-only input bundles
+EVIDENCE_DIR = STATE / "evidence"                  # what a verification actually found
+VERIFY_DIR = STATE / "verify"                      # isolated roots a check ran in
 
 # Ordered — this is the column order on the board.
 STAGES = [
@@ -977,6 +979,45 @@ def adapter_dir() -> Path | None:
 # relative one resolves against the tool install, never against a working
 # directory bench cannot see.
 AGENT_PROFILES = setting("BOARD_AGENT_PROFILES", "").strip()
+
+# ── verification (`verify.py`) ─────────────────────────────────────────
+#
+# How long bench lets one named check — and one preparation step — run
+# before it kills it and records a timeout. A timeout is not a test
+# failure and is never recorded as one; these only bound the wait.
+VERIFY_TIMEOUT = float(setting("BOARD_VERIFY_TIMEOUT", "1800"))
+PREPARE_TIMEOUT = float(setting("BOARD_VERIFY_PREPARE_TIMEOUT", "900"))
+
+# How many verifications this board runs at once. A check is somebody
+# else's test suite: two in parallel is a sensible machine's worth, and a
+# request over the cap waits its turn rather than being refused.
+VERIFY_PARALLEL = max(1, int(setting("BOARD_VERIFY_PARALLEL", "2")))
+
+# A cap on one verification's log, so a check that prints forever cannot
+# fill the disk. The evidence names the cap when it bites.
+VERIFY_LOG_CAP = int(setting("BOARD_VERIFY_LOG_CAP", str(4 * 1024 * 1024)))
+
+# Environment variables a check never inherits, by name. Publication
+# credentials are the point: a test suite has no business being able to
+# push, open a PR or publish a package, and the one reliable way to
+# enforce that is for the token not to be in its environment. Extend with
+# BOARD_VERIFY_ENV_DENY (comma-separated names, added to these).
+CREDENTIAL_ENV = (
+    "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_API_TOKEN",
+    "GH_CONFIG_DIR", "GIT_ASKPASS", "SSH_AUTH_SOCK", "SSH_AGENT_PID",
+    "NPM_TOKEN", "NODE_AUTH_TOKEN", "TWINE_PASSWORD", "TWINE_USERNAME",
+    "PYPI_TOKEN", "CARGO_REGISTRY_TOKEN", "DOCKER_AUTH_CONFIG",
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN",
+)
+
+
+def verify_env_deny() -> list[str]:
+    """Every environment variable name a check runs without: the built-in
+    credential list plus whatever the project added."""
+    extra = [part.strip() for part in
+             setting("BOARD_VERIFY_ENV_DENY", "").split(",") if part.strip()]
+    return sorted({*CREDENTIAL_ENV, *extra})
 
 
 def driver_path() -> Path | None:

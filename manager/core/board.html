@@ -757,6 +757,11 @@ const S = {
   // ONE run was frozen with, read back off the board rather than resolved
   // again, so the panel can never show a run a permission it did not ride
   manifests: {},
+  // card file -> {at, rollup, evidence, fetching}: what bench's own
+  // verification runs found for one card, read back off disk. Fetched
+  // rather than carried in the state payload for the manifest's reason,
+  // and never re-run by being looked at
+  evidence: {},
   openFolds: new Set(),  // expanded output folds, kept across renders
   fileView: null,        // {dir, name, content} open in the drawer
   drawerKey: null,       // which document the drawer last painted, for its scroll mark
@@ -777,13 +782,16 @@ const STAGE_TINT = { backlog: 'var(--dim)', 'to-do': 'var(--muted)',
 const STAGE_NOTE = { 'to-do': 'next up', review: 'your move' };
 const GLYPHS = { session: '●', end: '○', idle: '…', edit: '✎', read: '◔', search: '⌕',
   command: '$', test: '▶', check: '☑', git: '⎇', plan: '≡', subagent: '⑂', web: '∿',
-  move: '⇢', new: '＋', agent: '⚑', report: '▣', sync: '⇅', phase: '⟶', other: '·' };
+  move: '⇢', new: '＋', agent: '⚑', report: '▣', sync: '⇅', phase: '⟶',
+  verify: '◫', other: '·' };
 const FILTERS = [
   ['all', 'All', null],
   ['moves', 'Moves', new Set(['move', 'new', 'agent', 'sync', 'phase'])],
   ['edits', 'Edits', new Set(['edit'])],
   ['reads', 'Reads', new Set(['read', 'search'])],
-  ['tests', 'Tests', new Set(['test', 'check'])],
+  // a run's own test commands, and the verifications bench ran itself:
+  // two different accounts of the same question, filtered together
+  ['tests', 'Tests', new Set(['test', 'check', 'verify'])],
   ['commands', 'Commands', new Set(['command', 'subagent', 'web', 'other'])],
   ['git', 'Git', new Set(['git'])],
   ['plan', 'Plan', new Set(['plan', 'report'])],
@@ -976,6 +984,12 @@ function connectStream() {
       }
       scheduleRender();
     } else if (msg.type === 'board' || msg.type === 'agents') {
+      loadState();
+    } else if (msg.type === 'verify') {
+      // a verification started, ended or was refused: the per-card
+      // reading rides the state payload, and the cached rollup a panel
+      // is drawing has to be re-read rather than aged out
+      S.evidence = {};
       loadState();
     } else if (msg.type === 'toast') {
       // the server needs to say something to the person, not just the
@@ -1725,6 +1739,206 @@ function profileDetail(p) {
   return lines.join('\n');
 }
 
+/* ── verification: what bench ran, and what it found ───────────────────
+
+   Every outcome gets its own word. Colour says state, as it does
+   everywhere on this board, but the word is what carries the meaning: a
+   reader who cannot tell pine from terracotta still has to be able to
+   tell a failing test from a refused permission from a dependency that
+   would not install, and the two must never collapse into "red".
+
+   Nothing here renders "passing" from anything but a recorded run whose
+   own exit status was zero. A successful agent, a registered wrapper and
+   a declared check with no evidence are `not run`, in those words. */
+const VERIFY_STATE = {
+  passed:           ['pass',   '✓', 'passed'],
+  failed:           ['fail',   '✕', 'test failure'],
+  denied:           ['fail',   '⊘', 'permission denied'],
+  'prepare-failed': ['fail',   '⚑', 'dependency / preparation failure'],
+  error:            ['fail',   '!', 'no verdict reached'],
+  stale:            ['fail',   '~', 'stale — the source has changed'],
+  cancelled:        ['none',   '⊠', 'cancelled'],
+  'not-run':        ['none',   '—', 'not run'],
+  running:          ['accent', '◌', 'running now'],
+  preparing:        ['accent', '◌', 'preparing'],
+};
+
+function verifyState(outcome) {
+  return VERIFY_STATE[outcome] || ['none', '?', `unknown (${outcome || '—'})`];
+}
+
+function fmtSecs(s) {
+  if (s === null || s === undefined) return '';
+  return s < 60 ? `${s.toFixed(1)}s` : `${Math.round(s / 60)}m ${Math.round(s % 60)}s`;
+}
+
+/* One row per named check, in the Focus panel and in the sheet alike.
+   Preparation is drawn separately from the check it prepared, because
+   "the dependencies would not install" and "the tests failed" are
+   different things to go and do. */
+function verifyRows(rollup, opts) {
+  const rows = (rollup && rollup.rows) || [];
+  if (!rows.length) {
+    return `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no named checks</span>` +
+      `<span class="state">this board's profile declares none</span></div>`;
+  }
+  return rows.map(r => {
+    const [cls, glyph, word] = verifyState(r.outcome);
+    const bits = [word];
+    if (r.scope) bits.push(`scope ${r.scope}`);
+    if (r.commit) bits.push(r.commit.slice(0, 12));
+    if (r.duration) bits.push(fmtSecs(r.duration));
+    if (r.ended) bits.push(fmtShort(r.ended));
+    const prep = (r.prepare || []).map(p => {
+      const ok = p.outcome === 'prepared';
+      return `<div class="check-row ${ok ? 'pass' : 'fail'}" style="padding-left:18px">` +
+        `<span class="glyph">${ok ? '✓' : '✕'}</span>` +
+        `<span class="name">prepare · ${esc(p.name)}</span>` +
+        `<span class="state">${esc(ok ? 'prepared' : (p.outcome || 'failed'))}` +
+        `${p.network ? ' · needed the network' : ''}</span></div>`;
+    }).join('');
+    const open = (opts && opts.links && r.evidence)
+      ? `<button class="chip2" data-ev="${esc(r.evidence)}">log</button>` : '';
+    return `<div class="check-row ${cls}" title="${esc(r.why || '')}">` +
+      `<span class="glyph">${glyph}</span>` +
+      `<span class="name">${esc(r.check)}</span>` +
+      `<span class="state">${esc(bits.join(' · '))} ${open}</span></div>` + prep;
+  }).join('');
+}
+
+/* The card's own chip: present only where a card has evidence or a check
+   it could have, and wearing the worst thing any of them says. */
+function verifyChip(task) {
+  const v = (S.state.verify || {})[task.file];
+  if (!v) return null;
+  const [cls, glyph, word] = verifyState(v.outcome);
+  const tint = { pass: 'ok', fail: 'bad', accent: 'accent', none: '' }[cls] || '';
+  return {
+    label: `${v.passed}/${v.checks}`, pre: '◫', glyph, cls: tint, verify: true,
+    title: `Verification bench ran itself: ${word}. ${v.passed} of ${v.checks} `
+         + `named check${v.checks === 1 ? '' : 's'} passed. Evidence is `
+         + `${v.location === 'local' ? 'local to this board' : v.location}. `
+         + `Opening this runs nothing.`,
+  };
+}
+
+async function fetchVerifyLog(evidenceId, into) {
+  into.innerHTML = '<pre>reading the log…</pre>';
+  try {
+    const res = await fetch('/api/evidence/log?id=' + encodeURIComponent(evidenceId));
+    const data = await res.json();
+    into.innerHTML = res.ok
+      ? `<p class="why">Scrubbed of anything shaped like a credential on the ` +
+        `way out${data.clipped ? ', and clipped to its tail' : ''}.</p>` +
+        `<pre>${esc(data.text || '(the log is empty)')}</pre>`
+      : `<pre>${esc(data.error || 'the log could not be read')}</pre>`;
+  } catch {
+    into.innerHTML = '<pre>the log could not be read</pre>';
+  }
+}
+
+/* The detail panel. A GET of what is stored and nothing else: opening it
+   re-runs nothing, which is the one thing a panel like this must not do.
+   Rerunning is the armed ↻ chip per check, and it says what it costs. */
+async function verifySheet(task) {
+  const wrap = $('#sheetwrap');
+  const head = (tail) =>
+    `<div class="stitle"><span>${esc(task.title)}</span>` +
+    `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}` +
+    `◫ ${esc(tail)}</span></div>`;
+  wrap.innerHTML = `<div class="sheet">${head('verification')}<p>Reading the evidence…</p></div>`;
+  wrap.classList.add('open');
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+
+  const res = await fetch('/api/evidence?file=' + encodeURIComponent(task.file) +
+                          '&stage=' + encodeURIComponent(task.stage));
+  const data = await res.json();
+  const rollup = data.rollup || { rows: [] };
+  const rows = rollup.rows || [];
+  const names = [...new Set(rows.map(r => r.check))];
+
+  wrap.innerHTML =
+    `<div class="sheet">${head('verification')}` +
+    `<p>Bench ran these itself. Each outcome below is the exit status of a ` +
+    `process this board launched and waited on — not a report from a run, ` +
+    `and not an agent's exit code. A check nothing asked for reads ` +
+    `<b>not run</b>.</p>` +
+    `<div class="panel"><div class="phead"><span class="label">Named checks</span>` +
+    `<span class="r">${esc(rollup.location === 'local' ? 'local to this board' : String(rollup.location || ''))}</span></div>` +
+    verifyRows(rollup, { links: true }) + `</div>` +
+    `<div class="panel"><div class="phead"><span class="label">Run one again</span>` +
+    `<span class="r">a person's action</span></div>` +
+    (names.length
+      ? `<div class="chiprow">` + names.map(n =>
+          `<button class="chip2" data-rerun="${esc(n)}">` +
+          actLabel('↻ ' + n, 'run it?', 'running…') + `</button>`).join('') +
+        `</div><p class="why">Side effects, in full: bench runs that check's ` +
+        `command in this card's own checkout (or, for a <span class="mono">source</span> ` +
+        `check, in a detached checkout it makes and removes), with its ` +
+        `preparation steps first. It writes a new evidence record and a new ` +
+        `log; it moves no card, touches no branch and publishes nothing. ` +
+        `Build output, caches and temporary files land in the directory bench ` +
+        `points HOME and TMPDIR at. A run already in flight for the same ` +
+        `check is joined rather than doubled. A check that outlasts this ` +
+        `page's own patience is still running: the row above goes to ` +
+        `<b>running now</b> and the outcome arrives when the runner has ` +
+        `one — nothing is fired twice.</p>`
+      : `<p class="why">Nothing to rerun — this card has no named checks.</p>`) +
+    `</div>` +
+    `<div id="evlog"></div>` +
+    `<details class="fold"><summary>identities each result is bound to</summary>` +
+    `<pre>${esc(verifyDetail(data.evidence || []))}</pre></details>` +
+    `<div class="sbtns"><button id="sh-nover">Close<small>Nothing was run.` +
+    `</small></button></div></div>`;
+  $('#sh-nover').addEventListener('click', closeSheet);
+  wrap.querySelectorAll('[data-ev]').forEach(btn =>
+    btn.addEventListener('click', () => fetchVerifyLog(btn.dataset.ev, $('#evlog'))));
+  wrap.querySelectorAll('[data-rerun]').forEach(btn =>
+    wireAction(btn, `${task.file}::verify::${btn.dataset.rerun}`, {
+      label: '↻ ' + btn.dataset.rerun, confirm: 'run it?', busy: 'running…',
+      run: () => rerunCheck(task, btn.dataset.rerun),
+    }));
+}
+
+function verifyDetail(records) {
+  const lines = [];
+  for (const r of records) {
+    lines.push(`evidence    ${r.id}`);
+    lines.push(`check       ${r.check}${r.scope ? ' · scope ' + r.scope : ''}  ${r.checkId || ''}`);
+    lines.push(`outcome     ${r.outcome}${r.reason ? ' · ' + r.reason : ''}`);
+    lines.push(`command     ${r.command || '—'}`);
+    lines.push(`root        ${(r.root || {}).path || '—'} (${(r.root || {}).policy || '—'})`);
+    const s = r.source || {};
+    lines.push(`source      ${s.commit || 'unknown'}${s.branch ? ' · ' + s.branch : ''}` +
+               `  ${s.sourceId || ''}${(s.dirty || []).length ? '  +' + s.dirty.length + ' uncommitted' : ''}`);
+    if (s.why) lines.push(`            ${s.why}`);
+    lines.push(`policy      ${r.policyId || '—'}  (${r.policySource || '—'})`);
+    if ((r.contextIds || []).length) lines.push(`context     ${r.contextIds.join(', ')}`);
+    lines.push(`asked by    ${r.agent || r.actor || '—'} · intent ${r.intent || '—'}`);
+    lines.push(`environment ${((r.env || {}).removed || []).length} names removed` +
+               `  HOME=${(r.env || {}).home || '—'}`);
+    lines.push(`evidence is ${r.location || 'local'} to this board — nothing here is committed or synced`);
+    lines.push('');
+  }
+  return lines.join('\n') || 'no evidence recorded for this card yet';
+}
+
+async function rerunCheck(task, check) {
+  const res = await fetch('/api/verify', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: task.file, stage: task.stage, check }),
+  });
+  const data = await res.json();
+  const ev = data.evidence || {};
+  toast(res.ok
+    ? `${check}: ${verifyState(ev.outcome)[2]}${ev.why ? ' — ' + ev.why : ''}`
+    : (data.error || 'the check was not run'), !res.ok || ev.outcome !== 'passed');
+  await loadState();
+  if (S.view === 'board') verifySheet(task);
+  return res.ok;
+}
+
 async function replan(task) {
   const res = await fetch('/api/plan/replan', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2042,6 +2256,12 @@ function cardFor(task) {
            + `it may run, where it may write, which files it is given and `
            + `what is blocked. From ${policy.identity}.` });
   }
+  // what bench's own verification runs found on this card — a
+  // destination like the rest of the row, opening the evidence. Present
+  // only where there is evidence or a check that could have produced
+  // some, so a board nobody declared one on has no such chip anywhere.
+  const verified = verifyChip(task);
+  if (verified) chips.push(verified);
   if (prState && prState.ci) {
     chips.push({ label: 'CI', glyph: { pass: '✓', fail: '✕', running: '◌' }[prState.ci],
       cls: { pass: 'ok', fail: 'bad', running: 'accent' }[prState.ci], title: detail });
@@ -2128,6 +2348,7 @@ function cardFor(task) {
         if (c.phase) return `<button class="chip2 ${c.cls}" data-phase="${esc(c.phase)}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.plan) return `<button class="chip2 ${c.cls}" data-plan="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.profile) return `<button class="chip2 ${c.cls}" data-profile="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
+        if (c.verify) return `<button class="chip2 ${c.cls}" data-verify="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.cmd) return `<button class="chip2 ${c.cls}" data-cmd="${esc(c.cmd)}" title="${esc(c.title)}">${actLabel(c.label, 'run it?', 'running…')}${g}</button>`;
         return `<span class="chip2 ${c.cls}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</span>`;
       }).join('') + '</div>'
@@ -2152,6 +2373,8 @@ function cardFor(task) {
     btn.addEventListener('click', (e) => { e.stopPropagation(); planSheet(task); }));
   el.querySelectorAll('[data-profile]').forEach(btn =>
     btn.addEventListener('click', (e) => { e.stopPropagation(); profileSheet(task); }));
+  el.querySelectorAll('[data-verify]').forEach(btn =>
+    btn.addEventListener('click', (e) => { e.stopPropagation(); verifySheet(task); }));
   el.querySelectorAll('[data-drive]').forEach(btn =>
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -3433,8 +3656,17 @@ function renderFocus() {
   if (agent) fetchManifest(agent.id);
   const permsPanel = permissionsPanel(agent);
 
+  // And what bench itself ran, which is a different fact again. CHECKS
+  // above is classified from commands the *agent* ran — the run's own
+  // account of itself. This panel is the runner's: every row is a
+  // process this board launched and waited on, with preparation drawn
+  // apart from the check it prepared. A finished agent with nothing
+  // here reads `not run`, never `passed`.
+  if (task) fetchEvidence(task.file, task.stage);
+  const verifyPanel = verificationPanel(task, agent);
+
   $('#cgrid').innerHTML = nowPanel +
-    `<div class="c-side">${checksPanel}${permsPanel}${filesPanel}${recentPanel}</div>`;
+    `<div class="c-side">${checksPanel}${verifyPanel}${permsPanel}${filesPanel}${recentPanel}</div>`;
   document.querySelectorAll('#cgrid details.fold').forEach(d => {
     d.addEventListener('toggle', () => {
       if (d.open) S.openFolds.add(d.dataset.key); else S.openFolds.delete(d.dataset.key);
@@ -3468,6 +3700,65 @@ async function fetchDiff(agentId) {
     if (S.view === 'focus') scheduleRender();
   } catch {
     S.diffCache[agentId] = { at: Date.now(), files: cached ? cached.files : [] };
+  }
+}
+
+/* What bench's own runner found for this card, and what it has not been
+   asked to find. Fetched like the manifest and read back off disk: the
+   panel is a view of stored records, so drawing it runs nothing — which
+   is the rule a detail panel for test results has to follow. */
+function verificationPanel(task, agent) {
+  const head = (right) =>
+    `<div class="panel"><div class="phead"><span class="label">Verification</span>` +
+    `<span class="r">${right}</span></div>`;
+  if (!task) {
+    return head('—') +
+      `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no card attached</span>` +
+      `<span class="state">bench verifies a card's work</span></div></div>`;
+  }
+  const cached = S.evidence[task.file];
+  if (!cached || !cached.rollup) {
+    return head('reading') +
+      `<div class="check-row none"><span class="glyph">·</span>` +
+      `<span class="name">reading the evidence</span>` +
+      `<span class="state">loading</span></div></div>`;
+  }
+  const rollup = cached.rollup;
+  const rows = rollup.rows || [];
+  const live = rows.some(r => r.live);
+  const unverified = agent && agent.status !== 'running'
+    && rows.length && !rows.some(r => r.outcome === 'passed');
+  return head(esc(live ? 'running now' : (rollup.location === 'local'
+                                          ? 'local to this board' : 'synchronized'))) +
+    verifyRows(rollup, { links: false }) +
+    (unverified
+      ? `<div class="check-row none"><span class="glyph">·</span>` +
+        `<span class="name">the run has finished</span>` +
+        `<span class="state">nothing here passed — a finished agent is not a ` +
+        `verified card</span></div>`
+      : '') +
+    `<p class="why" style="margin:6px 0 0;color:var(--dim);font-size:11.5px">` +
+    `Each row is a process bench launched and waited on. Open the card's ` +
+    `◫ chip for the logs, the commits they ran against and a rerun.</p>` +
+    `</div>`;
+}
+
+async function fetchEvidence(file, stage) {
+  const cached = S.evidence[file];
+  if (cached && (cached.fetching || Date.now() - cached.at < 6000)) return;
+  S.evidence[file] = { ...(cached || {}), fetching: true };
+  try {
+    const res = await fetch('/api/evidence?file=' + encodeURIComponent(file) +
+                            '&stage=' + encodeURIComponent(stage || ''));
+    const data = res.ok ? await res.json() : {};
+    S.evidence[file] = { at: Date.now(), rollup: data.rollup || null,
+                         evidence: data.evidence || [] };
+    if (S.view === 'focus') scheduleRender();
+  } catch {
+    S.evidence[file] = { at: Date.now(),
+                         rollup: cached ? cached.rollup : null,
+                         evidence: cached ? cached.evidence : [] };
   }
 }
 

@@ -31,9 +31,17 @@
     "  executable is UI registration — a $ chip a person clicks — and being",
     "  registered there grants a headless run nothing: resolved profiles",
     "  list those separately, every one marked agentCapability: false.",
-    "  `verify` is a gate requirement, and `prepare` a preparation one:",
-    "  both are declared, surfaced and recorded, and neither is enforced",
-    "  yet. They resolve with status `pending` and say so.",
+    "  And a `checks` entry is neither: it is a command BENCH runs on a",
+    "  run's request, so the run is granted the shim that asks for it and",
+    "  not the command itself.",
+    "",
+    "COMMANDS, AND CHECKS",
+    "  A `commands` grant is a PREFIX a model composes a command line",
+    "  against. A `checks` entry is a NAME: the run asks for `unit`, bench",
+    "  builds the argument list from this document and runs it with no",
+    "  shell, and the evidence recorded is the exit status of bench's own",
+    "  child process. Declaring a check is how a project stops taking an",
+    "  agent's word for 'the tests passed'. Declare both, one, or neither.",
     "",
     "HOW STRONGLY ANYTHING IS ENFORCED",
     "  A command grant becomes a prefix allow-rule in the adapter's rule",
@@ -53,10 +61,117 @@
   ],
 
   "_doc_shared": [
-    "Top-level `commands`, `context` and `requires` apply to any intent",
-    "that does not name its own. Handy for one brief every run must read."
+    "Top-level `commands`, `context`, `requires` and `verify` apply to any",
+    "intent that does not name its own. Handy for one brief every run must",
+    "read, or one check every intent may ask for."
   ],
-  "requires": ["pinned-context", "context-boundary"],
+  "requires": ["pinned-context", "context-boundary", "named-verification",
+               "verification-evidence"],
+
+  "_doc_checks": [
+    "THE CHECKS BENCH RUNS ITSELF.",
+    "",
+    "Declared once here, at the top level, and selected per intent by name",
+    "in that intent's `verify` list — so a check reviewed once is the same",
+    "check whichever intent asks for it. An intent with no `verify` has no",
+    "checks and is granted no shim.",
+    "",
+    "  name     what a run asks for, and what its evidence is filed under",
+    "  run      one executable and fixed arguments. Quoting IS allowed",
+    "           here, unlike in a `commands` grant: a grant becomes a",
+    "           prefix allow-rule and a rule cannot see through a quote,",
+    "           but bench splits a check itself and hands the result to",
+    "           execve — so a path with spaces is expressible. What is",
+    "           still refused is anything that makes one command line into",
+    "           two: ; & | ` $ > < ( ) { } * ? ! ~ # \\ [ ]",
+    "  root     worktree (the card's own checkout) or source (a detached",
+    "           checkout of one exact commit that bench makes for the",
+    "           verification and removes afterwards). NOT `app`: a check",
+    "           never runs in the live application, and `source` is the",
+    "           only root a read-only `review` run has.",
+    "  scopes   {name: [arguments]}. A run selects a scope BY NAME; the",
+    "           arguments are yours and never the run's, which is what",
+    "           keeps a model out of the argv.",
+    "  prepare  names from the top-level `prepare` list, run before this",
+    "           check in the same root. A required one failing is",
+    "           `prepare-failed`, which is not a test failure.",
+    "  timeout  seconds, narrowing BOARD_VERIFY_TIMEOUT and never widening",
+    "           it. A timeout is recorded as `error`, never as a failure.",
+    "  required whether a later gate should insist on it (declared; the",
+    "           gate itself is a later member — `verified-outputs` is",
+    "           still pending and a profile requiring it refuses).",
+    "",
+    "REFUSED WHERE THIS FILE IS READ, before any process: a root of `app`,",
+    "a git subcommand that reshapes the repository (push, reset, worktree,",
+    "checkout, branch, config, clean, commit, …) because the execution",
+    "root shares its git metadata with every other worktree, an argument",
+    "whose basename reads as a credential, a scope that is not a name, and",
+    "a `verify` entry naming neither a check nor one of that intent's own",
+    "command grants.",
+    "",
+    "THE COMPATIBILITY PATH: a `verify` entry naming one of the intent's",
+    "own `commands` grants resolves to a check built from that grant, so a",
+    "document written before bench could run anything keeps working."
+  ],
+  "checks": [
+    {
+      "name": "unit",
+      "run": "python3 -m unittest discover -s tests",
+      "root": "worktree",
+      "scopes": {
+        "all": [],
+        "fast": ["-k", "fast"],
+        "one-module": ["tests/test_one.py"]
+      },
+      "prepare": ["deps"],
+      "timeout": 900,
+      "required": true,
+      "help": "the project's definition of done"
+    },
+    {
+      "_doc": [
+        "A check a read-only review may ask for. It runs in a detached",
+        "checkout of the card's own commit that bench makes and removes,",
+        "because a review has no worktree and must never run a suite in",
+        "the live application."
+      ],
+      "name": "whitespace",
+      "run": "git diff --check",
+      "root": "source",
+      "required": false
+    }
+  ],
+
+  "_doc_prepare": [
+    "Preparation steps, by name, run in the same isolated root as the",
+    "check that names them (or before every check of an intent that names",
+    "them in its own `prepare`). Same validation as a check.",
+    "",
+    "  required  true (default) means a failure stops the check and is",
+    "            recorded as `prepare-failed` — a dependency that would",
+    "            not install is not a test that failed. false means the",
+    "            failure is noted and the check runs anyway.",
+    "  network   declares that this step needs the network. Bench enforces",
+    "            NO network boundary (`network-policy` is pending), so the",
+    "            step gets whatever network this machine has and the",
+    "            resolved profile says so out loud. A profile that wants",
+    "            the refusal instead puts `network-policy` in `requires`.",
+    "",
+    "Where its writes go: bench points HOME, TMPDIR, XDG_*, PIP_CACHE_DIR,",
+    "NPM_CONFIG_CACHE, CARGO_HOME and the rest into a directory made for",
+    "this card's verifications, so a venv, node_modules or a build cache",
+    "lands there and not in anybody's home directory. That is where writes",
+    "are DIRECTED, not a boundary they are held inside."
+  ],
+  "prepare": [
+    {
+      "name": "deps",
+      "run": "python3 -m pip install --quiet -e .",
+      "network": true,
+      "required": true,
+      "help": "the project's own dependencies, into bench's isolated HOME"
+    }
+  ],
 
   "context": [
     {
@@ -110,20 +225,27 @@
           "help": "the project's definition of done"
         }
       ],
-      "verify": [
-        {
-          "_doc": "A gate requirement: declared, recorded, not yet enforced.",
-          "name": "unit-tests",
-          "help": "a later merge gate will insist this passed"
-        }
+      "_doc_verify": [
+        "Which of the document's checks this intent may ask bench to run.",
+        "Names only — the definitions are at the top level. Declaring one",
+        "adds bench's own `bench-verify` shim to this intent's grants and",
+        "nothing else: the run may ask, and may not run the command.",
+        "",
+        "A name here that is neither a declared check nor one of this",
+        "intent's own command grants REFUSES the launch, by name. A",
+        "requirement that resolves to nothing is indistinguishable from a",
+        "check that will never run, and that is the reading this exists to",
+        "make impossible."
       ],
-      "prepare": [
-        {
-          "_doc": "A preparation requirement: declared, not yet run for you.",
-          "name": "migrate",
-          "help": "apply this branch's migrations before the run"
-        }
+      "verify": ["unit"],
+
+      "_doc_prepare_intent": [
+        "Preparation this intent needs before ANY of its checks, as",
+        "against a check's own `prepare` which runs only before it. Names",
+        "from the top-level `prepare` list."
       ],
+      "prepare": [],
+
       "deny": ["publish"],
       "publication": {"commit": true, "push": false, "publish": false}
     },
@@ -132,6 +254,7 @@
       "commands": [
         {"name": "unit-tests", "run": "python3 -m unittest", "root": "worktree"}
       ],
+      "verify": ["unit"],
       "publication": {"commit": true, "push": true, "publish": false}
     },
 
@@ -141,9 +264,16 @@
         "hardcoded grant set inside each adapter and nothing else. Here it",
         "is a profile like the others — it runs in the application",
         "checkout, it is granted no project commands unless this names",
-        "them, and the only thing it publishes is its verdict."
+        "them, and the only thing it publishes is its verdict.",
+        "",
+        "It may still VERIFY. A `verify` list gives a read-only run the",
+        "shim and nothing else: it can ask bench to run a `source`-rooted",
+        "check and gains no commit and no push rule anywhere in the",
+        "generated permission document. Verifying is not committing, and",
+        "this is where the two stop being one question."
       ],
       "commands": [],
+      "verify": ["whitespace"],
       "context": [
         {"name": "review-checklist", "path": "work:reference/review.md",
          "required": false}

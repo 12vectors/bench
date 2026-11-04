@@ -119,11 +119,18 @@ def bash_rules(mode: str, commands: list[str],
     its denied capabilities are appended after the mode's own — so the
     narrowing always wins. Without one the dict is exactly what it was
     before profiles existed.
+
+    A profile's grants are rendered for every intent, `review` included,
+    while AGENT_COMMANDS stays restricted to the two that always had it.
+    That is what lets a read-only run be granted bench's own shim and ask
+    for a named check without gaining a commit or a push rule anywhere in
+    this document.
     """
     prefixes = list(MODE_PREFIXES.get(mode, []))
-    project = profile_prefixes(profile) if profile else commands
-    if mode in MODES_WITH_PROJECT_COMMANDS:
-        prefixes += [c for c in project if c not in prefixes]
+    if profile:
+        prefixes += [c for c in profile_prefixes(profile) if c not in prefixes]
+    elif mode in MODES_WITH_PROJECT_COMMANDS:
+        prefixes += [c for c in commands if c not in prefixes]
     rules = {"*": "deny"}
     for prefix in prefixes:
         rules[prefix] = "allow"

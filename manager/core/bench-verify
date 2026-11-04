@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Ask bench to run one of this run's named checks, and print what it found.
+
+    bench-verify                  list the checks this run may ask for
+    bench-verify <check>          run it
+    bench-verify <check> <scope>  run it over a declared scope
+
+This is the whole of a headless run's verification interface, and it is
+deliberately tiny. The run names a check; **bench** reads the operator's
+profile document, builds the argument list, runs it with no shell, and
+records the evidence before this process is told anything. There is no
+command line here for a model to compose, and nothing this script prints
+can change what was recorded.
+
+Which checks exist is the profile's answer, not this script's: a run whose
+profile declares none is told so, and asking for one it does not hold is
+refused by name. The board is reached over the loopback at BOARD_PORT, and
+BOARD_AGENT_ID identifies the asking run — which is also what pins the
+card, so this script cannot ask for a check against somebody else's work.
+
+Exit status, so a run can branch on the *kind* of answer rather than on
+prose. A verification is not a pass/fail boolean and this is not one
+either:
+
+    0  passed            the check ran and exited zero
+    1  failed            the check ran and said no — the project's verdict
+    2  denied            refused before anything ran
+    3  prepare-failed    a required preparation step failed; nothing ran
+    4  error/cancelled   no verdict was reached (timeout, signal, cancel)
+    5  unreachable       this board could not be asked at all
+
+A non-zero exit from this script is therefore never, by itself, a test
+failure — and the evidence on the board says which it was.
+"""
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+EXITS = {
+    "passed": 0,
+    "failed": 1,
+    "denied": 2,
+    "prepare-failed": 3,
+    "error": 4,
+    "cancelled": 4,
+    "stale": 4,
+    "running": 4,
+    "preparing": 4,
+}
+
+
+def ask(path: str, payload: dict | None, port: str, timeout: float):
+    url = f"http://127.0.0.1:{port}{path}"
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    request = urllib.request.Request(
+        url, data=data, method="POST" if data is not None else "GET",
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read() or b"{}")
+
+
+def main() -> int:
+    port = os.environ.get("BOARD_PORT", "26071")
+    agent = os.environ.get("BOARD_AGENT_ID", "")
+    args = [a for a in sys.argv[1:] if a]
+    if args and args[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    if not agent:
+        print("bench-verify: BOARD_AGENT_ID is not set, so bench cannot tell "
+              "which run is asking. This command is for a run the board "
+              "launched.", file=sys.stderr)
+        return 5
+
+    try:
+        if not args:
+            found = ask(f"/api/verify/checks?agent={agent}", None, port, 15)
+            checks = found.get("checks") or []
+            if not checks:
+                print("no named checks are available to this run — its profile "
+                      "declares none, so there is nothing to ask for.")
+                return 0
+            print("checks this run may ask for:")
+            for check in checks:
+                scopes = ", ".join(check.get("scopes") or [])
+                print(f"  {check['name']:<24} {check.get('run') or ''}"
+                      + (f"\n  {'':<24} scopes: {scopes}" if scopes else "")
+                      + (f"\n  {'':<24} {check['help']}" if check.get("help") else ""))
+            return 0
+        body = {"agent": agent, "check": args[0]}
+        if len(args) > 1:
+            body["scope"] = args[1]
+        # No client-side timeout short of the board's own: the board kills
+        # a check that overruns and records the timeout, and a client that
+        # gave up first would leave the asking run guessing about a
+        # verification that is still being recorded.
+        found = ask("/api/verify", body, port, 60 * 60 * 7)
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read() or b"{}").get("error") or str(exc)
+        except (ValueError, OSError):
+            detail = str(exc)
+        print(f"bench-verify: the board refused the request — {detail}",
+              file=sys.stderr)
+        return 2
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        print(f"bench-verify: could not reach the board on port {port} "
+              f"({exc}) — nothing was verified.", file=sys.stderr)
+        return 5
+
+    evidence = found.get("evidence") or {}
+    outcome = evidence.get("outcome") or "error"
+    print(f"{outcome.upper()}: {evidence.get('check')}"
+          + (f" (scope {evidence['scope']})" if evidence.get("scope") else ""))
+    if evidence.get("why"):
+        print(evidence["why"])
+    if evidence.get("command"):
+        print(f"ran:      {evidence['command']}")
+    root = evidence.get("root") or {}
+    source = evidence.get("source") or {}
+    if root.get("path"):
+        print(f"in:       {root['path']} ({root.get('policy')})")
+    if source.get("commit"):
+        print(f"source:   {source['commit'][:12]}"
+              + (f" + {len(source['dirty'])} uncommitted"
+                 if source.get("dirty") else ""))
+    for step in evidence.get("prepare") or []:
+        print(f"prepare:  {step['name']} — {step.get('outcome')}"
+              + (f" ({step['why']})" if step.get("why") else ""))
+    if evidence.get("rc") is not None:
+        print(f"exit:     {evidence['rc']}")
+    if evidence.get("duration"):
+        print(f"took:     {evidence['duration']:.1f}s")
+    print(f"evidence: {evidence.get('id')}")
+    if evidence.get("log"):
+        print(f"log:      {evidence['log']}")
+    if evidence.get("duplicate"):
+        print("this check was already running for this card; the result above "
+              "is that run's, not a second one.")
+    print("\nThe board recorded this itself. Report what it says — saying a "
+          "check passed when this printed otherwise is a claim the evidence "
+          "contradicts.")
+    return EXITS.get(outcome, 4)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
