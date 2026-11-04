@@ -44,7 +44,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports → taskfiles → plans / profiles → verify → events / github / drive / sync → agents → phases → watch / httpd → board.py
+config → state / reports → taskfiles → plans / profiles → reviews → verify → events / github / drive / sync → agents → phases → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -60,6 +60,10 @@ config → state / reports → taskfiles → plans / profiles → verify → eve
   in that checkout and which files it is guaranteed to have read. One
   profile per launch intent, the approved context it pins read-only, and
   the manifest recording what each run actually rode
+- `reviews.py` — the checkout a PR review runs in: the pull request's
+  repository, base and head resolved before anything is created, a
+  detached worktree of that exact head owned by the run, and whether the
+  review still speaks for the head the pull request proposes
 - `verify.py` — the named checks bench runs itself, on a run's request:
   the argument list built here rather than composed by a model, the
   environment the check is given, and the evidence it leaves — the
@@ -382,6 +386,10 @@ teammate should read: the tickets, the implementation plans in `plans/`,
 it — agent logs, drive and command logs, session timelines, the
 generated hook settings, and the recorded execution plans under
 `manager/local/state/plans/`, which hold this machine's worktree paths.
+The execution manifests, the verification evidence and the review
+checkouts' ownership records (`state/manifests/`, `state/evidence/`,
+`state/reviews/`) are machine-local for the same reason and by the same
+construction.
 `manager/local/.env` is gitignored and belongs there too: it names the
 roots on *this* disk and the binaries on this PATH. An absolute path out
 of somebody's home directory, a credential, or a log that means nothing
@@ -1294,8 +1302,10 @@ Review-stage cards with a PR carry two actions:
 - **◔ review PR** — a read-only agent reads the full diff in context,
   checks it against the task and AGENTS.md, posts its verdict to GitHub
   (`gh pr review --approve` / `--request-changes`) and appends a
-  `## PR review` section to the task file ending in
-  `PR REVIEW: APPROVE | REQUEST CHANGES`.
+  `## PR review at <commit>` section to the task file ending in
+  `PR REVIEW: APPROVE | REQUEST CHANGES`. It runs in a checkout bench
+  pinned to the exact revision that PR proposes, not in the application —
+  see "A review runs in the revision it is of".
 - **⚑ copilot** — requests a GitHub Copilot review via the API. Works iff
   Copilot code review is enabled for the repo; the error is relayed to the
   toast if not. The card tracks the whole arc with a `⚑` chip: `⚑ ◌` asked,
@@ -1308,7 +1318,11 @@ human), the card's actions shift to the loop that matters then:
 worktree (recreated from the branch if it was cleaned up), reads every
 review and line comment, addresses each point or says why not, commits,
 pushes so the PR updates, and appends a `## PR update` section to the task
-file. Then **◔ review PR** again, until it settles.
+file. Then **◔ review PR** again, until it settles. It refuses a **merged
+or closed** pull request by name, before a worktree or a model exists: a
+push there would not change that PR and would not reach its base, and
+saying "acted on the PR" about it would be a report of a change that moved
+nothing (see "Historical, as against the integration head").
 
 The board polls open PRs of review-stage cards (reviews + CI checks +
 GitHub's mergeable state, every 60s — a plain thread in board.py, no agent
@@ -1321,6 +1335,114 @@ branch — additively, never rebasing or force-pushing — in a dedicated
 resolution commit, and refuses semantic ones, naming the collision for a
 human to settle. GitHub computes mergeability lazily, so an UNKNOWN
 reading keeps the chip's last state rather than flapping.
+
+### A review runs in the revision it is of
+
+A plan says which checkout a *work* run works in; a profile says what a
+run may do there; verification says whether the project's checks passed
+and against what. This is the question those three left open on the
+read-only side: **which revision is being reviewed, and where does the
+reviewer execute it?**
+
+**◔ review PR** used to launch in `config.REPO` — the live application
+checkout. Three things followed, and each is a reason it no longer does:
+it is not the reviewed code (the checkout is on whatever branch somebody
+left it on, with whatever they have edited in it); it is not pinned (a
+push lands mid-review and a verdict about "the branch, whenever you
+looked" cannot say what it covered); and it is shared, which is why a
+project's own verification wrapper is right to refuse it and why `app` has
+never been an execution root for a check.
+
+So bench resolves the pull request's repository, base and head itself,
+brings that commit into the application's object store, and adds a
+**detached worktree of that one commit** under
+`manager/local/state/reviews/`. The run works there. A detached checkout
+has no branch to follow, so the revision cannot change under it, and
+nothing the run does reaches a tracked file of anyone else's checkout.
+
+- **Resolved before anything is created.** The identity reads, fetches
+  (bounded by `BOARD_REVIEW_FETCH_TIMEOUT`) and answers; then the profile,
+  against the path the checkout *will* be at; then the checkout; then the
+  manifest. So a refusal leaves no checkout, no record and no run.
+- **A head bench cannot name refuses the review.** There is no
+  second-best revision, so there is no fallback to the application
+  checkout — which is the behaviour this changed: a card with no branch
+  and a `gh` that cannot answer used to launch a review of whatever was
+  lying around.
+- **`gh` is the authority, and the weaker one says so.** When `gh` cannot
+  answer, the tip of the card's branch in this checkout is pinned instead
+  and the record reads `authority: "local"`, in those words — the bargain
+  `plans` strikes with `local-only`. The run is told, so a verdict cannot
+  read as though GitHub's head had been checked.
+- **Read-only stays read-only.** A pinned checkout is not a licence to
+  write in it: `review` still denies `edit`, `commit` and `push`, has no
+  writable root, and publishes nothing but its verdict.
+- **A relevance check pins nothing.** **◔ still true?** shares the
+  `review` intent and reviews no pull request, so it provisions nothing,
+  fetches nothing, asks GitHub nothing and runs in the application
+  checkout exactly as it always did.
+
+**A check may run there too.** `review` is an execution root for a named
+check (beside `worktree` and `source`), and it is the checkout the asking
+run was pinned — read off that run's frozen manifest, so a check runs
+against the revision the review is of rather than against whatever the
+branch has since become. Bench refuses rather than repairs: a run with no
+pinned checkout is refused the check by name, a directory that is a
+checkout of something else is refused, and one sitting at another commit
+is refused instead of being reset. The checkout outlives the verification,
+so the runner does not remove it — its own `_cleanup` leaves that to the
+review's ending.
+
+**Ownership, and what it buys.** One record per run, written before the
+model is invoked, naming the task, the run, the checkout, the base and
+head identities, the pull request's state and the process that made it.
+Machine-local, for the manifest's reason: it holds this machine's paths.
+From it: a second run never reuses a first's checkout (a directory
+another task or run owns is refused by name); cleanup removes only what
+bench made, only inside the reviews directory with every link followed,
+and never one with uncommitted work in it; a board that died owns up on
+the next start, releasing what it was holding under exactly those guards
+and reviewing nothing again; and a launch that fails after provisioning
+gives the checkout back rather than leaving an orphan nothing can account
+for.
+
+**Freshness is the head, not the age.** `reviews.freshness()` compares the
+pinned head with what the PR poll last saw — one authority for "what is
+the head now", fed by the beat that already runs, so the question costs a
+dictionary lookup rather than a call to GitHub per card. A head that has
+moved makes the review `superseded` and its evidence `stale` with the
+reason `head-changed`; a merged or closed pull request makes both
+`historical` with `pr-ended`. Neither is ever shown as the new head's
+approval, and neither is retracted: the review said what it said, about
+the commit it said it about. The heading the task file keeps carries the
+revision and the word, because the file outlives the checkout, the run and
+the pull request.
+
+### Historical, as against the integration head
+
+A merged or closed pull request is not a thing to push to, and a phase
+member's PR is merged into its phase branch early — so most member reviews
+end up historical by design. "A historical review of what a member
+proposed" and "validation of the current integration head" are two facts
+about two revisions, and the board keeps them apart:
+
+- **↻ act on PR refuses an obsolete target**, naming it, before the
+  profile, the worktree or the model. Nothing is pushed and nothing is
+  retargeted; the refusal names the integration head as the separate
+  target it is — the card that owns that branch, which is a phase card's
+  own PR.
+- **The record says which it was.** `target` is `member` or
+  `integration`, and `label` is `current`, `superseded` or `historical`.
+- **Nothing on the page implies otherwise.** A `⌾` chip in the card's
+  footer row, beside `⚿`, `⌖` and `◫`, opens the record: the base and
+  head identities with the authority each was read from, the owned
+  checkout and what became of it, and the checks that ran in it — in
+  words, with `superseded` in `--alarm` and `historical` in the idle
+  register, never in the colour of a pass. The sheet is read-only in both
+  halves of the word: it provisions nothing, fetches nothing and starts no
+  validation, because opening a historical review must not be a way to set
+  something running against a branch it never judged. A review that ran no
+  checks reads "no checks ran here" rather than nothing at all.
 
 A phase member's PR is opened against **its phase's branch**, not `main`:
 its branch was cut from there, so that is the only base whose diff is the
