@@ -1153,8 +1153,14 @@ class IdentitiesAndSeams(unittest.TestCase):
                          set(profiles.EVIDENCE_KINDS))
         for who in ("a runner", "a doctor", "a gate", "a reviewer"):
             self.assertIn(who, seams["extend"])
+        # `review` joined them with task 69: which revision a PR review
+        # was of is an identity later members refer to, exactly as the
+        # policy and the evidence are.
         self.assertEqual(set(seams["identities"]),
-                         {"policy", "context", "request", "evidence"})
+                         {"policy", "context", "request", "evidence", "review"})
+        self.assertEqual(set(seams["identities"]) | {"check"},
+                         set(profiles.ID_PREFIXES),
+                         "every identity type has a seam, and vice versa")
 
     def test_the_shipped_example_document_matches_the_schema(self):
         """The portable example is documentation that has to stay true:

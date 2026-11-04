@@ -52,6 +52,7 @@ MANIFESTS_DIR = STATE / "manifests"                # per-run execution manifests
 CONTEXT_DIR = STATE / "context"                    # pinned read-only input bundles
 EVIDENCE_DIR = STATE / "evidence"                  # what a verification actually found
 VERIFY_DIR = STATE / "verify"                      # isolated roots a check ran in
+REVIEWS_DIR = STATE / "reviews"                    # run-owned pinned PR-review checkouts
 
 # Ordered — this is the column order on the board.
 STAGES = [
@@ -644,6 +645,14 @@ def tasks_relative_to_app() -> str | None:
 # branching from local HEAD instead. Launching must never be blocked by
 # network weather; this bounds the whole delay.
 FETCH_TIMEOUT = float(setting("BOARD_FETCH_TIMEOUT", "10"))
+
+# How long bench waits to bring the commit a pull request's head names into
+# this checkout, before a PR review is refused for want of the revision it
+# is supposed to be reviewing (`reviews.py`). Longer than FETCH_TIMEOUT on
+# purpose: that one bounds a *fallback* — launching branches from HEAD
+# instead — and this one bounds the only thing that will do, so a slow
+# remote is waited for rather than silently reviewed around.
+REVIEW_FETCH_TIMEOUT = float(setting("BOARD_REVIEW_FETCH_TIMEOUT", "120"))
 
 # Team mode's second half: the work state's base branch is the shared
 # truth and every board a converging replica — board commits push as they

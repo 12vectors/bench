@@ -142,6 +142,7 @@ ID_PREFIXES = {
     "request": "req",           # which launch asked
     "check": "check",           # which named check, at which definition
     "evidence": "ev",           # what a verification actually found
+    "review": "rev",            # which revision a review was of
 }
 
 
@@ -171,6 +172,20 @@ def request_id(intent: str, filename: str, when: float | None = None) -> str:
     stamp = f"{when if when is not None else time.time():.3f}"
     return (f"{ID_PREFIXES['request']}:{intent}:{filename[:-3] if filename.endswith('.md') else filename}"
             f"@{_digest(intent, filename, stamp)[:12]}")
+
+
+def review_id(filename: str, head: str) -> str:
+    """Which revision a review was of: the card, and the commit the pull
+    request's head actually pointed at when bench pinned it.
+
+    The head is the identity because it is the only thing a verdict can
+    honestly be about. A PR whose head has moved is a different review
+    question, so it gets a different id rather than the same one with new
+    code under it — which is what lets old evidence read as historical
+    instead of as satisfaction of the new head's gate.
+    """
+    stem = filename[:-3] if filename.endswith(".md") else filename
+    return f"{ID_PREFIXES['review']}:{stem}@{(head or 'unknown')[:12]}"
 
 
 def check_id(name: str, revision: str) -> str:
@@ -377,13 +392,20 @@ def capability_table(adapter: dict) -> dict:
 # relocated install must not silently point an approved input somewhere
 # else.
 
-ROOT_WORDS = ("worktree", "app", "work", "tool")
+ROOT_WORDS = ("worktree", "review", "app", "work", "tool")
 
 
-def roots(worktree: Path | str | None) -> dict:
+def roots(worktree: Path | str | None, review: Path | str | None = None) -> dict:
     """The approved roots for one launch, resolved. `worktree` is None for
-    a read-only intent that runs in the application checkout — then the
-    word is simply unavailable and naming it is a blocker."""
+    a read-only intent, and naming the word is then a blocker.
+
+    `review` is the other half of the same rule, and it is the root a PR
+    review actually works in: a checkout bench made for that one run,
+    detached at the exact commit the pull request's head named
+    (`reviews.py`). It is available only to a launch bench has pinned one
+    for, so a relevance check — which provisions nothing, fetches nothing
+    and reviews no PR — simply does not have the word.
+    """
     found = {
         "app": str(config.app_repo()),
         "work": str(config.work_root()),
@@ -391,6 +413,8 @@ def roots(worktree: Path | str | None) -> dict:
     }
     if worktree is not None:
         found["worktree"] = str(worktree)
+    if review is not None:
+        found["review"] = str(review)
     return found
 
 
@@ -617,8 +641,19 @@ def _legacy_grants(intent: str, available: dict) -> tuple[list[dict], list[str]]
 # never runs in the application checkout, because that is the live code
 # and services the machine is actually using. `worktree` is the card's own
 # checkout, which bench made; `source` is a detached checkout of one exact
-# commit that bench makes for this verification and owns.
-CHECK_ROOTS = ("worktree", "source")
+# commit that bench makes for this verification and owns; `review` is the
+# checkout bench pinned for a PR review — detached at the reviewed head,
+# owned by that run for its whole life (`reviews.py`), and the only root a
+# review has that holds the *proposed* code rather than the card's own.
+CHECK_ROOTS = ("worktree", "source", "review")
+
+# Which of those roots a check may only have where a launch actually has
+# one. A `review` check asked for by a run with no pinned checkout is not
+# a broken document — it is a check that does not apply to that launch —
+# so it is dropped with a note rather than blocking the intent. Blocking
+# would take `◔ still true?` down on every board that declared one, and a
+# relevance check provisions nothing to run it in.
+ROOT_SCOPED_CHECKS = {"review": "review"}
 
 # The longest a check may be allowed to run, whatever the document says.
 # A per-check `timeout` narrows the board's setting and never widens it.
@@ -1290,7 +1325,8 @@ def _requirement_problem(name: str, table: dict) -> str | None:
     return None
 
 
-def resolve(intent: str, *, worktree: Path | str | None = None) -> dict:
+def resolve(intent: str, *, worktree: Path | str | None = None,
+            review: Path | str | None = None) -> dict:
     """One intent's effective policy, with nothing written.
 
     Everything in the returned document is either a fact about this board
@@ -1306,12 +1342,23 @@ def resolve(intent: str, *, worktree: Path | str | None = None) -> dict:
     doc = document()
     adapter = adapter_identity()
     table = capability_table(adapter)
-    available = roots(worktree)
-
-    cwd_word = baseline["cwd"]
-    cwd_path = available.get(cwd_word) or (str(worktree) if worktree else None)
+    available = roots(worktree, review)
 
     notes: list[str] = []
+    # A PR review runs in the checkout bench pinned for it, not in the
+    # application. That is this card's whole correction to the baseline:
+    # the live checkout is where a person's editor, a driver and every
+    # other worktree's git metadata are, and a review that executes
+    # proposed code must not be started in it. With nothing pinned — a
+    # relevance check — the word is absent and the baseline stands.
+    cwd_word = baseline["cwd"]
+    if intent == "review" and available.get("review"):
+        cwd_word = "review"
+        notes.append("this review runs in the checkout bench pinned for it, "
+                     "detached at the reviewed revision, rather than in the "
+                     "application checkout")
+    cwd_path = available.get(cwd_word) or (str(worktree) if worktree else None)
+
     blockers: list[str] = []
     configured: list[str] = []
     prompt_only: list[str] = []
@@ -1476,6 +1523,18 @@ def resolve(intent: str, *, worktree: Path | str | None = None) -> dict:
                     f"grant of that name cannot be run as one: "
                     f"{known[name].get('why')}")
                 continue
+            # A check declared against a root this launch does not have.
+            # Not a blocker: see ROOT_SCOPED_CHECKS. The run simply may
+            # not ask for it, so it is absent from what it is offered and
+            # `verify` refuses the name by listing what it may ask for.
+            needed = ROOT_SCOPED_CHECKS.get(known[name].get("root") or "")
+            if needed and not available.get(needed):
+                notes.append(
+                    f"the check '{name}' runs in the {needed} root, which this "
+                    f"'{intent}' launch has none of, so it is not offered to "
+                    f"it — a PR review is pinned a checkout of the reviewed "
+                    f"head and a relevance check is pinned nothing")
+                continue
             out.append(known[name])
         return out
 
@@ -1634,7 +1693,10 @@ def resolve(intent: str, *, worktree: Path | str | None = None) -> dict:
 
 
 def manifest(intent: str, filename: str, stage: str, *,
-             worktree: Path | str | None = None, pin_inputs: bool = False) -> dict:
+             worktree: Path | str | None = None,
+             review: Path | str | None = None,
+             review_record: dict | None = None,
+             pin_inputs: bool = False) -> dict:
     """The resolved profile, tied to one card and one request.
 
     `pin_inputs=False` — the UI's reading and every preflight — writes
@@ -1647,16 +1709,29 @@ def manifest(intent: str, filename: str, stage: str, *,
     board that showed a profile with no worktree root, and then launched
     one with it, would be the second parser this design exists to avoid.
     A read-only intent genuinely has none.
+
+    `review` is the pinned PR-review checkout, and `review_record` is what
+    bench recorded about it — the repository, the base and head identities
+    and whether the pull request is still the current one. Both are the
+    caller's to supply, because provisioning a checkout is a side effect
+    and resolving a profile is not: the UI's reading of a review profile
+    asks with the path the launch *would* pin and nothing on disk.
     """
     if worktree is None and intent != "review":
         worktree = config.WORKTREES / filename[:-3]
-    found = resolve(intent, worktree=worktree)
+    found = resolve(intent, worktree=worktree, review=review)
     found.update({
         "task": filename,
         "stage": stage,
         "requestId": request_id(intent, filename),
         "resolved": time.time(),
     })
+    if review_record is not None:
+        # Carried with the run for the whole of its life: `verify` reads
+        # which checkout a `review` check runs in off this, and the Focus
+        # view reads what the verdict was about off the same record rather
+        # than asking GitHub what the head is now.
+        found["review"] = review_record
     if pin_inputs and not found["blockers"]:
         pin(found)
     return found
@@ -1736,7 +1811,8 @@ def freshness(frozen: dict) -> dict:
         # the refusal as "the policy changed". The comparison has to ask
         # the same question the launch asked.
         current = resolve(frozen.get("intent") or "work",
-                          worktree=(frozen.get("roots") or {}).get("worktree"))
+                          worktree=(frozen.get("roots") or {}).get("worktree"),
+                          review=(frozen.get("roots") or {}).get("review"))
     except ValueError:
         return {"fresh": True, "changed": []}
     if frozen.get("revision") and current["revision"] != frozen["revision"]:
@@ -1781,7 +1857,7 @@ PUBLIC = ("v", "intent", "why", "revision", "policyId", "runner", "source",
           "adapter", "capabilities", "cwd", "roots", "commands", "uiCommands",
           "context", "bundle", "prepare", "verify", "denied", "publication",
           "writable", "requires", "guarantees", "notes", "blockers", "task",
-          "stage", "requestId", "resolved", "recorded", "agent")
+          "stage", "requestId", "resolved", "recorded", "agent", "review")
 
 # Per-input keys that may be shown. Contents are never among them, and a
 # `why`/`remedy` is prose bench wrote rather than anything read off disk.
@@ -1821,6 +1897,10 @@ def summary(found: dict | None) -> dict | None:
         "denied": len(found.get("denied") or []),
         "blockers": list(found.get("blockers") or []),
         "pending": list((found.get("guarantees") or {}).get("pending") or []),
+        # where this run actually works, which for a PR review is bench's
+        # own pinned checkout rather than the application
+        "cwd": (found.get("cwd") or {}).get("policy"),
+        "reviewId": (found.get("review") or {}).get("reviewId"),
     }
 
 
@@ -1959,6 +2039,7 @@ def seams() -> dict:
             "context": "profiles.context_id(name, sha256)",
             "request": "profiles.request_id(intent, filename)",
             "evidence": "profiles.evidence_id(kind, request, detail)",
+            "review": "profiles.review_id(filename, head)",
         },
         "evidenceKinds": dict(EVIDENCE_KINDS),
         "pending": dict(PENDING_CAPABILITIES),
@@ -1974,6 +2055,9 @@ def seams() -> dict:
                        "a `passed` that `verify.freshness()` calls fresh, and "
                        "declare 'verified-outputs'"),
             "a reviewer": ("read the frozen manifest for the run under review "
-                           "and `freshness()` for what has moved since"),
+                           "and `freshness()` for what has moved since — a PR "
+                           "review's own checkout, base and head are in "
+                           "`manifest['review']`, resolved and owned by "
+                           "`reviews.py`"),
         },
     }
