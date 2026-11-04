@@ -158,6 +158,67 @@ something you merely ask for in a system prompt is the one thing that
 makes the whole display a lie, so say `prompt-only`, or put it in
 `unsupported` with the reason.
 
+### `conformance` — letting the doctor check your translation
+
+Also optional, also in `capabilities.json`, and this is the half that
+lets bench's readiness doctor (`board.py --doctor --conformance`, or the
+⚕ inspector) check that your translation is faithful **without core
+learning anything about your vendor's rule syntax**. Two declarations:
+
+    "conformance": {"describe": ["python3", "describe.py"],
+                    "stubEnv": "BOARD_CLAUDE_BIN"}
+
+- **`describe`** is a command — an argument list, run with your adapter's
+  own directory as its working directory, so you name your own
+  interpreter and core never guesses at one. Given a launch's environment
+  (`AGENT_MODE`, `AGENT_PROMPT`, `AGENT_COMMANDS`, `AGENT_PROFILE`,
+  `AGENT_CONTEXT`, `AGENT_MODEL`, `AGENT_CWD`) it prints **one JSON
+  object** and launches nothing — no vendor binary, no model, no file
+  written. The keys core reads:
+
+      adapter   your adapter's name
+      intent    the launch intent described
+      argv      the whole argument list your vendor binary would receive
+      cwd       the directory the run would start in
+      allow     rules that permit, as rule text — your own syntax
+      deny      rules that forbid, as rule text
+      readOnly  whether your vendor's edit tools are withheld
+      context   the pinned inputs as delivered: paths and hashes
+
+  Anything else is yours and is shown rather than interpreted. There is
+  no `contextContents` key and there must never be one: an approved
+  input reaches a run as a path to the read-only copy bench pinned, and
+  its bytes have no business in a diagnostic.
+
+  From it the doctor asks, per intent: did every named grant become a
+  rule, with its fixed arguments intact? Is the working directory the one
+  bench named? Do the pinned inputs reach the run? Can this intent ask
+  bench for a named check — `review` included? Was the read-only intent
+  granted a way to write? And does any rule reach `git worktree`,
+  `reset`, `checkout`, `switch`, `branch`, `update-ref` or `remote`,
+  which would let a run choose a different lifecycle than the one bench
+  planned?
+
+- **`stubEnv`** names the environment variable that replaces your vendor
+  binary. With it the doctor can execute your `run` end to end against a
+  stub it writes, in a temporary directory it removes, and check that
+  bench's prompt reaches the binary you launch and that your exit status
+  is the binary's. Both shipped adapters already have such a variable for
+  their own tests.
+
+Declaring neither is honest: those rows read `skipped`, naming what you
+would have to declare. What they never read is `passed`.
+
+Two things worth saying plainly. First, if your `run` builds its argument
+list in a shell and `describe` rebuilds it in another language, the two
+can drift — hold them together with a test that asserts `describe`'s
+`argv` is what `run` actually passes to the stub, as
+`tests/test_execution_doctor.py` does for both shipped adapters. Second,
+a `describe` that parses and a stub that launches prove what bench and
+your adapter *pass*. They prove nothing about what your vendor enforces,
+the doctor says so in those words, and the only thing that answers that
+question is the separately authorised real-CLI smoke.
+
 ### `wire` — wire live-session visibility into the host project
 
 Called by `install.py` with the project root as argv[1] (plus `--dry-run`).

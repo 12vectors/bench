@@ -44,7 +44,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports → taskfiles → plans / profiles → reviews → verify → events / github / drive / sync → agents → phases → watch / httpd → board.py
+config → state / reports → taskfiles → plans / profiles → reviews → verify → doctor → events / github / drive / sync → agents → phases → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -68,6 +68,10 @@ config → state / reports → taskfiles → plans / profiles → reviews → ve
   the argument list built here rather than composed by a model, the
   environment the check is given, and the evidence it leaves — the
   runner's own exit status, bound to the source it ran against
+- `doctor.py` — what this board would grant, run and refuse, asked
+  without paying for a model: the same resolver a launch rides, read at
+  four honest distances, with every diagnostic's remedy and a coverage
+  table that says which distances were *not* taken
 - `events.py` — ingests NORMALIZED events (the adapter contract), session registry
 - `github.py` — PR opening, Copilot requests, review/CI polling
 - `drive.py` — runs the project driver, tracks the one live drive
@@ -551,6 +555,7 @@ operator's.
 ```bash
 ./.task-manager/start.sh                 # the usual way: install + port + board
 python3 .task-manager/manager/board.py   # or run the server directly
+python3 .task-manager/manager/board.py --doctor   # readiness, then exit
 ```
 
 `start.sh` runs `install.py` (idempotent), then sorts out the port before
@@ -666,8 +671,16 @@ The board has four views (header switcher):
   read from the manifest frozen at its launch, which is a different fact
   from what the settings say now (see "Execution profiles and approved
   context") — what **bench itself** ran and found, which is a different
-  fact again (see "Verification: bench runs the check") — and per-file
-  diff stats from its worktree.
+  fact again (see "Verification: bench runs the check") — whether a
+  launch of this kind would even start on this board and what is not
+  proved about that (see "Readiness: asking before paying") — and
+  per-file diff stats from its worktree.
+
+The header carries one more chip, and unlike the sync and phase chips it
+is always there: **⚕ readiness** opens the execution inspector. Those two
+are states that come and go; this is the door to a diagnosis, and a door
+that appeared only once something was wrong would be a door nobody
+learned about. Opening it reads and starts nothing.
 
 Liveness comes from Claude Code hooks configured in `.claude/settings.json`:
 every session in this repo POSTs normalized events to the board via the
@@ -1275,6 +1288,230 @@ in the card's own checkout (or a detached one bench makes and removes),
 preparation first, a new evidence record and a new log — no card moved,
 no branch touched, nothing published, and a run already in flight joined
 rather than doubled.
+
+## Readiness: asking before paying
+
+A plan says which checkout a run works in. A profile says what it may do
+there and which files it is guaranteed. Verification says whether the
+project's own checks passed and against what. Every one of those is
+resolved before a billable model is invoked — and until this, there was
+no way to *ask* any of them without invoking one.
+
+So an operator found a mistyped policy the expensive way: move a card,
+click **▸ start work**, watch the run refuse, read the ticker. A required
+input that was not there, a check `review` could not ask for, a
+`requires` naming a guarantee nothing enforces — each is a sentence bench
+can produce in milliseconds, and each was only ever produced by a launch.
+
+```bash
+python3 .task-manager/manager/board.py --doctor              # inspect
+python3 .task-manager/manager/board.py --doctor --help       # every option
+python3 .task-manager/manager/board.py --doctor --all        # + the active stages
+python3 .task-manager/manager/board.py --doctor --json       # for a script
+```
+
+and the same report behind the **⚕ readiness** chip in the header, and in
+the Focus view beside **Permissions & inputs** and **Verification**.
+
+### One evaluator, read from four distances
+
+The thing the doctor must not be is a second opinion. It owns no policy
+logic: it calls `profiles.resolve()` for each of the three launch
+intents and reports the `diagnostics` that came back, it calls
+`verify.request()` to run a check, and it asks each adapter what *it*
+would generate. Every code it reports is one `profiles.DIAGNOSTICS`
+names. A doctor that could disagree with a launch would be worse than
+none, so `profiles.seams()` says in as many words that it has no second
+parser and must not grow one.
+
+What it adds is **distance**, and saying honestly how far each answer is
+from the thing a person actually cares about:
+
+| level | what it proves | what it does not |
+| --- | --- | --- |
+| `static` | what bench resolved from the policy in force — roots, grants, readable inputs, checks, every refusal, exactly as a launch would | that any of it was carried out. No process ran |
+| `generated` | what the installed adapter would hand its vendor: the argument list, the working directory, the allow and deny rules | that the vendor honours any of it. These are rules as text |
+| `stub` | that the adapter's own `run` executed and passed bench's prompt, flags and working directory through | anything about the real CLI's permission behaviour. A stub answers; it does not enforce |
+| `runtime` | that bench's own runner built the argv, started the process, waited on it and recorded the status it got | that the project's real suite passes. A fixture is a fixture |
+| `real-agent` | that the installed CLI, with a model, was handed this policy and behaved as recorded | anything until it is separately authorised |
+
+The four cheap levels cannot be read as the expensive one, and that is
+enforced rather than left to a reader: `MODE_EVIDENCE` pins each mode to
+one level and `report()` **raises** rather than emitting a finding that
+claims another. Every row carries its level; every level carries its own
+"does not prove", in the table above's words.
+
+Four outcome words, everywhere, and the word carries the meaning rather
+than the colour: `passed`, `failed`, `skipped` (nothing to ask — this
+board has not configured the thing, which is not a fault) and `deferred`
+(this needs an authorisation, or a guarantee nothing installed here
+enforces). `deferred` is deliberately not `passed`.
+
+### Four stages, and only the first is free
+
+- **inspect** — resolves every intent, reads the approved inputs, and
+  puts bench's own deliberately broken fixture documents through the same
+  resolver. No process, no pin, no checkout, no token. This is what a GET
+  of `/api/doctor` does, which is why opening the inspector is not an
+  action and needs no confirmation.
+- **conformance** (`--conformance`) — asks the installed adapter what it
+  would generate for each intent, and runs its own `run` against a stub
+  standing in for the vendor binary. Runs the adapter's own executables,
+  in a temporary directory the doctor removes. No vendor binary, no
+  model, no network.
+- **controlled execution** (`--active`) — runs named checks through
+  `verify.py` itself at a git fixture the doctor creates under
+  `manager/local/state/doctor/` and removes. Three of them, because "it
+  failed" is three different things to do next: one that exits zero, one
+  that exits non-zero, and one whose required preparation will not
+  complete. Real processes, real evidence records — filed under the
+  doctor, never under a card — and no card moved, no branch touched,
+  nothing published.
+- **the real CLI** (`--real-agent --approve-real-agent`) — the one thing
+  no cheap level can answer. One short prompt, one timeout, one `work`
+  policy, at a disposable fixture, with this board's configured account
+  and model untouched: bench passes no model of its own, so the CLI
+  resolves whatever the operator's settings already say. It takes two
+  flags, and the API takes `"approve": true`, because nothing else should
+  ever spend a token.
+
+Without that approval the row is still there and reads `deferred` — a
+check that disappears when nobody runs it reads as one that passed. And
+the coverage table draws every stage nobody asked for as `not asked`,
+for the same reason: a stage missing from a coverage table is a stage a
+reader assumes was fine.
+
+### The diagnostics, and their remedies
+
+Every refusal `profiles.resolve()` can produce now carries the **code**
+it came from and a remedy for the class of it, named once in
+`profiles.DIAGNOSTICS`. `blockers` is unchanged and still prose — it is
+what the page leads with and what `require()` raises — and `diagnostics`
+sits beside it, so nothing downstream has to match on a sentence that
+could be reworded.
+
+Bench ships its own broken documents to prove the refusals still work,
+and the doctor resolves them through the real resolver so an operator
+reads the exact sentence their own mistake would produce. Five of them,
+each a different thing to go and fix:
+
+| fixture | code | what you would see |
+| --- | --- | --- |
+| a required input that is not there | `context-unreadable` | *the context input 'workflow-brief' … is not there. Put the file where the selection names it, inside the root it names, or mark the selection `"required": false`* |
+| a review told to verify with something only `work` holds | `check-undeclared` | *'review' asks for the check 'unit', which this document declares neither as a check nor as one of this intent's command grants* |
+| a check declared against the application checkout | `check-root-unsafe` | *the check 'unit' names the execution root 'app' — one of worktree, source, review. A check never runs in the application checkout: that is the live code and the live services* |
+| `requires: ["filesystem-sandbox"]` | `requirement-unsupported` | *nothing installed here enforces it, so the launch is refused rather than run under a restriction that exists only in the prompt* |
+| a check needing a preparation step nothing declares | `prepare-undeclared` | *add it to the document's top-level `"prepare"` list, or drop the reference; bench will not run a step it cannot read* |
+
+And the sixth, which the runner rather than the resolver answers: a
+**required preparation step that fails** is recorded `prepare-failed`
+with the check never run — a dependency that would not install is not a
+test that failed, and recording it as one sends a reader to the wrong
+file. The `--active` stage proves that distinction on every run.
+
+A diagnostic blocks the intent it is about and no other, because
+readiness is per launch rather than per board: a `work` profile missing
+its brief does not stop a review.
+
+### What it says about where things are, and what it withholds
+
+A diagnosis names **exact operator-local paths**, on purpose: "the input
+is not there" is useless without saying where bench looked, and the
+report never leaves the machine that made it — it reads `local to this
+board`, and nothing in it is committed, pushed or carried into a pull
+request. What it never carries is a *value*. No environment variable's
+content, no credential and no approved file's contents are read into it
+at all (the profile layer's allowlist has none to send), and the one
+place bytes bench did not write get through — a check's own output — is
+scrubbed by the same scrubber the evidence log uses. The report says all
+of this in a `redaction` block rather than leaving a reader to wonder.
+
+### Adapter conformance, without core learning a vendor
+
+Checking that an adapter's translation is faithful means reading rules in
+the vendor's own syntax, and core knows nothing about any vendor. So the
+adapter answers for itself, through two things it declares in
+`capabilities.json` — a `describe` command that prints what it *would*
+hand its vendor for one launch in a normalised shape, and the name of the
+environment variable that replaces the vendor binary so its `run` can be
+exercised against a stub. The whole contract is in
+`manager/core/adapters/README.md`.
+
+From those the doctor asks, per intent: did every named grant become a
+rule with its fixed arguments intact, is the working directory the one
+bench named, do the pinned inputs reach the run as paths, can this intent
+ask bench for a named check (`review` included), was the read-only intent
+granted any way to write, and does any rule reach `git worktree`,
+`reset`, `checkout`, `switch`, `branch`, `update-ref` or `remote` —
+which would let a run choose a different lifecycle than the one bench
+planned and recorded.
+
+One row is always `deferred`, and it is the honest one: **nothing
+prevents a run reading files beside its approved inputs.** Both shipped
+adapters declare `filesystem-sandbox` unsupported, bench enforces no such
+boundary, and the pinned bundle is a guaranteed *input* rather than a
+limit on reading. A profile that *requires* it is refused rather than
+reported as honoured, and that is the only honest answer available.
+
+An adapter that declares neither seam is not accused of anything: its
+rows read `skipped`, naming what it would have to declare. What they
+never read is `passed`.
+
+### A portable setup, end to end
+
+Everything above works on a board that configured nothing — a legacy
+board has no document, so `inspect` reports the legacy grants and the
+diagnostics table, and that is a real answer. What the doctor is *for*
+is the board that configured something. A separate-root install
+(`workspace/app`, `workspace/bench`, `workspace/work`) with selected
+workflow files, a scoped check and a preparation step, in
+`manager/local/profiles.json`:
+
+```jsonc
+{
+  "v": 1,
+  // selected from the tool and work-state roots by word, never by path:
+  // the document is machine-local but it is still read on a machine
+  // whose paths are its own
+  "context": [
+    {"name": "workflow-brief", "path": "tool:manager/local/AGENTS.md"},
+    {"name": "design-system", "path": "work:reference/design-system.md",
+     "required": false}
+  ],
+  "prepare": [
+    {"name": "deps", "run": "python3 -m pip install -e .", "network": true}
+  ],
+  "checks": [
+    {"name": "unit", "run": "python3 -m unittest discover -s tests",
+     "root": "worktree", "prepare": ["deps"], "timeout": 900,
+     // a scope is a *declared name*: the arguments are the operator's,
+     // never the run's
+     "scopes": {"fast": ["-k", "fast"]}},
+    {"name": "proposed", "run": "python3 -m unittest discover -s tests",
+     // the checkout bench pinned for a PR review, detached at the
+     // reviewed head — so a review's check is about the proposed code
+     "root": "review"}
+  ],
+  "profiles": {
+    "work":   {"verify": ["unit"]},
+    "act-pr": {"verify": ["unit"]},
+    "review": {"verify": ["proposed"]}
+  }
+}
+```
+
+Then `--doctor` says, before anything is launched, whether both briefs
+are readable, whether each intent can ask for its check, that `deps`
+needs the network and nothing here bounds that, and — with `--active` —
+that bench's runner really does tell a failing test from a dependency
+that would not install. The `--real-agent` row stays `deferred` until
+somebody authorises it.
+
+Two things the doctor will not do, and they are both deliberate. It will
+not fix your configuration: every failing row carries a remedy and
+changes nothing. And it will not validate anything but its own fixtures —
+the application's real suite, its services and its data are never what a
+diagnosis runs against.
 
 ## Pull requests
 
