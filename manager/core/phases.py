@@ -56,6 +56,7 @@ from pathlib import Path
 
 import agents
 import config
+import gates
 import github
 import state
 import taskfiles
@@ -234,10 +235,16 @@ def _failure_note(filename: str) -> str:
     return excerpt[-1].strip()[:120] if excerpt else ""
 
 
-def _member_state(task: dict, branch: str, started: set[str]) -> tuple[str, str]:
-    """One member → (state, why). The five halting conditions and the three
-    ways a member can be in flight, all derived from what the card and git
-    already say.
+def _member_state(task: dict, branch: str,
+                  started: set[str]) -> tuple[str, str, dict | None]:
+    """One member → (state, why, gate). The five halting conditions and the
+    three ways a member can be in flight, all derived from what the card
+    and git already say — plus, where this board gates one, the gate
+    reading that decided between `ready` and `halt`.
+
+    The gate travels with the state rather than being asked for again by
+    whatever renders it: the lane, the card and the halt all have to be
+    about the same reading.
 
     - `merged`  — it is settled *and* its work is in the phase branch (or
                   there was never a branch to bring)
@@ -258,15 +265,15 @@ def _member_state(task: dict, branch: str, started: set[str]) -> tuple[str, str]
     # is also what keeps a card moved by hand mid-run from being launched
     # or merged twice.
     if _running_on(task["file"]):
-        return "running", ""
+        return "running", "", None
     member_branch = f"task/{task['file'][:-3]}"
     has_branch = _branch_exists(member_branch)
     settled = task["stage"] in ("review", "done")
     if settled and (not has_branch or _contains(member_branch, branch)):
-        return "merged", ""
+        return "merged", "", None
     number = taskfiles.canonical_number(task["number"]) if task["number"] else ""
     if number not in started and not has_branch:
-        return "pending", ""
+        return "pending", "", None
 
     # The phase started this one (or someone did). Where it ended decides.
     if settled:
@@ -275,16 +282,40 @@ def _member_state(task: dict, branch: str, started: set[str]) -> tuple[str, str]
         # without CI must not deadlock every phase it runs.
         ci = (github.PR_STATE.get(task["file"]) or {}).get("ci")
         if ci == "fail":
-            return "halt", "its CI is red"
+            return "halt", "its CI is red", None
         if ci == "running":
-            return "waiting", "its checks are still running"
-        return "ready", ""
+            return "waiting", "its checks are still running", None
+        # And a member with no CI advancing is exactly the case a
+        # configured gate exists for. The gate is bench's own evidence
+        # against this member's branch tip, so an absent CI result no
+        # longer decides anything on a board that declared one — while a
+        # board that declared none resolves `ungated` and reads exactly
+        # as it read before.
+        decision = gates.evaluate(task["file"], "member", task=task)
+        gate = gates.public(decision)
+        if decision["decision"] == "pending":
+            return "waiting", decision["summary"], gate
+        if not gates.passable(decision):
+            return ("halt", f"its member gate is unmet — {decision['summary']}",
+                    gate)
+        return "ready", "", gate
     if task["stage"] == "in-progress":
         note = _failure_note(task["file"])
         return "halt", ("its run ended without reaching review/"
-                        + (f" — {note}" if note else ""))
+                        + (f" — {note}" if note else "")), None
     return "halt", (f"it is back in {task['stage']}/ — the run declined it, "
-                    f"or someone walked it back")
+                    f"or someone walked it back"), None
+
+
+def _gate_of(phase: dict) -> dict | None:
+    """What accepting this phase's integration head requires, for the lane
+    to draw. Display only: the acceptance path asks for itself, so a read
+    that fails here costs a line in the lane and never a merge."""
+    try:
+        return gates.public(gates.evaluate(phase["file"], "integration",
+                                           task=phase))
+    except (ValueError, OSError):
+        return None
 
 
 def _snapshot(phase: dict, by_file: dict[str, dict]) -> dict:
@@ -298,13 +329,14 @@ def _snapshot(phase: dict, by_file: dict[str, dict]) -> dict:
         task = by_file.get(listed["file"])
         if task is None:                      # vanished between reads
             continue
-        member_state, why = _member_state(task, branch, started)
+        member_state, why, gate = _member_state(task, branch, started)
         # canonical throughout: the log, `**Depends on:**` and a filename's
         # own number all have to be the same key or none of them match
         members.append({"number": taskfiles.canonical_number(task["number"])
                         if task["number"] else None, "file": task["file"],
                         "title": task["title"], "stage": task["stage"],
                         "state": member_state, "why": why,
+                        "gate": gate,
                         "dependsOn": task["dependsOn"]})
     halted = where["state"] == "halted"
     return {"file": phase["file"], "branch": branch, "stage": phase["stage"],
@@ -321,7 +353,15 @@ def _snapshot(phase: dict, by_file: dict[str, dict]) -> dict:
             "stopped": where["state"] == "stopped",
             "stoppedBy": where["reason"] if where["state"] == "stopped" else None,
             # the branch is the whole of "this phase has been started"
-            "started": _branch_exists(branch)}
+            "started": _branch_exists(branch),
+            # What accepting *this* phase requires, which is a different
+            # question from any member's: the integration head is the
+            # commit every member was merged into, and no member's
+            # evidence ran against it. Read here so the lane, the card
+            # and the refusal all show one reading — and guarded, because
+            # a gate that could not be read must not stop the Phases view
+            # drawing. The acceptance path reads it for itself.
+            "gate": _gate_of(phase)}
 
 
 def public_state() -> dict:
@@ -469,11 +509,22 @@ def _launch(phase: dict, member: dict) -> None:
 def _merge_member(phase: dict, member: dict) -> None:
     branch = f"task/{member['file'][:-3]}"
     phase_branch = agents.phase_branch(phase["file"])
+    # Asked again, here, with the branch about to be merged: `_snapshot`
+    # read the gate a pass ago and a push can land in between. Reading it
+    # twice is what makes the second read the one that matters, and it is
+    # the same function the first read called — so nothing can be let
+    # through by a reading the mutation did not make.
+    decision = gates.evaluate(member["file"], "member", task=member)
+    if not gates.passable(decision):
+        raise _Halt(f"{member['number']}'s member gate is unmet — "
+                    f"{decision['summary']}", member)
     # every advance is narrated, and finishing is its own half of one: what
     # the phase judged green is a different fact from what it then merged,
     # and a phase nobody can reconstruct afterwards is a phase nobody trusts
     _say(phase["file"], f"{phase['file']}: {member['number']} — "
-                        f"{member['title']} is green")
+                        f"{member['title']} is green"
+                        + (f" ({decision['summary']})"
+                           if decision["gated"] else ""))
     if _branch_exists(branch):
         _merge_into_phase(phase, branch, f"{member['number']}'s branch", member)
         _push_phase(phase)

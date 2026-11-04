@@ -44,7 +44,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports → taskfiles → plans / profiles → reviews → verify → doctor → events / github / drive / sync → agents → phases → watch / httpd → board.py
+config → state / reports → taskfiles → plans / profiles → reviews → verify → gates → doctor → events / github / drive / sync → agents → phases → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -68,6 +68,11 @@ config → state / reports → taskfiles → plans / profiles → reviews → ve
   the argument list built here rather than composed by a model, the
   environment the check is given, and the evidence it leaves — the
   runner's own exit status, bound to the source it ran against
+- `gates.py` — may this merge happen? The operator's requirement per
+  guarded mutation, read against evidence bound to the exact commit about
+  to move; bench's own review verdict kept apart from GitHub's formal
+  state; and an override that records who proceeded over what, and never
+  forges a pass
 - `doctor.py` — what this board would grant, run and refuse, asked
   without paying for a model: the same resolver a launch rides, read at
   four honest distances, with every diagnostic's remedy and a coverage
@@ -390,10 +395,11 @@ teammate should read: the tickets, the implementation plans in `plans/`,
 it — agent logs, drive and command logs, session timelines, the
 generated hook settings, and the recorded execution plans under
 `manager/local/state/plans/`, which hold this machine's worktree paths.
-The execution manifests, the verification evidence and the review
-checkouts' ownership records (`state/manifests/`, `state/evidence/`,
-`state/reviews/`) are machine-local for the same reason and by the same
-construction.
+The execution manifests, the verification evidence, the review
+checkouts' ownership records and the gate records — the Bench review
+verdicts and the overrides (`state/manifests/`, `state/evidence/`,
+`state/reviews/`, `state/gates/`) — are machine-local for the same reason
+and by the same construction.
 `manager/local/.env` is gitignored and belongs there too: it names the
 roots on *this* disk and the binaries on this PATH. An absolute path out
 of somebody's home directory, a credential, or a log that means nothing
@@ -671,10 +677,11 @@ The board has four views (header switcher):
   read from the manifest frozen at its launch, which is a different fact
   from what the settings say now (see "Execution profiles and approved
   context") — what **bench itself** ran and found, which is a different
-  fact again (see "Verification: bench runs the check") — whether a
-  launch of this kind would even start on this board and what is not
-  proved about that (see "Readiness: asking before paying") — and
-  per-file diff stats from its worktree.
+  fact again (see "Verification: bench runs the check") — whether the
+  work may actually be merged, which is a fourth (see "Gates: nothing
+  merges on a report") — whether a launch of this kind would even start
+  on this board and what is not proved about that (see "Readiness:
+  asking before paying") — and per-file diff stats from its worktree.
 
 The header carries one more chip, and unlike the sync and phase chips it
 is always there: **⚕ readiness** opens the execution inspector. Those two
@@ -1289,13 +1296,223 @@ preparation first, a new evidence record and a new log — no card moved,
 no branch touched, nothing published, and a run already in flight joined
 rather than doubled.
 
+## Gates: nothing merges on a report
+
+Verification records what the project's checks found. This is the
+question that record exists to answer: **may this merge happen?**
+
+Three things used to answer it, and not one of them is evidence. A
+process exited zero — which is the thing being judged reporting on
+itself. Commits appeared on a branch — which says work was done and
+nothing about whether it works. And no CI result came back, which the
+phase runner read as *advance*, so that a project without CI could not
+deadlock every phase it ran. That last one was honest when it was
+written and it is exactly the case a configured gate exists to stop: a
+member whose checks were refused before they started can reach `review/`
+with committed code and be merged into an integration branch by a beat
+nobody was watching.
+
+So a board that declares a gate gets one rule, and it is narrow. **The
+mutation runs when bench's own recorded evidence reads `passed` for every
+required check, against the exact commit about to be merged, and when the
+review policy the operator chose is satisfied by a record that genuinely
+says what it is read as saying.** Anything else is reported — by name,
+with the remedy — and the mutation does not run.
+
+A board that declares *no* gate is every board that existed before this,
+and it behaves exactly as it did. Its decision reads `ungated`, in that
+word, which is deliberately not `allowed`: nothing is required there and
+nothing is proved, and a reader is told so rather than shown a colour
+that could pass for a pass.
+
+### Three scopes, because three different things merge
+
+A gate is declared per guarded mutation, in the profile document's
+top-level `"gates"` block — validated where every other policy value is
+validated, beside the grants, the inputs and the checks:
+
+```jsonc
+"gates": {
+  "member":      {"checks": ["unit"]},
+  "integration": {"checks": ["unit"], "review": "bench"},
+  "acceptance":  {"checks": ["unit"], "review": "separate-reviewer"},
+  "overrides":   {"allow": false}
+}
+```
+
+- **`member`** — a phase merging one member's branch into its integration
+  branch. The automatic step no person clicks, and the one that used to
+  advance on an absent CI result.
+- **`integration`** — a phase's own integration head being accepted. That
+  is a *different commit* from any member's, which is why it is a scope
+  of its own: the head every member was merged into has never been
+  checked by any of them, and every member passing proves nothing about
+  it. Ancestry containment, already-merged member PRs and a quiet CI
+  prove nothing about it either.
+- **`acceptance`** — an ordinary card being merged and cleaned up: the one
+  place work leaves the board.
+
+The same law the rest of the document follows applies here. A gate
+requiring a check the document declares nowhere is **refused where the
+document is read** rather than blocking every merge later, because a
+requirement nothing can satisfy is indistinguishable from no requirement
+at all. A scope that is not a scope, a key a gate has no meaning for and
+a review policy bench has no word for are refused the same way, each
+with the code it came from and a remedy for the class of it. And a
+document with *any* refusal in it gates everything shut rather than open:
+an operator mid-edit is not handed the gate they were in the middle of
+changing.
+
+### Evidence is bound to the commit
+
+A required check is met by one thing only: a record `verify.py` wrote,
+which `verify.outcome_now()` still reads as `passed`, whose source was
+**bound** and **clean**, and whose commit is the commit about to move.
+
+The clean-source condition is the one that is easy to miss and hard to
+argue with. A check that ran with uncommitted files under it did not run
+against the commit that merges; it ran against something that existed on
+one disk. So the order on a gated board is **commit, then ask** — the
+agent's prompt says so where a gate is configured — and committing again
+means asking again.
+
+Everything else is unmet, and *which* way it is unmet is the whole
+difference between the sentences a reader needs:
+
+| reason | what happened |
+| --- | --- |
+| `not-run` | nothing asked bench for the check. An absent record is not a pass |
+| `failed` | the check ran and said no |
+| `prepare-failed` | a dependency would not install, so the check never ran |
+| `denied` | the request was refused before anything ran |
+| `cancelled` | it was stopped before reaching a verdict |
+| `error` | no verdict was reached — a timeout, or a board that restarted |
+| `stale` | it passed, and what it was about has changed since |
+| `other-commit` | it passed against a different commit from this one |
+| `source-dirty` | it passed with uncommitted work under it |
+| `source-unbound` | the source could not be bound, so it proves nothing |
+
+Each carries its own remedy, because "ask bench to run it", "read the
+log and fix what it found" and "the dependency step is the thing to fix"
+send a person to three different places. A check that is *running* is
+`pending` — the mutation waits, and nothing is decided from an answer
+that is not in yet.
+
+### Enforced at the mutation, and read twice
+
+Not in the UI. The page reads the same decision the mutation reads, from
+the same function, so a disabled action and a backend refusal can never
+give two different reasons for one state:
+
+- **`phases` holds a member out of `ready`** while its gate is unmet, and
+  halts the phase with the gate's own sentence as the reason — the
+  existing halt, which stops rather than skips and waits for a person.
+  Then it asks **again, immediately before the merge**, with the branch
+  tip in hand: the snapshot was taken a pass ago, and a push landing in
+  between is a different commit.
+- **Merge & clean up asks before it parks the drive** — cheap, and it
+  leaves the card, the branch, the worktree and every record untouched —
+  **and again immediately before the merge**, for the same reason. That
+  second read is the one that closes the stale-evidence window.
+
+Reading a gate runs nothing: no check, no relaunch, no card moved, no
+branch touched, nothing reaching a remote. Which is also why nothing
+retries by itself. An unmet gate is a human decision point, for a dead
+run's reasons — an outage would make an automatic rerun a thundering
+herd — so the remedy *names* the rerun path (the armed `↻` per check in
+the evidence sheet) and does not take it.
+
+A replica evaluates and renders exactly as the actor's board does, and
+advances nothing: the actor rule is the phase runner's, and
+merge-and-clean-up is a person's click.
+
+### Two records of a review, and a COMMENTED review is neither
+
+A gate's review policy is one of four words, and the last three are not
+interchangeable:
+
+- **`none`** — the default; no review is required by this gate.
+- **`bench`** — a **Bench review verdict** of APPROVE, recorded by bench
+  itself against this exact head. Independent of GitHub by construction:
+  **◔ review PR** records what its reviewer found whether or not
+  `gh pr review` accepted anything, so a board with no `gh` at all still
+  has verdicts, bound to the commit `reviews.py` pinned.
+- **`github`** — a **formal GitHub review state** of APPROVED at this
+  commit. Read from GitHub's own review objects, which carry the commit
+  each review was given for; an approval that cannot be bound to a commit
+  could only be bound by guessing, and a gate that guessed would be worse
+  than none.
+- **`separate-reviewer`** — that approval authored by somebody other than
+  the account that proposed the head.
+
+**The same-account limitation, said out loud.** GitHub does not accept an
+approval or a change request from the account that opened a pull request.
+A board whose reviewer runs as that account can only leave a *comment* —
+and bench reads it as one, however its body is worded. So `github` and
+`separate-reviewer` read unmet there, with the limitation named as the
+configuration fact it is and `bench` offered as the policy for a project
+with one identity. Bench never switches accounts, asks for a second
+credential, or downgrades a formal-review requirement to a comment; and
+where the reviewer's own log shows GitHub refusing the attempt, that is
+recorded as a note on bench's verdict rather than as a verdict or a
+review state.
+
+### An override is explicit, bound, and never a pass
+
+A gate can be proceeded over, and only through a path the policy turns on
+(`"overrides": {"allow": true}`, optionally restricted to named git
+identities). What makes it safe to have at all is what it writes down:
+the actor, the reason, the exact commit and the exact gates that were
+unmet when they decided.
+
+It forges nothing. No check becomes `passed`, no verdict appears, and the
+decision afterwards reads `overridden` — which wears the alarm, not the
+colour of a pass, and says in the same breath that the gate is still
+unmet. It authorises **one commit**: the next one is a different
+question. It lapses rather than stretching, so a gate that goes unmet
+*after* an override covers none of it. A repeated click, a replayed
+request and a board that restarted mid-confirmation produce one record,
+not two. A confirmation about a head that has since moved is refused. And
+a document with a refusal in it offers no override at all.
+
+### On the board
+
+A `⚖` chip in the card's footer row, beside `⚿`, `⌖`, `◫` and `CI`,
+opens the gate: what this board requires, what the records say against
+the commit that would move, and — per unmet requirement, in words — the
+reason and the remedy. Present only where a gate is configured, the law
+every other chip here follows.
+
+The sheet keeps the two review records apart, because that is the
+distinction the feature rests on: bench's own verdict with the head it
+was bound to, GitHub's formal state with the commit each review was given
+for, the comments drawn as comments, and the same-account limitation
+spelled out where it applies. Where the policy enables one, a single
+armed confirmation records an override, with the actor, the unmet gates
+and the commit written out beside the field for the reason.
+
+The Focus view gains a **Gate** panel beside **Verification**, drawing
+the three states an exit code cannot tell apart — code produced, work
+verified, work accepted. A phase's lane carries its integration gate at
+the top of itself, beside where a halt is drawn, because the lane is
+where "every member merged and green" has to stop reading as "ready to
+accept". And **⚕ readiness** reports, before anything is launched, what
+each scope requires and every refusal in the gate block with its remedy.
+
+The two records this adds — the Bench verdicts and the overrides — live
+under `manager/local/state/gates/`, machine-local for the reason
+`state/evidence/` and `state/reviews/` are: they hold this machine's
+reading of a remote and this machine's paths, and nothing a teammate
+pulls has any business carrying them.
+
 ## Readiness: asking before paying
 
 A plan says which checkout a run works in. A profile says what it may do
 there and which files it is guaranteed. Verification says whether the
-project's own checks passed and against what. Every one of those is
-resolved before a billable model is invoked — and until this, there was
-no way to *ask* any of them without invoking one.
+project's own checks passed and against what, and a gate says whether
+that is enough to merge. Every one of those is resolved before a billable
+model is invoked — and until this, there was no way to *ask* any of them
+without invoking one.
 
 So an operator found a mistyped policy the expensive way: move a card,
 click **▸ start work**, watch the run refuse, read the ticker. A required
@@ -1554,7 +1771,11 @@ Review-stage cards with a PR carry two actions:
   `## PR review at <commit>` section to the task file ending in
   `PR REVIEW: APPROVE | REQUEST CHANGES`. It runs in a checkout bench
   pinned to the exact revision that PR proposes, not in the application —
-  see "A review runs in the revision it is of".
+  see "A review runs in the revision it is of". Its verdict is also
+  recorded as **bench's own**, bound to that revision, whether or not
+  GitHub accepted a formal review of it: the account that opened a pull
+  request cannot approve it, and the comment that attempt falls back to
+  is never read as an approval — see "Gates: nothing merges on a report".
 - **⚑ copilot** — requests a GitHub Copilot review via the API. Works iff
   Copilot code review is enabled for the repo; the error is relayed to the
   toast if not. The card tracks the whole arc with a `⚑` chip: `⚑ ◌` asked,
@@ -1740,6 +1961,13 @@ phase merged — see "Finishing a phase finishes its cards". Cards without
 work move silently, and hand-moves on disk are never intercepted — the
 board only asks when you act through it.
 
+Where this board declares an acceptance gate, **merge & clean up** is
+refused until it is met: once before the drive is parked, so a refusal
+costs one read and changes nothing, and once more immediately before the
+merge, so a push that lands while the drive comes down is a refusal
+rather than a stale reading. The sentence is the same one the card's `⚖`
+chip shows — see "Gates: nothing merges on a report".
+
 That work takes as long as it takes, so **the card wears it** rather than
 sitting there looking idle while its branch is disassembled: from the
 first step to the last it takes the accent border and a breathing
@@ -1872,6 +2100,16 @@ board already runs: red halts the phase, running holds it, and a member
 with no checks at all advances — a project without CI must not deadlock
 every phase it runs. A member with no branch at all that is already in
 `review/` or `done/` is simply finished; there is nothing to bring.
+
+**And then the member gate, where one is declared.** "No CI result"
+advancing is exactly the case a configured gate exists to stop, so on a
+board that declares one the member also has to carry bench's own passing
+evidence for the commit about to be merged — read immediately before the
+merge as well as on the pass that chose it. An unmet gate halts the
+phase like any other condition, with the gate's own sentence as the
+reason; a required check still running holds it. A board that declares
+no gate resolves `ungated` and advances exactly as it always did. The
+whole of it is "Gates: nothing merges on a report".
 
 **Halt, never skip.** Five conditions stop a phase, each already a visible
 state on the card: a member that exits `NOT READY`, a run that exits

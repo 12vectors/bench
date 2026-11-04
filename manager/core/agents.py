@@ -46,6 +46,7 @@ from pathlib import Path
 
 import config
 import events
+import gates
 import plans
 import profiles
 import reports
@@ -663,6 +664,33 @@ def start_review(filename: str, stage: str) -> dict:
     return _agent_public(record)
 
 
+def _gate_note(filename: str) -> str:
+    """What the card's own gate says now that the run has ended, as one
+    clause for the line that records it.
+
+    The distinction it draws is the one an exit code cannot: a run that
+    committed code and never asked bench for the project's checks has
+    produced work *awaiting verification*, and a board that says
+    "finished" about it is the green badge this whole design exists to
+    prevent. Empty on a board that gates nothing, which is every board
+    that declared no gate.
+    """
+    try:
+        task = next((t for stage in collect()["stages"]
+                     for t in stage["tasks"] if t["file"] == filename), None)
+        scope = "member" if (task or {}).get("phase") else "acceptance"
+        decision = gates.evaluate(filename, scope, task=task)
+    except (ValueError, OSError):
+        return ""
+    if not decision["gated"]:
+        return ""
+    if decision["decision"] == "allowed":
+        return f" — verified: {decision['summary']}"
+    if decision["decision"] == "pending":
+        return f" — awaiting verification: {decision['summary']}"
+    return (f" — code is committed and NOT verified: {decision['summary']}")
+
+
 def _declined_reason(log_path: str) -> str | None:
     """First line of a `NOT READY:` marker in the agent's final output."""
     try:
@@ -853,7 +881,13 @@ def _reap_agent(agent_id: str, proc: subprocess.Popen, log_file) -> None:
                     move_task(filename, "in-progress", "review", actor="agent")
                 except ValueError:
                     pass
-            summary = f"{name} finished {filename} — review branch {branch}"
+            # Code produced is not work verified, and on a board that
+            # gates one it is the difference between a card that can
+            # advance and a card that cannot. So the ending says which it
+            # is — read from the gate rather than from the exit code that
+            # got us here, and silent on a board that gates nothing.
+            summary = (f"{name} finished {filename} — review branch {branch}"
+                       f"{_gate_note(filename)}")
     elif stopped:
         summary = f"{name} was held on {filename} — nothing is lost"
     else:
@@ -1118,6 +1152,24 @@ def _reap_pr_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
         verdict = match.group(1) if match else None
         _file_report(record, _review_heading(pinned, moved), report)
         _session_report(record, report)
+        if verdict:
+            # Bench's own record of what its reviewer found, bound to the
+            # head bench pinned it to — written whether or not GitHub
+            # accepted a formal review of it. That separation is the
+            # point: the account that opened a pull request cannot
+            # approve it, so a board reviewing its own work would
+            # otherwise have no verdict at all rather than a verdict
+            # GitHub would not hold.
+            try:
+                gates.record_verdict(
+                    filename, verdict=verdict,
+                    head=(pinned.get("head") or {}).get("commit"),
+                    agent=agent_id, actor="agent",
+                    review_id=pinned.get("reviewId"),
+                    note=moved["changed"][0] if moved.get("changed") else "",
+                    published=_publication_note(text))
+            except (ValueError, OSError):
+                pass
 
     if stopped:
         summary = f"{name}'s PR review of {filename} was held"
@@ -1145,6 +1197,34 @@ def _reap_pr_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
             "summary": f"{given['kept']} — nothing uncommitted is thrown away"})
     state.broadcast({"type": "board"})
     state.broadcast({"type": "agents"})
+
+
+# What GitHub says when the account that opened a pull request tries to
+# review it formally. Matched in the *run's own log*, which is the only
+# place the attempt is visible at all — and recorded as a note about the
+# attempt, never as a verdict and never as a review state. The authority
+# on whether a formal review exists is GitHub, read by the poll.
+_SAME_ACCOUNT_RE = re.compile(
+    r"(?i)can ?not (?:approve|request changes on) your own pull request")
+
+
+def _publication_note(log: str) -> str | None:
+    """Whether the reviewer's verdict reached GitHub as a formal review,
+    as far as its own log can say.
+
+    Deliberately narrow: this is a note on bench's verdict record saying
+    what happened when the run tried to publish it, so that "bench found
+    this" and "GitHub holds this" stay two facts. It decides nothing — a
+    gate asking for a formal GitHub state reads GitHub's own answer.
+    """
+    if not log:
+        return None
+    if _SAME_ACCOUNT_RE.search(log):
+        return ("refused-same-account: GitHub would not take a formal review "
+                "from the account that opened the pull request, so the "
+                "verdict is bench's own record and not a GitHub review "
+                "state")
+    return None
 
 
 def _review_heading(pinned: dict, moved: dict) -> str:

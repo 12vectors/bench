@@ -445,7 +445,12 @@ class TeamModeEndsItOnOrigin(PhaseEnding):
         self.run_phase()
         git(self.repo, "push", "-q", "origin",
             f"task/{ONE[:-3]}", f"task/{TWO[:-3]}")
-        self.patch(SYNC=True, COMMIT_MOVES=True)
+        # `BOARD_APP_MERGE` is pinned to its unset value as well as
+        # `BOARD_SYNC`: what this case is about is sync's own answer, and
+        # inheriting an operator's `BOARD_APP_MERGE=local` from the
+        # environment the suite happens to run in would decide it before
+        # the code under test got the chance.
+        self.patch(SYNC=True, COMMIT_MOVES=True, APP_MERGE="")
 
         result = self.complete()
 

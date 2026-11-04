@@ -92,6 +92,50 @@
       "lede": "Bench owns the git lifecycle, so it decides it once: where a card's work starts, what its PR targets, what selected each, what refuses before a branch or a worktree exists, and why the answer stops moving after the launch.",
       "source": "AGENTS.md",
       "from": "## Execution plans",
+      "to": "## Execution profiles and approved context"
+    },
+    {
+      "path": "/concepts/execution-profiles/",
+      "title": "Profiles and approved context",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "What a run may do in the checkout bench prepared, and which files it is guaranteed to have read — resolved, hashed and recorded before a model is invoked.",
+      "lede": "A plan says which checkout a run works in. This is the other half of the same decision: the named commands it may launch, the inputs pinned read-only for it, how strongly each of those actually holds, and the manifest that says what this particular run rode.",
+      "source": "AGENTS.md",
+      "from": "## Execution profiles and approved context",
+      "to": "## Verification: bench runs the check"
+    },
+    {
+      "path": "/concepts/verification/",
+      "title": "Verification",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "Bench runs the project's named checks itself, builds the argument list, and records the exit status its own wait() returned — so an agent's report is not evidence.",
+      "lede": "An agent saying the tests passed used to be the whole of it. A named check is the other arrangement: the run asks for one by name, bench runs it with no shell, and the evidence is the runner's own status, bound to the source it ran against.",
+      "source": "AGENTS.md",
+      "from": "## Verification: bench runs the check",
+      "to": "## Gates: nothing merges on a report"
+    },
+    {
+      "path": "/concepts/gates/",
+      "title": "Gates",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "May this merge happen? Required checks and review policies per guarded mutation, answered from evidence bound to the exact commit about to move.",
+      "lede": "A clean exit, new commits and a quiet CI are the three things that used to answer this, and not one of them is evidence. What a gate requires instead, where it is enforced, why a COMMENTED review is never an approval, and what an override records.",
+      "source": "AGENTS.md",
+      "from": "## Gates: nothing merges on a report",
+      "to": "## Readiness: asking before paying"
+    },
+    {
+      "path": "/concepts/readiness/",
+      "title": "Readiness",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "What this board would grant, run and refuse — asked without paying for a model, at four honest distances, with every diagnostic's remedy.",
+      "lede": "An operator used to find a mistyped policy the expensive way: move a card, click start work, watch the run refuse. The doctor answers the same questions in milliseconds, and says how far each answer is from the thing you actually care about.",
+      "source": "AGENTS.md",
+      "from": "## Readiness: asking before paying",
       "to": "## Pull requests"
     },
     {

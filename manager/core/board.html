@@ -638,6 +638,12 @@
   .sheet .sbtns button.shipit{background:var(--calm);border-color:var(--calm);color:var(--on-calm);font-weight:500}
   .sheet .sbtns button.shipit small{color:color-mix(in oklab, var(--on-calm) 75%, transparent)}
   .sheet .sbtns button.shipit:hover{border-color:var(--calm);color:var(--on-calm);filter:brightness(1.06)}
+  /* the one field in the whole page: an override's reason, which is the
+     only part of its record a person has to write */
+  .sheet .sbtns textarea{background:var(--panel);color:var(--ink);
+    border:1px solid var(--line);border-radius:6px;padding:8px 10px;
+    font:inherit;font-size:12.5px;min-height:52px;resize:vertical}
+  .sheet .sbtns textarea:focus{outline:none;border-color:var(--accent)}
 
   /* ── toast ──
      A refusal has to say the whole thing — which member is working, and
@@ -2160,6 +2166,234 @@ function verifyChip(task) {
   };
 }
 
+/* ── may this merge happen? ────────────────────────────────────────────
+
+   The gate, at card altitude. Three rules it follows and the design
+   system is the reason for all three: the word carries the meaning and
+   the colour only ever means state, so `ungated` is drawn in the settled
+   register rather than the colour of a pass; no evidence never looks
+   green; and an override wears the alarm, because it is a decision
+   somebody made over an unmet gate rather than a gate that was met. */
+
+const GATE_STATES = {
+  allowed: ['ok', '✓', 'met'],
+  ungated: ['dim', '·', 'ungated'],
+  pending: ['accent', '◌', 'waiting'],
+  blocked: ['bad', '✕', 'blocked'],
+  overridden: ['bad', '!', 'overridden'],
+};
+
+function gateState(word) {
+  return GATE_STATES[word] || ['', '·', word || 'unknown'];
+}
+
+function gateChip(task) {
+  const g = (S.state.gates || {})[task.file];
+  if (!g) return null;
+  const [cls, glyph, word] = gateState(g.decision);
+  const label = g.decision === 'blocked'
+    ? `${g.unmet.length} unmet`
+    : g.decision === 'allowed' ? `${g.met}/${g.required}` : word;
+  return {
+    label, pre: '⚖', glyph, cls, gate: g.scope,
+    title: `The ${g.scope} gate: ${g.summary}. Evidence is `
+         + `${g.location === 'local' ? 'local to this board' : g.location}. `
+         + `Opening this runs nothing.`,
+  };
+}
+
+/* One requirement, as a row. The reason and the remedy are the point of
+   the panel: "it failed", "nobody asked for it" and "a dependency would
+   not install" send a reader to three different places. */
+function gateRow(r) {
+  const cls = { met: 'pass', unmet: 'fail', pending: 'accent',
+                overridden: 'fail' }[r.state] || '';
+  const glyph = { met: '✓', unmet: '✕', pending: '◌',
+                  overridden: '!' }[r.state] || '·';
+  const name = r.kind === 'review' ? `review · ${r.name}` : r.name;
+  return `<div class="check-row ${cls}" title="${esc(r.why || '')}">` +
+    `<span class="glyph">${glyph}</span>` +
+    `<span class="name">${esc(name)}</span>` +
+    `<span class="state">${esc(r.state)}${r.commit ? ' · ' + esc(String(r.commit).slice(0, 12)) : ''}` +
+    `</span></div>` +
+    `<div class="check-row ${cls}" style="padding-left:18px">` +
+    `<span class="glyph">·</span><span class="name">why</span>` +
+    `<span class="state">${esc(r.why || '')}</span></div>` +
+    (r.remedy
+      ? `<div class="check-row" style="padding-left:18px">` +
+        `<span class="glyph">→</span><span class="name">remedy</span>` +
+        `<span class="state">${esc(r.remedy)}</span></div>`
+      : '');
+}
+
+function gatePanel(decision) {
+  const [cls, , word] = gateState(decision.decision);
+  const head = decision.head || {};
+  const row = (glyph, name, value, kls) =>
+    `<div class="check-row ${kls || ''}"><span class="glyph">${glyph}</span>` +
+    `<span class="name">${esc(name)}</span>` +
+    `<span class="state">${esc(value)}</span></div>`;
+  const applied = (decision.overrides || {}).applied;
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">${esc(decision.scope)} — ${esc(word)}</span>` +
+    `<span class="r">${esc(decision.policyId || '')}</span></div>` +
+    row('·', 'what it guards', decision.why) +
+    row('⚖', 'the commit it is about',
+        `${head.commit ? String(head.commit).slice(0, 12) : 'not resolved'} `
+        + `(${head.ref || 'unknown branch'})`,
+        head.commit ? '' : 'fail') +
+    (decision.gated
+      ? (decision.requirements || []).map(gateRow).join('')
+      : row('·', 'no requirement',
+            'this board declares no gate for this, so nothing is required '
+            + 'here and nothing is proved')) +
+    (applied
+      ? row('!', 'overridden',
+            `${applied.actor} at ${String(applied.head || '').slice(0, 12)} — `
+            + `${applied.reason} (gates still unmet: `
+            + `${(applied.gates || []).join(', ')})`, 'fail')
+      : '') +
+    `</div>`;
+}
+
+/* The detail panel, and — where the policy allows one — the single
+   armed confirmation that records an override. A GET of stored records:
+   opening it runs no check, relaunches nothing and reaches no remote. */
+async function gateSheet(task) {
+  const wrap = $('#sheetwrap');
+  const head = (tail) =>
+    `<div class="stitle"><span>${esc(task.title)}</span>` +
+    `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}` +
+    `⚖ ${esc(tail)}</span></div>`;
+  wrap.innerHTML = `<div class="sheet">${head('gate')}<p>Reading the records…</p></div>`;
+  wrap.classList.add('open');
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+
+  const res = await fetch('/api/gates?file=' + encodeURIComponent(task.file) +
+                          '&stage=' + encodeURIComponent(task.stage));
+  const data = res.ok ? await res.json() : {};
+  const scopes = data.scopes || [];
+  const policy = data.policy || {};
+  const blocked = scopes.filter(s => s.decision === 'blocked');
+  const first = blocked[0] || scopes[0] || null;
+  const canOverride = !!(policy.overrides || {}).allowed && blocked.length;
+
+  const verdicts = (data.verdicts || []).slice(0, 4).map(v =>
+    `<div class="check-row ${v.verdict === 'APPROVE' ? 'pass' : 'fail'}">` +
+    `<span class="glyph">${v.verdict === 'APPROVE' ? '✓' : '✕'}</span>` +
+    `<span class="name">bench · ${esc(v.verdict)}</span>` +
+    `<span class="state">at ${esc(String(v.head || 'an unrecorded head').slice(0, 12))}` +
+    `${v.published ? ' · ' + esc(v.published) : ''}</span></div>`).join('')
+    || `<div class="check-row none"><span class="glyph">—</span>` +
+       `<span class="name">no Bench verdict</span>` +
+       `<span class="state">◔ review PR records one, bound to the head it ` +
+       `was pinned</span></div>`;
+
+  const gh = data.github || null;
+  const formal = gh && (gh.formal || []).length
+    ? gh.formal.map(r =>
+        `<div class="check-row ${r.state === 'APPROVED' ? 'pass' : 'fail'}">` +
+        `<span class="glyph">${r.state === 'APPROVED' ? '✓' : '✕'}</span>` +
+        `<span class="name">github · ${esc(r.login || 'unknown')}</span>` +
+        `<span class="state">${esc(r.state)} of ` +
+        `${esc(String(r.commit || 'an unrecorded commit').slice(0, 12))}` +
+        `${r.self ? ' · the account that proposed the head' : ''}</span></div>`).join('')
+    : `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no formal GitHub review state</span>` +
+      `<span class="state">${gh ? 'bench has read the pull request and GitHub holds none'
+                                : 'bench has not read this pull request'}</span></div>`;
+  const limitation = gh && gh.limitation
+    ? `<div class="check-row fail"><span class="glyph">!</span>` +
+      `<span class="name">same account</span>` +
+      `<span class="state">${esc(gh.limitation.why)}</span></div>`
+    : '';
+  const comments = gh && (gh.comments || []).length
+    ? `<div class="check-row"><span class="glyph">·</span>` +
+      `<span class="name">comments</span>` +
+      `<span class="state">${gh.comments.length} commented review` +
+      `${gh.comments.length === 1 ? '' : 's'} — a comment is not a review ` +
+      `state, however it is worded</span></div>`
+    : '';
+
+  const history = (data.overrides || []).map(o =>
+    `<div class="check-row fail"><span class="glyph">!</span>` +
+    `<span class="name">${esc(o.actor)}</span>` +
+    `<span class="state">${esc(o.scope)} at ` +
+    `${esc(String(o.head || '').slice(0, 12))} over ` +
+    `${esc((o.gates || []).join(', '))} — ${esc(o.reason)}</span></div>`).join('');
+
+  wrap.innerHTML =
+    `<div class="sheet">${head('gate')}` +
+    (blocked.length
+      ? `<div class="panel bad"><div class="phead"><span class="label">` +
+        `Blocked</span></div>` +
+        blocked.map(s => `<div class="check-row fail">` +
+          `<span class="glyph">✕</span><span class="name">${esc(s.scope)}</span>` +
+          `<span class="state">${esc(s.summary)}</span></div>`).join('') +
+        `</div>`
+      : '') +
+    `<p>A gate asks one question: may this merge happen? It is answered ` +
+    `from bench's own recorded evidence, bound to the exact commit that ` +
+    `would move — not from an agent's report, not from its exit code, and ` +
+    `not from the absence of a CI result. Reading it here runs nothing.</p>` +
+    scopes.map(gatePanel).join('') +
+    `<div class="panel"><div class="phead"><span class="label">` +
+    `Review — two records, kept apart</span>` +
+    `<span class="r">bench's own, and GitHub's</span></div>` +
+    verdicts + formal + limitation + comments + `</div>` +
+    (history
+      ? `<div class="panel"><div class="phead"><span class="label">` +
+        `Overrides</span><span class="r">recorded, never a pass</span></div>` +
+        history + `</div>`
+      : '') +
+    `<p class="why">What this board requires comes from ` +
+    `${esc(policy.source && policy.source.identity || 'the legacy settings')}` +
+    `. ${policy.configured ? '' : 'No gate is configured, so nothing here is ' +
+      'required and nothing is proved. '}` +
+    `Evidence and these records are local to this board.</p>` +
+    (policy.blockers || []).map(b =>
+      `<div class="check-row fail"><span class="glyph">✕</span>` +
+      `<span class="name">policy</span><span class="state">${esc(b)}</span>` +
+      `</div>`).join('') +
+    `<div class="sbtns">` +
+    (canOverride
+      ? `<textarea id="sh-why" placeholder="Why are you proceeding over an ` +
+        `unmet gate? Recorded against you, with the commit and the gates ` +
+        `that are unmet."></textarea>` +
+        `<button id="sh-override">Override<small>Record that ` +
+        `${esc(data.actor || 'you')} proceeded over ` +
+        `${esc((first.unmet || []).map(u => u.name).join(', '))} at ` +
+        `${esc(String((first.head || {}).commit || '').slice(0, 12))}. It ` +
+        `forges no evidence, makes no gate met, and authorises this commit ` +
+        `only — the next one is a different question.</small></button>`
+      : '') +
+    `<button id="sh-nogate">Close<small>Nothing was run.</small></button>` +
+    `</div></div>`;
+  $('#sh-nogate').addEventListener('click', closeSheet);
+  const btn = $('#sh-override');
+  if (btn) {
+    wireAction(btn, `${task.file}::override`, {
+      label: 'Override', confirm: 'record the override?', busy: 'recording…',
+      run: async () => {
+        const reason = ($('#sh-why') || {}).value || '';
+        const r = await fetch('/api/gates/override', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file: task.file, scope: first.scope,
+                                 reason, head: (first.head || {}).commit }),
+        });
+        const out = await r.json();
+        if (!r.ok) { toast(out.error || 'the override was refused', true); return false; }
+        toast(out.duplicate
+          ? 'that override was already on record — nothing was recorded twice'
+          : 'override recorded: the gate is still unmet');
+        await loadState();
+        gateSheet(task);
+        return true;
+      },
+    });
+  }
+}
+
 /* ── where a PR review ran, and what it was of ─────────────────────────
 
    A review used to be a verdict with no location and no revision: it ran
@@ -2756,6 +2990,12 @@ function cardFor(task) {
   // some, so a board nobody declared one on has no such chip anywhere.
   const verified = verifyChip(task);
   if (verified) chips.push(verified);
+  // whether this card may actually be merged, and what is in the way —
+  // a destination like the rest of the row, opening the gate. Present
+  // only where this board declares a gate, so a board that declares
+  // none has no such chip anywhere.
+  const gate = gateChip(task);
+  if (gate) chips.push(gate);
   // where a PR review of this card ran and which revision it was of — a
   // destination like the rest of the row, opening the record. Present
   // only on cards bench has pinned a checkout for.
@@ -2848,6 +3088,7 @@ function cardFor(task) {
         if (c.plan) return `<button class="chip2 ${c.cls}" data-plan="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.profile) return `<button class="chip2 ${c.cls}" data-profile="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.verify) return `<button class="chip2 ${c.cls}" data-verify="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
+        if (c.gate) return `<button class="chip2 ${c.cls}" data-gate="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.review) return `<button class="chip2 ${c.cls}" data-review="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.cmd) return `<button class="chip2 ${c.cls}" data-cmd="${esc(c.cmd)}" title="${esc(c.title)}">${actLabel(c.label, 'run it?', 'running…')}${g}</button>`;
         return `<span class="chip2 ${c.cls}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</span>`;
@@ -2875,6 +3116,8 @@ function cardFor(task) {
     btn.addEventListener('click', (e) => { e.stopPropagation(); profileSheet(task); }));
   el.querySelectorAll('[data-verify]').forEach(btn =>
     btn.addEventListener('click', (e) => { e.stopPropagation(); verifySheet(task); }));
+  el.querySelectorAll('[data-gate]').forEach(btn =>
+    btn.addEventListener('click', (e) => { e.stopPropagation(); gateSheet(task); }));
   el.querySelectorAll('[data-review]').forEach(btn =>
     btn.addEventListener('click', (e) => { e.stopPropagation(); reviewSheet(task); }));
   el.querySelectorAll('[data-drive]').forEach(btn =>
@@ -3167,11 +3410,30 @@ function completeSheet(task, from) {
   // done/ with it and their workspaces go too. Counted the way the lane
   // counts them, from the runner's reading and the phase's own log.
   const swept = task.isPhase ? mergedIn(task).size : 0;
+  // And what this board's acceptance gate says, before the button that
+  // the server will refuse. One reading, so the sheet and the refusal
+  // give one reason — and said here rather than only in the toast
+  // afterwards, because "merge" is the click a person should not have to
+  // make to find out.
+  const gate = (S.state.gates || {})[task.file];
+  const blocked = gate && gate.decision === 'blocked' ? gate : null;
   const wrap = $('#sheetwrap');
   wrap.innerHTML =
     `<div class="sheet">` +
     `<div class="stitle"><span>${esc(task.title)}</span>` +
     `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}→ done</span></div>` +
+    (blocked
+      ? `<div class="panel bad"><div class="phead"><span class="label">` +
+        `Its ${esc(blocked.scope)} gate is unmet</span></div>` +
+        `<div class="check-row fail"><span class="glyph">✕</span>` +
+        `<span class="name">${esc(blocked.unmet.map(u => u.name).join(', '))}` +
+        `</span><span class="state">${esc(blocked.summary)}</span></div>` +
+        `<div class="check-row"><span class="glyph">·</span>` +
+        `<span class="name">what happens</span><span class="state">Merge &amp; ` +
+        `clean up is refused for this reason — the card, its branch and its ` +
+        `worktree are left exactly as they are. The ⚖ chip has the remedy.` +
+        `</span></div></div>`
+      : '') +
     `<p>This task has ${task.pr ? 'a PR and ' : ''}a branch with work on it. What should happen?</p>` +
     `<div class="sbtns">` +
     `<button id="sh-keep">Keep it where it is<small>Nothing moves, nothing changes.</small></button>` +
@@ -3693,7 +3955,22 @@ function laneFor(task) {
       `${flight.idle ? '' : '<span class="caret">▌</span>'}</span></div>`
     : '';
 
-  el.innerHTML = head + halt + well +
+  // What accepting *this* phase requires, which the lane owes a reader
+  // for the same reason the halt is drawn at the top of it: every member
+  // merged and green says nothing about the commit they were merged
+  // into, and the one place that distinction can be learned before
+  // somebody drags the card to done/ is here. Drawn only where a gate is
+  // configured, and `ungated` is never drawn as a pass.
+  const gate = snap && snap.gate && snap.gate.gated ? snap.gate : null;
+  const gateLine = gate
+    ? `<div class="lhalt"${gate.decision === 'blocked'
+        ? '' : ' style="border-color:var(--line)"'}>` +
+      `<span class="lglyph">${gateState(gate.decision)[1]}</span>` +
+      `<span class="lwhy"><b>integration gate ${esc(gateState(gate.decision)[2])}` +
+      `</b> — ${esc(gate.summary)}</span><span class="lacts"></span></div>`
+    : '';
+
+  el.innerHTML = head + halt + gateLine + well +
     `<div class="lstages" data-phase="${esc(task.file)}"></div>` + laneLog(task);
 
   const stages = el.querySelector('.lstages');
@@ -4200,6 +4477,12 @@ function renderFocus() {
   if (task) fetchEvidence(task.file, task.stage);
   const verifyPanel = verificationPanel(task, agent);
 
+  // And the fact those two leave open, which is the one a person about
+  // to merge actually wants: code produced is not work verified, and
+  // work verified is not work accepted. Read from the state payload the
+  // view already has, so drawing it costs nothing and runs nothing.
+  const gatePanelHere = focusGatePanel(task, agent);
+
   // And the fourth fact, which is about the board rather than the run:
   // would a launch of this kind even start here, and what is not proved
   // about that. Read lazily and never on a timer — resolving every intent
@@ -4218,8 +4501,8 @@ function renderFocus() {
       `</span></div></div>`;
 
   $('#cgrid').innerHTML = nowPanel +
-    `<div class="c-side">${checksPanel}${verifyPanel}${permsPanel}` +
-    `${readyPanel}${filesPanel}${recentPanel}</div>`;
+    `<div class="c-side">${checksPanel}${verifyPanel}${gatePanelHere}` +
+    `${permsPanel}${readyPanel}${filesPanel}${recentPanel}</div>`;
   document.querySelectorAll('#cgrid details.fold').forEach(d => {
     d.addEventListener('toggle', () => {
       if (d.open) S.openFolds.add(d.dataset.key); else S.openFolds.delete(d.dataset.key);
@@ -4295,6 +4578,61 @@ function verificationPanel(task, agent) {
     `Each row is a process bench launched and waited on. Open the card's ` +
     `◫ chip for the logs, the commits they ran against and a rerun.</p>` +
     `</div>`;
+}
+
+/* Code produced, work verified, work accepted — three states an exit code
+   cannot tell apart, drawn apart here. The panel reads the gate the state
+   payload already carries, so it costs nothing and starts nothing; the
+   card's ⚖ chip is where the whole reading and the remedies live. */
+function focusGatePanel(task, agent) {
+  const head = (right) =>
+    `<div class="panel"><div class="phead"><span class="label">Gate</span>` +
+    `<span class="r">${right}</span></div>`;
+  if (!task) {
+    return head('—') +
+      `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no card attached</span>` +
+      `<span class="state">a gate is about a card's own merge</span>` +
+      `</div></div>`;
+  }
+  const g = (S.state.gates || {})[task.file];
+  if (!g) {
+    return head('ungated') +
+      `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no gate configured</span>` +
+      `<span class="state">this board requires nothing before a merge, so ` +
+      `nothing here is proved — not a pass</span></div></div>`;
+  }
+  const [cls, glyph, word] = gateState(g.decision);
+  const finished = agent && agent.status && agent.status !== 'running';
+  const row = (name, value, kls) =>
+    `<div class="check-row ${kls || ''}"><span class="glyph">·</span>` +
+    `<span class="name">${esc(name)}</span>` +
+    `<span class="state">${esc(value)}</span></div>`;
+  return head(esc(`${g.scope} · local to this board`)) +
+    `<div class="check-row ${cls === 'ok' ? 'pass' : cls === 'bad' ? 'fail' : ''}">` +
+    `<span class="glyph">${glyph}</span>` +
+    `<span class="name">${esc(word)}</span>` +
+    `<span class="state">${esc(g.summary)}</span></div>` +
+    row('code produced',
+        finished ? 'the run has ended and its commits are on the branch'
+                 : 'the run is still working') +
+    row('verified',
+        g.decision === 'allowed'
+          ? `${g.met} of ${g.required} requirements met against ` +
+            `${String(g.head || '').slice(0, 12)}`
+          : g.decision === 'overridden'
+            ? 'no — an authorised person proceeded over an unmet gate'
+            : `no — ${g.unmet.length} unmet`,
+        g.decision === 'allowed' ? 'pass' : 'fail') +
+    (g.unmet || []).map(u =>
+      `<div class="check-row fail" style="padding-left:18px">` +
+      `<span class="glyph">✕</span><span class="name">${esc(u.name)}</span>` +
+      `<span class="state">${esc(u.reason)}</span></div>`).join('') +
+    `<p class="why" style="margin:6px 0 0;color:var(--dim);font-size:11.5px">` +
+    `A finished agent is not a verified card, and a verified card is not an ` +
+    `accepted one. The card's ⚖ chip has the whole reading and what to do ` +
+    `about each unmet requirement.</p></div>`;
 }
 
 async function fetchEvidence(file, stage) {
