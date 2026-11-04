@@ -1,0 +1,154 @@
+{
+  "v": 1,
+
+  "_doc": [
+    "The execution-profile document, whole. Copy it to",
+    "manager/local/profiles.json and edit, or point BOARD_AGENT_PROFILES at",
+    "a copy elsewhere. This file is documentation: core never reads it, and",
+    "a board with no document at all resolves on BOARD_AGENT_COMMANDS plus",
+    "the adapter's built-in git/gh grants — exactly the behaviour bench had",
+    "before profiles existed. Writing a document is how you get more; it is",
+    "never required.",
+    "",
+    "It is machine-local on purpose. It names roots on THIS disk and",
+    "capabilities THIS adapter declares, so it belongs with the tool",
+    "(manager/local/ is gitignored) and not in the application's history.",
+    "Nothing here is ever committed, pushed or carried into a PR body.",
+    "",
+    "WHAT A PROFILE IS RESOLVED FOR",
+    "  One per launch intent: `work`, `act-pr`, `review`. An intent the",
+    "  document says nothing about falls back to the legacy settings, so a",
+    "  document may configure one intent and leave the others alone.",
+    "",
+    "A PROFILE NARROWS; IT NEVER WIDENS",
+    "  publication.commit/push/publish may be turned OFF for an intent that",
+    "  has them and never ON for one that does not — `review` asking for",
+    "  push is refused by name. The built-in git/gh grants per intent are",
+    "  the adapter's own knowledge and are not a profile's to change.",
+    "",
+    "WHAT 'commands' IS NOT",
+    "  It is agent capability, and nothing else. A `manager/local/commands/`",
+    "  executable is UI registration — a $ chip a person clicks — and being",
+    "  registered there grants a headless run nothing: resolved profiles",
+    "  list those separately, every one marked agentCapability: false.",
+    "  `verify` is a gate requirement, and `prepare` a preparation one:",
+    "  both are declared, surfaced and recorded, and neither is enforced",
+    "  yet. They resolve with status `pending` and say so.",
+    "",
+    "HOW STRONGLY ANYTHING IS ENFORCED",
+    "  A command grant becomes a prefix allow-rule in the adapter's rule",
+    "  language. That narrows which command lines a run may launch. It is",
+    "  NOT a sandbox — nothing confines a process already running — and the",
+    "  resolved profile's `guarantees` block is the single place that says",
+    "  so. `requires` is how you refuse to run without a real guarantee:",
+    "  every word in it must be a capability the installed backend declares,",
+    "  and a profile requiring one nothing enforces is refused rather than",
+    "  run under a restriction that exists only in the prompt.",
+    "",
+    "THE SETTINGS PRECEDENCE, IN ORDER",
+    "  BOARD_AGENT_PROFILES > manager/local/profiles.json > the legacy",
+    "  BOARD_AGENT_COMMANDS and the adapter's built-in grants. A document",
+    "  that does not parse, or declares a `v` this bench does not read, is a",
+    "  blocker on every intent — it does not quietly become the old policy."
+  ],
+
+  "_doc_shared": [
+    "Top-level `commands`, `context` and `requires` apply to any intent",
+    "that does not name its own. Handy for one brief every run must read."
+  ],
+  "requires": ["pinned-context", "context-boundary"],
+
+  "context": [
+    {
+      "_doc": [
+        "An approved readable input. `path` is <root>:<relative path>, with",
+        "the root one of worktree, app, work, tool — a word rather than a",
+        "path, because the document is read on a machine whose paths are",
+        "its own. Resolved, hashed and copied into a read-only bundle",
+        "before the model is invoked, so a later edit changes the NEXT run",
+        "and not this one.",
+        "",
+        "Refused, fail-closed, every time: a path that is absolute or uses",
+        "'..', one that resolves outside its root through a link, a",
+        "directory (a directory grant is not a read-only guarantee), a",
+        "basename that reads as a credential, and anything over the",
+        "512 KiB cap. A required input that is missing or unreadable",
+        "refuses the launch by name, with a remedy. `\"required\": false`",
+        "turns that refusal into a note and changes nothing else.",
+        "",
+        "Approval covers these files and nothing beside them. It is not",
+        "permission to edit them, to read what sits next to them, or to",
+        "publish their contents."
+      ],
+      "name": "workflow-brief",
+      "path": "tool:manager/local/AGENTS.md",
+      "required": true
+    },
+    {
+      "name": "design-system",
+      "path": "work:reference/design-system.md",
+      "required": false
+    }
+  ],
+
+  "profiles": {
+    "work": {
+      "commands": [
+        {
+          "_doc": [
+            "A named command grant. `name` is its identity in the manifest,",
+            "the prompt and the UI. `run` is one executable and fixed",
+            "arguments — refused if it holds any of ; & | ` $ > < ( ) { }",
+            "* ? ! ~ # ' \" \\ [ ], because a prefix rule cannot see what a",
+            "shell would expand those into. The executable must be a bare",
+            "name resolved on PATH or an absolute path. `root` is which",
+            "approved root it runs in (default worktree)."
+          ],
+          "name": "unit-tests",
+          "run": "python3 -m unittest",
+          "root": "worktree",
+          "help": "the project's definition of done"
+        }
+      ],
+      "verify": [
+        {
+          "_doc": "A gate requirement: declared, recorded, not yet enforced.",
+          "name": "unit-tests",
+          "help": "a later merge gate will insist this passed"
+        }
+      ],
+      "prepare": [
+        {
+          "_doc": "A preparation requirement: declared, not yet run for you.",
+          "name": "migrate",
+          "help": "apply this branch's migrations before the run"
+        }
+      ],
+      "deny": ["publish"],
+      "publication": {"commit": true, "push": false, "publish": false}
+    },
+
+    "act-pr": {
+      "commands": [
+        {"name": "unit-tests", "run": "python3 -m unittest", "root": "worktree"}
+      ],
+      "publication": {"commit": true, "push": true, "publish": false}
+    },
+
+    "review": {
+      "_doc": [
+        "The intent the legacy arrangement had no answer for: it got a",
+        "hardcoded grant set inside each adapter and nothing else. Here it",
+        "is a profile like the others — it runs in the application",
+        "checkout, it is granted no project commands unless this names",
+        "them, and the only thing it publishes is its verdict."
+      ],
+      "commands": [],
+      "context": [
+        {"name": "review-checklist", "path": "work:reference/review.md",
+         "required": false}
+      ],
+      "publication": {"commit": false, "push": false, "publish": true}
+    }
+  }
+}

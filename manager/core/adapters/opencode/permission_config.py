@@ -29,6 +29,13 @@ local/.env); here each becomes "<prefix>" and "<prefix> *" allow rules.
 AGENT_MODEL, when set, becomes the config's top-level "model" key —
 opencode's "provider/model-id" form (opencode.ai/docs/config), passed
 through untranslated. Absent = no key, opencode's own resolution applies.
+
+AGENT_PROFILE, when the board sets it, is the resolved execution profile
+for this launch (core/profiles.py). It is read as a **narrowing** of the
+stance above and never a widening: its named grants are the same project
+prefixes resolved by name, and its `deny` words become deny rules placed
+last, where last-match-wins makes them beat every allow. Absent, every
+rule here is byte for byte what it was before profiles existed.
 """
 import json
 import os
@@ -55,33 +62,91 @@ MODE_DENY_PATTERNS = {
 # Which intents run the project's own test/check commands.
 MODES_WITH_PROJECT_COMMANDS = {"work", "act-pr"}
 
+# A denied capability, in the profile's vocabulary, as the glob patterns
+# that would exercise it. Narrowing only, and placed last so last-match-
+# wins puts them over every allow above.
+DENY_CAPABILITY_PATTERNS = {
+    "commit": ["git commit", "git commit *"],
+    "push": ["git push", "git push *"],
+    "force-push": ["git push --force*", "git push * --force*", "git push -f",
+                   "git push -f *", "git push * -f *"],
+    "rebase": ["git rebase", "git rebase *"],
+    "publish": ["gh pr create*", "gh pr merge*", "gh pr close*", "gh release*",
+                "gh api * --method POST*", "gh api * -X POST*"],
+    "reshape-lifecycle": ["git worktree*", "git reset*", "git checkout*",
+                          "git switch*", "git branch*", "git update-ref*",
+                          "git remote*"],
+    # "edit" is the "edit" permission key, not a bash pattern.
+    "edit": [],
+}
+
 
 def split_commands(raw: str) -> list[str]:
     """AGENT_COMMANDS: comma-separated neutral command prefixes."""
     return [p.strip() for p in (raw or "").split(",") if p.strip()]
 
 
-def bash_rules(mode: str, commands: list[str]) -> dict:
+def load_profile(raw: str | None) -> dict | None:
+    """AGENT_PROFILE: the resolved execution profile for this launch, or
+    None. Unparseable is None too — a malformed value must not read as an
+    empty deny list, and core refuses the launch before it writes one."""
+    if not (raw or "").strip():
+        return None
+    try:
+        found = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return found if isinstance(found, dict) else None
+
+
+def profile_prefixes(profile: dict | None) -> list[str]:
+    """The named command grants, as the prefixes a rule is made of."""
+    if not profile:
+        return []
+    out = []
+    for grant in profile.get("commands") or []:
+        if isinstance(grant, dict) and str(grant.get("prefix") or "").strip():
+            out.append(str(grant["prefix"]).strip())
+    return out
+
+
+def bash_rules(mode: str, commands: list[str],
+               profile: dict | None = None) -> dict:
     """Deny everything, then allow each prefix exactly and any longer
-    command starting with it. Insertion order is the rule order."""
+    command starting with it. Insertion order is the rule order.
+
+    With a profile, its named grants replace the AGENT_COMMANDS list and
+    its denied capabilities are appended after the mode's own — so the
+    narrowing always wins. Without one the dict is exactly what it was
+    before profiles existed.
+    """
     prefixes = list(MODE_PREFIXES.get(mode, []))
+    project = profile_prefixes(profile) if profile else commands
     if mode in MODES_WITH_PROJECT_COMMANDS:
-        prefixes += [c for c in commands if c not in prefixes]
+        prefixes += [c for c in project if c not in prefixes]
     rules = {"*": "deny"}
     for prefix in prefixes:
         rules[prefix] = "allow"
         rules[f"{prefix} *"] = "allow"
-    for pattern in MODE_DENY_PATTERNS.get(mode, []):
+    denies = list(MODE_DENY_PATTERNS.get(mode, []))
+    for word in (profile or {}).get("deny") or []:
+        for pattern in DENY_CAPABILITY_PATTERNS.get(str(word), []):
+            if pattern not in denies:
+                denies.append(pattern)
+    for pattern in denies:
         rules[pattern] = "deny"  # last, so it wins over the allows
     return rules
 
 
-def build_config(mode: str, commands: list[str], model: str = "") -> dict:
+def build_config(mode: str, commands: list[str], model: str = "",
+                 profile: dict | None = None) -> dict:
     config = {
         "$schema": "https://opencode.ai/config.json",
         "permission": {
-            "edit": "deny" if mode == "review" else "allow",
-            "bash": bash_rules(mode, commands),
+            "edit": "deny" if (mode == "review" or "edit" in
+                               ((profile or {}).get("deny") or []))
+                    else "allow",
+            "bash": bash_rules(mode, commands, profile),
         },
     }
     if model:
@@ -93,4 +158,5 @@ if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "work"
     commands = split_commands(os.environ.get("AGENT_COMMANDS", ""))
     model = os.environ.get("AGENT_MODEL", "").strip()
-    print(json.dumps(build_config(mode, commands, model)))
+    print(json.dumps(build_config(
+        mode, commands, model, load_profile(os.environ.get("AGENT_PROFILE")))))

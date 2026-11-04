@@ -10,6 +10,13 @@
 #            AGENT_MODEL     optional; opencode's "provider/model-id" form,
 #                            set as the generated config's model key.
 #                            Absent = opencode's own resolution, untouched.
+#            AGENT_PROFILE   optional; the resolved execution profile for
+#                            this launch as JSON (named command grants,
+#                            denied capabilities, the cwd policy). Read as
+#                            a narrowing of the intent, never a widening;
+#                            absent = exactly the pre-profile behaviour.
+#            AGENT_CONTEXT   optional; the pinned read-only inputs as JSON
+#                            (name, path, sha256) — paths, never content.
 #            AGENT_CWD       working directory (already set as cwd by the board)
 #            BOARD_*         passthrough for the event bridge
 #   stdout:  captured by the board as the job log; `opencode run` prints

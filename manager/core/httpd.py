@@ -19,9 +19,39 @@ import events
 import github
 import phases
 import plans
+import profiles
 import state
 import sync
 import taskfiles
+
+
+def policy_payload() -> dict:
+    """Where this board's execution policy comes from, and the revision of
+    it that applies to the *next* launch.
+
+    Deliberately not the whole resolution: that is per intent and costs a
+    hash of every approved input, so it lives behind `/api/profile`. What
+    the page needs on every state load is which document is in force and
+    whether it has moved — a run wears its own frozen revision, and the
+    two being comparable is what keeps "the settings say this" from being
+    read as "that run rode this".
+    """
+    doc = profiles.document()
+    adapter = profiles.adapter_identity()
+    return {
+        "kind": doc["kind"],
+        "identity": doc["identity"],
+        "describes": doc["describes"],
+        "revision": doc["revision"],
+        "problem": doc["problem"],
+        "intents": list(profiles.INTENTS),
+        "adapter": {"name": adapter["name"], "identity": adapter["identity"],
+                    "version": adapter["version"],
+                    "declared": adapter["declared"],
+                    "capabilities": adapter["capabilities"],
+                    "unsupported": adapter["unsupported"],
+                    "note": adapter.get("note")},
+    }
 
 
 def state_payload() -> dict:
@@ -58,6 +88,11 @@ def state_payload() -> dict:
         # one setting an agent cannot work around, so the board says it is
         # missing rather than letting a run discover it — see the header chip
         "hasAgentCommands": bool(config.agent_commands()),
+        # where the execution policy comes from and which revision of it
+        # applies *now*. Cheap (one file read), and it is what lets a run's
+        # frozen policy be told apart from the settings as they stand —
+        # the whole per-intent reading is `/api/profile`, on demand.
+        "policy": policy_payload(),
         "branches": github.task_branches(),
         "commands": config.commands(),
         "commandRuns": commands.public(),
@@ -136,6 +171,40 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"plan": plans.preflight(name, stage)})
             except (ValueError, OSError) as exc:
                 self._json(409, {"error": str(exc)})
+        elif path == "/api/profile":
+            # The profile preflight, on demand, for one card and one
+            # launch intent: what that run would be allowed to do, which
+            # files it would be given, and what stops it. Read-only — it
+            # resolves and hashes, and pins nothing, so opening it before
+            # a launch costs nothing and is the point.
+            #
+            # This is the *same* resolver the launch rides. The UI must
+            # never grow a second settings parser that could disagree
+            # with what a run was actually granted.
+            query = parse_qs(url.query)
+            name = (query.get("file") or [""])[0]
+            stage = (query.get("stage") or [""])[0] \
+                or (taskfiles.find_stage_of(name) or "")
+            intent = (query.get("intent") or ["work"])[0]
+            try:
+                found = profiles.manifest(intent, name, stage)
+                self._json(200, {"profile": profiles.public(found),
+                                 "policy": policy_payload()})
+            except (ValueError, OSError) as exc:
+                self._json(409, {"error": str(exc)})
+        elif path == "/api/manifest":
+            # What one run actually rode, read back off disk rather than
+            # re-resolved: the frozen policy and the inputs as they were
+            # pinned, plus what has moved since. A profile edited mid-run
+            # changes the next launch and never this record.
+            agent_id = (parse_qs(url.query).get("agent") or [""])[0]
+            frozen = profiles.recorded(agent_id)
+            if frozen is None:
+                self._json(404, {"error": f"no recorded manifest for {agent_id}"})
+            else:
+                self._json(200, {"manifest": profiles.public(frozen),
+                                 "freshness": profiles.freshness(frozen),
+                                 "policy": policy_payload()})
         elif path == "/api/diff":
             agent_id = (parse_qs(url.query).get("agent") or [""])[0]
             try:

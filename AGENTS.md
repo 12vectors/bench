@@ -44,7 +44,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports → taskfiles → plans → events / github / drive / sync → agents → phases → watch / httpd → board.py
+config → state / reports → taskfiles → plans / profiles → events / github / drive / sync → agents → phases → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -56,6 +56,10 @@ config → state / reports → taskfiles → plans → events / github / drive /
   starts from, which branch its PR targets, what selected each, and the
   preflight that validates all of it before a branch, a worktree or an
   agent exists
+- `profiles.py` — the other half of the same decision: what a run may do
+  in that checkout and which files it is guaranteed to have read. One
+  profile per launch intent, the approved context it pins read-only, and
+  the manifest recording what each run actually rode
 - `events.py` — ingests NORMALIZED events (the adapter contract), session registry
 - `github.py` — PR opening, Copilot requests, review/CI polling
 - `drive.py` — runs the project driver, tracks the one live drive
@@ -82,6 +86,19 @@ exactly the side effects its prompt demands — commit and test for work,
 push for act-pr, posting PR verdicts for review — with the project's own
 runnable commands coming from `BOARD_AGENT_COMMANDS` as neutral prefixes
 each adapter renders in its vendor's rule syntax.
+
+Two further things reach `run`, and both are *additions*: `AGENT_PROFILE`,
+the resolved execution profile for the launch (named command grants,
+denied capabilities, the working-directory policy), and `AGENT_CONTEXT`,
+the read-only inputs bench pinned for it — paths and hashes, never
+content. `AGENT_COMMANDS` is still set to exactly what it always was, so
+an adapter override that has never heard of profiles is handed the
+environment it was handed before and keeps working; one that does read the
+profile reads it as a **narrowing**, which is why passing it cannot
+broaden what a legacy board grants. Beside its `run`, an adapter declares
+what it can genuinely enforce in a `capabilities.json`, so a profile may
+refuse rather than claim a guarantee the vendor cannot make — see
+"Execution profiles and approved context".
 
 Adapters translate their vendor's events into the board's normalized
 schema at the edge — core never sees vendor payloads. That is what keeps
@@ -633,7 +650,10 @@ The board has four views (header switcher):
 - **Focus** — a heads-up display for one session: the task it holds, its live
   TodoWrite plan, the project's configured definition-of-done checks (a
   `checks` file in `manager/local/` overriding the shipped default in
-  `core/`), and per-file diff stats from its worktree.
+  `core/`), what the run was actually permitted to do and given to read —
+  read from the manifest frozen at its launch, which is a different fact
+  from what the settings say now (see "Execution profiles and approved
+  context") — and per-file diff stats from its worktree.
 
 Liveness comes from Claude Code hooks configured in `.claude/settings.json`:
 every session in this repo POSTs normalized events to the board via the
@@ -896,6 +916,173 @@ from, and **work-state git**, the checkout holding `tasks/`, where a move
 commits itself and sync fast-forwards `main`. One layout answers both with
 the same checkout, and asking through separate doors is what keeps
 filesystem layout from changing branch-selection semantics.
+
+## Execution profiles and approved context
+
+A plan says *which checkout* a run works in. A **profile** says what that
+run may do there, and which files it is guaranteed to have read. The two
+compose and do not overlap, and both are resolved, validated and written
+down before a billable model is invoked.
+
+Before this, the second half was implicit and scattered.
+`BOARD_AGENT_COMMANDS` was compiled into permission rules for `work` and
+`act-pr` only, and `review` got a hardcoded grant set inside each
+adapter. A prompt could *point* at a workflow brief outside the checkout,
+but nothing checked the file was there, nothing recorded which revision of
+it the run saw, and nothing stopped it changing under a run in flight. So
+three things had no answer at all: what exactly may this run run, which
+files is it guaranteed, and what did *this* run ride as against what the
+settings say now. One resolved profile answers all three.
+
+### Four facts that used to be one
+
+The old arrangement could not be extended because it conflated four
+different facts. They are separate now, and the data says which is which:
+
+- **UI registration** — a `manager/local/commands/` executable is a `$`
+  chip a person clicks. Appearing there grants a headless run nothing:
+  resolved profiles list those under `uiCommands`, every one marked
+  `agentCapability: false`.
+- **Agent capability** — a named command grant. The only thing that
+  reaches an adapter's permission rules.
+- **Prompt instruction** — what the run is *told*. Prose persuades; it
+  does not enforce, and `guarantees.promptOnly` says so out loud.
+- **Gate requirement** — what a later verification or merge gate will
+  insist on (`verify`), and what should be prepared before a launch
+  (`prepare`). Declared, surfaced and recorded here; both resolve
+  `pending`, because nothing enforces them yet.
+
+### Where a profile comes from
+
+Two structured inputs, in this order, and nothing else:
+
+1. **A profile document** — `manager/local/profiles.json`, or wherever
+   `BOARD_AGENT_PROFILES` points. Machine-local by construction: it names
+   roots on *this* disk and capabilities *this* adapter declares, so it
+   lives with the tool and never in the application's history. The whole
+   schema is documented in `manager/core/profiles.example.json`.
+2. **The legacy settings** — `BOARD_AGENT_COMMANDS` plus each adapter's
+   built-in git/gh grants. A board with no document resolves exactly as it
+   did before profiles existed, marked `source.kind: "legacy"`. That is
+   the whole of "no new metadata keeps established behaviour", and it is
+   why an update changes nothing until somebody writes a document.
+
+A profile **narrows and never widens**. `publication.commit/push/publish`
+may be turned off for an intent that has it and never on for one that does
+not — `review` asking for push is refused by name — and the built-in
+git/gh grants per intent stay the adapter's own knowledge. A document that
+does not parse, or declares a schema version this bench does not read, is
+a blocker on *every* intent and grants nothing at all: an operator who
+mistyped a policy must not be handed the permissions they were in the
+middle of changing.
+
+### What it says, and how strongly
+
+A resolved profile names the launch intent, the approved execution roots
+(`worktree`, `app`, `work`, `tool` — words, not paths, because the
+document is read on a machine whose paths are its own), the working
+directory it runs in, the writable locations, each named command grant
+with its executable and validated argument list, the approved readable
+inputs, the explicitly denied capabilities, and what the profile
+*requires*.
+
+A command grant is one executable and fixed arguments. Anything that makes
+one command line into two, or makes its text depend on the shell, is
+refused where the document is read rather than by the process that would
+have run it: compound commands, pipelines, redirections, globs, backtick
+and `$(…)` substitutions, a relative executable, a path climbing out with
+`..`, a malformed or duplicated grant name, an unknown execution root, and
+a root the intent does not have (a read-only run has no worktree).
+
+And **how strongly** anything holds is a separate answer, in four words
+used everywhere: `enforced`, `prefix-allowlist`, `prompt-only`, `pending`.
+A grant becomes a prefix allow-rule in the adapter's rule language. That
+narrows which command lines a run may launch; it is **not** a sandbox,
+nothing confines a process already running, and the `guarantees` block is
+the single place that says so. Each adapter declares what it can actually
+enforce in a `capabilities.json` beside its `run`; both shipped adapters
+declare `filesystem-sandbox` unsupported, in those words. `requires` is
+how a profile refuses to run without a real guarantee: every word in it
+must resolve to something the installed backend genuinely does, and a
+profile requiring one nothing enforces is **refused** rather than run
+under a restriction that exists only in the prompt.
+
+### Approved context: pinned, hashed, and nothing beside it
+
+A project selects a set of files from the tool and work-state roots, and
+they are delivered as verifiable readable inputs. Three things in order
+make that a guarantee rather than a hope: the path is resolved inside a
+named root, the content is hashed, and a read-only copy is pinned under
+`manager/local/state/context/` before the model is invoked. The prompt
+then names those files by the path they were pinned at — *in addition* to
+the workflow brief it already points at, which is never replaced,
+reworded or summarised.
+
+It fails closed, every time. A required input that is missing, unreadable,
+a directory, over the size cap, named like a credential, absolute, using
+`..`, or reachable only through a link out of its root **refuses the
+launch** — by input name, with a remedy, before any model, and leaving the
+card with no branch, no worktree, no claim and no run. A directory grant
+is refused *as* a read-only guarantee, because it lets a run read whatever
+is dropped in later. `"required": false` turns that refusal into a note
+and changes nothing else.
+
+Approval covers those files and nothing beside them. It is not permission
+to edit them, to read what sits next to them, or to publish their
+contents — and no diagnostic ever quotes one: refusals name paths,
+revisions and hashes, never bytes.
+
+What the copy guarantees is worth stating narrowly, because the obvious
+phrasing claims more: an edit to the source cannot change what a run was
+given. The bundle is written read-only, but a run with a shell could
+still alter its own copy, which is why the hash on record is of what was
+pinned rather than of what it was meant to be. That sentence is in the
+capability table the board shows, in those words.
+
+### One manifest, for the whole of the run
+
+The resolved profile is recorded with the run, in
+`manager/local/state/manifests/<agent id>.json`, and it holds the policy
+revision and its source identity, each input's source revision and content
+hash, the working-directory policy, and the adapter and resolver versions.
+Machine-local for the plan's reason: it holds this machine's paths.
+
+Four consequences, and they are why the record exists:
+
+- **A later change does not repin an existing run.** Edit the document, or
+  the approved file itself, and the run keeps what it rode; the next
+  launch gets the new answer. `freshness()` is what reports the
+  difference, and it never resolves it.
+- **The page reads the run's manifest, not the settings.** The Focus
+  view's **Permissions & inputs** panel is fed by the frozen record and
+  says "settings have moved" when they have, so "what the settings say
+  now" can never be read as "what that run rode".
+- **One resolver answers both.** The pre-launch reading and the launch
+  itself call the same function, so a page cannot show a permission a run
+  would not have had.
+- **Later members have identities to refer to.** Policy, context, request
+  and evidence identities are defined once (`profiles.seams()` names them,
+  along with every pending capability and what a runner, a doctor, a gate
+  and a reviewer each plug into), so none of them invents a second policy
+  schema.
+
+### On the board
+
+A `⚿` chip in the card's footer row, beside `⌖` and `CI`, opens the
+profile preflight: where the run would run, what it may write, every named
+command grant, every approved input with its readable status, what is
+blocked, and — at the top, in `--alarm` — any blocker with its remedy,
+before a launch. The sheet switches between the three intents, because
+which one a card hosts depends on what you are about to click. It is
+read-only: it resolves and hashes and pins nothing, so opening it costs
+nothing.
+
+The chip appears only where there is something to say. A board resolving
+on the legacy settings has no such chip anywhere — the same law the plan
+chip follows — and a document that does not parse wears the alarm and the
+reason. Technical detail (identities, hashes, the settings precedence, the
+capability table) folds away rather than leading, and an approved
+document's contents are nowhere on the page.
 
 ## Pull requests
 

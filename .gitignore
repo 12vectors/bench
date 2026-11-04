@@ -1,4 +1,5 @@
 manager/local/.env
+manager/local/profiles.json
 manager/local/state/
 __pycache__/
 .worktrees/

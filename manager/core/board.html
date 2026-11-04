@@ -626,6 +626,12 @@
   .sheet .prows .v{font-family:var(--mono);font-size:11.5px;color:var(--ink);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .sheet .prows .why{margin-left:auto;flex:none;font-size:11.5px;color:var(--dim)}
+  /* the profile sheet reuses the Focus panels, so a named grant and a
+     readable input read the same wherever they are drawn */
+  .sheet .panel{padding:10px 12px;gap:6px}
+  .sheet .chiprow{border-top:none;padding-top:0}
+  .panel>.fold{margin-top:4px}
+  .panel>.fold pre{max-height:220px;overflow:auto}
   .sheet .sbtns{display:flex;flex-direction:column;gap:6px;margin-top:2px}
   .sheet .sbtns button{text-align:left;padding:10px 12px;font-size:13px}
   .sheet .sbtns button small{display:block;font-size:11.5px;color:var(--dim);margin-top:2px}
@@ -747,6 +753,10 @@ const S = {
   focusSid: null,
   filter: 'all',
   diffCache: {},         // agentId -> {at, files, fetching}
+  // agentId -> {at, manifest, freshness, fetching}: the policy and inputs
+  // ONE run was frozen with, read back off the board rather than resolved
+  // again, so the panel can never show a run a permission it did not ride
+  manifests: {},
   openFolds: new Set(),  // expanded output folds, kept across renders
   fileView: null,        // {dir, name, content} open in the drawer
   drawerKey: null,       // which document the drawer last painted, for its scroll mark
@@ -1519,6 +1529,202 @@ async function planSheet(task) {
   $('#sh-replan').addEventListener('click', () => { closeSheet(); replan(task); });
 }
 
+/* ── what a run may do, and what it is guaranteed to have read ─────────
+   The profile preflight, on demand: the resolved policy for one card and
+   one launch intent, read from the same resolver the launch rides. It is
+   read-only — it resolves and hashes, and pins nothing — so opening it
+   before a launch costs nothing and is the point.
+
+   Three things are kept visually apart because conflating them is the
+   mistake this exists to end: what is *configured*, what is actually
+   *enforced* (and by whom — a prefix rule is not a sandbox), and what is
+   merely asked for in the prompt or owed to a later gate. Hashes and the
+   settings precedence are real but secondary, so they fold away. */
+
+const PROFILE_INTENT_FOR = { 'in-progress': 'work', review: 'act-pr' };
+
+function profileIntentFor(task) {
+  return PROFILE_INTENT_FOR[task.stage] || 'review';
+}
+
+const INTENT_LABEL = { work: '▸ work', 'act-pr': '↻ act on PR',
+                       review: '◔ review' };
+
+/* An input's readable status, as the row's own state. `pinned` is the
+   strong one: bench holds a read-only copy, so the run's bytes cannot
+   change under it. `resolved` is the pre-launch reading of the same file
+   — validated and hashed, not yet copied. */
+const INPUT_STATE = {
+  pinned: ['pass', '✓', 'pinned read-only for the run'],
+  resolved: ['pass', '✓', 'readable — pinned at launch'],
+  missing: ['fail', '✕', 'not there'],
+  unreadable: ['fail', '✕', 'cannot be read'],
+  refused: ['fail', '✕', 'refused'],
+  unresolved: ['none', '—', 'not resolved'],
+};
+
+function inputRows(found) {
+  const items = found.context || [];
+  if (!items.length) {
+    return `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no approved context selected</span>` +
+      `<span class="state">the run reads the repository it is in</span></div>`;
+  }
+  return items.map(i => {
+    const [cls, glyph, word] = INPUT_STATE[i.status] || INPUT_STATE.unresolved;
+    const need = i.required ? '' : ' · optional';
+    return `<div class="check-row ${cls}" title="${esc(i.source)}">` +
+      `<span class="glyph">${glyph}</span>` +
+      `<span class="name">${esc(i.name)}</span>` +
+      `<span class="state">${esc(word)}${need}</span></div>`;
+  }).join('');
+}
+
+function grantRows(found) {
+  const grants = found.commands || [];
+  if (!grants.length) {
+    return `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no command grants</span>` +
+      `<span class="state">this run may run nothing of the project's</span></div>`;
+  }
+  return grants.map(g =>
+    `<div class="check-row" title="runs in the ${esc(g.root)} root">` +
+    `<span class="glyph">$</span><span class="name">${esc(g.name)}</span>` +
+    `<span class="state">${esc(g.prefix)}</span></div>`).join('');
+}
+
+function deniedRow(found) {
+  const words = (found.denied || []).map(d => d.capability);
+  const pub = found.publication || {};
+  const allowed = ['commit', 'push', 'publish'].filter(k => pub[k]);
+  return `<div class="prow"><span class="k">Blocked</span>` +
+    `<span class="v">${esc(words.join(', ') || 'nothing named')}</span>` +
+    `<span class="why">may ${esc(allowed.join(' and ') || 'change nothing')}</span></div>`;
+}
+
+/* Configured is not enforced, and the difference is the whole point. Each
+   line names who answers for it; a prefix allow-rule says so in those
+   words rather than borrowing the word "sandbox". */
+function guaranteeLines(found) {
+  const g = found.guarantees || {};
+  const table = found.capabilities || {};
+  const say = (list, lead) => (list || []).length
+    ? `${lead}: ${list.map(n => `${n} (${(table[n] || {}).by || '—'})`).join(', ')}`
+    : '';
+  return [
+    say(g.enforced, 'Enforced'),
+    say(g.prefixMatched, 'Narrowed by prefix match, not confined'),
+    say(g.pending, 'Asked for, enforced by nothing yet'),
+    ...(g.promptOnly || []),
+    g.caveat,
+  ].filter(Boolean);
+}
+
+async function profileSheet(task, intent) {
+  intent = intent || profileIntentFor(task);
+  const wrap = $('#sheetwrap');
+  const head = (tail) =>
+    `<div class="stitle"><span>${esc(task.title)}</span>` +
+    `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}` +
+    `⚿ ${esc(tail)}</span></div>`;
+  wrap.innerHTML = `<div class="sheet">${head(intent)}<p>Resolving…</p></div>`;
+  wrap.classList.add('open');
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+
+  const res = await fetch('/api/profile?file=' + encodeURIComponent(task.file) +
+                          '&stage=' + encodeURIComponent(task.stage) +
+                          '&intent=' + encodeURIComponent(intent));
+  const data = await res.json();
+  const p = data.profile;
+  if (!res.ok || !p) {
+    wrap.innerHTML = `<div class="sheet">${head(intent)}` +
+      `<p class="bad">${esc(data.error || 'the profile could not be resolved')}</p>` +
+      `<div class="sbtns"><button id="sh-noprof">Close<small>Nothing was ` +
+      `started, and nothing was pinned.</small></button></div></div>`;
+    $('#sh-noprof').addEventListener('click', closeSheet);
+    return;
+  }
+
+  const blocked = (p.blockers || []).length;
+  const switcher = Object.keys(INTENT_LABEL).map(key =>
+    `<button class="chip2 ${key === intent ? 'accent' : ''}" data-intent="${key}">` +
+    `${esc(INTENT_LABEL[key])}</button>`).join('');
+
+  const rows = [
+    ['Runs in', p.cwd.path || p.cwd.policy, `the ${p.cwd.policy} root`],
+    ['Writable', (p.writable || []).map(w => w.path).join(', ') || 'nothing',
+      (p.writable || []).length ? (p.writable[0].why || '') : 'read-only run'],
+    ['Policy', p.source.kind === 'legacy'
+      ? 'the legacy settings'
+      : (p.source.identity || 'a profile document'),
+      p.source.describes || ''],
+  ];
+
+  wrap.innerHTML =
+    `<div class="sheet">${head(intent + ' profile')}` +
+    `<div class="chiprow">${switcher}</div>` +
+    (blocked
+      ? `<p class="bad">This run will not start: ${esc(p.blockers[0])}</p>`
+      + ((p.blockers.length > 1)
+         ? `<p class="bad">${p.blockers.slice(1).map(b => esc(b)).join('<br>')}</p>`
+         : '')
+      : `<p>Resolved and validated. Nothing has been pinned — the read-only ` +
+        `copy of each input is made at the launch, not here.</p>`) +
+    `<div class="prows">` +
+    rows.map(([k, v, why]) => `<div class="prow"><span class="k">${esc(k)}</span>` +
+      `<span class="v">${esc(v)}</span><span class="why">${esc(why || '')}</span></div>`).join('') +
+    deniedRow(p) +
+    `</div>` +
+    `<div class="panel"><div class="phead"><span class="label">Commands it may run</span>` +
+    `<span class="r">prefix rules</span></div>${grantRows(p)}</div>` +
+    `<div class="panel"><div class="phead"><span class="label">Files it is given</span>` +
+    `<span class="r">read-only</span></div>${inputRows(p)}</div>` +
+    `<details class="fold"><summary>what is actually enforced, and by whom</summary>` +
+    `<pre>${esc(guaranteeLines(p).join('\n\n'))}</pre></details>` +
+    `<details class="fold"><summary>revisions, hashes and precedence</summary>` +
+    `<pre>${esc(profileDetail(p))}</pre></details>` +
+    ((p.notes || []).length
+      ? `<p>${p.notes.map(n => esc(n)).join('<br>')}</p>` : '') +
+    `<div class="sbtns"><button id="sh-noprof">Close<small>Nothing is ` +
+    `written.</small></button></div></div>`;
+  $('#sh-noprof').addEventListener('click', closeSheet);
+  wrap.querySelectorAll('[data-intent]').forEach(btn =>
+    btn.addEventListener('click', () => profileSheet(task, btn.dataset.intent)));
+}
+
+/* The technical half: identities, hashes, where the policy came from. Real
+   and checkable, and nobody reads it first — so it folds. Contents never
+   appear here; the server's allowlist has none to send. */
+function profileDetail(p) {
+  const lines = [
+    `policy      ${p.policyId}`,
+    `revision    ${p.revision}`,
+    `resolver    ${p.runner.module} v${p.runner.version} · schema v${p.v}`,
+    `adapter     ${p.adapter.name}${p.adapter.version ? ' v' + p.adapter.version : ''}` +
+      `${p.adapter.declared ? '' : ' (declares no capabilities)'}`,
+    `source      ${p.source.kind}${p.source.identity ? ' · ' + p.source.identity : ''}` +
+      ` · ${(p.source.revision || '').slice(0, 12)}`,
+    `precedence  ${(p.source.precedence || []).join('  >  ')}`,
+    `request     ${p.requestId || '—'}`,
+  ];
+  if (p.requires && p.requires.length)
+    lines.push(`requires    ${p.requires.join(', ')}`);
+  for (const i of p.context || []) {
+    lines.push(`input       ${i.name}  ${i.source}  ${i.revision || '—'}  ` +
+               `sha256 ${(i.sha256 || '').slice(0, 16)}`);
+    if (i.why) lines.push(`            ${i.why}`);
+    if (i.remedy) lines.push(`            remedy: ${i.remedy}`);
+  }
+  if (p.bundle) lines.push(`bundle      ${p.bundle.path}`);
+  for (const v of p.verify || [])
+    lines.push(`verify      ${v.name} — ${v.status}: ${v.why}`);
+  for (const v of p.prepare || [])
+    lines.push(`prepare     ${v.name} — ${v.status}: ${v.why}`);
+  for (const c of p.uiCommands || [])
+    lines.push(`ui command  ${c.name} — ${c.why}`);
+  return lines.join('\n');
+}
+
 async function replan(task) {
   const res = await fetch('/api/plan/replan', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1821,6 +2027,21 @@ function cardFor(task) {
       cls: (planned.drift || []).length ? 'bad' : '', plan: true,
       title: planChipTitle(planned) });
   }
+  // what a launch on this card would be allowed to do, and which files it
+  // would be given — a destination like the rest of the row, opening the
+  // profile preflight. Present only where there is something to say: a
+  // board resolving on the legacy settings has no such chip anywhere, and
+  // a policy document that does not parse wears the alarm.
+  const policy = S.state.policy;
+  if (policy && policy.kind === 'broken') {
+    chips.push({ label: 'policy', pre: '⚿', cls: 'bad', profile: true,
+      title: policy.problem || 'the profile document does not resolve' });
+  } else if (policy && policy.kind === 'file') {
+    chips.push({ label: 'profile', pre: '⚿', cls: '', profile: true,
+      title: `The execution profile a launch on this card would ride — what `
+           + `it may run, where it may write, which files it is given and `
+           + `what is blocked. From ${policy.identity}.` });
+  }
   if (prState && prState.ci) {
     chips.push({ label: 'CI', glyph: { pass: '✓', fail: '✕', running: '◌' }[prState.ci],
       cls: { pass: 'ok', fail: 'bad', running: 'accent' }[prState.ci], title: detail });
@@ -1906,6 +2127,7 @@ function cardFor(task) {
         if (c.act) return `<button class="chip2 ${c.cls}" data-drive="${c.act}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.phase) return `<button class="chip2 ${c.cls}" data-phase="${esc(c.phase)}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.plan) return `<button class="chip2 ${c.cls}" data-plan="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
+        if (c.profile) return `<button class="chip2 ${c.cls}" data-profile="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.cmd) return `<button class="chip2 ${c.cls}" data-cmd="${esc(c.cmd)}" title="${esc(c.title)}">${actLabel(c.label, 'run it?', 'running…')}${g}</button>`;
         return `<span class="chip2 ${c.cls}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</span>`;
       }).join('') + '</div>'
@@ -1928,6 +2150,8 @@ function cardFor(task) {
     }));
   el.querySelectorAll('[data-plan]').forEach(btn =>
     btn.addEventListener('click', (e) => { e.stopPropagation(); planSheet(task); }));
+  el.querySelectorAll('[data-profile]').forEach(btn =>
+    btn.addEventListener('click', (e) => { e.stopPropagation(); profileSheet(task); }));
   el.querySelectorAll('[data-drive]').forEach(btn =>
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -3008,6 +3232,64 @@ function pickFocusSid() {
   return S.focusSid;
 }
 
+/* The run's own policy, in the Focus view's side column.
+
+   It is the *frozen* one, read back off the board rather than resolved
+   again, and the panel says so when the settings have since moved — "this
+   run rode that; the document now says this" is a distinction a reviewer
+   needs and a second settings parser would quietly lose. The technical
+   half (identities, hashes, precedence) folds, as it does in the sheet.
+
+   A session with no agent behind it — a person's own — has no policy to
+   show, because bench granted it nothing: the panel says that rather than
+   drawing empty rows. */
+function permissionsPanel(agent) {
+  const head = (right) =>
+    `<div class="panel"><div class="phead"><span class="label">Permissions & inputs</span>` +
+    `<span class="r">${right}</span></div>`;
+  if (!agent) {
+    return head('—') +
+      `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">your own session</span>` +
+      `<span class="state">bench granted it nothing</span></div></div>`;
+  }
+  const cached = S.manifests[agent.id];
+  const found = cached && cached.manifest;
+  if (!found) {
+    const summary = agent.profile;
+    return head(esc(agent.mode || 'work')) +
+      `<div class="check-row none"><span class="glyph">·</span>` +
+      `<span class="name">${summary ? esc(summary.policyId) : 'reading the manifest'}</span>` +
+      `<span class="state">${summary
+        ? esc(`${summary.commands} grants · ${summary.readable}/${summary.inputs} inputs`)
+        : 'loading'}</span></div></div>`;
+  }
+  const fresh = cached.freshness || { fresh: true, changed: [] };
+  const moved = !fresh.fresh
+    ? `<div class="check-row none"><span class="glyph">·</span>` +
+      `<span class="name">settings have moved</span>` +
+      `<span class="state">this run keeps what it rode</span></div>`
+    : '';
+  const pub = found.publication || {};
+  const may = ['commit', 'push', 'publish'].filter(k => pub[k]);
+  return head(esc(`${found.intent} · ${found.cwd.policy}`)) +
+    grantRows(found) +
+    inputRows(found) +
+    `<div class="check-row"><span class="glyph">↑</span>` +
+    `<span class="name">may</span>` +
+    `<span class="state">${esc(may.join(', ') || 'change nothing')}</span></div>` +
+    `<div class="check-row fail"><span class="glyph">✕</span>` +
+    `<span class="name">blocked</span>` +
+    `<span class="state">${esc((found.denied || []).map(d => d.capability).join(', ') || 'nothing named')}</span></div>` +
+    moved +
+    `<details class="fold"><summary>what is actually enforced, and by whom</summary>` +
+    `<pre>${esc(guaranteeLines(found).join('\n\n'))}</pre></details>` +
+    `<details class="fold"><summary>this run's frozen revisions</summary>` +
+    `<pre>${esc(profileDetail(found) +
+      (fresh.changed || []).map(c => `\nsince:      ${c}`).join(''))}</pre></details>` +
+    `</div>`;
+}
+
 function renderFocus() {
   const sid = pickFocusSid();
   if (sid) loadSession(sid);
@@ -3144,7 +3426,15 @@ function renderFocus() {
   const recentPanel = `<div class="panel"><div class="phead"><span class="label">Recent</span></div>` +
     `<div class="minifeed">${recent || '<span style="color:var(--dim);font-size:12px">nothing yet</span>'}</div></div>`;
 
-  $('#cgrid').innerHTML = nowPanel + `<div class="c-side">${checksPanel}${filesPanel}${recentPanel}</div>`;
+  // What this run was allowed to do, frozen at its launch. The CHECKS panel
+  // above says what the project's definition of done is; this one says
+  // whether the run could even have run it, which file inputs it was
+  // guaranteed, and where it could write.
+  if (agent) fetchManifest(agent.id);
+  const permsPanel = permissionsPanel(agent);
+
+  $('#cgrid').innerHTML = nowPanel +
+    `<div class="c-side">${checksPanel}${permsPanel}${filesPanel}${recentPanel}</div>`;
   document.querySelectorAll('#cgrid details.fold').forEach(d => {
     d.addEventListener('toggle', () => {
       if (d.open) S.openFolds.add(d.dataset.key); else S.openFolds.delete(d.dataset.key);
@@ -3178,6 +3468,28 @@ async function fetchDiff(agentId) {
     if (S.view === 'focus') scheduleRender();
   } catch {
     S.diffCache[agentId] = { at: Date.now(), files: cached ? cached.files : [] };
+  }
+}
+
+/* The manifest one run was frozen with. Fetched rather than carried in the
+   state payload, because it holds a capability table per run and the
+   payload rides every SSE nudge — and read back off disk rather than
+   resolved again, which is the whole guarantee: a profile edited mid-run
+   retargets the next launch and never this record. */
+async function fetchManifest(agentId) {
+  const cached = S.manifests[agentId];
+  if (cached && (cached.fetching || Date.now() - cached.at < 8000)) return;
+  S.manifests[agentId] = { ...(cached || {}), fetching: true };
+  try {
+    const res = await fetch('/api/manifest?agent=' + encodeURIComponent(agentId));
+    const data = res.ok ? await res.json() : {};
+    S.manifests[agentId] = { at: Date.now(), manifest: data.manifest || null,
+                             freshness: data.freshness || null };
+    if (S.view === 'focus') scheduleRender();
+  } catch {
+    S.manifests[agentId] = { at: Date.now(),
+                             manifest: cached ? cached.manifest : null,
+                             freshness: cached ? cached.freshness : null };
   }
 }
 
