@@ -1871,7 +1871,8 @@ async function verifySheet(task) {
     `<span class="r">a person's action</span></div>` +
     (names.length
       ? `<div class="chiprow">` + names.map(n =>
-          `<button class="chip2" data-rerun="${esc(n)}">↻ ${esc(n)}</button>`).join('') +
+          `<button class="chip2" data-rerun="${esc(n)}">` +
+          actLabel('↻ ' + n, 'run it?', 'running…') + `</button>`).join('') +
         `</div><p class="why">Side effects, in full: bench runs that check's ` +
         `command in this card's own checkout (or, for a <span class="mono">source</span> ` +
         `check, in a detached checkout it makes and removes), with its ` +
@@ -1879,7 +1880,10 @@ async function verifySheet(task) {
         `log; it moves no card, touches no branch and publishes nothing. ` +
         `Build output, caches and temporary files land in the directory bench ` +
         `points HOME and TMPDIR at. A run already in flight for the same ` +
-        `check is joined rather than doubled.</p>`
+        `check is joined rather than doubled. A check that outlasts this ` +
+        `page's own patience is still running: the row above goes to ` +
+        `<b>running now</b> and the outcome arrives when the runner has ` +
+        `one — nothing is fired twice.</p>`
       : `<p class="why">Nothing to rerun — this card has no named checks.</p>`) +
     `</div>` +
     `<div id="evlog"></div>` +

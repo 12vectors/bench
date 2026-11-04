@@ -1019,6 +1019,24 @@ class ReviewVerifiesWithoutPublishing(VerifyCase):
         self.assertEqual(bash["git commit"], "deny")
         self.assertEqual(bash["git push"], "deny")
 
+    def test_act_pr_may_verify_too_and_runs_in_the_cards_worktree(self):
+        """The third permitted mode, executed rather than resolved: a run
+        addressing review feedback asks for the same check by the same
+        name, and keeps the push it needs."""
+        self.declares({"v": 1, "checks": [
+            {"name": "unit", "run": str(self.executable("recorder", RECORDER))}],
+            "profiles": {"act-pr": {"verify": ["unit"]}}})
+        tree = self.worktree()
+        found = profiles.require(profiles.manifest(
+            "act-pr", CARD, "in-progress", pin_inputs=True))
+        profiles.record("fix-1", found)
+        self.assertTrue(found["publication"]["push"])
+        got = verify.request(check="unit", agent="fix-1")
+        self.assertEqual(got["outcome"], "passed", got["why"])
+        self.assertEqual(got["intent"], "act-pr")
+        self.assertEqual(Path(self.invocations()[0]["cwd"]).resolve(),
+                         tree.resolve())
+
     def test_a_review_without_a_profile_gains_nothing_at_all(self):
         """The legacy reading is untouched: AGENT_COMMANDS never reached
         the read-only intent and still does not."""
@@ -1278,6 +1296,71 @@ class TheApiIsOneDoor(VerifyCase):
         offered = verify.available(frozen)
         self.assertEqual([c["name"] for c in offered], ["unit"])
         self.assertEqual(sorted(offered[0]["scopes"]), ["fast"])
+
+    def _serve(self):
+        """A real board on a real port, so the shim can be run the way a
+        headless agent runs it — no interactive prompt anywhere in it."""
+        from http.server import ThreadingHTTPServer
+        server = ThreadingHTTPServer(("127.0.0.1", 0), httpd.Handler)
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.server_close)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        port = server.server_address[1]
+        self.addCleanup(setattr, state, "serve_port", state.serve_port)
+        state.serve_port = port
+        return port
+
+    def _shim(self, port: int, *args: str, agent: str = "run-1"):
+        env = dict(os.environ, BOARD_PORT=str(port), BOARD_AGENT_ID=agent)
+        return subprocess.run([str(profiles.verify_shim()), *args],
+                              capture_output=True, text=True, env=env,
+                              timeout=120)
+
+    def test_the_shim_runs_a_check_over_the_loopback_and_exits_zero(self):
+        self.declares(self.one_check(scopes={"fast": ["-k", "fast"]}))
+        self.worktree()
+        self.manifest()
+        port = self._serve()
+
+        listing = self._shim(port)
+        self.assertEqual(listing.returncode, 0, listing.stderr)
+        self.assertIn("unit", listing.stdout)
+        self.assertIn("fast", listing.stdout)
+
+        ran = self._shim(port, "unit", "fast")
+        self.assertEqual(ran.returncode, 0, ran.stderr + ran.stdout)
+        self.assertIn("PASSED: unit", ran.stdout)
+        self.assertIn("ev:verification@", ran.stdout)
+        self.assertEqual(self.invocations()[0]["argv"], ["-k", "fast"])
+        # and the board recorded it before the shim was told anything
+        [record] = verify.for_task(CARD)
+        self.assertEqual(record["outcome"], "passed")
+        self.assertIn(record["id"], ran.stdout)
+
+    def test_the_shim_exits_one_only_for_a_check_that_said_no(self):
+        self.declares(self.one_check(run=str(self.executable("fails", FAILS))))
+        self.worktree()
+        self.manifest()
+        port = self._serve()
+        failed = self._shim(port, "unit")
+        self.assertEqual(failed.returncode, 1, failed.stdout)
+        self.assertIn("FAILED: unit", failed.stdout)
+
+        refused = self._shim(port, "coverage")
+        self.assertEqual(refused.returncode, 2, refused.stdout)
+        self.assertIn("DENIED: coverage", refused.stdout)
+
+    def test_the_shim_says_so_rather_than_guessing_when_asked_by_nobody(self):
+        port = self._serve()
+        stray = self._shim(port, "unit", agent="")
+        self.assertEqual(stray.returncode, 5)
+        self.assertIn("BOARD_AGENT_ID", stray.stderr)
+        unreachable = subprocess.run(
+            [str(profiles.verify_shim()), "unit"], capture_output=True,
+            text=True, timeout=60,
+            env=dict(os.environ, BOARD_PORT="1", BOARD_AGENT_ID="run-1"))
+        self.assertEqual(unreachable.returncode, 5)
+        self.assertIn("nothing was verified", unreachable.stderr)
 
     def test_the_shim_is_shipped_runnable_and_stdlib_only(self):
         shim = profiles.verify_shim()
