@@ -251,8 +251,9 @@ class ReviewCase(unittest.TestCase):
                          reviews.OBSERVED):
             registry.clear()
             self.addCleanup(registry.clear)
-        verify.forget_cached()
-        self.addCleanup(verify.forget_cached)
+        for forget in (verify.forget_cached, reviews.forget_cached):
+            forget()
+            self.addCleanup(forget)
         self.sent: list[dict] = []
         self.addCleanup(setattr, state, "broadcast", state.broadcast)
         state.broadcast = self.sent.append
@@ -1188,6 +1189,24 @@ class WhatTheBoardSays(ReviewCase):
         self.assertFalse(rollup["verified"])
         self.assertFalse(any(row["outcome"] == "passed"
                              for row in rollup["rows"]))
+
+    def test_the_board_reading_is_memoised_and_notices_a_moved_head(self):
+        """It rides every SSE nudge and a record is a file, so without a
+        memo this would be a read per review ever made, per nudge. The
+        memo has to be exact rather than short-lived: a head that moved
+        changes the answer with nothing written."""
+        self.proposes()
+        self.review()
+        collected = __import__("taskfiles").collect()
+        first = reviews.board(collected)
+        self.assertIs(reviews.board(collected), first, "read twice, once")
+
+        self.proposes(self.proposed_commit("a later head\n"))
+        reviews.resolve_head(CARD, self.card_now())
+        second = reviews.board(collected)
+
+        self.assertIsNot(second, first)
+        self.assertEqual(second[CARD]["label"], "superseded")
 
     def test_the_public_record_carries_no_content_and_no_environment(self):
         self.proposes()

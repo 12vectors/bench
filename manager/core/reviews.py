@@ -126,6 +126,16 @@ TARGETS = {
 # GitHub per card per state payload.
 OBSERVED: dict[str, dict] = {}
 
+# And the cost of answering about it. The board's own reading rides every
+# SSE nudge, and a record is a file: without a memo this would be a read
+# per review ever made, per nudge, for ever. Two things can move the
+# answer and both are in the key — a record being written (the epoch) and
+# the pull request's head moving under one (the observations) — so the
+# cache is exact rather than merely short-lived. `verify.board` keeps one
+# for the same reason.
+_EPOCH = 0
+_BOARD: tuple | None = None
+
 _SHA = re.compile(r"^[0-9a-f]{7,40}$")
 
 
@@ -443,6 +453,9 @@ def _slug(agent_id: str) -> str:
 
 
 def _store(record: dict) -> dict:
+    global _EPOCH
+    with state.LOCK:
+        _EPOCH += 1
     config.REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
     record_path(record["agent"]).write_text(
         json.dumps(record, indent=2, sort_keys=True, default=str),
@@ -869,8 +882,15 @@ def board(collected: dict) -> dict:
     this board follows — a board that has reviewed nothing gets an empty
     object and renders exactly what it always did.
     """
-    files = {task["file"] for stage in collected.get("stages", [])
-             for task in stage["tasks"]}
+    global _BOARD
+    files = frozenset(task["file"] for stage in collected.get("stages", [])
+                      for task in stage["tasks"])
+    with state.LOCK:
+        stamp = (_EPOCH, frozenset(
+            (name, seen.get("commit"), seen.get("state"))
+            for name, seen in OBSERVED.items()))
+    if _BOARD is not None and _BOARD[0] == stamp and _BOARD[1] == files:
+        return _BOARD[2]
     found: dict = {}
     for record in all_records():          # newest first
         task = record.get("task") or ""
@@ -881,7 +901,17 @@ def board(collected: dict) -> dict:
         reading["kept"] = record.get("kept")
         reading["live"] = not record.get("released")
         found[task] = reading
+    _BOARD = (stamp, files, found)
     return found
+
+
+def forget_cached() -> None:
+    """Drop the memoised board reading. Nothing on the serving path calls
+    it — the epoch and the observations do that work — but a test, and
+    anything that replaces the reviews directory under the board's feet,
+    needs the door."""
+    global _BOARD
+    _BOARD = None
 
 
 def line(record: dict) -> str:
