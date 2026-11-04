@@ -931,10 +931,14 @@ def resolve(intent: str, *, worktree: Path | str | None = None) -> dict:
         legacy, trouble = _legacy_grants(intent, available)
         grants += legacy
         notes += trouble
-    else:
+    elif doc["kind"] == "legacy":
         legacy, trouble = _legacy_grants(intent, available)
         grants += legacy
         notes += trouble
+    # A broken document grants nothing at all. Resolving it to the legacy
+    # settings would hand an operator the permissions they were in the
+    # middle of changing, which is the one reading a mistyped policy must
+    # never get — the blocker above has already refused the launch.
 
     if grants:
         configured.append("command-allowlist")
