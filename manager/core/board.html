@@ -3410,11 +3410,30 @@ function completeSheet(task, from) {
   // done/ with it and their workspaces go too. Counted the way the lane
   // counts them, from the runner's reading and the phase's own log.
   const swept = task.isPhase ? mergedIn(task).size : 0;
+  // And what this board's acceptance gate says, before the button that
+  // the server will refuse. One reading, so the sheet and the refusal
+  // give one reason — and said here rather than only in the toast
+  // afterwards, because "merge" is the click a person should not have to
+  // make to find out.
+  const gate = (S.state.gates || {})[task.file];
+  const blocked = gate && gate.decision === 'blocked' ? gate : null;
   const wrap = $('#sheetwrap');
   wrap.innerHTML =
     `<div class="sheet">` +
     `<div class="stitle"><span>${esc(task.title)}</span>` +
     `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}→ done</span></div>` +
+    (blocked
+      ? `<div class="panel bad"><div class="phead"><span class="label">` +
+        `Its ${esc(blocked.scope)} gate is unmet</span></div>` +
+        `<div class="check-row fail"><span class="glyph">✕</span>` +
+        `<span class="name">${esc(blocked.unmet.map(u => u.name).join(', '))}` +
+        `</span><span class="state">${esc(blocked.summary)}</span></div>` +
+        `<div class="check-row"><span class="glyph">·</span>` +
+        `<span class="name">what happens</span><span class="state">Merge &amp; ` +
+        `clean up is refused for this reason — the card, its branch and its ` +
+        `worktree are left exactly as they are. The ⚖ chip has the remedy.` +
+        `</span></div></div>`
+      : '') +
     `<p>This task has ${task.pr ? 'a PR and ' : ''}a branch with work on it. What should happen?</p>` +
     `<div class="sbtns">` +
     `<button id="sh-keep">Keep it where it is<small>Nothing moves, nothing changes.</small></button>` +

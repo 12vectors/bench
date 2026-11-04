@@ -1491,6 +1491,17 @@ class ThePageReadsTheDecision(unittest.TestCase):
         self.assertRegex(self.html,
                          r"function gateChip\(task\) \{\n.*\n  if \(!g\) return null;")
 
+    def test_the_merge_sheet_says_the_gate_before_the_button(self):
+        """"Merge" is the click a person should not have to make to find
+        out that it is refused — so the sheet reads the same decision the
+        server will, and says what happens if they click anyway."""
+        sheet = self.html[self.html.index("function completeSheet"):
+                          self.html.index("function completeSheet") + 4000]
+        self.assertIn("S.state.gates", sheet)
+        self.assertIn("gate is unmet", sheet)
+        self.assertIn("is refused for this reason", sheet)
+        self.assertIn("left exactly as they are", sheet)
+
     def test_reading_it_is_not_an_action(self):
         self.assertIn("Opening this runs nothing", self.html)
         self.assertIn("Reading it here runs nothing", self.html)
