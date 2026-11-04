@@ -165,6 +165,24 @@ RUNNING: dict[str, dict] = {}        # evidence id -> record, with its proc
 _KEYS: dict[str, str] = {}           # (task, check, scope) -> evidence id
 _SLOTS = threading.BoundedSemaphore(config.VERIFY_PARALLEL)
 
+# ── and the cost of answering about it ─────────────────────────────────
+#
+# Asking whether a pass is still fresh means reading the checkout it ran
+# in: a handful of git commands and a hash per untracked file. That is the
+# right price for a question somebody asked, and the wrong price to pay
+# per card on every state payload — and the board's own reading rides
+# every SSE nudge.
+#
+# So the answer is memoised, and `_EPOCH` is what makes the memo safe: a
+# terminal record never changes, so the only things that can move an
+# answer are the source and the policy, which is exactly what the TTL is
+# for; and any *new* record bumps the epoch, so a cached board reading can
+# never outlive a verification that has since ended.
+_EPOCH = 0
+_FRESH_TTL = 10.0
+_FRESH: dict[str, tuple[float, dict]] = {}
+_BOARD: tuple[int, frozenset, dict] | None = None
+
 
 def _key(task: str, check: str, scope: str | None) -> str:
     return f"{task}\x00{check}\x00{scope or ''}"
@@ -436,6 +454,9 @@ def _store(record: dict) -> dict:
     the request is accepted and once when it ends — because an evidence
     file that only appeared at the end would be missing in exactly the
     case a reader most needs it: while it is running, and after a crash."""
+    global _EPOCH
+    with state.LOCK:
+        _EPOCH += 1
     config.EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     stored = {k: v for k, v in record.items() if k not in ("proc", "cancelling")}
     path_of(record["id"]).write_text(
@@ -1130,7 +1151,30 @@ def outcome_now(record: dict) -> dict:
     and it may only ever disagree in the safe direction: a `passed` whose
     source or policy moved becomes `stale`, and nothing ever becomes
     `passed` here.
+
+    Memoised for `_FRESH_TTL`, because the question costs git. Only a
+    `passed` can change reading at all, so only a `passed` is asked —
+    everything else is already the record's own last word, and no amount
+    of re-reading turns a failure into anything else.
     """
+    if record.get("outcome") != "passed":
+        return {"outcome": record.get("outcome"), "reason": record.get("reason"),
+                "why": record.get("why"),
+                "freshness": {"fresh": True, "changed": []},
+                "recorded": record.get("outcome")}
+    key = record.get("id") or ""
+    cached = _FRESH.get(key)
+    if cached and time.time() - cached[0] < _FRESH_TTL:
+        return cached[1]
+    found = _outcome_now(record)
+    if key:
+        if len(_FRESH) > 500:        # a memo, not a store
+            _FRESH.clear()
+        _FRESH[key] = (time.time(), found)
+    return found
+
+
+def _outcome_now(record: dict) -> dict:
     fresh = freshness(record)
     if fresh["stale"]:
         return {"outcome": "stale", "reason": "source-changed"
@@ -1235,17 +1279,36 @@ def board(collected: dict) -> dict:
     chip on this board follows — a board nobody configured checks on gets
     an empty object and renders exactly what it always did.
     """
+    global _BOARD
+    files = frozenset(task["file"] for stage in collected.get("stages", [])
+                      for task in stage["tasks"])
+    with state.LOCK:
+        epoch = _EPOCH
+    # The key carries a time bucket as well as the epoch, because a pass
+    # can go stale without anything being stored — the source moved under
+    # it. Epoch alone would hold a `passed` chip on a card whose code has
+    # changed for as long as nothing else was verified.
+    stamp = (epoch, int(time.time() / _FRESH_TTL))
+    if _BOARD is not None and _BOARD[0] == stamp and _BOARD[1] == files:
+        return _BOARD[2]
+
     worst = ("failed", "prepare-failed", "error", "denied", "stale",
              "cancelled", "running", "preparing", "passed")
     found: dict = {}
     by_task: dict[str, list[dict]] = {}
     for record in all_evidence():
-        by_task.setdefault(record.get("task") or "", []).append(record)
-    files = {task["file"] for stage in collected.get("stages", [])
-             for task in stage["tasks"]}
-    for filename, records in by_task.items():
-        if filename not in files:
+        task = record.get("task") or ""
+        if task not in files:
             continue
+        by_task.setdefault(task, []).append(record)
+    for filename, records in by_task.items():
+        # One row per check: the chip summarises a card, and an older run
+        # of the same check is history the sheet shows rather than a
+        # second thing to weigh here.
+        latest: dict[str, dict] = {}
+        for record in records:              # all_evidence() is newest first
+            latest.setdefault(record.get("check") or "", record)
+        records = list(latest.values())
         readings = [outcome_now(r) for r in records]
         outcomes = [r["outcome"] for r in readings]
         pick = next((w for w in worst if w in outcomes), outcomes[0])
@@ -1259,7 +1322,17 @@ def board(collected: dict) -> dict:
                           for r in records),
             "location": "local",
         }
+    _BOARD = (stamp, files, found)
     return found
+
+
+def forget_cached() -> None:
+    """Drop the memoised readings. Nothing on the serving path calls it —
+    the epoch and the TTL do that work — but a test, and anything that
+    changes a root under the board's feet, needs the door."""
+    global _BOARD
+    _FRESH.clear()
+    _BOARD = None
 
 
 def line(record: dict) -> str:

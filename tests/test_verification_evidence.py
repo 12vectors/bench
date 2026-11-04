@@ -191,6 +191,10 @@ class VerifyCase(unittest.TestCase):
                          verify.RUNNING, verify._KEYS):
             registry.clear()
             self.addCleanup(registry.clear)
+        # The memoised freshness readings are per evidence id and keyed on
+        # paths this case is about to replace, so they start and end empty
+        verify.forget_cached()
+        self.addCleanup(verify.forget_cached)
         self.sent: list[dict] = []
         self.addCleanup(setattr, state, "broadcast", state.broadcast)
         state.broadcast = self.sent.append
@@ -640,6 +644,27 @@ class EvidenceIsBoundToItsSubject(VerifyCase):
         reading = verify.outcome_now(verify.read(found["id"]))
         self.assertEqual(reading["outcome"], "stale")
         self.assertEqual(reading["reason"], "policy-changed")
+
+    def test_the_memoised_reading_cannot_hold_a_pass_open(self):
+        """Asking whether a pass is fresh costs git, so the answer is
+        memoised — and the memo is only ever consulted for a `passed`,
+        expires, and can be dropped. What it must never do is keep a card
+        green after its code changed, so the board reading carries a time
+        bucket as well as the epoch."""
+        self.declares(self.one_check())
+        tree = self.worktree()
+        self.manifest()
+        found = self.ask("unit")
+        collected = {"stages": [{"slug": "in-progress",
+                                 "tasks": [{"file": CARD}]}]}
+        self.assertEqual(verify.board(collected)[CARD]["outcome"], "passed")
+        (tree / "code.txt").write_text("changed under it\n", encoding="utf-8")
+        verify.forget_cached()
+        self.assertEqual(verify.board(collected)[CARD]["outcome"], "stale")
+        # and a failure is never asked at all — the record is its last word
+        again = verify.read(found["id"])
+        again["outcome"] = "failed"
+        self.assertEqual(verify.outcome_now(again)["outcome"], "failed")
 
     def test_nothing_ever_becomes_passed_by_being_re_read(self):
         self.declares(self.one_check(run=str(self.executable("fails", FAILS))))
@@ -1269,6 +1294,35 @@ class TheApiIsOneDoor(VerifyCase):
                         "error", "cancelled"):
             self.assertIn(f'"{outcome}"', text)
         self.assertIn("never, by itself, a test", text)
+
+    def test_the_shipped_example_document_parses_and_resolves(self):
+        """The documentation is a real document: it is copied, edited and
+        run by every operator who configures this, so a `_doc` key or a
+        check that does not validate is a bug in the feature."""
+        example = (REPO / "manager" / "core" / "profiles.example.json")
+        data = json.loads(example.read_text(encoding="utf-8"))
+        self.assertEqual(data["v"], profiles.PROFILE_VERSION)
+        # pointed at this test's own roots, with the example's own paths
+        # replaced by files that exist here — the shape is what is on test
+        data["context"] = []
+        for profile in data["profiles"].values():
+            profile.pop("context", None)
+        recorder = str(self.executable("recorder", RECORDER))
+        for check in data["checks"]:
+            if check["run"].startswith("python3 -m unittest"):
+                check["run"] = recorder
+        for step in data["prepare"]:
+            step["run"] = recorder
+        data["requires"] = [r for r in data["requires"]
+                            if r != "pinned-context"]
+        self.declares(data)
+        self.worktree()
+        for intent in profiles.INTENTS:
+            with self.subTest(intent=intent):
+                found = profiles.manifest(intent, CARD, "in-progress")
+                self.assertEqual(found["blockers"], [])
+                self.assertTrue(found["verify"],
+                                "the example declares a check for every intent")
 
     def test_the_seams_name_the_runner_that_now_exists(self):
         seams = profiles.seams()

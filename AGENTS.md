@@ -44,7 +44,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports → taskfiles → plans / profiles → events / github / drive / sync → agents → phases → watch / httpd → board.py
+config → state / reports → taskfiles → plans / profiles → verify → events / github / drive / sync → agents → phases → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -60,6 +60,10 @@ config → state / reports → taskfiles → plans / profiles → events / githu
   in that checkout and which files it is guaranteed to have read. One
   profile per launch intent, the approved context it pins read-only, and
   the manifest recording what each run actually rode
+- `verify.py` — the named checks bench runs itself, on a run's request:
+  the argument list built here rather than composed by a model, the
+  environment the check is given, and the evidence it leaves — the
+  runner's own exit status, bound to the source it ran against
 - `events.py` — ingests NORMALIZED events (the adapter contract), session registry
 - `github.py` — PR opening, Copilot requests, review/CI polling
 - `drive.py` — runs the project driver, tracks the one live drive
@@ -653,7 +657,9 @@ The board has four views (header switcher):
   `core/`), what the run was actually permitted to do and given to read —
   read from the manifest frozen at its launch, which is a different fact
   from what the settings say now (see "Execution profiles and approved
-  context") — and per-file diff stats from its worktree.
+  context") — what **bench itself** ran and found, which is a different
+  fact again (see "Verification: bench runs the check") — and per-file
+  diff stats from its worktree.
 
 Liveness comes from Claude Code hooks configured in `.claude/settings.json`:
 every session in this repo POSTs normalized events to the board via the
@@ -1083,6 +1089,184 @@ chip follows — and a document that does not parse wears the alarm and the
 reason. Technical detail (identities, hashes, the settings precedence, the
 capability table) folds away rather than leading, and an approved
 document's contents are nowhere on the page.
+
+## Verification: bench runs the check
+
+A plan says which checkout a run works in; a profile says what it may do
+there. This is the question those two leave open: **did the project's own
+checks actually pass, and against what?**
+
+"The tests passed" used to be a sentence in an agent's report. The board
+had given the run a *prefix* — `python3 -m unittest` — and a shell, and
+then believed what came back. A **named check** is the other
+arrangement: the run asks for `unit-tests`, bench reads the operator's
+document, builds the argument list itself, runs it with no shell, and
+records the exit status its own `wait()` returned before the asking run
+is told anything.
+
+Three things follow, and they are the whole feature:
+
+- **Nothing a model writes reaches an argv.** A name is all a run can
+  choose. There is no command line for anything to be appended to, and a
+  scope is a *declared name* too (`--fast`, a directory, a `-k` filter is
+  the operator's to write, never the run's).
+- **An exit code read by the thing being judged is not evidence.** An
+  agent exiting zero cannot make a check passing, and a check nothing
+  asked for is `not-run` rather than silence.
+- **"It failed" is not one fact.** A test that failed, a dependency that
+  would not install, a permission that was refused, a cancellation and a
+  timeout are five different things to do next, so they are five
+  outcomes rather than one non-zero.
+
+### What a document declares
+
+Two lists at the top level of the profile document, and a name per intent
+— the whole schema is in `manager/core/profiles.example.json`:
+
+```jsonc
+"checks":  [{"name": "unit", "run": "python3 -m unittest discover -s tests",
+             "root": "worktree", "scopes": {"fast": ["-k", "fast"]},
+             "prepare": ["deps"], "timeout": 900}],
+"prepare": [{"name": "deps", "run": "python3 -m pip install -e .",
+             "network": true}],
+"profiles": {"work": {"verify": ["unit"]}, "review": {"verify": ["unit"]}}
+```
+
+A check is validated where the document is read — in the policy layer,
+beside the grants and the inputs, and ahead of any process. It is held to
+everything a command grant is held to and three things more, each because
+*bench* is the one running it:
+
+- **The application checkout is not an execution root.** `worktree` is
+  the card's own checkout, which bench made; `source` is a detached
+  checkout of one exact commit that bench makes for the verification and
+  owns. There is no third answer, because verifying in the live code and
+  the live services is how a test suite takes a working tree down with
+  it — and `source` is the only root a read-only run has.
+- **A check verifies; it does not reshape the repository.** `git diff
+  --check` is exactly the sort of thing a check is; `git push`, `git
+  reset`, `git worktree`, `git config` and the rest are refused by name,
+  because the execution root shares its git metadata with every other
+  worktree of the application.
+- **An argument naming a credential is refused**, as a context selection
+  is — `pytest --env-file .env` is refused as an argument rather than as
+  a file.
+
+A check *may* be quoted where a grant may not, and the difference is
+worth keeping straight: a grant becomes a prefix allow-rule and a rule
+cannot see through a quote, so quoting there would widen what it matched.
+A check is never rendered into a rule — bench splits it once and hands
+the result to `execve` — so a path with spaces is expressible exactly the
+way a shell expresses one.
+
+### How a run asks
+
+One executable, granted by bench itself and present only where that
+intent has a check to ask for: `manager/core/bench-verify`. With no
+arguments it lists what the run may ask for; with a name it runs it; with
+a name and a scope it runs that scope. Its exit status says which *kind*
+of answer came back — `0` passed, `1` the check itself said no, `2`
+refused, `3` preparation failed, `4` no verdict reached, `5` the board
+could not be asked — so only `1` is a test failure.
+
+Because it is a grant, both adapters render it, **`review` included**.
+That is the one rule this changed: a profile's named grants now reach the
+read-only intent, while `BOARD_AGENT_COMMANDS` still does not. A review
+that can ask bench to run the tests gains no commit and no push rule
+anywhere in the generated document, which is the separation
+`publication` existed for.
+
+### The compatibility path, in one sentence
+
+A `verify` entry naming one of the intent's own **command grants**
+resolves to a check built from that grant. So a document written before
+bench could run anything keeps working and its declared requirement
+becomes a real run — while a `verify` naming *nothing* is now refused,
+because a requirement that resolves to `pending` is indistinguishable
+from a check that will never run. A board with no document has no checks
+at all and resolves exactly as it always did: its agents run the
+project's commands themselves, through the grants they have always had.
+
+### What a check is given, and what that is worth
+
+Said narrowly, because the obvious phrasing claims more. Bench
+**enforces** the argument list, the absence of publication credentials
+(removed from the child's environment by name — a process cannot read
+what is not there), the directory the check starts in, and that a check
+never runs in the application checkout. Bench **directs** where caches,
+virtualenvs, `node_modules`, build output and temporary files land, by
+pointing `HOME`, `TMPDIR` and the cache variables into a directory made
+for the verification. That is not a jail: a check with a path can still
+write elsewhere. `filesystem-sandbox` is the capability that would make
+it one, no shipped adapter or backend enforces it, and a profile that
+*requires* it is refused rather than reported as guaranteed.
+
+Two more absences are deliberate. The **launch environment** (`AGENT_*`)
+never reaches a check, so it cannot read the prompt or the resolved
+policy; and neither does the board's own address (`BOARD_PORT`,
+`BOARD_AGENT_ID`), so a check cannot turn round and ask for another
+verification. A preparation step that declares `"network": true` runs
+with whatever network the machine has and the evidence says so —
+`network-policy` is pending, and a profile requiring it refuses.
+
+### The evidence
+
+One JSON record per verification under `local/state/evidence/`, written
+when the request is accepted and rewritten when it ends, with the
+check's whole output beside it. It holds the command and its argument
+list, the execution root and whether bench made it, the exact source
+(the commit, the branch, and a digest of everything uncommitted), the
+policy, check, context and request identities, the names removed from the
+environment, every preparation step's own outcome, the timestamps, the
+exit status and the log. Machine-local for the manifest's reason, so the
+board says `local to this board` rather than implying a teammate can see
+it.
+
+Four things it guarantees:
+
+- **It never drifts towards a pass.** A record still marked `running`
+  when a board starts is evidence that board does not own, so it is
+  closed as `error`, naming the restart. Nothing is re-run: asking again
+  is a person's decision, and an automatic retry at boot is how an outage
+  becomes a thundering herd.
+- **A pass is bound to what it was about.** Modified tracked source, a
+  new untracked file, a new commit, an edited check or a changed policy
+  all make a recorded `passed` read `stale`. `freshness()` compares and
+  never resolves; `outcome_now()` may only ever disagree with the record
+  in the safe direction.
+- **Secrets do not reach a reader.** The record names paths, revisions
+  and hashes and never content or an environment *value*; the log — the
+  one place bytes bench did not write get through — is scrubbed of
+  anything credential-shaped on the way out.
+- **It outlives the run, the worktree and the board.** Holding a run
+  cancels the verifications bench was running for it, recorded as
+  cancelled rather than as failures; a duplicate request for a check
+  already in flight joins it rather than doubling it; and a `source`
+  checkout with uncommitted work in it is kept and reported rather than
+  forced out.
+
+### On the board
+
+A `◫` chip in the card's footer row, beside `⚿`, `⌖` and `CI`, opens the
+evidence: every named check with its outcome **in words**, its scope, the
+commit it ran against, how long it took, its preparation steps drawn
+apart from the check they prepared, and a safe link to the scrubbed log.
+Colour means state as it does everywhere here, but the word is what
+carries the meaning — a test failure, a permission denial and a
+dependency failure must not collapse into "red".
+
+The Focus view gains a **Verification** panel beside **Checks**, and the
+pair is the point: `Checks` is classified from commands the *agent* ran —
+the run's own account of itself — and this one is the runner's, every row
+a process the board launched and waited on. A finished agent with nothing
+there reads `not run`, in those words, and says so.
+
+Opening either runs nothing. Rerunning is an armed `↻` per check in the
+sheet, with its side effects written out beside it: the check's command
+in the card's own checkout (or a detached one bench makes and removes),
+preparation first, a new evidence record and a new log — no card moved,
+no branch touched, nothing published, and a run already in flight joined
+rather than doubled.
 
 ## Pull requests
 

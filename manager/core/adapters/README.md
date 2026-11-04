@@ -107,10 +107,33 @@ rendered as rules that beat your allows (both shipped adapters map them in
 it: a profile may turn a side effect off for an intent and may never turn
 one on.
 
+One rule about `commands` is worth stating on its own, because it is the
+one that changed. **Render a profile's grants for every intent, `review`
+included.** `AGENT_COMMANDS` stays restricted to `work` and `act-pr` —
+the read-only intent never had the project's commands and must not gain
+them by the back door — but a resolved profile's grants are named,
+validated and deliberately selected, and one of them may be bench's own:
+where a profile declares named checks, bench adds a grant for the
+`bench-verify` shim that *asks* for one. A review that can ask bench to
+run the tests is not a review that can commit, and both shipped adapters
+show the shape: the shim gets an allow-rule, `git commit` and `git push`
+get deny-rules, in the same generated document.
+
 `AGENT_CONTEXT` is the read-only inputs bench pinned for the run — `[{"name",
 "path", "source", "sha256", "access": "read-only"}]`, paths and hashes
 only, never content. The prompt already names them; an adapter that can
 grant reads narrowly may also use the list.
+
+### What an adapter has nothing to do with: verification
+
+A profile's named **checks** are not in `AGENT_PROFILE` and deliberately
+so. Bench runs them itself, in a root it chose, with an environment it
+built and no shell — see "Verification: bench runs the check" in the root
+`AGENT.md` — and the only thing that reaches an adapter is the one grant
+for the shim a run invokes to ask. So an adapter needs no notion of a
+check, a scope, a preparation step or an outcome, and an adapter override
+written before any of this existed gets exactly the environment it always
+got.
 
 ### `capabilities.json` — what you can actually enforce
 
