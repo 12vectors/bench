@@ -2332,6 +2332,21 @@ def verification_block(found: dict | None) -> str:
         "passing when the runner printed otherwise is a claim the record "
         "contradicts, and a reviewer reads the record.",
     ]
+    # And, where this board actually gates a merge on one of them, the
+    # one operational consequence a run has to know: the evidence is
+    # bound to the commit. A check asked for over uncommitted work was
+    # not about the commit that merges, so it satisfies nothing — which
+    # makes "commit, then ask" the order rather than a preference.
+    if _gates_something(document()):
+        lines += [
+            "",
+            "This board gates its merges on those checks, and a result is "
+            "bound to the commit it ran against: evidence from another "
+            "commit, or from a checkout with uncommitted work in it, "
+            "satisfies nothing. So **commit your work first and ask for the "
+            "check afterwards**, and if you commit again, ask again. "
+            "Nothing merges on a report, an exit code, or new commits.",
+        ]
     return "\n".join(lines)
 
 

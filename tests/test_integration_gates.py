@@ -66,6 +66,7 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import agents  # noqa: E402
 import config  # noqa: E402
+import doctor  # noqa: E402
 import gates  # noqa: E402
 import github  # noqa: E402
 import httpd  # noqa: E402
@@ -1282,3 +1283,83 @@ class ThePageReadsTheDecision(unittest.TestCase):
     def test_reading_it_is_not_an_action(self):
         self.assertIn("Opening this runs nothing", self.html)
         self.assertIn("Reading it here runs nothing", self.html)
+
+
+# ── asking what the gate requires, before paying for anything ──────────
+
+
+class TheDoctorReportsTheGate(GateCase):
+    """The readiness report answers for gates at the `static` distance:
+    what this board would refuse a merge without, and every refusal in the
+    gate block with the code it came from. It reads no evidence and
+    decides no card's case."""
+
+    def test_an_ungated_board_is_skipped_rather_than_passed(self):
+        found = doctor.inspect(worktree=self.tmp / "worktrees" / STEM)
+        rows = {f["name"]: f for f in found["findings"]
+                if f["name"].startswith("gate:")}
+        for scope in profiles.GATE_SCOPES:
+            with self.subTest(scope=scope):
+                self.assertEqual(rows[f"gate:{scope}"]["outcome"], "skipped")
+                self.assertIn("nothing is proved",
+                              rows[f"gate:{scope}"]["detail"])
+        self.assertFalse(found["gates"]["configured"])
+
+    def test_a_configured_gate_is_reported_with_what_it_requires(self):
+        self.gated(review="bench")
+        found = doctor.inspect(worktree=self.tmp / "worktrees" / STEM)
+        row = next(f for f in found["findings"]
+                   if f["name"] == "gate:acceptance")
+        self.assertEqual(row["outcome"], "passed")
+        self.assertIn("requires unit", row["detail"])
+        self.assertIn("review: bench", row["detail"])
+        self.assertEqual(found["gates"]["scopes"]["acceptance"]["review"],
+                         "bench")
+
+    def test_a_broken_gate_block_is_a_failed_row_with_its_remedy(self):
+        self.declares({"v": 1, "gates": {"acceptance": {"checks": ["nope"]}}})
+        found = doctor.inspect(worktree=self.tmp / "worktrees" / STEM)
+        rows = [f for f in found["findings"] if f["name"].startswith("gate:")]
+        failed = [f for f in rows if f["outcome"] == "failed"]
+        self.assertTrue(failed)
+        coded = next(f for f in failed if f["code"] == "gate-check-undeclared")
+        self.assertTrue(coded["remedy"])
+        for scope in profiles.GATE_SCOPES:
+            row = next(f for f in rows if f["name"] == f"gate:{scope}")
+            self.assertEqual(row["outcome"], "failed",
+                             "a policy that does not resolve gates nothing "
+                             "open")
+
+    def test_benchs_own_broken_gate_fixtures_still_refuse(self):
+        rows = {f["name"]: f for f in doctor.fixture_findings()}
+        for name, code in (("fixture:a-gate-requiring-nothing",
+                            "gate-check-undeclared"),
+                           ("fixture:a-review-policy-that-is-not-one",
+                            "gate-review-unknown")):
+            with self.subTest(name=name):
+                self.assertEqual(rows[name]["outcome"], "passed",
+                                 rows[name]["detail"])
+                self.assertEqual(rows[name]["code"], code)
+
+    def test_the_override_path_is_reported_whether_or_not_it_is_on(self):
+        found = doctor.inspect(worktree=self.tmp / "worktrees" / STEM)
+        row = next(f for f in found["findings"]
+                   if f["name"] == "gate:override")
+        self.assertEqual(row["outcome"], "skipped")
+        self.assertIn("forges no evidence", row["detail"])
+        self.gated(overrides={"allow": True, "actors": ["istos"]})
+        found = doctor.inspect(worktree=self.tmp / "worktrees" / STEM)
+        row = next(f for f in found["findings"]
+                   if f["name"] == "gate:override")
+        self.assertEqual(row["outcome"], "passed")
+        self.assertIn("istos", row["detail"])
+
+    def test_the_report_reads_nothing_and_runs_nothing(self):
+        self.gated()
+        self.worktree()
+        before = sorted(p.name for p in (self.state).rglob("*")) \
+            if self.state.is_dir() else []
+        doctor.inspect(worktree=config.WORKTREES / STEM)
+        after = sorted(p.name for p in (self.state).rglob("*")) \
+            if self.state.is_dir() else []
+        self.assertEqual(before, after)

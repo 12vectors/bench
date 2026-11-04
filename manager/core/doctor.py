@@ -383,6 +383,10 @@ def inspect(worktree: Path | str | None = None) -> dict:
         readings.append(_public_intent(found))
         findings += _intent_findings(intent, found)
 
+    # — what a merge refuses without, which is not what a launch grants —
+    gate_policy = profiles.gate_policy(doc)
+    findings += _gate_findings(gate_policy)
+
     # — what nothing here enforces, named rather than omitted —
     findings += _pending_findings(table, readings)
 
@@ -392,6 +396,10 @@ def inspect(worktree: Path | str | None = None) -> dict:
     return {
         "layout": layout,
         "problems": troubles,
+        # what this board refuses a merge without, per guarded scope. The
+        # same resolution the merge path reads, reported and never
+        # re-derived — this module owns no policy logic here either.
+        "gates": profiles.gate_policy_public(gate_policy),
         "policy": {"kind": doc["kind"], "identity": doc["identity"],
                    "path": doc["path"], "revision": doc["revision"],
                    "describes": doc["describes"], "problem": doc["problem"],
@@ -404,6 +412,60 @@ def inspect(worktree: Path | str | None = None) -> dict:
         "intents": readings,
         "findings": findings,
     }
+
+
+def _gate_findings(policy: dict) -> list[dict]:
+    """What a merge on this board refuses without, per guarded scope.
+
+    A reading at the `static` distance and nothing more: it resolves the
+    operator's gate block and reports it. It reads no evidence, asks git
+    nothing and decides no card's case — a particular card's gate is the
+    ⚖ chip on that card, for the reason the `scope` row above gives.
+
+    A board that declares no gate gets `skipped` rather than `passed`,
+    which is the distinction this whole report is built on: nothing is
+    required here, and nothing is proved.
+    """
+    out: list[dict] = []
+    for scope, entry in sorted(policy["scopes"].items()):
+        checks = ", ".join(c["name"] for c in entry["checks"])
+        out.append(_finding(
+            "inspect", f"gate:{scope}",
+            "failed" if policy["blockers"] else
+            ("passed" if entry["gated"] else "skipped"),
+            entry["why"],
+            (f"this board's gate policy does not resolve, so no gate can be "
+             f"evaluated and none is assumed met: {policy['blockers'][0]}"
+             if policy["blockers"] else
+             f"requires {checks or 'no check'}"
+             f" · review: {entry['review']} — {entry['reviewWhy']}"
+             if entry["gated"] else
+             "nothing is required here, so nothing is proved — a merge runs "
+             "as it did before gates existed"),
+            remedy=(profiles.DIAGNOSTICS["gate-check-undeclared"][1]
+                    if policy["blockers"] else
+                    ("Declare it in the document's \"gates\" block if this "
+                     "board should refuse a merge without evidence. An "
+                     "unconfigured gate is honest, not safe."
+                     if not entry["gated"] else None))))
+    for diagnostic in policy["diagnostics"]:
+        out.append(_finding(
+            "inspect", f"gate:{diagnostic['code']}", "failed",
+            diagnostic["title"], diagnostic["why"],
+            code=diagnostic["code"], remedy=diagnostic["remedy"]))
+    out.append(_finding(
+        "inspect", "gate:override", "skipped" if not
+        policy["overrides"]["allowed"] else "passed",
+        "whether a person may proceed over an unmet gate on this board, and "
+        "what is recorded when they do",
+        policy["overrides"]["why"]
+        + (f" · allowed to: {', '.join(policy['overrides']['actors'])}"
+           if policy["overrides"]["actors"] else "")
+        + ". An override records the actor, the reason, the exact head and "
+          "the exact gates that were unmet; it forges no evidence and "
+          "authorises one commit",
+        remedy=None))
+    return out
 
 
 def _intent_findings(intent: str, found: dict) -> list[dict]:
@@ -586,6 +648,31 @@ FIXTURES = (
         "intent": "work",
         "raw": "{ this is not json",
     },
+    {
+        # Resolved through `gate_policy` rather than `resolve`, because a
+        # gate is a property of the board and not of a launch intent. Same
+        # reader, same codes, same remedies — see `fixture_findings`.
+        "name": "a-gate-requiring-nothing",
+        "about": "a gate requiring a check the document declares nowhere",
+        "code": "gate-check-undeclared",
+        "via": "gates",
+        "intent": "work",
+        "document": {
+            "v": 1,
+            "gates": {"acceptance": {"checks": ["unit"]}},
+        },
+    },
+    {
+        "name": "a-review-policy-that-is-not-one",
+        "about": "a gate asking for a review policy bench has no word for",
+        "code": "gate-review-unknown",
+        "via": "gates",
+        "intent": "work",
+        "document": {
+            "v": 1,
+            "gates": {"acceptance": {"review": "lgtm"}},
+        },
+    },
 )
 
 
@@ -609,10 +696,12 @@ def fixture_findings() -> list[dict]:
                                 encoding="utf-8")
             wanted = fixture["code"]
             try:
-                found = profiles.resolve(
-                    fixture["intent"],
-                    worktree=tmp / "worktree",
-                    policy=profiles.document_at(path))
+                found = (
+                    profiles.gate_policy(profiles.document_at(path))
+                    if fixture.get("via") == "gates" else
+                    profiles.resolve(fixture["intent"],
+                                     worktree=tmp / "worktree",
+                                     policy=profiles.document_at(path)))
                 codes = [d["code"] for d in found["diagnostics"]]
                 why = next((d["why"] for d in found["diagnostics"]
                             if d["code"] == wanted), None)
