@@ -446,9 +446,13 @@ def _run_process(argv: list[str], root: Path, env: dict, log,
         cancelled = record.get("cancelling")
     ended = time.time()
     if cancelled:
+        # `cancel()` takes the reason from its caller, so a word this
+        # table does not hold is possible — and a KeyError here would
+        # leave the record `running` for ever, which is the one thing a
+        # cancellation must not do. The word itself is the fallback.
         return {"rc": rc, "started": started, "ended": ended,
                 "outcome": "cancelled", "reason": cancelled,
-                "why": REASONS[cancelled]}
+                "why": REASONS.get(cancelled, cancelled)}
     if timed_out:
         log.write(f"bench: killed after {timeout:.0f}s\n".encode("utf-8"))
         log.flush()
@@ -623,9 +627,17 @@ def _refuse(request: dict, reason: str, why: str) -> dict:
 # ── a request, from its first refusal to its evidence ──────────────────
 
 
+# The card name a diagnosis files its evidence under. Not a card — no
+# stage directory holds it and `for_task` of any real card never returns
+# it — which is the point: a doctor's run must be visible as a doctor's
+# run and must never be read as one of a card's checks having passed.
+FIXTURE_TASK = "bench-doctor.fixture.md"
+
+
 def request(*, check: str, task: str | None = None, agent: str | None = None,
             scope: str | None = None, intent: str | None = None,
-            stage: str | None = None, actor: str = "agent") -> dict:
+            stage: str | None = None, actor: str = "agent",
+            fixture: dict | None = None) -> dict:
     """Run one named check, and record what happened.
 
     Synchronous: it returns when the check has ended, because the thing
@@ -639,19 +651,34 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
     Neither can name a check the profile does not hold, and neither can
     name another card: the execution root is derived from the task, and
     the task from the run.
+
+    `fixture` is the one caller that supplies both halves itself —
+    `doctor.py`, with a policy it resolved from a fixture document and a
+    root it made for the diagnosis. Everything below it is the runner this
+    function has always been: the argument list bench builds, the isolated
+    environment, the preparation, the evidence written before the caller
+    is told anything. What it is *not* is a second runner, which is the
+    whole reason the parameter exists rather than a copy of this body. The
+    root is the caller's, so `_cleanup` removes nothing of it.
     """
-    frozen = profiles.recorded(agent) if agent else None
-    if agent and frozen is None:
-        return _refuse(
-            _request_shell(check, task or "", scope, intent or "work", agent,
-                           actor, stage or "", None),
-            "no-profile",
-            f"there is no recorded execution profile for the run '{agent}', so "
-            f"there is nothing that says which checks it may ask for")
-    if frozen is not None:
-        task = frozen.get("task") or task
-        intent = frozen.get("intent") or intent or "work"
-        stage = frozen.get("stage") or stage
+    frozen = None
+    if fixture is not None:
+        task = FIXTURE_TASK
+        intent = (fixture["manifest"].get("intent") or "work")
+        stage = ""
+    else:
+        frozen = profiles.recorded(agent) if agent else None
+        if agent and frozen is None:
+            return _refuse(
+                _request_shell(check, task or "", scope, intent or "work", agent,
+                               actor, stage or "", None),
+                "no-profile",
+                f"there is no recorded execution profile for the run '{agent}', so "
+                f"there is nothing that says which checks it may ask for")
+        if frozen is not None:
+            task = frozen.get("task") or task
+            intent = frozen.get("intent") or intent or "work"
+            stage = frozen.get("stage") or stage
     task = task or ""
     intent = intent or "work"
     if Path(task).name != task or not task.endswith(".md"):
@@ -661,7 +688,7 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
                        f"{task!r} is not a task file name")
     stage = stage or taskfiles.find_stage_of(task) or ""
 
-    manifest = frozen
+    manifest = fixture["manifest"] if fixture is not None else frozen
     if manifest is None:
         # A person's request, so the profile resolves fresh — with the
         # review checkout this card is still holding, if it is one. Without
@@ -717,12 +744,22 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
     })
 
     # — the root, and nothing else's —
-    try:
-        root, prepared, root_note = _execution_root(found, task, manifest)
-    except ValueError as exc:
-        reason = "root-foreign" if "checkout of another" in str(exc) \
-            else "root-unavailable"
-        return _refuse(shell, reason, str(exc))
+    if fixture is not None:
+        root, prepared = Path(str(fixture["root"])), False
+        root_note = (f"a fixture {fixture.get('label') or 'the doctor'} made "
+                     f"and removes itself — bench owns nothing here")
+        shell["doctor"] = str(fixture.get("label") or "doctor")
+        if not root.is_dir():
+            return _refuse(shell, "root-unavailable",
+                           f"the fixture root {root} is not there, so nothing "
+                           f"was run")
+    else:
+        try:
+            root, prepared, root_note = _execution_root(found, task, manifest)
+        except ValueError as exc:
+            reason = "root-foreign" if "checkout of another" in str(exc) \
+                else "root-unavailable"
+            return _refuse(shell, reason, str(exc))
     shell["root"] = {"policy": found["root"], "path": str(root),
                      "owned": prepared, "note": root_note}
 
@@ -1381,7 +1418,11 @@ PUBLIC = ("v", "id", "runner", "task", "stage", "agent", "actor", "intent",
           "command", "scopeArgs", "root", "source", "env", "outcome",
           "reason", "why", "rc", "started", "ended", "duration", "timeout",
           "checkId", "checkRevision", "required", "help", "queued",
-          "duplicate")
+          "duplicate",
+          # present only on a diagnosis's own record: which doctor fixture
+          # it ran at. A reader must be able to tell a doctor's run from a
+          # card's, and an absent key is a card's.
+          "doctor")
 
 
 def public(record: dict | None) -> dict | None:

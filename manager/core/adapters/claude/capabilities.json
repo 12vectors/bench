@@ -17,6 +17,21 @@
     "read-only-tools": "enforced",
     "model-selection": "enforced"
   },
+  "conformance": {
+    "_doc": [
+      "How this adapter may be inspected without a vendor binary, so core",
+      "can check conformance while still knowing nothing about any vendor.",
+      "`describe` is the command — argument list, run with this directory",
+      "as its working directory — that prints what this adapter would hand",
+      "its vendor for one launch, in the normalised shape",
+      "core/adapters/README.md documents. The adapter names its own",
+      "interpreter so core never guesses at one. `stubEnv` names the",
+      "variable that replaces the vendor binary, so `run` itself can be",
+      "executed end to end against a stub."
+    ],
+    "describe": ["python3", "describe.py"],
+    "stubEnv": "BOARD_CLAUDE_BIN"
+  },
   "unsupported": {
     "filesystem-sandbox": "Claude Code's permission rules match tool inputs; they cannot confine a run's reads to a named set of files, and the shell it is granted is not sandboxed. A pinned context bundle is a guaranteed input, never a boundary on reading.",
     "network-policy": "the CLI exposes no network boundary this adapter could set"
