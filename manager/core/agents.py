@@ -904,7 +904,13 @@ def start_pr_review(filename: str, stage: str) -> dict:
         raise ValueError(found["problem"])
     stem = filename[:-3]
     checkout = reviews.checkout_path(stem, found["head"]["commit"])
-    manifest = _profiled("review", filename, stage, review=checkout)
+    # Resolved and pinned here rather than after the checkout, for the
+    # reason the work launch pins before its worktree: the one thing worse
+    # than refusing late is refusing late with a checkout already on disk.
+    # The path is derivable from the head, so this needs nothing to exist
+    # yet — and a bundle is content-addressed and read-only, so one
+    # written for a launch that then failed is reused by the next.
+    _profiled("review", filename, stage, review=checkout)
 
     # …and it must be told the branch its PR is actually from: the prompt
     # asks GitHub for the diff by branch, and a phase's is its own.
