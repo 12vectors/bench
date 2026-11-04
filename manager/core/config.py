@@ -48,6 +48,8 @@ AGENT_DIR = STATE / "agent"                        # headless-agent stdout logs
 DRIVES_DIR = STATE / "drives"                      # driver stdout logs
 HOOKS_DIR = STATE / "hooks"                        # generated agent hook config
 PLANS_DIR = STATE / "plans"                        # recorded execution plans
+MANIFESTS_DIR = STATE / "manifests"                # per-run execution manifests
+CONTEXT_DIR = STATE / "context"                    # pinned read-only input bundles
 
 # Ordered — this is the column order on the board.
 STAGES = [
@@ -965,6 +967,16 @@ def adapter_dir() -> Path | None:
         if (candidate / "run").is_file():
             return candidate
     return None
+
+
+# Where the execution-profile document is, when the project wrote one: a
+# machine-local JSON file resolved per launch intent (`profiles.py`).
+# Empty falls back to manager/local/profiles.json, and no document at all
+# resolves on BOARD_AGENT_COMMANDS plus the adapter's built-in grants —
+# exactly today's behaviour. An absolute value is used as given; a
+# relative one resolves against the tool install, never against a working
+# directory bench cannot see.
+AGENT_PROFILES = setting("BOARD_AGENT_PROFILES", "").strip()
 
 
 def driver_path() -> Path | None:
