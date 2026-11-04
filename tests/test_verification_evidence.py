@@ -566,6 +566,44 @@ class EveryOutcomeIsItsOwn(VerifyCase):
         self.assertEqual(len(self.invocations()), 0,
                          "the hanging check is the only process there was")
 
+    def test_two_checks_do_not_fight_over_the_machine(self):
+        """A check is somebody else's test suite, so the board runs at
+        most BOARD_VERIFY_PARALLEL of them: the second waits its turn
+        rather than being refused, and both get a real answer."""
+        self.patch(VERIFY_PARALLEL=1)
+        marker = self.tmp / "concurrent"
+        slow = self.executable("slow", """#!{python}
+import os, time
+path = os.environ["BENCH_VERIFY_MARKER"]
+with open(path, "a") as fh:
+    fh.write("in\\n")
+time.sleep(1.0)
+with open(path, "a") as fh:
+    fh.write("out\\n")
+""")
+        self.declares({"v": 1, "checks": [
+            {"name": "one", "run": str(slow)},
+            {"name": "two", "run": str(slow)}],
+            "profiles": {"work": {"verify": ["one", "two"]}}})
+        self.worktree()
+        self.manifest()
+        config._ENV["BENCH_VERIFY_MARKER"] = str(marker)
+        self.addCleanup(config._ENV.pop, "BENCH_VERIFY_MARKER", None)
+
+        done: list[dict] = []
+        threads = [threading.Thread(target=lambda n=name: done.append(self.ask(n)),
+                                    daemon=True)
+                   for name in ("one", "two")]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+        self.assertEqual(len(done), 2)
+        self.assertEqual({r["outcome"] for r in done}, {"passed"})
+        # one in, one out, one in, one out — never two inside at once
+        self.assertEqual(marker.read_text(encoding="utf-8").split(),
+                         ["in", "out", "in", "out"])
+
     def test_every_outcome_word_is_one_the_vocabulary_names(self):
         self.declares(self.one_check())
         self.worktree()

@@ -165,6 +165,20 @@ def _from_exit(rc: int) -> tuple[str, str, str]:
 RUNNING: dict[str, dict] = {}        # evidence id -> record, with its proc
 _KEYS: dict[str, str] = {}           # (task, check, scope) -> evidence id
 _SLOTS = threading.BoundedSemaphore(config.VERIFY_PARALLEL)
+_SLOTS_FOR = config.VERIFY_PARALLEL
+
+
+def slots() -> threading.BoundedSemaphore:
+    """How many verifications may run at once, read from the setting
+    rather than from whatever it said at import. A check is somebody
+    else's test suite: two at once is a sensible machine's worth, and a
+    board whose operator says one means one."""
+    global _SLOTS, _SLOTS_FOR
+    with state.LOCK:
+        if config.VERIFY_PARALLEL != _SLOTS_FOR:
+            _SLOTS = threading.BoundedSemaphore(config.VERIFY_PARALLEL)
+            _SLOTS_FOR = config.VERIFY_PARALLEL
+        return _SLOTS
 
 # ── and the cost of answering about it ─────────────────────────────────
 #
@@ -838,7 +852,8 @@ def _execute(record: dict, check: dict, root: Path, owned: bool) -> dict:
     _store(record)
 
     waited = time.time()
-    acquired = _SLOTS.acquire(timeout=max(check["timeout"], 60))
+    slot = slots()
+    acquired = slot.acquire(timeout=max(check["timeout"], 60))
     if not acquired:
         return _finish(record, {
             "rc": None, "started": None, "ended": time.time(),
@@ -860,7 +875,7 @@ def _execute(record: dict, check: dict, root: Path, owned: bool) -> dict:
                                        check["timeout"], record, "check")
         return _finish(record, outcome, owned, root)
     finally:
-        _SLOTS.release()
+        slot.release()
 
 
 def _log_header(record: dict, check: dict, root: Path) -> str:
