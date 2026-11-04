@@ -17,11 +17,20 @@ here either: `plans` resolves and validates one execution plan before any
 branch, worktree, claim or process exists, and everything after the
 launch reads that record (task 58).
 
+Nor is what a run may *do* in that checkout. `profiles` resolves one
+execution profile per launch intent — the named command grants, the
+approved roots, the readable inputs it pins, and the capabilities that
+are explicitly denied — validates it in the same breath as the plan, and
+records the manifest the run actually rode (task 67). Every launch below
+therefore refuses twice before it spends a token: once on the plan, once
+on the profile.
+
 Prompts live in .prompts/ and are read fresh on every launch.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -32,6 +41,7 @@ from pathlib import Path
 import config
 import events
 import plans
+import profiles
 import reports
 import state
 from taskfiles import (actor_name, append_to_task, collect, commit_edit,
@@ -109,6 +119,11 @@ def _agent_public(record: dict) -> dict:
               ("id", "task", "branch", "worktree", "status", "rc", "started", "session")}
     public["mode"] = record.get("mode", "work")
     public["name"] = record.get("name")
+    # What this run was allowed to do, as the compact reading a row wears.
+    # The whole manifest is deliberately *not* here: it is frozen on disk
+    # and fetched by `/api/manifest`, so the board's state payload does not
+    # carry a capability table per running agent on every SSE nudge.
+    public["profile"] = record.get("profile")
     # The model the launch was actually given; None = inherited the
     # vendor's own default. Honesty for the Sessions/Focus views.
     public["model"] = record.get("model")
@@ -222,7 +237,8 @@ def _validate(filename: str, stage: str, allowed: set[str], why: str | None = No
     _assert_no_running_agent(filename)
 
 
-def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str, log_path: Path):
+def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str,
+            log_path: Path, manifest: dict | None = None):
     """Run one headless job through the configured agent adapter.
 
     The adapter contract: `run` gets AGENT_PROMPT, AGENT_MODE (the intent:
@@ -232,6 +248,14 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str, log
     plus the BOARD_* passthrough for its event bridge; its stdout is the
     job log; exit 0 = completed. Returns (proc, log_file, model) with
     model = '' when the launch inherits the vendor default.
+
+    AGENT_PROFILE and AGENT_CONTEXT are the resolved execution profile's
+    half of that contract, and they are *additions*: AGENT_COMMANDS is
+    still set to exactly what it always was, so an adapter override that
+    has never heard of profiles is handed the same environment it was
+    handed before and keeps working. An adapter that does read the profile
+    reads it as a narrowing — named grants and denied capabilities — which
+    is why passing it cannot broaden what a legacy board grants.
     """
     adapter = config.adapter_dir()
     if adapter is None:
@@ -248,6 +272,12 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str, log
         "BOARD_TASK": filename,
         "BOARD_PORT": str(state.serve_port),
     })
+    if manifest is not None:
+        env["AGENT_PROFILE"] = json.dumps(profiles.adapter_policy(manifest))
+        env["AGENT_CONTEXT"] = json.dumps(profiles.adapter_context(manifest))
+    else:
+        env.pop("AGENT_PROFILE", None)
+        env.pop("AGENT_CONTEXT", None)
     model = config.agent_model(mode)
     if model:
         env["AGENT_MODEL"] = model
@@ -279,6 +309,50 @@ def _no_commands_note() -> str | None:
         return None
     return ("no project commands configured, so it cannot run this project's "
             "tests — set BOARD_AGENT_COMMANDS in manager/local/.env")
+
+
+def _profile_note(manifest: dict) -> str | None:
+    """What a launch owes the ticker about the policy it rode.
+
+    Silent on a legacy board, which is almost every board: there is
+    nothing to say about settings nobody wrote. A board with a profile
+    document gets the policy identity and how many inputs were pinned,
+    because that is the fact a reader of the log will want and the
+    manifest is otherwise machine-local.
+    """
+    if manifest["source"]["kind"] == "legacy":
+        return None
+    pinned = len([i for i in manifest["context"] if i["status"] == "pinned"])
+    bits = [f"profile {manifest['policyId']}",
+            f"{len(manifest['commands'])} named command grant"
+            f"{'' if len(manifest['commands']) == 1 else 's'}"]
+    if pinned:
+        bits.append(f"{pinned} pinned input{'' if pinned == 1 else 's'}")
+    return " · ".join(bits)
+
+
+def _profiled(intent: str, filename: str, stage: str, *,
+              worktree: Path | str | None = None) -> dict:
+    """Resolve, validate and freeze the profile for one launch.
+
+    Called twice on the paths that claim a card — once before any side
+    effect, with nothing pinned, so a refusal costs one read; and once at
+    the launch itself, where `pin_inputs=True` copies the approved inputs
+    into a read-only bundle and the record is written. Between the two
+    sits `require`, which is why no bundle is ever written for a launch
+    that was refused.
+    """
+    return profiles.require(
+        profiles.manifest(intent, filename, stage, worktree=worktree,
+                          pin_inputs=True))
+
+
+def _preflight_profile(intent: str, filename: str, stage: str, *,
+                       worktree: Path | str | None = None) -> None:
+    """The read-only half: refuse before a branch, a worktree, a claim or
+    a model exists. Writes nothing — not even a pinned bundle."""
+    profiles.require(profiles.manifest(intent, filename, stage,
+                                       worktree=worktree))
 
 
 def _fresh_branch_point() -> tuple[str | None, str | None]:
@@ -411,12 +485,20 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     # the card exactly as it was — unclaimed, no branch, no worktree, no
     # run. Then once more after the claim, because the claim is a write and
     # the committed start action revalidates what it is about to act on.
+    #
+    # The profile is validated in the same breath and for the same reason:
+    # a required input that is missing, a path that escapes its root, a
+    # capability the installed adapter cannot enforce — each of those must
+    # refuse *before* a billable model is invoked, and each of them leaves
+    # the card untouched because neither reading writes anything.
     plans.require(plans.preflight(filename, stage))
+    _preflight_profile("work", filename, stage)
     card_path = config.TASKS / stage / filename
     unclaimed = card_path.read_text(encoding="utf-8")
     claim_for_launch(filename, stage, takeover)
     try:
         plan = plans.require(plans.preflight(filename, stage))
+        _preflight_profile("work", filename, stage)
     except ValueError:
         # The second reading refused — a fetch that failed between the two,
         # a branch deleted in the gap. A launch that did not happen claims
@@ -464,12 +546,17 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     # PR this card's move into review/ opens, acting on its reviews, the
     # merge at the end — reads one target rather than resolving its own.
     plan = plans.record(plan)
+    # And the profile, pinned: from here the run's approved inputs cannot
+    # change under it, and the manifest records exactly what it rode.
+    manifest = _profiled("work", filename, "in-progress", worktree=worktree)
+    manifest = profiles.record(agent_id, manifest)
 
     prompt = config.prompt("work.md").format(
         branch=branch, filename=filename, body=task["body"],
-        plan=plans.brief(plan),
+        plan=plans.brief(plan), context=profiles.prompt_block(manifest),
         **config.prompt_fields(filename, "in-progress"))
-    proc, log_file, model = _launch("work", prompt, worktree, agent_id, filename, log_path)
+    proc, log_file, model = _launch("work", prompt, worktree, agent_id,
+                                    filename, log_path, manifest)
 
     name = _pick_name(stem)
     record = {
@@ -478,6 +565,7 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
         "rc": None, "started": time.time(), "session": None,
         "log": str(log_path), "proc": proc, "origin": stage, "mode": "work",
         "name": name, "model": model or None, "plan": plans.portable(plan),
+        "manifest": manifest, "profile": profiles.summary(manifest),
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
@@ -485,7 +573,7 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
                if continuing else
                f"{name} started on {filename} (branch {branch})")
     summary += f" — {plans.line(plan)}"
-    for note in (*plan["notes"], _no_commands_note()):
+    for note in (*plan["notes"], _profile_note(manifest), _no_commands_note()):
         if note:
             summary += f" — {note}"
     state.record_board_event({
@@ -504,16 +592,25 @@ def start_review(filename: str, stage: str) -> dict:
     answer, not an omission. Nothing is written but the report.
     """
     _validate(filename, stage, config.STAGE_DIRS)
+    # The read-only intent gets a resolved profile of its own now, rather
+    # than the hardcoded grant set each adapter used to hold alone — so a
+    # relevance check refuses a missing required input exactly as a work
+    # launch does, before the model.
+    _preflight_profile("review", filename, stage)
 
     task = read_task(config.TASKS / stage / filename, stage)
     agent_id = f"review-{filename[:-3]}-{time.strftime('%H%M%S')}"
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = profiles.record(agent_id,
+                               _profiled("review", filename, stage))
 
     prompt = config.prompt("review.md").format(
         stage=stage, filename=filename, body=task["body"],
+        context=profiles.prompt_block(manifest),
         **config.prompt_fields(filename, stage))
-    proc, log_file, model = _launch("review", prompt, config.REPO, agent_id, filename, log_path)
+    proc, log_file, model = _launch("review", prompt, config.REPO, agent_id,
+                                    filename, log_path, manifest)
 
     name = _pick_name(filename)
     record = {
@@ -521,6 +618,7 @@ def start_review(filename: str, stage: str) -> dict:
         "base": None, "status": "running", "rc": None, "started": time.time(),
         "session": None, "log": str(log_path), "proc": proc,
         "origin": stage, "mode": "review", "name": name, "model": model or None,
+        "manifest": manifest, "profile": profiles.summary(manifest),
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
@@ -745,6 +843,7 @@ def start_pr_review(filename: str, stage: str) -> dict:
     """
     _validate(filename, stage, {"review"},
               "PR reviews run on cards in review/")
+    _preflight_profile("review", filename, stage)
     task = read_task(config.TASKS / stage / filename, stage)
     if not task.get("pr"):
         raise ValueError(f"{filename} has no PR yet — nothing to review")
@@ -757,17 +856,21 @@ def start_pr_review(filename: str, stage: str) -> dict:
     agent_id = f"review-pr-{filename[:-3]}-{time.strftime('%H%M%S')}"
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = profiles.record(agent_id, _profiled("review", filename, stage))
 
     prompt = config.prompt("review-pr.md").format(
         filename=filename, pr=task["pr"], branch=branch, body=task["body"],
+        context=profiles.prompt_block(manifest),
         **config.prompt_fields(filename, stage))
-    proc, log_file, model = _launch("review", prompt, config.REPO, agent_id, filename, log_path)
+    proc, log_file, model = _launch("review", prompt, config.REPO, agent_id,
+                                    filename, log_path, manifest)
 
     record = {
         "id": agent_id, "task": filename, "branch": branch, "worktree": None,
         "base": None, "status": "running", "rc": None, "started": time.time(),
         "session": None, "log": str(log_path), "proc": proc,
         "origin": stage, "mode": "review", "name": name, "model": model or None,
+        "manifest": manifest, "profile": profiles.summary(manifest),
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
@@ -796,6 +899,9 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     stem = filename[:-3]
     branch = f"task/{stem}"
     worktree = config.WORKTREES / stem
+    # Before the worktree is recreated, not after: a profile that cannot
+    # be honoured must not leave a checkout behind to explain.
+    _preflight_profile("act-pr", filename, stage, worktree=worktree)
     # The same plan the work was launched on, revalidated before the run
     # that will push to the PR: a card whose requirements changed under it,
     # or whose base or target has disappeared, needs a person rather than a
@@ -823,14 +929,17 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     agent_id = f"fix-pr-{stem}-{time.strftime('%H%M%S')}"
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = profiles.record(
+        agent_id, _profiled("act-pr", filename, stage, worktree=worktree))
 
     prompt = config.prompt("act-pr.md").format(
         filename=filename, branch=branch, pr=task["pr"], body=task["body"],
         base=plan["prBase"], remote=plan.get("appRemote") or "origin",
-        plan=plans.brief(plan),
+        plan=plans.brief(plan), context=profiles.prompt_block(manifest),
         **config.prompt_fields(filename, stage))
     # act-pr is the one intent allowed to push: the PR must update.
-    proc, log_file, model = _launch("act-pr", prompt, worktree, agent_id, filename, log_path)
+    proc, log_file, model = _launch("act-pr", prompt, worktree, agent_id,
+                                    filename, log_path, manifest)
 
     record = {
         "id": agent_id, "task": filename, "branch": branch,
@@ -838,13 +947,14 @@ def start_pr_fix(filename: str, stage: str) -> dict:
         "rc": None, "started": time.time(), "session": None,
         "log": str(log_path), "proc": proc, "origin": stage, "mode": "work",
         "name": name, "model": model or None, "plan": plans.portable(plan),
+        "manifest": manifest, "profile": profiles.summary(manifest),
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
     summary = f"{name} is acting on the review of {filename}'s PR"
-    note = _no_commands_note()
-    if note:
-        summary += f" — {note}"
+    for note in (_profile_note(manifest), _no_commands_note()):
+        if note:
+            summary += f" — {note}"
     state.record_board_event({
         "kind": "agent", "actor": "agent", "file": filename,
         "summary": summary,

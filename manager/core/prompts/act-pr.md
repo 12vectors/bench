@@ -67,6 +67,8 @@ Do this properly:
   the PR updates.
 - Do NOT move, rename or edit the task file itself (`{task_path}`).
 
+{context}
+
 End your reply with a report whose FIRST line is exactly
 ADDRESSED: <one line on what changed>
 followed by a bullet per review point: what was asked, and what you did

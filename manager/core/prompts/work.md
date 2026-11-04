@@ -36,6 +36,8 @@ the same turn.
 
 {guidance}
 
+{context}
+
 The task is `{filename}`. Its content:
 
 --- TASK ---
