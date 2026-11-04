@@ -17,6 +17,12 @@ here either: `plans` resolves and validates one execution plan before any
 branch, worktree, claim or process exists, and everything after the
 launch reads that record (task 58).
 
+Nor, for a PR review, is *which revision* it reads. `reviews` resolves
+the pull request's repository, base and head, brings that commit here and
+adds the run-owned detached checkout the review runs in — so a review
+executes the proposed code in a checkout bench made for it rather than in
+the live application, and its verdict is bound to a commit (task 69).
+
 Nor is what a run may *do* in that checkout. `profiles` resolves one
 execution profile per launch intent — the named command grants, the
 approved roots, the readable inputs it pins, and the capabilities that
@@ -43,6 +49,7 @@ import events
 import plans
 import profiles
 import reports
+import reviews
 import state
 import verify
 from taskfiles import (actor_name, append_to_task, collect, commit_edit,
@@ -127,6 +134,10 @@ def _agent_public(record: dict) -> dict:
     # state payload carries a capability table per running agent on every
     # SSE nudge.
     public["profile"] = record.get("profile")
+    # For a PR review: which revision it is of and the checkout bench
+    # pinned for it. None on every other kind — a relevance check pins
+    # nothing, and a work run has its card's own worktree above.
+    public["review"] = record.get("review")
     # The model the launch was actually given; None = inherited the
     # vendor's own default. Honesty for the Sessions/Focus views.
     public["model"] = record.get("model")
@@ -335,7 +346,9 @@ def _profile_note(manifest: dict) -> str | None:
 
 
 def _profiled(intent: str, filename: str, stage: str, *,
-              worktree: Path | str | None = None) -> dict:
+              worktree: Path | str | None = None,
+              review: Path | str | None = None,
+              review_record: dict | None = None) -> dict:
     """Resolve, validate and pin the profile for one launch.
 
     `require` sits between the resolution and the pin, so no bundle is
@@ -346,6 +359,7 @@ def _profiled(intent: str, filename: str, stage: str, *,
     """
     return profiles.require(
         profiles.manifest(intent, filename, stage, worktree=worktree,
+                          review=review, review_record=review_record,
                           pin_inputs=True))
 
 
@@ -862,44 +876,85 @@ def start_pr_review(filename: str, stage: str) -> dict:
 
     A phase card is allowed here, deliberately: the PR into `main` is what
     the whole run exists to produce, and reading it writes nothing.
+
+    The review does **not** run in the application checkout. `reviews`
+    resolves the pull request's base and head, and bench adds a detached
+    checkout of that exact head for this run to work in — so the review
+    reads the code the PR proposes, at a revision that cannot change under
+    it, in a directory no other checkout shares. Everything is resolved
+    before anything is created, in this order:
+
+    1. the identity, which reads and fetches and creates nothing, so a PR
+       whose head bench cannot name refuses with the card untouched;
+    2. the profile, resolved and pinned against the path the checkout
+       *will* be at — derivable from the head, so no worktree exists yet
+       for a refusal to leave behind;
+    3. the checkout itself, recorded as owned by this run;
+    4. the manifest, which carries the review record, so `verify` and the
+       page read what this run was pinned rather than asking again.
     """
     _validate(filename, stage, {"review"},
               "PR reviews run on cards in review/")
     task = read_task(config.TASKS / stage / filename, stage)
     if not task.get("pr"):
         raise ValueError(f"{filename} has no PR yet — nothing to review")
-    manifest = _profiled("review", filename, stage)
 
-    # …but it must be told the branch its PR is actually from: the prompt
+    found = reviews.identity(filename, task)
+    if found["problem"]:
+        raise ValueError(found["problem"])
+    stem = filename[:-3]
+    checkout = reviews.checkout_path(stem, found["head"]["commit"])
+    manifest = _profiled("review", filename, stage, review=checkout)
+
+    # …and it must be told the branch its PR is actually from: the prompt
     # asks GitHub for the diff by branch, and a phase's is its own.
-    branch = (phase_branch(filename) if task["isPhase"]
-              else f"task/{filename[:-3]}")
+    branch = phase_branch(filename) if task["isPhase"] else f"task/{stem}"
     name = _pick_name(filename)
-    agent_id = f"review-pr-{filename[:-3]}-{time.strftime('%H%M%S')}"
+    agent_id = f"review-pr-{stem}-{time.strftime('%H%M%S')}"
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = profiles.record(agent_id, manifest)
 
-    prompt = config.prompt("review-pr.md").format(
-        filename=filename, pr=task["pr"], branch=branch, body=task["body"],
-        context=profiles.prompt_block(manifest),
-        verification=profiles.verification_block(manifest),
-        **config.prompt_fields(filename, stage))
-    proc, log_file, model = _launch("review", prompt, config.REPO, agent_id,
-                                    filename, log_path, manifest)
+    pinned = reviews.provision(filename, stage, agent_id, found)
+    try:
+        manifest = profiles.record(
+            agent_id,
+            profiles.require(profiles.manifest(
+                "review", filename, stage, review=checkout,
+                review_record=pinned, pin_inputs=True)))
+
+        prompt = config.prompt("review-pr.md").format(
+            filename=filename, pr=task["pr"], branch=branch, body=task["body"],
+            review=reviews.prompt_block(pinned),
+            context=profiles.prompt_block(manifest),
+            verification=profiles.verification_block(manifest),
+            **config.prompt_fields(filename, stage))
+        proc, log_file, model = _launch("review", prompt, Path(pinned["path"]),
+                                        agent_id, filename, log_path, manifest)
+    except BaseException:
+        # Nothing may be left holding a checkout for a run that never
+        # started — the record is the only thing that could say who owns
+        # it, and there would be no run to ask.
+        reviews.release(agent_id, "the review was never launched")
+        raise
 
     record = {
-        "id": agent_id, "task": filename, "branch": branch, "worktree": None,
-        "base": None, "status": "running", "rc": None, "started": time.time(),
-        "session": None, "log": str(log_path), "proc": proc,
-        "origin": stage, "mode": "review", "name": name, "model": model or None,
-        "profile": profiles.summary(manifest),
+        "id": agent_id, "task": filename, "branch": branch,
+        # Not `worktree`: that key is a card's own working checkout, which
+        # `agent_diff`, the drive and the local commands all read as
+        # editable. This one is read-only and bench's.
+        "worktree": None,
+        "base": found["head"]["commit"], "status": "running", "rc": None,
+        "started": time.time(), "session": None, "log": str(log_path),
+        "proc": proc, "origin": stage, "mode": "review", "name": name,
+        "model": model or None, "profile": profiles.summary(manifest),
+        "review": reviews.summary(pinned),
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
     state.record_board_event({
         "kind": "agent", "actor": "agent", "file": filename,
-        "summary": f"{name} is reviewing {filename}'s PR",
+        "summary": (f"{name} is reviewing {filename}'s PR — "
+                    f"{reviews.line(pinned)}"),
     })
     threading.Thread(target=_reap_pr_review, args=(agent_id, proc, log_file),
                      daemon=True).start()
@@ -918,6 +973,14 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     task = read_task(config.TASKS / stage / filename, stage)
     if not task.get("pr"):
         raise ValueError(f"{filename} has no PR to act on")
+    # A merged or closed pull request is not a target a push repairs, and
+    # a phase member's PR is merged into the phase branch early — so this
+    # is the common case rather than the rare one. Refused here, ahead of
+    # the profile, the worktree and the model, so nothing is pushed and
+    # nothing is represented as having repaired the integration branch.
+    obsolete = reviews.repair_problem(filename, task)
+    if obsolete:
+        raise ValueError(obsolete)
 
     stem = filename[:-3]
     branch = f"task/{stem}"
@@ -1019,6 +1082,19 @@ def _reap_pr_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
     filename = record["task"]
     name = record.get("name") or "the reviewer"
 
+    # Before the verdict is written anywhere, ask the pull request what its
+    # head is *now*. A push that landed during the review means the verdict
+    # is about an earlier revision — which is a fact the record must carry,
+    # because a review that reads as the current head's approval when it is
+    # not is exactly the green badge this card exists to prevent. Nothing
+    # is re-run and nothing is retargeted: the review said what it said,
+    # about the commit it said it about.
+    pinned = reviews.owned(agent_id) or {}
+    reviews.resolve_head(filename)
+    moved = reviews.freshness(pinned) if pinned else {"stale": False,
+                                                      "changed": []}
+    note = moved["changed"][0] if moved.get("changed") else ""
+
     verdict = None
     if rc == 0 and not stopped:
         try:
@@ -1029,7 +1105,7 @@ def _reap_pr_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
         report = _report_of(record, text[idx:] if idx >= 0 else text)
         match = re.search(r"^PR REVIEW:\s*(APPROVE|REQUEST CHANGES)", report)
         verdict = match.group(1) if match else None
-        _file_report(record, "PR review", report)
+        _file_report(record, _review_heading(pinned, moved), report)
         _session_report(record, report)
 
     if stopped:
@@ -1040,11 +1116,46 @@ def _reap_pr_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
         summary = f"{name}'s PR review of {filename} ended without a verdict — see its log"
     else:
         word = "approved it" if verdict == "APPROVE" else "asked for changes"
-        summary = f"{name} reviewed {filename}'s PR and {word}"
+        head = (pinned.get("head") or {}).get("commit") or ""
+        summary = (f"{name} reviewed {filename}'s PR at "
+                   f"{head[:12] or 'an unrecorded revision'} and {word}")
+        if note:
+            summary += f" — {note}"
     state.record_board_event({"kind": "agent", "actor": "agent", "file": filename,
                               "summary": summary})
+
+    # The checkout goes back whatever the ending was — held, failed, done.
+    # Ownership is the record's, so this removes only what bench made, only
+    # when nothing uncommitted is in it, and reports rather than forces.
+    given = reviews.release(agent_id, f"the review ended ({record['status']})")
+    if given and given.get("kept"):
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": f"{given['kept']} — nothing uncommitted is thrown away"})
     state.broadcast({"type": "board"})
     state.broadcast({"type": "agents"})
+
+
+def _review_heading(pinned: dict, moved: dict) -> str:
+    """What the permanent record calls this review.
+
+    The heading carries the revision, because the task file outlives the
+    checkout, the run and the pull request — and a reader a month later
+    has nothing else to tell "this judged the code that merged" from
+    "this judged a revision that was then pushed over". A historical
+    review says so in the heading rather than in a sentence somebody has
+    to reach.
+    """
+    if not pinned:
+        return "PR review"
+    head = ((pinned.get("head") or {}).get("commit") or "")[:12]
+    at = f"PR review at {head}" if head else "PR review"
+    if moved.get("historical"):
+        return f"{at} (historical — the PR is " \
+               f"{str(moved.get('state') or 'closed').lower()})"
+    if moved.get("stale"):
+        return f"{at} (superseded — the PR's head has moved since)"
+    return at
 
 
 def _reap_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:

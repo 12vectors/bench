@@ -169,8 +169,14 @@ class PhaseCase(unittest.TestCase):
                    LOCAL=local, WORKTREES=self.tmp / "worktrees",
                    AGENT_DIR=self.tmp / "agent", SESSIONS_DIR=self.tmp / "sessions",
                    PLANS_DIR=self.tmp / "plans",
+                   # a launch records a manifest, pins its inputs and — for
+                   # a PR review — owns a checkout: all of it under the
+                   # case's own directory, never the real install's state
+                   MANIFESTS_DIR=self.tmp / "manifests",
+                   CONTEXT_DIR=self.tmp / "context",
+                   REVIEWS_DIR=self.tmp / "reviews",
                    GH_BIN=str(gh), COMMIT_MOVES=False, SYNC=False,
-                   FETCH_TIMEOUT=10.0)
+                   FETCH_TIMEOUT=10.0, REVIEW_FETCH_TIMEOUT=30.0)
 
         for registry in (state.AGENTS, state.BOARD_EVENTS, state.EXPECTED_MOVES,
                          github.PR_STATE, phases.SNAPSHOTS):
