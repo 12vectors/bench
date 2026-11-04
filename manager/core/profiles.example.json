@@ -57,7 +57,21 @@
     "  BOARD_AGENT_PROFILES > manager/local/profiles.json > the legacy",
     "  BOARD_AGENT_COMMANDS and the adapter's built-in grants. A document",
     "  that does not parse, or declares a `v` this bench does not read, is a",
-    "  blocker on every intent — it does not quietly become the old policy."
+    "  blocker on every intent — it does not quietly become the old policy.",
+    "",
+    "CHECKING IT WITHOUT PAYING FOR A LAUNCH",
+    "  Every refusal below is produced in milliseconds, so ask for it before",
+    "  you pay for a run that would have told you:",
+    "",
+    "    python3 .task-manager/manager/board.py --doctor",
+    "    python3 .task-manager/manager/board.py --doctor --help",
+    "",
+    "  or the ⚕ readiness chip in the board's header. It resolves every",
+    "  intent through the resolver a launch rides, names the diagnostic code",
+    "  and remedy for anything that would stop one, and — when you ask for",
+    "  the active stages by name — runs the adapter's own generation and",
+    "  bench's own check runner at a fixture it removes. It fixes nothing.",
+    "  See 'Readiness: asking before paying' in AGENTS.md."
   ],
 
   "_doc_shared": [

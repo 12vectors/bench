@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import agents
 import commands
 import config
+import doctor
 import drive
 import events
 import github
@@ -54,6 +55,41 @@ def policy_payload() -> dict:
                     "unsupported": adapter["unsupported"],
                     "note": adapter.get("note")},
     }
+
+
+def doctor_payload(modes: list[str], *, approve: bool = False,
+                   asked: bool = False) -> dict:
+    """The readiness report, at whatever distance was asked for.
+
+    One function behind both routes, because the difference between them
+    is not what they compute — it is what they are *allowed* to. A GET
+    passes no modes and is therefore inspection: resolving, hashing and
+    reading approved files, with no process, no pin and no checkout. A
+    POST may name the modes that do something, and `asked` is how this
+    tells "the page opened the inspector" from "a person clicked a button
+    with its side effects written beside it".
+
+    The real-agent mode is the one that is refused rather than deferred
+    when it is named without approval: a request that said "run the real
+    CLI" and got a `deferred` row back would read as a mode that quietly
+    did nothing, so the request itself fails and nothing is diagnosed.
+    """
+    for mode in modes:
+        if mode not in doctor.MODES:
+            raise ValueError(f"unknown doctor mode '{mode}' — one of "
+                             f"{', '.join(doctor.MODES)}")
+        if not asked and doctor.MODES[mode]["sideEffects"]:
+            raise ValueError(
+                f"the '{mode}' mode {doctor.MODES[mode]['does']}, which is "
+                f"not something reading a report may do — ask for it "
+                f"explicitly")
+    if "real-agent" in modes and not approve:
+        raise ValueError(
+            "the real-agent mode launches the installed CLI with a model and "
+            "spends tokens on this board's configured account, so it needs "
+            "its own approval — send \"approve\": true with it. Nothing was "
+            "diagnosed.")
+    return doctor.report(modes, approve_real_agent=approve)
 
 
 def state_payload() -> dict:
@@ -309,6 +345,21 @@ class Handler(BaseHTTPRequestHandler):
                      "scopes": sorted(c["scopes"]), "help": c["help"],
                      "required": c["required"]}
                     for c in verify.available(frozen)]})
+        elif path == "/api/doctor":
+            # Readiness, read. The whole per-intent resolution, every
+            # diagnostic with its remedy, bench's own fixture documents
+            # through the same resolver, and the coverage table saying
+            # which modes were *not* asked for.
+            #
+            # A GET names no mode, so this starts no process, pins
+            # nothing, provisions no checkout and spends nothing —
+            # which is why the inspector may be opened without a
+            # confirmation. Everything that does something is a POST
+            # with the mode named.
+            try:
+                self._json(200, {"doctor": doctor_payload([])})
+            except (ValueError, OSError) as exc:
+                self._json(409, {"error": str(exc)})
         elif path == "/api/diff":
             agent_id = (parse_qs(url.query).get("agent") or [""])[0]
             try:
@@ -513,6 +564,17 @@ class Handler(BaseHTTPRequestHandler):
                     intent=payload.get("intent") or None,
                     stage=payload.get("stage") or None,
                     actor="agent" if payload.get("agent") else "you"))})
+            elif path == "/api/doctor/run":
+                payload = self._read_body()
+                # The active half, and a POST because each named mode does
+                # something: the adapter's own executables, real processes
+                # at a fixture bench makes and removes, or — with its own
+                # approval and never without — the installed CLI with a
+                # model. Nothing here moves a card, touches a branch,
+                # publishes anything or changes a setting.
+                self._json(200, {"doctor": doctor_payload(
+                    [str(m) for m in (payload.get("modes") or [])],
+                    approve=bool(payload.get("approve")), asked=True)})
             elif path == "/api/verify/cancel":
                 payload = self._read_body()
                 self._json(200, verify.cancel(payload["id"]))

@@ -53,6 +53,7 @@ CONTEXT_DIR = STATE / "context"                    # pinned read-only input bund
 EVIDENCE_DIR = STATE / "evidence"                  # what a verification actually found
 VERIFY_DIR = STATE / "verify"                      # isolated roots a check ran in
 REVIEWS_DIR = STATE / "reviews"                    # run-owned pinned PR-review checkouts
+DOCTOR_DIR = STATE / "doctor"                      # fixtures a diagnosis makes and removes
 
 # Ordered — this is the column order on the board.
 STAGES = [

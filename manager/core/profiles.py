@@ -313,6 +313,176 @@ PENDING_CAPABILITIES = {
 }
 
 
+# ── diagnostics: the code each refusal came from ───────────────────────
+#
+# `blockers` is prose, and it has to stay prose: it is what the page leads
+# with and what `require()` raises. But an operator-facing doctor has to be
+# able to say "this is the *required input unreadable* diagnostic" without
+# reading English, and nothing downstream may re-derive a refusal by
+# matching on its wording — a reworded sentence would silently stop being
+# the diagnostic it was.
+#
+# So every refusal carries the code it came from, named here with the
+# remedy that applies to the whole class of it. One table, beside the
+# refusals that raise it, and **no second evaluator anywhere**: a consumer
+# reads the code off a resolution it did not make. It never decides
+# whether something is blocked.
+DIAGNOSTICS = {
+    "policy-unreadable": (
+        "the profile document cannot be read",
+        "Fix the document named above, or unset BOARD_AGENT_PROFILES to "
+        "resolve on the legacy settings. Bench will not fall back to them "
+        "under a policy you were in the middle of changing."),
+    "name-invalid": (
+        "a name in the document is not a name",
+        "Names match [a-z0-9][a-z0-9._-]* — they are identities in the "
+        "manifest, the prompt and the evidence, not prose."),
+    "grant-invalid": (
+        "a named command grant is not one executable and fixed arguments",
+        "Write the grant's \"run\" as one executable and fixed arguments, in "
+        "the normalised form. Compound commands, pipelines, redirections, "
+        "globs and substitutions are refused because a prefix allow-rule "
+        "cannot see what they would expand to."),
+    "grant-duplicate": (
+        "two command grants share one name",
+        "Rename one of them: a grant's name is its identity in the manifest "
+        "and on the board."),
+    "grant-reserved": (
+        "a command grant uses a name bench owns",
+        f"Rename the grant. '{'bench-verify'}' is bench's own shim for asking "
+        f"for a named check, and it is added to the intents that have one."),
+    "grant-root-unavailable": (
+        "a command grant names a root this intent does not have",
+        "A read-only run has no worktree. Give the grant a root the intent "
+        "actually has, or declare it on an intent that does."),
+    "context-unreadable": (
+        "a required approved input is not there to be read",
+        "Put the file where the selection names it, inside the root it names, "
+        "or mark the selection \"required\": false if the run is still useful "
+        "without it. A directory is refused as a read-only guarantee, because "
+        "it would let a run read whatever is dropped into it later."),
+    "context-refused": (
+        "a context selection is refused before it is read",
+        "Name one file, relative to one of the named roots, with no '..' and "
+        "no basename that reads as a credential. Approving a document never "
+        "approves the secret that happens to sit beside it."),
+    "context-duplicate": (
+        "two context inputs share one name",
+        "Rename one of them: an input's name is the file it is pinned at, so "
+        "two selections sharing one would pin over each other."),
+    "check-invalid": (
+        "a named check is not something bench can run",
+        "A check is one executable and fixed arguments: bench splits it once "
+        "and hands the result to execve, with no shell to expand anything. "
+        "Quoting is allowed here (a check is never rendered into a rule); "
+        "pipelines, redirections, globs and substitutions are not."),
+    "check-root-unsafe": (
+        "a check names an execution root bench will not verify in",
+        "Declare the check with \"root\": \"worktree\" (the card's own "
+        "checkout), \"source\" (a detached checkout bench makes for the "
+        "verification) or \"review\" (the checkout a PR review was pinned). "
+        "The application checkout is never one: that is the live code and the "
+        "live services."),
+    "check-reshapes-repository": (
+        "a check would rewrite the repository it is meant to read",
+        "The execution root shares its git metadata with every other worktree "
+        "of the application. Use a reading subcommand — `git diff --check`, "
+        "`git ls-files` — and leave pushes, resets and branch moves to the "
+        "lifecycle bench owns."),
+    "check-names-credential": (
+        "a check's argument list names a file that reads as a credential",
+        "Drop the argument. A check is not how a secret gets read, and bench "
+        "refuses the argument rather than the file."),
+    "check-duplicate": (
+        "two checks share one name",
+        "Rename one of them: a check's name is what a run asks for and what "
+        "its evidence is filed under."),
+    "check-undeclared": (
+        "an intent asks for a check this document does not declare",
+        "Declare it in the document's top-level \"checks\" list, or name one "
+        "of that intent's own command grants. A requirement that resolves to "
+        "nothing is how a board reports a check that never ran as one that "
+        "passed, so it is refused instead."),
+    "check-unrunnable": (
+        "an intent asks for a check bench cannot build a command line from",
+        "Fix the grant or check named above, or stop naming it in this "
+        "intent's \"verify\" list."),
+    "prepare-invalid": (
+        "a preparation step is not something bench can run",
+        "Same shape as a check: one executable and fixed arguments. A step "
+        "that does not validate is refused rather than skipped, because the "
+        "check that needs it would then run unprepared and fail for the "
+        "wrong reason."),
+    "prepare-reshapes-repository": (
+        "a preparation step would rewrite the repository",
+        "Prepare dependencies, not history. See check-reshapes-repository."),
+    "prepare-names-credential": (
+        "a preparation step names a file that reads as a credential",
+        "Drop the argument."),
+    "prepare-duplicate": (
+        "two preparation steps share one name",
+        "Rename one of them."),
+    "prepare-undeclared": (
+        "an intent or a check names a preparation step nothing declares",
+        "Add it to the document's top-level \"prepare\" list, or drop the "
+        "reference. Bench will not run a step it cannot read."),
+    "deny-unknown": (
+        "an intent denies a capability bench has no word for",
+        "Use one of the known capability words. A typo here would read as a "
+        "denial that silently does nothing."),
+    "publication-widened": (
+        "an intent asks for a publication side effect it does not have",
+        "A profile narrows and never widens. Use the intent whose own prompt "
+        "demands that side effect — `review` asking for push is refused by "
+        "name."),
+    "requirement-unsupported": (
+        "the profile requires a guarantee nothing installed here enforces",
+        "Drop the word from \"requires\", or install a backend that declares "
+        "it. A profile requiring a guarantee that exists only in the prompt "
+        "is refused rather than reported as honoured."),
+}
+
+
+def diagnostic(code: str, why: str, remedy: str | None = None) -> dict:
+    """One refusal, with the code it came from and a remedy.
+
+    An unknown code is not silently accepted: the whole value of the code
+    is that a consumer can switch on it, and a typo would be a diagnostic
+    nothing recognises.
+    """
+    if code not in DIAGNOSTICS:
+        raise ValueError(f"unknown diagnostic code '{code}' — one of "
+                         f"{', '.join(sorted(DIAGNOSTICS))}")
+    title, standing = DIAGNOSTICS[code]
+    return {"code": code, "title": title, "why": why,
+            "remedy": remedy or standing}
+
+
+class _Trouble(list):
+    """The `blockers` list every consumer already reads, plus the code each
+    entry came from.
+
+    A list subclass rather than a second structure, so the prose half is
+    built and read exactly as it was: nothing downstream has to know this
+    exists, and `blockers[0]` is still the earliest thing that went wrong.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.coded: list[dict] = []
+
+    def add(self, code: str, why: str, remedy: str | None = None) -> None:
+        self.append(why)
+        self.coded.append(diagnostic(code, why, remedy))
+
+    def add_all(self, code: str, whys) -> None:
+        for why in whys:
+            if isinstance(why, tuple):
+                self.add(why[0], why[1])
+            else:
+                self.add(code, why)
+
+
 def adapter_identity() -> dict:
     """Which adapter this board launches through, and what it says it can
     enforce — read from `capabilities.json` beside its `run`.
@@ -452,7 +622,12 @@ def document_path() -> Path | None:
 
 
 def document() -> dict:
-    """The profile document, read fresh, plus what to say about it.
+    """The profile document this board resolves with, read fresh."""
+    return document_at(document_path())
+
+
+def document_at(path: Path | None) -> dict:
+    """One profile document, read fresh, plus what to say about it.
 
     Three answers, and each is a real one. `{"kind": "legacy"}` is a board
     with no document, which resolves exactly as it did before profiles
@@ -461,8 +636,11 @@ def document() -> dict:
     intent rather than a silent fall back to the legacy grants, because an
     operator who wrote a policy and mistyped it must not be given the
     permissions they were trying to change.
+
+    Taking the path rather than finding it is what lets the doctor resolve
+    a *fixture* document through this exact reader — one parser, used by
+    the launch, the page and the diagnosis alike.
     """
-    path = document_path()
     if path is None:
         return {"kind": "legacy", "path": None, "identity": None,
                 "revision": _digest("legacy", config.AGENT_COMMANDS),
@@ -531,20 +709,27 @@ SHELL_BREAKERS = (";", "&", "|", "`", "$", ">", "<", "(", ")", "\n", "\r",
                   "{", "}", "*", "?", "!", "~", "#", "'", '"', "\\", "[", "]")
 
 
-def _grant_problem(raw: dict, available: dict) -> str | None:
-    """Why this grant cannot be used, or None. One sentence, naming the
-    grant, because it is shown beside it."""
+def _grant_problem(raw: dict, available: dict) -> tuple[str, str] | None:
+    """Why this grant cannot be used, or None — as `(code, sentence)`.
+
+    One sentence, naming the grant, because it is shown beside it; one
+    code, because a doctor has to be able to recognise the class of
+    refusal without reading the sentence.
+    """
     name = str(raw.get("name") or "").strip()
     if not NAME_RE.match(name):
-        return (f"a command grant is named {name!r} — a grant's name is its "
+        return ("name-invalid",
+                f"a command grant is named {name!r} — a grant's name is its "
                 f"identity in the manifest and the UI, so it must match "
                 f"[a-z0-9][a-z0-9._-]*")
+    if not str(raw.get("run") or "").strip():
+        return ("grant-invalid",
+                f"the command grant '{name}' has no \"run\" — there is nothing to allow")
     run = str(raw.get("run") or "").strip()
-    if not run:
-        return f"the command grant '{name}' has no \"run\" — there is nothing to allow"
     for breaker in SHELL_BREAKERS:
         if breaker in run:
-            return (f"the command grant '{name}' contains {breaker!r} in its "
+            return ("grant-invalid",
+                    f"the command grant '{name}' contains {breaker!r} in its "
                     f"\"run\" — a grant is one executable and fixed arguments, "
                     f"not a shell line: compound commands, redirections, globs "
                     f"and substitutions are refused because a prefix rule "
@@ -552,28 +737,34 @@ def _grant_problem(raw: dict, available: dict) -> str | None:
     try:
         parts = shlex.split(run)
     except ValueError as exc:
-        return f"the command grant '{name}' does not parse as a command line ({exc})"
+        return ("grant-invalid",
+                f"the command grant '{name}' does not parse as a command line ({exc})")
     if not parts:
-        return f"the command grant '{name}' has an empty \"run\""
+        return ("grant-invalid", f"the command grant '{name}' has an empty \"run\"")
     if shlex.join(parts) != run:
-        return (f"the command grant '{name}' is written {run!r}, which "
+        return ("grant-invalid",
+                f"the command grant '{name}' is written {run!r}, which "
                 f"normalises to {shlex.join(parts)!r} — write it in the "
                 f"normalised form so the rule and the grant read alike")
     executable = parts[0]
     if ".." in Path(executable).parts:
-        return (f"the command grant '{name}' names the executable "
+        return ("grant-invalid",
+                f"the command grant '{name}' names the executable "
                 f"{executable!r}, which climbs out of its own path with '..'")
     if "/" in executable and not executable.startswith("/"):
-        return (f"the command grant '{name}' names the executable "
+        return ("grant-invalid",
+                f"the command grant '{name}' names the executable "
                 f"{executable!r} — give a bare name resolved on PATH, or an "
                 f"absolute path; a relative path depends on a working "
                 f"directory the rule does not pin")
     root = str(raw.get("root") or "worktree")
     if root not in ROOT_WORDS:
-        return (f"the command grant '{name}' names the execution root "
+        return ("grant-invalid",
+                f"the command grant '{name}' names the execution root "
                 f"{root!r} — one of {', '.join(ROOT_WORDS)}")
     if root not in available:
-        return (f"the command grant '{name}' runs in the {root} root, which "
+        return ("grant-root-unavailable",
+                f"the command grant '{name}' runs in the {root} root, which "
                 f"this intent has none of — a read-only run has no worktree")
     return None
 
@@ -617,7 +808,7 @@ def _legacy_grants(intent: str, available: dict) -> tuple[list[dict], list[str]]
             # and dropped from the *named* list, and the adapter still
             # receives AGENT_COMMANDS verbatim — so nothing a board could
             # run yesterday stops running today because of a name.
-            problems.append(f"{problem} (from BOARD_AGENT_COMMANDS)")
+            problems.append(f"{problem[1]} (from BOARD_AGENT_COMMANDS)")
             continue
         grants.append(_grant(raw, source="BOARD_AGENT_COMMANDS",
                              available=available))
@@ -685,20 +876,25 @@ GIT_RESHAPING = {
 CHECK_BREAKERS = tuple(c for c in SHELL_BREAKERS if c not in ("'", '"'))
 
 
-def _runnable_problem(name: str, what: str, run: str) -> str | None:
-    """Why bench cannot run this command line itself.
+def _runnable_problem(name: str, what: str, run: str,
+                      kind: str = "check") -> tuple[str, str] | None:
+    """Why bench cannot run this command line itself, as `(code, sentence)`.
 
     Everything a command grant is held to except the quoting ban (see
     `CHECK_BREAKERS`), plus the two refusals that exist only because bench
     is the one running it: a git subcommand that reshapes the repository,
-    and an argument that names a file reading as a credential.
+    and an argument that names a file reading as a credential. Those two
+    get codes of their own, because they are the two an operator fixes
+    differently from a typo.
     """
     run = run.strip()
     if not run:
-        return f"the {what} '{name}' has no \"run\" — there is nothing to run"
+        return (f"{kind}-invalid",
+                f"the {what} '{name}' has no \"run\" — there is nothing to run")
     for breaker in CHECK_BREAKERS:
         if breaker in run:
-            return (f"the {what} '{name}' contains {breaker!r} in its \"run\" "
+            return (f"{kind}-invalid",
+                    f"the {what} '{name}' contains {breaker!r} in its \"run\" "
                     f"— a check is one executable and fixed arguments, not a "
                     f"shell line: compound commands, pipelines, redirections, "
                     f"globs and substitutions are refused because bench runs "
@@ -706,33 +902,39 @@ def _runnable_problem(name: str, what: str, run: str) -> str | None:
     try:
         parts = shlex.split(run)
     except ValueError as exc:
-        return f"the {what} '{name}' does not parse as a command line ({exc})"
+        return (f"{kind}-invalid",
+                f"the {what} '{name}' does not parse as a command line ({exc})")
     if not parts:
-        return f"the {what} '{name}' has an empty \"run\""
+        return (f"{kind}-invalid", f"the {what} '{name}' has an empty \"run\"")
     if shlex.join(parts) != run:
-        return (f"the {what} '{name}' is written {run!r}, which normalises to "
+        return (f"{kind}-invalid",
+                f"the {what} '{name}' is written {run!r}, which normalises to "
                 f"{shlex.join(parts)!r} — write it in the normalised form so "
                 f"the document and the argument list read alike")
     executable = parts[0]
     if ".." in Path(executable).parts:
-        return (f"the {what} '{name}' names the executable {executable!r}, "
+        return (f"{kind}-invalid",
+                f"the {what} '{name}' names the executable {executable!r}, "
                 f"which climbs out of its own path with '..'")
     if "/" in executable and not executable.startswith("/"):
-        return (f"the {what} '{name}' names the executable {executable!r} — "
+        return (f"{kind}-invalid",
+                f"the {what} '{name}' names the executable {executable!r} — "
                 f"give a bare name resolved on PATH, or an absolute path; a "
                 f"relative one depends on a working directory the document "
                 f"cannot pin")
     if Path(parts[0]).name == "git":
         subcommand = next((p for p in parts[1:] if not p.startswith("-")), "")
         if subcommand in GIT_RESHAPING:
-            return (f"the {what} '{name}' runs `git {subcommand}`, which "
+            return (f"{kind}-reshapes-repository",
+                    f"the {what} '{name}' runs `git {subcommand}`, which "
                     f"reshapes the repository rather than reading it — the "
                     f"execution root shares its git metadata with every other "
                     f"worktree of the application, and bench will not run "
                     f"something that rewrites it in the name of verifying")
     for token in parts[1:]:
         if SECRET_NAMES.search(Path(token).name):
-            return (f"the {what} '{name}' names {token!r}, whose basename reads "
+            return (f"{kind}-names-credential",
+                    f"the {what} '{name}' names {token!r}, whose basename reads "
                     f"as a credential — a check is not how a secret gets read, "
                     f"and bench refuses the argument rather than the file")
     return None
@@ -755,12 +957,13 @@ def _tokens_problem(name: str, what: str, tokens: list) -> str | None:
     return None
 
 
-def _check_problem(raw: dict, known_prepare: set[str]) -> str | None:
-    """Why this check cannot be offered, or None. One sentence, naming the
-    check, because it is shown beside it."""
+def _check_problem(raw: dict, known_prepare: set[str]) -> tuple[str, str] | None:
+    """Why this check cannot be offered, or None — as `(code, sentence)`.
+    One sentence, naming the check, because it is shown beside it."""
     name = str(raw.get("name") or "").strip()
     if not NAME_RE.match(name):
-        return (f"a check is named {name!r} — a check's name is what a run "
+        return ("name-invalid",
+                f"a check is named {name!r} — a check's name is what a run "
                 f"asks for and what its evidence is filed under, so it must "
                 f"match [a-z0-9][a-z0-9._-]*")
     problem = _runnable_problem(name, "check", str(raw.get("run") or ""))
@@ -768,38 +971,45 @@ def _check_problem(raw: dict, known_prepare: set[str]) -> str | None:
         return problem
     root = str(raw.get("root") or "worktree")
     if root not in CHECK_ROOTS:
-        return (f"the check '{name}' names the execution root {root!r} — one "
+        return ("check-root-unsafe",
+                f"the check '{name}' names the execution root {root!r} — one "
                 f"of {', '.join(CHECK_ROOTS)}. A check never runs in the "
                 f"application checkout: that is the live code and the live "
                 f"services, and verifying in it is how a test suite takes a "
                 f"working tree down with it")
     raw_scopes = raw.get("scopes")
     if raw_scopes is not None and not isinstance(raw_scopes, dict):
-        return (f"the check '{name}' declares \"scopes\" that are not an "
+        return ("check-invalid",
+                f"the check '{name}' declares \"scopes\" that are not an "
                 f"object — write {{\"<name>\": [\"<argument>\", …]}}, so a run "
                 f"selects a scope by name and never by writing arguments")
     for key, tokens in (raw_scopes or {}).items():
         if not NAME_RE.match(str(key)):
-            return (f"the check '{name}' declares the scope {key!r} — a scope "
+            return ("name-invalid",
+                    f"the check '{name}' declares the scope {key!r} — a scope "
                     f"is selected by name, so it must match "
                     f"[a-z0-9][a-z0-9._-]*")
         if not isinstance(tokens, list):
-            return (f"the scope '{key}' of the check '{name}' is not a list of "
+            return ("check-invalid",
+                    f"the scope '{key}' of the check '{name}' is not a list of "
                     f"arguments")
         trouble = _tokens_problem(name, f"the scope '{key}'", tokens)
         if trouble:
-            return trouble
+            return ("check-invalid", trouble)
         for token in tokens:
             if SECRET_NAMES.search(Path(str(token)).name):
-                return (f"the scope '{key}' of the check '{name}' names "
+                return ("check-names-credential",
+                        f"the scope '{key}' of the check '{name}' names "
                         f"{token!r}, whose basename reads as a credential")
     raw_prepare = raw.get("prepare")
     if raw_prepare is not None and not isinstance(raw_prepare, list):
-        return (f"the check '{name}' declares \"prepare\" that is not a list "
+        return ("check-invalid",
+                f"the check '{name}' declares \"prepare\" that is not a list "
                 f"of preparation-step names")
     for step in raw_prepare or []:
         if str(step) not in known_prepare:
-            return (f"the check '{name}' needs the preparation step "
+            return ("prepare-undeclared",
+                    f"the check '{name}' needs the preparation step "
                     f"{str(step)!r}, which the document does not declare — add "
                     f"it to the document's top-level \"prepare\" list, or drop "
                     f"the reference; bench will not run a step it cannot read")
@@ -808,21 +1018,24 @@ def _check_problem(raw: dict, known_prepare: set[str]) -> str | None:
         try:
             value = float(timeout)
         except (TypeError, ValueError):
-            return f"the check '{name}' declares a \"timeout\" that is not a number"
+            return ("check-invalid",
+                    f"the check '{name}' declares a \"timeout\" that is not a number")
         if value <= 0 or value > MAX_CHECK_TIMEOUT:
-            return (f"the check '{name}' declares a timeout of {timeout} — give "
+            return ("check-invalid",
+                    f"the check '{name}' declares a timeout of {timeout} — give "
                     f"a number of seconds between 1 and {MAX_CHECK_TIMEOUT}")
     return None
 
 
-def _step_problem(raw: dict) -> str | None:
+def _step_problem(raw: dict) -> tuple[str, str] | None:
     """The same question for one preparation step."""
     name = str(raw.get("name") or "").strip()
     if not NAME_RE.match(name):
-        return (f"a preparation step is named {name!r} — names match "
+        return ("name-invalid",
+                f"a preparation step is named {name!r} — names match "
                 f"[a-z0-9][a-z0-9._-]*")
     return _runnable_problem(name, "preparation step",
-                             str(raw.get("run") or ""))
+                             str(raw.get("run") or ""), kind="prepare")
 
 
 def _check_revision(name: str, run: str, root: str, scopes: dict,
@@ -898,19 +1111,20 @@ def verify_shim() -> Path:
     return config.CORE / "bench-verify"
 
 
-def document_steps(doc: dict) -> tuple[dict, list[str]]:
+def document_steps(doc: dict) -> tuple[dict, list[tuple[str, str]]]:
     """The document's preparation steps, by name, and why any of them
     cannot be used. A step that does not validate is a blocker rather than
     a step quietly left out: the check that names it would otherwise run
     unprepared and fail for the wrong reason."""
     steps: dict[str, dict] = {}
-    trouble: list[str] = []
+    trouble: list[tuple[str, str]] = []
     if doc["kind"] != "file":
         return steps, trouble
     raw = doc.get("prepare")
     for entry in raw if isinstance(raw, list) else []:
         if not isinstance(entry, dict):
-            trouble.append(f"a preparation step is not an object: {entry!r}")
+            trouble.append(("prepare-invalid",
+                            f"a preparation step is not an object: {entry!r}"))
             continue
         problem = _step_problem(entry)
         if problem:
@@ -918,15 +1132,16 @@ def document_steps(doc: dict) -> tuple[dict, list[str]]:
             continue
         name = str(entry["name"]).strip()
         if name in steps:
-            trouble.append(f"the preparation step '{name}' is declared twice "
-                           f"— a step's name is its identity")
+            trouble.append(("prepare-duplicate",
+                            f"the preparation step '{name}' is declared twice "
+                            f"— a step's name is its identity"))
             continue
         steps[name] = _step(entry, source=doc["identity"] or "the document")
     return steps, trouble
 
 
 def promoted_checks(grants: list[dict],
-                    declared: dict) -> tuple[dict, list[str]]:
+                    declared: dict) -> tuple[dict, list[tuple[str, str]]]:
     """This intent's command grants, as checks bench could run itself.
 
     The documented compatibility path. A grant and a check are the same
@@ -941,7 +1156,7 @@ def promoted_checks(grants: list[dict],
     is never shadowed by a grant that happens to share its name.
     """
     out: dict = {}
-    trouble: list[str] = []
+    trouble: list[tuple[str, str]] = []
     for grant in grants:
         name = grant["name"]
         if name in declared or name == VERIFY_GRANT:
@@ -953,9 +1168,8 @@ def promoted_checks(grants: list[dict],
             # Not a blocker on its own: a grant that cannot be a check is
             # perfectly fine as a grant, and only an intent that actually
             # asks for it by name has a problem. `_named` says so there.
-            trouble_name = name
-            out[trouble_name] = {"name": name, "status": "unavailable",
-                                 "why": problem}
+            out[name] = {"name": name, "status": "unavailable",
+                         "why": problem[1], "code": problem[0]}
             continue
         out[name] = _check(raw, {}, source=f"{grant['source']} (a command "
                                            f"grant, promoted)",
@@ -977,18 +1191,19 @@ def _step_from_grant(check: dict) -> dict:
     }
 
 
-def document_checks(doc: dict, steps: dict) -> tuple[dict, list[str]]:
+def document_checks(doc: dict, steps: dict) -> tuple[dict, list[tuple[str, str]]]:
     """The document's named checks, by name, and why any of them cannot be
     offered. Resolved once per document rather than once per intent, so
     two intents asking for `unit-tests` are asking for the same thing."""
     checks: dict[str, dict] = {}
-    trouble: list[str] = []
+    trouble: list[tuple[str, str]] = []
     if doc["kind"] != "file":
         return checks, trouble
     raw = doc.get("checks")
     for entry in raw if isinstance(raw, list) else []:
         if not isinstance(entry, dict):
-            trouble.append(f"a check is not an object: {entry!r}")
+            trouble.append(("check-invalid",
+                            f"a check is not an object: {entry!r}"))
             continue
         problem = _check_problem(entry, set(steps))
         if problem:
@@ -996,9 +1211,10 @@ def document_checks(doc: dict, steps: dict) -> tuple[dict, list[str]]:
             continue
         name = str(entry["name"]).strip()
         if name in checks:
-            trouble.append(f"the check '{name}' is declared twice — a check's "
-                           f"name is what a run asks for, and two commands "
-                           f"cannot share one")
+            trouble.append(("check-duplicate",
+                            f"the check '{name}' is declared twice — a check's "
+                            f"name is what a run asks for, and two commands "
+                            f"cannot share one"))
             continue
         checks[name] = _check(entry, steps,
                               source=doc["identity"] or "the document",
@@ -1336,7 +1552,8 @@ def _requirement_problem(name: str, table: dict) -> str | None:
 
 
 def resolve(intent: str, *, worktree: Path | str | None = None,
-            review: Path | str | None = None) -> dict:
+            review: Path | str | None = None,
+            policy: dict | None = None) -> dict:
     """One intent's effective policy, with nothing written.
 
     Everything in the returned document is either a fact about this board
@@ -1344,12 +1561,19 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
     whole answer to "may a launch start" and empty means yes. The UI and
     the launch both read this function, which is the point — a page that
     parsed the settings a second time could disagree with the run.
+
+    `policy` is a document already read by `document_at()`, for the one
+    caller that resolves something other than this board's: the doctor,
+    putting a deliberately broken fixture through this resolver so that
+    the diagnostic an operator will see is the diagnostic bench actually
+    produces. Default None reads the board's own, which is every other
+    caller.
     """
     if intent not in INTENTS:
         raise ValueError(f"unknown launch intent '{intent}' — one of "
                          f"{', '.join(INTENTS)}")
     baseline = BASELINE[intent]
-    doc = document()
+    doc = policy if policy is not None else document()
     adapter = adapter_identity()
     table = capability_table(adapter)
     available = roots(worktree, review)
@@ -1369,13 +1593,13 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
                      "application checkout")
     cwd_path = available.get(cwd_word) or (str(worktree) if worktree else None)
 
-    blockers: list[str] = []
+    blockers = _Trouble()
     configured: list[str] = []
     prompt_only: list[str] = []
 
     declared = doc["profiles"].get(intent) if doc["kind"] == "file" else None
     if doc["problem"]:
-        blockers.append(doc["problem"])
+        blockers.add("policy-unreadable", doc["problem"])
     if adapter.get("note"):
         notes.append(adapter["note"])
 
@@ -1391,19 +1615,21 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
         seen: set[str] = set()
         for raw in raw_grants if isinstance(raw_grants, list) else []:
             if not isinstance(raw, dict):
-                blockers.append(f"a command grant for '{intent}' is not an "
-                                f"object: {raw!r}")
+                blockers.add("grant-invalid",
+                             f"a command grant for '{intent}' is not an "
+                             f"object: {raw!r}")
                 continue
             problem = _grant_problem(raw, available)
             if problem:
-                blockers.append(problem)
+                blockers.add(*problem)
                 continue
             grant = _grant(raw, source=doc["identity"] or "the profile document",
                            available=available)
             if grant["name"] in seen:
-                blockers.append(f"the command grant '{grant['name']}' is "
-                                f"declared twice for '{intent}' — a grant's "
-                                f"name is its identity")
+                blockers.add("grant-duplicate",
+                             f"the command grant '{grant['name']}' is "
+                             f"declared twice for '{intent}' — a grant's "
+                             f"name is its identity")
                 continue
             seen.add(grant["name"])
             grants.append(grant)
@@ -1452,9 +1678,10 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
     for raw in selections:
         name = str(raw.get("name") or "").strip()
         if name and name in seen_inputs:
-            blockers.append(f"the context input '{name}' is declared twice for "
-                            f"'{intent}' — an input's name is its identity, "
-                            f"and two files cannot share one")
+            blockers.add("context-duplicate",
+                         f"the context input '{name}' is declared twice for "
+                         f"'{intent}' — an input's name is its identity, "
+                         f"and two files cannot share one")
             continue
         seen_inputs.add(name)
         deduped.append(raw)
@@ -1464,7 +1691,14 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
         if item["status"] == "resolved":
             continue
         if item["required"]:
-            blockers.append(f"{item['why']}. {item['remedy']}")
+            # Two codes, because they are two different things to go and
+            # do: a selection bench refused before reading anything is an
+            # authoring mistake, and a file that is simply not there is an
+            # operator's missing input.
+            blockers.add(
+                "context-refused" if item["status"] == "refused"
+                else "context-unreadable",
+                f"{item['why']}. {item['remedy']}", item["remedy"])
         else:
             notes.append(f"{item['why']} — the run goes ahead without it")
     if any(i["status"] == "resolved" for i in context):
@@ -1478,9 +1712,9 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
     # and `review` gaining the right to *ask* is not `review` gaining the
     # right to commit.
     steps, step_trouble = document_steps(doc)
-    blockers += step_trouble
+    blockers.add_all("prepare-invalid", step_trouble)
     available_checks, check_trouble = document_checks(doc, steps)
-    blockers += check_trouble
+    blockers.add_all("check-invalid", check_trouble)
 
     # The compatibility path, and it is the whole of it: a `verify` or
     # `prepare` entry naming one of this intent's own **command grants**
@@ -1492,7 +1726,7 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
     # anything therefore keeps working, and its declared requirement
     # becomes a real run rather than staying a note.
     promotable, promotion_trouble = promoted_checks(grants, available_checks)
-    blockers += promotion_trouble
+    blockers.add_all("check-invalid", promotion_trouble)
     available_checks = {**available_checks, **promotable}
     steps = {**steps, **{n: _step_from_grant(c) for n, c in promotable.items()}}
 
@@ -1511,14 +1745,16 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
                 entry = entry.get("name")
             name = str(entry or "").strip()
             if not NAME_RE.match(name):
-                blockers.append(f"'{intent}' names the {what} {name!r} — "
-                                f"names match [a-z0-9][a-z0-9._-]*")
+                blockers.add("name-invalid",
+                             f"'{intent}' names the {what} {name!r} — "
+                             f"names match [a-z0-9][a-z0-9._-]*")
                 continue
             if name in seen:
                 continue
             seen.add(name)
             if name not in known:
-                blockers.append(
+                blockers.add(
+                    "check-undeclared" if what == "check" else "prepare-undeclared",
                     f"'{intent}' asks for the {what} '{name}', which this "
                     f"document declares neither as a {what} nor as one of this "
                     f"intent's command grants. Declare it in the top-level "
@@ -1528,7 +1764,8 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
                     f"check that never ran as one that passed")
                 continue
             if known[name].get("status") != "available":
-                blockers.append(
+                blockers.add(
+                    "check-unrunnable" if what == "check" else "prepare-invalid",
                     f"'{intent}' asks for the {what} '{name}', and the command "
                     f"grant of that name cannot be run as one: "
                     f"{known[name].get('why')}")
@@ -1575,10 +1812,11 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
                 "root": cwd_word, "help": "ask bench to run a named check"}
         problem = _grant_problem(shim, available)
         if problem:
-            blockers.append(problem)
+            blockers.add(*problem)
         elif any(g["name"] == VERIFY_GRANT for g in grants):
-            blockers.append(f"a command grant is named '{VERIFY_GRANT}', which "
-                            f"is bench's own — rename it")
+            blockers.add("grant-reserved",
+                         f"a command grant is named '{VERIFY_GRANT}', which "
+                         f"is bench's own — rename it")
         else:
             grant = _grant(shim, source="bench", available=available)
             grant["why"] = ("the run asks for a check by name; bench builds "
@@ -1592,8 +1830,9 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
     for word in extra if isinstance(extra, list) else []:
         word = str(word).strip()
         if word not in DENIALS:
-            blockers.append(f"'{intent}' denies the unknown capability "
-                            f"{word!r} — one of {', '.join(sorted(DENIALS))}")
+            blockers.add("deny-unknown",
+                         f"'{intent}' denies the unknown capability "
+                         f"{word!r} — one of {', '.join(sorted(DENIALS))}")
             continue
         if word not in deny_words:
             deny_words.append(word)
@@ -1608,7 +1847,8 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
         if isinstance(declared_pub, dict) and key in declared_pub:
             asked = bool(declared_pub[key])
             if asked and not publication[key]:
-                blockers.append(
+                blockers.add(
+                    "publication-widened",
                     f"'{intent}' asks for publication.{key} = true, and the "
                     f"intent does not have it — a profile narrows what an "
                     f"intent may do and never widens it. Use the intent whose "
@@ -1627,7 +1867,7 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
         requires.append(word)
         problem = _requirement_problem(word, table)
         if problem:
-            blockers.append(problem)
+            blockers.add("requirement-unsupported", problem)
 
     configured.append("working-directory")
     if config.agent_model(intent):
@@ -1695,7 +1935,13 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
                        "a process that is already running"),
         },
         "notes": notes,
-        "blockers": blockers,
+        "blockers": list(blockers),
+        # the same refusals, each with the code it came from and a remedy
+        # for the class of it. Added beside `blockers` rather than
+        # replacing them, so every existing consumer reads exactly what it
+        # read before and the doctor can switch on a code instead of
+        # matching on a sentence.
+        "diagnostics": blockers.coded,
     }
 
 
@@ -1866,7 +2112,10 @@ def freshness(frozen: dict) -> dict:
 PUBLIC = ("v", "intent", "why", "revision", "policyId", "runner", "source",
           "adapter", "capabilities", "cwd", "roots", "commands", "uiCommands",
           "context", "bundle", "prepare", "verify", "denied", "publication",
-          "writable", "requires", "guarantees", "notes", "blockers", "task",
+          "writable", "requires", "guarantees", "notes", "blockers",
+          # codes and remedies bench wrote — never anything read off disk
+          "diagnostics",
+          "task",
           "stage", "requestId", "resolved", "recorded", "agent", "review")
 
 # Per-input keys that may be shown. Contents are never among them, and a
@@ -1906,6 +2155,9 @@ def summary(found: dict | None) -> dict | None:
         "checks": [c["name"] for c in found.get("verify") or []],
         "denied": len(found.get("denied") or []),
         "blockers": list(found.get("blockers") or []),
+        # the codes alone, so a compact row can say *which* diagnostics
+        # without carrying their prose
+        "codes": [d["code"] for d in found.get("diagnostics") or []],
         "pending": list((found.get("guarantees") or {}).get("pending") or []),
         # where this run actually works, which for a PR review is bench's
         # own pinned checkout rather than the application
@@ -2058,9 +2310,13 @@ def seams() -> dict:
                          "recorded manifest, runs each named check itself with "
                          "no shell, and files the evidence under "
                          "evidence_id('verification', requestId, …)"),
-            "a doctor": ("call resolve() for each of profiles.INTENTS and report "
-                         "`blockers` and `guarantees.pending` — it needs no "
-                         "second parser and must not grow one"),
+            "a doctor": ("`doctor.py` — it calls resolve() for each of "
+                         "profiles.INTENTS, reads `diagnostics`, `blockers` "
+                         "and `guarantees.pending` off what came back, and "
+                         "resolves its own fixtures through document_at() and "
+                         "resolve(policy=…). It has no second parser and must "
+                         "not grow one: every code it reports is one "
+                         "profiles.DIAGNOSTICS names"),
             "a gate": ("read the evidence `verify.for_task()` returns, insist on "
                        "a `passed` that `verify.freshness()` calls fresh, and "
                        "declare 'verified-outputs'"),
