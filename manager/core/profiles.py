@@ -1232,7 +1232,13 @@ def freshness(frozen: dict) -> dict:
         return {"fresh": True, "changed": []}
     changed: list[str] = []
     try:
-        current = resolve(frozen.get("intent") or "work")
+        # Resolved against the roots this run *had*, which matters: a
+        # command grant runs in the worktree root by default, and
+        # re-resolving without one would refuse that grant and then report
+        # the refusal as "the policy changed". The comparison has to ask
+        # the same question the launch asked.
+        current = resolve(frozen.get("intent") or "work",
+                          worktree=(frozen.get("roots") or {}).get("worktree"))
     except ValueError:
         return {"fresh": True, "changed": []}
     if frozen.get("revision") and current["revision"] != frozen["revision"]:

@@ -834,6 +834,20 @@ class ReadableContextIsImmutable(ProfileCase):
             "a recorded manifest must not be repinned by a later edit")
         self.assertEqual(frozen["revision"], again["revision"])
 
+    def test_an_untouched_board_is_fresh_even_with_worktree_grants(self):
+        """The comparison has to ask the question the launch asked. A
+        command grant runs in the worktree root by default, so a freshness
+        check that re-resolved without one would refuse that grant and
+        then report its own refusal as a changed policy."""
+        self.declares({"v": 1, "profiles": {"work": {
+            "commands": [{"name": "unit-tests", "run": "python3 -m unittest",
+                          "root": "worktree"}],
+            "context": [{"name": "design", "path": "work:reference/design.md"}]}}})
+        frozen = profiles.record("agent-1", profiles.pin(self.resolve("work")))
+        self.assertEqual([g["name"] for g in frozen["commands"]], ["unit-tests"])
+        verdict = profiles.freshness(frozen)
+        self.assertTrue(verdict["fresh"], verdict["changed"])
+
     def test_freshness_reports_the_edit_without_changing_the_record(self):
         frozen = profiles.record("agent-1", profiles.pin(self.resolve("work")))
         self.assertTrue(profiles.freshness(frozen)["fresh"])
