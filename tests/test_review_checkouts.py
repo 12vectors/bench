@@ -613,6 +613,22 @@ class TheReviewerWorksInThePinnedCheckout(ReviewCase):
             git(self.repo, "rev-parse", "--verify", "--quiet",
                 BRANCH).returncode, 0, "the branch it reviewed is untouched")
 
+    def test_the_checkout_lives_with_the_tool_and_in_neither_repository(self):
+        """Machine-local, for the manifest's and the plan's reason: it
+        holds this machine's paths and belongs to neither the application's
+        history nor the shared ticket history."""
+        self.proposes()
+
+        self.review()
+
+        where = Path(reviews.for_task(CARD)[0]["path"]).resolve()
+        self.assertTrue(where.is_relative_to((self.tool / "manager" / "local"
+                                              / "state").resolve()))
+        self.assertFalse(where.is_relative_to(self.repo.resolve()))
+        self.assertFalse(where.is_relative_to(self.work.resolve()))
+        self.assertFalse(where.is_relative_to(config.WORKTREES.resolve()),
+                         "and not among the cards' own worktrees")
+
     def test_a_relevance_check_pins_nothing_and_still_runs_in_the_app(self):
         """The regression this card had to keep: `◔ still true?` shares the
         review intent and reviews no pull request. It must not provision,
