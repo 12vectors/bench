@@ -235,13 +235,29 @@ class NoStaleArmedChip(unittest.TestCase):
         head = re.search(r"function render\(\) \{\n(.*?)\n  renderTitle", self.html, re.S)
         self.assertIn("forgetActsOfVanishedCards();", head.group(1))
 
-    def test_every_act_key_is_a_task_file(self):
-        """The sweep reads the key's first segment as a filename, so every
-        key wireAction is given must start with one."""
+    def test_every_act_key_is_a_task_file_or_the_boards_own(self):
+        """The sweep reads a key's first segment as a filename, so a card's
+        key must start with one — otherwise the window would survive the
+        card.
+
+        One namespace is exempt and is exempt deliberately: the readiness
+        inspector's active stages belong to the board rather than to any
+        card, so they are keyed `board::` and the sweep skips them. A key
+        in neither namespace would be dropped on the next render, which is
+        an armed button quietly disarming itself."""
         keys = re.findall(r"wireAction\(btn, `([^`]+)`", self.html)
         self.assertTrue(keys, "no wired actions found")
+        self.assertIn("const BOARD_ACT = 'board::';", self.html)
         for key in keys:
-            self.assertTrue(key.startswith("${task.file}::"), f"stray act key {key!r}")
+            self.assertTrue(
+                key.startswith("${task.file}::") or key.startswith("${BOARD_ACT}"),
+                f"stray act key {key!r}")
+
+    def test_the_sweep_knows_the_boards_own_keys_are_not_cards(self):
+        body = re.search(r"function forgetActsOfVanishedCards\(\) \{(.*?)\n\}",
+                         self.html, re.S)
+        self.assertIn("key.startsWith(BOARD_ACT)", body.group(1),
+                      "the sweep would delete the board's own armed windows")
 
 
 if __name__ == "__main__":

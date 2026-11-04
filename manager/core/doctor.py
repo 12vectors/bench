@@ -265,6 +265,20 @@ def redaction() -> dict:
 # ── mode: inspect ──────────────────────────────────────────────────────
 
 
+def example_worktree() -> Path:
+    """The worktree root a reading resolves against when no card is named.
+
+    A diagnosis is about the board rather than about one card, so there is
+    no checkout to point at — and leaving the word out would make every
+    grant that runs in a worktree read as *refused for want of a
+    worktree*, which is a diagnostic about nothing. So the reading uses
+    the path a card's worktree would be at, under the worktrees root this
+    board actually resolves, and nothing is created there: `resolve` reads
+    roots as words and only ever touches disk for the inputs inside one.
+    """
+    return config.WORKTREES / "a-card"
+
+
 def _intent_reading(intent: str, worktree: Path | str | None) -> dict:
     """One intent's resolved profile, through the resolver a launch rides.
 
@@ -274,7 +288,7 @@ def _intent_reading(intent: str, worktree: Path | str | None) -> dict:
     so rather than inventing a path.
     """
     return profiles.resolve(intent, worktree=None if intent == "review"
-                            else worktree)
+                            else (worktree or example_worktree()))
 
 
 def _public_intent(found: dict) -> dict:
@@ -347,6 +361,19 @@ def inspect(worktree: Path | str | None = None) -> dict:
         if not adapter["declared"] else None))
 
     # — one reading per launch intent, and the diagnostics off each —
+    #
+    # And a row saying what these rows are *about*, because the honest
+    # answer is "the shape of the policy" rather than "card 70": there is
+    # no card here, so the worktree root is the path a card's would be at
+    # and a selection inside a particular checkout is not what was read.
+    findings.append(_finding(
+        "inspect", "scope", "skipped",
+        "which card these readings are about",
+        f"none. A diagnosis resolves the policy for the board, so the "
+        f"worktree root is the path a card's checkout would be at "
+        f"({worktree or example_worktree()}) and nothing was created there. "
+        f"A particular card's reading is the ⚿ chip on that card.",
+        remedy=None))
     readings: list[dict] = []
     for intent in profiles.INTENTS:
         found = _intent_reading(intent, worktree)

@@ -712,6 +712,11 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
 
     shell = _request_shell(check, task, scope, intent, agent, actor, stage,
                            manifest)
+    if fixture is not None:
+        # Set before any refusal, so a diagnosis's *refused* record is as
+        # recognisably the doctor's as a successful one. A reader must
+        # never have to wonder whether a row under this name was a card's.
+        shell["doctor"] = str(fixture.get("label") or "doctor")
     found = next((c for c in available(manifest) if c["name"] == check), None)
     if found is None:
         offered = ", ".join(c["name"] for c in available(manifest)) or "none"
@@ -748,7 +753,6 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
         root, prepared = Path(str(fixture["root"])), False
         root_note = (f"a fixture {fixture.get('label') or 'the doctor'} made "
                      f"and removes itself — bench owns nothing here")
-        shell["doctor"] = str(fixture.get("label") or "doctor")
         if not root.is_dir():
             return _refuse(shell, "root-unavailable",
                            f"the fixture root {root} is not there, so nothing "

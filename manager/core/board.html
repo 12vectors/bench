@@ -2000,7 +2000,7 @@ function paintDoctorSheet(report, intent) {
   wrap.querySelectorAll('[data-doctormode]').forEach(btn => {
     const mode = btn.dataset.doctormode;
     const m = report.modes[mode];
-    wireAction(btn, `doctor::${mode}`, {
+    wireAction(btn, `${BOARD_ACT}doctor::${mode}`, {
       label: m.label, confirm: 'run it?', busy: 'running…',
       run: () => doctorRun(mode, intent),
     });
@@ -2952,9 +2952,19 @@ function actLabel(rest, confirm, busy) {
    straight back (⌘Z, or a teammate's undo) is never found already armed
    by a click nobody made against the card as it now stands. Keys are
    `<file>::<action>`, and a task file never contains `::`. */
+/* Act keys live in two namespaces and the sweep has to know which is
+   which. A card's actions are keyed by its filename, so an armed window
+   goes when the card does — archived from another board, or moved by hand
+   on disk. The board's own actions — the readiness inspector's active
+   stages — belong to the board rather than to any card, so they are
+   keyed `board::` and the sweep leaves them alone. A key that is neither
+   is a bug, and it is dropped. */
+const BOARD_ACT = 'board::';
+
 function forgetActsOfVanishedCards() {
   const live = new Set(allTasks().map(t => t.file));
   for (const key of Object.keys(S.acts)) {
+    if (key.startsWith(BOARD_ACT)) continue;
     if (!live.has(key.split('::')[0])) delete S.acts[key];
   }
 }
