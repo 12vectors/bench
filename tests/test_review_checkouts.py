@@ -1194,6 +1194,17 @@ class ThePageSaysWhereAReviewRan(unittest.TestCase):
     def setUpClass(cls):
         cls.html = BOARD.read_text(encoding="utf-8")
 
+    def test_the_review_glyph_is_its_own_and_takes_nobody_elses(self):
+        """Colour means state here and a glyph means one thing: `⌸` is the
+        archive tray's and appears in exactly two places (its own test
+        enforces that), so the review surface wears `⌾` instead."""
+        self.assertEqual(self.html.count("⌸"), 2,
+                         "the tray's glyph is the tray's")
+        for name in ("function reviewPanel(record", "function reviewRows(found)",
+                     "function reviewChip(task)"):
+            start = self.html.index(name)
+            self.assertNotIn("⌸", self.html[start:start + 4200])
+
     def test_the_chip_reads_the_servers_reading_and_opens_the_record(self):
         self.assertIn("S.state.reviews", self.html)
         self.assertIn('data-review="1"', self.html)

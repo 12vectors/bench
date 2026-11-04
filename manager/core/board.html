@@ -1915,7 +1915,7 @@ function reviewPanel(record, evidence, current) {
     row('⌾', 'reviewed head', `${head || 'unknown'} (${(record.head || {}).authority || 'unknown'} authority)`) +
     row('→', 'proposed into', `${base.ref || 'unknown'}${base.commit ? ' at ' + base.commit.slice(0, 12) : ''}`) +
     row('·', 'pull request', `#${record.number} · ${String(record.state || 'state unknown').toLowerCase()} · ${(REVIEW_TARGETS[record.target] || record.target || '')}`) +
-    row('⌸', 'checkout', where, record.kept ? 'fail' : '') +
+    row('·', 'checkout', where, record.kept ? 'fail' : '') +
     checks +
     ((fresh.changed || []).length
       ? (fresh.changed || []).map(c => row('✕', 'not current', c, 'fail')).join('')
@@ -3693,7 +3693,7 @@ function reviewRows(found) {
     `<span class="name">reviewing</span>` +
     `<span class="state">${esc(head.slice(0, 12) || 'unknown')} → ${esc(base)}` +
     `${r.historical ? ' · historical' : ''}</span></div>` +
-    `<div class="check-row"><span class="glyph">⌸</span>` +
+    `<div class="check-row"><span class="glyph">·</span>` +
     `<span class="name">pinned checkout</span>` +
     `<span class="state">${esc(r.path || '—')}</span></div>`;
 }
