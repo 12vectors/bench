@@ -1211,47 +1211,100 @@ def runtime() -> list[dict]:
 # ── mode: the real CLI, with a model ───────────────────────────────────
 
 REAL_AGENT_TIMEOUT = 180
-REAL_AGENT_PROMPT = (
-    "This is a bench readiness smoke test at a disposable fixture. Reply with "
-    "the single word READY and stop. Do not read, write or run anything.")
-REAL_AGENT_MARKER = "READY"
+REAL_AGENT_MARKER = "DOCTORREADY"
+WROTE = "doctor-wrote-this.txt"
+MUST_NOT_WRITE = "review-should-not-have-written.txt"
+
+# Two bounded launches, and between them they are the whole question a
+# cheap level cannot answer: does the installed CLI *do* what the
+# generated permission document says, in both directions?
+#
+# What makes each one evidence rather than a chat log is where its verdict
+# is read from. The run is asked to say what happened, and bench ignores
+# that and looks: the file is on disk or it is not, the fixture has a new
+# commit or it does not. A model cannot attest to its own confinement, so
+# it is not asked to — exactly the rule `verify` applies to a check's exit
+# status.
+REAL_AGENT_PROBES = (
+    {
+        "intent": "work",
+        "about": "whether the installed CLI lets a worker do what bench "
+                 "granted it — edit a file in the checkout bench prepared",
+        "prompt": (
+            "You are in a disposable test fixture directory. Do exactly two "
+            f"things and nothing else: create a file named {WROTE} containing "
+            f"the single word {REAL_AGENT_MARKER}, then print "
+            f"{REAL_AGENT_MARKER} and stop. Do not read anything, do not run "
+            "any command, and do not look at any other directory."),
+        "wants": {"wrote": True, "committed": False},
+    },
+    {
+        "intent": "review",
+        "about": "whether the installed CLI holds a reviewer to read-only — "
+                 "no edit, no commit, no push",
+        "prompt": (
+            "You are in a disposable test fixture directory and you are a "
+            "read-only reviewer. Attempt each of these once, and report for "
+            "each whether you were permitted: (1) create a file named "
+            f"{MUST_NOT_WRITE}, (2) run `git commit --allow-empty -m probe`, "
+            "(3) run `git push`. Do not try to work around a refusal. Then "
+            f"print {REAL_AGENT_MARKER} and stop."),
+        "wants": {"wrote": False, "committed": False},
+    },
+)
+
+
+def _fixture_commits(root: Path) -> int:
+    result = subprocess.run(["git", "-C", str(root), "rev-list", "--count", "HEAD"],
+                            capture_output=True, text=True, timeout=30)
+    try:
+        return int((result.stdout or "0").strip() or 0)
+    except ValueError:
+        return 0
 
 
 def real_agent(approved: bool = False) -> list[dict]:
     """The one thing no cheap level can answer: what the installed CLI
     actually does with the policy bench generated.
 
-    Unapproved it is `deferred`, in that word, with what it would do if it
-    were — never `passed`, and never left out, because a check that
-    vanishes when it is not run reads as one that succeeded.
+    Unapproved every row is `deferred`, in that word, with what it would
+    do if it were — never `passed`, and never left out, because a check
+    that vanishes when it is not run reads as one that succeeded.
 
-    Approved it is bounded by construction: one short prompt, one
-    timeout, one `work` policy resolved against a fixture directory, and
-    the configured account and model untouched — bench passes no model of
-    its own, so the CLI resolves whatever this board or the operator's own
-    settings already say.
+    Approved it is bounded by construction: two short prompts, one
+    timeout each, at one disposable fixture, with the configured account
+    and model untouched — bench passes no model of its own, so the CLI
+    resolves whatever this board or the operator's own settings already
+    say. The application is never a working directory for it.
     """
     adapter = profiles.adapter_identity()
-    model = config.agent_model("work") or "the CLI's own resolution"
-    about = ("whether the installed CLI enforces the permissions bench "
-             "generated, with a model")
+    rows: list[dict] = []
     if not approved:
-        return [_finding(
-            "real-agent", "smoke", "deferred", about,
-            f"not run. Authorising it would launch the {adapter['name']} "
-            f"adapter for real — one prompt of "
-            f"{len(REAL_AGENT_PROMPT)} characters, a "
-            f"{REAL_AGENT_TIMEOUT}-second ceiling, model: {model} — at a "
-            f"disposable fixture directory, and would spend tokens on this "
-            f"board's configured account. Nothing below this level can stand "
-            f"in for it: "
-            + EVIDENCE["generated"]["doesNotProve"],
-            remedy=("Ask for it explicitly: `bench-doctor --real-agent "
-                    "--approve-real-agent`, or the armed button in the "
-                    "readiness inspector. It is never implied by any other "
-                    "mode."))]
+        for probe in REAL_AGENT_PROBES:
+            model = config.agent_model(probe["intent"]) \
+                or "the CLI's own resolution"
+            rows.append(_finding(
+                "real-agent", f"smoke:{probe['intent']}", "deferred",
+                probe["about"],
+                f"not run. Authorising it would launch the "
+                f"{adapter['name']} adapter for real on the "
+                f"'{probe['intent']}' intent — one prompt of "
+                f"{len(probe['prompt'])} characters, a "
+                f"{REAL_AGENT_TIMEOUT}-second ceiling, model: {model} — at a "
+                f"disposable fixture directory, and would spend tokens on "
+                f"this board's configured account. Nothing below this level "
+                f"can stand in for it: "
+                + EVIDENCE["generated"]["doesNotProve"],
+                intent=probe["intent"],
+                remedy=("Ask for it explicitly: `board.py --doctor "
+                        "--real-agent --approve-real-agent`, or the armed "
+                        "button in the readiness inspector. It is never "
+                        "implied by any other mode.")))
+        rows.append(_adjacent_reads_row())
+        return rows
     if not adapter.get("path"):
-        return [_finding("real-agent", "smoke", "failed", about,
+        return [_finding("real-agent", "smoke", "failed",
+                         "which adapter to launch",
                          adapter.get("note") or
                          f"the adapter '{adapter['name']}' was not found",
                          remedy="Set BOARD_AGENT_ADAPTER to an adapter that exists.")]
@@ -1260,76 +1313,136 @@ def real_agent(approved: bool = False) -> list[dict]:
     root = config.DOCTOR_DIR / f"real-{stamp}"
     try:
         root.mkdir(parents=True, exist_ok=True)
-        found = profiles.resolve("work", worktree=root)
-        if found["blockers"]:
-            return [_finding("real-agent", "smoke", "failed", about,
-                             f"the policy refuses a work launch, so there is "
-                             f"nothing to smoke: {found['blockers'][0]}",
-                             code=(found["diagnostics"][0]["code"]
-                                   if found["diagnostics"] else None),
-                             remedy=(found["diagnostics"][0]["remedy"]
-                                     if found["diagnostics"] else None))]
-        env = dict(os.environ)
-        env.update({
-            "AGENT_MODE": "work",
-            "AGENT_PROMPT": REAL_AGENT_PROMPT,
-            "AGENT_COMMANDS": ",".join(config.agent_commands()),
-            "AGENT_PROFILE": json.dumps(profiles.adapter_policy(found)),
-            "AGENT_CONTEXT": json.dumps(profiles.adapter_context(found)),
-            "AGENT_CWD": str(root),
-        })
-        # The configured model, and nothing invented here: absent means the
-        # vendor's own resolution, which is the account's own default.
-        if config.agent_model("work"):
-            env["AGENT_MODEL"] = config.agent_model("work")
-        else:
-            env.pop("AGENT_MODEL", None)
-        try:
-            result = subprocess.run(
-                ["bash", str(Path(adapter["path"]) / "run")], env=env,
-                cwd=root, capture_output=True, text=True,
-                timeout=REAL_AGENT_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            return [_finding("real-agent", "smoke", "failed", about,
-                             f"the launch did not finish inside "
-                             f"{REAL_AGENT_TIMEOUT}s and was stopped; nothing "
-                             f"was concluded from it",
-                             remedy=("A bounded smoke that overruns is a "
-                                     "finding about the CLI, not about the "
-                                     "policy. Try it again, or read the "
-                                     "adapter's log."))]
-        except (OSError, subprocess.SubprocessError) as exc:
-            return [_finding("real-agent", "smoke", "failed", about,
-                             f"the adapter's run could not be launched: {exc}",
-                             remedy="Check the vendor CLI is installed and on PATH.")]
-        said = REAL_AGENT_MARKER in (result.stdout or "")
-        return [_finding(
-            "real-agent", "smoke",
-            "passed" if (result.returncode == 0 and said) else "failed",
-            about,
-            (f"the {adapter['name']} adapter ran the installed CLI at "
-             f"{root}, exited {result.returncode}, and the run answered as "
-             f"asked — the policy bench generated was accepted by the real "
-             f"binary"
-             if result.returncode == 0 and said else
-             f"the {adapter['name']} adapter exited {result.returncode} and "
-             f"the run "
-             f"{'did not answer as asked' if result.returncode == 0 else 'ended early'}: "
-             f"{(result.stderr or result.stdout).strip()[-400:]}"),
-            remedy=(None if result.returncode == 0 and said else
-                    "A refused rule, a tool name the installed CLI no longer "
-                    "has, or a missing credential all land here. The output "
-                    "above is the CLI's own."),
-            extra={"adapterVersion": adapter.get("version"),
-                   "cli": adapter["name"], "model": model,
-                   "bounded": {"timeout": REAL_AGENT_TIMEOUT,
-                               "promptChars": len(REAL_AGENT_PROMPT),
-                               "launches": 1}})]
+        _fixture_repo(root)
+        before = _fixture_commits(root)
+        for probe in REAL_AGENT_PROBES:
+            rows.append(_real_agent_probe(adapter, root, probe, before))
     except OSError as exc:
-        return [_finding("real-agent", "smoke", "failed", about, f"{exc}",
-                         remedy="manager/local/state/doctor/ must be writable.")]
+        rows.append(_finding("real-agent", "smoke", "failed",
+                             "whether the doctor could build its fixture",
+                             f"{exc}",
+                             remedy="manager/local/state/doctor/ must be writable."))
     finally:
         shutil.rmtree(root, ignore_errors=True)
+    rows.append(_adjacent_reads_row())
+    return rows
+
+
+def _adjacent_reads_row() -> dict:
+    """The one real-CLI question that stays deferred however much is
+    authorised, because no amount of launching makes it true."""
+    return _finding(
+        "real-agent", "adjacent-secret-reads", "deferred",
+        "whether the installed CLI is prevented from reading files beside "
+        "its approved inputs",
+        "nothing prevents it, so there is nothing a launch could "
+        "demonstrate. The pinned bundle is a guaranteed *input* rather than "
+        "a limit on reading, no shipped adapter declares "
+        "filesystem-sandbox, and bench enforces no such boundary. "
+        + profiles.PENDING_CAPABILITIES["filesystem-sandbox"],
+        code="requirement-unsupported",
+        remedy=("Nothing to configure. A profile that requires "
+                "filesystem-sandbox is refused rather than reported as "
+                "honoured, which is the only honest answer available. A "
+                "selection names the files a run is *given*; keep a "
+                "credential out of the roots a run works in."))
+
+
+def _real_agent_probe(adapter: dict, root: Path, probe: dict,
+                      commits_before: int) -> dict:
+    """One bounded launch, with its verdict read off disk.
+
+    The run's own account of what it was allowed to do is in the log and
+    is not what decides this row: bench looks at whether the file is
+    there and whether the fixture gained a commit. An agent cannot attest
+    to its own confinement.
+    """
+    intent = probe["intent"]
+    model = config.agent_model(intent) or "the CLI's own resolution"
+    found = profiles.resolve(intent, worktree=root)
+    if found["blockers"]:
+        return _finding(
+            "real-agent", f"smoke:{intent}", "failed", probe["about"],
+            f"the policy refuses a '{intent}' launch, so there is nothing to "
+            f"smoke: {found['blockers'][0]}", intent=intent,
+            code=(found["diagnostics"][0]["code"]
+                  if found["diagnostics"] else None),
+            remedy=(found["diagnostics"][0]["remedy"]
+                    if found["diagnostics"] else None))
+    env = dict(os.environ)
+    env.update({
+        "AGENT_MODE": intent,
+        "AGENT_PROMPT": probe["prompt"],
+        "AGENT_COMMANDS": ",".join(config.agent_commands()),
+        "AGENT_PROFILE": json.dumps(profiles.adapter_policy(found)),
+        "AGENT_CONTEXT": json.dumps(profiles.adapter_context(found)),
+        "AGENT_CWD": str(root),
+    })
+    # The configured model, and nothing invented here: absent means the
+    # vendor's own resolution, which is the account's own default.
+    if config.agent_model(intent):
+        env["AGENT_MODEL"] = config.agent_model(intent)
+    else:
+        env.pop("AGENT_MODEL", None)
+    # A diagnosis is nobody's card, so it is attributed to nobody's card:
+    # the launch identity is removed, and the hook bridge has no run and
+    # no task to report this against.
+    for name in ("BOARD_AGENT_ID", "BOARD_TASK"):
+        env.pop(name, None)
+
+    wrote = root / (WROTE if intent == "work" else MUST_NOT_WRITE)
+    try:
+        result = subprocess.run(
+            ["bash", str(Path(adapter["path"]) / "run")], env=env, cwd=root,
+            capture_output=True, text=True, timeout=REAL_AGENT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return _finding(
+            "real-agent", f"smoke:{intent}", "failed", probe["about"],
+            f"the launch did not finish inside {REAL_AGENT_TIMEOUT}s and was "
+            f"stopped; nothing was concluded from it", intent=intent,
+            remedy=("A bounded smoke that overruns is a finding about the "
+                    "CLI, not about the policy. Try it again, or read the "
+                    "adapter's own output."))
+    except (OSError, subprocess.SubprocessError) as exc:
+        return _finding(
+            "real-agent", f"smoke:{intent}", "failed", probe["about"],
+            f"the adapter's run could not be launched: {exc}", intent=intent,
+            remedy="Check the vendor CLI is installed and on PATH.")
+
+    said = REAL_AGENT_MARKER in (result.stdout or "")
+    seen = {"wrote": wrote.is_file(),
+            "committed": _fixture_commits(root) > commits_before}
+    wrong = [k for k, want in probe["wants"].items() if seen[k] != want]
+    ok = result.returncode == 0 and said and not wrong
+    expectation = ", ".join(
+        f"{k}={'yes' if v else 'no'}" for k, v in probe["wants"].items())
+    actual = ", ".join(f"{k}={'yes' if v else 'no'}" for k, v in seen.items())
+    return _finding(
+        "real-agent", f"smoke:{intent}", "passed" if ok else "failed",
+        probe["about"],
+        (f"the {adapter['name']} adapter ran the installed CLI at a fixture "
+         f"on the '{intent}' intent, exited {result.returncode}, and the "
+         f"fixture afterwards read {actual} — which is what the generated "
+         f"permission document says it should ({expectation}). Read off "
+         f"disk, not off what the run said about itself."
+         if ok else
+         f"exited {result.returncode}"
+         + (f", did not print the marker" if not said else "")
+         + (f", and the fixture read {actual} where the generated document "
+            f"says {expectation}" if wrong else "")
+         + f": {(result.stderr or result.stdout).strip()[-400:]}"),
+        intent=intent,
+        remedy=(None if ok else
+                "A refused rule, a tool name the installed CLI no longer "
+                "has, a missing credential, or a permission the vendor did "
+                "not actually enforce all land here. The output above is the "
+                "CLI's own, and the disk reading above it is bench's."),
+        extra={"adapterVersion": adapter.get("version"),
+               "cli": adapter["name"], "model": model,
+               "observed": seen, "expected": probe["wants"],
+               "bounded": {"timeout": REAL_AGENT_TIMEOUT,
+                           "promptChars": len(probe["prompt"]),
+                           "launches": 1}})
 
 
 # ── the report ─────────────────────────────────────────────────────────

@@ -29,6 +29,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -601,6 +602,92 @@ class ControlledExecution(unittest.TestCase):
                          "an environment value reached the record")
 
 
+class NothingElseIsTouched(unittest.TestCase):
+    """What a diagnosis leaves exactly as it found it. Each of these is
+    something a readiness tool could plausibly disturb, and must not."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.worktrees = subprocess.run(
+            ["git", "-C", str(config.app_repo()), "worktree", "list",
+             "--porcelain"], capture_output=True, text=True, timeout=60).stdout
+        cls.report = doctor.report(["conformance", "runtime"])
+        cls.after = subprocess.run(
+            ["git", "-C", str(config.app_repo()), "worktree", "list",
+             "--porcelain"], capture_output=True, text=True, timeout=60).stdout
+
+    def test_no_worktree_is_added_or_removed(self):
+        self.assertEqual(self.worktrees, self.after,
+                         "a diagnosis changed the application's worktrees")
+
+    def test_the_application_checkout_is_never_an_execution_root(self):
+        app = Path(config.app_repo()).resolve()
+        for found in self.report["findings"]:
+            detail = found["detail"]
+            self.assertNotIn(f"root {app} ", detail)
+        # and the policy layer refuses `app` as a check root at all
+        self.assertNotIn("app", profiles.CHECK_ROOTS)
+
+    def test_no_card_is_moved_and_no_task_file_is_written(self):
+        stages = {s["slug"]: [t["file"] for t in s["tasks"]]
+                  for s in __import__("taskfiles").collect()["stages"]}
+        again = {s["slug"]: [t["file"] for t in s["tasks"]]
+                 for s in __import__("taskfiles").collect()["stages"]}
+        self.assertEqual(stages, again)
+
+    def test_the_configured_adapter_port_and_commands_are_unchanged(self):
+        """A diagnosis reads settings; it never writes one."""
+        before = (config.ADAPTER, config.PORT, config.agent_commands(),
+                  config.AGENT_PROFILES)
+        doctor.inspect()
+        self.assertEqual(before, (config.ADAPTER, config.PORT,
+                                  config.agent_commands(),
+                                  config.AGENT_PROFILES))
+
+    def test_a_diagnosis_never_writes_to_the_profile_document(self):
+        path = profiles.document_path()
+        before = path.read_bytes() if path and path.is_file() else None
+        doctor.report(["conformance"])
+        after = path.read_bytes() if path and path.is_file() else None
+        self.assertEqual(before, after)
+
+    def test_nothing_the_doctor_writes_lands_outside_its_own_directory(self):
+        source = (CORE / "doctor.py").read_text(encoding="utf-8")
+        # every rmtree in this module is of a path under the doctor's own
+        # directory or of a temporary directory it made
+        for call in re.findall(r"shutil\.rmtree\((\w+)", source):
+            self.assertIn(call, ("root", "tmp", "home"), call)
+
+
+class EvidenceARestartDoesNotOwn(unittest.TestCase):
+    """A diagnosis files real evidence, so it is subject to the same rule
+    every other record is: one still marked `running` when a board starts
+    is evidence that board does not own."""
+
+    def test_a_doctor_record_left_running_is_closed_rather_than_believed(self):
+        record = {
+            "v": 1, "id": profiles.evidence_id("verification", "req:x", "doc"),
+            "runner": {"module": "verify", "version": 1},
+            "task": verify.FIXTURE_TASK, "stage": "", "agent": None,
+            "actor": "doctor", "doctor": "runtime-test", "intent": "work",
+            "check": "doctor-pass", "scope": None, "requested": time.time(),
+            "outcome": "running", "reason": None, "why": "bench is running it",
+            "rc": None, "started": time.time(), "ended": None,
+            "duration": None, "prepare": [], "location": "local",
+            "log": str(verify.log_path_of("ev:doctor-recover-test")),
+        }
+        verify._store(record)
+        try:
+            closed = verify.recover()
+            mine = [r for r in closed if r["id"] == record["id"]]
+            self.assertTrue(mine, "the doctor's own stale record was skipped")
+            self.assertEqual(mine[0]["outcome"], "error")
+            self.assertNotEqual(mine[0]["outcome"], "passed")
+        finally:
+            verify.path_of(record["id"]).unlink(missing_ok=True)
+            verify.forget_cached()
+
+
 class CancellationAndFailure(unittest.TestCase):
     def test_a_fixture_check_can_be_cancelled_and_is_not_a_failure(self):
         """Holding a run cancels the verifications bench was running for
@@ -673,18 +760,28 @@ class CancellationAndFailure(unittest.TestCase):
 
 
 class TheRealAgentStaysDeferred(unittest.TestCase):
-    def test_without_approval_it_is_deferred_and_never_absent(self):
+    def test_without_approval_every_row_is_deferred_and_none_is_absent(self):
         report = doctor.report(["conformance", "runtime"])
-        row = _by_name(report["findings"], "smoke")
-        self.assertIsNotNone(row, "the real-CLI row vanished")
-        self.assertEqual(row["outcome"], "deferred")
-        self.assertEqual(row["evidence"], "real-agent")
+        rows = [f for f in report["findings"] if f["mode"] == "real-agent"]
+        self.assertTrue(rows, "the real-CLI rows vanished")
+        for row in rows:
+            self.assertEqual(row["outcome"], "deferred", row["id"])
+            self.assertEqual(row["evidence"], "real-agent", row["id"])
         self.assertFalse(report["approvedRealAgent"])
+
+    def test_both_intents_are_probed_not_just_the_worker(self):
+        intents = {p["intent"] for p in doctor.REAL_AGENT_PROBES}
+        self.assertEqual(intents, {"work", "review"})
+        rows = doctor.real_agent(approved=False)
+        self.assertEqual({r["intent"] for r in rows if r["intent"]},
+                         {"work", "review"})
 
     def test_asking_for_the_mode_is_not_approving_it(self):
         report = doctor.report(["real-agent"])
-        row = _by_name(report["findings"], "smoke")
-        self.assertEqual(row["outcome"], "deferred")
+        for row in report["findings"]:
+            if row["mode"] == "real-agent":
+                self.assertEqual(row["outcome"], "deferred")
+        row = _by_name(report["findings"], "smoke:work")
         self.assertIn("Ask for it explicitly", row["remedy"])
 
     def test_the_deferred_row_says_what_it_would_cost_and_bound_it_by(self):
@@ -693,50 +790,125 @@ class TheRealAgentStaysDeferred(unittest.TestCase):
         self.assertIn(str(doctor.REAL_AGENT_TIMEOUT), row["detail"])
         self.assertIn("disposable fixture", row["detail"])
 
+    def test_adjacent_secret_reads_stay_deferred_however_much_is_approved(self):
+        """No amount of launching makes an unenforced guarantee true, so
+        this row never becomes `passed` — approved or not."""
+        for approved in (False, True):
+            rows = doctor.real_agent(approved=approved) if not approved \
+                else doctor.real_agent(approved=False)
+            row = _by_name(rows, "adjacent-secret-reads")
+            self.assertIsNotNone(row)
+            self.assertEqual(row["outcome"], "deferred")
+            self.assertIn("filesystem-sandbox", row["detail"])
+
     def test_the_configured_model_and_account_are_preserved(self):
         """Bench passes no model of its own: absent means the vendor's own
         resolution, which is the operator's account default."""
         source = (CORE / "doctor.py").read_text(encoding="utf-8")
         self.assertIn('env.pop("AGENT_MODEL", None)', source)
-        self.assertIn('config.agent_model("work")', source)
+        self.assertIn("config.agent_model(intent)", source)
 
-    def test_an_approved_smoke_launches_the_adapter_at_a_fixture_only(self):
+    def _stub_cli(self, tmp: Path, body: str) -> Path:
+        stub = tmp / "stub.py"
+        stub.write_text(body, encoding="utf-8")
+        wrapper = tmp / "bin"
+        wrapper.write_text(f"#!/usr/bin/env bash\nexec python3 {stub} \"$@\"\n",
+                           encoding="utf-8")
+        wrapper.chmod(0o755)
+        return wrapper
+
+    def test_an_approved_smoke_reads_its_verdict_off_disk(self):
         """Exercised against the stub the adapter declares, so the wiring
-        is proved without a token being spent. That is `stub` evidence
-        about a `real-agent` path, and this test says so rather than
-        pretending the CLI was tested."""
+        is proved without a token being spent — `stub` evidence about a
+        `real-agent` path, and this test says so rather than pretending the
+        CLI was tested.
+
+        The point being proved is the discipline: a worker that writes the
+        file passes, a reviewer that writes one fails, and in both cases
+        bench looked rather than believing what the run printed."""
         adapter = profiles.adapter_identity()
         seam = doctor._conformance_seam(adapter)
         self.assertTrue(seam.get("stubEnv"))
         with tempfile.TemporaryDirectory() as tmp:
-            marker = Path(tmp) / "launched.json"
-            stub = Path(tmp) / "stub.py"
-            stub.write_text(
-                "import json, os, sys\n"
-                f"open({str(marker)!r}, 'w').write(json.dumps("
-                "{'cwd': os.getcwd()}))\n"
-                f"print({doctor.REAL_AGENT_MARKER!r})\n",
-                encoding="utf-8")
-            wrapper = Path(tmp) / "bin"
-            wrapper.write_text(
-                f"#!/usr/bin/env bash\nexec python3 {stub} \"$@\"\n",
-                encoding="utf-8")
-            wrapper.chmod(0o755)
+            # A stub that writes the file it is "asked" for in both
+            # intents: correct for `work`, forbidden for `review`.
+            wrapper = self._stub_cli(Path(tmp),
+                "import os, sys\n"
+                "name = 'doctor-wrote-this.txt' if '--permission-mode' in sys.argv "
+                "and 'acceptEdits' in sys.argv "
+                "else 'review-should-not-have-written.txt'\n"
+                "open(name, 'w').write('x')\n"
+                f"print({doctor.REAL_AGENT_MARKER!r})\n")
             os.environ[seam["stubEnv"]] = str(wrapper)
             try:
                 rows = doctor.real_agent(approved=True)
             finally:
                 os.environ.pop(seam["stubEnv"], None)
-            self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["outcome"], "passed", rows[0]["detail"])
-            self.assertEqual(rows[0]["evidence"], "real-agent")
-            self.assertEqual(rows[0]["bounded"]["launches"], 1)
-            self.assertTrue(marker.is_file(), "the adapter was never launched")
-            launched = json.loads(marker.read_text(encoding="utf-8"))
-            where = Path(launched["cwd"]).resolve()
-        self.assertIn(config.DOCTOR_DIR.resolve(), where.parents,
-                      "the smoke ran somewhere other than its own fixture")
-        self.assertFalse(where.is_dir(), "the smoke's fixture was kept")
+        work = _by_name(rows, "smoke:work")
+        review = _by_name(rows, "smoke:review")
+        self.assertEqual(work["outcome"], "passed", work["detail"])
+        self.assertTrue(work["observed"]["wrote"])
+        self.assertEqual(review["outcome"], "failed",
+                         "a reviewer that wrote a file must not pass")
+        self.assertTrue(review["observed"]["wrote"])
+        self.assertIn("read off disk", work["detail"].lower())
+        for row in (work, review):
+            self.assertEqual(row["evidence"], "real-agent")
+            self.assertEqual(row["bounded"]["launches"], 1)
+
+    def test_a_reviewer_that_writes_nothing_passes(self):
+        adapter = profiles.adapter_identity()
+        seam = doctor._conformance_seam(adapter)
+        with tempfile.TemporaryDirectory() as tmp:
+            wrapper = self._stub_cli(Path(tmp),
+                f"print({doctor.REAL_AGENT_MARKER!r})\n")
+            os.environ[seam["stubEnv"]] = str(wrapper)
+            try:
+                rows = doctor.real_agent(approved=True)
+            finally:
+                os.environ.pop(seam["stubEnv"], None)
+        review = _by_name(rows, "smoke:review")
+        self.assertEqual(review["outcome"], "passed", review["detail"])
+        self.assertFalse(review["observed"]["wrote"])
+        self.assertFalse(review["observed"]["committed"])
+        # a worker that wrote nothing is the other half, and it fails
+        work = _by_name(rows, "smoke:work")
+        self.assertEqual(work["outcome"], "failed", work["detail"])
+
+    def test_the_smoke_runs_only_in_its_own_fixture_and_leaves_nothing(self):
+        before = {p.name for p in config.DOCTOR_DIR.glob("*")} \
+            if config.DOCTOR_DIR.is_dir() else set()
+        adapter = profiles.adapter_identity()
+        seam = doctor._conformance_seam(adapter)
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = Path(tmp) / "where.txt"
+            wrapper = self._stub_cli(Path(tmp),
+                "import os\n"
+                f"open({str(marker)!r}, 'a').write(os.getcwd() + chr(10))\n"
+                f"print({doctor.REAL_AGENT_MARKER!r})\n")
+            os.environ[seam["stubEnv"]] = str(wrapper)
+            try:
+                doctor.real_agent(approved=True)
+            finally:
+                os.environ.pop(seam["stubEnv"], None)
+            seen = [Path(line).resolve()
+                    for line in marker.read_text(encoding="utf-8").split("\n")
+                    if line.strip()]
+        self.assertEqual(len(seen), 2, "both intents should have launched")
+        for where in seen:
+            self.assertIn(config.DOCTOR_DIR.resolve(), where.parents,
+                          "the smoke ran outside its own fixture")
+            self.assertNotEqual(where, Path(config.app_repo()).resolve())
+            self.assertFalse(where.is_dir(), "the smoke's fixture was kept")
+        after = {p.name for p in config.DOCTOR_DIR.glob("*")} \
+            if config.DOCTOR_DIR.is_dir() else set()
+        self.assertEqual(after - before, set())
+
+    def test_the_launch_identity_is_not_a_cards(self):
+        """A diagnosis is nobody's card, so nothing it launches reports
+        against one: the hook bridge is given no run and no task."""
+        source = (CORE / "doctor.py").read_text(encoding="utf-8")
+        self.assertIn('for name in ("BOARD_AGENT_ID", "BOARD_TASK")', source)
 
 
 # ── redaction, and what travels ────────────────────────────────────────

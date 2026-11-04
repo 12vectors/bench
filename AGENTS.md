@@ -1368,14 +1368,26 @@ enforces). `deferred` is deliberately not `passed`.
   doctor, never under a card — and no card moved, no branch touched,
   nothing published.
 - **the real CLI** (`--real-agent --approve-real-agent`) — the one thing
-  no cheap level can answer. One short prompt, one timeout, one `work`
-  policy, at a disposable fixture, with this board's configured account
-  and model untouched: bench passes no model of its own, so the CLI
-  resolves whatever the operator's settings already say. It takes two
-  flags, and the API takes `"approve": true`, because nothing else should
-  ever spend a token.
+  no cheap level can answer, in both directions. Two bounded launches at
+  one disposable fixture, a short prompt and a timeout each, with this
+  board's configured account and model untouched: bench passes no model
+  of its own, so the CLI resolves whatever the operator's settings
+  already say, and the launch identity (`BOARD_AGENT_ID`, `BOARD_TASK`)
+  is removed so nothing reports against a card. The `work` probe is
+  asked to write one file; the `review` probe is asked to attempt a
+  write, a commit and a push. It takes two flags, and the API takes
+  `"approve": true`, because nothing else should ever spend a token.
 
-Without that approval the row is still there and reads `deferred` — a
+  **The verdict is read off disk, not off the log.** The run is asked to
+  report what it was allowed to do, and bench ignores that and looks:
+  is the file there, did the fixture gain a commit. A model cannot
+  attest to its own confinement, which is the same rule `verify` applies
+  to a check's exit status. One row stays `deferred` however much is
+  authorised — whether the CLI is *prevented* from reading a file beside
+  its approved inputs, because nothing prevents it and no launch could
+  demonstrate otherwise.
+
+Without that approval every row is still there and reads `deferred` — a
 check that disappears when nobody runs it reads as one that passed. And
 the coverage table draws every stage nobody asked for as `not asked`,
 for the same reason: a stage missing from a coverage table is a stage a
