@@ -2691,7 +2691,10 @@ async function fireAgent(task, url, extra) {
   toast(url.endsWith('act-pr')
     ? `${who} is acting on the review of ${task.file}'s PR`
     : url.endsWith('review-pr')
-      ? `${who} is reviewing ${task.file}'s PR`
+      // which revision, because that is what the verdict will be about and
+      // the click is the moment it was decided
+      ? `${who} is reviewing ${task.file}'s PR at ` +
+        `${((data.agent.review || {}).head || 'an unrecorded commit').slice(0, 12)}`
       : data.agent.mode === 'review'
         ? `${who} is checking ${task.file} is still true of the codebase`
         : `${who} is on it — branch ${data.agent.branch}`);

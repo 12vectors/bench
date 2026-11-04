@@ -1211,6 +1211,16 @@ class ThePageSaysWhereAReviewRan(unittest.TestCase):
         self.assertRegex(self.html,
                          r"\[data-review\][\s\S]{0,200}reviewSheet\(task\)")
 
+    def test_a_refusal_reaches_the_person_who_clicked(self):
+        """Every refusal in this feature is the server's sentence — a head
+        bench cannot name, a foreign checkout, a merged target — and the
+        page shows it rather than a generic failure."""
+        start = self.html.index("async function fireAgent(task, url, extra)")
+        body = self.html[start:start + 1600]
+        self.assertIn("toast(data.error", body)
+        self.assertIn("review || {}).head", body,
+                      "and a launch that worked says which revision")
+
     def test_the_chip_is_absent_on_a_board_that_has_reviewed_nothing(self):
         window = self.html[self.html.index("function reviewChip(task) {"):]
         window = window[:window.index("function reviewPanel")]
