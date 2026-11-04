@@ -115,7 +115,16 @@ class ProfileCase(unittest.TestCase):
     No symlinks are used to make any of it work: the roots are named
     settings, which is the whole of card 67's "operator-local separate
     roots work without symlinks".
+
+    `LAYOUT` is where the board's own files sit relative to the
+    application, and the resolution cases are run under all three further
+    down: `external` (the tool, the tickets and the code in three places),
+    `vendored` (a `.task-manager/` inside the project) and `flat` (the
+    self-hosted source checkout, where the tool *is* the project).
+    Filesystem layout must not change what a run is allowed to do.
     """
+
+    LAYOUT = "external"
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -133,13 +142,19 @@ class ProfileCase(unittest.TestCase):
         git(self.repo, "add", "-A")
         git(self.repo, "commit", "-q", "-m", "root")
 
-        self.work = self.tmp / "work"
+        # where the tool and the work state sit for this layout
+        if self.LAYOUT == "external":
+            self.tool, self.work = self.tmp / "tool", self.tmp / "work"
+        elif self.LAYOUT == "vendored":
+            self.tool = self.work = self.repo / ".task-manager"
+        else:
+            self.tool = self.work = self.repo
+
         self.tasks = self.work / "tasks"
         for slug in (*config.STAGE_DIRS, "archive"):
             (self.tasks / slug).mkdir(parents=True)
-        (self.work / "reference").mkdir()
+        (self.work / "reference").mkdir(parents=True, exist_ok=True)
 
-        self.tool = self.tmp / "tool"
         self.local = self.tool / "manager" / "local"
         (self.local / "adapters" / config.ADAPTER).mkdir(parents=True)
         (self.local / "commands").mkdir(parents=True)
@@ -166,8 +181,10 @@ class ProfileCase(unittest.TestCase):
                    COMMIT_MOVES=False, SYNC=False, FETCH_TIMEOUT=10.0)
         # EXTERNAL/APP_SETTING are read at import; these tests point the
         # roots directly, which is the same resolved layout.
-        self.patch(APP_SETTING=str(self.repo), WORK_SETTING=str(self.work),
-                   EXTERNAL=True)
+        external = self.LAYOUT == "external"
+        self.patch(APP_SETTING=str(self.repo) if external else "",
+                   WORK_SETTING=str(self.work) if external else "",
+                   EXTERNAL=external)
 
         for registry in (state.AGENTS, state.BOARD_EVENTS, state.EXPECTED_MOVES):
             registry.clear()
@@ -1279,6 +1296,32 @@ class TheLaunchRecordsWhatItRode(ProfileCase):
         self.assertEqual([g["name"] for g in again["commands"]], ["unit-tests"])
         self.assertFalse(profiles.freshness(again)["fresh"])
 
+    def test_a_manifest_outlives_the_card_until_someone_drops_it(self):
+        """Unlike a plan, which stops describing anything once the work
+        merges, a manifest is the record of what one run was granted — so
+        nothing removes it on the card's behalf, and `forget` is the
+        explicit way out."""
+        record = self.run_agent()
+        self.assertIsNotNone(profiles.recorded(record["id"]))
+        self.assertTrue(profiles.forget(record["id"]))
+        self.assertIsNone(profiles.recorded(record["id"]))
+        self.assertFalse(profiles.forget(record["id"]),
+                         "forgetting twice is not an error worth raising")
+
+    def test_a_launch_that_fails_on_git_leaves_no_worktree_behind(self):
+        """The pin is before the worktree, so the ordering can be checked
+        from the other side: a refusal at the git step must not have left a
+        checkout, and the content-addressed bundle it already wrote is
+        reused rather than cleaned up."""
+        config.WORKTREES.mkdir(parents=True, exist_ok=True)
+        (config.WORKTREES / STEM).mkdir()
+        (config.WORKTREES / STEM / "squatter.txt").write_text("x\n",
+                                                              encoding="utf-8")
+        with self.assertRaises(ValueError) as caught:
+            agents.start_agent(CARD, "in-progress")
+        self.assertIn("not a git", str(caught.exception))
+        self.assertEqual(agents.list_public(), [])
+
     def test_act_pr_and_review_record_their_own_intents(self):
         self.declares({"v": 1, "profiles": {
             "review": {"context": [
@@ -1430,6 +1473,131 @@ class TheApiServesOneResolver(ProfileCase):
         shown = profiles.public(profiles.manifest("work", CARD, "in-progress"))
         self.assertTrue(shown["blockers"])
         self.assertIn("mark the selection", shown["blockers"][0])
+
+
+# ── every layout, and what an install carries across an update ─────────
+
+
+class EveryLayoutResolvesTheSame(ProfileCase):
+    """The resolution cases that could plausibly move with the layout, run
+    under each of the three. Which repository a root *is* changes; what a
+    run is allowed to do must not."""
+
+    def _document(self) -> None:
+        (self.work / "reference" / "design.md").write_text(
+            "the design\n", encoding="utf-8")
+        (self.local / "AGENTS.md").write_text("the brief\n", encoding="utf-8")
+        self.declares({"v": 1, "profiles": {"work": {
+            "commands": [{"name": "unit-tests", "run": "python3 -m unittest"}],
+            "context": [
+                {"name": "design", "path": "work:reference/design.md"},
+                {"name": "brief", "path": "tool:manager/local/AGENTS.md"}]}}})
+
+    def test_the_named_roots_are_the_resolved_ones(self):
+        found = self.resolve("work")
+        self.assertEqual(found["roots"]["app"], str(self.repo))
+        self.assertEqual(found["roots"]["work"], str(self.work))
+        self.assertEqual(found["roots"]["tool"], str(self.tool))
+
+    def test_a_document_resolves_its_inputs_against_those_roots(self):
+        self._document()
+        found = self.resolve("work")
+        self.assertEqual(found["blockers"], [])
+        self.assertEqual(sorted(self.inputs(found)), ["brief", "design"])
+        for item in found["context"]:
+            self.assertTrue(item["readable"], item["name"])
+
+    def test_the_legacy_path_is_the_legacy_path_everywhere(self):
+        self.assertEqual(self.resolve("work")["source"]["kind"], "legacy")
+        self.assertEqual(self.prefixes(self.resolve("work")),
+                         ["python3 -m unittest"])
+
+    def test_a_launch_records_and_pins_under_the_tool(self):
+        self._document()
+        record = self.run_agent()
+        frozen = profiles.recorded(record["id"])
+        self.assertEqual(len(frozen["context"]), 2)
+        for item in frozen["context"]:
+            self.assertEqual(item["status"], "pinned")
+            self.assertTrue(Path(item["pinned"]).is_relative_to(self.local),
+                            "a pinned bundle belongs with the tool, never in "
+                            "the application or the shared ticket history")
+
+    def test_escapes_are_measured_against_the_root_this_layout_gives(self):
+        outside = self.tmp / "outside.md"
+        outside.write_text("not approved\n", encoding="utf-8")
+        (self.work / "reference" / "link.md").symlink_to(outside)
+        self.declares({"v": 1, "profiles": {"work": {"context": [
+            {"name": "escape", "path": "work:reference/link.md"}]}}})
+        self.assertTrue(self.resolve("work")["blockers"])
+
+
+class AVendoredInstall(EveryLayoutResolvesTheSame):
+    LAYOUT = "vendored"
+
+
+class ASelfHostedCheckout(EveryLayoutResolvesTheSame):
+    LAYOUT = "flat"
+
+
+class WhatAnInstallCarries(unittest.TestCase):
+    """Clean reinstallation and update expectations: the resolver ships,
+    the example ships, and a project's own policy survives an update that
+    replaces `manager/core/` wholesale."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.manifest = (REPO / "manager" / "core" / "release-manifest"
+                        ).read_text(encoding="utf-8")
+
+    def test_the_resolver_and_its_example_ship_with_core(self):
+        self.assertIn("tree manager/core", self.manifest,
+                      "manager/core ships wholesale, which is how "
+                      "profiles.py and profiles.example.json reach an install")
+        for name in ("profiles.py", "profiles.example.json"):
+            self.assertTrue((REPO / "manager" / "core" / name).is_file(), name)
+
+    def test_the_shipped_adapters_carry_their_declarations(self):
+        for directory in ("claude", "opencode"):
+            self.assertTrue((REPO / "manager" / "core" / "adapters" /
+                             directory / "capabilities.json").is_file(),
+                            directory)
+
+    def test_no_project_policy_is_ever_shipped(self):
+        """A document names roots on one disk. Shipping one would point a
+        fresh install at somebody else's machine."""
+        self.assertNotIn("profiles.json", self.manifest.replace(
+            "profiles.example.json", ""))
+        self.assertFalse((REPO / "manager" / "local" / "profiles.json").exists(),
+                         "bench's own repository must not carry one either")
+
+    def test_a_projects_own_policy_is_gitignored(self):
+        """It is machine-local, like local/.env — and in a vendored
+        install `manager/local/` sits inside the application, so this is
+        what keeps a policy out of the application's own history."""
+        ignored = (REPO / ".gitignore").read_text(encoding="utf-8").split()
+        self.assertIn("manager/local/profiles.json", ignored)
+
+    def test_an_update_replaces_core_and_never_local(self):
+        classes = {}
+        for line in self.manifest.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            kind, _, path = line.partition(" ")
+            classes[path] = kind
+        self.assertEqual(classes["manager/core"], "tree")
+        for path, kind in classes.items():
+            if path.startswith("manager/local"):
+                self.assertIn(kind, ("keep", "seed", "once"),
+                              f"{path} would be replaced by an update")
+
+    def test_the_settings_example_documents_the_new_key(self):
+        text = (REPO / "manager" / "core" / ".env.example"
+                ).read_text(encoding="utf-8")
+        self.assertIn("\nBOARD_AGENT_PROFILES=", text)
+        self.assertIn("profiles.example.json", text)
+        self.assertIn("BOARD_AGENT_COMMANDS plus the adapter's", text)
 
 
 if __name__ == "__main__":

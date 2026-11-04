@@ -1179,6 +1179,15 @@ def recorded(agent_id: str) -> dict | None:
 
 
 def forget(agent_id: str) -> bool:
+    """Drop one run's manifest.
+
+    Nothing in this card calls it, deliberately: unlike a plan, which
+    describes a card's *current* work and stops describing anything once
+    that work merges, a manifest is the record of what one run was granted
+    — the thing a reviewer or a later gate goes back to. So it outlives
+    the card, and the way to remove one is for a person (or a later
+    member, whose cleanup policy this is) to ask.
+    """
     try:
         manifest_path(agent_id).unlink()
         return True

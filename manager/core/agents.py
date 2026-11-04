@@ -333,14 +333,13 @@ def _profile_note(manifest: dict) -> str | None:
 
 def _profiled(intent: str, filename: str, stage: str, *,
               worktree: Path | str | None = None) -> dict:
-    """Resolve, validate and freeze the profile for one launch.
+    """Resolve, validate and pin the profile for one launch.
 
-    Called twice on the paths that claim a card — once before any side
-    effect, with nothing pinned, so a refusal costs one read; and once at
-    the launch itself, where `pin_inputs=True` copies the approved inputs
-    into a read-only bundle and the record is written. Between the two
-    sits `require`, which is why no bundle is ever written for a launch
-    that was refused.
+    `require` sits between the resolution and the pin, so no bundle is
+    ever written for a launch that was refused — and every call site below
+    makes this call *before* it creates a branch, a worktree or a process,
+    so a refusal leaves nothing to explain. The manifest is filed under
+    the run's id afterwards, once there is an id for it.
     """
     return profiles.require(
         profiles.manifest(intent, filename, stage, worktree=worktree,
@@ -349,8 +348,13 @@ def _profiled(intent: str, filename: str, stage: str, *,
 
 def _preflight_profile(intent: str, filename: str, stage: str, *,
                        worktree: Path | str | None = None) -> None:
-    """The read-only half: refuse before a branch, a worktree, a claim or
-    a model exists. Writes nothing — not even a pinned bundle."""
+    """The same question asked with *nothing at all* written — not even a
+    pinned bundle.
+
+    One caller: the reading `start_agent` takes before it claims the card.
+    The claim is a write, so what precedes it has to be free of side
+    effects in a way even the pin is not.
+    """
     profiles.require(profiles.manifest(intent, filename, stage,
                                        worktree=worktree))
 
@@ -496,20 +500,28 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     card_path = config.TASKS / stage / filename
     unclaimed = card_path.read_text(encoding="utf-8")
     claim_for_launch(filename, stage, takeover)
+    stem = filename[:-3]
     try:
         plan = plans.require(plans.preflight(filename, stage))
-        _preflight_profile("work", filename, stage)
+        # And the profile, pinned here rather than after the worktree: the
+        # pin is the moment the run's inputs stop being able to change, and
+        # the one thing worse than refusing late is refusing late with a
+        # checkout already on disk. A bundle is content-addressed and
+        # read-only, so one written for a launch that then failed on git is
+        # reused by the next rather than left to be cleaned up.
+        manifest = _profiled("work", filename, stage,
+                             worktree=config.WORKTREES / stem)
     except ValueError:
         # The second reading refused — a fetch that failed between the two,
-        # a branch deleted in the gap. A launch that did not happen claims
-        # nothing, so the card goes back to what it said before the claim,
-        # committed the same way the claim was.
+        # a branch deleted in the gap, a required input that vanished. A
+        # launch that did not happen claims nothing, so the card goes back
+        # to what it said before the claim, committed the same way the
+        # claim was.
         if card_path.read_text(encoding="utf-8") != unclaimed:
             card_path.write_text(unclaimed, encoding="utf-8")
             commit_edit(filename, stage, "claim released: launch refused")
         raise
 
-    stem = filename[:-3]
     branch = plan["branch"]
     worktree = Path(plan["worktree"])
 
@@ -546,9 +558,10 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     # PR this card's move into review/ opens, acting on its reviews, the
     # merge at the end — reads one target rather than resolving its own.
     plan = plans.record(plan)
-    # And the profile, pinned: from here the run's approved inputs cannot
-    # change under it, and the manifest records exactly what it rode.
-    manifest = _profiled("work", filename, "in-progress", worktree=worktree)
+    # The manifest the same way, now that the run has an id to file it
+    # under: from here what this run rode is a fact on disk, and a later
+    # edit to the document or to an approved file changes the next launch
+    # and never this one.
     manifest = profiles.record(agent_id, manifest)
 
     prompt = config.prompt("work.md").format(
@@ -595,15 +608,15 @@ def start_review(filename: str, stage: str) -> dict:
     # The read-only intent gets a resolved profile of its own now, rather
     # than the hardcoded grant set each adapter used to hold alone — so a
     # relevance check refuses a missing required input exactly as a work
-    # launch does, before the model.
-    _preflight_profile("review", filename, stage)
+    # launch does, before the model. Nothing exists to clean up at this
+    # point, which is where every launch refusal belongs.
+    manifest = _profiled("review", filename, stage)
 
     task = read_task(config.TASKS / stage / filename, stage)
     agent_id = f"review-{filename[:-3]}-{time.strftime('%H%M%S')}"
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = profiles.record(agent_id,
-                               _profiled("review", filename, stage))
+    manifest = profiles.record(agent_id, manifest)
 
     prompt = config.prompt("review.md").format(
         stage=stage, filename=filename, body=task["body"],
@@ -843,10 +856,10 @@ def start_pr_review(filename: str, stage: str) -> dict:
     """
     _validate(filename, stage, {"review"},
               "PR reviews run on cards in review/")
-    _preflight_profile("review", filename, stage)
     task = read_task(config.TASKS / stage / filename, stage)
     if not task.get("pr"):
         raise ValueError(f"{filename} has no PR yet — nothing to review")
+    manifest = _profiled("review", filename, stage)
 
     # …but it must be told the branch its PR is actually from: the prompt
     # asks GitHub for the diff by branch, and a phase's is its own.
@@ -856,7 +869,7 @@ def start_pr_review(filename: str, stage: str) -> dict:
     agent_id = f"review-pr-{filename[:-3]}-{time.strftime('%H%M%S')}"
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = profiles.record(agent_id, _profiled("review", filename, stage))
+    manifest = profiles.record(agent_id, manifest)
 
     prompt = config.prompt("review-pr.md").format(
         filename=filename, pr=task["pr"], branch=branch, body=task["body"],
@@ -899,9 +912,11 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     stem = filename[:-3]
     branch = f"task/{stem}"
     worktree = config.WORKTREES / stem
-    # Before the worktree is recreated, not after: a profile that cannot
-    # be honoured must not leave a checkout behind to explain.
-    _preflight_profile("act-pr", filename, stage, worktree=worktree)
+    # Resolved and pinned before the worktree is recreated, not after: a
+    # profile that cannot be honoured must not leave a checkout behind to
+    # explain, and the pin is the moment this run's inputs stop being able
+    # to change under it.
+    manifest = _profiled("act-pr", filename, stage, worktree=worktree)
     # The same plan the work was launched on, revalidated before the run
     # that will push to the PR: a card whose requirements changed under it,
     # or whose base or target has disappeared, needs a person rather than a
@@ -929,8 +944,7 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     agent_id = f"fix-pr-{stem}-{time.strftime('%H%M%S')}"
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = profiles.record(
-        agent_id, _profiled("act-pr", filename, stage, worktree=worktree))
+    manifest = profiles.record(agent_id, manifest)
 
     prompt = config.prompt("act-pr.md").format(
         filename=filename, branch=branch, pr=task["pr"], body=task["body"],
