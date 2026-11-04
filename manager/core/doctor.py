@@ -168,7 +168,10 @@ MODES = {
         "label": "real CLI smoke",
         "does": ("launches the installed adapter for real, with whatever "
                  "model and account this board is configured for, at a "
-                 "disposable fixture — bounded to one short prompt"),
+                 "disposable fixture — two bounded probes, one per "
+                 "direction: what a worker may do, and what a reviewer may "
+                 "not. Each verdict is read off disk rather than off what "
+                 "the run says about itself"),
         "sideEffects": ["spends tokens on the configured account",
                         "runs the installed vendor CLI, which may reach the "
                         "network",
@@ -414,7 +417,7 @@ def _intent_findings(intent: str, found: dict) -> list[dict]:
     """
     out = [_finding(
         "inspect", "launch", "failed" if found["blockers"] else "passed",
-        f"whether a '{intent}' launch would start on this board",
+        f"whether a launch of '{intent}' would start on this board",
         found["blockers"][0] if found["blockers"] else
         (f"would run in {found['cwd']['path'] or found['cwd']['policy']} "
          f"({found['cwd']['policy']} root) · "
@@ -457,7 +460,7 @@ def _intent_findings(intent: str, found: dict) -> list[dict]:
             f"and this run's own account of its testing is all there is")
     out.append(_finding(
         "inspect", "verification", state,
-        f"whether a '{intent}' run can ask bench to run a named check",
+        f"whether the '{intent}' intent can ask bench to run a named check",
         detail, intent=intent,
         code=(blocked[0]["code"] if blocked else None),
         remedy=(blocked[0]["remedy"] if blocked else
@@ -495,9 +498,10 @@ def _pending_findings(table: dict, readings: list[dict]) -> list[dict]:
             code=("requirement-unsupported" if requiring else None),
             remedy=(profiles.DIAGNOSTICS["requirement-unsupported"][1]
                     if requiring else
-                    f"Nothing to do. {(table.get(name) or {}).get('by') or 'Nothing'} "
-                    f"answers for it today, and a profile that requires it is "
-                    f"refused rather than reported as honoured.")))
+                    f"Nothing to do — "
+                    f"{(table.get(name) or {}).get('by') or 'nothing'} answers "
+                    f"for it today, and a profile that requires it is refused "
+                    f"rather than reported as honoured.")))
     return out
 
 
@@ -919,9 +923,8 @@ def _conformance_rows(adapter: dict, seam: dict, intent: str,
         "whether the run is prevented from reading files beside its approved "
         "inputs",
         (f"nothing here prevents it. The {adapter['name']} adapter declares "
-         f"filesystem-sandbox unsupported, bench enforces no such boundary, "
-         f"and the pinned bundle is a guaranteed *input* rather than a limit "
-         f"on reading. "
+         f"filesystem-sandbox unsupported and bench enforces no such "
+         f"boundary: "
          + profiles.PENDING_CAPABILITIES["filesystem-sandbox"]),
         intent=intent, code="requirement-unsupported",
         remedy=("Nothing to configure. A profile that requires "
@@ -1293,8 +1296,9 @@ def real_agent(approved: bool = False) -> list[dict]:
                 f"{REAL_AGENT_TIMEOUT}-second ceiling, model: {model} — at a "
                 f"disposable fixture directory, and would spend tokens on "
                 f"this board's configured account. Nothing below this level "
-                f"can stand in for it: "
-                + EVIDENCE["generated"]["doesNotProve"],
+                f"can stand in for it: the cheaper stages read the rules "
+                f"this board generates, and rules are text until a vendor "
+                f"binary is handed them.",
                 intent=probe["intent"],
                 remedy=("Ask for it explicitly: `board.py --doctor "
                         "--real-agent --approve-real-agent`, or the armed "
@@ -1336,9 +1340,8 @@ def _adjacent_reads_row() -> dict:
         "whether the installed CLI is prevented from reading files beside "
         "its approved inputs",
         "nothing prevents it, so there is nothing a launch could "
-        "demonstrate. The pinned bundle is a guaranteed *input* rather than "
-        "a limit on reading, no shipped adapter declares "
-        "filesystem-sandbox, and bench enforces no such boundary. "
+        "demonstrate. No shipped adapter declares filesystem-sandbox and "
+        "bench enforces no such boundary: "
         + profiles.PENDING_CAPABILITIES["filesystem-sandbox"],
         code="requirement-unsupported",
         remedy=("Nothing to configure. A profile that requires "
@@ -1502,10 +1505,11 @@ def _verdict(findings: list[dict], readings: list[dict]) -> dict:
         line = (f"{len(failed)} thing{'' if len(failed) == 1 else 's'} would "
                 f"stop or weaken a launch here"
                 + (f" — {', '.join(blocked)} affected" if blocked else "")
-                + f". Strongest evidence taken: {EVIDENCE[strongest]['label']}.")
+                + f". The strongest evidence taken was "
+                  f"'{EVIDENCE[strongest]['label']}'.")
     else:
-        line = (f"Nothing found at this level. Strongest evidence taken: "
-                f"{EVIDENCE[strongest]['label']} — "
+        line = (f"Nothing found at this level. The strongest evidence taken "
+                f"was '{EVIDENCE[strongest]['label']}', which does not prove "
                 f"{EVIDENCE[strongest]['doesNotProve']}.")
     return {
         "ready": not failed,
