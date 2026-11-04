@@ -54,6 +54,7 @@ EVIDENCE_DIR = STATE / "evidence"                  # what a verification actuall
 VERIFY_DIR = STATE / "verify"                      # isolated roots a check ran in
 REVIEWS_DIR = STATE / "reviews"                    # run-owned pinned PR-review checkouts
 DOCTOR_DIR = STATE / "doctor"                      # fixtures a diagnosis makes and removes
+GATES_DIR = STATE / "gates"                        # Bench review verdicts and gate overrides
 
 # Ordered — this is the column order on the board.
 STAGES = [

@@ -716,7 +716,12 @@ def document_at(path: Path | None) -> dict:
            # for it, and an intent's own `verify`/`prepare` are names.
            "checks": data.get("checks") or [],
            "prepare": data.get("prepare") or [],
-           "verify": data.get("verify") or []}
+           "verify": data.get("verify") or [],
+           # The gate requirements, kept as written rather than
+           # defaulted: `gate_policy` has to tell "no gate block" from
+           # "a gate block that is not an object", and the second is a
+           # refusal rather than an absence.
+           "gates": data.get("gates")}
     if version != PROFILE_VERSION:
         out["problem"] = (
             f"the profile document {out['identity']} declares "
