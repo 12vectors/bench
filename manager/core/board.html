@@ -1922,6 +1922,10 @@ function reviewPanel(record, evidence, current) {
       : row('✓', 'still current',
             `the pull request is still at ${(current && current.commit || head).slice(0, 12)}`,
             'pass')) +
+    // a caveat is not a change: a head read from the local branch has not
+    // been superseded by anything, it was never bound — said in the
+    // settled register rather than the alarm
+    (fresh.caveats || []).map(c => row('·', 'unbound', c)).join('') +
     (record.notes || []).map(n => row('·', 'note', n)).join('') +
     `</div>`;
 }

@@ -545,6 +545,15 @@ class TheReviewerWorksInThePinnedCheckout(ReviewCase):
         # a different claim from the one this review can make
         self.assertIn("could not read the pull request's own head",
                       self.runs()[0]["prompt"])
+        # a caveat, not a change: it has not been *superseded* by anything,
+        # so it does not wear the alarm every review on a board without gh
+        # would otherwise wear
+        fresh = reviews.freshness(record)
+        self.assertEqual(fresh["changed"], [])
+        self.assertFalse(fresh["stale"])
+        self.assertTrue(any("never bound" in c for c in fresh["caveats"]),
+                        fresh["caveats"])
+        self.assertEqual(reviews.label(record), "current")
 
     def test_the_prompt_names_the_checkout_and_forbids_moving_the_revision(self):
         head = self.proposes()

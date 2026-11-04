@@ -726,7 +726,7 @@ def freshness(record: dict) -> dict:
     does on purpose.
     """
     if not record:
-        return {"fresh": True, "changed": [], "stale": False,
+        return {"fresh": True, "changed": [], "caveats": [], "stale": False,
                 "historical": False, "pinned": None, "head": None}
     pinned = ((record.get("head") or {}).get("commit") or "")
     now = observed(record.get("task") or "") or {}
@@ -743,14 +743,20 @@ def freshness(record: dict) -> dict:
             f"the pull request has been {status.lower()} since this review "
             f"ran, so it is a record of what was proposed rather than a "
             f"judgement of anything open")
+    # Not a change, and kept apart from them for that reason: a review
+    # pinned from the local branch has not been *superseded* by anything.
+    # What it lacks is the binding, and a reader needs that said without
+    # every review on a board without `gh` wearing the alarm for it.
+    caveats: list[str] = []
     if (record.get("head") or {}).get("authority") == "local":
-        changed.append(
+        caveats.append(
             "the reviewed head was read from this checkout's own branch "
             "rather than from the pull request, so it was never bound to "
             "what GitHub shows")
     return {
         "fresh": not changed,
         "changed": changed,
+        "caveats": caveats,
         # `stale` is the reading a badge must take: a review whose head has
         # moved is never shown as the current head's approval.
         "stale": bool(changed),
