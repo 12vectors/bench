@@ -40,6 +40,8 @@ nothing. You may and should run read-only commands (gh, git log, grep).
 
 {context}
 
+{verification}
+
 When you have a verdict, POST it to GitHub:
 - approve:          gh pr review {branch} --approve --body "<your summary>"
 - request changes:  gh pr review {branch} --request-changes --body "<your findings>"

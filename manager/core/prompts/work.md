@@ -38,6 +38,8 @@ the same turn.
 
 {context}
 
+{verification}
+
 The task is `{filename}`. Its content:
 
 --- TASK ---

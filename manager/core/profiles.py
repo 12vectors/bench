@@ -861,6 +861,58 @@ def document_steps(doc: dict) -> tuple[dict, list[str]]:
     return steps, trouble
 
 
+def promoted_checks(grants: list[dict],
+                    declared: dict) -> tuple[dict, list[str]]:
+    """This intent's command grants, as checks bench could run itself.
+
+    The documented compatibility path. A grant and a check are the same
+    shape — one executable, fixed arguments, a named root — so a `verify`
+    entry that names a grant resolves to a check built from it rather than
+    refusing. Two things still refuse, because they are the two a check is
+    held to and a grant is not: a root a check may not use (the
+    application checkout), and a command line that reshapes the repository
+    instead of reading it.
+
+    A name the document declares as a check wins: an explicit definition
+    is never shadowed by a grant that happens to share its name.
+    """
+    out: dict = {}
+    trouble: list[str] = []
+    for grant in grants:
+        name = grant["name"]
+        if name in declared or name == VERIFY_GRANT:
+            continue
+        raw = {"name": name, "run": grant["run"], "root": grant["root"],
+               "help": grant["help"]}
+        problem = _check_problem(raw, set())
+        if problem:
+            # Not a blocker on its own: a grant that cannot be a check is
+            # perfectly fine as a grant, and only an intent that actually
+            # asks for it by name has a problem. `_named` says so there.
+            trouble_name = name
+            out[trouble_name] = {"name": name, "status": "unavailable",
+                                 "why": problem}
+            continue
+        out[name] = _check(raw, {}, source=f"{grant['source']} (a command "
+                                           f"grant, promoted)",
+                           scale=config.VERIFY_TIMEOUT)
+    return out, trouble
+
+
+def _step_from_grant(check: dict) -> dict:
+    """The same promotion for a preparation step — a grant named in an
+    intent's `prepare` list runs before its checks."""
+    if check.get("status") != "available":
+        return check
+    return {
+        "name": check["name"], "run": check["run"],
+        "executable": check["executable"], "argv": list(check["argv"]),
+        "required": True, "network": False, "networkEnforcement": None,
+        "help": check["help"], "source": check["source"],
+        "status": "available", "enforcement": "enforced",
+    }
+
+
 def document_checks(doc: dict, steps: dict) -> tuple[dict, list[str]]:
     """The document's named checks, by name, and why any of them cannot be
     offered. Resolved once per document rather than once per intent, so
@@ -1344,6 +1396,20 @@ def resolve(intent: str, *, worktree: Path | str | None = None) -> dict:
     available_checks, check_trouble = document_checks(doc, steps)
     blockers += check_trouble
 
+    # The compatibility path, and it is the whole of it: a `verify` or
+    # `prepare` entry naming one of this intent's own **command grants**
+    # resolves to a check built from that grant. A grant is already one
+    # executable and fixed arguments validated exactly as a check is, so
+    # the promotion adds nothing and refuses the two things a check
+    # refuses extra — a root a check may not use, and a command line that
+    # reshapes the repository. A document written before bench could run
+    # anything therefore keeps working, and its declared requirement
+    # becomes a real run rather than staying a note.
+    promotable, promotion_trouble = promoted_checks(grants, available_checks)
+    blockers += promotion_trouble
+    available_checks = {**available_checks, **promotable}
+    steps = {**steps, **{n: _step_from_grant(c) for n, c in promotable.items()}}
+
     def _named(key: str, known: dict, what: str) -> list[dict]:
         raw = declared.get(key) if isinstance(declared, dict) else None
         # A document-level `verify` is the shared default — one set of
@@ -1367,12 +1433,19 @@ def resolve(intent: str, *, worktree: Path | str | None = None) -> dict:
             seen.add(name)
             if name not in known:
                 blockers.append(
-                    f"'{intent}' asks for the {what} '{name}', which the "
-                    f"document does not declare. Declare it in the top-level "
-                    f"\"{'checks' if known is available_checks else 'prepare'}\" "
-                    f"list — bench will not run something it cannot read, and "
-                    f"a requirement naming nothing is how a board reports a "
+                    f"'{intent}' asks for the {what} '{name}', which this "
+                    f"document declares neither as a {what} nor as one of this "
+                    f"intent's command grants. Declare it in the top-level "
+                    f"\"{'checks' if what == 'check' else 'prepare'}\" list — "
+                    f"bench will not run something it cannot read, and a "
+                    f"requirement naming nothing is how a board reports a "
                     f"check that never ran as one that passed")
+                continue
+            if known[name].get("status") != "available":
+                blockers.append(
+                    f"'{intent}' asks for the {what} '{name}', and the command "
+                    f"grant of that name cannot be run as one: "
+                    f"{known[name].get('why')}")
                 continue
             out.append(known[name])
         return out
@@ -1783,6 +1856,61 @@ def prompt_block(found: dict | None) -> str:
                  "and nothing beside them: it is not permission to edit them, "
                  "to read other files in the directories they came from, or to "
                  "publish their contents.")
+    return "\n".join(lines)
+
+
+def verification_block(found: dict | None) -> str:
+    """What the run is told about the checks bench will run for it.
+
+    Empty string when the profile declares none, so a board that
+    configured nothing renders the prompt it always did, byte for byte.
+
+    Where there *are* checks, the wording is deliberate on one point: the
+    run is told that the evidence is already on the board, so reporting a
+    pass the shim did not print is a claim the record contradicts. That is
+    prose, and prose persuades rather than enforces — which is exactly why
+    the enforcement lives in the runner and not here.
+    """
+    if not found:
+        return ""
+    checks = found.get("verify") or []
+    if not checks:
+        return ""
+    shim = str(verify_shim())
+    lines = [
+        "This board runs the project's checks itself. You do not run them "
+        "and you are not asked to vouch for them: you ask for one by name, "
+        "bench builds the command line from the operator's own policy, runs "
+        "it, and records the outcome — the exit status of its own child "
+        "process — before telling you anything.",
+        "",
+        f"    {shim}                 list the checks you may ask for",
+        f"    {shim} <check>         run one",
+        f"    {shim} <check> <scope> run one over a declared scope",
+        "",
+        "Available to this run:",
+    ]
+    for check in checks:
+        scopes = ", ".join(sorted(check["scopes"]))
+        lines.append(f"- `{check['name']}` — runs `{check['run']}` in the "
+                     f"{check['root']} root"
+                     + (f"; scopes: {scopes}" if scopes else "")
+                     + (f". {check['help']}" if check["help"] else ""))
+        for step in check["prepare"]:
+            lines.append(f"  - prepared first by `{step['name']}`, which bench "
+                         f"also runs")
+    lines += [
+        "",
+        "Its exit status says which kind of answer came back: 0 passed, 1 the "
+        "check itself said no, 2 refused, 3 preparation failed, 4 no verdict "
+        "was reached. Only 1 is a test failure — treat the rest as what they "
+        "are rather than as a failing suite.",
+        "",
+        "The evidence is already on the board by the time you read the "
+        "output, so your report should say what it said. Reporting a check as "
+        "passing when the runner printed otherwise is a claim the record "
+        "contradicts, and a reviewer reads the record.",
+    ]
     return "\n".join(lines)
 
 

@@ -23,6 +23,7 @@ import profiles
 import state
 import sync
 import taskfiles
+import verify
 
 
 def policy_payload() -> dict:
@@ -93,6 +94,12 @@ def state_payload() -> dict:
         # frozen policy be told apart from the settings as they stand —
         # the whole per-intent reading is `/api/profile`, on demand.
         "policy": policy_payload(),
+        # what bench's own verification runs found, per card: the worst
+        # thing any of them says and how many there are. Cheap, and empty
+        # on a board nobody declared a check on — the whole reading is
+        # `/api/evidence`, on demand. A card is never shown as verified
+        # here from anything but a recorded run's own exit status.
+        "verify": verify.board(collected),
         "branches": github.task_branches(),
         "commands": config.commands(),
         "commandRuns": commands.public(),
@@ -205,6 +212,52 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"manifest": profiles.public(frozen),
                                  "freshness": profiles.freshness(frozen),
                                  "policy": policy_payload()})
+        elif path == "/api/evidence":
+            # What bench's own verifications found for one card, read back
+            # off disk: one row per check, including the checks nothing
+            # asked for. Reading is reading — opening a detail panel
+            # re-runs nothing, which is why this is a GET of stored
+            # records and not a resolution.
+            query = parse_qs(url.query)
+            name = (query.get("file") or [""])[0]
+            stage = (query.get("stage") or [""])[0] \
+                or (taskfiles.find_stage_of(name) or "")
+            intent = (query.get("intent") or ["work"])[0]
+            manifest = None
+            try:
+                # which checks this card's run *could* ask for, so a check
+                # that never ran is a row rather than an absence
+                manifest = profiles.manifest(intent, name, stage)
+            except (ValueError, OSError):
+                manifest = None
+            self._json(200, {
+                "rollup": verify.rollup(name, manifest),
+                "evidence": [verify.public(r) for r in verify.for_task(name)],
+                "outcomes": verify.OUTCOMES,
+            })
+        elif path == "/api/evidence/log":
+            # One verification's own output, scrubbed of anything shaped
+            # like a credential on the way out. The record itself never
+            # held content; this is the one place bytes bench did not
+            # write reach a reader.
+            try:
+                self._json(200, verify.log_text(
+                    (parse_qs(url.query).get("id") or [""])[0]))
+            except (ValueError, OSError) as exc:
+                self._json(404, {"error": str(exc)})
+        elif path == "/api/verify/checks":
+            # What one run may ask for, read off its frozen manifest — the
+            # same answer `bench-verify` with no arguments prints.
+            agent_id = (parse_qs(url.query).get("agent") or [""])[0]
+            frozen = profiles.recorded(agent_id)
+            if frozen is None:
+                self._json(404, {"error": f"no recorded profile for {agent_id}"})
+            else:
+                self._json(200, {"checks": [
+                    {"name": c["name"], "run": c["run"], "root": c["root"],
+                     "scopes": sorted(c["scopes"]), "help": c["help"],
+                     "required": c["required"]}
+                    for c in verify.available(frozen)]})
         elif path == "/api/diff":
             agent_id = (parse_qs(url.query).get("agent") or [""])[0]
             try:
@@ -389,6 +442,29 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"drive": drive.start(payload["file"])})
             elif path == "/api/drive/stop":
                 self._json(200, {"drive": drive.stop()})
+            elif path == "/api/verify":
+                payload = self._read_body()
+                # The one door a verification comes through — the shim a
+                # run invokes and the board's own ↻ verify alike. It runs
+                # the check and returns the evidence, so the caller is
+                # told what was recorded rather than what it hoped.
+                #
+                # `agent` is a run asking, and then the frozen manifest is
+                # the policy: what that run was granted, not what the
+                # document says now. Without one it is a person's, and the
+                # profile resolves fresh. Neither can name a check the
+                # profile does not hold.
+                self._json(200, {"evidence": verify.public(verify.request(
+                    check=payload["check"],
+                    task=payload.get("file"),
+                    agent=payload.get("agent") or None,
+                    scope=payload.get("scope") or None,
+                    intent=payload.get("intent") or None,
+                    stage=payload.get("stage") or None,
+                    actor="agent" if payload.get("agent") else "you"))})
+            elif path == "/api/verify/cancel":
+                payload = self._read_body()
+                self._json(200, verify.cancel(payload["id"]))
             elif path == "/api/agent/stop":
                 payload = self._read_body()
                 agent = agents.stop_agent(payload["id"])
