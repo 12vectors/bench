@@ -1098,8 +1098,22 @@ def board(collected: dict) -> dict:
         # its merge into the phase branch comes first.
         if task.get("phase") and not task.get("isPhase"):
             scope = "member"
-        decision = evaluate(task["file"], scope, task=task, tips=tips,
-                            policy=policy, records=records)
+        try:
+            decision = evaluate(task["file"], scope, task=task, tips=tips,
+                                policy=policy, records=records)
+        except (ValueError, OSError) as exc:
+            # The page must not go blank because one card's gate could not
+            # be read, and it must not read as open either. One card's row
+            # says what happened; the rest of the board is unaffected.
+            found[task["file"]] = {
+                "scope": scope, "decision": "blocked",
+                "summary": f"this card's gate could not be read: {exc}",
+                "unmet": [{"name": "gate", "kind": "policy",
+                           "reason": "policy-refused"}],
+                "pending": [], "required": 1, "met": 0,
+                "head": None, "headRef": None, "override": False,
+                "location": "local"}
+            continue
         if decision["decision"] == "ungated" and not policy["blockers"]:
             continue
         found[task["file"]] = {

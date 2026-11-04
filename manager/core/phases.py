@@ -307,6 +307,17 @@ def _member_state(task: dict, branch: str,
                     f"or someone walked it back"), None
 
 
+def _gate_of(phase: dict) -> dict | None:
+    """What accepting this phase's integration head requires, for the lane
+    to draw. Display only: the acceptance path asks for itself, so a read
+    that fails here costs a line in the lane and never a merge."""
+    try:
+        return gates.public(gates.evaluate(phase["file"], "integration",
+                                           task=phase))
+    except (ValueError, OSError):
+        return None
+
+
 def _snapshot(phase: dict, by_file: dict[str, dict]) -> dict:
     """The whole phase, recomputed. Nothing is remembered between passes."""
     branch = agents.phase_branch(phase["file"])
@@ -347,9 +358,10 @@ def _snapshot(phase: dict, by_file: dict[str, dict]) -> dict:
             # question from any member's: the integration head is the
             # commit every member was merged into, and no member's
             # evidence ran against it. Read here so the lane, the card
-            # and the refusal all show one reading.
-            "gate": gates.public(gates.evaluate(phase["file"], "integration",
-                                                task=phase))}
+            # and the refusal all show one reading — and guarded, because
+            # a gate that could not be read must not stop the Phases view
+            # drawing. The acceptance path reads it for itself.
+            "gate": _gate_of(phase)}
 
 
 def public_state() -> dict:
