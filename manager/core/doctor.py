@@ -66,6 +66,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -1447,3 +1448,195 @@ def report(modes: list[str] | None = None, *,
         "coverage": coverage(findings, asked),
         "summary": _verdict(findings, inspected["intents"]),
     }
+
+
+# ── the operator's own entry point ─────────────────────────────────────
+#
+# The same report the board's inspector shows, from the same functions, so
+# the terminal and the page cannot disagree. `board.py --doctor` is the
+# documented way in and this is all it wires up; `python3
+# manager/core/doctor.py` is the same thing for anyone who would rather
+# say so directly.
+#
+# Deliberately not a shipped executable of its own. `bench-verify` is one
+# because a *headless run* is granted it as a command prefix and has to
+# be able to launch it; nothing launches this but a person, and adding a
+# second binary to the release for that would be a third place to keep
+# the argument list right.
+
+USAGE = (
+    "usage: board.py --doctor [--conformance] [--active] [--all]\n"
+    "                         [--real-agent --approve-real-agent]\n"
+    "                         [--intent work|act-pr|review] [--json] [--quiet]\n")
+
+HELP = """What this board would grant, run and refuse — asked without paying
+for a model.
+
+    --doctor                   inspect: resolve every launch intent, read the
+                               approved inputs, and put bench's own fixture
+                               documents through the same resolver. Starts no
+                               process, pins nothing, spends nothing.
+    --doctor --conformance     also ask the installed adapter what it would
+                               generate, and run its own `run` against a stub
+                               standing in for the vendor binary
+    --doctor --active          also run named checks through bench's own
+                               runner, at a git fixture the doctor makes and
+                               removes
+    --doctor --real-agent      bounded smoke against the installed CLI, with a
+      --approve-real-agent     model, at a disposable fixture. This one
+                               spends tokens, so it takes two flags and is
+                               never implied by anything else
+    --doctor --all             inspect + conformance + active (never the real
+                               agent)
+
+    --json                     the whole report, for a script
+    --intent work              narrow the per-intent rows shown
+    --quiet                    only what is not passing
+
+Nothing here evaluates a policy of its own: the resolver a launch rides is
+the resolver this reports. A doctor that could disagree with a launch
+would be worse than none.
+
+Exit status, so a script can branch on the kind of answer rather than on
+prose:
+
+    0  ready at the level asked for — nothing is failing
+    1  something would stop or weaken a launch; the rows say what
+    2  the request itself was refused (an unknown option, or the real-agent
+       mode without its own approval) — nothing was diagnosed
+
+A deferred row never makes this non-zero: "nobody authorised the real CLI
+smoke" is not a fault, and the report says so in that word.
+"""
+
+GLYPH = {"passed": "✓", "failed": "✕", "skipped": "—", "deferred": "·"}
+
+
+def parse(argv: list[str]) -> dict:
+    """The doctor's own options. Raises ValueError on anything it does not
+    know, because a mistyped flag that silently did nothing would read as
+    a mode that found nothing wrong."""
+    asked: dict = {"modes": [], "approve": False, "json": False,
+                   "quiet": False, "intent": None, "help": False}
+    rest = list(argv)
+    while rest:
+        flag = rest.pop(0)
+        if flag in ("-h", "--help"):
+            asked["help"] = True
+        elif flag == "--conformance":
+            asked["modes"].append("conformance")
+        elif flag in ("--active", "--runtime"):
+            asked["modes"].append("runtime")
+        elif flag == "--all":
+            asked["modes"] += ["conformance", "runtime"]
+        elif flag == "--real-agent":
+            asked["modes"].append("real-agent")
+        elif flag == "--approve-real-agent":
+            asked["approve"] = True
+        elif flag == "--json":
+            asked["json"] = True
+        elif flag == "--quiet":
+            asked["quiet"] = True
+        elif flag == "--intent":
+            if not rest:
+                raise ValueError("--intent needs a launch intent")
+            asked["intent"] = rest.pop(0)
+            if asked["intent"] not in profiles.INTENTS:
+                raise ValueError(f"unknown launch intent "
+                                 f"{asked['intent']!r} — one of "
+                                 f"{', '.join(profiles.INTENTS)}")
+        else:
+            raise ValueError(f"unknown option {flag!r}")
+    seen, modes = set(), []
+    for mode in asked["modes"]:
+        if mode not in seen:
+            seen.add(mode)
+            modes.append(mode)
+    asked["modes"] = modes
+    return asked
+
+
+def render(report: dict, asked: dict) -> str:
+    """The report as a person reads it: the plain-language line first, the
+    coverage table second — including the stages nobody asked for — and
+    then a row per finding with its cause and its remedy."""
+    out: list[str] = [report["summary"]["line"], ""]
+    policy = report["policy"]
+    out.append(f"  policy      {policy['kind']}"
+               + (f" · {policy['identity']}" if policy["identity"] else "")
+               + f" · adapter {report['adapter']['name']}")
+    out.append(f"  application {report['layout']['app']}")
+    out.append(f"  work state  {report['layout']['work']}")
+    out.append(f"  evidence    {report['location']}")
+    out.append("")
+
+    out.append("coverage")
+    for row in report["coverage"]:
+        counts = " ".join(f"{GLYPH[word]}{row['counts'][word]}"
+                          for word in ("passed", "failed", "skipped",
+                                       "deferred"))
+        out.append(f"  {row['label']:<22} {counts:<20} "
+                   f"{'' if row['asked'] else 'not asked'}".rstrip())
+        if row["asked"]:
+            out.append(f"  {'':<22} proves: {row['proves']}")
+            out.append(f"  {'':<22} not proved: {row['doesNotProve']}")
+        elif row["why"]:
+            out.append(f"  {'':<22} {row['why']}")
+    out.append("")
+
+    for mode in MODES:
+        rows = [f for f in report["findings"] if f["mode"] == mode]
+        if asked["quiet"]:
+            rows = [f for f in rows if f["outcome"] != "passed"]
+        if asked["intent"]:
+            rows = [f for f in rows
+                    if f["intent"] in (None, asked["intent"])]
+        if not rows:
+            continue
+        level = EVIDENCE[MODE_EVIDENCE[mode]]["label"]
+        out.append(f"{MODES[mode]['label']} ({level})")
+        for found in rows:
+            tail = f" [{found['intent']}]" if found["intent"] else ""
+            out.append(f"  {GLYPH[found['outcome']]} "
+                       f"{found['outcome']:<9} {found['name']}{tail}")
+            out.append(f"      {found['about']}")
+            out.append(f"      {found['detail']}")
+            if found["code"]:
+                out.append(f"      code: {found['code']}")
+            if found["remedy"] and found["outcome"] != "passed":
+                out.append(f"      remedy: {found['remedy']}")
+        out.append("")
+
+    out.append("what this report withholds")
+    for key, why in report["redaction"].items():
+        out.append(f"  {key:<10} {why}")
+    return "\n".join(out)
+
+
+def cli(argv: list[str]) -> int:
+    try:
+        asked = parse(argv)
+    except ValueError as exc:
+        print(f"doctor: {exc}\n\n{USAGE}", file=sys.stderr)
+        return 2
+    if asked["help"]:
+        print(HELP.strip())
+        return 0
+    if "real-agent" in asked["modes"] and not asked["approve"]:
+        print("doctor: --real-agent launches the installed CLI with a model "
+              "and spends tokens on this board's configured account, so it "
+              "takes a second flag: add --approve-real-agent. Nothing was "
+              "diagnosed.", file=sys.stderr)
+        return 2
+    try:
+        found = report(asked["modes"], approve_real_agent=asked["approve"])
+    except ValueError as exc:
+        print(f"doctor: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(found, indent=2, sort_keys=True) if asked["json"]
+          else render(found, asked))
+    return 0 if found["summary"]["ready"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(cli(sys.argv[1:]))

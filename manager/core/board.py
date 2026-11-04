@@ -3,6 +3,7 @@
 
     python3 .task-manager/manager/board.py            # serve on :26071, open a browser
     python3 .task-manager/manager/board.py --port 9000 --no-open
+    python3 .task-manager/manager/board.py --doctor    # readiness, then exit
 
 The manager sits cleanly on top of the tasks/ directory: it reads and moves
 task files, but the tasks work as a plain folder kanban without it. See
@@ -15,6 +16,7 @@ task files, but the tasks work as a plain folder kanban without it. See
     sync.py       origin/main as the shared board: push on move, pull on a beat
     reviews.py    the pinned, run-owned checkout a PR review runs in
     verify.py     named checks bench runs itself, and the evidence they leave
+    doctor.py     what this board would grant, run and refuse — no model
     agents.py     headless work/review agents: launch, reap, stop, diff
     phases.py     a phase run: its own branch, its members merged into it
     watch.py      2s disk poller narrating moves made outside the API
@@ -28,11 +30,13 @@ from __future__ import annotations
 
 import argparse
 import errno
+import sys
 import threading
 import webbrowser
 from http.server import ThreadingHTTPServer
 
 import config
+import doctor
 import drive
 import events
 import github
@@ -73,7 +77,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=config.PORT)
     parser.add_argument("--no-open", action="store_true", help="don't open a browser")
-    args = parser.parse_args()
+    # Declared so `board.py --help` names it, and dispatched *before*
+    # parsing so `--doctor --help` reaches the doctor's own options rather
+    # than this parser's. Wiring, which is all this module is: every
+    # option after `--doctor`, and every word it prints, belongs to
+    # doctor.py.
+    parser.add_argument("--doctor", action="store_true",
+                        help="print what this board would grant, run and "
+                             "refuse, and exit (see --doctor --help)")
+    argv = sys.argv[1:]
+    if "--doctor" in argv:
+        refuse_broken_layout()
+        raise SystemExit(doctor.cli([a for a in argv if a != "--doctor"]))
+    args = parser.parse_args(argv)
     refuse_broken_layout()
     state.serve_port = args.port
 

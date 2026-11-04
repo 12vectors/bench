@@ -781,18 +781,20 @@ class CredentialsAndContentsDoNotTravel(unittest.TestCase):
 
 
 class TheCommandLine(unittest.TestCase):
-    def _run(self, *args, env=None):
-        environ = dict(os.environ)
-        environ.update(env or {})
-        return subprocess.run([sys.executable, str(CORE / "bench-doctor"),
-                               *args], capture_output=True, text=True,
-                              timeout=600, env=environ)
+    """`board.py --doctor`, which is argparse and wiring and nothing else:
+    every option and every printed word belongs to doctor.py."""
+
+    def _run(self, *args):
+        return subprocess.run([sys.executable, str(CORE / "board.py"),
+                               "--doctor", *args], capture_output=True,
+                              text=True, timeout=900, env=dict(os.environ))
 
     def test_with_no_arguments_it_inspects_and_starts_nothing(self):
         result = self._run()
         self.assertIn(result.returncode, (0, 1), result.stderr)
         self.assertIn("inspect", result.stdout)
         self.assertIn("not asked", result.stdout)
+        self.assertIn("what this report withholds", result.stdout)
 
     def test_json_is_the_whole_report(self):
         result = self._run("--json")
@@ -806,22 +808,41 @@ class TheCommandLine(unittest.TestCase):
         result = self._run("--real-agent")
         self.assertEqual(result.returncode, 2)
         self.assertIn("--approve-real-agent", result.stderr)
+        self.assertEqual(result.stdout, "")
 
     def test_an_unknown_flag_is_refused_by_name(self):
         result = self._run("--make-it-green")
         self.assertEqual(result.returncode, 2)
         self.assertIn("make-it-green", result.stderr)
 
-    def test_the_exit_status_says_which_kind_of_answer_came_back(self):
-        source = (CORE / "bench-doctor").read_text(encoding="utf-8")
-        for line in ("0  ready", "1  something", "2  the request"):
-            self.assertIn(line, source)
+    def test_the_board_does_not_serve_when_it_is_asked_to_diagnose(self):
+        source = (CORE / "board.py").read_text(encoding="utf-8")
+        self.assertIn("raise SystemExit(doctor.cli(", source)
+        self.assertLess(source.index("doctor.cli("),
+                        source.index("ThreadingHTTPServer(("))
 
-    def test_it_is_a_shipped_executable_with_a_shebang(self):
-        path = CORE / "bench-doctor"
-        self.assertTrue(path.read_bytes().startswith(b"#!"))
-        self.assertTrue(os.access(path, os.X_OK),
-                        "bench-doctor is not executable")
+    def test_help_lists_every_mode_and_what_it_costs(self):
+        result = self._run("--help")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for phrase in ("--conformance", "--active", "--approve-real-agent",
+                       "spends tokens", "Starts no"):
+            self.assertIn(phrase, result.stdout, phrase)
+
+    def test_the_exit_status_says_which_kind_of_answer_came_back(self):
+        for line in ("0  ready", "1  something", "2  the request"):
+            self.assertIn(line, doctor.HELP)
+
+    def test_an_unknown_intent_is_refused_rather_than_silently_ignored(self):
+        with self.assertRaises(ValueError) as caught:
+            doctor.parse(["--intent", "whatever"])
+        self.assertIn("whatever", str(caught.exception))
+
+    def test_quiet_drops_only_the_passing_rows(self):
+        report = doctor.report()
+        full = doctor.render(report, doctor.parse([]))
+        quiet = doctor.render(report, doctor.parse(["--quiet"]))
+        self.assertLess(len(quiet), len(full))
+        self.assertIn("deferred", quiet)
 
 
 # ── the HTTP surface ───────────────────────────────────────────────────
