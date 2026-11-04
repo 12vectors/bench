@@ -265,6 +265,9 @@ class GateCase(unittest.TestCase):
     def decide(self, scope: str = "acceptance", *, filename: str = CARD):
         return gates.evaluate(filename, scope)
 
+    def stage_of(self, filename: str = CARD) -> str | None:
+        return taskfiles.find_stage_of(filename)
+
     def reviews_say(self, entries, *, filename: str = CARD,
                     author: str = "istos", head: str | None = None) -> dict:
         """GitHub's own review objects, in the REST shape the poll reads —
@@ -510,3 +513,473 @@ class EvidenceIsBoundToTheCommit(GateCase):
         self.assertEqual(before, after, "reading produced no evidence")
         self.assertEqual(
             head, git(self.repo, "rev-parse", f"task/{STEM}").stdout.strip())
+
+
+# ── a Bench verdict and GitHub's review state are two records ──────────
+
+
+class TwoRecordsOfReview(GateCase):
+    """The separation this card exists to keep: what bench's own reviewer
+    found, and what GitHub actually holds. A COMMENTED review is neither,
+    and the account that opened a pull request cannot approve it."""
+
+    def setUp(self):
+        super().setUp()
+        self.wt = self.worktree()
+
+    def satisfied_checks(self) -> str:
+        """A head with the gate's check already passed against it, so the
+        cases below are about the review half and nothing else."""
+        self.commit_in(self.wt)
+        self.manifest()
+        self.assertEqual(self.ask()["outcome"], "passed")
+        return git(self.repo, "rev-parse", f"task/{STEM}").stdout.strip()
+
+    def test_a_bench_verdict_is_recorded_against_the_head_it_was_of(self):
+        self.gated(review="bench")
+        head = self.satisfied_checks()
+        gates.record_verdict(CARD, verdict="APPROVE", head=head,
+                             agent="rev-1", actor="agent")
+        found = self.decide()
+        self.assertEqual(found["decision"], "allowed", found["summary"])
+        row = [r for r in found["requirements"] if r["kind"] == "review"][0]
+        self.assertEqual(row["state"], "met")
+        self.assertEqual(row["reason"], "bench-approved")
+
+    def test_a_bench_verdict_about_another_head_does_not_travel(self):
+        self.gated(review="bench")
+        self.satisfied_checks()
+        gates.record_verdict(CARD, verdict="APPROVE", head="0" * 40,
+                             agent="rev-1", actor="agent")
+        found = self.decide()
+        self.assertEqual(found["decision"], "blocked")
+        row = found["unmet"][0]
+        self.assertEqual(row["reason"], "verdict-other-head")
+        self.assertIn("is never retracted", row["remedy"])
+
+    def test_a_request_changes_verdict_blocks_with_its_own_reason(self):
+        self.gated(review="bench")
+        head = self.satisfied_checks()
+        gates.record_verdict(CARD, verdict="REQUEST CHANGES", head=head,
+                             agent="rev-1", actor="agent")
+        found = self.decide()
+        self.assertEqual(found["decision"], "blocked")
+        self.assertEqual(found["unmet"][0]["reason"], "verdict-changes")
+
+    def test_a_verdict_is_only_one_of_the_two_words(self):
+        for attempt in ("looks good", "approve-ish", "", "APPROVED"):
+            with self.subTest(attempt=attempt):
+                with self.assertRaises(ValueError):
+                    gates.record_verdict(CARD, verdict=attempt, head="a" * 40)
+
+    def test_a_commented_review_is_never_read_as_an_approval(self):
+        self.gated(review="github")
+        head = self.satisfied_checks()
+        self.reviews_say([{"id": 1, "user": {"login": "istos"},
+                           "state": "COMMENTED", "commit_id": head,
+                           "body": "PR REVIEW: APPROVE — looks good to me"}],
+                         head=head)
+        found = self.decide()
+        self.assertEqual(found["decision"], "blocked")
+        row = found["unmet"][0]
+        self.assertEqual(row["reason"], "same-account")
+        self.assertIn("GitHub does not accept an approval", row["why"])
+        self.assertIn("\"review\": \"bench\"", row["remedy"])
+
+    def test_the_same_account_limitation_is_surfaced_as_configuration(self):
+        self.gated(review="github")
+        head = self.satisfied_checks()
+        observed = self.reviews_say(
+            [{"id": 1, "user": {"login": "istos"}, "state": "COMMENTED",
+              "commit_id": head}], author="istos", head=head)
+        self.assertEqual(observed["limitation"]["kind"], "same-account")
+        self.assertEqual(observed["limitation"]["login"], "istos")
+        self.assertEqual(observed["formal"], [],
+                         "a comment is not a formal review state")
+
+    def test_a_formal_approval_at_the_head_meets_a_github_gate(self):
+        self.gated(review="github")
+        head = self.satisfied_checks()
+        self.reviews_say([{"id": 2, "user": {"login": "elena"},
+                           "state": "APPROVED", "commit_id": head}],
+                         head=head)
+        found = self.decide()
+        self.assertEqual(found["decision"], "allowed", found["summary"])
+
+    def test_a_formal_approval_of_an_earlier_commit_does_not_travel(self):
+        self.gated(review="github")
+        head = self.satisfied_checks()
+        self.reviews_say([{"id": 2, "user": {"login": "elena"},
+                           "state": "APPROVED", "commit_id": "f" * 40}],
+                         head=head)
+        found = self.decide()
+        self.assertEqual(found["decision"], "blocked")
+        self.assertEqual(found["unmet"][0]["reason"], "approval-other-head")
+
+    def test_changes_requested_beats_nothing_and_blocks(self):
+        self.gated(review="github")
+        head = self.satisfied_checks()
+        self.reviews_say([{"id": 3, "user": {"login": "elena"},
+                           "state": "CHANGES_REQUESTED", "commit_id": head}],
+                         head=head)
+        found = self.decide()
+        self.assertEqual(found["decision"], "blocked")
+        self.assertEqual(found["unmet"][0]["reason"], "changes-requested")
+
+    def test_a_separate_reviewer_policy_refuses_the_authors_own_approval(self):
+        self.gated(review="separate-reviewer")
+        head = self.satisfied_checks()
+        # GitHub would not accept this, but a board must not depend on
+        # that: if an approval authored by the proposer ever arrives, the
+        # policy that asked for a second identity still says no.
+        self.reviews_say([{"id": 4, "user": {"login": "istos"},
+                           "state": "APPROVED", "commit_id": head}],
+                         author="istos", head=head)
+        found = self.decide()
+        self.assertEqual(found["decision"], "blocked")
+        self.assertEqual(found["unmet"][0]["reason"], "no-separate-reviewer")
+
+    def test_a_separate_reviewer_policy_is_met_by_another_identity(self):
+        self.gated(review="separate-reviewer")
+        head = self.satisfied_checks()
+        self.reviews_say([{"id": 5, "user": {"login": "elena"},
+                           "state": "APPROVED", "commit_id": head}],
+                         author="istos", head=head)
+        found = self.decide()
+        self.assertEqual(found["decision"], "allowed", found["summary"])
+        row = [r for r in found["requirements"] if r["kind"] == "review"][0]
+        self.assertEqual(row["reason"], "approved-by-another")
+
+    def test_the_formal_state_survives_a_restart_bound_to_its_commit(self):
+        self.gated(review="github")
+        head = self.satisfied_checks()
+        self.reviews_say([{"id": 2, "user": {"login": "elena"},
+                           "state": "APPROVED", "commit_id": head}],
+                         head=head)
+        gates.REVIEW_STATE.clear()        # the board restarted
+        gates.forget_cached()
+        self.assertEqual(self.decide()["decision"], "allowed")
+        # and it is still bound to the commit it was given for, so a
+        # restart cannot re-bind it to whatever the head has become
+        moved = self.commit_in(self.wt, "pushed over the approval\n")
+        gates.REVIEW_STATE.clear()
+        verify.forget_cached()
+        gates.forget_cached()
+        found = self.decide()
+        self.assertEqual(found["decision"], "blocked")
+        self.assertNotEqual(found["head"]["commit"], head)
+        self.assertEqual(found["head"]["commit"], moved)
+
+    def test_a_verdict_records_what_happened_when_it_was_published(self):
+        note = agents._publication_note(
+            "gh: Can not approve your own pull request (HTTP 422)")
+        self.assertIsNotNone(note)
+        self.assertIn("refused-same-account", note)
+        self.assertIsNone(agents._publication_note("all good"))
+
+
+# ── an override is explicit, bound, and never a pass ───────────────────
+
+
+class AnOverrideIsNeverAPass(GateCase):
+    """What makes a proceed-anyway safe to have at all: who, why, which
+    commit and which gates — and a decision that still reads
+    `overridden`."""
+
+    def setUp(self):
+        super().setUp()
+        self.wt = self.worktree()
+        self.head = self.commit_in(self.wt)
+
+    def test_an_override_is_refused_where_the_policy_does_not_enable_one(self):
+        self.gated()
+        with self.assertRaises(ValueError) as caught:
+            gates.override(CARD, "acceptance", actor="istos",
+                           reason="shipping the demo in ten minutes")
+        self.assertIn("does not allow overriding", str(caught.exception))
+        self.assertIn("\"allow\": true", str(caught.exception))
+        self.assertEqual(gates.overrides_for(CARD), [])
+
+    def test_an_actor_the_policy_does_not_name_is_refused(self):
+        self.gated(overrides={"allow": True, "actors": ["elena"]})
+        with self.assertRaises(ValueError) as caught:
+            gates.override(CARD, "acceptance", actor="istos",
+                           reason="shipping the demo in ten minutes")
+        self.assertIn("not one of the identities", str(caught.exception))
+        self.assertEqual(gates.overrides_for(CARD), [])
+
+    def test_an_override_records_actor_reason_head_and_the_unmet_gates(self):
+        self.gated(overrides={"allow": True})
+        result = gates.override(CARD, "acceptance", actor="istos",
+                                reason="the check runner is down, demo at 5")
+        record = result["override"]
+        self.assertEqual(record["actor"], "istos")
+        self.assertEqual(record["head"], self.head)
+        self.assertEqual(record["gates"], ["unit"])
+        self.assertEqual(record["unmet"][0]["reason"], "not-run")
+        self.assertIn("demo at 5", record["reason"])
+        self.assertTrue(record["policyId"])
+
+    def test_an_override_leaves_the_decision_reading_overridden(self):
+        self.gated(overrides={"allow": True})
+        gates.override(CARD, "acceptance", actor="istos",
+                       reason="the check runner is down, demo at 5")
+        found = self.decide()
+        self.assertEqual(found["decision"], "overridden")
+        self.assertTrue(gates.passable(found), "the merge may now run")
+        self.assertEqual(found["requirements"][0]["state"], "overridden")
+        self.assertIn("still unmet", found["summary"])
+        self.assertEqual(found["overriddenGates"], ["unit"])
+        # and it forged nothing: the evidence is exactly as absent as it
+        # was before anybody clicked
+        self.assertEqual(verify.for_task(CARD), [])
+        self.assertEqual(found["requirements"][0]["reason"], "not-run")
+
+    def test_a_second_click_does_not_record_a_second_override(self):
+        self.gated(overrides={"allow": True})
+        first = gates.override(CARD, "acceptance", actor="istos",
+                               reason="the check runner is down, demo at 5")
+        second = gates.override(CARD, "acceptance", actor="istos",
+                                reason="the check runner is down, demo at 5")
+        self.assertFalse(first["duplicate"])
+        self.assertTrue(second["duplicate"])
+        self.assertEqual(len(gates.overrides_for(CARD)), 1)
+
+    def test_an_override_does_not_authorise_the_next_commit(self):
+        self.gated(overrides={"allow": True})
+        gates.override(CARD, "acceptance", actor="istos",
+                       reason="the check runner is down, demo at 5")
+        self.assertEqual(self.decide()["decision"], "overridden")
+        moved = self.commit_in(self.wt, "something else entirely\n")
+        gates.forget_cached()
+        found = self.decide()
+        self.assertEqual(found["decision"], "blocked",
+                         "an override authorises one commit")
+        self.assertEqual(found["head"]["commit"], moved)
+
+    def test_a_confirmation_about_a_head_that_has_moved_is_refused(self):
+        self.gated(overrides={"allow": True})
+        stale = self.head
+        self.commit_in(self.wt, "pushed while the sheet was open\n")
+        gates.forget_cached()
+        with self.assertRaises(ValueError) as caught:
+            gates.override(CARD, "acceptance", actor="istos",
+                           reason="the check runner is down, demo at 5",
+                           head=stale)
+        self.assertIn("the head moved while you were looking",
+                      str(caught.exception))
+        self.assertEqual(gates.overrides_for(CARD), [])
+
+    def test_an_override_survives_a_restart_and_is_not_applied_twice(self):
+        self.gated(overrides={"allow": True})
+        gates.override(CARD, "acceptance", actor="istos",
+                       reason="the check runner is down, demo at 5")
+        gates.forget_cached()              # the board restarted
+        self.assertEqual(self.decide()["decision"], "overridden")
+        self.assertEqual(len(gates.overrides_for(CARD)), 1)
+
+    def test_a_gate_that_becomes_unmet_afterwards_was_never_authorised(self):
+        self.gated(review="bench", overrides={"allow": True})
+        self.manifest()
+        self.assertEqual(self.ask()["outcome"], "passed")
+        # only the review half is unmet, so only the review half is in
+        # the record
+        record = gates.override(CARD, "acceptance", actor="istos",
+                                reason="no reviewer until Monday")["override"]
+        self.assertEqual(record["gates"], ["bench"])
+        self.assertEqual(self.decide()["decision"], "overridden")
+        # Now the check stops being met as well. The override named one
+        # gate, so it does not stretch over the second — and it lapses
+        # rather than covering the half it did name, because a decision
+        # that let half an unmet gate through would be the widening this
+        # record exists to prevent.
+        (self.wt / "code.txt").write_text("edited after the fact\n",
+                                          encoding="utf-8")
+        verify.forget_cached()
+        gates.forget_cached()
+        found = self.decide()
+        self.assertEqual(found["decision"], "blocked")
+        self.assertEqual([r["name"] for r in found["unmet"]],
+                         ["unit", "bench"])
+
+    def test_an_override_needs_a_reason_and_a_person(self):
+        self.gated(overrides={"allow": True})
+        with self.assertRaises(ValueError) as caught:
+            gates.override(CARD, "acceptance", actor="istos", reason="meh")
+        self.assertIn("a reason somebody can read later",
+                      str(caught.exception))
+        with self.assertRaises(ValueError) as caught:
+            gates.override(CARD, "acceptance", actor="",
+                           reason="a perfectly good reason here")
+        self.assertIn("recorded against a person", str(caught.exception))
+
+    def test_there_is_nothing_to_override_on_a_met_gate(self):
+        self.gated(overrides={"allow": True})
+        self.manifest()
+        self.assertEqual(self.ask()["outcome"], "passed")
+        self.assertEqual(self.decide()["decision"], "allowed")
+        with self.assertRaises(ValueError) as caught:
+            gates.override(CARD, "acceptance", actor="istos",
+                           reason="just in case, for later")
+        self.assertIn("nothing to override", str(caught.exception))
+
+    def test_overrides_are_refused_while_the_policy_does_not_resolve(self):
+        self.declares({"v": 1, "gates": {"acceptance": {"checks": ["nope"]},
+                                         "overrides": {"allow": True}}})
+        self.assertFalse(
+            profiles.gate_policy()["overrides"]["allowed"],
+            "a document with a refusal in it offers no way around itself")
+        with self.assertRaises(ValueError):
+            gates.override(CARD, "acceptance", actor="istos",
+                           reason="the policy is broken, let me through")
+
+
+# ── the backend refuses, not the page ──────────────────────────────────
+
+
+class TheBackendIsTheAuthority(GateCase):
+    """Every refusal a disabled button would explain is raised by the code
+    that would have done the thing, in the same sentence, from the same
+    reading."""
+
+    def setUp(self):
+        super().setUp()
+        self.wt = self.worktree()
+        self.head = self.commit_in(self.wt)
+        (self.tasks / "review" / CARD).write_text(
+            card("71 — Gate integration", status="Review"), encoding="utf-8")
+        (self.tasks / "in-progress" / CARD).unlink()
+
+    def test_merge_and_clean_up_refuses_an_unmet_gate(self):
+        self.gated()
+        with self.assertRaises(ValueError) as caught:
+            github.complete_task(CARD, "review")
+        said = str(caught.exception)
+        self.assertIn("blocked by this board's acceptance gate", said)
+        self.assertIn("nothing has asked bench for 'unit'", said)
+        self.assertIn("evidence sheet", said, "the remedy travels with it")
+
+    def test_a_refusal_leaves_the_card_the_branch_and_the_worktree(self):
+        self.gated()
+        with self.assertRaises(ValueError):
+            github.complete_task(CARD, "review")
+        self.assertTrue((self.tasks / "review" / CARD).is_file())
+        self.assertEqual(
+            git(self.repo, "rev-parse", f"task/{STEM}").stdout.strip(),
+            self.head)
+        self.assertTrue(self.wt.is_dir())
+        self.assertEqual(
+            git(self.repo, "rev-parse", "main").stdout.strip(),
+            git(self.repo, "rev-parse", "main").stdout.strip())
+        self.assertNotIn(STEM, git(self.repo, "log", "--oneline",
+                                   "main").stdout)
+
+    def test_the_refusal_is_not_a_claim_left_on_the_card(self):
+        self.gated()
+        with self.assertRaises(ValueError):
+            github.complete_task(CARD, "review")
+        self.assertEqual(state.completing_public(), {},
+                         "the completing claim is given back on every exit")
+
+    def test_a_met_gate_lets_the_merge_through(self):
+        self.gated()
+        self.manifest(worktree=self.wt)
+        self.assertEqual(self.ask(filename=CARD, stage="review")["outcome"],
+                         "passed")
+        self.assertEqual(gates.evaluate(CARD, "acceptance")["decision"],
+                         "allowed")
+        result = github.complete_task(CARD, "review")
+        self.assertTrue(result["merged"])
+        self.assertEqual(
+            0, git(self.repo, "merge-base", "--is-ancestor", self.head,
+                   "main").returncode,
+            "the verified commit is in the application base")
+        self.assertEqual(self.stage_of(CARD), "done")
+
+    def test_the_api_and_the_mutation_give_one_reason(self):
+        self.gated()
+        payload = httpd.gates_payload(CARD, "review")
+        shown = payload["scopes"][0]
+        self.assertEqual(shown["decision"], "blocked")
+        with self.assertRaises(ValueError) as caught:
+            github.complete_task(CARD, "review")
+        self.assertIn(shown["unmet"][0]["why"], str(caught.exception))
+
+    def test_an_ungated_board_merges_exactly_as_it_always_did(self):
+        result = github.complete_task(CARD, "review")
+        self.assertTrue(result["merged"])
+
+
+# ── what the API says, and what it withholds ───────────────────────────
+
+
+class TheApiSaysOneThing(GateCase):
+    """The page reads the decision; it never computes one."""
+
+    def setUp(self):
+        super().setUp()
+        self.wt = self.worktree()
+        self.head = self.commit_in(self.wt)
+
+    def test_an_ungated_board_sends_no_gate_anywhere(self):
+        payload = httpd.state_payload()
+        self.assertEqual(payload["gates"], {},
+                         "a board that declared no gate has no chip")
+        self.assertFalse(payload["gatePolicy"]["configured"])
+
+    def test_a_gated_card_carries_its_decision_and_its_reason(self):
+        self.gated()
+        payload = httpd.state_payload()
+        found = payload["gates"][CARD]
+        self.assertEqual(found["scope"], "acceptance")
+        self.assertEqual(found["decision"], "blocked")
+        self.assertEqual(found["unmet"][0]["name"], "unit")
+        self.assertEqual(found["head"], self.head)
+        self.assertEqual(found["headRef"], f"task/{STEM}")
+        self.assertEqual(found["location"], "local")
+
+    def test_the_policy_travels_with_the_state_and_holds_no_secrets(self):
+        self.gated(review="bench")
+        shown = httpd.state_payload()["gatePolicy"]
+        self.assertTrue(shown["configured"])
+        self.assertEqual(shown["scopes"]["acceptance"]["review"], "bench")
+        self.assertEqual(
+            [c["name"] for c in shown["scopes"]["acceptance"]["checks"]],
+            ["unit"])
+        self.assertEqual(json.loads(json.dumps(shown)), shown,
+                         "it is JSON the page can read")
+
+    def test_the_gate_sheet_reads_every_record_for_one_card(self):
+        self.gated(review="bench", overrides={"allow": True})
+        gates.record_verdict(CARD, verdict="APPROVE", head=self.head,
+                             agent="rev-1")
+        self.reviews_say([{"id": 9, "user": {"login": "istos"},
+                           "state": "COMMENTED", "commit_id": self.head}],
+                         head=self.head)
+        payload = httpd.gates_payload(CARD, "in-progress")
+        self.assertEqual(len(payload["scopes"]), 1)
+        self.assertEqual(payload["verdicts"][0]["verdict"], "APPROVE")
+        self.assertEqual(payload["github"]["limitation"]["kind"],
+                         "same-account")
+        self.assertEqual(payload["overrides"], [])
+        self.assertIn("ungated", payload["decisions"])
+        self.assertIn("not-run", payload["reasons"])
+        self.assertEqual(payload["location"], "local")
+
+    def test_a_broken_policy_is_shown_with_its_remedy_not_as_a_pass(self):
+        self.declares({"v": 1, "gates": {"acceptance": {"checks": ["nope"]}}})
+        payload = httpd.state_payload()
+        self.assertEqual(payload["gates"][CARD]["decision"], "blocked")
+        shown = payload["gatePolicy"]
+        self.assertTrue(shown["blockers"])
+        self.assertEqual(shown["diagnostics"][0]["code"],
+                         "gate-check-undeclared")
+        self.assertTrue(shown["diagnostics"][0]["remedy"])
+
+    def test_the_public_reading_is_an_allowlist(self):
+        self.gated()
+        found = gates.evaluate(CARD, "acceptance")
+        shown = gates.public(found)
+        self.assertLessEqual(set(shown), set(gates.PUBLIC))
+        self.assertNotIn("read", json.dumps(shown["requirements"]).lower()[:0]
+                         or "")

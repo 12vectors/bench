@@ -17,6 +17,7 @@ import config
 import doctor
 import drive
 import events
+import gates
 import github
 import phases
 import plans
@@ -92,6 +93,49 @@ def doctor_payload(modes: list[str], *, approve: bool = False,
     return doctor.report(modes, approve_real_agent=approve)
 
 
+def gates_payload(name: str, stage: str) -> dict:
+    """One card's gates, every scope that could guard it, read.
+
+    Both scopes a card can be guarded by are returned rather than only
+    the one that applies right now: a phase member is gated at its merge
+    into the integration branch *and* carried through its phase's own
+    acceptance, and a reader deciding what to do next needs to see which
+    of the two is in the way.
+
+    The Bench verdicts, the formal GitHub review state and the overrides
+    come with it, because the whole point of the sheet is that those are
+    three different records and none of them stands in for another.
+    """
+    task = None
+    for group in taskfiles.collect()["stages"]:
+        for found in group["tasks"]:
+            if found["file"] == name:
+                task = found
+    scopes = ["member", gates.scope_for(task or {})]
+    if (task or {}).get("isPhase"):
+        scopes = ["integration"]
+    elif not (task or {}).get("phase"):
+        scopes = ["acceptance"]
+    policy = profiles.gate_policy()
+    return {
+        "task": name, "stage": stage,
+        "scopes": [gates.public(gates.evaluate(name, scope, task=task,
+                                               policy=policy))
+                   for scope in scopes],
+        "policy": profiles.gate_policy_public(policy),
+        "verdicts": gates.verdicts_for(name),
+        "github": gates.github_reviews(name),
+        "overrides": gates.overrides_for(name),
+        "decisions": gates.DECISIONS,
+        "reasons": gates.REASONS,
+        # Who this board would record an override against. Sent so the
+        # confirmation can name them rather than asking a person to trust
+        # that something sensible will be written down.
+        "actor": taskfiles.actor_name(),
+        "location": "local",
+    }
+
+
 def state_payload() -> dict:
     with state.LOCK:
         sessions = sorted(
@@ -143,6 +187,13 @@ def state_payload() -> dict:
         # has reviewed nothing, so the chip follows the same law as the
         # plan's and the profile's — the whole reading is `/api/review`.
         "reviews": reviews.board(collected),
+        # what this board's gates require before a merge, and what each
+        # card's gate currently says. Empty on a board that declared
+        # none — the same law every other chip follows — and never a
+        # pass: `ungated` is its own word, and a card with an unmet gate
+        # carries the reason rather than a colour.
+        "gates": gates.board(collected),
+        "gatePolicy": profiles.gate_policy_public(profiles.gate_policy()),
         "branches": github.task_branches(),
         "commands": config.commands(),
         "commandRuns": commands.public(),
@@ -322,6 +373,23 @@ class Handler(BaseHTTPRequestHandler):
                 "targets": reviews.TARGETS,
                 "stage": stage,
             })
+        elif path == "/api/gates":
+            # What this card's gates require and what the records say —
+            # the same reading the merge path makes, from the same
+            # function, so a disabled action and a backend refusal can
+            # never give two different reasons for one state.
+            #
+            # A GET of stored records and one `for-each-ref`. It runs no
+            # check, relaunches nothing and reaches no remote, which is
+            # why opening the sheet is not an action.
+            query = parse_qs(url.query)
+            name = (query.get("file") or [""])[0]
+            stage = (query.get("stage") or [""])[0] \
+                or (taskfiles.find_stage_of(name) or "")
+            try:
+                self._json(200, gates_payload(name, stage))
+            except (ValueError, OSError) as exc:
+                self._json(409, {"error": str(exc)})
         elif path == "/api/evidence/log":
             # One verification's own output, scrubbed of anything shaped
             # like a credential on the way out. The record itself never
@@ -575,6 +643,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"doctor": doctor_payload(
                     [str(m) for m in (payload.get("modes") or [])],
                     approve=bool(payload.get("approve")), asked=True)})
+            elif path == "/api/gates/override":
+                payload = self._read_body()
+                # Proceeding over an unmet gate, on the record. The actor
+                # is this checkout's git identity rather than anything a
+                # request may claim — an override names a person, and a
+                # person is not a field a browser fills in. The head the
+                # confirmation was shown is sent back with it, so a sheet
+                # that has gone stale is refused rather than authorising
+                # a commit nobody looked at.
+                result = gates.override(
+                    payload["file"], payload["scope"],
+                    actor=taskfiles.actor_name() or "",
+                    reason=str(payload.get("reason") or ""),
+                    head=str(payload.get("head") or "") or None)
+                self._json(200, {
+                    "override": result["override"],
+                    "duplicate": result["duplicate"],
+                    "gate": gates.public(result["decision"])})
             elif path == "/api/verify/cancel":
                 payload = self._read_body()
                 self._json(200, verify.cancel(payload["id"]))
