@@ -707,6 +707,20 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
 
     try:
         return _execute(shell, found, root, prepared)
+    except Exception as exc:                 # noqa: BLE001 — see below
+        # Anything unexpected still has to close the record. An exception
+        # out of here would otherwise leave `running` on disk until the
+        # next board start swept it, and "a verification that looks live
+        # for ever" is the one failure this module exists to prevent. The
+        # caller still gets the exception; what it does not get is a lie
+        # on disk.
+        _finish(shell, {"rc": None, "started": shell.get("started"),
+                        "ended": time.time(), "outcome": "error",
+                        "reason": "no-executable",
+                        "why": (f"bench could not run the check: {exc} — "
+                                f"nothing was verified, and this is not a "
+                                f"test failure")}, prepared, root)
+        raise
     finally:
         with state.LOCK:
             RUNNING.pop(shell["id"], None)
@@ -1107,11 +1121,32 @@ def freshness(record: dict) -> dict:
     if not record:
         return {"fresh": True, "changed": [], "stale": False}
     source = record.get("source") or {}
-    root = Path((record.get("root") or {}).get("path") or "")
+    where = record.get("root") or {}
+    root = Path(where.get("path") or "")
     if not source.get("bound"):
         changed.append(source.get("why") or
                        "the source this ran against was never bound, so the "
                        "result cannot be reused")
+    elif where.get("policy") == "source":
+        # A `source` check ran in a *detached checkout of one commit* that
+        # bench made and then removed on purpose, so the checkout being
+        # gone says nothing — asking after it would make every read-only
+        # verification stale the moment it finished. The commit is the
+        # binding, and the question is whether the card's branch still
+        # points at it.
+        task = record.get("task") or ""
+        branch = config.branch_for(task[:-3]) if task.endswith(".md") else ""
+        now = _git(config.app_repo(), "rev-parse", "--verify",
+                   f"{branch}^{{commit}}") if branch else None
+        if now is None or now.returncode != 0:
+            changed.append(f"the branch this ran against ({branch or 'unknown'}) "
+                           f"no longer exists, so what it covered cannot be "
+                           f"checked")
+        elif now.stdout.strip() != source.get("commit"):
+            changed.append(
+                f"the branch has moved on — it ran against "
+                f"{str(source.get('commit') or '')[:12]} and {branch} is now "
+                f"at {now.stdout.strip()[:12]}")
     elif not root.is_dir():
         changed.append(f"the checkout it ran in ({root}) is gone, so what it "
                        f"ran against can no longer be checked")

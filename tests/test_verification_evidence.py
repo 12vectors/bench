@@ -898,6 +898,38 @@ open("tracked.txt", "a")
         self.assertTrue(Path(got["root"]["path"]).is_dir())
         self.assertIn("uncommitted", got["root"]["kept"])
 
+    def test_a_source_pass_is_bound_to_the_commit_not_to_the_checkout(self):
+        """Bench removes its own checkout by design, so asking after it
+        would make every read-only verification stale the moment it
+        finished. For a `source` check the commit is the binding, and the
+        question is whether the card's branch still points at it."""
+        self.declares({"v": 1, "checks": [
+            {"name": "unit", "run": str(self.executable("recorder", RECORDER)),
+             "root": "source"}],
+            "profiles": {"review": {"verify": ["unit"]}}})
+        tree = self.worktree()
+        (tree / "work.txt").write_text("the work\n", encoding="utf-8")
+        git(tree, "add", "-A")
+        git(tree, "-c", "user.email=a@b", "-c", "user.name=t",
+            "commit", "-q", "-m", "the work")
+        profiles.record("review-1", profiles.require(profiles.manifest(
+            "review", CARD, "in-progress", pin_inputs=True)))
+        got = verify.request(check="unit", agent="review-1")
+        self.assertEqual(got["outcome"], "passed", got["why"])
+        self.assertTrue(got["root"].get("removed"))
+        verify.forget_cached()
+        self.assertEqual(verify.outcome_now(verify.read(got["id"]))["outcome"],
+                         "passed", "the checkout going is not the pass going")
+
+        (tree / "more.txt").write_text("more\n", encoding="utf-8")
+        git(tree, "add", "-A")
+        git(tree, "-c", "user.email=a@b", "-c", "user.name=t",
+            "commit", "-q", "-m", "more")
+        verify.forget_cached()
+        reading = verify.outcome_now(verify.read(got["id"]))
+        self.assertEqual(reading["outcome"], "stale")
+        self.assertIn("moved on", reading["why"])
+
     def test_a_source_check_with_no_branch_is_refused_not_guessed(self):
         self.declares({"v": 1, "checks": [
             {"name": "unit", "run": str(self.executable("recorder", RECORDER)),
