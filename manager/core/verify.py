@@ -121,6 +121,7 @@ REASONS = {
     "signal": "the check was killed by a signal",
     "timeout": "the check was still running when its timeout expired",
     "no-executable": "the check's executable could not be run",
+    "runner-error": "bench itself failed while running the check",
     "unknown-check": "no check of that name is available to this run",
     "unknown-scope": "no scope of that name is declared on that check",
     "root-unavailable": "the execution root this check needs does not exist",
@@ -716,7 +717,7 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
         # on disk.
         _finish(shell, {"rc": None, "started": shell.get("started"),
                         "ended": time.time(), "outcome": "error",
-                        "reason": "no-executable",
+                        "reason": "runner-error",
                         "why": (f"bench could not run the check: {exc} — "
                                 f"nothing was verified, and this is not a "
                                 f"test failure")}, prepared, root)
