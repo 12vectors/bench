@@ -75,6 +75,9 @@ import state  # noqa: E402
 import taskfiles  # noqa: E402
 import verify  # noqa: E402
 
+from tests.test_phase_runs import (ONE, PHASE, PHASE_BRANCH, TWO,  # noqa: E402
+                                   PhaseCase)
+
 CARD = "71-gate-integration.md"
 STEM = CARD[:-3]
 
@@ -978,8 +981,304 @@ class TheApiSaysOneThing(GateCase):
 
     def test_the_public_reading_is_an_allowlist(self):
         self.gated()
-        found = gates.evaluate(CARD, "acceptance")
-        shown = gates.public(found)
+        shown = gates.public(gates.evaluate(CARD, "acceptance"))
         self.assertLessEqual(set(shown), set(gates.PUBLIC))
-        self.assertNotIn("read", json.dumps(shown["requirements"]).lower()[:0]
-                         or "")
+        self.assertEqual(json.loads(json.dumps(shown)), shown)
+
+
+# ── a whole phase, gated, in a disposable repository ───────────────────
+
+
+class AGatedPhase(PhaseCase):
+    """The end-to-end half: a real phase run over a real repository, with
+    a gate configured, driven one pass at a time.
+
+    The fixture is `test_phase_runs`' own, so the thing under test is the
+    runner that ships rather than a re-implementation of it — with the
+    state directories this card adds patched into the case's temporary
+    tree, because a test must never read or write the install's own."""
+
+    def setUp(self):
+        super().setUp()
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir(exist_ok=True)
+        self.patch(EVIDENCE_DIR=self.tmp / "evidence",
+                   VERIFY_DIR=self.tmp / "verify",
+                   GATES_DIR=self.tmp / "gates",
+                   AGENT_PROFILES="", AGENT_COMMANDS="python3 -m unittest",
+                   VERIFY_TIMEOUT=60.0, PREPARE_TIMEOUT=60.0,
+                   VERIFY_PARALLEL=2, VERIFY_LOG_CAP=4 * 1024 * 1024,
+                   APP_MERGE="")
+        for registry in (verify.RUNNING, verify._KEYS, gates.REVIEW_STATE):
+            registry.clear()
+            self.addCleanup(registry.clear)
+        verify.forget_cached()
+        gates.forget_cached()
+        self.addCleanup(verify.forget_cached)
+        self.addCleanup(gates.forget_cached)
+
+    def executable(self, name: str, body: str) -> Path:
+        path = self.bin / name
+        path.write_text(body.format(python=sys.executable), encoding="utf-8")
+        path.chmod(path.stat().st_mode | stat.S_IEXEC)
+        return path
+
+    def declares(self, document: dict) -> None:
+        (config.LOCAL / "profiles.json").write_text(json.dumps(document),
+                                                    encoding="utf-8")
+        gates.forget_cached()
+
+    def gate(self, *, scopes=("member",), body: str = PASSES) -> None:
+        self.declares({
+            "v": 1,
+            "checks": [{"name": "unit",
+                        "run": str(self.executable("unit", body)),
+                        "root": "worktree"}],
+            "profiles": {"work": {"verify": ["unit"]},
+                         "review": {"verify": ["unit"]}},
+            "gates": {scope: {"checks": ["unit"]} for scope in scopes},
+        })
+
+    def verify_card(self, filename: str) -> dict:
+        """Ask bench for the check on one card, as a person would from the
+        evidence sheet's armed ↻."""
+        stage = self.stage_of(filename)
+        return verify.request(check="unit", task=filename, stage=stage,
+                              actor="you")
+
+    def test_a_member_with_no_check_halts_the_phase_instead_of_merging(self):
+        self.gate()
+        self.start()
+        found = self.advance()
+        self.assertIsNotNone(found["halted"], "an unmet gate halts")
+        self.assertIn("member gate is unmet", found["halted"])
+        self.assertIn("nothing has asked bench for 'unit'", found["halted"])
+        self.assertFalse(
+            phases._contains(f"task/{ONE[:-3]}", PHASE_BRANCH),
+            "nothing was merged into the phase branch")
+        self.assertEqual(self.stage_of(ONE), "review",
+                         "the member's own work is left exactly as it is")
+
+    def test_no_ci_no_longer_means_advance_on_a_gated_board(self):
+        """The case the SAFER report is about: a committed branch, a clean
+        agent exit, and no CI result at all."""
+        self.gate()
+        self.start()
+        self.assertEqual(github.PR_STATE.get(ONE, {}).get("ci"), None)
+        self.advance()
+        self.assertIn("halted", " ".join(self.log()))
+
+    def test_a_verified_member_merges_and_the_phase_carries_on(self):
+        self.gate()
+        self.start()
+        found = self.verify_card(ONE)
+        self.assertEqual(found["outcome"], "passed", found["why"])
+        snapshot = self.advance()
+        self.assertIsNone(snapshot["halted"], snapshot.get("halted"))
+        self.assertTrue(phases._contains(f"task/{ONE[:-3]}", PHASE_BRANCH))
+        self.assertIn(f"{ONE[:-3].split('-')[0]} merged", " ".join(self.log()))
+
+    def test_running_the_phase_again_after_verifying_clears_the_halt(self):
+        self.gate()
+        self.start()
+        self.advance()
+        self.assertIn("halted", " ".join(self.log()))
+        self.verify_card(ONE)
+        verify.forget_cached()
+        gates.forget_cached()
+        phases.start_phase(PHASE, "in-progress")
+        self.settle()
+        self.assertTrue(phases._contains(f"task/{ONE[:-3]}", PHASE_BRANCH))
+
+    def test_a_members_gate_is_re_read_immediately_before_the_merge(self):
+        """The window this closes: the snapshot said ready, and the branch
+        moved before the merge ran."""
+        self.gate()
+        self.start()
+        self.verify_card(ONE)
+        verify.forget_cached()
+        gates.forget_cached()
+        snapshot = phases._snapshot(
+            phases._cards()[0][PHASE], phases._cards()[0])
+        member = next(m for m in snapshot["members"] if m["file"] == ONE)
+        self.assertEqual(member["state"], "ready")
+        # a push lands between the reading and the merge
+        worktree = config.WORKTREES / ONE[:-3]
+        (worktree / "late.txt").write_text("pushed after the reading\n",
+                                           encoding="utf-8")
+        git(worktree, "add", "-A")
+        git(worktree, "-c", "user.email=a@b", "-c", "user.name=late",
+            "commit", "-q", "-m", "late")
+        verify.forget_cached()
+        gates.forget_cached()
+        with self.assertRaises(phases._Halt) as caught:
+            phases._merge_member(phases._cards()[0][PHASE], member)
+        self.assertIn("member gate is unmet", str(caught.exception))
+        self.assertFalse(phases._contains(f"task/{ONE[:-3]}", PHASE_BRANCH))
+
+    def test_the_integration_head_is_its_own_question(self):
+        """Every member verified, every member merged — and the commit
+        they were merged into has no evidence of its own."""
+        self.gate(scopes=("member", "integration"))
+        self.start()
+        self.verify_card(ONE)
+        self.advance()                       # merge 31, start 32
+        self.verify_card(TWO)
+        self.advance()                       # merge 32, open the phase PR
+        self.assertEqual(self.stage_of(PHASE), "review")
+        for member in (ONE, TWO):
+            rows = [r for r in verify.for_task(member)
+                    if r["outcome"] == "passed"]
+            self.assertTrue(rows, f"{member} really did pass its check")
+        found = gates.evaluate(PHASE, "integration")
+        self.assertEqual(found["decision"], "blocked")
+        self.assertEqual(found["unmet"][0]["reason"], "not-run")
+        self.assertEqual(found["head"]["commit"], self.tip(PHASE_BRANCH))
+        with self.assertRaises(ValueError) as caught:
+            github.complete_task(PHASE, "review")
+        self.assertIn("integration gate", str(caught.exception))
+        self.assertEqual(self.stage_of(PHASE), "review",
+                         "a refused acceptance moves nothing")
+
+    def test_verifying_the_integration_head_itself_lets_it_through(self):
+        self.gate(scopes=("member", "integration"))
+        self.start()
+        self.verify_card(ONE)
+        self.advance()
+        self.verify_card(TWO)
+        self.advance()
+        found = self.verify_card(PHASE)
+        self.assertEqual(found["outcome"], "passed", found["why"])
+        self.assertEqual((found["source"] or {}).get("commit"),
+                         self.tip(PHASE_BRANCH),
+                         "the phase's check ran in the integration head")
+        self.assertEqual(gates.evaluate(PHASE, "integration")["decision"],
+                         "allowed")
+        result = github.complete_task(PHASE, "review")
+        self.assertTrue(result["merged"])
+        self.assertEqual(sorted(result["swept"]), sorted([ONE, TWO]))
+
+    def test_a_replica_evaluates_and_advances_nothing(self):
+        self.gate()
+        self.start()
+        self.verify_card(ONE)
+        verify.forget_cached()
+        gates.forget_cached()
+        # team mode, and the card is held by somebody else
+        self.patch(COMMIT_MOVES=True)
+        text = self.text(PHASE).replace("**Priority:** High",
+                                        "**Priority:** High\n"
+                                        "**Assignee:** elena")
+        (self.tasks / "in-progress" / PHASE).write_text(text,
+                                                        encoding="utf-8")
+        before = self.tip(PHASE_BRANCH)
+        snapshot = self.advance()
+        self.assertEqual(self.tip(PHASE_BRANCH), before,
+                         "a replica merges nothing")
+        member = next(m for m in snapshot["members"] if m["file"] == ONE)
+        self.assertEqual(member["state"], "ready",
+                         "it still renders the same reading")
+        self.assertEqual(member["gate"]["decision"], "allowed")
+
+    def test_the_snapshot_carries_the_gate_the_lane_draws(self):
+        self.gate(scopes=("member", "integration"))
+        self.start()
+        snapshot = self.advance()
+        member = next(m for m in snapshot["members"] if m["file"] == ONE)
+        self.assertEqual(member["gate"]["decision"], "blocked")
+        self.assertEqual(member["gate"]["scope"], "member")
+        self.assertEqual(snapshot["gate"]["scope"], "integration")
+        self.assertEqual(snapshot["gate"]["task"], PHASE)
+
+    def test_an_ungated_phase_runs_exactly_as_it_always_did(self):
+        self.start()
+        self.advance()
+        self.advance()
+        self.assertEqual(self.stage_of(PHASE), "review")
+        self.assertTrue(phases._contains(f"task/{ONE[:-3]}", PHASE_BRANCH))
+        self.assertTrue(phases._contains(f"task/{TWO[:-3]}", PHASE_BRANCH))
+
+
+# ── what the page says, and what it must never say ────────────────────
+
+
+class ThePageReadsTheDecision(unittest.TestCase):
+    """board.html is one file of inline JS with no frontend runner, so
+    these are source-level invariants — the ones that, if broken, would
+    put the page back where this card found it: a page that cannot say why
+    a card may not advance, or one that draws an absence as a pass."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = (REPO / "manager" / "core" / "board.html").read_text(
+            encoding="utf-8")
+        # The gate's own code, so an invariant about it is asserted
+        # against it rather than against the whole page — where a
+        # perfectly good line of the verification panel would satisfy or
+        # break it by accident.
+        start = cls.html.index("may this merge happen?")
+        end = cls.html.index("where a PR review ran", start)
+        cls.region = cls.html[start:end]
+
+    def test_the_page_asks_the_server_for_the_decision(self):
+        self.assertIn("'/api/gates?file='", self.html)
+        self.assertIn("'/api/gates/override'", self.html)
+
+    def test_the_page_computes_no_decision_of_its_own(self):
+        """The one thing a second evaluator would do: decide. The gate's
+        own code never reads an evidence record, never compares a commit
+        and never derives a verdict — those answers arrive resolved, and
+        the page's whole job is to draw them."""
+        self.longMessage = False
+        for forbidden in ("S.evidence", "rollup", "outcome === ",
+                          ".commit === ", "freshness", ".bound"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(
+                    forbidden, self.region,
+                    f"the gate's own code in board.html contains "
+                    f"{forbidden!r}, which is a decision the server makes")
+        # the decision words it renders are exactly the server's, mapped
+        # to a colour and a glyph and nothing else
+        for word in gates.DECISIONS:
+            with self.subTest(word=word):
+                self.assertIn(f"{word}:", self.region)
+
+    def test_ungated_is_drawn_in_the_settled_register_not_as_a_pass(self):
+        self.assertRegex(self.html, r"ungated: \['dim'")
+        self.assertRegex(self.html, r"allowed: \['ok'")
+        self.assertIn("nothing is required", self.html)
+
+    def test_an_override_is_never_drawn_as_a_gate_that_was_met(self):
+        self.assertRegex(self.html, r"overridden: \['bad'")
+        self.assertIn("the gate is still unmet", self.html)
+        self.assertIn("forges no evidence", self.html)
+        self.assertIn("authorises this commit", self.html)
+
+    def test_the_confirmation_names_the_gates_and_the_commit(self):
+        self.assertIn("proceeded over", self.html)
+        self.assertIn("first.unmet", self.html)
+        self.assertIn("(first.head || {}).commit", self.html)
+
+    def test_the_focus_view_separates_produced_from_verified(self):
+        self.assertIn("function focusGatePanel", self.html)
+        self.assertIn("code produced", self.html)
+        self.assertIn("A finished agent is not a verified card", self.html)
+
+    def test_the_lane_says_what_accepting_the_phase_requires(self):
+        self.assertIn("integration gate", self.html)
+        self.assertIn("snap.gate", self.html)
+
+    def test_the_two_review_records_are_drawn_apart(self):
+        self.assertIn("Review — two records, kept apart", self.html)
+        self.assertIn("a comment is not a review", self.html)
+        self.assertIn("no formal GitHub review state", self.html)
+        self.assertIn("same account", self.html)
+
+    def test_the_chip_appears_only_where_a_gate_is_configured(self):
+        self.assertIn("const gate = gateChip(task);", self.html)
+        self.assertRegex(self.html,
+                         r"function gateChip\(task\) \{\n.*\n  if \(!g\) return null;")
+
+    def test_reading_it_is_not_an_action(self):
+        self.assertIn("Opening this runs nothing", self.html)
+        self.assertIn("Reading it here runs nothing", self.html)
