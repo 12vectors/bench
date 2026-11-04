@@ -119,10 +119,12 @@ def _agent_public(record: dict) -> dict:
               ("id", "task", "branch", "worktree", "status", "rc", "started", "session")}
     public["mode"] = record.get("mode", "work")
     public["name"] = record.get("name")
-    # What this run was allowed to do, as the compact reading a row wears.
-    # The whole manifest is deliberately *not* here: it is frozen on disk
-    # and fetched by `/api/manifest`, so the board's state payload does not
-    # carry a capability table per running agent on every SSE nudge.
+    # What this run was allowed to do, as the compact reading a row wears
+    # — a count of grants and inputs, and anything that blocked it. The
+    # whole manifest is deliberately nowhere near here: it is frozen on
+    # disk and fetched by `/api/manifest`, so neither the registry nor the
+    # state payload carries a capability table per running agent on every
+    # SSE nudge.
     public["profile"] = record.get("profile")
     # The model the launch was actually given; None = inherited the
     # vendor's own default. Honesty for the Sessions/Focus views.
@@ -578,7 +580,7 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
         "rc": None, "started": time.time(), "session": None,
         "log": str(log_path), "proc": proc, "origin": stage, "mode": "work",
         "name": name, "model": model or None, "plan": plans.portable(plan),
-        "manifest": manifest, "profile": profiles.summary(manifest),
+        "profile": profiles.summary(manifest),
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
@@ -631,7 +633,7 @@ def start_review(filename: str, stage: str) -> dict:
         "base": None, "status": "running", "rc": None, "started": time.time(),
         "session": None, "log": str(log_path), "proc": proc,
         "origin": stage, "mode": "review", "name": name, "model": model or None,
-        "manifest": manifest, "profile": profiles.summary(manifest),
+        "profile": profiles.summary(manifest),
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
@@ -883,7 +885,7 @@ def start_pr_review(filename: str, stage: str) -> dict:
         "base": None, "status": "running", "rc": None, "started": time.time(),
         "session": None, "log": str(log_path), "proc": proc,
         "origin": stage, "mode": "review", "name": name, "model": model or None,
-        "manifest": manifest, "profile": profiles.summary(manifest),
+        "profile": profiles.summary(manifest),
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
@@ -961,7 +963,7 @@ def start_pr_fix(filename: str, stage: str) -> dict:
         "rc": None, "started": time.time(), "session": None,
         "log": str(log_path), "proc": proc, "origin": stage, "mode": "work",
         "name": name, "model": model or None, "plan": plans.portable(plan),
-        "manifest": manifest, "profile": profiles.summary(manifest),
+        "profile": profiles.summary(manifest),
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record

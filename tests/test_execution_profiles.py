@@ -740,6 +740,16 @@ class ApprovedContextFailsClosed(ProfileCase):
         self.assertTrue(found["blockers"])
         self.assertIn("outside the work root", found["blockers"][0])
 
+    def test_an_input_may_not_be_declared_twice(self):
+        (self.work / "reference" / "a.md").write_text("a\n", encoding="utf-8")
+        (self.local / "AGENTS.md").write_text("b\n", encoding="utf-8")
+        self.declares({"v": 1, "profiles": {"work": {"context": [
+            {"name": "brief", "path": "work:reference/a.md"},
+            {"name": "brief", "path": "tool:manager/local/AGENTS.md"}]}}})
+        found = self.resolve("work")
+        self.assertTrue(found["blockers"])
+        self.assertIn("declared twice", found["blockers"][0])
+
     def test_an_unknown_root_word_is_refused(self):
         found = self._select(name="x", path="home:.ssh/id_rsa")
         self.assertTrue(found["blockers"])
@@ -1046,6 +1056,18 @@ class FourSeparateQuestions(ProfileCase):
         for entry in table.values():
             self.assertIn(entry["enforcement"], profiles.ENFORCEMENT)
             self.assertTrue(entry["why"])
+
+    def test_the_things_bench_enforces_claim_only_what_they_do(self):
+        """The reason to read these sentences in a test: each is a claim a
+        reader will rely on, and the narrow truth is narrower than the
+        obvious phrasing. A copy stops the *source* changing; it does not
+        confine the run. A cwd is where a process starts, not a cage."""
+        table = self.resolve("work")["capabilities"]
+        pinned = table["pinned-context"]["why"]
+        self.assertIn("edit to the source cannot change", pinned)
+        self.assertIn("could still alter its own copy", pinned)
+        self.assertIn("not a boundary it is held inside",
+                      table["working-directory"]["why"])
 
 
 # ── identities and the seams later members use ─────────────────────────

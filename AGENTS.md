@@ -1032,6 +1032,13 @@ to edit them, to read what sits next to them, or to publish their
 contents — and no diagnostic ever quotes one: refusals name paths,
 revisions and hashes, never bytes.
 
+What the copy guarantees is worth stating narrowly, because the obvious
+phrasing claims more: an edit to the source cannot change what a run was
+given. The bundle is written read-only, but a run with a shell could
+still alter its own copy, which is why the hash on record is of what was
+pinned rather than of what it was meant to be. That sentence is in the
+capability table the board shows, in those words.
+
 ### One manifest, for the whole of the run
 
 The resolved profile is recorded with the run, in

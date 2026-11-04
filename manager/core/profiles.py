@@ -210,19 +210,28 @@ def evidence_id(kind: str, request: str, detail: str = "") -> str:
 
 ENFORCEMENT = ("enforced", "prefix-allowlist", "prompt-only", "pending")
 
-# What bench enforces itself, whatever adapter is installed.
+# What bench enforces itself, whatever adapter is installed — and each
+# `why` is written to claim the narrow thing that is actually true. A copy
+# made before the launch really does stop the *source* changing under the
+# run; it is not a boundary on what the run may then do to its own copy,
+# and saying otherwise here would make the whole display a lie.
 BENCH_CAPABILITIES = {
     "pinned-context": ("enforced",
-                       "bench copies each approved input into a read-only "
-                       "bundle and hashes it before the launch, so the run's "
-                       "inputs cannot change under it"),
+                       "bench copies each approved input into a bundle and "
+                       "hashes it before the launch, so an edit to the source "
+                       "cannot change what this run was given. The copy is "
+                       "written read-only; a run with a shell could still "
+                       "alter its own copy, which is why the hash on record "
+                       "is of what was pinned"),
     "working-directory": ("enforced",
-                          "the launch runs in the directory bench names, "
-                          "passed as the child process's cwd"),
+                          "the launch is started in the directory bench names, "
+                          "as the child process's cwd. That is where it begins, "
+                          "not a boundary it is held inside"),
     "context-boundary": ("enforced",
                          "an input reachable only through a link out of its "
                          "root, or naming a directory, is refused rather "
-                         "than pinned"),
+                         "than pinned — so an approved document cannot stand "
+                         "in for an unapproved one"),
 }
 
 # What an adapter may declare in `capabilities.json` beside its `run`.
@@ -961,6 +970,22 @@ def resolve(intent: str, *, worktree: Path | str | None = None) -> dict:
             raw_context = doc.get("context") or []
         if isinstance(raw_context, list):
             selections = [s for s in raw_context if isinstance(s, dict)]
+    # A name is an input's identity — in the manifest, in the prompt, and
+    # as the file it is pinned at. Two selections sharing one would pin
+    # over each other, so the second is refused rather than silently
+    # deciding which document the run actually got.
+    seen_inputs: set[str] = set()
+    deduped: list[dict] = []
+    for raw in selections:
+        name = str(raw.get("name") or "").strip()
+        if name and name in seen_inputs:
+            blockers.append(f"the context input '{name}' is declared twice for "
+                            f"'{intent}' — an input's name is its identity, "
+                            f"and two files cannot share one")
+            continue
+        seen_inputs.add(name)
+        deduped.append(raw)
+    selections = deduped
     context = [_resolve_selection(raw, available) for raw in selections]
     for item in context:
         if item["status"] == "resolved":
