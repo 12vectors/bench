@@ -906,10 +906,21 @@ class ThePage(unittest.TestCase):
         self.assertIn("doctorRun(", self.html)
 
     def test_the_buttons_say_their_side_effects(self):
-        for phrase in ("runs the adapter's own executables",
-                       "starts real processes",
-                       "spends tokens"):
-            self.assertIn(phrase, self.html, phrase)
+        """In the server's own words, not the page's — so a mode that
+        gains a side effect cannot keep a button that does not mention
+        it."""
+        self.assertIn("m.sideEffects", self.html)
+        self.assertIn("m.needsApproval", self.html)
+        self.assertIn("side effects", self.html)
+        for mode in ("conformance", "runtime", "real-agent"):
+            self.assertTrue(doctor.MODES[mode]["sideEffects"], mode)
+
+    def test_the_real_cli_stage_asks_a_second_time_before_spending(self):
+        start = self.html.index("async function doctorRun(")
+        body = self.html[start:start + 2000]
+        self.assertIn("needsApproval", body)
+        self.assertIn("spends tokens", body)
+        self.assertIn("approve: !!needsApproval", body)
 
     def test_the_page_renders_the_servers_own_words(self):
         """Four outcomes, four evidence levels and the remedy, all read

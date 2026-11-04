@@ -683,6 +683,11 @@
   </nav>
   <span class="spacer"></span>
   <div class="phasechips" id="phasechips" hidden></div>
+  <!-- the readiness inspector: always here, because it is the way in to a
+       diagnosis rather than a state that comes and goes. Opening it reads;
+       everything that does something is armed inside it. -->
+  <div class="livechip" id="doctorchip" role="button" tabindex="0"
+       aria-label="open the readiness inspector"></div>
   <div class="livechip" id="syncchip" hidden style="cursor:default"></div>
   <div class="livechip" id="cmdchip" hidden style="cursor:default"></div>
   <div class="livechip" id="livechip" title="open Sessions"></div>
@@ -762,6 +767,12 @@ const S = {
   // rather than carried in the state payload for the manifest's reason,
   // and never re-run by being looked at
   evidence: {},
+  // {at, report, fetching}: the last readiness reading taken on this tab.
+  // Held rather than refetched on every render because reading it resolves
+  // every intent and hashes every approved input — cheap, but not free —
+  // and because "nothing failing when you last looked" is the only thing
+  // a cached reading may ever be shown as saying
+  doctor: null,
   openFolds: new Set(),  // expanded output folds, kept across renders
   fileView: null,        // {dir, name, content} open in the drawer
   drawerKey: null,       // which document the drawer last painted, for its scroll mark
@@ -1129,6 +1140,45 @@ function renderAgentCommands() {
     `<span class="mono">BOARD_AGENT_COMMANDS</span>`;
 }
 
+/* The readiness inspector's own chip. Unlike the sync and phase chips it
+   is always here, and deliberately: those two are *states* that come and
+   go, and this is the door to a diagnosis — a door that appeared only
+   when something was already wrong would be a door nobody learned about.
+
+   What it says, it says honestly. Before anything has been read it offers
+   the inspector and names where the policy comes from. A document that
+   does not parse is the one fact the cheap state payload already knows,
+   so that wears `--alarm` without anything being resolved. After a
+   reading it carries that reading's count — and the title says when it
+   was taken, because "nothing failing when you last looked" is a
+   different claim from "nothing failing". */
+function renderDoctor() {
+  const el = $('#doctorchip');
+  const policy = S.state?.policy || {};
+  const read = S.doctor && S.doctor.report;
+  let colour = 'muted', tail = policy.kind === 'legacy'
+    ? 'legacy settings' : (policy.identity || 'policy');
+  let title = 'What this board would grant, run and refuse — resolved for ' +
+    'every launch intent, with the remedy for anything that would stop ' +
+    'one. Opening this reads: it starts no process, pins nothing and ' +
+    'spends nothing.';
+  if (policy.problem) {
+    colour = 'alarm';
+    tail = 'policy broken';
+    title = policy.problem + ' — open the inspector for the remedy.';
+  } else if (read) {
+    const failed = read.summary.failed;
+    colour = failed ? 'alarm' : 'calm';
+    tail = failed ? `${failed} to look at` : 'nothing failing';
+    title = `${read.summary.line} Read ${fmtShort(read.generated)}; open to ` +
+      `read it again. This says nothing about what has changed since.`;
+  }
+  el.title = title;
+  el.innerHTML = `<span class="dot" style="background:var(--${colour === 'muted' ? 'idle' : colour})"></span>` +
+    `<span style="color:var(--${colour})">⚕ readiness</span>` +
+    `<span class="mono">${esc(clip(String(tail), 28))}</span>`;
+}
+
 /* ── a phase in flight ────────────────────────────────────────────────── */
 
 /* The phases the header has something to say about: one running, or one
@@ -1278,6 +1328,7 @@ function render() {
   renderViews();
   renderSync();
   renderAgentCommands();
+  renderDoctor();
   if (S.view === 'flight') renderFlight();
   else if (S.view === 'focus') renderFocus();
   else renderCards();
@@ -1737,6 +1788,292 @@ function profileDetail(p) {
   for (const c of p.uiCommands || [])
     lines.push(`ui command  ${c.name} — ${c.why}`);
   return lines.join('\n');
+}
+
+/* ── readiness: what this board would grant, run and refuse ────────────
+
+   The inspector. Everything the profile sheet says about one card, asked
+   for the board as a whole and without a card at all — plus the two
+   things only a diagnosis can say: what a *deliberately broken* policy
+   would be told, and what each answer is actually worth.
+
+   That second one is the whole discipline here. A resolution, a generated
+   settings document, an adapter's own `run` against a stub, a process
+   bench ran, and the installed CLI with a model are five different
+   amounts of knowledge, and a single green badge over all of them would
+   be the most reassuring lie this board could tell. So every row carries
+   its level, every level carries what it does *not* prove, and a mode
+   nobody asked for is drawn as `not asked` rather than left out.
+
+   Four words, and the word carries the meaning rather than the colour —
+   as it does in the verification panel, and for the same reason: a
+   reader who cannot tell pine from terracotta still has to be able to
+   tell "we checked and it is fine" from "we never checked". */
+const DOCTOR_OUTCOME = {
+  passed:   ['pass', '✓', 'passed'],
+  failed:   ['fail', '✕', 'failed'],
+  skipped:  ['none', '—', 'skipped'],
+  deferred: ['none', '·', 'deferred'],
+};
+
+function doctorOutcome(word) {
+  return DOCTOR_OUTCOME[word] || ['none', '?', String(word || '—')];
+}
+
+/* One row per finding: the outcome in words, the level it was taken at,
+   what it was about, and — when it is not passing — the cause and the
+   remedy the server wrote. Nothing here decides a verdict. */
+function doctorRows(report, rows) {
+  if (!rows.length) {
+    return `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">nothing to report</span>` +
+      `<span class="state">this stage asked no questions here</span></div>`;
+  }
+  return rows.map(f => {
+    const [cls, glyph, word] = doctorOutcome(f.outcome);
+    const level = (report.evidence[f.evidence] || {}).label || f.evidence;
+    const tail = f.intent ? ` · ${f.intent}` : '';
+    const remedy = (f.outcome !== 'passed' && f.remedy)
+      ? `<div class="check-row ${cls}" style="padding-left:18px">` +
+        `<span class="glyph">→</span><span class="name">remedy</span>` +
+        `<span class="state">${esc(f.remedy)}</span></div>`
+      : '';
+    return `<div class="check-row ${cls}" title="${esc(f.detail)}">` +
+      `<span class="glyph">${glyph}</span>` +
+      `<span class="name">${esc(f.name)}${esc(tail)}</span>` +
+      `<span class="state">${esc(word)} · ${esc(level)}` +
+      `${f.code ? ' · ' + esc(f.code) : ''}</span></div>` +
+      `<div class="check-row ${cls}" style="padding-left:18px">` +
+      `<span class="glyph">·</span><span class="name">${esc(f.about)}</span>` +
+      `<span class="state">${esc(f.detail)}</span></div>` + remedy;
+  }).join('');
+}
+
+/* The coverage table, which is the half a reader skips at their peril: it
+   is the only place that says which stages were *not* run. A stage
+   missing from a coverage table is a stage a reader assumes passed. */
+function doctorCoverage(report) {
+  return report.coverage.map(row => {
+    const counts = ['passed', 'failed', 'skipped', 'deferred']
+      .map(w => `${doctorOutcome(w)[1]}${row.counts[w]}`).join(' ');
+    const cls = row.counts.failed ? 'fail' : row.asked ? 'pass' : 'none';
+    return `<div class="check-row ${cls}">` +
+      `<span class="glyph">${row.asked ? '▣' : '▢'}</span>` +
+      `<span class="name">${esc(row.label)}</span>` +
+      `<span class="state">${esc(row.asked ? counts : 'not asked')}</span></div>` +
+      `<div class="check-row none" style="padding-left:18px">` +
+      `<span class="glyph">·</span><span class="name">not proved</span>` +
+      `<span class="state">${esc(row.doesNotProve)}</span></div>`;
+  }).join('');
+}
+
+/* Shared by the inspector and the Focus view, so a board-level reading
+   and a run-level one cannot drift into two vocabularies. `intent`
+   narrows it to the rows about one launch kind. */
+function readinessPanel(report, opts) {
+  const o = opts || {};
+  let rows = report.findings;
+  if (o.intent) rows = rows.filter(f => !f.intent || f.intent === o.intent);
+  if (o.only) rows = rows.filter(f => o.only.includes(f.outcome));
+  const head = o.title || 'Readiness';
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">${esc(head)}</span>` +
+    `<span class="r">${esc((report.evidence[report.summary.strongestEvidence] || {}).label || '')}</span></div>` +
+    `<div class="check-row ${report.summary.failed ? 'fail' : 'pass'}">` +
+    `<span class="glyph">${report.summary.failed ? '✕' : '✓'}</span>` +
+    `<span class="name">${esc(o.intent || 'this board')}</span>` +
+    `<span class="state">${esc(report.summary.line)}</span></div>` +
+    doctorRows(report, rows) + `</div>`;
+}
+
+/* The inspector itself. A GET of the report, so opening it resolves,
+   hashes and reads approved files and does nothing else: no process, no
+   pinned bundle, no provisioned checkout, no model, no grant changed.
+   Every stage that *does* something is a button below, armed, with its
+   side effects written out beside it in the server's own words. */
+async function doctorSheet(mode) {
+  const wrap = $('#sheetwrap');
+  const head = (tail) =>
+    `<div class="stitle"><span>Readiness</span>` +
+    `<span class="mono">⚕ ${esc(tail)}</span></div>`;
+  wrap.innerHTML = `<div class="sheet" role="dialog" ` +
+    `aria-label="execution readiness inspector">${head('reading…')}` +
+    `<p>Resolving every launch intent. Nothing is being started.</p></div>`;
+  wrap.classList.add('open');
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+
+  let report = null, error = null;
+  try {
+    const res = await fetch('/api/doctor');
+    const data = await res.json();
+    if (res.ok && data.doctor) report = data.doctor;
+    else error = data.error || 'the readiness report could not be built';
+  } catch (e) {
+    error = e.message || 'the board could not be asked';
+  }
+  if (!report) {
+    wrap.innerHTML = `<div class="sheet" role="dialog" ` +
+      `aria-label="execution readiness inspector">${head('unavailable')}` +
+      `<p class="bad">${esc(error)}</p>` +
+      `<div class="sbtns"><button id="sh-nodoc">Close<small>Nothing was ` +
+      `started.</small></button></div></div>`;
+    $('#sh-nodoc').addEventListener('click', closeSheet);
+    return;
+  }
+  S.doctor = { at: Date.now(), report };
+  renderDoctor();
+  paintDoctorSheet(report, mode);
+}
+
+/* Drawn from a report already in hand, so switching the intent tab or
+   coming back from an active stage repaints without asking again. */
+function paintDoctorSheet(report, intent) {
+  const wrap = $('#sheetwrap');
+  const head = (tail) =>
+    `<div class="stitle"><span>Readiness</span>` +
+    `<span class="mono">⚕ ${esc(tail)}</span></div>`;
+  const switcher = ['', ...Object.keys(INTENT_LABEL)].map(key =>
+    `<button class="chip2 ${key === (intent || '') ? 'accent' : ''}" ` +
+    `data-doctorintent="${esc(key)}" aria-label="${key ? 'show ' + key + ' rows' : 'show every row'}">` +
+    `${key ? esc(INTENT_LABEL[key]) : 'everything'}</button>`).join('');
+
+  const stages = report.coverage.filter(row => row.mode !== 'inspect')
+    .map(row => {
+      const m = report.modes[row.mode];
+      const effects = (m.sideEffects || [])
+        .map(e => `<li>${esc(e)}</li>`).join('');
+      const label = row.mode === 'real-agent'
+        ? `⚕ ${m.label} — needs your approval`
+        : `⚕ run ${m.label}`;
+      return `<div class="check-row ${row.asked ? 'pass' : 'none'}">` +
+        `<span class="glyph">${row.asked ? '▣' : '▢'}</span>` +
+        `<span class="name">${esc(m.label)}</span>` +
+        `<span class="state">${esc(row.asked ? 'run in this reading' : 'not asked')}` +
+        `</span></div>` +
+        `<div class="check-row none" style="padding-left:18px">` +
+        `<span class="glyph">·</span><span class="name">${esc(m.does)}</span>` +
+        `<span class="state"><button class="chip2" ` +
+        `data-doctormode="${esc(row.mode)}" ` +
+        `aria-label="${esc(label)}">${actLabel(label, 'run it?', 'running…')}` +
+        `</button></span></div>` +
+        `<div class="check-row none" style="padding-left:18px">` +
+        `<span class="glyph">!</span><span class="name">side effects</span>` +
+        `<span class="state"><ul style="margin:0;padding-left:14px">${effects}</ul>` +
+        `${m.needsApproval ? '<br>This one needs your explicit approval and ' +
+          'is never implied by another stage.' : ''}</span></div>`;
+    }).join('');
+
+  wrap.innerHTML =
+    `<div class="sheet" role="dialog" aria-label="execution readiness inspector">` +
+    head(report.summary.failed ? `${report.summary.failed} to look at`
+                               : 'nothing failing') +
+    `<p>${report.summary.failed ? '<b class="bad">' : ''}` +
+    `${esc(report.summary.line)}${report.summary.failed ? '</b>' : ''}</p>` +
+    `<p>This is the resolver a launch rides, asked without launching one. ` +
+    `Reading it starts no process, pins nothing and spends nothing — and ` +
+    `a reading is not a proof: each row says what it was taken from.</p>` +
+    `<div class="chiprow">${switcher}</div>` +
+    readinessPanel(report, { intent: intent || null,
+                             title: 'What would happen' }) +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Coverage</span>` +
+    `<span class="r">${esc(report.location)}</span></div>` +
+    doctorCoverage(report) + `</div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Ask for more than a reading</span>` +
+    `<span class="r">a person's action</span></div>${stages}</div>` +
+    `<details class="fold"><summary>every diagnostic bench can produce, and its remedy</summary>` +
+    `<pre>${esc(Object.entries(report.diagnosticCodes).map(
+      ([code, d]) => `${code}\n  ${d.title}\n  ${d.remedy}`).join('\n\n'))}</pre></details>` +
+    `<details class="fold"><summary>what each level of evidence is worth</summary>` +
+    `<pre>${esc(Object.entries(report.evidence).map(
+      ([level, e]) => `${level} — ${e.label}\n  proves: ${e.proves}\n` +
+                      `  does not prove: ${e.doesNotProve}`).join('\n\n'))}</pre></details>` +
+    `<details class="fold"><summary>roots, policy and what this report withholds</summary>` +
+    `<pre>${esc(doctorDetail(report))}</pre></details>` +
+    `<div class="sbtns"><button id="sh-nodoc">Close<small>Nothing was ` +
+    `started, and nothing was pinned.</small></button></div></div>`;
+  $('#sh-nodoc').addEventListener('click', closeSheet);
+  wrap.querySelectorAll('[data-doctorintent]').forEach(btn =>
+    btn.addEventListener('click', () =>
+      paintDoctorSheet(report, btn.dataset.doctorintent || null)));
+  wrap.querySelectorAll('[data-doctormode]').forEach(btn => {
+    const mode = btn.dataset.doctormode;
+    const m = report.modes[mode];
+    wireAction(btn, `doctor::${mode}`, {
+      label: m.label, confirm: 'run it?', busy: 'running…',
+      run: () => doctorRun(mode, intent),
+    });
+  });
+}
+
+/* The technical half: identities, roots, the precedence, and what the
+   report deliberately does not carry. Real and checkable, and nobody
+   reads it first — so it folds. */
+function doctorDetail(report) {
+  const lines = [
+    `generated   ${fmtShort(report.generated)} in ${report.took.toFixed(2)}s`,
+    `schema      doctor v${report.v}`,
+    `ran         ${report.ran.join(', ')}`,
+    `application ${report.layout.app}`,
+    `work state  ${report.layout.work}`,
+    `worktrees   ${report.layout.worktrees}`,
+    `tool        ${report.layout.tool}`,
+    `layout      ${report.layout.external ? 'external' : 'vendored'} · ` +
+      `app base ${report.layout.appBase} · state base ${report.layout.stateBase}`,
+    `policy      ${report.policy.kind}` +
+      (report.policy.identity ? ` · ${report.policy.identity}` : '') +
+      ` · ${(report.policy.revision || '').slice(0, 12)}`,
+    `precedence  ${(report.policy.precedence || []).join('  >  ')}`,
+    `adapter     ${report.adapter.name}` +
+      (report.adapter.version ? ` v${report.adapter.version}` : '') +
+      (report.adapter.declared ? '' : ' (declares no capabilities)'),
+  ];
+  for (const p of report.problems || []) lines.push(`refused     ${p}`);
+  for (const reading of report.intents || []) {
+    lines.push(`intent      ${reading.intent} · ${reading.policyId} · ` +
+               `cwd ${(reading.cwd || {}).policy}`);
+    for (const b of reading.blockers || []) lines.push(`            blocked: ${b}`);
+  }
+  lines.push('');
+  for (const [key, why] of Object.entries(report.redaction || {})) {
+    lines.push(`${key.padEnd(11)} ${why}`);
+  }
+  return lines.join('\n');
+}
+
+/* Asking for an active stage. A POST, named, with the side effects
+   already written beside the button that fired it — and, for the real
+   CLI, a second deliberate approval that nothing else implies. */
+async function doctorRun(mode, intent) {
+  const needsApproval = (S.doctor?.report?.modes || {})[mode]?.needsApproval;
+  if (needsApproval && !confirm(
+      'This launches the installed agent CLI with a model, at a disposable ' +
+      'fixture directory, and spends tokens on this board\'s configured ' +
+      'account. Nothing else runs it. Authorise it?')) return false;
+  toast(`running the ${mode} stage…`);
+  try {
+    const res = await fetch('/api/doctor/run', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modes: [mode], approve: !!needsApproval }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.doctor) {
+      toast(data.error || 'that stage did not run', true);
+      return false;
+    }
+    S.doctor = { at: Date.now(), report: data.doctor };
+    renderDoctor();
+    paintDoctorSheet(data.doctor, intent);
+    const row = data.doctor.coverage.find(r => r.mode === mode) || {};
+    toast(`${mode}: ${(row.counts || {}).failed || 0} failed, ` +
+          `${(row.counts || {}).passed || 0} passed`,
+          !!(row.counts || {}).failed);
+    return true;
+  } catch (e) {
+    toast(`the ${mode} stage failed — ${e.message || 'no response'}`, true);
+    return false;
+  }
 }
 
 /* ── verification: what bench ran, and what it found ───────────────────
@@ -3853,8 +4190,26 @@ function renderFocus() {
   if (task) fetchEvidence(task.file, task.stage);
   const verifyPanel = verificationPanel(task, agent);
 
+  // And the fourth fact, which is about the board rather than the run:
+  // would a launch of this kind even start here, and what is not proved
+  // about that. Read lazily and never on a timer — resolving every intent
+  // is cheap but not free, and a reading is only ever shown as saying
+  // what it said when it was taken.
+  fetchReadiness();
+  const readyPanel = S.doctor?.report
+    ? readinessPanel(S.doctor.report, {
+        intent: agent ? (agent.mode || 'work') : null,
+        title: 'Readiness', only: ['failed', 'deferred'] })
+    : `<div class="panel"><div class="phead"><span class="label">Readiness</span>` +
+      `<span class="r">—</span></div>` +
+      `<div class="check-row none"><span class="glyph">·</span>` +
+      `<span class="name">reading the policy</span>` +
+      `<span class="state">what this board would grant, run and refuse` +
+      `</span></div></div>`;
+
   $('#cgrid').innerHTML = nowPanel +
-    `<div class="c-side">${checksPanel}${verifyPanel}${permsPanel}${filesPanel}${recentPanel}</div>`;
+    `<div class="c-side">${checksPanel}${verifyPanel}${permsPanel}` +
+    `${readyPanel}${filesPanel}${recentPanel}</div>`;
   document.querySelectorAll('#cgrid details.fold').forEach(d => {
     d.addEventListener('toggle', () => {
       if (d.open) S.openFolds.add(d.dataset.key); else S.openFolds.delete(d.dataset.key);
@@ -3947,6 +4302,26 @@ async function fetchEvidence(file, stage) {
     S.evidence[file] = { at: Date.now(),
                          rollup: cached ? cached.rollup : null,
                          evidence: cached ? cached.evidence : [] };
+  }
+}
+
+/* The readiness reading. A GET, so this starts no process, pins nothing
+   and spends nothing — but it does resolve every intent and hash every
+   approved input, so it is held for a minute rather than taken on every
+   SSE nudge. A reading older than that is still shown while a fresh one
+   is on the way: the panel's own words are about when it was taken. */
+async function fetchReadiness() {
+  const cached = S.doctor;
+  if (cached && (cached.fetching || Date.now() - cached.at < 60000)) return;
+  S.doctor = { ...(cached || { at: 0 }), fetching: true };
+  try {
+    const res = await fetch('/api/doctor');
+    const data = res.ok ? await res.json() : {};
+    if (data.doctor) S.doctor = { at: Date.now(), report: data.doctor };
+    else S.doctor = { at: Date.now(), report: cached ? cached.report : null };
+    scheduleRender();
+  } catch {
+    S.doctor = { at: Date.now(), report: cached ? cached.report : null };
   }
 }
 
@@ -4099,6 +4474,12 @@ function md(src) {
 document.querySelectorAll('#views button').forEach(b =>
   b.addEventListener('click', () => setView(b.dataset.view)));
 $('#livechip').addEventListener('click', () => setView('flight'));
+/* Keyboard as well as pointer: the inspector is the one header chip that
+   opens something, so it is reachable without a mouse. */
+$('#doctorchip').addEventListener('click', () => doctorSheet(null));
+$('#doctorchip').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doctorSheet(null); }
+});
 $('#themebtn').addEventListener('click', () => { S.dark = !S.dark; applyTheme(); });
 $('#focussel').addEventListener('change', (e) => { S.focusSid = e.target.value; render(); });
 $('#refresh').addEventListener('click', loadState);
