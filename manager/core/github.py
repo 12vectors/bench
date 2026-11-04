@@ -30,6 +30,7 @@ from pathlib import Path
 
 import config
 import drive as drive_mod
+import gates
 import plans
 import reports
 import reviews
@@ -491,12 +492,38 @@ def _fold(data: dict, prev: dict, base: str | None = None) -> dict:
             "detail": " · ".join(detail_bits)}
 
 
+def _review_objects(number: str) -> list[dict] | None:
+    """GitHub's own review objects for one pull request, from the REST
+    endpoint rather than from `gh pr view`.
+
+    One field is the whole reason: `commit_id`, which says **which
+    revision each review was of**. `gh pr view --json reviews` does not
+    carry it, and an approval with no commit on it could only ever be
+    bound to a head by guessing — so a gate that needed one would be
+    guessing about the thing it exists to be sure of.
+
+    Asked only when a configured gate actually requires a formal GitHub
+    review state (`gates.needs_github_reviews`), so a board that gates
+    nothing, or gates on bench's own verdict, pays exactly what it paid
+    before this existed.
+    """
+    result = _run([config.GH_BIN, "api", "--paginate",
+                   f"repos/{_api_repo()}/pulls/{number}/reviews"], timeout=60)
+    if result.returncode != 0:
+        return None
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, list) else None
+
+
 def _poll_pr(filename: str, url: str) -> None:
     number = url.rstrip("/").rsplit("/", 1)[-1]
     result = _gh_pr("view", number,
                     "--json",
                     "reviews,reviewRequests,statusCheckRollup,state,mergeable"
-                    ",baseRefName,headRefOid,mergedAt",
+                    ",baseRefName,headRefOid,mergedAt,author",
                     timeout=60)
     if result.returncode != 0:
         return
@@ -515,6 +542,18 @@ def _poll_pr(filename: str, url: str) -> None:
         reviews.observe(filename, head=entry.get("head"),
                         base=entry.get("base") or entry.get("wantBase"),
                         status=entry.get("prState") or "")
+    # And what the *formal* review state is, bound to the commit each
+    # review was given for — a separate reading, because a gate that asks
+    # for a GitHub approval is asking about a record GitHub holds and not
+    # about the folded verdict this beat computes for the chip.
+    if gates.needs_github_reviews():
+        objects = _review_objects(number)
+        if objects is not None:
+            gates.observe_reviews(
+                filename, reviews=objects,
+                author=str((data.get("author") or {}).get("login") or "")
+                or None,
+                head=entry.get("head"))
     if prev.get("baseMismatch") != entry["baseMismatch"] and entry["baseMismatch"]:
         state.record_board_event({
             "kind": "agent", "actor": "board", "file": filename,
@@ -620,6 +659,15 @@ def _complete(filename: str, stage: str) -> dict:
     stem = filename[:-3]
     branch = branch_of(filename)   # a phase's own branch, or task/<stem>
     task = _woven(filename, stage)
+    # Before the drive is parked, and well before anything irreversible:
+    # what this board's acceptance gate requires, and whether the
+    # evidence on record satisfies it against the commit this would
+    # merge. A refusal here leaves the card, its branch, its worktree and
+    # every record exactly as they are, and says the same sentence the
+    # page says — one reading, one authority.
+    scope = gates.scope_for(task)
+    gates.require(gates.evaluate(filename, scope, task=task),
+                  "merge & clean up")
     # Read before anything is destroyed and acted on only after the merge
     # lands: the phase branch is deleted in the middle of this, and it is
     # the only thing that can say which members it carried.
@@ -647,6 +695,13 @@ def _complete(filename: str, stage: str) -> dict:
         if gone:
             raise ValueError(gone)
         _assert_lands_in_the_base(filename, target)
+        # And again, immediately before the one irreversible step. The
+        # first reading was before the drive was parked, which takes as
+        # long as it takes; a push landing in between is a different
+        # commit, and this is the read that is actually about the commit
+        # the merge will take.
+        gates.require(gates.evaluate(filename, scope, task=task),
+                      "the merge")
         on_origin = config.app_merge_on_origin()
         if on_origin:
             _merge_on_origin(filename, stage, branch)
