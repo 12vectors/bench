@@ -1481,8 +1481,13 @@ class TheApiIsOneDoor(VerifyCase):
         seams = profiles.seams()
         self.assertIn("verify.py", seams["extend"]["a runner"])
         self.assertIn("verify.for_task", seams["extend"]["a gate"])
-        self.assertIn("verified-outputs", profiles.PENDING_CAPABILITIES,
-                      "the gate is still a later member, and says so")
+        # The gate this card left as a later member is card 71's
+        # `gates.py`, so `verified-outputs` is no longer pending — it is a
+        # capability a board that declares a gate genuinely has, and the
+        # seam names the module that provides it.
+        self.assertIn("gates.py", seams["extend"]["a gate"])
+        self.assertNotIn("verified-outputs", profiles.PENDING_CAPABILITIES)
+        self.assertIn("verified-outputs", profiles.BENCH_CAPABILITIES)
         self.assertNotIn("prepared-inputs", profiles.PENDING_CAPABILITIES)
 
 

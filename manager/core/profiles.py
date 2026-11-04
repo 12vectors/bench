@@ -43,8 +43,11 @@ is which:
    the workflow brief). Prose persuades; it does not enforce, and
    `guarantees.promptOnly` says so out loud.
 4. **Gate requirement** — what a later verification or merge gate will
-   insist on (`verify`). Declared here, enforced by a later member, and
-   marked `pending` until one exists.
+   insist on. Two halves, and they are different facts: `verify` is what
+   a *run* may ask bench for, and the document's top-level `"gates"`
+   block is what an *integration or acceptance* refuses without. Both are
+   validated here, in the policy layer; `gates.py` is what evaluates the
+   second against recorded evidence and enforces it.
 
 ## Where a profile comes from
 
@@ -198,8 +201,9 @@ def check_id(name: str, revision: str) -> str:
 
 
 # What a verification records against a request, and what it is for.
-# `verify.py` produces the first three; a merge gate is still a later
-# member and `verified-outputs` says so.
+# `verify.py` produces the first three; `gates.py` produces the fourth —
+# a gate's own verdict about one guarded mutation, which is a reading of
+# the other three and never a substitute for them.
 EVIDENCE_KINDS = {
     "command-run": "a named command grant was actually run, and how it exited",
     "context-read": "a pinned input was actually read by the run",
@@ -273,6 +277,16 @@ BENCH_CAPABILITIES = {
                               "is told anything. A model cannot attest that a "
                               "check passed, and an agent exiting zero never "
                               "makes one passing"),
+    "verified-outputs": ("enforced",
+                         "a configured gate refuses the mutation it guards "
+                         "unless bench's own evidence for every required "
+                         "check reads `passed` against the exact commit about "
+                         "to be merged. The status is the runner's, the "
+                         "binding is the commit, and neither an agent's "
+                         "report nor its exit code is an input to it. What it "
+                         "does not claim is that the check is a good one: "
+                         "bench runs the operator's command and reads what it "
+                         "returned"),
     "isolated-environment": ("enforced",
                              "a check's environment is built by bench rather "
                              "than inherited: publication credentials are "
@@ -303,9 +317,6 @@ PENDING_CAPABILITIES = {
                            "the pinned bundle is a guaranteed *input*, not a "
                            "boundary on reading, and an isolated execution "
                            "root is a directory rather than a jail"),
-    "verified-outputs": ("verifications run and their evidence is recorded; "
-                         "the merge gate that *insists* on a named check "
-                         "having passed is a later member"),
     "network-policy": ("neither an adapter nor bench exposes a network "
                        "boundary a profile could set, so a preparation step "
                        "that needs the network has whatever network this "
@@ -440,6 +451,31 @@ DIAGNOSTICS = {
         "Drop the word from \"requires\", or install a backend that declares "
         "it. A profile requiring a guarantee that exists only in the prompt "
         "is refused rather than reported as honoured."),
+    "gate-scope-unknown": (
+        "the \"gates\" block names something that is not a gate",
+        "A gate is declared per scope: \"member\" (a phase merging one "
+        "card's branch into its integration branch), \"integration\" (a "
+        "phase's own branch being accepted) or \"acceptance\" (an ordinary "
+        "card being merged and cleaned up). A misspelled scope would read as "
+        "a gate that silently gates nothing."),
+    "gate-invalid": (
+        "a gate requirement is not the shape a gate is read in",
+        "Each scope takes \"checks\" (a list of declared check names), "
+        "\"review\" (one review policy word) and nothing else; "
+        "\"overrides\" takes \"allow\" and an optional \"actors\" list."),
+    "gate-check-undeclared": (
+        "a gate requires a check this document does not declare",
+        "Declare it in the document's top-level \"checks\" list. A gate "
+        "naming nothing is indistinguishable from no gate at all, so it is "
+        "refused rather than resolved to an empty requirement."),
+    "gate-review-unknown": (
+        "a gate asks for a review policy bench has no word for",
+        "Use one of the review policy words. `none` gates nothing, `bench` "
+        "requires a recorded Bench verdict on the exact head, `github` "
+        "requires a formal APPROVED review state on GitHub, and "
+        "`separate-reviewer` requires that approval to be authored by "
+        "somebody other than the account that proposed the head — a "
+        "COMMENTED review is never read as either."),
 }
 
 
@@ -1794,6 +1830,15 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
         configured.append("prepared-inputs")
     if verify:
         configured.append("isolated-environment")
+    # A gate is a property of the board rather than of this intent, so it
+    # is read shallowly from the same document and never re-validated
+    # here: `gate_policy()` is the one authority on whether a gate block
+    # holds together, and a resolution of `work` must not grow a second
+    # opinion about it. What this adds is the honest guarantee word —
+    # `verified-outputs` is enforced on a board that gates something, and
+    # absent on one that gates nothing.
+    if _gates_something(doc):
+        configured.append("verified-outputs")
     for step in [*prepare, *(s for c in verify for s in c["prepare"])]:
         if step["network"]:
             notes.append(
@@ -2285,6 +2330,286 @@ def verification_block(found: dict | None) -> str:
     return "\n".join(lines)
 
 
+# ── gate requirements: what an integration refuses without ─────────────
+#
+# A `verify` list says what a *run* may ask bench to run. This says what a
+# *mutation* insists on having found: the automatic merge of a phase
+# member into its integration branch, the acceptance of a phase's own
+# integration head, and the merge-and-clean-up of an ordinary card.
+#
+# It is read here, in the policy layer, for the reason every other
+# document value is: these names end up deciding whether an irreversible
+# git operation runs, and a requirement that resolves to nothing is
+# indistinguishable from no requirement at all. `gates.py` evaluates what
+# this returns against recorded evidence. It has no second parser.
+
+# One scope per guarded mutation, each named for the thing it guards
+# rather than for the code that calls it.
+GATE_SCOPES = {
+    "member": ("a phase merging one member's branch into its integration "
+               "branch — the automatic step no person clicks"),
+    "integration": ("a phase's own integration head being accepted — the "
+                    "head every member was merged into, which is a "
+                    "different revision from any of them"),
+    "acceptance": ("an ordinary card being merged and cleaned up — the "
+                   "one place work leaves the board"),
+}
+
+# What a gate may insist on about review, and what each word actually
+# means. `none` is the default and gates nothing, which is what keeps a
+# board that declared no gates behaving exactly as it did.
+#
+# The distinction the last three exist for: GitHub's formal review state
+# and a Bench verdict are two different records of two different things,
+# and a COMMENTED review is neither of them. A board whose only reviewer
+# is the account that opened the pull request cannot produce a formal
+# APPROVED at all — GitHub refuses it — so a policy that needs one says
+# so and is reported as unmet rather than satisfied by the comment the
+# attempt fell back to.
+REVIEW_POLICIES = {
+    "none": "no review is required by this gate",
+    "bench": ("a Bench review verdict of APPROVE, recorded by bench itself "
+              "against this exact head. Independent of GitHub: it is bench's "
+              "own record of what its reviewer found"),
+    "github": ("a formal GitHub review state of APPROVED on the pull "
+               "request at this head. A COMMENTED review is not an approval, "
+               "however it is worded"),
+    "separate-reviewer": ("a formal GitHub APPROVED authored by somebody "
+                          "other than the account that proposed the head. "
+                          "Bench never switches accounts or asks for a second "
+                          "credential to satisfy this — it reports it unmet"),
+}
+
+GATE_POLICY_VERSION = 1
+
+
+def _gates_something(doc: dict) -> bool:
+    """Does this document gate anything at all? A shallow read, used only
+    to decide whether `verified-outputs` is a guarantee this board makes.
+    It validates nothing — `gate_policy()` is the only reader that does,
+    and two validators would be the second parser this design refuses."""
+    raw = doc.get("gates") if doc.get("kind") == "file" else None
+    if not isinstance(raw, dict):
+        return False
+    for scope in GATE_SCOPES:
+        entry = raw.get(scope)
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("checks") or str(entry.get("review") or "none") != "none":
+            return True
+    return False
+
+
+def gate_policy(doc: dict | None = None) -> dict:
+    """What this board's gates require, per scope — validated, with every
+    refusal carrying its code.
+
+    Three answers, and each is a real one:
+
+    - **nothing declared** (`configured: False`) — a board with no
+      `"gates"` block, which is every board that existed before this.
+      Each scope resolves to no checks and `review: "none"`, and
+      `gates.py` reports that as *ungated* in those words rather than as
+      a pass.
+    - **declared** — the scopes the document named, each with its checks
+      resolved to the same definitions `verify` resolves to, so a gate
+      and a run cannot disagree about what `unit` is.
+    - **broken** — a document that does not parse or declares a schema
+      this bench does not read. That is a blocker on every scope, the
+      same way it is a blocker on every intent: an operator mid-edit must
+      not have their gates silently become none.
+    """
+    doc = document() if doc is None else doc
+    trouble = _Trouble()
+    if doc.get("problem"):
+        trouble.add("policy-unreadable", doc["problem"])
+    steps, step_trouble = document_steps(doc)
+    trouble.add_all("prepare-invalid", step_trouble)
+    known, check_trouble = document_checks(doc, steps)
+    trouble.add_all("check-invalid", check_trouble)
+
+    raw = doc.get("gates") if doc.get("kind") == "file" else None
+    declared = raw if isinstance(raw, dict) else {}
+    if raw is not None and not isinstance(raw, dict):
+        trouble.add("gate-invalid",
+                    f"the document's \"gates\" is {type(raw).__name__}, and a "
+                    f"gate block is an object keyed by scope — one of "
+                    f"{', '.join(sorted(GATE_SCOPES))}")
+
+    allow_overrides = False
+    overrides = {"allowed": False, "actors": [],
+                 "why": "no override path is enabled on this board, so an "
+                        "unmet gate is unmet"}
+    for key in declared:
+        if key in GATE_SCOPES or key == "overrides":
+            continue
+        trouble.add("gate-scope-unknown",
+                    f"the \"gates\" block names {key!r}, which is not a gate "
+                    f"scope — one of {', '.join(sorted(GATE_SCOPES))}")
+
+    raw_over = declared.get("overrides")
+    if raw_over is not None:
+        if not isinstance(raw_over, dict):
+            trouble.add("gate-invalid",
+                        f"\"gates.overrides\" is {type(raw_over).__name__} — it "
+                        f"is an object with \"allow\" and an optional "
+                        f"\"actors\" list")
+        else:
+            allow = raw_over.get("allow", False)
+            if not isinstance(allow, bool):
+                trouble.add("gate-invalid",
+                            f"\"gates.overrides.allow\" is {allow!r} — it is "
+                            f"true or false, because it decides whether a "
+                            f"person may proceed over an unmet gate at all")
+            actors = raw_over.get("actors")
+            names: list[str] = []
+            if actors is not None and not isinstance(actors, list):
+                trouble.add("gate-invalid",
+                            "\"gates.overrides.actors\" is not a list — it "
+                            "names the git identities allowed to override")
+            else:
+                names = [str(a).strip() for a in (actors or []) if str(a).strip()]
+            allow_overrides = bool(allow)
+            overrides = {
+                "allowed": allow_overrides,
+                "actors": names,
+                "why": ("an authorised person may proceed over an unmet gate, "
+                        "and doing so is recorded against them — it never "
+                        "makes the gate met"
+                        if allow else
+                        "the document turns the override path off, so an unmet "
+                        "gate is unmet"),
+            }
+
+    scopes: dict = {}
+    for scope, why in GATE_SCOPES.items():
+        entry = declared.get(scope)
+        checks: list[dict] = []
+        review = "none"
+        if entry is not None and not isinstance(entry, dict):
+            trouble.add("gate-invalid",
+                        f"the '{scope}' gate is {type(entry).__name__} — a "
+                        f"gate is an object with \"checks\" and \"review\"")
+            entry = None
+        if isinstance(entry, dict):
+            for key in entry:
+                if key not in ("checks", "review"):
+                    trouble.add("gate-invalid",
+                                f"the '{scope}' gate declares {key!r}, which "
+                                f"a gate has no meaning for — it takes "
+                                f"\"checks\" and \"review\"")
+            raw_checks = entry.get("checks")
+            if raw_checks is not None and not isinstance(raw_checks, list):
+                trouble.add("gate-invalid",
+                            f"the '{scope}' gate's \"checks\" is not a list of "
+                            f"declared check names")
+                raw_checks = []
+            seen: set[str] = set()
+            for name in raw_checks or []:
+                name = str(name).strip()
+                if not NAME_RE.match(name):
+                    trouble.add("name-invalid",
+                                f"the '{scope}' gate requires the check "
+                                f"{name!r} — names match [a-z0-9][a-z0-9._-]*")
+                    continue
+                if name in seen:
+                    continue
+                seen.add(name)
+                found = known.get(name)
+                if found is None:
+                    trouble.add(
+                        "gate-check-undeclared",
+                        f"the '{scope}' gate requires the check '{name}', "
+                        f"which this document declares nowhere. A gate reads "
+                        f"evidence filed under a check's own name, so a name "
+                        f"nothing declares could never be satisfied — and a "
+                        f"requirement that can never be met is refused here "
+                        f"rather than blocking every merge later")
+                    continue
+                if found.get("status") != "available":
+                    trouble.add("check-unrunnable",
+                                f"the '{scope}' gate requires the check "
+                                f"'{name}', which cannot be run as one: "
+                                f"{found.get('why')}")
+                    continue
+                checks.append(found)
+            raw_review = entry.get("review")
+            if raw_review is not None:
+                word = str(raw_review).strip()
+                if word not in REVIEW_POLICIES:
+                    trouble.add(
+                        "gate-review-unknown",
+                        f"the '{scope}' gate asks for the review policy "
+                        f"{word!r} — one of "
+                        f"{', '.join(sorted(REVIEW_POLICIES))}")
+                else:
+                    review = word
+        scopes[scope] = {
+            "scope": scope, "why": why,
+            "declared": isinstance(entry, dict),
+            "checks": checks,
+            "review": review,
+            "reviewWhy": REVIEW_POLICIES[review],
+            # A gate with nothing to insist on is ungated, and the word is
+            # the one the board shows. It is not a pass.
+            "gated": bool(checks) or review != "none",
+        }
+
+    # Resolved last, because a document with *any* refusal in it is a
+    # document whose author is mid-edit: handing them an override path out
+    # of a policy that does not parse would be the one way a broken gate
+    # block could let a merge through.
+    overrides["allowed"] = allow_overrides and not trouble
+    if allow_overrides and trouble:
+        overrides["why"] = ("the override path is declared, and it is not "
+                            "offered while this document has a refusal in it "
+                            "— fix the policy first")
+
+    revision = _digest(
+        str(GATE_POLICY_VERSION), doc.get("revision") or "",
+        json.dumps({s: {"checks": [c["revision"] for c in v["checks"]],
+                        "review": v["review"]}
+                    for s, v in scopes.items()}, sort_keys=True),
+        json.dumps(overrides, sort_keys=True))
+    return {
+        "v": GATE_POLICY_VERSION,
+        "configured": bool(declared) and not trouble,
+        "revision": revision,
+        "policyId": f"gates:{revision[:12]}",
+        "source": {"kind": doc.get("kind"), "identity": doc.get("identity"),
+                   "revision": doc.get("revision"),
+                   "describes": doc.get("describes")},
+        "scopes": scopes,
+        "overrides": overrides,
+        "reviewPolicies": dict(REVIEW_POLICIES),
+        "blockers": list(trouble),
+        "diagnostics": trouble.coded,
+    }
+
+
+def gate_policy_public(found: dict) -> dict:
+    """One gate policy as the board may show it: the same allowlist law
+    `public` keeps, applied to a structure that holds operator-local paths
+    in its check definitions and nothing else of consequence."""
+    return {
+        "v": found["v"], "configured": found["configured"],
+        "revision": found["revision"], "policyId": found["policyId"],
+        "source": dict(found["source"]),
+        "scopes": {scope: {
+            "scope": scope, "why": entry["why"], "declared": entry["declared"],
+            "gated": entry["gated"], "review": entry["review"],
+            "reviewWhy": entry["reviewWhy"],
+            "checks": [{"name": c["name"], "run": c["run"], "root": c["root"],
+                        "checkId": c["checkId"], "required": c["required"],
+                        "help": c["help"]} for c in entry["checks"]],
+        } for scope, entry in found["scopes"].items()},
+        "overrides": dict(found["overrides"]),
+        "reviewPolicies": dict(found["reviewPolicies"]),
+        "blockers": list(found["blockers"]),
+        "diagnostics": list(found["diagnostics"]),
+    }
+
+
 # ── the seams later members plug into ──────────────────────────────────
 
 
@@ -2317,9 +2642,13 @@ def seams() -> dict:
                          "resolve(policy=…). It has no second parser and must "
                          "not grow one: every code it reports is one "
                          "profiles.DIAGNOSTICS names"),
-            "a gate": ("read the evidence `verify.for_task()` returns, insist on "
-                       "a `passed` that `verify.freshness()` calls fresh, and "
-                       "declare 'verified-outputs'"),
+            "a gate": ("`gates.py` — it reads the requirements `gate_policy()` "
+                       "returns, the evidence `verify.for_task()` returns, and "
+                       "insists on a `passed` that `verify.outcome_now()` still "
+                       "calls `passed` against the exact commit it is about to "
+                       "let through. It declares 'verified-outputs', and it has "
+                       "no second parser either: every refusal it reports about "
+                       "a policy is a diagnostic this module named"),
             "a reviewer": ("read the frozen manifest for the run under review "
                            "and `freshness()` for what has moved since — a PR "
                            "review's own checkout, base and head are in "
