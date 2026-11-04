@@ -781,6 +781,11 @@ def _request_shell(check: str, task: str, scope: str | None, intent: str,
         "policyRevision": (manifest or {}).get("revision"),
         "policySource": ((manifest or {}).get("source") or {}).get("kind"),
         "contextIds": context,
+        # which revision a PR review was pinned to, when the run asking is
+        # one. It closes the chain: policy, context, request, review and
+        # evidence are all named in one record, so "what did this check
+        # actually run against" is answerable from the evidence alone.
+        "reviewId": ((manifest or {}).get("review") or {}).get("reviewId"),
         "adapter": ((manifest or {}).get("adapter") or {}).get("name"),
         # evidence is machine-local, like the manifest and the plan: it
         # names this disk's paths, and nothing here is ever committed
@@ -1359,7 +1364,7 @@ def _outcome_now(record: dict) -> dict:
 
 PUBLIC = ("v", "id", "runner", "task", "stage", "agent", "actor", "intent",
           "check", "scope", "requested", "requestId", "policyId",
-          "policyRevision", "policySource", "contextIds", "adapter",
+          "policyRevision", "policySource", "contextIds", "reviewId", "adapter",
           "location", "log", "logBytes", "logTruncated", "prepare", "argv",
           "command", "scopeArgs", "root", "source", "env", "outcome",
           "reason", "why", "rc", "started", "ended", "duration", "timeout",

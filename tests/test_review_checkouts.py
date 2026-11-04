@@ -644,6 +644,21 @@ class VerifyingFromThePinnedCheckout(ReviewCase):
                          Path(record["path"]).resolve())
         self.assertEqual(ran[0]["head"], head)
 
+    def test_the_evidence_names_the_revision_the_review_was_pinned_to(self):
+        """The identity chain, closed: policy, context, request, review and
+        evidence all named in one record, so "what did this check run
+        against" is answerable from the evidence alone."""
+        head = self.proposes()
+        self.review_check()
+        record, manifest = self.pinned()
+
+        found = verify.request(check="unit", agent="run-1")
+
+        self.assertEqual(found["reviewId"], profiles.review_id(CARD, head))
+        self.assertEqual(found["reviewId"], record["reviewId"])
+        self.assertEqual(found["policyId"], manifest["policyId"])
+        self.assertEqual(found["requestId"], manifest["requestId"])
+
     def test_the_verification_does_not_remove_the_checkout_under_the_run(self):
         self.proposes()
         self.review_check()
@@ -760,6 +775,24 @@ class VerifyingFromThePinnedCheckout(ReviewCase):
         self.assertTrue(Path(pinned["pinned"]).is_file())
         self.assertIn(pinned["pinned"], self.runs()[0]["prompt"])
         self.assertEqual([i["name"] for i in self.runs()[0]["context"]], ["rules"])
+
+    def test_the_reviewed_code_is_not_approvable_as_a_context_input(self):
+        """It is the subject of the review, not an input to it — and the
+        ordering could not honour the claim anyway: inputs are hashed and
+        copied before the checkout the path would be in exists."""
+        self.proposes()
+        self.declares({"v": 1, "profiles": {"review": {"context": [
+            {"name": "theirs", "path": "review:code.txt"}]}}})
+
+        found = profiles.manifest("review", CARD, "review",
+                                  review=reviews.checkout_path(STEM, "deadbeef"))
+
+        self.assertTrue(found["blockers"])
+        self.assertIn("code under review", found["blockers"][0])
+        with self.assertRaises(ValueError):
+            agents.start_pr_review(CARD, "review")
+        self.assertEqual(reviews.all_records(), [],
+                         "and it refused before anything was checked out")
 
 
 # ── a head that moved is not current ───────────────────────────────────
@@ -1187,9 +1220,15 @@ class ThePageSaysWhereAReviewRan(unittest.TestCase):
 
     def test_a_review_that_ran_no_checks_says_so(self):
         start = self.html.index("function reviewPanel(record")
-        body = self.html[start:start + 3200]
+        body = self.html[start:start + 4200]
         self.assertIn("no checks ran here", body)
         self.assertIn("executed nothing bench recorded", body)
+
+    def test_preparation_is_drawn_apart_from_the_check_it_prepared(self):
+        start = self.html.index("function reviewPanel(record")
+        body = self.html[start:start + 4200]
+        self.assertIn("prepare · ", body)
+        self.assertIn("e.prepare", body)
 
     def test_the_focus_panel_reads_the_frozen_manifests_review(self):
         start = self.html.index("function reviewRows(found) {")

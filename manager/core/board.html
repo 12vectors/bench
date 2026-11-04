@@ -1879,11 +1879,22 @@ function reviewPanel(record, evidence, current) {
     ? rows.map(e => {
         const [c, glyph, said] = verifyState((e.outcome === 'passed'
           && (fresh.stale || fresh.historical)) ? 'stale' : e.outcome);
+        // preparation apart from the check it prepared, as the evidence
+        // sheet draws it: "the dependencies would not install" and "the
+        // tests failed" are different things to go and do
+        const prep = (e.prepare || []).map(p => {
+          const ok = p.outcome === 'prepared';
+          return `<div class="check-row ${ok ? 'pass' : 'fail'}" ` +
+            `style="padding-left:18px"><span class="glyph">${ok ? '✓' : '✕'}</span>` +
+            `<span class="name">prepare · ${esc(p.name)}</span>` +
+            `<span class="state">${esc(ok ? 'prepared' : (p.outcome || 'failed'))}` +
+            `</span></div>`;
+        }).join('');
         return `<div class="check-row ${c}" title="${esc(e.why || '')}">` +
           `<span class="glyph">${glyph}</span>` +
           `<span class="name">${esc(e.check)}</span>` +
           `<span class="state">${esc(said)} · in the pinned checkout` +
-          `${e.duration ? ' · ' + fmtSecs(e.duration) : ''}</span></div>`;
+          `${e.duration ? ' · ' + fmtSecs(e.duration) : ''}</span></div>` + prep;
       }).join('')
     : `<div class="check-row none"><span class="glyph">—</span>` +
       `<span class="name">no checks ran here</span>` +

@@ -1067,6 +1067,16 @@ def _selection_problem(raw: dict, available: dict) -> tuple[str | None, str | No
     if word not in ROOT_WORDS:
         return (f"the context input '{name}' names the root {word!r}",
                 f"use one of {', '.join(ROOT_WORDS)}")
+    if word == "review":
+        # The reviewed code is the *subject* of a review, not an approved
+        # input to it. Pinning a file out of it would also claim a
+        # guarantee the ordering cannot make: inputs are hashed and copied
+        # before the checkout the path would be in exists.
+        return (f"the context input '{name}' is in the review root, which "
+                f"holds the code under review rather than anything approved",
+                "name a file under tool, work or app — the reviewed "
+                "revision reaches the run as its working directory, not as "
+                "a pinned input")
     if word not in available:
         return (f"the context input '{name}' is in the {word} root, which this "
                 f"intent has none of",
