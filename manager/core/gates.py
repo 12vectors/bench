@@ -823,7 +823,14 @@ def evaluate(filename: str, scope: str, *, task: dict | None = None,
     unmet = [r for r in rows if r["state"] == "unmet"]
     pending = [r for r in rows if r["state"] == "pending"]
 
-    applied = _override_in_force(filename, scope, head, unmet)
+    # An override authorises the gates that were *unmet* when somebody
+    # read them. A check still running is not one of those — nobody
+    # decided anything about an answer that was not in — so a pending
+    # requirement holds the mutation even under an override. Letting it
+    # through would be the override widening itself, which is the one
+    # thing this record exists to stop.
+    applied = _override_in_force(filename, scope, head, unmet) \
+        if not pending else None
     if applied is not None and unmet:
         for row in rows:
             if row["state"] == "unmet":

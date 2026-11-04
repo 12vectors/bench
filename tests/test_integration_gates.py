@@ -601,6 +601,25 @@ class EvidenceIsBoundToTheCommit(GateCase):
                 self.assertIn(reason, gates.REMEDIES)
                 self.assertTrue(gates.REMEDIES[reason].strip())
 
+    def test_a_source_rooted_check_satisfies_a_gate_at_the_same_commit(self):
+        """A check bench ran in a detached checkout of one commit it made
+        and removed: the checkout being gone says nothing, and the commit
+        is the binding — which is exactly what a gate compares."""
+        self.gated(root="source")
+        head = self.commit_in(self.wt)
+        self.manifest()
+        found = self.ask()
+        self.assertEqual(found["outcome"], "passed", found["why"])
+        self.assertEqual((found["root"] or {}).get("policy"), "source")
+        self.assertEqual((found["source"] or {}).get("commit"), head)
+        decision = self.decide()
+        self.assertEqual(decision["decision"], "allowed", decision["summary"])
+        # and it stops satisfying it the moment the branch moves on
+        self.commit_in(self.wt, "a later edit\n")
+        verify.forget_cached()
+        gates.forget_cached()
+        self.assertEqual(self.decide()["decision"], "blocked")
+
     def test_reading_the_gate_runs_nothing_and_writes_nothing(self):
         self.gated()
         self.commit_in(self.wt)
@@ -903,6 +922,35 @@ class AnOverrideIsNeverAPass(GateCase):
         self.assertEqual(found["decision"], "blocked")
         self.assertEqual([r["name"] for r in found["unmet"]],
                          ["unit", "bench"])
+
+    def test_an_override_does_not_cover_a_check_that_is_still_running(self):
+        """An override authorises the gates that were unmet when somebody
+        read them. A check still running is not one of those — nobody
+        decided anything about an answer that was not in — so it holds the
+        mutation even under an override."""
+        import threading
+        self.gated(check="unit", body=HANGS, overrides={"allow": True},
+                   review="bench")
+        self.manifest()
+        gates.override(CARD, "acceptance", actor="istos",
+                       reason="no reviewer until Monday, and the suite hangs")
+        self.assertEqual(self.decide()["decision"], "overridden")
+        asking = threading.Thread(target=self.ask, daemon=True)
+        asking.start()
+        self.assertTrue(wait_for(lambda: bool(verify.RUNNING)))
+        try:
+            found = self.decide()
+            self.assertFalse(gates.passable(found),
+                             "an override does not widen over a check that "
+                             "has not answered")
+            self.assertNotEqual(found["decision"], "overridden")
+            self.assertTrue(found["pending"],
+                            "the running check is reported as what it is")
+            self.assertIsNone(found["overrides"]["applied"])
+        finally:
+            for ident in list(verify.RUNNING):
+                verify.cancel(ident)
+            asking.join(timeout=20)
 
     def test_an_override_needs_a_reason_and_a_person(self):
         self.gated(overrides={"allow": True})
