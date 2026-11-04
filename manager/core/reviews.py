@@ -485,6 +485,27 @@ def live_for_task(filename: str) -> dict | None:
     return next((r for r in for_task(filename) if not r.get("released")), None)
 
 
+def pinned_path_for(filename: str) -> Path | None:
+    """The checkout a review of this card is in, or would be put in — when
+    bench can say so without asking GitHub anything.
+
+    For the page's reading of a review profile. The preflight has to show
+    the directory the run would work in, and it must not cost a call to
+    GitHub per open: a checkout still held answers it exactly, and
+    otherwise the head the PR poll last saw does. Neither resolves, pins
+    or fetches, and when neither knows, the honest answer is None — bench
+    has not pinned one, and the profile then shows no review root.
+    """
+    record = live_for_task(filename)
+    if record and record.get("path"):
+        return Path(str(record["path"]))
+    head = (observed(filename) or {}).get("commit")
+    if not head:
+        return None
+    stem = filename[:-3] if filename.endswith(".md") else filename
+    return checkout_path(stem, head)
+
+
 def provision(filename: str, stage: str, agent_id: str, found: dict) -> dict:
     """Add the run-owned checkout of the reviewed head, and record it.
 

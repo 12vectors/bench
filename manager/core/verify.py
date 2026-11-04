@@ -1243,8 +1243,8 @@ def freshness(record: dict) -> dict:
             moved("pr-ended",
                   f"the pull request has been "
                   f"{str(now.get('state')).lower()} since this ran, so it is "
-                  f"a record of what was proposed rather than a current "
-                  f"result")
+                  f"a historical record of what was proposed rather than a "
+                  f"current result")
     elif where.get("policy") == "source":
         # A `source` check ran in a *detached checkout of one commit* that
         # bench made and then removed on purpose, so the checkout being

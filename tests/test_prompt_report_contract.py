@@ -39,7 +39,12 @@ FIELDS = {"branch": "task/x", "stage": "backlog", "filename": "x.md",
           # `profiles.verification_block` renders them — "" on a board
           # whose profile declares none, which is every board by default
           # (task 68)
-          "verification": ""}
+          "verification": "",
+          # where a PR review was put and which revision it is of, as
+          # `reviews.prompt_block` renders it — never "" for a PR review,
+          # which is pinned a checkout before the model is invoked, and
+          # never rendered at all for any other kind (task 69)
+          "review": "You are in /tmp/x, detached at deadbeef."}
 
 
 def _tail(name: str) -> str:

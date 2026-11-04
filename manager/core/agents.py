@@ -1090,7 +1090,12 @@ def _reap_pr_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
     # is re-run and nothing is retargeted: the review said what it said,
     # about the commit it said it about.
     pinned = reviews.owned(agent_id) or {}
-    reviews.resolve_head(filename)
+    stage = find_stage_of(filename)
+    try:
+        card = read_task(config.TASKS / stage / filename, stage) if stage else None
+    except OSError:
+        card = None
+    reviews.resolve_head(filename, card)
     moved = reviews.freshness(pinned) if pinned else {"stale": False,
                                                       "changed": []}
     note = moved["changed"][0] if moved.get("changed") else ""

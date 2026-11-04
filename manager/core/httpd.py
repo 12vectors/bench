@@ -20,6 +20,7 @@ import github
 import phases
 import plans
 import profiles
+import reviews
 import state
 import sync
 import taskfiles
@@ -100,6 +101,12 @@ def state_payload() -> dict:
         # `/api/evidence`, on demand. A card is never shown as verified
         # here from anything but a recorded run's own exit status.
         "verify": verify.board(collected),
+        # where a PR review of each card actually ran: the revision it was
+        # pinned to, the checkout bench owned for it, and whether that is
+        # still the head the pull request proposes. Empty on a board that
+        # has reviewed nothing, so the chip follows the same law as the
+        # plan's and the profile's — the whole reading is `/api/review`.
+        "reviews": reviews.board(collected),
         "branches": github.task_branches(),
         "commands": config.commands(),
         "commandRuns": commands.public(),
@@ -194,7 +201,16 @@ class Handler(BaseHTTPRequestHandler):
                 or (taskfiles.find_stage_of(name) or "")
             intent = (query.get("intent") or ["work"])[0]
             try:
-                found = profiles.manifest(intent, name, stage)
+                # For `review`, the root a PR review actually works in —
+                # the checkout it holds, or the one the head bench last
+                # saw would put it at. Read free, from a record and the
+                # PR poll: the page must show the directory the run would
+                # start in, and must not pin, fetch or ask GitHub to.
+                held = reviews.live_for_task(name) if intent == "review" else None
+                pinned = (reviews.pinned_path_for(name)
+                          if intent == "review" else None)
+                found = profiles.manifest(intent, name, stage,
+                                          review=pinned, review_record=held)
                 self._json(200, {"profile": profiles.public(found),
                                  "policy": policy_payload()})
             except (ValueError, OSError) as exc:
@@ -226,14 +242,49 @@ class Handler(BaseHTTPRequestHandler):
             manifest = None
             try:
                 # which checks this card's run *could* ask for, so a check
-                # that never ran is a row rather than an absence
-                manifest = profiles.manifest(intent, name, stage)
+                # that never ran is a row rather than an absence — with
+                # the review checkout this card holds, if it holds one,
+                # for `/api/profile`'s reason above
+                held = reviews.live_for_task(name) if intent == "review" else None
+                manifest = profiles.manifest(
+                    intent, name, stage,
+                    review=(held or {}).get("path") or None,
+                    review_record=held)
             except (ValueError, OSError):
                 manifest = None
             self._json(200, {
                 "rollup": verify.rollup(name, manifest),
                 "evidence": [verify.public(r) for r in verify.for_task(name)],
                 "outcomes": verify.OUTCOMES,
+            })
+        elif path == "/api/review":
+            # Where this card's PR reviews ran, and what they were of: the
+            # repository, the base and head identities, the checkout bench
+            # owned, and — per review — whether the pull request still
+            # proposes that head.
+            #
+            # A GET of records and one reading of what the poll last saw.
+            # It provisions nothing, fetches nothing and starts no
+            # validation: opening a historical review must not be a way to
+            # set anything running, least of all against an integration
+            # branch the review never judged.
+            query = parse_qs(url.query)
+            name = (query.get("file") or [""])[0]
+            stage = (query.get("stage") or [""])[0] \
+                or (taskfiles.find_stage_of(name) or "")
+            records = reviews.for_task(name)
+            evidence = [verify.public(r) for r in verify.for_task(name)
+                        if (r.get("root") or {}).get("policy") == "review"]
+            self._json(200, {
+                "reviews": [reviews.public(r) for r in records],
+                # what the PR currently proposes, as the board last read
+                # it — the fact every `stale` above is measured against
+                "head": reviews.observed(name),
+                "evidence": evidence,
+                "outcomes": verify.OUTCOMES,
+                "authorities": reviews.AUTHORITIES,
+                "targets": reviews.TARGETS,
+                "stage": stage,
             })
         elif path == "/api/evidence/log":
             # One verification's own output, scrubbed of anything shaped
