@@ -128,11 +128,20 @@ def allow_rules(mode: str, commands: list[str],
     same project prefixes, resolved and validated by name. The built-in
     git/gh prefixes per intent are the adapter's own knowledge and are not
     a profile's to change.
+
+    A profile's grants are rendered for **every** intent, `review`
+    included. AGENT_COMMANDS is not: the read-only intent never had the
+    project's commands and must not gain them by the back door. The
+    difference matters because a review may be granted the one thing
+    bench adds itself — the shim that asks for a named check — and
+    verifying is not committing: a review that can ask bench to run the
+    tests still has no commit and no push rule anywhere in this document.
     """
     prefixes = list(MODE_PREFIXES.get(mode, []))
-    project = profile_prefixes(profile) if profile else commands
-    if mode in MODES_WITH_PROJECT_COMMANDS:
-        prefixes += [c for c in project if c not in prefixes]
+    if profile:
+        prefixes += [c for c in profile_prefixes(profile) if c not in prefixes]
+    elif mode in MODES_WITH_PROJECT_COMMANDS:
+        prefixes += [c for c in commands if c not in prefixes]
     rules = []
     for prefix in prefixes:
         rules += [f"Bash({prefix})", f"Bash({prefix}:*)"]
