@@ -36,6 +36,10 @@ You are read-only: make NO edits, NO commits, move nothing.
 {guidance_read_only} Read the code, and run read-only commands (grep,
 git log) as needed.
 
+{context}
+
+{verification}
+
 End with a report whose FIRST line is exactly
 RELEVANCE REVIEW: <Still relevant | Partly done | Already done | Needs rewrite>
 followed by the evidence (what you checked, what changed) and a

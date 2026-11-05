@@ -30,7 +30,21 @@ FIELDS = {"branch": "task/x", "stage": "backlog", "filename": "x.md",
           "guidance_read_only": "Read AGENTS.md.",
           # the execution plan the board resolved before the launch, and
           # the base it recorded for the card's PR (task 58)
-          "base": "main", "remote": "origin", "plan": "- Branch: `task/x`"}
+          "base": "main", "remote": "origin", "plan": "- Branch: `task/x`",
+          # the approved readable inputs the board pinned for the run, as
+          # `profiles.prompt_block` renders them — "" on a board that
+          # selected none, which is every board by default (task 67)
+          "context": "",
+          # the named checks bench will run for the run, as
+          # `profiles.verification_block` renders them — "" on a board
+          # whose profile declares none, which is every board by default
+          # (task 68)
+          "verification": "",
+          # where a PR review was put and which revision it is of, as
+          # `reviews.prompt_block` renders it — never "" for a PR review,
+          # which is pinned a checkout before the model is invoked, and
+          # never rendered at all for any other kind (task 69)
+          "review": "You are in /tmp/x, detached at deadbeef."}
 
 
 def _tail(name: str) -> str:

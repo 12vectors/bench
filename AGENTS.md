@@ -44,7 +44,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports → taskfiles → plans → events / github / drive / sync → agents → phases → watch / httpd → board.py
+config → state / reports → taskfiles → plans / profiles → reviews → verify → gates → doctor → events / github / drive / sync → agents → phases → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -56,6 +56,27 @@ config → state / reports → taskfiles → plans → events / github / drive /
   starts from, which branch its PR targets, what selected each, and the
   preflight that validates all of it before a branch, a worktree or an
   agent exists
+- `profiles.py` — the other half of the same decision: what a run may do
+  in that checkout and which files it is guaranteed to have read. One
+  profile per launch intent, the approved context it pins read-only, and
+  the manifest recording what each run actually rode
+- `reviews.py` — the checkout a PR review runs in: the pull request's
+  repository, base and head resolved before anything is created, a
+  detached worktree of that exact head owned by the run, and whether the
+  review still speaks for the head the pull request proposes
+- `verify.py` — the named checks bench runs itself, on a run's request:
+  the argument list built here rather than composed by a model, the
+  environment the check is given, and the evidence it leaves — the
+  runner's own exit status, bound to the source it ran against
+- `gates.py` — may this merge happen? The operator's requirement per
+  guarded mutation, read against evidence bound to the exact commit about
+  to move; bench's own review verdict kept apart from GitHub's formal
+  state; and an override that records who proceeded over what, and never
+  forges a pass
+- `doctor.py` — what this board would grant, run and refuse, asked
+  without paying for a model: the same resolver a launch rides, read at
+  four honest distances, with every diagnostic's remedy and a coverage
+  table that says which distances were *not* taken
 - `events.py` — ingests NORMALIZED events (the adapter contract), session registry
 - `github.py` — PR opening, Copilot requests, review/CI polling
 - `drive.py` — runs the project driver, tracks the one live drive
@@ -82,6 +103,19 @@ exactly the side effects its prompt demands — commit and test for work,
 push for act-pr, posting PR verdicts for review — with the project's own
 runnable commands coming from `BOARD_AGENT_COMMANDS` as neutral prefixes
 each adapter renders in its vendor's rule syntax.
+
+Two further things reach `run`, and both are *additions*: `AGENT_PROFILE`,
+the resolved execution profile for the launch (named command grants,
+denied capabilities, the working-directory policy), and `AGENT_CONTEXT`,
+the read-only inputs bench pinned for it — paths and hashes, never
+content. `AGENT_COMMANDS` is still set to exactly what it always was, so
+an adapter override that has never heard of profiles is handed the
+environment it was handed before and keeps working; one that does read the
+profile reads it as a **narrowing**, which is why passing it cannot
+broaden what a legacy board grants. Beside its `run`, an adapter declares
+what it can genuinely enforce in a `capabilities.json`, so a profile may
+refuse rather than claim a guarantee the vendor cannot make — see
+"Execution profiles and approved context".
 
 Adapters translate their vendor's events into the board's normalized
 schema at the edge — core never sees vendor payloads. That is what keeps
@@ -361,6 +395,11 @@ teammate should read: the tickets, the implementation plans in `plans/`,
 it — agent logs, drive and command logs, session timelines, the
 generated hook settings, and the recorded execution plans under
 `manager/local/state/plans/`, which hold this machine's worktree paths.
+The execution manifests, the verification evidence, the review
+checkouts' ownership records and the gate records — the Bench review
+verdicts and the overrides (`state/manifests/`, `state/evidence/`,
+`state/reviews/`, `state/gates/`) — are machine-local for the same reason
+and by the same construction.
 `manager/local/.env` is gitignored and belongs there too: it names the
 roots on *this* disk and the binaries on this PATH. An absolute path out
 of somebody's home directory, a credential, or a log that means nothing
@@ -522,6 +561,7 @@ operator's.
 ```bash
 ./.task-manager/start.sh                 # the usual way: install + port + board
 python3 .task-manager/manager/board.py   # or run the server directly
+python3 .task-manager/manager/board.py --doctor   # readiness, then exit
 ```
 
 `start.sh` runs `install.py` (idempotent), then sorts out the port before
@@ -633,7 +673,21 @@ The board has four views (header switcher):
 - **Focus** — a heads-up display for one session: the task it holds, its live
   TodoWrite plan, the project's configured definition-of-done checks (a
   `checks` file in `manager/local/` overriding the shipped default in
-  `core/`), and per-file diff stats from its worktree.
+  `core/`), what the run was actually permitted to do and given to read —
+  read from the manifest frozen at its launch, which is a different fact
+  from what the settings say now (see "Execution profiles and approved
+  context") — what **bench itself** ran and found, which is a different
+  fact again (see "Verification: bench runs the check") — whether the
+  work may actually be merged, which is a fourth (see "Gates: nothing
+  merges on a report") — whether a launch of this kind would even start
+  on this board and what is not proved about that (see "Readiness:
+  asking before paying") — and per-file diff stats from its worktree.
+
+The header carries one more chip, and unlike the sync and phase chips it
+is always there: **⚕ readiness** opens the execution inspector. Those two
+are states that come and go; this is the door to a diagnosis, and a door
+that appeared only once something was wrong would be a door nobody
+learned about. Opening it reads and starts nothing.
 
 Liveness comes from Claude Code hooks configured in `.claude/settings.json`:
 every session in this repo POSTs normalized events to the board via the
@@ -897,6 +951,998 @@ commits itself and sync fast-forwards `main`. One layout answers both with
 the same checkout, and asking through separate doors is what keeps
 filesystem layout from changing branch-selection semantics.
 
+## Execution profiles and approved context
+
+A plan says *which checkout* a run works in. A **profile** says what that
+run may do there, and which files it is guaranteed to have read. The two
+compose and do not overlap, and both are resolved, validated and written
+down before a billable model is invoked.
+
+Before this, the second half was implicit and scattered.
+`BOARD_AGENT_COMMANDS` was compiled into permission rules for `work` and
+`act-pr` only, and `review` got a hardcoded grant set inside each
+adapter. A prompt could *point* at a workflow brief outside the checkout,
+but nothing checked the file was there, nothing recorded which revision of
+it the run saw, and nothing stopped it changing under a run in flight. So
+three things had no answer at all: what exactly may this run run, which
+files is it guaranteed, and what did *this* run ride as against what the
+settings say now. One resolved profile answers all three.
+
+### Four facts that used to be one
+
+The old arrangement could not be extended because it conflated four
+different facts. They are separate now, and the data says which is which:
+
+- **UI registration** — a `manager/local/commands/` executable is a `$`
+  chip a person clicks. Appearing there grants a headless run nothing:
+  resolved profiles list those under `uiCommands`, every one marked
+  `agentCapability: false`.
+- **Agent capability** — a named command grant. The only thing that
+  reaches an adapter's permission rules.
+- **Prompt instruction** — what the run is *told*. Prose persuades; it
+  does not enforce, and `guarantees.promptOnly` says so out loud.
+- **Gate requirement** — what a later verification or merge gate will
+  insist on (`verify`), and what should be prepared before a launch
+  (`prepare`). Declared, surfaced and recorded here; both resolve
+  `pending`, because nothing enforces them yet.
+
+### Where a profile comes from
+
+Two structured inputs, in this order, and nothing else:
+
+1. **A profile document** — `manager/local/profiles.json`, or wherever
+   `BOARD_AGENT_PROFILES` points. Machine-local by construction: it names
+   roots on *this* disk and capabilities *this* adapter declares, so it
+   lives with the tool and never in the application's history. The whole
+   schema is documented in `manager/core/profiles.example.json`.
+2. **The legacy settings** — `BOARD_AGENT_COMMANDS` plus each adapter's
+   built-in git/gh grants. A board with no document resolves exactly as it
+   did before profiles existed, marked `source.kind: "legacy"`. That is
+   the whole of "no new metadata keeps established behaviour", and it is
+   why an update changes nothing until somebody writes a document.
+
+A profile **narrows and never widens**. `publication.commit/push/publish`
+may be turned off for an intent that has it and never on for one that does
+not — `review` asking for push is refused by name — and the built-in
+git/gh grants per intent stay the adapter's own knowledge. A document that
+does not parse, or declares a schema version this bench does not read, is
+a blocker on *every* intent and grants nothing at all: an operator who
+mistyped a policy must not be handed the permissions they were in the
+middle of changing.
+
+### What it says, and how strongly
+
+A resolved profile names the launch intent, the approved execution roots
+(`worktree`, `app`, `work`, `tool` — words, not paths, because the
+document is read on a machine whose paths are its own), the working
+directory it runs in, the writable locations, each named command grant
+with its executable and validated argument list, the approved readable
+inputs, the explicitly denied capabilities, and what the profile
+*requires*.
+
+A command grant is one executable and fixed arguments. Anything that makes
+one command line into two, or makes its text depend on the shell, is
+refused where the document is read rather than by the process that would
+have run it: compound commands, pipelines, redirections, globs, backtick
+and `$(…)` substitutions, a relative executable, a path climbing out with
+`..`, a malformed or duplicated grant name, an unknown execution root, and
+a root the intent does not have (a read-only run has no worktree).
+
+And **how strongly** anything holds is a separate answer, in four words
+used everywhere: `enforced`, `prefix-allowlist`, `prompt-only`, `pending`.
+A grant becomes a prefix allow-rule in the adapter's rule language. That
+narrows which command lines a run may launch; it is **not** a sandbox,
+nothing confines a process already running, and the `guarantees` block is
+the single place that says so. Each adapter declares what it can actually
+enforce in a `capabilities.json` beside its `run`; both shipped adapters
+declare `filesystem-sandbox` unsupported, in those words. `requires` is
+how a profile refuses to run without a real guarantee: every word in it
+must resolve to something the installed backend genuinely does, and a
+profile requiring one nothing enforces is **refused** rather than run
+under a restriction that exists only in the prompt.
+
+The same honesty holds where it is read first. The writable locations
+are the **intended** write scope (`"enforcement": "intended"`), and the
+profile carries a separate `isolation` answer read from the same
+capability table: with `filesystem-sandbox` unsupported it says *not
+enforced*. The ⚿ sheet's summary draws them as two rows — **Intended
+writes** and **OS isolation: none enforced** — and the Focus panel says
+the same in one line, so the headline never reads as a boundary that the
+folded technical detail then retracts.
+
+### Approved context: pinned, hashed, and nothing beside it
+
+A project selects a set of files from the tool and work-state roots, and
+they are delivered as verifiable readable inputs. Three things in order
+make that a guarantee rather than a hope: the path is resolved inside a
+named root, the content is hashed, and a read-only copy is pinned under
+`manager/local/state/context/` before the model is invoked. The prompt
+then names those files by the path they were pinned at — *in addition* to
+the workflow brief it already points at, which is never replaced,
+reworded or summarised.
+
+It fails closed, every time. A required input that is missing, unreadable,
+a directory, over the size cap, named like a credential, absolute, using
+`..`, or reachable only through a link out of its root **refuses the
+launch** — by input name, with a remedy, before any model, and leaving the
+card with no branch, no worktree, no claim and no run. A directory grant
+is refused *as* a read-only guarantee, because it lets a run read whatever
+is dropped in later. `"required": false` turns that refusal into a note
+and changes nothing else.
+
+Approval covers those files and nothing beside them. It is not permission
+to edit them, to read what sits next to them, or to publish their
+contents — and no diagnostic ever quotes one: refusals name paths,
+revisions and hashes, never bytes.
+
+What the copy guarantees is worth stating narrowly, because the obvious
+phrasing claims more: an edit to the source cannot change what a run was
+given. The bundle is written read-only, but a run with a shell could
+still alter its own copy, which is why the hash on record is of what was
+pinned rather than of what it was meant to be. That sentence is in the
+capability table the board shows, in those words.
+
+### One manifest, for the whole of the run
+
+The resolved profile is recorded with the run, in
+`manager/local/state/manifests/<agent id>.json`, and it holds the policy
+revision and its source identity, each input's source revision and content
+hash, the working-directory policy, and the adapter and resolver versions.
+Machine-local for the plan's reason: it holds this machine's paths.
+
+Four consequences, and they are why the record exists:
+
+- **A later change does not repin an existing run.** Edit the document, or
+  the approved file itself, and the run keeps what it rode; the next
+  launch gets the new answer. `freshness()` is what reports the
+  difference, and it never resolves it.
+- **The page reads the run's manifest, not the settings.** The Focus
+  view's **Permissions & inputs** panel is fed by the frozen record and
+  says "settings have moved" when they have, so "what the settings say
+  now" can never be read as "what that run rode".
+- **One resolver answers both.** The pre-launch reading and the launch
+  itself call the same function, so a page cannot show a permission a run
+  would not have had.
+- **Later members have identities to refer to.** Policy, context, request
+  and evidence identities are defined once (`profiles.seams()` names them,
+  along with every pending capability and what a runner, a doctor, a gate
+  and a reviewer each plug into), so none of them invents a second policy
+  schema.
+
+### On the board
+
+A `⚿` chip in the card's footer row, beside `⌖` and `CI`, opens the
+profile preflight: where the run would run, what it may write, every named
+command grant, every approved input with its readable status, what is
+blocked, and — at the top, in `--alarm` — any blocker with its remedy,
+before a launch. The sheet switches between the three intents, because
+which one a card hosts depends on what you are about to click. It is
+read-only: it resolves and hashes and pins nothing, so opening it costs
+nothing.
+
+The chip appears only where there is something to say. A board resolving
+on the legacy settings has no such chip anywhere — the same law the plan
+chip follows — and a document that does not parse wears the alarm and the
+reason. Technical detail (identities, hashes, the settings precedence, the
+capability table) folds away rather than leading, and an approved
+document's contents are nowhere on the page.
+
+## Verification: bench runs the check
+
+### Start here: you provide the checks; bench runs them
+
+**Verification means checking the work, rather than taking the agent's word
+for it.** For a website, that might mean running tests and checking that the
+site builds. For a data project, it might mean checking that the output has
+the required columns and contains no invalid records.
+
+Bench does not know what makes *your* application correct. **You or your
+project team are responsible for providing and maintaining the programs
+that check it.** You can reuse existing test and build commands; you do not
+have to invent a special Bench testing system. If you are not a developer,
+ask your developer or coding agent to create the checks, explain their
+coverage and limitations, and demonstrate that they fail when something
+is wrong. An agent can help write them, but that does not remove your
+team's responsibility to decide whether the checks are sufficient.
+
+For example, imagine an agent changes a customer sign-up form:
+
+1. Your team provides a verification program that tests sign-up and checks
+   that the application builds.
+2. The person configuring Bench registers that program as a **named check**
+   and approves where and how it may run.
+3. The agent asks Bench to run the check, or you request it from the board.
+4. Bench runs the approved program against the relevant saved version of
+   the code and records the result itself.
+5. If you have configured a **gate** requiring that check, Bench will not
+   allow the guarded merge until the required current evidence passes.
+
+**The program does the checking. Bench runs it, records the evidence and
+applies your acceptance rules.** Bench does not manufacture tests for a
+project simply because you install it or create a card.
+
+### Who is responsible for what?
+
+| Responsibility | Who owns it? |
+| --- | --- |
+| Decide what correct behavior looks like | You and your project team |
+| Write and maintain tests, build checks and verification scripts | Your developers, with agent assistance if useful |
+| Approve runnable commands, test locations and required checks | The operator: the person who configures this Bench installation |
+| Execute an approved check and record its result and code version | Bench |
+| Enforce the configured conditions before integration or acceptance | Bench's gates |
+| Judge whether the checks cover the important risks and review the work | You and your reviewers |
+
+### The terms, without the machinery
+
+- **Verification program:** an ordinary script or command that checks the
+  work. It might run your existing test suite, build the app or validate
+  data. A **named check** is the label Bench uses for an approved invocation
+  of that program, such as `unit` or `build`.
+- **Preparation program:** a command that gets a disposable test environment
+  ready, such as installing approved dependencies or preparing a test
+  database. You provide this too when it is needed. Preparation failing
+  means the checks could not run; it is not a failing test result.
+- **Scope:** the portion of the work a check covers, such as `backend`,
+  `frontend` or `all`. These names and their arguments are configured by
+  the operator. A backend-only pass does not satisfy a gate requiring all.
+- **Evidence:** Bench's record of what actually ran, its result, and the
+  code and checking-program identities it applies to. An agent's sentence
+  saying “tests passed” is not this record.
+- **Gate:** a condition enforced before a particular action, such as
+  merging a task into a phase or accepting the completed phase. It can
+  require checks, review approval, or both. Registering a check does not
+  automatically make it a required gate.
+- **Stale:** evidence that no longer establishes a pass for the current
+  work. Changing the code, approved inputs or checking program can make
+  an earlier result stale and require a new run.
+
+### What you need to supply
+
+Start with the commands your team already uses to test and build the
+project. Ask the developer configuring Bench to:
+
+1. Identify the checks that matter and explain what they do **not** cover.
+2. Make them run without interactive questions and return a failing exit
+   status when a check fails. A wrapper must not hide a failure by printing
+   “OK” or exiting successfully after a failed command.
+3. Supply any required preparation steps. Use disposable test data, not
+   your live database, and document required dependencies and access.
+4. Register the approved commands and scopes in the local execution-profile
+   configuration, then separately choose which checks a gate must require.
+5. Demonstrate both a passing case and a deliberately failing case in a
+   safe fixture. Check that Bench shows the correct outcome and blocks the
+   required gate on failure.
+
+The configuration example below is for the person doing that setup. You do
+not need to understand its JSON to ask your team: **“Which checks are we
+providing, what do they cover, and which ones must pass before acceptance?”**
+
+As new tests are added, an existing test-suite command may discover them
+automatically. A new test family, dependency or kind of check may instead
+need an updated program and configuration. Bench does not automatically
+invent that missing coverage.
+
+### What a pass does — and does not — tell you
+
+Bench normally uses the verification program's exit status to determine
+whether it succeeded. **A pass means the supplied check passed, not that
+Bench has proved the application is bug-free.** A check that tests the wrong
+thing, skips important cases or always exits successfully gives weak
+assurance. Human review and any required manual checks still matter.
+
+If preparation fails, permission is denied or the check is cancelled,
+Bench records that different outcome rather than pretending the tests
+passed. A previously passing result must also be relevant to the current
+code and required scope. If a full check fails, a passing backend-only run
+cannot stand in for it.
+
+Checks execute programs. A separate checkout and command permissions are
+not an operating-system sandbox: do not assume an arbitrary test script
+cannot access other files or services. Use the documented trust limits
+below; guarantees the installed backend cannot enforce must not be treated
+as protection.
+
+**Existing projects remain compatible:** with no configured gate, Bench
+keeps its ungated behavior. Nothing is required and nothing is proved by
+that decision. To make verification mandatory, configure the appropriate
+gate as well as the check.
+
+### How named checks work
+
+A plan says which checkout a run works in; a profile says what it may do
+there. This is the question those two leave open: **did the project's own
+checks actually pass, and against what?**
+
+"The tests passed" used to be a sentence in an agent's report. The board
+had given the run a *prefix* — `python3 -m unittest` — and a shell, and
+then believed what came back. A **named check** is the other
+arrangement: the run asks for `unit-tests`, bench reads the operator's
+document, builds the argument list itself, runs it with no shell, and
+records the exit status its own `wait()` returned before the asking run
+is told anything.
+
+Three things follow, and they are the whole feature:
+
+- **Nothing a model writes reaches an argv.** A name is all a run can
+  choose. There is no command line for anything to be appended to, and a
+  scope is a *declared name* too (`--fast`, a directory, a `-k` filter is
+  the operator's to write, never the run's).
+- **An exit code read by the thing being judged is not evidence.** An
+  agent exiting zero cannot make a check passing, and a check nothing
+  asked for is `not-run` rather than silence.
+- **"It failed" is not one fact.** A test that failed, a dependency that
+  would not install, a permission that was refused, a cancellation and a
+  timeout are five different things to do next, so they are five
+  outcomes rather than one non-zero.
+
+### What a document declares
+
+Two lists at the top level of the profile document, and a name per intent
+— the whole schema is in `manager/core/profiles.example.json`:
+
+```jsonc
+"checks":  [{"name": "unit", "run": "python3 -m unittest discover -s tests",
+             "root": "worktree", "scopes": {"fast": ["-k", "fast"]},
+             "prepare": ["deps"], "timeout": 900}],
+"prepare": [{"name": "deps", "run": "python3 -m pip install -e .",
+             "network": true}],
+"profiles": {"work": {"verify": ["unit"]}, "review": {"verify": ["unit"]}}
+```
+
+A check is validated where the document is read — in the policy layer,
+beside the grants and the inputs, and ahead of any process. It is held to
+everything a command grant is held to and three things more, each because
+*bench* is the one running it:
+
+- **The application checkout is not an execution root.** `worktree` is
+  the card's own checkout, which bench made; `source` is a detached
+  checkout of one exact commit that bench makes for the verification and
+  owns; `review` is the isolated checkout pinned to the pull request's
+  exact proposed commit for a PR-review run. A `review` check requires
+  that provisioned checkout; it never falls back to the live application.
+  These are execution locations, not security sandboxes. See the trust
+  limits below before running project code.
+- **A check verifies; it does not reshape the repository.** `git diff
+  --check` is exactly the sort of thing a check is; `git push`, `git
+  reset`, `git worktree`, `git config` and the rest are refused by name,
+  because the execution root shares its git metadata with every other
+  worktree of the application.
+- **An argument naming a credential is refused**, as a context selection
+  is — `pytest --env-file .env` is refused as an argument rather than as
+  a file.
+
+A check *may* be quoted where a grant may not, and the difference is
+worth keeping straight: a grant becomes a prefix allow-rule and a rule
+cannot see through a quote, so quoting there would widen what it matched.
+A check is never rendered into a rule — bench splits it once and hands
+the result to `execve` — so a path with spaces is expressible exactly the
+way a shell expresses one.
+
+### How a run asks
+
+One executable, granted by bench itself and present only where that
+intent has a check to ask for: `manager/core/bench-verify`. With no
+arguments it lists what the run may ask for; with a name it runs it; with
+a name and a scope it runs that scope. Its exit status says which *kind*
+of answer came back — `0` passed, `1` the check itself said no, `2`
+refused, `3` preparation failed, `4` no verdict reached, `5` the board
+could not be asked — so only `1` is a test failure.
+
+Because it is a grant, both adapters render it, **`review` included**.
+That is the one rule this changed: a profile's named grants now reach the
+read-only intent, while `BOARD_AGENT_COMMANDS` still does not. A review
+that can ask bench to run the tests gains no commit and no push rule
+anywhere in the generated document, which is the separation
+`publication` existed for.
+
+### The compatibility path, in one sentence
+
+A `verify` entry naming one of the intent's own **command grants**
+resolves to a check built from that grant. So a document written before
+bench could run anything keeps working and its declared requirement
+becomes a real run — while a `verify` naming *nothing* is now refused,
+because a requirement that resolves to `pending` is indistinguishable
+from a check that will never run. A board with no document has no checks
+at all and resolves exactly as it always did: its agents run the
+project's commands themselves, through the grants they have always had.
+
+### What a check is given, and what that is worth
+
+Said narrowly, because the obvious phrasing claims more. Bench
+**enforces** the argument list, the absence of publication credentials
+(removed from the child's environment by name — a process cannot read
+what is not there), the directory the check starts in, and that a check
+never runs in the application checkout. Bench **directs** where caches,
+virtualenvs, `node_modules`, build output and temporary files land, by
+pointing `HOME`, `TMPDIR` and the cache variables into a directory made
+for the verification. That is not a jail: a check with a path can still
+write elsewhere. `filesystem-sandbox` is the capability that would make
+it one, no shipped adapter or backend enforces it, and a profile that
+*requires* it is refused rather than reported as guaranteed.
+
+Two more absences are deliberate. The **launch environment** (`AGENT_*`)
+never reaches a check, so it cannot read the prompt or the resolved
+policy; and neither does the board's own address (`BOARD_PORT`,
+`BOARD_AGENT_ID`), so a check cannot turn round and ask for another
+verification. A preparation step that declares `"network": true` runs
+with whatever network the machine has and the evidence says so —
+`network-policy` is pending, and a profile requiring it refuses.
+
+### The evidence
+
+One JSON record per verification under `local/state/evidence/`, written
+when the request is accepted and rewritten when it ends, with the
+check's whole output beside it. It holds the command and its argument
+list, the execution root and whether bench made it, the exact source
+(the commit, the branch, and a digest of everything uncommitted), the
+policy, check, context and request identities, the names removed from the
+environment, every preparation step's own outcome, the timestamps, the
+exit status and the log. Machine-local for the manifest's reason, so the
+board says `local to this board` rather than implying a teammate can see
+it.
+
+Four things it guarantees:
+
+- **It never drifts towards a pass.** A record still marked `running`
+  when a board starts is evidence that board does not own, so it is
+  closed as `error`, naming the restart. Nothing is re-run: asking again
+  is a person's decision, and an automatic retry at boot is how an outage
+  becomes a thundering herd.
+- **A pass is bound to what it was about.** Modified tracked source, a
+  new untracked file, a new commit, an edited check or a changed policy
+  all make a recorded `passed` read `stale`. So does a changed
+  **program**: the record hashes the executable as it resolved on the
+  check's PATH, the interpreter its `#!` line names (one level), and every
+  absolute-path argument outside the execution root (`python3
+  /opt/ci/check.py`), and the same for each preparation step — so a file
+  replaced at the same path is a different check. It records bench's own
+  **runner revision** too, and evidence from another runner, or a record
+  naming no program identity at all, is never reused (`program-changed`,
+  `runner-changed`). What that pins is what was invoked; it does not bind
+  the libraries, modules or services those programs load, and it is not a
+  sandbox. `freshness()` compares and never resolves; `outcome_now()` may
+  only ever disagree with the record in the safe direction.
+- **Secrets do not reach a reader.** The record names paths, revisions
+  and hashes and never content or an environment *value*; the log — the
+  one place bytes bench did not write get through — is scrubbed of
+  anything credential-shaped on the way out.
+- **It outlives the run, the worktree and the board.** Holding a run
+  cancels the verifications bench was running for it, recorded as
+  cancelled rather than as failures; a duplicate request for a check
+  already in flight joins it rather than doubling it; and a `source`
+  checkout with uncommitted work in it is kept and reported rather than
+  forced out.
+
+### On the board
+
+A `◫` chip in the card's footer row, beside `⚿`, `⌖` and `CI`, opens the
+evidence: every named check with its outcome **in words**, its scope, the
+commit it ran against, how long it took, its preparation steps drawn
+apart from the check they prepared, and a safe link to the scrubbed log.
+Colour means state as it does everywhere here, but the word is what
+carries the meaning — a test failure, a permission denial and a
+dependency failure must not collapse into "red".
+
+The Focus view gains a **Verification** panel beside **Checks**, and the
+pair is the point: `Checks` is classified from commands the *agent* ran —
+the run's own account of itself — and this one is the runner's, every row
+a process the board launched and waited on. A finished agent with nothing
+there reads `not run`, in those words, and says so.
+
+Opening either runs nothing. Rerunning is an armed `↻` per check in the
+sheet, with its side effects written out beside it: the check's command
+in the card's own checkout (or a detached one bench makes and removes),
+preparation first, a new evidence record and a new log — no card moved,
+no branch touched, nothing published, and a run already in flight joined
+rather than doubled.
+
+## Gates: nothing merges on a report
+
+A gate is an acceptance rule you configure: for example, “the full test
+suite must pass before this phase can merge.” Your team supplies the
+verification programs; Bench uses their recorded results to enforce the
+rule. A gate can also require a review. Adding a check and making it
+mandatory are separate choices. With no gate configured, there is no
+required verification barrier.
+
+Verification records what the project's checks found. This is the
+question that record exists to answer: **may this merge happen?**
+
+Three things used to answer it, and not one of them is evidence. A
+process exited zero — which is the thing being judged reporting on
+itself. Commits appeared on a branch — which says work was done and
+nothing about whether it works. And no CI result came back, which the
+phase runner read as *advance*, so that a project without CI could not
+deadlock every phase it ran. That last one was honest when it was
+written and it is exactly the case a configured gate exists to stop: a
+member whose checks were refused before they started can reach `review/`
+with committed code and be merged into an integration branch by a beat
+nobody was watching.
+
+So a board that declares a gate gets one rule, and it is narrow. **The
+mutation runs when bench's own recorded evidence reads `passed` for every
+required check, against the exact commit about to be merged, and when the
+review policy the operator chose is satisfied by a record that genuinely
+says what it is read as saying.** Anything else is reported — by name,
+with the remedy — and the mutation does not run.
+
+A board that declares *no* gate is every board that existed before this,
+and it behaves exactly as it did. Its decision reads `ungated`, in that
+word, which is deliberately not `allowed`: nothing is required there and
+nothing is proved, and a reader is told so rather than shown a colour
+that could pass for a pass.
+
+### Three scopes, because three different things merge
+
+A gate is declared per guarded mutation, in the profile document's
+top-level `"gates"` block — validated where every other policy value is
+validated, beside the grants, the inputs and the checks:
+
+```jsonc
+"gates": {
+  "member":      {"checks": [{"check": "unit", "scope": "fast"}]},
+  "integration": {"checks": ["unit"], "review": "bench"},
+  "acceptance":  {"checks": ["unit"], "review": "separate-reviewer"},
+  "overrides":   {"allow": false}
+}
+```
+
+- **`member`** — a phase merging one member's branch into its integration
+  branch. The automatic step no person clicks, and the one that used to
+  advance on an absent CI result.
+- **`integration`** — a phase's own integration head being accepted. That
+  is a *different commit* from any member's, which is why it is a scope
+  of its own: the head every member was merged into has never been
+  checked by any of them, and every member passing proves nothing about
+  it. Ancestry containment, already-merged member PRs and a quiet CI
+  prove nothing about it either.
+- **`acceptance`** — an ordinary card being merged and cleaned up: the one
+  place work leaves the board.
+
+The same law the rest of the document follows applies here. A gate
+requiring a check the document declares nowhere is **refused where the
+document is read** rather than blocking every merge later, because a
+requirement nothing can satisfy is indistinguishable from no requirement
+at all. A scope that is not a scope, a key a gate has no meaning for and
+a review policy bench has no word for are refused the same way, each
+with the code it came from and a remedy for the class of it. And a
+document with *any* refusal in it gates everything shut rather than open:
+an operator mid-edit is not handed the gate they were in the middle of
+changing.
+
+### A requirement is a check and the coverage it needs
+
+A requirement is written two ways. A bare name — `"unit"` — is the
+**unscoped full run** of that check, and it is what every gate written
+before scopes existed keeps meaning. `{"check": "unit", "scope": "fast"}`
+is that declared scope. A scope the check does not declare, or a
+requirement object with any other key, is refused where the document is
+read (`gate-scope-undeclared`, `gate-invalid`).
+
+Coverage is matched, not assumed. The full run covers every scope of its
+check; a scope covers only itself. So a narrow pass never satisfies a
+broader requirement — `unit backend` passing says nothing about `unit` —
+and a gate that needs both says so by requiring both.
+
+**The newest relevant answer is the gate's answer.** For a full-run
+requirement every run of the check is relevant; for a scope, that scope
+and the full run. A failed, errored or cancelled rerun supersedes an
+earlier pass, and one still running holds the gate `pending`. Passes that
+are not about this head, narrow passes and denied requests (which ran
+nothing) supersede nothing. Ordering is request time, then end time, and
+on a tie a non-pass reads as the newer — never the order files were
+listed in. The ⚖ sheet names each requirement's coverage (`unit · full
+run`, `unit · scope fast`), so a ◫ chip reading a scoped pass beside a
+gate requiring the full run is never left unexplained.
+
+### Evidence is bound to the commit
+
+A required check is met by one thing only: a record `verify.py` wrote,
+which `verify.outcome_now()` still reads as `passed`, whose source was
+**bound** and **clean**, whose commit is the commit about to move, and
+which is the newest relevant answer for the requirement's coverage.
+
+The clean-source condition is the one that is easy to miss and hard to
+argue with. A check that ran with uncommitted files under it did not run
+against the commit that merges; it ran against something that existed on
+one disk. So the order on a gated board is **commit, then ask** — the
+agent's prompt says so where a gate is configured — and committing again
+means asking again.
+
+Everything else is unmet, and *which* way it is unmet is the whole
+difference between the sentences a reader needs:
+
+| reason | what happened |
+| --- | --- |
+| `not-run` | nothing asked bench for the check. An absent record is not a pass |
+| `failed` | the check ran and said no |
+| `prepare-failed` | a dependency would not install, so the check never ran |
+| `denied` | the request was refused before anything ran |
+| `cancelled` | it was stopped before reaching a verdict |
+| `error` | no verdict was reached — a timeout, or a board that restarted |
+| `stale` | it passed, and what it was about has changed since |
+| `other-commit` | it passed against a different commit from this one |
+| `source-dirty` | it passed with uncommitted work under it |
+| `source-unbound` | the source could not be bound, so it proves nothing |
+
+Each carries its own remedy, because "ask bench to run it", "read the
+log and fix what it found" and "the dependency step is the thing to fix"
+send a person to three different places. A check that is *running* is
+`pending` — the mutation waits, and nothing is decided from an answer
+that is not in yet.
+
+### Enforced at the mutation, and read twice
+
+Not in the UI. The page reads the same decision the mutation reads, from
+the same function, so a disabled action and a backend refusal can never
+give two different reasons for one state:
+
+- **`phases` holds a member out of `ready`** while its gate is unmet, and
+  halts the phase with the gate's own sentence as the reason — the
+  existing halt, which stops rather than skips and waits for a person.
+  Then it asks **again, immediately before the merge**, with the branch
+  tip in hand: the snapshot was taken a pass ago, and a push landing in
+  between is a different commit.
+- **Merge & clean up asks before it parks the drive** — cheap, and it
+  leaves the card, the branch, the worktree and every record untouched —
+  **and again immediately before the merge**, for the same reason. That
+  second read narrows the stale-evidence window; what closes it is below.
+
+**The merge takes the commit the gate read.** Reading twice is not an
+atomic mutation, so on a gated board the validated head itself flows into
+the merge: the local merge and a phase member's merge take that SHA
+rather than the branch name, and a merge on origin runs `gh pr merge
+--match-head-commit <sha>`, which GitHub refuses if the pull request's
+head has moved. A `gh` that does not offer the flag is refused by name —
+there is no unconditional fallback over a gate. Cleanup is held to the
+same commit: a branch that gained commits after the gate read it keeps
+its worktree and its local branch, and the remote branch is deleted only
+while `ls-remote` shows nothing but what was merged, with a
+`--force-with-lease` on that exact value so a push landing in between
+makes git refuse. A phase member's workspace is cleared under the same
+rule against the commit the phase merged. An ungated board merges and
+cleans up exactly as it always did.
+
+Reading a gate runs nothing: no check, no relaunch, no card moved, no
+branch touched, nothing reaching a remote. Which is also why nothing
+retries by itself. An unmet gate is a human decision point, for a dead
+run's reasons — an outage would make an automatic rerun a thundering
+herd — so the remedy *names* the rerun path (the armed `↻` per check in
+the evidence sheet) and does not take it.
+
+A replica evaluates and renders exactly as the actor's board does, and
+advances nothing: the actor rule is the phase runner's, and
+merge-and-clean-up is a person's click.
+
+### Two records of a review, and a COMMENTED review is neither
+
+A gate's review policy is one of four words, and the last three are not
+interchangeable:
+
+- **`none`** — the default; no review is required by this gate.
+- **`bench`** — a **Bench review verdict** of APPROVE, recorded by bench
+  itself against this exact head. Independent of GitHub by construction:
+  **◔ review PR** records what its reviewer found whether or not
+  `gh pr review` accepted anything, so a board with no `gh` at all still
+  has verdicts, bound to the commit `reviews.py` pinned.
+- **`github`** — a **formal GitHub review state** of APPROVED at this
+  commit. Read from GitHub's own review objects, which carry the commit
+  each review was given for; an approval that cannot be bound to a commit
+  could only be bound by guessing, and a gate that guessed would be worse
+  than none.
+- **`separate-reviewer`** — that approval authored by somebody other than
+  the account that proposed the head.
+
+**An outstanding change request blocks, whoever else approved.** Per
+reviewer, the latest formal state stands — `APPROVED`,
+`CHANGES_REQUESTED` or `DISMISSED`, ordered by submission time. A later
+review from the *same* reviewer supersedes their earlier one, and a
+dismissal on GitHub clears it; another reviewer's approval clears nobody,
+and a `COMMENTED` review supersedes nothing. On a stale head the reading
+is conservative in both directions: an approval counts only at the
+commit it was given for, while a change request on an earlier commit
+stays outstanding until it is superseded or dismissed. This is bench's
+reading of the review objects the poll last saw — it is **not** GitHub's
+branch protection, whose required reviews, code owners and dismissal
+settings GitHub applies separately when it merges, and the sheet says so.
+
+**The same-account limitation, said out loud.** GitHub does not accept an
+approval or a change request from the account that opened a pull request.
+A board whose reviewer runs as that account can only leave a *comment* —
+and bench reads it as one, however its body is worded. So `github` and
+`separate-reviewer` read unmet there, with the limitation named as the
+configuration fact it is and `bench` offered as the policy for a project
+with one identity. Bench never switches accounts, asks for a second
+credential, or downgrades a formal-review requirement to a comment; and
+where the reviewer's own log shows GitHub refusing the attempt, that is
+recorded as a note on bench's verdict rather than as a verdict or a
+review state.
+
+### An override is explicit, bound, and never a pass
+
+A gate can be proceeded over, and only through a path the policy turns on
+(`"overrides": {"allow": true}`, optionally restricted to named git
+identities). What makes it safe to have at all is what it writes down:
+the actor, the reason, the exact commit and the exact gates that were
+unmet when they decided.
+
+It forges nothing. No check becomes `passed`, no verdict appears, and the
+decision afterwards reads `overridden` — which wears the alarm, not the
+colour of a pass, and says in the same breath that the gate is still
+unmet. It authorises **one commit**: the next one is a different
+question. It lapses rather than stretching, so a gate that goes unmet
+*after* an override covers none of it. A repeated click, a replayed
+request and a board that restarted mid-confirmation produce one record,
+not two. A confirmation about a head that has since moved is refused. And
+a document with a refusal in it offers no override at all.
+
+### On the board
+
+A `⚖` chip in the card's footer row, beside `⚿`, `⌖`, `◫` and `CI`,
+opens the gate: what this board requires, what the records say against
+the commit that would move, and — per unmet requirement, in words — the
+reason and the remedy. Present only where a gate is configured, the law
+every other chip here follows.
+
+The sheet keeps the two review records apart, because that is the
+distinction the feature rests on: bench's own verdict with the head it
+was bound to, GitHub's formal state with the commit each review was given
+for, the comments drawn as comments, and the same-account limitation
+spelled out where it applies. Where the policy enables one, a single
+armed confirmation records an override, with the actor, the unmet gates
+and the commit written out beside the field for the reason.
+
+The Focus view gains a **Gate** panel beside **Verification**, drawing
+the three states an exit code cannot tell apart — code produced, work
+verified, work accepted. A phase's lane carries its integration gate at
+the top of itself, beside where a halt is drawn, because the lane is
+where "every member merged and green" has to stop reading as "ready to
+accept". And **⚕ readiness** reports, before anything is launched, what
+each scope requires and every refusal in the gate block with its remedy.
+
+The two records this adds — the Bench verdicts and the overrides — live
+under `manager/local/state/gates/`, machine-local for the reason
+`state/evidence/` and `state/reviews/` are: they hold this machine's
+reading of a remote and this machine's paths, and nothing a teammate
+pulls has any business carrying them.
+
+## Readiness: asking before paying
+
+A plan says which checkout a run works in. A profile says what it may do
+there and which files it is guaranteed. Verification says whether the
+project's own checks passed and against what, and a gate says whether
+that is enough to merge. Every one of those is resolved before a billable
+model is invoked — and until this, there was no way to *ask* any of them
+without invoking one.
+
+So an operator found a mistyped policy the expensive way: move a card,
+click **▸ start work**, watch the run refuse, read the ticker. A required
+input that was not there, a check `review` could not ask for, a
+`requires` naming a guarantee nothing enforces — each is a sentence bench
+can produce in milliseconds, and each was only ever produced by a launch.
+
+```bash
+python3 .task-manager/manager/board.py --doctor              # inspect
+python3 .task-manager/manager/board.py --doctor --help       # every option
+python3 .task-manager/manager/board.py --doctor --all        # + the active stages
+python3 .task-manager/manager/board.py --doctor --json       # for a script
+```
+
+and the same report behind the **⚕ readiness** chip in the header, and in
+the Focus view beside **Permissions & inputs** and **Verification**.
+
+### One evaluator, read from four distances
+
+The thing the doctor must not be is a second opinion. It owns no policy
+logic: it calls `profiles.resolve()` for each of the three launch
+intents and reports the `diagnostics` that came back, it calls
+`verify.request()` to run a check, and it asks each adapter what *it*
+would generate. Every code it reports is one `profiles.DIAGNOSTICS`
+names. A doctor that could disagree with a launch would be worse than
+none, so `profiles.seams()` says in as many words that it has no second
+parser and must not grow one.
+
+What it adds is **distance**, and saying honestly how far each answer is
+from the thing a person actually cares about:
+
+| level | what it proves | what it does not |
+| --- | --- | --- |
+| `static` | what bench resolved from the policy in force — roots, grants, readable inputs, checks, every refusal, exactly as a launch would | that any of it was carried out. No process ran |
+| `generated` | what the installed adapter would hand its vendor: the argument list, the working directory, the allow and deny rules | that the vendor honours any of it. These are rules as text |
+| `stub` | that the adapter's own `run` executed and passed bench's prompt, flags and working directory through | anything about the real CLI's permission behaviour. A stub answers; it does not enforce |
+| `runtime` | that bench's own runner built the argv, started the process, waited on it and recorded the status it got | that the project's real suite passes. A fixture is a fixture |
+| `real-agent` | that the installed CLI, with a model, was handed this policy and behaved as recorded | anything until it is separately authorised |
+
+The four cheap levels cannot be read as the expensive one, and that is
+enforced rather than left to a reader: `MODE_EVIDENCE` pins each mode to
+one level and `report()` **raises** rather than emitting a finding that
+claims another. Every row carries its level; every level carries its own
+"does not prove", in the table above's words.
+
+Four outcome words, everywhere, and the word carries the meaning rather
+than the colour: `passed`, `failed`, `skipped` (nothing to ask — this
+board has not configured the thing, which is not a fault) and `deferred`
+(this needs an authorisation, or a guarantee nothing installed here
+enforces). `deferred` is deliberately not `passed`.
+
+### Four stages, and only the first is free
+
+- **inspect** — resolves every intent, reads the approved inputs, and
+  puts bench's own deliberately broken fixture documents through the same
+  resolver. No process, no pin, no checkout, no token. This is what a GET
+  of `/api/doctor` does, which is why opening the inspector is not an
+  action and needs no confirmation.
+- **conformance** (`--conformance`) — asks the installed adapter what it
+  would generate for each intent, and runs its own `run` against a stub
+  standing in for the vendor binary. Runs the adapter's own executables,
+  in a temporary directory the doctor removes. No vendor binary, no
+  model, no network.
+- **controlled execution** (`--active`) — runs named checks through
+  `verify.py` itself at a git fixture the doctor creates under
+  `manager/local/state/doctor/` and removes. Three of them, because "it
+  failed" is three different things to do next: one that exits zero, one
+  that exits non-zero, and one whose required preparation will not
+  complete. Real processes, real evidence records — filed under the
+  doctor, never under a card — and no card moved, no branch touched,
+  nothing published.
+- **the real CLI** (`--real-agent --approve-real-agent`) — the one thing
+  no cheap level can answer, in both directions. Two bounded launches at
+  one disposable fixture, a short prompt and a timeout each, with this
+  board's configured account and model untouched: bench passes no model
+  of its own, so the CLI resolves whatever the operator's settings
+  already say, and the launch identity (`BOARD_AGENT_ID`, `BOARD_TASK`)
+  is removed so nothing reports against a card. The `work` probe is
+  asked to write one file; the `review` probe is asked to attempt a
+  write, a commit and a push. It takes two flags, and the API takes
+  `"approve": true`, because nothing else should ever spend a token.
+
+  **The verdict is read off disk, not off the log.** The run is asked to
+  report what it was allowed to do, and bench ignores that and looks:
+  is the file there, did the fixture gain a commit. A model cannot
+  attest to its own confinement, which is the same rule `verify` applies
+  to a check's exit status. One row stays `deferred` however much is
+  authorised — whether the CLI is *prevented* from reading a file beside
+  its approved inputs, because nothing prevents it and no launch could
+  demonstrate otherwise.
+
+Without that approval every row is still there and reads `deferred` — a
+check that disappears when nobody runs it reads as one that passed. And
+the coverage table draws every stage nobody asked for as `not asked`,
+for the same reason: a stage missing from a coverage table is a stage a
+reader assumes was fine.
+
+### The diagnostics, and their remedies
+
+Every refusal `profiles.resolve()` can produce now carries the **code**
+it came from and a remedy for the class of it, named once in
+`profiles.DIAGNOSTICS`. `blockers` is unchanged and still prose — it is
+what the page leads with and what `require()` raises — and `diagnostics`
+sits beside it, so nothing downstream has to match on a sentence that
+could be reworded.
+
+Bench ships its own broken documents to prove the refusals still work,
+and the doctor resolves them through the real resolver so an operator
+reads the exact sentence their own mistake would produce. Five of them,
+each a different thing to go and fix:
+
+| fixture | code | what you would see |
+| --- | --- | --- |
+| a required input that is not there | `context-unreadable` | *the context input 'workflow-brief' … is not there. Put the file where the selection names it, inside the root it names, or mark the selection `"required": false`* |
+| a review told to verify with something only `work` holds | `check-undeclared` | *'review' asks for the check 'unit', which this document declares neither as a check nor as one of this intent's command grants* |
+| a check declared against the application checkout | `check-root-unsafe` | *the check 'unit' names the execution root 'app' — one of worktree, source, review. A check never runs in the application checkout: that is the live code and the live services* |
+| `requires: ["filesystem-sandbox"]` | `requirement-unsupported` | *nothing installed here enforces it, so the launch is refused rather than run under a restriction that exists only in the prompt* |
+| a check needing a preparation step nothing declares | `prepare-undeclared` | *add it to the document's top-level `"prepare"` list, or drop the reference; bench will not run a step it cannot read* |
+
+And the sixth, which the runner rather than the resolver answers: a
+**required preparation step that fails** is recorded `prepare-failed`
+with the check never run — a dependency that would not install is not a
+test that failed, and recording it as one sends a reader to the wrong
+file. The `--active` stage proves that distinction on every run.
+
+A diagnostic blocks the intent it is about and no other, because
+readiness is per launch rather than per board: a `work` profile missing
+its brief does not stop a review.
+
+### What it says about where things are, and what it withholds
+
+A diagnosis names **exact operator-local paths**, on purpose: "the input
+is not there" is useless without saying where bench looked, and the
+report never leaves the machine that made it — it reads `local to this
+board`, and nothing in it is committed, pushed or carried into a pull
+request. What it never carries is a *value*. No environment variable's
+content, no credential and no approved file's contents are read into it
+at all (the profile layer's allowlist has none to send), and the one
+place bytes bench did not write get through — a check's own output — is
+scrubbed by the same scrubber the evidence log uses. The report says all
+of this in a `redaction` block rather than leaving a reader to wonder.
+
+### Adapter conformance, without core learning a vendor
+
+Checking that an adapter's translation is faithful means reading rules in
+the vendor's own syntax, and core knows nothing about any vendor. So the
+adapter answers for itself, through two things it declares in
+`capabilities.json` — a `describe` command that prints what it *would*
+hand its vendor for one launch in a normalised shape, and the name of the
+environment variable that replaces the vendor binary so its `run` can be
+exercised against a stub. The whole contract is in
+`manager/core/adapters/README.md`.
+
+From those the doctor asks, per intent: did every named grant become a
+rule with its fixed arguments intact, is the working directory the one
+bench named, do the pinned inputs reach the run as paths, can this intent
+ask bench for a named check (`review` included), was the read-only intent
+granted any way to write, and does any rule reach `git worktree`,
+`reset`, `checkout`, `switch`, `branch`, `update-ref` or `remote` —
+which would let a run choose a different lifecycle than the one bench
+planned and recorded.
+
+One row is always `deferred`, and it is the honest one: **nothing
+prevents a run reading files beside its approved inputs.** Both shipped
+adapters declare `filesystem-sandbox` unsupported, bench enforces no such
+boundary, and the pinned bundle is a guaranteed *input* rather than a
+limit on reading. A profile that *requires* it is refused rather than
+reported as honoured, and that is the only honest answer available.
+
+An adapter that declares neither seam is not accused of anything: its
+rows read `skipped`, naming what it would have to declare. What they
+never read is `passed`.
+
+### A portable setup, end to end
+
+Everything above works on a board that configured nothing — a legacy
+board has no document, so `inspect` reports the legacy grants and the
+diagnostics table, and that is a real answer. What the doctor is *for*
+is the board that configured something. A separate-root install
+(`workspace/app`, `workspace/bench`, `workspace/work`) with selected
+workflow files, a scoped check and a preparation step, in
+`manager/local/profiles.json`:
+
+```jsonc
+{
+  "v": 1,
+  // selected from the tool and work-state roots by word, never by path:
+  // the document is machine-local but it is still read on a machine
+  // whose paths are its own
+  "context": [
+    {"name": "workflow-brief", "path": "tool:manager/local/AGENTS.md"},
+    {"name": "design-system", "path": "work:reference/design-system.md",
+     "required": false}
+  ],
+  "prepare": [
+    {"name": "deps", "run": "python3 -m pip install -e .", "network": true}
+  ],
+  "checks": [
+    {"name": "unit", "run": "python3 -m unittest discover -s tests",
+     "root": "worktree", "prepare": ["deps"], "timeout": 900,
+     // a scope is a *declared name*: the arguments are the operator's,
+     // never the run's
+     "scopes": {"fast": ["-k", "fast"]}},
+    {"name": "proposed", "run": "python3 -m unittest discover -s tests",
+     // the checkout bench pinned for a PR review, detached at the
+     // reviewed head — so a review's check is about the proposed code
+     "root": "review"}
+  ],
+  "profiles": {
+    "work":   {"verify": ["unit"]},
+    "act-pr": {"verify": ["unit"]},
+    "review": {"verify": ["proposed"]}
+  }
+}
+```
+
+Then `--doctor` says, before anything is launched, whether both briefs
+are readable, whether each intent can ask for its check, that `deps`
+needs the network and nothing here bounds that, and — with `--active` —
+that bench's runner really does tell a failing test from a dependency
+that would not install. The `--real-agent` row stays `deferred` until
+somebody authorises it.
+
+Two things the doctor will not do, and they are both deliberate. It will
+not fix your configuration: every failing row carries a remedy and
+changes nothing. And it will not validate anything but its own fixtures —
+the application's real suite, its services and its data are never what a
+diagnosis runs against.
+
 ## Pull requests
 
 A card entering `review/` with a `task/<stem>` branch gets a PR opened for
@@ -923,8 +1969,14 @@ Review-stage cards with a PR carry two actions:
 - **◔ review PR** — a read-only agent reads the full diff in context,
   checks it against the task and AGENTS.md, posts its verdict to GitHub
   (`gh pr review --approve` / `--request-changes`) and appends a
-  `## PR review` section to the task file ending in
-  `PR REVIEW: APPROVE | REQUEST CHANGES`.
+  `## PR review at <commit>` section to the task file ending in
+  `PR REVIEW: APPROVE | REQUEST CHANGES`. It runs in a checkout bench
+  pinned to the exact revision that PR proposes, not in the application —
+  see "A review runs in the revision it is of". Its verdict is also
+  recorded as **bench's own**, bound to that revision, whether or not
+  GitHub accepted a formal review of it: the account that opened a pull
+  request cannot approve it, and the comment that attempt falls back to
+  is never read as an approval — see "Gates: nothing merges on a report".
 - **⚑ copilot** — requests a GitHub Copilot review via the API. Works iff
   Copilot code review is enabled for the repo; the error is relayed to the
   toast if not. The card tracks the whole arc with a `⚑` chip: `⚑ ◌` asked,
@@ -937,7 +1989,11 @@ human), the card's actions shift to the loop that matters then:
 worktree (recreated from the branch if it was cleaned up), reads every
 review and line comment, addresses each point or says why not, commits,
 pushes so the PR updates, and appends a `## PR update` section to the task
-file. Then **◔ review PR** again, until it settles.
+file. Then **◔ review PR** again, until it settles. It refuses a **merged
+or closed** pull request by name, before a worktree or a model exists: a
+push there would not change that PR and would not reach its base, and
+saying "acted on the PR" about it would be a report of a change that moved
+nothing (see "Historical, as against the integration head").
 
 The board polls open PRs of review-stage cards (reviews + CI checks +
 GitHub's mergeable state, every 60s — a plain thread in board.py, no agent
@@ -950,6 +2006,114 @@ branch — additively, never rebasing or force-pushing — in a dedicated
 resolution commit, and refuses semantic ones, naming the collision for a
 human to settle. GitHub computes mergeability lazily, so an UNKNOWN
 reading keeps the chip's last state rather than flapping.
+
+### A review runs in the revision it is of
+
+A plan says which checkout a *work* run works in; a profile says what a
+run may do there; verification says whether the project's checks passed
+and against what. This is the question those three left open on the
+read-only side: **which revision is being reviewed, and where does the
+reviewer execute it?**
+
+**◔ review PR** used to launch in `config.REPO` — the live application
+checkout. Three things followed, and each is a reason it no longer does:
+it is not the reviewed code (the checkout is on whatever branch somebody
+left it on, with whatever they have edited in it); it is not pinned (a
+push lands mid-review and a verdict about "the branch, whenever you
+looked" cannot say what it covered); and it is shared, which is why a
+project's own verification wrapper is right to refuse it and why `app` has
+never been an execution root for a check.
+
+So bench resolves the pull request's repository, base and head itself,
+brings that commit into the application's object store, and adds a
+**detached worktree of that one commit** under
+`manager/local/state/reviews/`. The run works there. A detached checkout
+has no branch to follow, so the revision cannot change under it, and
+nothing the run does reaches a tracked file of anyone else's checkout.
+
+- **Resolved before anything is created.** The identity reads, fetches
+  (bounded by `BOARD_REVIEW_FETCH_TIMEOUT`) and answers; then the profile,
+  against the path the checkout *will* be at; then the checkout; then the
+  manifest. So a refusal leaves no checkout, no record and no run.
+- **A head bench cannot name refuses the review.** There is no
+  second-best revision, so there is no fallback to the application
+  checkout — which is the behaviour this changed: a card with no branch
+  and a `gh` that cannot answer used to launch a review of whatever was
+  lying around.
+- **`gh` is the authority, and the weaker one says so.** When `gh` cannot
+  answer, the tip of the card's branch in this checkout is pinned instead
+  and the record reads `authority: "local"`, in those words — the bargain
+  `plans` strikes with `local-only`. The run is told, so a verdict cannot
+  read as though GitHub's head had been checked.
+- **Read-only stays read-only.** A pinned checkout is not a licence to
+  write in it: `review` still denies `edit`, `commit` and `push`, has no
+  writable root, and publishes nothing but its verdict.
+- **A relevance check pins nothing.** **◔ still true?** shares the
+  `review` intent and reviews no pull request, so it provisions nothing,
+  fetches nothing, asks GitHub nothing and runs in the application
+  checkout exactly as it always did.
+
+**A check may run there too.** `review` is an execution root for a named
+check (beside `worktree` and `source`), and it is the checkout the asking
+run was pinned — read off that run's frozen manifest, so a check runs
+against the revision the review is of rather than against whatever the
+branch has since become. Bench refuses rather than repairs: a run with no
+pinned checkout is refused the check by name, a directory that is a
+checkout of something else is refused, and one sitting at another commit
+is refused instead of being reset. The checkout outlives the verification,
+so the runner does not remove it — its own `_cleanup` leaves that to the
+review's ending.
+
+**Ownership, and what it buys.** One record per run, written before the
+model is invoked, naming the task, the run, the checkout, the base and
+head identities, the pull request's state and the process that made it.
+Machine-local, for the manifest's reason: it holds this machine's paths.
+From it: a second run never reuses a first's checkout (a directory
+another task or run owns is refused by name); cleanup removes only what
+bench made, only inside the reviews directory with every link followed,
+and never one with uncommitted work in it; a board that died owns up on
+the next start, releasing what it was holding under exactly those guards
+and reviewing nothing again; and a launch that fails after provisioning
+gives the checkout back rather than leaving an orphan nothing can account
+for.
+
+**Freshness is the head, not the age.** `reviews.freshness()` compares the
+pinned head with what the PR poll last saw — one authority for "what is
+the head now", fed by the beat that already runs, so the question costs a
+dictionary lookup rather than a call to GitHub per card. A head that has
+moved makes the review `superseded` and its evidence `stale` with the
+reason `head-changed`; a merged or closed pull request makes both
+`historical` with `pr-ended`. Neither is ever shown as the new head's
+approval, and neither is retracted: the review said what it said, about
+the commit it said it about. The heading the task file keeps carries the
+revision and the word, because the file outlives the checkout, the run and
+the pull request.
+
+### Historical, as against the integration head
+
+A merged or closed pull request is not a thing to push to, and a phase
+member's PR is merged into its phase branch early — so most member reviews
+end up historical by design. "A historical review of what a member
+proposed" and "validation of the current integration head" are two facts
+about two revisions, and the board keeps them apart:
+
+- **↻ act on PR refuses an obsolete target**, naming it, before the
+  profile, the worktree or the model. Nothing is pushed and nothing is
+  retargeted; the refusal names the integration head as the separate
+  target it is — the card that owns that branch, which is a phase card's
+  own PR.
+- **The record says which it was.** `target` is `member` or
+  `integration`, and `label` is `current`, `superseded` or `historical`.
+- **Nothing on the page implies otherwise.** A `⌾` chip in the card's
+  footer row, beside `⚿`, `⌖` and `◫`, opens the record: the base and
+  head identities with the authority each was read from, the owned
+  checkout and what became of it, and the checks that ran in it — in
+  words, with `superseded` in `--alarm` and `historical` in the idle
+  register, never in the colour of a pass. The sheet is read-only in both
+  halves of the word: it provisions nothing, fetches nothing and starts no
+  validation, because opening a historical review must not be a way to set
+  something running against a branch it never judged. A review that ran no
+  checks reads "no checks ran here" rather than nothing at all.
 
 A phase member's PR is opened against **its phase's branch**, not `main`:
 its branch was cut from there, so that is the only base whose diff is the
@@ -997,6 +2161,13 @@ stays put. On a phase card the same action also finishes the cards the
 phase merged — see "Finishing a phase finishes its cards". Cards without
 work move silently, and hand-moves on disk are never intercepted — the
 board only asks when you act through it.
+
+Where this board declares an acceptance gate, **merge & clean up** is
+refused until it is met: once before the drive is parked, so a refusal
+costs one read and changes nothing, and once more immediately before the
+merge, so a push that lands while the drive comes down is a refusal
+rather than a stale reading. The sentence is the same one the card's `⚖`
+chip shows — see "Gates: nothing merges on a report".
 
 That work takes as long as it takes, so **the card wears it** rather than
 sitting there looking idle while its branch is disassembled: from the
@@ -1130,6 +2301,16 @@ board already runs: red halts the phase, running holds it, and a member
 with no checks at all advances — a project without CI must not deadlock
 every phase it runs. A member with no branch at all that is already in
 `review/` or `done/` is simply finished; there is nothing to bring.
+
+**And then the member gate, where one is declared.** "No CI result"
+advancing is exactly the case a configured gate exists to stop, so on a
+board that declares one the member also has to carry bench's own passing
+evidence for the commit about to be merged — read immediately before the
+merge as well as on the pass that chose it. An unmet gate halts the
+phase like any other condition, with the gate's own sentence as the
+reason; a required check still running holds it. A board that declares
+no gate resolves `ungated` and advances exactly as it always did. The
+whole of it is "Gates: nothing merges on a report".
 
 **Halt, never skip.** Five conditions stop a phase, each already a visible
 state on the card: a member that exits `NOT READY`, a run that exits

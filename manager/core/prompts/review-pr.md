@@ -26,17 +26,26 @@ The task content, for what the work was supposed to be:
 {body}
 --- END TASK ---
 
+{review}
+
 Review the PR properly:
-- Fetch the diff with `gh pr diff {branch}` (or by PR number) and read it all.
+- Read the diff: `gh pr diff {branch}` (or by PR number), or `git diff`
+  against the base in the checkout you are in. Read all of it.
 - Read the surrounding code where the diff touches it — judge the change in
-  context, not in isolation.
+  context, not in isolation. The checkout you are in holds the proposed
+  code, so reading a file here is reading it as the PR proposes it.
 - Check the work against the task: does it do what the task asked? Is
   anything missing, wrong, or beyond scope?
 - {guidance_read_only} Judge the change against its layering rules,
   definition of done and testing expectations.
 
 You are read-only on the working tree: make NO edits, NO commits, move
-nothing. You may and should run read-only commands (gh, git log, grep).
+nothing, and change the checked-out revision in nothing. You may and
+should run read-only commands (gh, git log, grep).
+
+{context}
+
+{verification}
 
 When you have a verdict, POST it to GitHub:
 - approve:          gh pr review {branch} --approve --body "<your summary>"

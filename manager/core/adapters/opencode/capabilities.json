@@ -1,0 +1,33 @@
+{
+  "v": 1,
+  "adapter": "opencode",
+  "version": "1",
+  "_doc": [
+    "What this adapter can actually enforce, in the four words core uses:",
+    "enforced, prefix-allowlist, prompt-only, pending. A profile that",
+    "*requires* a capability missing from the map below is refused rather",
+    "than run under a restriction that exists only in the prompt — see",
+    "`requires` in core/profiles.example.json."
+  ],
+  "capabilities": {
+    "command-allowlist": "prefix-allowlist",
+    "command-denylist": "prefix-allowlist",
+    "read-only-tools": "enforced",
+    "model-selection": "enforced"
+  },
+  "conformance": {
+    "_doc": [
+      "How this adapter may be inspected without a vendor binary — the",
+      "contract is in core/adapters/README.md. `describe` is the command",
+      "that prints what this adapter would hand opencode for one launch,",
+      "run with this directory as its working directory; `stubEnv` names",
+      "the variable that replaces the binary so `run` can be exercised."
+    ],
+    "describe": ["python3", "describe.py"],
+    "stubEnv": "BOARD_OPENCODE_BIN"
+  },
+  "unsupported": {
+    "filesystem-sandbox": "opencode's permission rules are globs over tool inputs and command lines; they cannot confine a run's reads to a named set of files.",
+    "network-policy": "opencode exposes no network boundary this adapter could set"
+  }
+}

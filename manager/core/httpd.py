@@ -14,14 +14,126 @@ from urllib.parse import parse_qs, unquote, urlparse
 import agents
 import commands
 import config
+import doctor
 import drive
 import events
+import gates
 import github
 import phases
 import plans
+import profiles
+import reviews
 import state
 import sync
 import taskfiles
+import verify
+
+
+def policy_payload() -> dict:
+    """Where this board's execution policy comes from, and the revision of
+    it that applies to the *next* launch.
+
+    Deliberately not the whole resolution: that is per intent and costs a
+    hash of every approved input, so it lives behind `/api/profile`. What
+    the page needs on every state load is which document is in force and
+    whether it has moved — a run wears its own frozen revision, and the
+    two being comparable is what keeps "the settings say this" from being
+    read as "that run rode this".
+    """
+    doc = profiles.document()
+    adapter = profiles.adapter_identity()
+    return {
+        "kind": doc["kind"],
+        "identity": doc["identity"],
+        "describes": doc["describes"],
+        "revision": doc["revision"],
+        "problem": doc["problem"],
+        "intents": list(profiles.INTENTS),
+        "adapter": {"name": adapter["name"], "identity": adapter["identity"],
+                    "version": adapter["version"],
+                    "declared": adapter["declared"],
+                    "capabilities": adapter["capabilities"],
+                    "unsupported": adapter["unsupported"],
+                    "note": adapter.get("note")},
+    }
+
+
+def doctor_payload(modes: list[str], *, approve: bool = False,
+                   asked: bool = False) -> dict:
+    """The readiness report, at whatever distance was asked for.
+
+    One function behind both routes, because the difference between them
+    is not what they compute — it is what they are *allowed* to. A GET
+    passes no modes and is therefore inspection: resolving, hashing and
+    reading approved files, with no process, no pin and no checkout. A
+    POST may name the modes that do something, and `asked` is how this
+    tells "the page opened the inspector" from "a person clicked a button
+    with its side effects written beside it".
+
+    The real-agent mode is the one that is refused rather than deferred
+    when it is named without approval: a request that said "run the real
+    CLI" and got a `deferred` row back would read as a mode that quietly
+    did nothing, so the request itself fails and nothing is diagnosed.
+    """
+    for mode in modes:
+        if mode not in doctor.MODES:
+            raise ValueError(f"unknown doctor mode '{mode}' — one of "
+                             f"{', '.join(doctor.MODES)}")
+        if not asked and doctor.MODES[mode]["sideEffects"]:
+            raise ValueError(
+                f"the '{mode}' mode {doctor.MODES[mode]['does']}, which is "
+                f"not something reading a report may do — ask for it "
+                f"explicitly")
+    if "real-agent" in modes and not approve:
+        raise ValueError(
+            "the real-agent mode launches the installed CLI with a model and "
+            "spends tokens on this board's configured account, so it needs "
+            "its own approval — send \"approve\": true with it. Nothing was "
+            "diagnosed.")
+    return doctor.report(modes, approve_real_agent=approve)
+
+
+def gates_payload(name: str, stage: str) -> dict:
+    """One card's gates, every scope that could guard it, read.
+
+    Both scopes a card can be guarded by are returned rather than only
+    the one that applies right now: a phase member is gated at its merge
+    into the integration branch *and* carried through its phase's own
+    acceptance, and a reader deciding what to do next needs to see which
+    of the two is in the way.
+
+    The Bench verdicts, the formal GitHub review state and the overrides
+    come with it, because the whole point of the sheet is that those are
+    three different records and none of them stands in for another.
+    """
+    task = None
+    for group in taskfiles.collect()["stages"]:
+        for found in group["tasks"]:
+            if found["file"] == name:
+                task = found
+    scopes = ["member", gates.scope_for(task or {})]
+    if (task or {}).get("isPhase"):
+        scopes = ["integration"]
+    elif not (task or {}).get("phase"):
+        scopes = ["acceptance"]
+    policy = profiles.gate_policy()
+    return {
+        "task": name, "stage": stage,
+        "scopes": [gates.public(gates.evaluate(name, scope, task=task,
+                                               policy=policy))
+                   for scope in scopes],
+        "policy": profiles.gate_policy_public(policy),
+        "verdicts": gates.verdicts_for(name),
+        "github": gates.github_reviews(name),
+        "overrides": gates.overrides_for(name),
+        "decisions": gates.DECISIONS,
+        "reasons": gates.REASONS,
+        # Who this board would record an override against. Sent so the
+        # confirmation can name them rather than asking a person to trust
+        # that something sensible will be written down.
+        "actor": taskfiles.actor_name(),
+        "location": "local",
+    }
 
 
 def state_payload() -> dict:
@@ -58,6 +170,30 @@ def state_payload() -> dict:
         # one setting an agent cannot work around, so the board says it is
         # missing rather than letting a run discover it — see the header chip
         "hasAgentCommands": bool(config.agent_commands()),
+        # where the execution policy comes from and which revision of it
+        # applies *now*. Cheap (one file read), and it is what lets a run's
+        # frozen policy be told apart from the settings as they stand —
+        # the whole per-intent reading is `/api/profile`, on demand.
+        "policy": policy_payload(),
+        # what bench's own verification runs found, per card: the worst
+        # thing any of them says and how many there are. Cheap, and empty
+        # on a board nobody declared a check on — the whole reading is
+        # `/api/evidence`, on demand. A card is never shown as verified
+        # here from anything but a recorded run's own exit status.
+        "verify": verify.board(collected),
+        # where a PR review of each card actually ran: the revision it was
+        # pinned to, the checkout bench owned for it, and whether that is
+        # still the head the pull request proposes. Empty on a board that
+        # has reviewed nothing, so the chip follows the same law as the
+        # plan's and the profile's — the whole reading is `/api/review`.
+        "reviews": reviews.board(collected),
+        # what this board's gates require before a merge, and what each
+        # card's gate currently says. Empty on a board that declared
+        # none — the same law every other chip follows — and never a
+        # pass: `ungated` is its own word, and a card with an unmet gate
+        # carries the reason rather than a colour.
+        "gates": gates.board(collected),
+        "gatePolicy": profiles.gate_policy_public(profiles.gate_policy()),
         "branches": github.task_branches(),
         "commands": config.commands(),
         "commandRuns": commands.public(),
@@ -134,6 +270,162 @@ class Handler(BaseHTTPRequestHandler):
                 or (taskfiles.find_stage_of(name) or "")
             try:
                 self._json(200, {"plan": plans.preflight(name, stage)})
+            except (ValueError, OSError) as exc:
+                self._json(409, {"error": str(exc)})
+        elif path == "/api/profile":
+            # The profile preflight, on demand, for one card and one
+            # launch intent: what that run would be allowed to do, which
+            # files it would be given, and what stops it. Read-only — it
+            # resolves and hashes, and pins nothing, so opening it before
+            # a launch costs nothing and is the point.
+            #
+            # This is the *same* resolver the launch rides. The UI must
+            # never grow a second settings parser that could disagree
+            # with what a run was actually granted.
+            query = parse_qs(url.query)
+            name = (query.get("file") or [""])[0]
+            stage = (query.get("stage") or [""])[0] \
+                or (taskfiles.find_stage_of(name) or "")
+            intent = (query.get("intent") or ["work"])[0]
+            try:
+                # For `review`, the root a PR review actually works in —
+                # the checkout it holds, or the one the head bench last
+                # saw would put it at. Read free, from a record and the
+                # PR poll: the page must show the directory the run would
+                # start in, and must not pin, fetch or ask GitHub to.
+                held = reviews.live_for_task(name) if intent == "review" else None
+                pinned = (reviews.pinned_path_for(name)
+                          if intent == "review" else None)
+                found = profiles.manifest(intent, name, stage,
+                                          review=pinned, review_record=held)
+                self._json(200, {"profile": profiles.public(found),
+                                 "policy": policy_payload()})
+            except (ValueError, OSError) as exc:
+                self._json(409, {"error": str(exc)})
+        elif path == "/api/manifest":
+            # What one run actually rode, read back off disk rather than
+            # re-resolved: the frozen policy and the inputs as they were
+            # pinned, plus what has moved since. A profile edited mid-run
+            # changes the next launch and never this record.
+            agent_id = (parse_qs(url.query).get("agent") or [""])[0]
+            frozen = profiles.recorded(agent_id)
+            if frozen is None:
+                self._json(404, {"error": f"no recorded manifest for {agent_id}"})
+            else:
+                self._json(200, {"manifest": profiles.public(frozen),
+                                 "freshness": profiles.freshness(frozen),
+                                 "policy": policy_payload()})
+        elif path == "/api/evidence":
+            # What bench's own verifications found for one card, read back
+            # off disk: one row per check, including the checks nothing
+            # asked for. Reading is reading — opening a detail panel
+            # re-runs nothing, which is why this is a GET of stored
+            # records and not a resolution.
+            query = parse_qs(url.query)
+            name = (query.get("file") or [""])[0]
+            stage = (query.get("stage") or [""])[0] \
+                or (taskfiles.find_stage_of(name) or "")
+            intent = (query.get("intent") or ["work"])[0]
+            manifest = None
+            try:
+                # which checks this card's run *could* ask for, so a check
+                # that never ran is a row rather than an absence — with
+                # the review checkout this card holds, if it holds one,
+                # for `/api/profile`'s reason above
+                held = reviews.live_for_task(name) if intent == "review" else None
+                manifest = profiles.manifest(
+                    intent, name, stage,
+                    review=(held or {}).get("path") or None,
+                    review_record=held)
+            except (ValueError, OSError):
+                manifest = None
+            self._json(200, {
+                "rollup": verify.rollup(name, manifest),
+                "evidence": [verify.public(r) for r in verify.for_task(name)],
+                "outcomes": verify.OUTCOMES,
+            })
+        elif path == "/api/review":
+            # Where this card's PR reviews ran, and what they were of: the
+            # repository, the base and head identities, the checkout bench
+            # owned, and — per review — whether the pull request still
+            # proposes that head.
+            #
+            # A GET of records and one reading of what the poll last saw.
+            # It provisions nothing, fetches nothing and starts no
+            # validation: opening a historical review must not be a way to
+            # set anything running, least of all against an integration
+            # branch the review never judged.
+            query = parse_qs(url.query)
+            name = (query.get("file") or [""])[0]
+            stage = (query.get("stage") or [""])[0] \
+                or (taskfiles.find_stage_of(name) or "")
+            records = reviews.for_task(name)
+            evidence = [verify.public(r) for r in verify.for_task(name)
+                        if (r.get("root") or {}).get("policy") == "review"]
+            self._json(200, {
+                "reviews": [reviews.public(r) for r in records],
+                # what the PR currently proposes, as the board last read
+                # it — the fact every `stale` above is measured against
+                "head": reviews.observed(name),
+                "evidence": evidence,
+                "outcomes": verify.OUTCOMES,
+                "authorities": reviews.AUTHORITIES,
+                "targets": reviews.TARGETS,
+                "stage": stage,
+            })
+        elif path == "/api/gates":
+            # What this card's gates require and what the records say —
+            # the same reading the merge path makes, from the same
+            # function, so a disabled action and a backend refusal can
+            # never give two different reasons for one state.
+            #
+            # A GET of stored records and one `for-each-ref`. It runs no
+            # check, relaunches nothing and reaches no remote, which is
+            # why opening the sheet is not an action.
+            query = parse_qs(url.query)
+            name = (query.get("file") or [""])[0]
+            stage = (query.get("stage") or [""])[0] \
+                or (taskfiles.find_stage_of(name) or "")
+            try:
+                self._json(200, gates_payload(name, stage))
+            except (ValueError, OSError) as exc:
+                self._json(409, {"error": str(exc)})
+        elif path == "/api/evidence/log":
+            # One verification's own output, scrubbed of anything shaped
+            # like a credential on the way out. The record itself never
+            # held content; this is the one place bytes bench did not
+            # write reach a reader.
+            try:
+                self._json(200, verify.log_text(
+                    (parse_qs(url.query).get("id") or [""])[0]))
+            except (ValueError, OSError) as exc:
+                self._json(404, {"error": str(exc)})
+        elif path == "/api/verify/checks":
+            # What one run may ask for, read off its frozen manifest — the
+            # same answer `bench-verify` with no arguments prints.
+            agent_id = (parse_qs(url.query).get("agent") or [""])[0]
+            frozen = profiles.recorded(agent_id)
+            if frozen is None:
+                self._json(404, {"error": f"no recorded profile for {agent_id}"})
+            else:
+                self._json(200, {"checks": [
+                    {"name": c["name"], "run": c["run"], "root": c["root"],
+                     "scopes": sorted(c["scopes"]), "help": c["help"],
+                     "required": c["required"]}
+                    for c in verify.available(frozen)]})
+        elif path == "/api/doctor":
+            # Readiness, read. The whole per-intent resolution, every
+            # diagnostic with its remedy, bench's own fixture documents
+            # through the same resolver, and the coverage table saying
+            # which modes were *not* asked for.
+            #
+            # A GET names no mode, so this starts no process, pins
+            # nothing, provisions no checkout and spends nothing —
+            # which is why the inspector may be opened without a
+            # confirmation. Everything that does something is a POST
+            # with the mode named.
+            try:
+                self._json(200, {"doctor": doctor_payload([])})
             except (ValueError, OSError) as exc:
                 self._json(409, {"error": str(exc)})
         elif path == "/api/diff":
@@ -320,6 +612,58 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"drive": drive.start(payload["file"])})
             elif path == "/api/drive/stop":
                 self._json(200, {"drive": drive.stop()})
+            elif path == "/api/verify":
+                payload = self._read_body()
+                # The one door a verification comes through — the shim a
+                # run invokes and the board's own ↻ verify alike. It runs
+                # the check and returns the evidence, so the caller is
+                # told what was recorded rather than what it hoped.
+                #
+                # `agent` is a run asking, and then the frozen manifest is
+                # the policy: what that run was granted, not what the
+                # document says now. Without one it is a person's, and the
+                # profile resolves fresh. Neither can name a check the
+                # profile does not hold.
+                self._json(200, {"evidence": verify.public(verify.request(
+                    check=payload["check"],
+                    task=payload.get("file"),
+                    agent=payload.get("agent") or None,
+                    scope=payload.get("scope") or None,
+                    intent=payload.get("intent") or None,
+                    stage=payload.get("stage") or None,
+                    actor="agent" if payload.get("agent") else "you"))})
+            elif path == "/api/doctor/run":
+                payload = self._read_body()
+                # The active half, and a POST because each named mode does
+                # something: the adapter's own executables, real processes
+                # at a fixture bench makes and removes, or — with its own
+                # approval and never without — the installed CLI with a
+                # model. Nothing here moves a card, touches a branch,
+                # publishes anything or changes a setting.
+                self._json(200, {"doctor": doctor_payload(
+                    [str(m) for m in (payload.get("modes") or [])],
+                    approve=bool(payload.get("approve")), asked=True)})
+            elif path == "/api/gates/override":
+                payload = self._read_body()
+                # Proceeding over an unmet gate, on the record. The actor
+                # is this checkout's git identity rather than anything a
+                # request may claim — an override names a person, and a
+                # person is not a field a browser fills in. The head the
+                # confirmation was shown is sent back with it, so a sheet
+                # that has gone stale is refused rather than authorising
+                # a commit nobody looked at.
+                result = gates.override(
+                    payload["file"], payload["scope"],
+                    actor=taskfiles.actor_name() or "",
+                    reason=str(payload.get("reason") or ""),
+                    head=str(payload.get("head") or "") or None)
+                self._json(200, {
+                    "override": result["override"],
+                    "duplicate": result["duplicate"],
+                    "gate": gates.public(result["decision"])})
+            elif path == "/api/verify/cancel":
+                payload = self._read_body()
+                self._json(200, verify.cancel(payload["id"]))
             elif path == "/api/agent/stop":
                 payload = self._read_body()
                 agent = agents.stop_agent(payload["id"])

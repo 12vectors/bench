@@ -48,6 +48,13 @@ AGENT_DIR = STATE / "agent"                        # headless-agent stdout logs
 DRIVES_DIR = STATE / "drives"                      # driver stdout logs
 HOOKS_DIR = STATE / "hooks"                        # generated agent hook config
 PLANS_DIR = STATE / "plans"                        # recorded execution plans
+MANIFESTS_DIR = STATE / "manifests"                # per-run execution manifests
+CONTEXT_DIR = STATE / "context"                    # pinned read-only input bundles
+EVIDENCE_DIR = STATE / "evidence"                  # what a verification actually found
+VERIFY_DIR = STATE / "verify"                      # isolated roots a check ran in
+REVIEWS_DIR = STATE / "reviews"                    # run-owned pinned PR-review checkouts
+DOCTOR_DIR = STATE / "doctor"                      # fixtures a diagnosis makes and removes
+GATES_DIR = STATE / "gates"                        # Bench review verdicts and gate overrides
 
 # Ordered — this is the column order on the board.
 STAGES = [
@@ -641,6 +648,14 @@ def tasks_relative_to_app() -> str | None:
 # network weather; this bounds the whole delay.
 FETCH_TIMEOUT = float(setting("BOARD_FETCH_TIMEOUT", "10"))
 
+# How long bench waits to bring the commit a pull request's head names into
+# this checkout, before a PR review is refused for want of the revision it
+# is supposed to be reviewing (`reviews.py`). Longer than FETCH_TIMEOUT on
+# purpose: that one bounds a *fallback* — launching branches from HEAD
+# instead — and this one bounds the only thing that will do, so a slow
+# remote is waited for rather than silently reviewed around.
+REVIEW_FETCH_TIMEOUT = float(setting("BOARD_REVIEW_FETCH_TIMEOUT", "120"))
+
 # Team mode's second half: the work state's base branch is the shared
 # truth and every board a converging replica — board commits push as they
 # are made, a beat pulls what other boards published. Off by default; on,
@@ -965,6 +980,55 @@ def adapter_dir() -> Path | None:
         if (candidate / "run").is_file():
             return candidate
     return None
+
+
+# Where the execution-profile document is, when the project wrote one: a
+# machine-local JSON file resolved per launch intent (`profiles.py`).
+# Empty falls back to manager/local/profiles.json, and no document at all
+# resolves on BOARD_AGENT_COMMANDS plus the adapter's built-in grants —
+# exactly today's behaviour. An absolute value is used as given; a
+# relative one resolves against the tool install, never against a working
+# directory bench cannot see.
+AGENT_PROFILES = setting("BOARD_AGENT_PROFILES", "").strip()
+
+# ── verification (`verify.py`) ─────────────────────────────────────────
+#
+# How long bench lets one named check — and one preparation step — run
+# before it kills it and records a timeout. A timeout is not a test
+# failure and is never recorded as one; these only bound the wait.
+VERIFY_TIMEOUT = float(setting("BOARD_VERIFY_TIMEOUT", "1800"))
+PREPARE_TIMEOUT = float(setting("BOARD_VERIFY_PREPARE_TIMEOUT", "900"))
+
+# How many verifications this board runs at once. A check is somebody
+# else's test suite: two in parallel is a sensible machine's worth, and a
+# request over the cap waits its turn rather than being refused.
+VERIFY_PARALLEL = max(1, int(setting("BOARD_VERIFY_PARALLEL", "2")))
+
+# A cap on one verification's log, so a check that prints forever cannot
+# fill the disk. The evidence names the cap when it bites.
+VERIFY_LOG_CAP = int(setting("BOARD_VERIFY_LOG_CAP", str(4 * 1024 * 1024)))
+
+# Environment variables a check never inherits, by name. Publication
+# credentials are the point: a test suite has no business being able to
+# push, open a PR or publish a package, and the one reliable way to
+# enforce that is for the token not to be in its environment. Extend with
+# BOARD_VERIFY_ENV_DENY (comma-separated names, added to these).
+CREDENTIAL_ENV = (
+    "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_API_TOKEN",
+    "GH_CONFIG_DIR", "GIT_ASKPASS", "SSH_AUTH_SOCK", "SSH_AGENT_PID",
+    "NPM_TOKEN", "NODE_AUTH_TOKEN", "TWINE_PASSWORD", "TWINE_USERNAME",
+    "PYPI_TOKEN", "CARGO_REGISTRY_TOKEN", "DOCKER_AUTH_CONFIG",
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN",
+)
+
+
+def verify_env_deny() -> list[str]:
+    """Every environment variable name a check runs without: the built-in
+    credential list plus whatever the project added."""
+    extra = [part.strip() for part in
+             setting("BOARD_VERIFY_ENV_DENY", "").split(",") if part.strip()]
+    return sorted({*CREDENTIAL_ENV, *extra})
 
 
 def driver_path() -> Path | None:

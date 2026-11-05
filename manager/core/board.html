@@ -626,12 +626,24 @@
   .sheet .prows .v{font-family:var(--mono);font-size:11.5px;color:var(--ink);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .sheet .prows .why{margin-left:auto;flex:none;font-size:11.5px;color:var(--dim)}
+  /* the profile sheet reuses the Focus panels, so a named grant and a
+     readable input read the same wherever they are drawn */
+  .sheet .panel{padding:10px 12px;gap:6px}
+  .sheet .chiprow{border-top:none;padding-top:0}
+  .panel>.fold{margin-top:4px}
+  .panel>.fold pre{max-height:220px;overflow:auto}
   .sheet .sbtns{display:flex;flex-direction:column;gap:6px;margin-top:2px}
   .sheet .sbtns button{text-align:left;padding:10px 12px;font-size:13px}
   .sheet .sbtns button small{display:block;font-size:11.5px;color:var(--dim);margin-top:2px}
   .sheet .sbtns button.shipit{background:var(--calm);border-color:var(--calm);color:var(--on-calm);font-weight:500}
   .sheet .sbtns button.shipit small{color:color-mix(in oklab, var(--on-calm) 75%, transparent)}
   .sheet .sbtns button.shipit:hover{border-color:var(--calm);color:var(--on-calm);filter:brightness(1.06)}
+  /* the one field in the whole page: an override's reason, which is the
+     only part of its record a person has to write */
+  .sheet .sbtns textarea{background:var(--panel);color:var(--ink);
+    border:1px solid var(--line);border-radius:6px;padding:8px 10px;
+    font:inherit;font-size:12.5px;min-height:52px;resize:vertical}
+  .sheet .sbtns textarea:focus{outline:none;border-color:var(--accent)}
 
   /* ── toast ──
      A refusal has to say the whole thing — which member is working, and
@@ -677,6 +689,11 @@
   </nav>
   <span class="spacer"></span>
   <div class="phasechips" id="phasechips" hidden></div>
+  <!-- the readiness inspector: always here, because it is the way in to a
+       diagnosis rather than a state that comes and goes. Opening it reads;
+       everything that does something is armed inside it. -->
+  <div class="livechip" id="doctorchip" role="button" tabindex="0"
+       aria-label="open the readiness inspector"></div>
   <div class="livechip" id="syncchip" hidden style="cursor:default"></div>
   <div class="livechip" id="cmdchip" hidden style="cursor:default"></div>
   <div class="livechip" id="livechip" title="open Sessions"></div>
@@ -747,6 +764,21 @@ const S = {
   focusSid: null,
   filter: 'all',
   diffCache: {},         // agentId -> {at, files, fetching}
+  // agentId -> {at, manifest, freshness, fetching}: the policy and inputs
+  // ONE run was frozen with, read back off the board rather than resolved
+  // again, so the panel can never show a run a permission it did not ride
+  manifests: {},
+  // card file -> {at, rollup, evidence, fetching}: what bench's own
+  // verification runs found for one card, read back off disk. Fetched
+  // rather than carried in the state payload for the manifest's reason,
+  // and never re-run by being looked at
+  evidence: {},
+  // {at, report, fetching}: the last readiness reading taken on this tab.
+  // Held rather than refetched on every render because reading it resolves
+  // every intent and hashes every approved input — cheap, but not free —
+  // and because "nothing failing when you last looked" is the only thing
+  // a cached reading may ever be shown as saying
+  doctor: null,
   openFolds: new Set(),  // expanded output folds, kept across renders
   fileView: null,        // {dir, name, content} open in the drawer
   drawerKey: null,       // which document the drawer last painted, for its scroll mark
@@ -767,13 +799,16 @@ const STAGE_TINT = { backlog: 'var(--dim)', 'to-do': 'var(--muted)',
 const STAGE_NOTE = { 'to-do': 'next up', review: 'your move' };
 const GLYPHS = { session: '●', end: '○', idle: '…', edit: '✎', read: '◔', search: '⌕',
   command: '$', test: '▶', check: '☑', git: '⎇', plan: '≡', subagent: '⑂', web: '∿',
-  move: '⇢', new: '＋', agent: '⚑', report: '▣', sync: '⇅', phase: '⟶', other: '·' };
+  move: '⇢', new: '＋', agent: '⚑', report: '▣', sync: '⇅', phase: '⟶',
+  verify: '◫', other: '·' };
 const FILTERS = [
   ['all', 'All', null],
   ['moves', 'Moves', new Set(['move', 'new', 'agent', 'sync', 'phase'])],
   ['edits', 'Edits', new Set(['edit'])],
   ['reads', 'Reads', new Set(['read', 'search'])],
-  ['tests', 'Tests', new Set(['test', 'check'])],
+  // a run's own test commands, and the verifications bench ran itself:
+  // two different accounts of the same question, filtered together
+  ['tests', 'Tests', new Set(['test', 'check', 'verify'])],
   ['commands', 'Commands', new Set(['command', 'subagent', 'web', 'other'])],
   ['git', 'Git', new Set(['git'])],
   ['plan', 'Plan', new Set(['plan', 'report'])],
@@ -967,6 +1002,12 @@ function connectStream() {
       scheduleRender();
     } else if (msg.type === 'board' || msg.type === 'agents') {
       loadState();
+    } else if (msg.type === 'verify') {
+      // a verification started, ended or was refused: the per-card
+      // reading rides the state payload, and the cached rollup a panel
+      // is drawing has to be re-read rather than aged out
+      S.evidence = {};
+      loadState();
     } else if (msg.type === 'toast') {
       // the server needs to say something to the person, not just the
       // ticker — losing a card to another board is the case that matters
@@ -1103,6 +1144,45 @@ function renderAgentCommands() {
   el.innerHTML = `<span class="dot" style="background:var(--idle)"></span>` +
     `<span style="color:var(--muted)">no agent commands</span>` +
     `<span class="mono">BOARD_AGENT_COMMANDS</span>`;
+}
+
+/* The readiness inspector's own chip. Unlike the sync and phase chips it
+   is always here, and deliberately: those two are *states* that come and
+   go, and this is the door to a diagnosis — a door that appeared only
+   when something was already wrong would be a door nobody learned about.
+
+   What it says, it says honestly. Before anything has been read it offers
+   the inspector and names where the policy comes from. A document that
+   does not parse is the one fact the cheap state payload already knows,
+   so that wears `--alarm` without anything being resolved. After a
+   reading it carries that reading's count — and the title says when it
+   was taken, because "nothing failing when you last looked" is a
+   different claim from "nothing failing". */
+function renderDoctor() {
+  const el = $('#doctorchip');
+  const policy = S.state?.policy || {};
+  const read = S.doctor && S.doctor.report;
+  let colour = 'muted', tail = policy.kind === 'legacy'
+    ? 'legacy settings' : (policy.identity || 'policy');
+  let title = 'What this board would grant, run and refuse — resolved for ' +
+    'every launch intent, with the remedy for anything that would stop ' +
+    'one. Opening this reads: it starts no process, pins nothing and ' +
+    'spends nothing.';
+  if (policy.problem) {
+    colour = 'alarm';
+    tail = 'policy broken';
+    title = policy.problem + ' — open the inspector for the remedy.';
+  } else if (read) {
+    const failed = read.summary.failed;
+    colour = failed ? 'alarm' : 'calm';
+    tail = failed ? `${failed} to look at` : 'nothing failing';
+    title = `${read.summary.line} Read ${fmtShort(read.generated)}; open to ` +
+      `read it again. This says nothing about what has changed since.`;
+  }
+  el.title = title;
+  el.innerHTML = `<span class="dot" style="background:var(--${colour === 'muted' ? 'idle' : colour})"></span>` +
+    `<span style="color:var(--${colour})">⚕ readiness</span>` +
+    `<span class="mono">${esc(clip(String(tail), 28))}</span>`;
 }
 
 /* ── a phase in flight ────────────────────────────────────────────────── */
@@ -1254,6 +1334,7 @@ function render() {
   renderViews();
   renderSync();
   renderAgentCommands();
+  renderDoctor();
   if (S.view === 'flight') renderFlight();
   else if (S.view === 'focus') renderFocus();
   else renderCards();
@@ -1517,6 +1598,1106 @@ async function planSheet(task) {
     `</div></div>`;
   $('#sh-noplan').addEventListener('click', closeSheet);
   $('#sh-replan').addEventListener('click', () => { closeSheet(); replan(task); });
+}
+
+/* ── what a run may do, and what it is guaranteed to have read ─────────
+   The profile preflight, on demand: the resolved policy for one card and
+   one launch intent, read from the same resolver the launch rides. It is
+   read-only — it resolves and hashes, and pins nothing — so opening it
+   before a launch costs nothing and is the point.
+
+   Three things are kept visually apart because conflating them is the
+   mistake this exists to end: what is *configured*, what is actually
+   *enforced* (and by whom — a prefix rule is not a sandbox), and what is
+   merely asked for in the prompt or owed to a later gate. Hashes and the
+   settings precedence are real but secondary, so they fold away. */
+
+const PROFILE_INTENT_FOR = { 'in-progress': 'work', review: 'act-pr' };
+
+function profileIntentFor(task) {
+  return PROFILE_INTENT_FOR[task.stage] || 'review';
+}
+
+const INTENT_LABEL = { work: '▸ work', 'act-pr': '↻ act on PR',
+                       review: '◔ review' };
+
+/* An input's readable status, as the row's own state. `pinned` is the
+   strong one: bench holds a read-only copy, so the run's bytes cannot
+   change under it. `resolved` is the pre-launch reading of the same file
+   — validated and hashed, not yet copied. */
+const INPUT_STATE = {
+  pinned: ['pass', '✓', 'pinned read-only for the run'],
+  resolved: ['pass', '✓', 'readable — pinned at launch'],
+  missing: ['fail', '✕', 'not there'],
+  unreadable: ['fail', '✕', 'cannot be read'],
+  refused: ['fail', '✕', 'refused'],
+  unresolved: ['none', '—', 'not resolved'],
+};
+
+function inputRows(found) {
+  const items = found.context || [];
+  if (!items.length) {
+    return `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no approved context selected</span>` +
+      `<span class="state">the run reads the repository it is in</span></div>`;
+  }
+  return items.map(i => {
+    const [cls, glyph, word] = INPUT_STATE[i.status] || INPUT_STATE.unresolved;
+    const need = i.required ? '' : ' · optional';
+    return `<div class="check-row ${cls}" title="${esc(i.source)}">` +
+      `<span class="glyph">${glyph}</span>` +
+      `<span class="name">${esc(i.name)}</span>` +
+      `<span class="state">${esc(word)}${need}</span></div>`;
+  }).join('');
+}
+
+function grantRows(found) {
+  const grants = found.commands || [];
+  if (!grants.length) {
+    return `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no command grants</span>` +
+      `<span class="state">this run may run nothing of the project's</span></div>`;
+  }
+  return grants.map(g =>
+    `<div class="check-row" title="runs in the ${esc(g.root)} root">` +
+    `<span class="glyph">$</span><span class="name">${esc(g.name)}</span>` +
+    `<span class="state">${esc(g.prefix)}</span></div>`).join('');
+}
+
+function deniedRow(found) {
+  const words = (found.denied || []).map(d => d.capability);
+  const pub = found.publication || {};
+  const allowed = ['commit', 'push', 'publish'].filter(k => pub[k]);
+  return `<div class="prow"><span class="k">Blocked</span>` +
+    `<span class="v">${esc(words.join(', ') || 'nothing named')}</span>` +
+    `<span class="why">may ${esc(allowed.join(' and ') || 'change nothing')}</span></div>`;
+}
+
+/* Configured is not enforced, and the difference is the whole point. Each
+   line names who answers for it; a prefix allow-rule says so in those
+   words rather than borrowing the word "sandbox". */
+function guaranteeLines(found) {
+  const g = found.guarantees || {};
+  const table = found.capabilities || {};
+  const say = (list, lead) => (list || []).length
+    ? `${lead}: ${list.map(n => `${n} (${(table[n] || {}).by || '—'})`).join(', ')}`
+    : '';
+  return [
+    say(g.enforced, 'Enforced'),
+    say(g.prefixMatched, 'Narrowed by prefix match, not confined'),
+    say(g.pending, 'Asked for, enforced by nothing yet'),
+    ...(g.promptOnly || []),
+    g.caveat,
+  ].filter(Boolean);
+}
+
+/* Where a run is meant to write is not where it is held. The intended
+   scope and the OS isolation are two rows, and the second says plainly
+   that nothing enforces it — read from the profile's own `isolation`, or,
+   for a record frozen before that existed, from the capability table. */
+function isolated(p) {
+  if (p.isolation) return !!p.isolation.enforced;
+  const cap = (p.capabilities || {})['filesystem-sandbox'] || {};
+  return cap.enforcement === 'enforced';
+}
+
+function isolationLine(p) {
+  if (p.isolation) return p.isolation.why;
+  return isolated(p)
+    ? 'filesystem-sandbox is enforced here'
+    : 'not enforced — no filesystem-sandbox, so the writable scope is '
+      + 'intended rather than a boundary';
+}
+
+async function profileSheet(task, intent) {
+  intent = intent || profileIntentFor(task);
+  const wrap = $('#sheetwrap');
+  const head = (tail) =>
+    `<div class="stitle"><span>${esc(task.title)}</span>` +
+    `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}` +
+    `⚿ ${esc(tail)}</span></div>`;
+  wrap.innerHTML = `<div class="sheet">${head(intent)}<p>Resolving…</p></div>`;
+  wrap.classList.add('open');
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+
+  const res = await fetch('/api/profile?file=' + encodeURIComponent(task.file) +
+                          '&stage=' + encodeURIComponent(task.stage) +
+                          '&intent=' + encodeURIComponent(intent));
+  const data = await res.json();
+  const p = data.profile;
+  if (!res.ok || !p) {
+    wrap.innerHTML = `<div class="sheet">${head(intent)}` +
+      `<p class="bad">${esc(data.error || 'the profile could not be resolved')}</p>` +
+      `<div class="sbtns"><button id="sh-noprof">Close<small>Nothing was ` +
+      `started, and nothing was pinned.</small></button></div></div>`;
+    $('#sh-noprof').addEventListener('click', closeSheet);
+    return;
+  }
+
+  const blocked = (p.blockers || []).length;
+  const switcher = Object.keys(INTENT_LABEL).map(key =>
+    `<button class="chip2 ${key === intent ? 'accent' : ''}" data-intent="${key}">` +
+    `${esc(INTENT_LABEL[key])}</button>`).join('');
+
+  const rows = [
+    ['Runs in', p.cwd.path || p.cwd.policy, `the ${p.cwd.policy} root`],
+    ['Intended writes', (p.writable || []).map(w => w.path).join(', ') || 'nothing',
+      (p.writable || []).length ? (p.writable[0].why || '') : 'read-only run'],
+    ['OS isolation', isolated(p) ? 'enforced' : 'none enforced', isolationLine(p)],
+    ['Policy', p.source.kind === 'legacy'
+      ? 'the legacy settings'
+      : (p.source.identity || 'a profile document'),
+      p.source.describes || ''],
+  ];
+
+  wrap.innerHTML =
+    `<div class="sheet">${head(intent + ' profile')}` +
+    `<div class="chiprow">${switcher}</div>` +
+    (blocked
+      ? `<p class="bad">This run will not start: ${esc(p.blockers[0])}</p>`
+      + ((p.blockers.length > 1)
+         ? `<p class="bad">${p.blockers.slice(1).map(b => esc(b)).join('<br>')}</p>`
+         : '')
+      : `<p>Resolved and validated. Nothing has been pinned — the read-only ` +
+        `copy of each input is made at the launch, not here.</p>`) +
+    `<div class="prows">` +
+    rows.map(([k, v, why]) => `<div class="prow"><span class="k">${esc(k)}</span>` +
+      `<span class="v">${esc(v)}</span><span class="why">${esc(why || '')}</span></div>`).join('') +
+    deniedRow(p) +
+    `</div>` +
+    `<div class="panel"><div class="phead"><span class="label">Commands it may run</span>` +
+    `<span class="r">prefix rules</span></div>${grantRows(p)}</div>` +
+    `<div class="panel"><div class="phead"><span class="label">Files it is given</span>` +
+    `<span class="r">read-only</span></div>${inputRows(p)}</div>` +
+    `<details class="fold"><summary>what is actually enforced, and by whom</summary>` +
+    `<pre>${esc(guaranteeLines(p).join('\n\n'))}</pre></details>` +
+    `<details class="fold"><summary>revisions, hashes and precedence</summary>` +
+    `<pre>${esc(profileDetail(p))}</pre></details>` +
+    ((p.notes || []).length
+      ? `<p>${p.notes.map(n => esc(n)).join('<br>')}</p>` : '') +
+    `<div class="sbtns"><button id="sh-noprof">Close<small>Nothing is ` +
+    `written.</small></button></div></div>`;
+  $('#sh-noprof').addEventListener('click', closeSheet);
+  wrap.querySelectorAll('[data-intent]').forEach(btn =>
+    btn.addEventListener('click', () => profileSheet(task, btn.dataset.intent)));
+}
+
+/* The technical half: identities, hashes, where the policy came from. Real
+   and checkable, and nobody reads it first — so it folds. Contents never
+   appear here; the server's allowlist has none to send. */
+function profileDetail(p) {
+  const lines = [
+    `policy      ${p.policyId}`,
+    `revision    ${p.revision}`,
+    `resolver    ${p.runner.module} v${p.runner.version} · schema v${p.v}`,
+    `adapter     ${p.adapter.name}${p.adapter.version ? ' v' + p.adapter.version : ''}` +
+      `${p.adapter.declared ? '' : ' (declares no capabilities)'}`,
+    `source      ${p.source.kind}${p.source.identity ? ' · ' + p.source.identity : ''}` +
+      ` · ${(p.source.revision || '').slice(0, 12)}`,
+    `precedence  ${(p.source.precedence || []).join('  >  ')}`,
+    `request     ${p.requestId || '—'}`,
+  ];
+  if (p.requires && p.requires.length)
+    lines.push(`requires    ${p.requires.join(', ')}`);
+  for (const i of p.context || []) {
+    lines.push(`input       ${i.name}  ${i.source}  ${i.revision || '—'}  ` +
+               `sha256 ${(i.sha256 || '').slice(0, 16)}`);
+    if (i.why) lines.push(`            ${i.why}`);
+    if (i.remedy) lines.push(`            remedy: ${i.remedy}`);
+  }
+  if (p.bundle) lines.push(`bundle      ${p.bundle.path}`);
+  for (const v of p.verify || [])
+    lines.push(`verify      ${v.name} — ${v.status}: ${v.why}`);
+  for (const v of p.prepare || [])
+    lines.push(`prepare     ${v.name} — ${v.status}: ${v.why}`);
+  for (const c of p.uiCommands || [])
+    lines.push(`ui command  ${c.name} — ${c.why}`);
+  return lines.join('\n');
+}
+
+/* ── readiness: what this board would grant, run and refuse ────────────
+
+   The inspector. Everything the profile sheet says about one card, asked
+   for the board as a whole and without a card at all — plus the two
+   things only a diagnosis can say: what a *deliberately broken* policy
+   would be told, and what each answer is actually worth.
+
+   That second one is the whole discipline here. A resolution, a generated
+   settings document, an adapter's own `run` against a stub, a process
+   bench ran, and the installed CLI with a model are five different
+   amounts of knowledge, and a single green badge over all of them would
+   be the most reassuring lie this board could tell. So every row carries
+   its level, every level carries what it does *not* prove, and a mode
+   nobody asked for is drawn as `not asked` rather than left out.
+
+   Four words, and the word carries the meaning rather than the colour —
+   as it does in the verification panel, and for the same reason: a
+   reader who cannot tell pine from terracotta still has to be able to
+   tell "we checked and it is fine" from "we never checked". */
+const DOCTOR_OUTCOME = {
+  passed:   ['pass', '✓', 'passed'],
+  failed:   ['fail', '✕', 'failed'],
+  skipped:  ['none', '—', 'skipped'],
+  deferred: ['none', '·', 'deferred'],
+};
+
+function doctorOutcome(word) {
+  return DOCTOR_OUTCOME[word] || ['none', '?', String(word || '—')];
+}
+
+/* One row per finding: the outcome in words, the level it was taken at,
+   what it was about, and — when it is not passing — the cause and the
+   remedy the server wrote. Nothing here decides a verdict. */
+function doctorRows(report, rows) {
+  if (!rows.length) {
+    return `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">nothing to report</span>` +
+      `<span class="state">this stage asked no questions here</span></div>`;
+  }
+  return rows.map(f => {
+    const [cls, glyph, word] = doctorOutcome(f.outcome);
+    const level = (report.evidence[f.evidence] || {}).label || f.evidence;
+    const tail = f.intent ? ` · ${f.intent}` : '';
+    const remedy = (f.outcome !== 'passed' && f.remedy)
+      ? `<div class="check-row ${cls}" style="padding-left:18px">` +
+        `<span class="glyph">→</span><span class="name">remedy</span>` +
+        `<span class="state">${esc(f.remedy)}</span></div>`
+      : '';
+    return `<div class="check-row ${cls}" title="${esc(f.detail)}">` +
+      `<span class="glyph">${glyph}</span>` +
+      `<span class="name">${esc(f.name)}${esc(tail)}</span>` +
+      `<span class="state">${esc(word)} · ${esc(level)}` +
+      `${f.code ? ' · ' + esc(f.code) : ''}</span></div>` +
+      `<div class="check-row ${cls}" style="padding-left:18px">` +
+      `<span class="glyph">·</span><span class="name">${esc(f.about)}</span>` +
+      `<span class="state">${esc(f.detail)}</span></div>` + remedy;
+  }).join('');
+}
+
+/* The coverage table, which is the half a reader skips at their peril: it
+   is the only place that says which stages were *not* run. A stage
+   missing from a coverage table is a stage a reader assumes passed. */
+function doctorCoverage(report) {
+  return report.coverage.map(row => {
+    const counts = ['passed', 'failed', 'skipped', 'deferred']
+      .map(w => `${doctorOutcome(w)[1]}${row.counts[w]}`).join(' ');
+    const cls = row.counts.failed ? 'fail' : row.asked ? 'pass' : 'none';
+    return `<div class="check-row ${cls}">` +
+      `<span class="glyph">${row.asked ? '▣' : '▢'}</span>` +
+      `<span class="name">${esc(row.label)}</span>` +
+      `<span class="state">${esc(row.asked ? counts : 'not asked')}</span></div>` +
+      `<div class="check-row none" style="padding-left:18px">` +
+      `<span class="glyph">·</span><span class="name">not proved</span>` +
+      `<span class="state">${esc(row.doesNotProve)}</span></div>`;
+  }).join('');
+}
+
+/* Shared by the inspector and the Focus view, so a board-level reading
+   and a run-level one cannot drift into two vocabularies. `intent`
+   narrows it to the rows about one launch kind. */
+function readinessPanel(report, opts) {
+  const o = opts || {};
+  let rows = report.findings;
+  if (o.intent) rows = rows.filter(f => !f.intent || f.intent === o.intent);
+  if (o.only) rows = rows.filter(f => o.only.includes(f.outcome));
+  const head = o.title || 'Readiness';
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">${esc(head)}</span>` +
+    `<span class="r">${esc((report.evidence[report.summary.strongestEvidence] || {}).label || '')}</span></div>` +
+    `<div class="check-row ${report.summary.failed ? 'fail' : 'pass'}">` +
+    `<span class="glyph">${report.summary.failed ? '✕' : '✓'}</span>` +
+    `<span class="name">${esc(o.intent || 'this board')}</span>` +
+    `<span class="state">${esc(report.summary.line)}</span></div>` +
+    doctorRows(report, rows) + `</div>`;
+}
+
+/* The inspector itself. A GET of the report, so opening it resolves,
+   hashes and reads approved files and does nothing else: no process, no
+   pinned bundle, no provisioned checkout, no model, no grant changed.
+   Every stage that *does* something is a button below, armed, with its
+   side effects written out beside it in the server's own words. */
+async function doctorSheet(mode) {
+  const wrap = $('#sheetwrap');
+  const head = (tail) =>
+    `<div class="stitle"><span>Readiness</span>` +
+    `<span class="mono">⚕ ${esc(tail)}</span></div>`;
+  wrap.innerHTML = `<div class="sheet" role="dialog" ` +
+    `aria-label="execution readiness inspector">${head('reading…')}` +
+    `<p>Resolving every launch intent. Nothing is being started.</p></div>`;
+  wrap.classList.add('open');
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+
+  let report = null, error = null;
+  try {
+    const res = await fetch('/api/doctor');
+    const data = await res.json();
+    if (res.ok && data.doctor) report = data.doctor;
+    else error = data.error || 'the readiness report could not be built';
+  } catch (e) {
+    error = e.message || 'the board could not be asked';
+  }
+  if (!report) {
+    wrap.innerHTML = `<div class="sheet" role="dialog" ` +
+      `aria-label="execution readiness inspector">${head('unavailable')}` +
+      `<p class="bad">${esc(error)}</p>` +
+      `<div class="sbtns"><button id="sh-nodoc">Close<small>Nothing was ` +
+      `started.</small></button></div></div>`;
+    $('#sh-nodoc').addEventListener('click', closeSheet);
+    return;
+  }
+  S.doctor = { at: Date.now(), report };
+  renderDoctor();
+  paintDoctorSheet(report, mode);
+}
+
+/* Drawn from a report already in hand, so switching the intent tab or
+   coming back from an active stage repaints without asking again. */
+function paintDoctorSheet(report, intent) {
+  const wrap = $('#sheetwrap');
+  const head = (tail) =>
+    `<div class="stitle"><span>Readiness</span>` +
+    `<span class="mono">⚕ ${esc(tail)}</span></div>`;
+  const switcher = ['', ...Object.keys(INTENT_LABEL)].map(key =>
+    `<button class="chip2 ${key === (intent || '') ? 'accent' : ''}" ` +
+    `data-doctorintent="${esc(key)}" aria-label="${key ? 'show ' + key + ' rows' : 'show every row'}">` +
+    `${key ? esc(INTENT_LABEL[key]) : 'everything'}</button>`).join('');
+
+  const stages = report.coverage.filter(row => row.mode !== 'inspect')
+    .map(row => {
+      const m = report.modes[row.mode];
+      const effects = (m.sideEffects || [])
+        .map(e => `<li>${esc(e)}</li>`).join('');
+      const label = row.mode === 'real-agent'
+        ? `⚕ ${m.label} — needs your approval`
+        : `⚕ run ${m.label}`;
+      return `<div class="check-row ${row.asked ? 'pass' : 'none'}">` +
+        `<span class="glyph">${row.asked ? '▣' : '▢'}</span>` +
+        `<span class="name">${esc(m.label)}</span>` +
+        `<span class="state">${esc(row.asked ? 'run in this reading' : 'not asked')}` +
+        `</span></div>` +
+        `<div class="check-row none" style="padding-left:18px">` +
+        `<span class="glyph">·</span><span class="name">${esc(m.does)}</span>` +
+        `<span class="state"><button class="chip2" ` +
+        `data-doctormode="${esc(row.mode)}" ` +
+        `aria-label="${esc(label)}">${actLabel(label, 'run it?', 'running…')}` +
+        `</button></span></div>` +
+        `<div class="check-row none" style="padding-left:18px">` +
+        `<span class="glyph">!</span><span class="name">side effects</span>` +
+        `<span class="state"><ul style="margin:0;padding-left:14px">${effects}</ul>` +
+        `${m.needsApproval ? '<br>This one needs your explicit approval and ' +
+          'is never implied by another stage.' : ''}</span></div>`;
+    }).join('');
+
+  wrap.innerHTML =
+    `<div class="sheet" role="dialog" aria-label="execution readiness inspector">` +
+    head(report.summary.failed ? `${report.summary.failed} to look at`
+                               : 'nothing failing') +
+    `<p>${report.summary.failed ? '<b class="bad">' : ''}` +
+    `${esc(report.summary.line)}${report.summary.failed ? '</b>' : ''}</p>` +
+    `<p>This is the resolver a launch rides, asked without launching one. ` +
+    `Reading it starts no process, pins nothing and spends nothing — and ` +
+    `a reading is not a proof: each row says what it was taken from.</p>` +
+    `<div class="chiprow">${switcher}</div>` +
+    readinessPanel(report, { intent: intent || null,
+                             title: 'What would happen' }) +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Coverage</span>` +
+    `<span class="r">${esc(report.location)}</span></div>` +
+    doctorCoverage(report) + `</div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Ask for more than a reading</span>` +
+    `<span class="r">a person's action</span></div>${stages}</div>` +
+    `<details class="fold"><summary>every diagnostic bench can produce, and its remedy</summary>` +
+    `<pre>${esc(Object.entries(report.diagnosticCodes).map(
+      ([code, d]) => `${code}\n  ${d.title}\n  ${d.remedy}`).join('\n\n'))}</pre></details>` +
+    `<details class="fold"><summary>what each level of evidence is worth</summary>` +
+    `<pre>${esc(Object.entries(report.evidence).map(
+      ([level, e]) => `${level} — ${e.label}\n  proves: ${e.proves}\n` +
+                      `  does not prove: ${e.doesNotProve}`).join('\n\n'))}</pre></details>` +
+    `<details class="fold"><summary>roots, policy and what this report withholds</summary>` +
+    `<pre>${esc(doctorDetail(report))}</pre></details>` +
+    `<div class="sbtns"><button id="sh-nodoc">Close<small>Nothing was ` +
+    `started, and nothing was pinned.</small></button></div></div>`;
+  $('#sh-nodoc').addEventListener('click', closeSheet);
+  wrap.querySelectorAll('[data-doctorintent]').forEach(btn =>
+    btn.addEventListener('click', () =>
+      paintDoctorSheet(report, btn.dataset.doctorintent || null)));
+  wrap.querySelectorAll('[data-doctormode]').forEach(btn => {
+    const mode = btn.dataset.doctormode;
+    const m = report.modes[mode];
+    wireAction(btn, `${BOARD_ACT}doctor::${mode}`, {
+      label: m.label, confirm: 'run it?', busy: 'running…',
+      run: () => doctorRun(mode, intent),
+    });
+  });
+}
+
+/* The technical half: identities, roots, the precedence, and what the
+   report deliberately does not carry. Real and checkable, and nobody
+   reads it first — so it folds. */
+function doctorDetail(report) {
+  const lines = [
+    `generated   ${fmtShort(report.generated)} in ${report.took.toFixed(2)}s`,
+    `schema      doctor v${report.v}`,
+    `ran         ${report.ran.join(', ')}`,
+    `application ${report.layout.app}`,
+    `work state  ${report.layout.work}`,
+    `worktrees   ${report.layout.worktrees}`,
+    `tool        ${report.layout.tool}`,
+    `layout      ${report.layout.external ? 'external' : 'vendored'} · ` +
+      `app base ${report.layout.appBase} · state base ${report.layout.stateBase}`,
+    `policy      ${report.policy.kind}` +
+      (report.policy.identity ? ` · ${report.policy.identity}` : '') +
+      ` · ${(report.policy.revision || '').slice(0, 12)}`,
+    `precedence  ${(report.policy.precedence || []).join('  >  ')}`,
+    `adapter     ${report.adapter.name}` +
+      (report.adapter.version ? ` v${report.adapter.version}` : '') +
+      (report.adapter.declared ? '' : ' (declares no capabilities)'),
+  ];
+  for (const p of report.problems || []) lines.push(`refused     ${p}`);
+  for (const reading of report.intents || []) {
+    lines.push(`intent      ${reading.intent} · ${reading.policyId} · ` +
+               `cwd ${(reading.cwd || {}).policy}`);
+    for (const b of reading.blockers || []) lines.push(`            blocked: ${b}`);
+  }
+  lines.push('');
+  for (const [key, why] of Object.entries(report.redaction || {})) {
+    lines.push(`${key.padEnd(11)} ${why}`);
+  }
+  return lines.join('\n');
+}
+
+/* Asking for an active stage. A POST, named, with the side effects
+   already written beside the button that fired it — and, for the real
+   CLI, a second deliberate approval that nothing else implies. */
+async function doctorRun(mode, intent) {
+  const needsApproval = (S.doctor?.report?.modes || {})[mode]?.needsApproval;
+  if (needsApproval && !confirm(
+      'This launches the installed agent CLI with a model, at a disposable ' +
+      'fixture directory, and spends tokens on this board\'s configured ' +
+      'account. Nothing else runs it. Authorise it?')) return false;
+  toast(`running the ${mode} stage…`);
+  try {
+    const res = await fetch('/api/doctor/run', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modes: [mode], approve: !!needsApproval }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.doctor) {
+      toast(data.error || 'that stage did not run', true);
+      return false;
+    }
+    S.doctor = { at: Date.now(), report: data.doctor };
+    renderDoctor();
+    paintDoctorSheet(data.doctor, intent);
+    const row = data.doctor.coverage.find(r => r.mode === mode) || {};
+    toast(`${mode}: ${(row.counts || {}).failed || 0} failed, ` +
+          `${(row.counts || {}).passed || 0} passed`,
+          !!(row.counts || {}).failed);
+    return true;
+  } catch (e) {
+    toast(`the ${mode} stage failed — ${e.message || 'no response'}`, true);
+    return false;
+  }
+}
+
+/* ── verification: what bench ran, and what it found ───────────────────
+
+   Every outcome gets its own word. Colour says state, as it does
+   everywhere on this board, but the word is what carries the meaning: a
+   reader who cannot tell pine from terracotta still has to be able to
+   tell a failing test from a refused permission from a dependency that
+   would not install, and the two must never collapse into "red".
+
+   Nothing here renders "passing" from anything but a recorded run whose
+   own exit status was zero. A successful agent, a registered wrapper and
+   a declared check with no evidence are `not run`, in those words. */
+const VERIFY_STATE = {
+  passed:           ['pass',   '✓', 'passed'],
+  failed:           ['fail',   '✕', 'test failure'],
+  denied:           ['fail',   '⊘', 'permission denied'],
+  'prepare-failed': ['fail',   '⚑', 'dependency / preparation failure'],
+  error:            ['fail',   '!', 'no verdict reached'],
+  stale:            ['fail',   '~', 'stale — the source has changed'],
+  cancelled:        ['none',   '⊠', 'cancelled'],
+  'not-run':        ['none',   '—', 'not run'],
+  running:          ['accent', '◌', 'running now'],
+  preparing:        ['accent', '◌', 'preparing'],
+};
+
+function verifyState(outcome) {
+  return VERIFY_STATE[outcome] || ['none', '?', `unknown (${outcome || '—'})`];
+}
+
+function fmtSecs(s) {
+  if (s === null || s === undefined) return '';
+  return s < 60 ? `${s.toFixed(1)}s` : `${Math.round(s / 60)}m ${Math.round(s % 60)}s`;
+}
+
+/* One row per named check, in the Focus panel and in the sheet alike.
+   Preparation is drawn separately from the check it prepared, because
+   "the dependencies would not install" and "the tests failed" are
+   different things to go and do. */
+function verifyRows(rollup, opts) {
+  const rows = (rollup && rollup.rows) || [];
+  if (!rows.length) {
+    return `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no named checks</span>` +
+      `<span class="state">this board's profile declares none</span></div>`;
+  }
+  return rows.map(r => {
+    const [cls, glyph, word] = verifyState(r.outcome);
+    const bits = [word];
+    if (r.scope) bits.push(`scope ${r.scope}`);
+    if (r.commit) bits.push(r.commit.slice(0, 12));
+    if (r.duration) bits.push(fmtSecs(r.duration));
+    if (r.ended) bits.push(fmtShort(r.ended));
+    const prep = (r.prepare || []).map(p => {
+      const ok = p.outcome === 'prepared';
+      return `<div class="check-row ${ok ? 'pass' : 'fail'}" style="padding-left:18px">` +
+        `<span class="glyph">${ok ? '✓' : '✕'}</span>` +
+        `<span class="name">prepare · ${esc(p.name)}</span>` +
+        `<span class="state">${esc(ok ? 'prepared' : (p.outcome || 'failed'))}` +
+        `${p.network ? ' · needed the network' : ''}</span></div>`;
+    }).join('');
+    const open = (opts && opts.links && r.evidence)
+      ? `<button class="chip2" data-ev="${esc(r.evidence)}">log</button>` : '';
+    return `<div class="check-row ${cls}" title="${esc(r.why || '')}">` +
+      `<span class="glyph">${glyph}</span>` +
+      `<span class="name">${esc(r.check)}</span>` +
+      `<span class="state">${esc(bits.join(' · '))} ${open}</span></div>` + prep;
+  }).join('');
+}
+
+/* The card's own chip: present only where a card has evidence or a check
+   it could have, and wearing the worst thing any of them says. */
+function verifyChip(task) {
+  const v = (S.state.verify || {})[task.file];
+  if (!v) return null;
+  const [cls, glyph, word] = verifyState(v.outcome);
+  const tint = { pass: 'ok', fail: 'bad', accent: 'accent', none: '' }[cls] || '';
+  return {
+    label: `${v.passed}/${v.checks}`, pre: '◫', glyph, cls: tint, verify: true,
+    title: `Verification bench ran itself: ${word}. ${v.passed} of ${v.checks} `
+         + `named check${v.checks === 1 ? '' : 's'} passed. Evidence is `
+         + `${v.location === 'local' ? 'local to this board' : v.location}. `
+         + `Opening this runs nothing.`,
+  };
+}
+
+/* ── may this merge happen? ────────────────────────────────────────────
+
+   The gate, at card altitude. Three rules it follows and the design
+   system is the reason for all three: the word carries the meaning and
+   the colour only ever means state, so `ungated` is drawn in the settled
+   register rather than the colour of a pass; no evidence never looks
+   green; and an override wears the alarm, because it is a decision
+   somebody made over an unmet gate rather than a gate that was met. */
+
+const GATE_STATES = {
+  allowed: ['ok', '✓', 'met'],
+  ungated: ['dim', '·', 'ungated'],
+  pending: ['accent', '◌', 'waiting'],
+  blocked: ['bad', '✕', 'blocked'],
+  overridden: ['bad', '!', 'overridden'],
+};
+
+function gateState(word) {
+  return GATE_STATES[word] || ['', '·', word || 'unknown'];
+}
+
+function gateChip(task) {
+  const g = (S.state.gates || {})[task.file];
+  if (!g) return null;
+  const [cls, glyph, word] = gateState(g.decision);
+  const label = g.decision === 'blocked'
+    ? `${g.unmet.length} unmet`
+    : g.decision === 'allowed' ? `${g.met}/${g.required}` : word;
+  return {
+    label, pre: '⚖', glyph, cls, gate: g.scope,
+    title: `The ${g.scope} gate: ${g.summary}. Evidence is `
+         + `${g.location === 'local' ? 'local to this board' : g.location}. `
+         + `Opening this runs nothing.`,
+  };
+}
+
+/* One requirement, as a row. The reason and the remedy are the point of
+   the panel: "it failed", "nobody asked for it" and "a dependency would
+   not install" send a reader to three different places. */
+/* A check requirement names the coverage it needs: a bare check is its
+   unscoped full run, and a scope is only itself — so a scoped pass on the
+   ◫ chip beside a gate requiring the full run is never left unexplained. */
+function requirementLabel(r) {
+  if (r.kind === 'review') return `review · ${r.name}`;
+  if (r.kind !== 'check') return r.name;
+  return `${r.check || r.name} · ${r.scope ? 'scope ' + r.scope : 'full run'}`;
+}
+
+function gateRow(r) {
+  const cls = { met: 'pass', unmet: 'fail', pending: 'accent',
+                overridden: 'fail' }[r.state] || '';
+  const glyph = { met: '✓', unmet: '✕', pending: '◌',
+                  overridden: '!' }[r.state] || '·';
+  const name = requirementLabel(r);
+  return `<div class="check-row ${cls}" title="${esc(r.why || '')}">` +
+    `<span class="glyph">${glyph}</span>` +
+    `<span class="name">${esc(name)}</span>` +
+    `<span class="state">${esc(r.state)}${r.commit ? ' · ' + esc(String(r.commit).slice(0, 12)) : ''}` +
+    `</span></div>` +
+    `<div class="check-row ${cls}" style="padding-left:18px">` +
+    `<span class="glyph">·</span><span class="name">why</span>` +
+    `<span class="state">${esc(r.why || '')}</span></div>` +
+    (r.remedy
+      ? `<div class="check-row" style="padding-left:18px">` +
+        `<span class="glyph">→</span><span class="name">remedy</span>` +
+        `<span class="state">${esc(r.remedy)}</span></div>`
+      : '');
+}
+
+function gatePanel(decision) {
+  const [cls, , word] = gateState(decision.decision);
+  const head = decision.head || {};
+  const row = (glyph, name, value, kls) =>
+    `<div class="check-row ${kls || ''}"><span class="glyph">${glyph}</span>` +
+    `<span class="name">${esc(name)}</span>` +
+    `<span class="state">${esc(value)}</span></div>`;
+  const applied = (decision.overrides || {}).applied;
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">${esc(decision.scope)} — ${esc(word)}</span>` +
+    `<span class="r">${esc(decision.policyId || '')}</span></div>` +
+    row('·', 'what it guards', decision.why) +
+    row('⚖', 'the commit it is about',
+        `${head.commit ? String(head.commit).slice(0, 12) : 'not resolved'} `
+        + `(${head.ref || 'unknown branch'})`,
+        head.commit ? '' : 'fail') +
+    // A policy that does not resolve is not `gated` either, and it is not
+    // absent: its refusal is the requirement, and it is unmet.
+    (decision.gated || (decision.blockers || []).length
+      ? (decision.requirements || []).map(gateRow).join('')
+      : row('·', 'no requirement',
+            'this board declares no gate for this, so nothing is required '
+            + 'here and nothing is proved')) +
+    (applied
+      ? row('!', 'overridden',
+            `${applied.actor} at ${String(applied.head || '').slice(0, 12)} — `
+            + `${applied.reason} (gates still unmet: `
+            + `${(applied.gates || []).join(', ')})`, 'fail')
+      : '') +
+    `</div>`;
+}
+
+/* The detail panel, and — where the policy allows one — the single
+   armed confirmation that records an override. A GET of stored records:
+   opening it runs no check, relaunches nothing and reaches no remote. */
+async function gateSheet(task) {
+  const wrap = $('#sheetwrap');
+  const head = (tail) =>
+    `<div class="stitle"><span>${esc(task.title)}</span>` +
+    `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}` +
+    `⚖ ${esc(tail)}</span></div>`;
+  wrap.innerHTML = `<div class="sheet">${head('gate')}<p>Reading the records…</p></div>`;
+  wrap.classList.add('open');
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+
+  const res = await fetch('/api/gates?file=' + encodeURIComponent(task.file) +
+                          '&stage=' + encodeURIComponent(task.stage));
+  const data = res.ok ? await res.json() : {};
+  const scopes = data.scopes || [];
+  const policy = data.policy || {};
+  const blocked = scopes.filter(s => s.decision === 'blocked');
+  const first = blocked[0] || scopes[0] || null;
+  const canOverride = !!(policy.overrides || {}).allowed && blocked.length;
+
+  const verdicts = (data.verdicts || []).slice(0, 4).map(v =>
+    `<div class="check-row ${v.verdict === 'APPROVE' ? 'pass' : 'fail'}">` +
+    `<span class="glyph">${v.verdict === 'APPROVE' ? '✓' : '✕'}</span>` +
+    `<span class="name">bench · ${esc(v.verdict)}</span>` +
+    `<span class="state">at ${esc(String(v.head || 'an unrecorded head').slice(0, 12))}` +
+    `${v.published ? ' · ' + esc(v.published) : ''}</span></div>`).join('')
+    || `<div class="check-row none"><span class="glyph">—</span>` +
+       `<span class="name">no Bench verdict</span>` +
+       `<span class="state">◔ review PR records one, bound to the head it ` +
+       `was pinned</span></div>`;
+
+  const gh = data.github || null;
+  const formal = gh && (gh.formal || []).length
+    ? gh.formal.map(r =>
+        `<div class="check-row ${r.state === 'APPROVED' ? 'pass' : 'fail'}">` +
+        `<span class="glyph">${r.state === 'APPROVED' ? '✓' : '✕'}</span>` +
+        `<span class="name">github · ${esc(r.login || 'unknown')}</span>` +
+        `<span class="state">${esc(r.state)} of ` +
+        `${esc(String(r.commit || 'an unrecorded commit').slice(0, 12))}` +
+        `${r.self ? ' · the account that proposed the head' : ''}</span></div>`).join('')
+    : `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no formal GitHub review state</span>` +
+      `<span class="state">${gh ? 'bench has read the pull request and GitHub holds none'
+                                : 'bench has not read this pull request'}</span></div>`;
+  const limitation = gh && gh.limitation
+    ? `<div class="check-row fail"><span class="glyph">!</span>` +
+      `<span class="name">same account</span>` +
+      `<span class="state">${esc(gh.limitation.why)}</span></div>`
+    : '';
+  const comments = gh && (gh.comments || []).length
+    ? `<div class="check-row"><span class="glyph">·</span>` +
+      `<span class="name">comments</span>` +
+      `<span class="state">${gh.comments.length} commented review` +
+      `${gh.comments.length === 1 ? '' : 's'} — a comment is not a review ` +
+      `state, however it is worded</span></div>`
+    : '';
+
+  const history = (data.overrides || []).map(o =>
+    `<div class="check-row fail"><span class="glyph">!</span>` +
+    `<span class="name">${esc(o.actor)}</span>` +
+    `<span class="state">${esc(o.scope)} at ` +
+    `${esc(String(o.head || '').slice(0, 12))} over ` +
+    `${esc((o.gates || []).join(', '))} — ${esc(o.reason)}</span></div>`).join('');
+
+  wrap.innerHTML =
+    `<div class="sheet">${head('gate')}` +
+    (blocked.length
+      ? `<div class="panel bad"><div class="phead"><span class="label">` +
+        `Blocked</span></div>` +
+        blocked.map(s => `<div class="check-row fail">` +
+          `<span class="glyph">✕</span><span class="name">${esc(s.scope)}</span>` +
+          `<span class="state">${esc(s.summary)}</span></div>`).join('') +
+        `</div>`
+      : '') +
+    `<p>A gate asks one question: may this merge happen? It is answered ` +
+    `from bench's own recorded evidence, bound to the exact commit that ` +
+    `would move — not from an agent's report, not from its exit code, and ` +
+    `not from the absence of a CI result. Reading it here runs nothing.</p>` +
+    scopes.map(gatePanel).join('') +
+    `<div class="panel"><div class="phead"><span class="label">` +
+    `Review — two records, kept apart</span>` +
+    `<span class="r">bench's own, and GitHub's</span></div>` +
+    verdicts + formal + limitation + comments + `</div>` +
+    (history
+      ? `<div class="panel"><div class="phead"><span class="label">` +
+        `Overrides</span><span class="r">recorded, never a pass</span></div>` +
+        history + `</div>`
+      : '') +
+    `<p class="why">What this board requires comes from ` +
+    `${esc(policy.source && policy.source.identity || 'the legacy settings')}` +
+    `. ${(policy.blockers || []).length
+      ? 'That policy does not resolve, so every gate here is blocked until it ' +
+        'is fixed — that is not the same as having no gate. '
+      : policy.configured ? '' : 'No gate is configured, so nothing here is ' +
+        'required and nothing is proved. '}` +
+    `Evidence and these records are local to this board.</p>` +
+    (policy.blockers || []).map(b =>
+      `<div class="check-row fail"><span class="glyph">✕</span>` +
+      `<span class="name">policy</span><span class="state">${esc(b)}</span>` +
+      `</div>`).join('') +
+    `<div class="sbtns">` +
+    (canOverride
+      ? `<textarea id="sh-why" placeholder="Why are you proceeding over an ` +
+        `unmet gate? Recorded against you, with the commit and the gates ` +
+        `that are unmet."></textarea>` +
+        `<button id="sh-override">Override<small>Record that ` +
+        `${esc(data.actor || 'you')} proceeded over ` +
+        `${esc((first.unmet || []).map(u => u.name).join(', '))} at ` +
+        `${esc(String((first.head || {}).commit || '').slice(0, 12))}. It ` +
+        `forges no evidence, makes no gate met, and authorises this commit ` +
+        `only — the next one is a different question.</small></button>`
+      : '') +
+    `<button id="sh-nogate">Close<small>Nothing was run.</small></button>` +
+    `</div></div>`;
+  $('#sh-nogate').addEventListener('click', closeSheet);
+  const btn = $('#sh-override');
+  if (btn) {
+    wireAction(btn, `${task.file}::override`, {
+      label: 'Override', confirm: 'record the override?', busy: 'recording…',
+      run: async () => {
+        const reason = ($('#sh-why') || {}).value || '';
+        const r = await fetch('/api/gates/override', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file: task.file, scope: first.scope,
+                                 reason, head: (first.head || {}).commit }),
+        });
+        const out = await r.json();
+        if (!r.ok) { toast(out.error || 'the override was refused', true); return false; }
+        toast(out.duplicate
+          ? 'that override was already on record — nothing was recorded twice'
+          : 'override recorded: the gate is still unmet');
+        await loadState();
+        gateSheet(task);
+        return true;
+      },
+    });
+  }
+}
+
+/* ── where a PR review ran, and what it was of ─────────────────────────
+
+   A review used to be a verdict with no location and no revision: it ran
+   in the live application checkout, at whatever that happened to hold.
+   Now it runs in a checkout bench pinned to the exact head the pull
+   request proposed, and these two read that record back.
+
+   The one thing this must never do is imply currency it does not have. A
+   verdict is about the commit it was pinned to, so a head that has moved
+   makes it `superseded` and a merged PR makes it `historical` — and
+   neither is drawn in the colour of a pass. */
+
+const REVIEW_LABELS = {
+  current: ['', 'reviewed', 'this is the head the pull request still proposes'],
+  superseded: ['bad', 'superseded',
+               "the PR's head has moved since — this says nothing about the "
+               + 'code there now'],
+  historical: ['dim', 'historical',
+               'the pull request is merged or closed — a record of what it '
+               + 'proposed, not a validation of what is in its base now'],
+  none: ['', 'reviewed', ''],
+};
+
+const REVIEW_TARGETS = {
+  member: "one card's own pull request",
+  integration: "a phase's integration branch",
+};
+
+function reviewChip(task) {
+  const r = (S.state.reviews || {})[task.file];
+  if (!r) return null;
+  const [cls, word, why] = REVIEW_LABELS[r.label] || REVIEW_LABELS.none;
+  const head = (r.head || '').slice(0, 12);
+  return {
+    label: `${word} ${head}`, pre: '⌾', review: true,
+    // accent means an agent is alive in it; otherwise the state's own
+    // colour, and never the colour of a pass — a pinned review is a
+    // location and a revision, not a verdict
+    cls: r.live ? 'accent' : cls,
+    title: `A PR review ran in a checkout bench pinned for it, detached at `
+         + `${r.head || 'an unrecorded commit'}`
+         + (r.base ? `, which PR #${r.number} proposes into ${r.base}` : '')
+         + `. ${why}. Opening this runs nothing.`,
+  };
+}
+
+function reviewPanel(record, evidence, current) {
+  const fresh = record.freshness || {};
+  const word = (REVIEW_LABELS[record.label] || REVIEW_LABELS.none)[1];
+  const head = (record.head || {}).commit || '';
+  const base = record.base || {};
+  const rows = (evidence || []).filter(e => e.agent === record.agent);
+  const checks = rows.length
+    ? rows.map(e => {
+        const [c, glyph, said] = verifyState((e.outcome === 'passed'
+          && (fresh.stale || fresh.historical)) ? 'stale' : e.outcome);
+        // preparation apart from the check it prepared, as the evidence
+        // sheet draws it: "the dependencies would not install" and "the
+        // tests failed" are different things to go and do
+        const prep = (e.prepare || []).map(p => {
+          const ok = p.outcome === 'prepared';
+          return `<div class="check-row ${ok ? 'pass' : 'fail'}" ` +
+            `style="padding-left:18px"><span class="glyph">${ok ? '✓' : '✕'}</span>` +
+            `<span class="name">prepare · ${esc(p.name)}</span>` +
+            `<span class="state">${esc(ok ? 'prepared' : (p.outcome || 'failed'))}` +
+            `</span></div>`;
+        }).join('');
+        return `<div class="check-row ${c}" title="${esc(e.why || '')}">` +
+          `<span class="glyph">${glyph}</span>` +
+          `<span class="name">${esc(e.check)}</span>` +
+          `<span class="state">${esc(said)} · in the pinned checkout` +
+          `${e.duration ? ' · ' + fmtSecs(e.duration) : ''}</span></div>` + prep;
+      }).join('')
+    : `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no checks ran here</span>` +
+      `<span class="state">this review executed nothing bench recorded` +
+      `</span></div>`;
+  const row = (glyph, name, value, kls) =>
+    `<div class="check-row ${kls || ''}"><span class="glyph">${glyph}</span>` +
+    `<span class="name">${esc(name)}</span>` +
+    `<span class="state">${esc(value)}</span></div>`;
+  const where = record.removed
+    ? `${record.path} — removed when the review ended`
+    : record.kept ? record.kept
+    : record.released ? `${record.path} — ${record.released}`
+    : `${record.path} — held by this run`;
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">${esc(word)}</span>` +
+    `<span class="r">${esc(record.reviewId || record.agent)}</span></div>` +
+    row('⌾', 'reviewed head', `${head || 'unknown'} (${(record.head || {}).authority || 'unknown'} authority)`) +
+    row('→', 'proposed into', `${base.ref || 'unknown'}${base.commit ? ' at ' + base.commit.slice(0, 12) : ''}`) +
+    row('·', 'pull request', `#${record.number} · ${String(record.state || 'state unknown').toLowerCase()} · ${(REVIEW_TARGETS[record.target] || record.target || '')}`) +
+    row('·', 'checkout', where, record.kept ? 'fail' : '') +
+    checks +
+    ((fresh.changed || []).length
+      ? (fresh.changed || []).map(c => row('✕', 'not current', c, 'fail')).join('')
+      : row('✓', 'still current',
+            `the pull request is still at ${(current && current.commit || head).slice(0, 12)}`,
+            'pass')) +
+    // a caveat is not a change: a head read from the local branch has not
+    // been superseded by anything, it was never bound — said in the
+    // settled register rather than the alarm
+    (fresh.caveats || []).map(c => row('·', 'unbound', c)).join('') +
+    (record.notes || []).map(n => row('·', 'note', n)).join('') +
+    `</div>`;
+}
+
+/* The detail panel. A GET of records and of what the PR poll last saw:
+   it provisions nothing, fetches nothing from GitHub and starts no
+   validation — opening a historical review must not be a way to set
+   anything running against an integration branch it never judged. */
+async function reviewSheet(task) {
+  const wrap = $('#sheetwrap');
+  const head = (tail) =>
+    `<div class="stitle"><span>${esc(task.title)}</span>` +
+    `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}` +
+    `⌾ ${esc(tail)}</span></div>`;
+  wrap.innerHTML = `<div class="sheet">${head('pr review')}<p>Reading the record…</p></div>`;
+  wrap.classList.add('open');
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+
+  const res = await fetch('/api/review?file=' + encodeURIComponent(task.file) +
+                          '&stage=' + encodeURIComponent(task.stage));
+  const data = res.ok ? await res.json() : {};
+  const records = data.reviews || [];
+  const current = data.head || null;
+
+  wrap.innerHTML =
+    `<div class="sheet">${head('pr review')}` +
+    `<p>A PR review does not run in the application checkout. Bench resolves ` +
+    `the pull request's head, checks that one commit out into a directory it ` +
+    `owns for the run, and removes it afterwards — so a review reads the ` +
+    `proposed code at a revision that cannot change under it.</p>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">The pull request now</span>` +
+    `<span class="r">${esc(current && current.source === 'poll' ? 'from the PR poll' : 'last read')}</span></div>` +
+    `<div class="check-row"><span class="glyph">·</span>` +
+    `<span class="name">head</span><span class="state">` +
+    `${esc(current && current.commit ? current.commit : 'bench has not read it')}` +
+    `${current && current.state ? ' · ' + esc(String(current.state).toLowerCase()) : ''}` +
+    `</span></div></div>` +
+    (records.length
+      ? records.map(r => reviewPanel(r, data.evidence, current)).join('')
+      : `<div class="panel"><div class="check-row none"><span class="glyph">—</span>` +
+        `<span class="name">no review has been pinned</span>` +
+        `<span class="state">◔ review PR pins a checkout of the head</span>` +
+        `</div></div>`) +
+    `<p class="why">Reading this ran nothing: no checkout was made, nothing ` +
+    `was fetched and no check was started. A superseded or historical ` +
+    `review stays exactly what it was — the judgement of one revision — ` +
+    `and validating what is in a base branch now is that branch's own card, ` +
+    `never this panel.</p>` +
+    `<div class="sbtns"><button id="sh-norev">Close<small>Nothing was run.` +
+    `</small></button></div></div>`;
+  $('#sh-norev').addEventListener('click', closeSheet);
+}
+
+async function fetchVerifyLog(evidenceId, into) {
+  into.innerHTML = '<pre>reading the log…</pre>';
+  try {
+    const res = await fetch('/api/evidence/log?id=' + encodeURIComponent(evidenceId));
+    const data = await res.json();
+    into.innerHTML = res.ok
+      ? `<p class="why">Scrubbed of anything shaped like a credential on the ` +
+        `way out${data.clipped ? ', and clipped to its tail' : ''}.</p>` +
+        `<pre>${esc(data.text || '(the log is empty)')}</pre>`
+      : `<pre>${esc(data.error || 'the log could not be read')}</pre>`;
+  } catch {
+    into.innerHTML = '<pre>the log could not be read</pre>';
+  }
+}
+
+/* The detail panel. A GET of what is stored and nothing else: opening it
+   re-runs nothing, which is the one thing a panel like this must not do.
+   Rerunning is the armed ↻ chip per check, and it says what it costs. */
+async function verifySheet(task) {
+  const wrap = $('#sheetwrap');
+  const head = (tail) =>
+    `<div class="stitle"><span>${esc(task.title)}</span>` +
+    `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}` +
+    `◫ ${esc(tail)}</span></div>`;
+  wrap.innerHTML = `<div class="sheet">${head('verification')}<p>Reading the evidence…</p></div>`;
+  wrap.classList.add('open');
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+
+  const res = await fetch('/api/evidence?file=' + encodeURIComponent(task.file) +
+                          '&stage=' + encodeURIComponent(task.stage));
+  const data = await res.json();
+  const rollup = data.rollup || { rows: [] };
+  const rows = rollup.rows || [];
+  const names = [...new Set(rows.map(r => r.check))];
+
+  wrap.innerHTML =
+    `<div class="sheet">${head('verification')}` +
+    `<p>Bench ran these itself. Each outcome below is the exit status of a ` +
+    `process this board launched and waited on — not a report from a run, ` +
+    `and not an agent's exit code. A check nothing asked for reads ` +
+    `<b>not run</b>.</p>` +
+    `<div class="panel"><div class="phead"><span class="label">Named checks</span>` +
+    `<span class="r">${esc(rollup.location === 'local' ? 'local to this board' : String(rollup.location || ''))}</span></div>` +
+    verifyRows(rollup, { links: true }) + `</div>` +
+    `<div class="panel"><div class="phead"><span class="label">Run one again</span>` +
+    `<span class="r">a person's action</span></div>` +
+    (names.length
+      ? `<div class="chiprow">` + names.map(n =>
+          `<button class="chip2" data-rerun="${esc(n)}">` +
+          actLabel('↻ ' + n, 'run it?', 'running…') + `</button>`).join('') +
+        `</div><p class="why">Side effects, in full: bench runs that check's ` +
+        `command in this card's own checkout (or, for a <span class="mono">source</span> ` +
+        `check, in a detached checkout it makes and removes), with its ` +
+        `preparation steps first. It writes a new evidence record and a new ` +
+        `log; it moves no card, touches no branch and publishes nothing. ` +
+        `Build output, caches and temporary files land in the directory bench ` +
+        `points HOME and TMPDIR at. A run already in flight for the same ` +
+        `check is joined rather than doubled. A check that outlasts this ` +
+        `page's own patience is still running: the row above goes to ` +
+        `<b>running now</b> and the outcome arrives when the runner has ` +
+        `one — nothing is fired twice.</p>`
+      : `<p class="why">Nothing to rerun — this card has no named checks.</p>`) +
+    `</div>` +
+    `<div id="evlog"></div>` +
+    `<details class="fold"><summary>identities each result is bound to</summary>` +
+    `<pre>${esc(verifyDetail(data.evidence || []))}</pre></details>` +
+    `<div class="sbtns"><button id="sh-nover">Close<small>Nothing was run.` +
+    `</small></button></div></div>`;
+  $('#sh-nover').addEventListener('click', closeSheet);
+  wrap.querySelectorAll('[data-ev]').forEach(btn =>
+    btn.addEventListener('click', () => fetchVerifyLog(btn.dataset.ev, $('#evlog'))));
+  wrap.querySelectorAll('[data-rerun]').forEach(btn =>
+    wireAction(btn, `${task.file}::verify::${btn.dataset.rerun}`, {
+      label: '↻ ' + btn.dataset.rerun, confirm: 'run it?', busy: 'running…',
+      run: () => rerunCheck(task, btn.dataset.rerun),
+    }));
+}
+
+function verifyDetail(records) {
+  const lines = [];
+  for (const r of records) {
+    lines.push(`evidence    ${r.id}`);
+    lines.push(`check       ${r.check}${r.scope ? ' · scope ' + r.scope : ''}  ${r.checkId || ''}`);
+    lines.push(`outcome     ${r.outcome}${r.reason ? ' · ' + r.reason : ''}`);
+    lines.push(`command     ${r.command || '—'}`);
+    lines.push(`root        ${(r.root || {}).path || '—'} (${(r.root || {}).policy || '—'})`);
+    const s = r.source || {};
+    lines.push(`source      ${s.commit || 'unknown'}${s.branch ? ' · ' + s.branch : ''}` +
+               `  ${s.sourceId || ''}${(s.dirty || []).length ? '  +' + s.dirty.length + ' uncommitted' : ''}`);
+    if (s.why) lines.push(`            ${s.why}`);
+    lines.push(`policy      ${r.policyId || '—'}  (${r.policySource || '—'})`);
+    if ((r.contextIds || []).length) lines.push(`context     ${r.contextIds.join(', ')}`);
+    lines.push(`asked by    ${r.agent || r.actor || '—'} · intent ${r.intent || '—'}`);
+    lines.push(`environment ${((r.env || {}).removed || []).length} names removed` +
+               `  HOME=${(r.env || {}).home || '—'}`);
+    lines.push(`evidence is ${r.location || 'local'} to this board — nothing here is committed or synced`);
+    lines.push('');
+  }
+  return lines.join('\n') || 'no evidence recorded for this card yet';
+}
+
+async function rerunCheck(task, check) {
+  const res = await fetch('/api/verify', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: task.file, stage: task.stage, check }),
+  });
+  const data = await res.json();
+  const ev = data.evidence || {};
+  toast(res.ok
+    ? `${check}: ${verifyState(ev.outcome)[2]}${ev.why ? ' — ' + ev.why : ''}`
+    : (data.error || 'the check was not run'), !res.ok || ev.outcome !== 'passed');
+  await loadState();
+  if (S.view === 'board') verifySheet(task);
+  return res.ok;
 }
 
 async function replan(task) {
@@ -1821,6 +3002,39 @@ function cardFor(task) {
       cls: (planned.drift || []).length ? 'bad' : '', plan: true,
       title: planChipTitle(planned) });
   }
+  // what a launch on this card would be allowed to do, and which files it
+  // would be given — a destination like the rest of the row, opening the
+  // profile preflight. Present only where there is something to say: a
+  // board resolving on the legacy settings has no such chip anywhere, and
+  // a policy document that does not parse wears the alarm.
+  const policy = S.state.policy;
+  if (policy && policy.kind === 'broken') {
+    chips.push({ label: 'policy', pre: '⚿', cls: 'bad', profile: true,
+      title: policy.problem || 'the profile document does not resolve' });
+  } else if (policy && policy.kind === 'file') {
+    chips.push({ label: 'profile', pre: '⚿', cls: '', profile: true,
+      title: `The execution profile a launch on this card would ride — what `
+           + `it may run, where it is meant to write (intended scope, no `
+           + `OS isolation), which files it is given and `
+           + `what is blocked. From ${policy.identity}.` });
+  }
+  // what bench's own verification runs found on this card — a
+  // destination like the rest of the row, opening the evidence. Present
+  // only where there is evidence or a check that could have produced
+  // some, so a board nobody declared one on has no such chip anywhere.
+  const verified = verifyChip(task);
+  if (verified) chips.push(verified);
+  // whether this card may actually be merged, and what is in the way —
+  // a destination like the rest of the row, opening the gate. Present
+  // only where this board declares a gate, so a board that declares
+  // none has no such chip anywhere.
+  const gate = gateChip(task);
+  if (gate) chips.push(gate);
+  // where a PR review of this card ran and which revision it was of — a
+  // destination like the rest of the row, opening the record. Present
+  // only on cards bench has pinned a checkout for.
+  const reviewed = reviewChip(task);
+  if (reviewed) chips.push(reviewed);
   if (prState && prState.ci) {
     chips.push({ label: 'CI', glyph: { pass: '✓', fail: '✕', running: '◌' }[prState.ci],
       cls: { pass: 'ok', fail: 'bad', running: 'accent' }[prState.ci], title: detail });
@@ -1906,6 +3120,10 @@ function cardFor(task) {
         if (c.act) return `<button class="chip2 ${c.cls}" data-drive="${c.act}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.phase) return `<button class="chip2 ${c.cls}" data-phase="${esc(c.phase)}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.plan) return `<button class="chip2 ${c.cls}" data-plan="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
+        if (c.profile) return `<button class="chip2 ${c.cls}" data-profile="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
+        if (c.verify) return `<button class="chip2 ${c.cls}" data-verify="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
+        if (c.gate) return `<button class="chip2 ${c.cls}" data-gate="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
+        if (c.review) return `<button class="chip2 ${c.cls}" data-review="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.cmd) return `<button class="chip2 ${c.cls}" data-cmd="${esc(c.cmd)}" title="${esc(c.title)}">${actLabel(c.label, 'run it?', 'running…')}${g}</button>`;
         return `<span class="chip2 ${c.cls}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</span>`;
       }).join('') + '</div>'
@@ -1928,6 +3146,14 @@ function cardFor(task) {
     }));
   el.querySelectorAll('[data-plan]').forEach(btn =>
     btn.addEventListener('click', (e) => { e.stopPropagation(); planSheet(task); }));
+  el.querySelectorAll('[data-profile]').forEach(btn =>
+    btn.addEventListener('click', (e) => { e.stopPropagation(); profileSheet(task); }));
+  el.querySelectorAll('[data-verify]').forEach(btn =>
+    btn.addEventListener('click', (e) => { e.stopPropagation(); verifySheet(task); }));
+  el.querySelectorAll('[data-gate]').forEach(btn =>
+    btn.addEventListener('click', (e) => { e.stopPropagation(); gateSheet(task); }));
+  el.querySelectorAll('[data-review]').forEach(btn =>
+    btn.addEventListener('click', (e) => { e.stopPropagation(); reviewSheet(task); }));
   el.querySelectorAll('[data-drive]').forEach(btn =>
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2003,9 +3229,19 @@ function actLabel(rest, confirm, busy) {
    straight back (⌘Z, or a teammate's undo) is never found already armed
    by a click nobody made against the card as it now stands. Keys are
    `<file>::<action>`, and a task file never contains `::`. */
+/* Act keys live in two namespaces and the sweep has to know which is
+   which. A card's actions are keyed by its filename, so an armed window
+   goes when the card does — archived from another board, or moved by hand
+   on disk. The board's own actions — the readiness inspector's active
+   stages — belong to the board rather than to any card, so they are
+   keyed `board::` and the sweep leaves them alone. A key that is neither
+   is a bug, and it is dropped. */
+const BOARD_ACT = 'board::';
+
 function forgetActsOfVanishedCards() {
   const live = new Set(allTasks().map(t => t.file));
   for (const key of Object.keys(S.acts)) {
+    if (key.startsWith(BOARD_ACT)) continue;
     if (!live.has(key.split('::')[0])) delete S.acts[key];
   }
 }
@@ -2079,7 +3315,10 @@ async function fireAgent(task, url, extra) {
   toast(url.endsWith('act-pr')
     ? `${who} is acting on the review of ${task.file}'s PR`
     : url.endsWith('review-pr')
-      ? `${who} is reviewing ${task.file}'s PR`
+      // which revision, because that is what the verdict will be about and
+      // the click is the moment it was decided
+      ? `${who} is reviewing ${task.file}'s PR at ` +
+        `${((data.agent.review || {}).head || 'an unrecorded commit').slice(0, 12)}`
       : data.agent.mode === 'review'
         ? `${who} is checking ${task.file} is still true of the codebase`
         : `${who} is on it — branch ${data.agent.branch}`);
@@ -2205,11 +3444,30 @@ function completeSheet(task, from) {
   // done/ with it and their workspaces go too. Counted the way the lane
   // counts them, from the runner's reading and the phase's own log.
   const swept = task.isPhase ? mergedIn(task).size : 0;
+  // And what this board's acceptance gate says, before the button that
+  // the server will refuse. One reading, so the sheet and the refusal
+  // give one reason — and said here rather than only in the toast
+  // afterwards, because "merge" is the click a person should not have to
+  // make to find out.
+  const gate = (S.state.gates || {})[task.file];
+  const blocked = gate && gate.decision === 'blocked' ? gate : null;
   const wrap = $('#sheetwrap');
   wrap.innerHTML =
     `<div class="sheet">` +
     `<div class="stitle"><span>${esc(task.title)}</span>` +
     `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}→ done</span></div>` +
+    (blocked
+      ? `<div class="panel bad"><div class="phead"><span class="label">` +
+        `Its ${esc(blocked.scope)} gate is unmet</span></div>` +
+        `<div class="check-row fail"><span class="glyph">✕</span>` +
+        `<span class="name">${esc(blocked.unmet.map(u => u.name).join(', '))}` +
+        `</span><span class="state">${esc(blocked.summary)}</span></div>` +
+        `<div class="check-row"><span class="glyph">·</span>` +
+        `<span class="name">what happens</span><span class="state">Merge &amp; ` +
+        `clean up is refused for this reason — the card, its branch and its ` +
+        `worktree are left exactly as they are. The ⚖ chip has the remedy.` +
+        `</span></div></div>`
+      : '') +
     `<p>This task has ${task.pr ? 'a PR and ' : ''}a branch with work on it. What should happen?</p>` +
     `<div class="sbtns">` +
     `<button id="sh-keep">Keep it where it is<small>Nothing moves, nothing changes.</small></button>` +
@@ -2239,9 +3497,22 @@ function completeSheet(task, from) {
     if (!res.ok) { toast(data.error || 'completion failed — the card stays', true); }
     else {
       const went = (data.swept || []).length;
-      toast(data.merged ? `${task.file} merged and cleaned up` +
-              (went ? ` — ${went} card${went === 1 ? '' : 's'} went to done/ with it` : '')
-            : `${task.file} moved to done`);
+      const kept = (data.kept || []).length;
+      /* `merged` says a commit landed, not that the card is accepted: a
+         branch that moved past the gated commit leaves the card where it
+         was, and the toast must not say done/ about it. */
+      if (data.partial) {
+        toast(`${task.file} partly completed — ${String(data.unmerged.merged).slice(0, 12)} ` +
+              `merged, but ${data.unmerged.branch} has moved on and is not merged; ` +
+              `the card stays in ${data.stage}/`, true);
+      } else {
+        toast((data.merged ? `${task.file} merged and cleaned up` +
+                (went ? ` — ${went} card${went === 1 ? '' : 's'} went to done/ with it` : '')
+              : `${task.file} moved to done`) +
+              (kept ? ` · ${kept} card${kept === 1 ? '' : 's'} moved on since the phase ` +
+                      `merged ${kept === 1 ? 'it' : 'them'} and stay${kept === 1 ? 's' : ''} put` : ''),
+              kept > 0);
+      }
     }
     await loadState();
   });
@@ -2731,7 +4002,22 @@ function laneFor(task) {
       `${flight.idle ? '' : '<span class="caret">▌</span>'}</span></div>`
     : '';
 
-  el.innerHTML = head + halt + well +
+  // What accepting *this* phase requires, which the lane owes a reader
+  // for the same reason the halt is drawn at the top of it: every member
+  // merged and green says nothing about the commit they were merged
+  // into, and the one place that distinction can be learned before
+  // somebody drags the card to done/ is here. Drawn only where a gate is
+  // configured, and `ungated` is never drawn as a pass.
+  const gate = snap && snap.gate && snap.gate.gated ? snap.gate : null;
+  const gateLine = gate
+    ? `<div class="lhalt"${gate.decision === 'blocked'
+        ? '' : ' style="border-color:var(--line)"'}>` +
+      `<span class="lglyph">${gateState(gate.decision)[1]}</span>` +
+      `<span class="lwhy"><b>integration gate ${esc(gateState(gate.decision)[2])}` +
+      `</b> — ${esc(gate.summary)}</span><span class="lacts"></span></div>`
+    : '';
+
+  el.innerHTML = head + halt + gateLine + well +
     `<div class="lstages" data-phase="${esc(task.file)}"></div>` + laneLog(task);
 
   const stages = el.querySelector('.lstages');
@@ -3008,6 +4294,88 @@ function pickFocusSid() {
   return S.focusSid;
 }
 
+/* The run's own policy, in the Focus view's side column.
+
+   It is the *frozen* one, read back off the board rather than resolved
+   again, and the panel says so when the settings have since moved — "this
+   run rode that; the document now says this" is a distinction a reviewer
+   needs and a second settings parser would quietly lose. The technical
+   half (identities, hashes, precedence) folds, as it does in the sheet.
+
+   A session with no agent behind it — a person's own — has no policy to
+   show, because bench granted it nothing: the panel says that rather than
+   drawing empty rows. */
+function permissionsPanel(agent) {
+  const head = (right) =>
+    `<div class="panel"><div class="phead"><span class="label">Permissions & inputs</span>` +
+    `<span class="r">${right}</span></div>`;
+  if (!agent) {
+    return head('—') +
+      `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">your own session</span>` +
+      `<span class="state">bench granted it nothing</span></div></div>`;
+  }
+  const cached = S.manifests[agent.id];
+  const found = cached && cached.manifest;
+  if (!found) {
+    const summary = agent.profile;
+    return head(esc(agent.mode || 'work')) +
+      `<div class="check-row none"><span class="glyph">·</span>` +
+      `<span class="name">${summary ? esc(summary.policyId) : 'reading the manifest'}</span>` +
+      `<span class="state">${summary
+        ? esc(`${summary.commands} grants · ${summary.readable}/${summary.inputs} inputs`)
+        : 'loading'}</span></div></div>`;
+  }
+  const fresh = cached.freshness || { fresh: true, changed: [] };
+  const moved = !fresh.fresh
+    ? `<div class="check-row none"><span class="glyph">·</span>` +
+      `<span class="name">settings have moved</span>` +
+      `<span class="state">this run keeps what it rode</span></div>`
+    : '';
+  const pub = found.publication || {};
+  const may = ['commit', 'push', 'publish'].filter(k => pub[k]);
+  return head(esc(`${found.intent} · ${found.cwd.policy}`)) +
+    reviewRows(found) +
+    grantRows(found) +
+    inputRows(found) +
+    `<div class="check-row"><span class="glyph">↑</span>` +
+    `<span class="name">may</span>` +
+    `<span class="state">${esc(may.join(', ') || 'change nothing')}</span></div>` +
+    `<div class="check-row ${isolated(found) ? 'pass' : 'none'}"><span class="glyph">·</span>` +
+    `<span class="name">writes</span>` +
+    `<span class="state">${esc(((found.writable || []).map(w => w.root).join(', ')
+      || 'none') + ' intended · OS isolation: ' + isolationLine(found))}</span></div>` +
+    `<div class="check-row fail"><span class="glyph">✕</span>` +
+    `<span class="name">blocked</span>` +
+    `<span class="state">${esc((found.denied || []).map(d => d.capability).join(', ') || 'nothing named')}</span></div>` +
+    moved +
+    `<details class="fold"><summary>what is actually enforced, and by whom</summary>` +
+    `<pre>${esc(guaranteeLines(found).join('\n\n'))}</pre></details>` +
+    `<details class="fold"><summary>this run's frozen revisions</summary>` +
+    `<pre>${esc(profileDetail(found) +
+      (fresh.changed || []).map(c => `\nsince:      ${c}`).join(''))}</pre></details>` +
+    `</div>`;
+}
+
+/* Where a PR review ran, read off the same frozen manifest as the rest of
+   this panel: the revision it was pinned to and the checkout bench owned
+   for it. Nothing at all for every other kind — a work run has its card's
+   own worktree and a relevance check is pinned nothing, and inventing a
+   row for them would suggest a location neither has. */
+function reviewRows(found) {
+  const r = found.review;
+  if (!r) return '';
+  const head = (r.head || {}).commit || '';
+  const base = (r.base || {}).ref || 'unknown';
+  return `<div class="check-row"><span class="glyph">⌾</span>` +
+    `<span class="name">reviewing</span>` +
+    `<span class="state">${esc(head.slice(0, 12) || 'unknown')} → ${esc(base)}` +
+    `${r.historical ? ' · historical' : ''}</span></div>` +
+    `<div class="check-row"><span class="glyph">·</span>` +
+    `<span class="name">pinned checkout</span>` +
+    `<span class="state">${esc(r.path || '—')}</span></div>`;
+}
+
 function renderFocus() {
   const sid = pickFocusSid();
   if (sid) loadSession(sid);
@@ -3144,7 +4512,48 @@ function renderFocus() {
   const recentPanel = `<div class="panel"><div class="phead"><span class="label">Recent</span></div>` +
     `<div class="minifeed">${recent || '<span style="color:var(--dim);font-size:12px">nothing yet</span>'}</div></div>`;
 
-  $('#cgrid').innerHTML = nowPanel + `<div class="c-side">${checksPanel}${filesPanel}${recentPanel}</div>`;
+  // What this run was allowed to do, frozen at its launch. The CHECKS panel
+  // above says what the project's definition of done is; this one says
+  // whether the run could even have run it, which file inputs it was
+  // guaranteed, and where it could write.
+  if (agent) fetchManifest(agent.id);
+  const permsPanel = permissionsPanel(agent);
+
+  // And what bench itself ran, which is a different fact again. CHECKS
+  // above is classified from commands the *agent* ran — the run's own
+  // account of itself. This panel is the runner's: every row is a
+  // process this board launched and waited on, with preparation drawn
+  // apart from the check it prepared. A finished agent with nothing
+  // here reads `not run`, never `passed`.
+  if (task) fetchEvidence(task.file, task.stage);
+  const verifyPanel = verificationPanel(task, agent);
+
+  // And the fact those two leave open, which is the one a person about
+  // to merge actually wants: code produced is not work verified, and
+  // work verified is not work accepted. Read from the state payload the
+  // view already has, so drawing it costs nothing and runs nothing.
+  const gatePanelHere = focusGatePanel(task, agent);
+
+  // And the fourth fact, which is about the board rather than the run:
+  // would a launch of this kind even start here, and what is not proved
+  // about that. Read lazily and never on a timer — resolving every intent
+  // is cheap but not free, and a reading is only ever shown as saying
+  // what it said when it was taken.
+  fetchReadiness();
+  const readyPanel = S.doctor?.report
+    ? readinessPanel(S.doctor.report, {
+        intent: agent ? (agent.mode || 'work') : null,
+        title: 'Readiness', only: ['failed', 'deferred'] })
+    : `<div class="panel"><div class="phead"><span class="label">Readiness</span>` +
+      `<span class="r">—</span></div>` +
+      `<div class="check-row none"><span class="glyph">·</span>` +
+      `<span class="name">reading the policy</span>` +
+      `<span class="state">what this board would grant, run and refuse` +
+      `</span></div></div>`;
+
+  $('#cgrid').innerHTML = nowPanel +
+    `<div class="c-side">${checksPanel}${verifyPanel}${gatePanelHere}` +
+    `${permsPanel}${readyPanel}${filesPanel}${recentPanel}</div>`;
   document.querySelectorAll('#cgrid details.fold').forEach(d => {
     d.addEventListener('toggle', () => {
       if (d.open) S.openFolds.add(d.dataset.key); else S.openFolds.delete(d.dataset.key);
@@ -3178,6 +4587,162 @@ async function fetchDiff(agentId) {
     if (S.view === 'focus') scheduleRender();
   } catch {
     S.diffCache[agentId] = { at: Date.now(), files: cached ? cached.files : [] };
+  }
+}
+
+/* What bench's own runner found for this card, and what it has not been
+   asked to find. Fetched like the manifest and read back off disk: the
+   panel is a view of stored records, so drawing it runs nothing — which
+   is the rule a detail panel for test results has to follow. */
+function verificationPanel(task, agent) {
+  const head = (right) =>
+    `<div class="panel"><div class="phead"><span class="label">Verification</span>` +
+    `<span class="r">${right}</span></div>`;
+  if (!task) {
+    return head('—') +
+      `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no card attached</span>` +
+      `<span class="state">bench verifies a card's work</span></div></div>`;
+  }
+  const cached = S.evidence[task.file];
+  if (!cached || !cached.rollup) {
+    return head('reading') +
+      `<div class="check-row none"><span class="glyph">·</span>` +
+      `<span class="name">reading the evidence</span>` +
+      `<span class="state">loading</span></div></div>`;
+  }
+  const rollup = cached.rollup;
+  const rows = rollup.rows || [];
+  const live = rows.some(r => r.live);
+  const unverified = agent && agent.status !== 'running'
+    && rows.length && !rows.some(r => r.outcome === 'passed');
+  return head(esc(live ? 'running now' : (rollup.location === 'local'
+                                          ? 'local to this board' : 'synchronized'))) +
+    verifyRows(rollup, { links: false }) +
+    (unverified
+      ? `<div class="check-row none"><span class="glyph">·</span>` +
+        `<span class="name">the run has finished</span>` +
+        `<span class="state">nothing here passed — a finished agent is not a ` +
+        `verified card</span></div>`
+      : '') +
+    `<p class="why" style="margin:6px 0 0;color:var(--dim);font-size:11.5px">` +
+    `Each row is a process bench launched and waited on. Open the card's ` +
+    `◫ chip for the logs, the commits they ran against and a rerun.</p>` +
+    `</div>`;
+}
+
+/* Code produced, work verified, work accepted — three states an exit code
+   cannot tell apart, drawn apart here. The panel reads the gate the state
+   payload already carries, so it costs nothing and starts nothing; the
+   card's ⚖ chip is where the whole reading and the remedies live. */
+function focusGatePanel(task, agent) {
+  const head = (right) =>
+    `<div class="panel"><div class="phead"><span class="label">Gate</span>` +
+    `<span class="r">${right}</span></div>`;
+  if (!task) {
+    return head('—') +
+      `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no card attached</span>` +
+      `<span class="state">a gate is about a card's own merge</span>` +
+      `</div></div>`;
+  }
+  const g = (S.state.gates || {})[task.file];
+  if (!g) {
+    return head('ungated') +
+      `<div class="check-row none"><span class="glyph">—</span>` +
+      `<span class="name">no gate configured</span>` +
+      `<span class="state">this board requires nothing before a merge, so ` +
+      `nothing here is proved — not a pass</span></div></div>`;
+  }
+  const [cls, glyph, word] = gateState(g.decision);
+  const finished = agent && agent.status && agent.status !== 'running';
+  const row = (name, value, kls) =>
+    `<div class="check-row ${kls || ''}"><span class="glyph">·</span>` +
+    `<span class="name">${esc(name)}</span>` +
+    `<span class="state">${esc(value)}</span></div>`;
+  return head(esc(`${g.scope} · local to this board`)) +
+    `<div class="check-row ${cls === 'ok' ? 'pass' : cls === 'bad' ? 'fail' : ''}">` +
+    `<span class="glyph">${glyph}</span>` +
+    `<span class="name">${esc(word)}</span>` +
+    `<span class="state">${esc(g.summary)}</span></div>` +
+    row('code produced',
+        finished ? 'the run has ended and its commits are on the branch'
+                 : 'the run is still working') +
+    row('verified',
+        g.decision === 'allowed'
+          ? `${g.met} of ${g.required} requirements met against ` +
+            `${String(g.head || '').slice(0, 12)}`
+          : g.decision === 'overridden'
+            ? 'no — an authorised person proceeded over an unmet gate'
+            : `no — ${g.unmet.length} unmet`,
+        g.decision === 'allowed' ? 'pass' : 'fail') +
+    (g.unmet || []).map(u =>
+      `<div class="check-row fail" style="padding-left:18px">` +
+      `<span class="glyph">✕</span><span class="name">${esc(u.name)}</span>` +
+      `<span class="state">${esc(u.reason)}</span></div>`).join('') +
+    `<p class="why" style="margin:6px 0 0;color:var(--dim);font-size:11.5px">` +
+    `A finished agent is not a verified card, and a verified card is not an ` +
+    `accepted one. The card's ⚖ chip has the whole reading and what to do ` +
+    `about each unmet requirement.</p></div>`;
+}
+
+async function fetchEvidence(file, stage) {
+  const cached = S.evidence[file];
+  if (cached && (cached.fetching || Date.now() - cached.at < 6000)) return;
+  S.evidence[file] = { ...(cached || {}), fetching: true };
+  try {
+    const res = await fetch('/api/evidence?file=' + encodeURIComponent(file) +
+                            '&stage=' + encodeURIComponent(stage || ''));
+    const data = res.ok ? await res.json() : {};
+    S.evidence[file] = { at: Date.now(), rollup: data.rollup || null,
+                         evidence: data.evidence || [] };
+    if (S.view === 'focus') scheduleRender();
+  } catch {
+    S.evidence[file] = { at: Date.now(),
+                         rollup: cached ? cached.rollup : null,
+                         evidence: cached ? cached.evidence : [] };
+  }
+}
+
+/* The readiness reading. A GET, so this starts no process, pins nothing
+   and spends nothing — but it does resolve every intent and hash every
+   approved input, so it is held for a minute rather than taken on every
+   SSE nudge. A reading older than that is still shown while a fresh one
+   is on the way: the panel's own words are about when it was taken. */
+async function fetchReadiness() {
+  const cached = S.doctor;
+  if (cached && (cached.fetching || Date.now() - cached.at < 60000)) return;
+  S.doctor = { ...(cached || { at: 0 }), fetching: true };
+  try {
+    const res = await fetch('/api/doctor');
+    const data = res.ok ? await res.json() : {};
+    if (data.doctor) S.doctor = { at: Date.now(), report: data.doctor };
+    else S.doctor = { at: Date.now(), report: cached ? cached.report : null };
+    scheduleRender();
+  } catch {
+    S.doctor = { at: Date.now(), report: cached ? cached.report : null };
+  }
+}
+
+/* The manifest one run was frozen with. Fetched rather than carried in the
+   state payload, because it holds a capability table per run and the
+   payload rides every SSE nudge — and read back off disk rather than
+   resolved again, which is the whole guarantee: a profile edited mid-run
+   retargets the next launch and never this record. */
+async function fetchManifest(agentId) {
+  const cached = S.manifests[agentId];
+  if (cached && (cached.fetching || Date.now() - cached.at < 8000)) return;
+  S.manifests[agentId] = { ...(cached || {}), fetching: true };
+  try {
+    const res = await fetch('/api/manifest?agent=' + encodeURIComponent(agentId));
+    const data = res.ok ? await res.json() : {};
+    S.manifests[agentId] = { at: Date.now(), manifest: data.manifest || null,
+                             freshness: data.freshness || null };
+    if (S.view === 'focus') scheduleRender();
+  } catch {
+    S.manifests[agentId] = { at: Date.now(),
+                             manifest: cached ? cached.manifest : null,
+                             freshness: cached ? cached.freshness : null };
   }
 }
 
@@ -3308,6 +4873,12 @@ function md(src) {
 document.querySelectorAll('#views button').forEach(b =>
   b.addEventListener('click', () => setView(b.dataset.view)));
 $('#livechip').addEventListener('click', () => setView('flight'));
+/* Keyboard as well as pointer: the inspector is the one header chip that
+   opens something, so it is reachable without a mouse. */
+$('#doctorchip').addEventListener('click', () => doctorSheet(null));
+$('#doctorchip').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doctorSheet(null); }
+});
 $('#themebtn').addEventListener('click', () => { S.dark = !S.dark; applyTheme(); });
 $('#focussel').addEventListener('change', (e) => { S.focusSid = e.target.value; render(); });
 $('#refresh').addEventListener('click', loadState);

@@ -9,13 +9,15 @@ implementations: `claude/` (the default) and `opencode/`. Select with
 
 ## The contract
 
-An adapter is a directory with two executables:
+An adapter is a directory with two executables, and may declare one file
+(`capabilities.json`, below).
 
 ### `run` — execute one headless job to completion
 
 - env in: `AGENT_PROMPT` (the full prompt), `AGENT_MODE` (the launch
   intent, below), `AGENT_COMMANDS` (the project's allowed command
-  prefixes, below), `AGENT_MODEL` (optional, below), `AGENT_CWD`, and
+  prefixes, below), `AGENT_MODEL` (optional, below), `AGENT_PROFILE` and
+  `AGENT_CONTEXT` (optional, below), `AGENT_CWD`, and
   the `BOARD_*` passthrough (`BOARD_AGENT_ID`, `BOARD_TASK`,
   `BOARD_PORT`) which your event bridge must forward with every event.
 - stdout is captured by the board as the job log. The prompts instruct the
@@ -76,6 +78,146 @@ through untranslated (claude → `--model "$AGENT_MODEL"`, opencode → the
 generated config's `model` key). Never send your vendor an empty value:
 the board only sets the variable when a model is actually configured
 (`BOARD_AGENT_MODEL` and its per-intent overrides in `local/.env`).
+
+### The resolved profile (`AGENT_PROFILE` / `AGENT_CONTEXT`) — optional
+
+`AGENT_COMMANDS` above is the whole of what an adapter has ever needed,
+and it is still set to exactly what it always was. These two are
+additions, and both are **narrowings**: an adapter that ignores them is
+correct and keeps working, and one that reads them can only end up
+granting less.
+
+`AGENT_PROFILE` is the launch's resolved execution profile as JSON
+(`core/profiles.py`):
+
+    {"v": 1, "intent": "work", "policyId": "profile:work@…",
+     "cwd": {"policy": "worktree", "path": "…"},
+     "commands": [{"name": "unit-tests", "prefix": "python3 -m unittest",
+                   "root": "worktree"}],
+     "deny": ["push", "publish", "force-push", "rebase",
+              "reshape-lifecycle"],
+     "publication": {"commit": true, "push": false, "publish": false},
+     "requires": []}
+
+`commands` is the same project prefix list `AGENT_COMMANDS` carries, named
+and validated — render `prefix` as you render those. `deny` is the half
+worth adding: each word is a capability that must be denied outright,
+rendered as rules that beat your allows (both shipped adapters map them in
+`DENY_CAPABILITY_PREFIXES` / `DENY_CAPABILITY_PATTERNS`). Never widen from
+it: a profile may turn a side effect off for an intent and may never turn
+one on.
+
+One rule about `commands` is worth stating on its own, because it is the
+one that changed. **Render a profile's grants for every intent, `review`
+included.** `AGENT_COMMANDS` stays restricted to `work` and `act-pr` —
+the read-only intent never had the project's commands and must not gain
+them by the back door — but a resolved profile's grants are named,
+validated and deliberately selected, and one of them may be bench's own:
+where a profile declares named checks, bench adds a grant for the
+`bench-verify` shim that *asks* for one. A review that can ask bench to
+run the tests is not a review that can commit, and both shipped adapters
+show the shape: the shim gets an allow-rule, `git commit` and `git push`
+get deny-rules, in the same generated document.
+
+`AGENT_CONTEXT` is the read-only inputs bench pinned for the run — `[{"name",
+"path", "source", "sha256", "access": "read-only"}]`, paths and hashes
+only, never content. The prompt already names them; an adapter that can
+grant reads narrowly may also use the list.
+
+### What an adapter has nothing to do with: verification
+
+A profile's named **checks** are not in `AGENT_PROFILE` and deliberately
+so. Bench runs them itself, in a root it chose, with an environment it
+built and no shell — see "Verification: bench runs the check" in the root
+`AGENT.md` — and the only thing that reaches an adapter is the one grant
+for the shim a run invokes to ask. So an adapter needs no notion of a
+check, a scope, a preparation step or an outcome, and an adapter override
+written before any of this existed gets exactly the environment it always
+got.
+
+### `capabilities.json` — what you can actually enforce
+
+Beside your `run`, optionally, a declaration in four words core
+understands: `enforced`, `prefix-allowlist` (a prefix match over the
+command line — narrowing, **not** a sandbox), `prompt-only`, `pending`.
+
+    {"v": 1, "adapter": "claude", "version": "1",
+     "capabilities": {"command-allowlist": "prefix-allowlist",
+                      "command-denylist": "prefix-allowlist",
+                      "read-only-tools": "enforced",
+                      "model-selection": "enforced"},
+     "unsupported": {"filesystem-sandbox": "why not, in one sentence"}}
+
+This is not a grant and it changes no rule. It is what lets a profile's
+`requires` list **refuse** a launch rather than report a guarantee the
+vendor cannot make, and what lets the board show who answers for each one.
+Declaring nothing is honest and costs nothing: a legacy board requires
+nothing, so it runs through such an adapter unchanged — only an operator
+who wrote a `requires` list gets the refusal. Claiming `enforced` for
+something you merely ask for in a system prompt is the one thing that
+makes the whole display a lie, so say `prompt-only`, or put it in
+`unsupported` with the reason.
+
+### `conformance` — letting the doctor check your translation
+
+Also optional, also in `capabilities.json`, and this is the half that
+lets bench's readiness doctor (`board.py --doctor --conformance`, or the
+⚕ inspector) check that your translation is faithful **without core
+learning anything about your vendor's rule syntax**. Two declarations:
+
+    "conformance": {"describe": ["python3", "describe.py"],
+                    "stubEnv": "BOARD_CLAUDE_BIN"}
+
+- **`describe`** is a command — an argument list, run with your adapter's
+  own directory as its working directory, so you name your own
+  interpreter and core never guesses at one. Given a launch's environment
+  (`AGENT_MODE`, `AGENT_PROMPT`, `AGENT_COMMANDS`, `AGENT_PROFILE`,
+  `AGENT_CONTEXT`, `AGENT_MODEL`, `AGENT_CWD`) it prints **one JSON
+  object** and launches nothing — no vendor binary, no model, no file
+  written. The keys core reads:
+
+      adapter   your adapter's name
+      intent    the launch intent described
+      argv      the whole argument list your vendor binary would receive
+      cwd       the directory the run would start in
+      allow     rules that permit, as rule text — your own syntax
+      deny      rules that forbid, as rule text
+      readOnly  whether your vendor's edit tools are withheld
+      context   the pinned inputs as delivered: paths and hashes
+
+  Anything else is yours and is shown rather than interpreted. There is
+  no `contextContents` key and there must never be one: an approved
+  input reaches a run as a path to the read-only copy bench pinned, and
+  its bytes have no business in a diagnostic.
+
+  From it the doctor asks, per intent: did every named grant become a
+  rule, with its fixed arguments intact? Is the working directory the one
+  bench named? Do the pinned inputs reach the run? Can this intent ask
+  bench for a named check — `review` included? Was the read-only intent
+  granted a way to write? And does any rule reach `git worktree`,
+  `reset`, `checkout`, `switch`, `branch`, `update-ref` or `remote`,
+  which would let a run choose a different lifecycle than the one bench
+  planned?
+
+- **`stubEnv`** names the environment variable that replaces your vendor
+  binary. With it the doctor can execute your `run` end to end against a
+  stub it writes, in a temporary directory it removes, and check that
+  bench's prompt reaches the binary you launch and that your exit status
+  is the binary's. Both shipped adapters already have such a variable for
+  their own tests.
+
+Declaring neither is honest: those rows read `skipped`, naming what you
+would have to declare. What they never read is `passed`.
+
+Two things worth saying plainly. First, if your `run` builds its argument
+list in a shell and `describe` rebuilds it in another language, the two
+can drift — hold them together with a test that asserts `describe`'s
+`argv` is what `run` actually passes to the stub, as
+`tests/test_execution_doctor.py` does for both shipped adapters. Second,
+a `describe` that parses and a stub that launches prove what bench and
+your adapter *pass*. They prove nothing about what your vendor enforces,
+the doctor says so in those words, and the only thing that answers that
+question is the separately authorised real-CLI smoke.
 
 ### `wire` — wire live-session visibility into the host project
 
