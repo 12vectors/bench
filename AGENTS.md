@@ -1129,6 +1129,126 @@ document's contents are nowhere on the page.
 
 ## Verification: bench runs the check
 
+### Start here: you provide the checks; bench runs them
+
+**Verification means checking the work, rather than taking the agent's word
+for it.** For a website, that might mean running tests and checking that the
+site builds. For a data project, it might mean checking that the output has
+the required columns and contains no invalid records.
+
+Bench does not know what makes *your* application correct. **You or your
+project team are responsible for providing and maintaining the programs
+that check it.** You can reuse existing test and build commands; you do not
+have to invent a special Bench testing system. If you are not a developer,
+ask your developer or coding agent to create the checks, explain their
+coverage and limitations, and demonstrate that they fail when something
+is wrong. An agent can help write them, but that does not remove your
+team's responsibility to decide whether the checks are sufficient.
+
+For example, imagine an agent changes a customer sign-up form:
+
+1. Your team provides a verification program that tests sign-up and checks
+   that the application builds.
+2. The person configuring Bench registers that program as a **named check**
+   and approves where and how it may run.
+3. The agent asks Bench to run the check, or you request it from the board.
+4. Bench runs the approved program against the relevant saved version of
+   the code and records the result itself.
+5. If you have configured a **gate** requiring that check, Bench will not
+   allow the guarded merge until the required current evidence passes.
+
+**The program does the checking. Bench runs it, records the evidence and
+applies your acceptance rules.** Bench does not manufacture tests for a
+project simply because you install it or create a card.
+
+### Who is responsible for what?
+
+| Responsibility | Who owns it? |
+| --- | --- |
+| Decide what correct behavior looks like | You and your project team |
+| Write and maintain tests, build checks and verification scripts | Your developers, with agent assistance if useful |
+| Approve runnable commands, test locations and required checks | The operator: the person who configures this Bench installation |
+| Execute an approved check and record its result and code version | Bench |
+| Enforce the configured conditions before integration or acceptance | Bench's gates |
+| Judge whether the checks cover the important risks and review the work | You and your reviewers |
+
+### The terms, without the machinery
+
+- **Verification program:** an ordinary script or command that checks the
+  work. It might run your existing test suite, build the app or validate
+  data. A **named check** is the label Bench uses for an approved invocation
+  of that program, such as `unit` or `build`.
+- **Preparation program:** a command that gets a disposable test environment
+  ready, such as installing approved dependencies or preparing a test
+  database. You provide this too when it is needed. Preparation failing
+  means the checks could not run; it is not a failing test result.
+- **Scope:** the portion of the work a check covers, such as `backend`,
+  `frontend` or `all`. These names and their arguments are configured by
+  the operator. A backend-only pass does not satisfy a gate requiring all.
+- **Evidence:** Bench's record of what actually ran, its result, and the
+  code and checking-program identities it applies to. An agent's sentence
+  saying “tests passed” is not this record.
+- **Gate:** a condition enforced before a particular action, such as
+  merging a task into a phase or accepting the completed phase. It can
+  require checks, review approval, or both. Registering a check does not
+  automatically make it a required gate.
+- **Stale:** evidence that no longer establishes a pass for the current
+  work. Changing the code, approved inputs or checking program can make
+  an earlier result stale and require a new run.
+
+### What you need to supply
+
+Start with the commands your team already uses to test and build the
+project. Ask the developer configuring Bench to:
+
+1. Identify the checks that matter and explain what they do **not** cover.
+2. Make them run without interactive questions and return a failing exit
+   status when a check fails. A wrapper must not hide a failure by printing
+   “OK” or exiting successfully after a failed command.
+3. Supply any required preparation steps. Use disposable test data, not
+   your live database, and document required dependencies and access.
+4. Register the approved commands and scopes in the local execution-profile
+   configuration, then separately choose which checks a gate must require.
+5. Demonstrate both a passing case and a deliberately failing case in a
+   safe fixture. Check that Bench shows the correct outcome and blocks the
+   required gate on failure.
+
+The configuration example below is for the person doing that setup. You do
+not need to understand its JSON to ask your team: **“Which checks are we
+providing, what do they cover, and which ones must pass before acceptance?”**
+
+As new tests are added, an existing test-suite command may discover them
+automatically. A new test family, dependency or kind of check may instead
+need an updated program and configuration. Bench does not automatically
+invent that missing coverage.
+
+### What a pass does — and does not — tell you
+
+Bench normally uses the verification program's exit status to determine
+whether it succeeded. **A pass means the supplied check passed, not that
+Bench has proved the application is bug-free.** A check that tests the wrong
+thing, skips important cases or always exits successfully gives weak
+assurance. Human review and any required manual checks still matter.
+
+If preparation fails, permission is denied or the check is cancelled,
+Bench records that different outcome rather than pretending the tests
+passed. A previously passing result must also be relevant to the current
+code and required scope. If a full check fails, a passing backend-only run
+cannot stand in for it.
+
+Checks execute programs. A separate checkout and command permissions are
+not an operating-system sandbox: do not assume an arbitrary test script
+cannot access other files or services. Use the documented trust limits
+below; guarantees the installed backend cannot enforce must not be treated
+as protection.
+
+**Existing projects remain compatible:** with no configured gate, Bench
+keeps its ungated behavior. Nothing is required and nothing is proved by
+that decision. To make verification mandatory, configure the appropriate
+gate as well as the check.
+
+### How named checks work
+
 A plan says which checkout a run works in; a profile says what it may do
 there. This is the question those two leave open: **did the project's own
 checks actually pass, and against what?**
@@ -1177,9 +1297,11 @@ everything a command grant is held to and three things more, each because
 - **The application checkout is not an execution root.** `worktree` is
   the card's own checkout, which bench made; `source` is a detached
   checkout of one exact commit that bench makes for the verification and
-  owns. There is no third answer, because verifying in the live code and
-  the live services is how a test suite takes a working tree down with
-  it — and `source` is the only root a read-only run has.
+  owns; `review` is the isolated checkout pinned to the pull request's
+  exact proposed commit for a PR-review run. A `review` check requires
+  that provisioned checkout; it never falls back to the live application.
+  These are execution locations, not security sandboxes. See the trust
+  limits below before running project code.
 - **A check verifies; it does not reshape the repository.** `git diff
   --check` is exactly the sort of thing a check is; `git push`, `git
   reset`, `git worktree`, `git config` and the rest are refused by name,
@@ -1315,6 +1437,13 @@ no branch touched, nothing published, and a run already in flight joined
 rather than doubled.
 
 ## Gates: nothing merges on a report
+
+A gate is an acceptance rule you configure: for example, “the full test
+suite must pass before this phase can merge.” Your team supplies the
+verification programs; Bench uses their recorded results to enforce the
+rule. A gate can also require a review. Adding a check and making it
+mandatory are separate choices. With no gate configured, there is no
+required verification barrier.
 
 Verification records what the project's checks found. This is the
 question that record exists to answer: **may this merge happen?**
