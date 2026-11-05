@@ -1041,6 +1041,15 @@ must resolve to something the installed backend genuinely does, and a
 profile requiring one nothing enforces is **refused** rather than run
 under a restriction that exists only in the prompt.
 
+The same honesty holds where it is read first. The writable locations
+are the **intended** write scope (`"enforcement": "intended"`), and the
+profile carries a separate `isolation` answer read from the same
+capability table: with `filesystem-sandbox` unsupported it says *not
+enforced*. The ⚿ sheet's summary draws them as two rows — **Intended
+writes** and **OS isolation: none enforced** — and the Focus panel says
+the same in one line, so the headline never reads as a boundary that the
+folded technical detail then retracts.
+
 ### Approved context: pinned, hashed, and nothing beside it
 
 A project selects a set of files from the tool and work-state roots, and
@@ -1259,9 +1268,18 @@ Four things it guarantees:
   becomes a thundering herd.
 - **A pass is bound to what it was about.** Modified tracked source, a
   new untracked file, a new commit, an edited check or a changed policy
-  all make a recorded `passed` read `stale`. `freshness()` compares and
-  never resolves; `outcome_now()` may only ever disagree with the record
-  in the safe direction.
+  all make a recorded `passed` read `stale`. So does a changed
+  **program**: the record hashes the executable as it resolved on the
+  check's PATH, the interpreter its `#!` line names (one level), and every
+  absolute-path argument outside the execution root (`python3
+  /opt/ci/check.py`), and the same for each preparation step — so a file
+  replaced at the same path is a different check. It records bench's own
+  **runner revision** too, and evidence from another runner, or a record
+  naming no program identity at all, is never reused (`program-changed`,
+  `runner-changed`). What that pins is what was invoked; it does not bind
+  the libraries, modules or services those programs load, and it is not a
+  sandbox. `freshness()` compares and never resolves; `outcome_now()` may
+  only ever disagree with the record in the safe direction.
 - **Secrets do not reach a reader.** The record names paths, revisions
   and hashes and never content or an environment *value*; the log — the
   one place bytes bench did not write get through — is scrubbed of
@@ -1333,7 +1351,7 @@ validated, beside the grants, the inputs and the checks:
 
 ```jsonc
 "gates": {
-  "member":      {"checks": ["unit"]},
+  "member":      {"checks": [{"check": "unit", "scope": "fast"}]},
   "integration": {"checks": ["unit"], "review": "bench"},
   "acceptance":  {"checks": ["unit"], "review": "separate-reviewer"},
   "overrides":   {"allow": false}
@@ -1363,11 +1381,37 @@ document with *any* refusal in it gates everything shut rather than open:
 an operator mid-edit is not handed the gate they were in the middle of
 changing.
 
+### A requirement is a check and the coverage it needs
+
+A requirement is written two ways. A bare name — `"unit"` — is the
+**unscoped full run** of that check, and it is what every gate written
+before scopes existed keeps meaning. `{"check": "unit", "scope": "fast"}`
+is that declared scope. A scope the check does not declare, or a
+requirement object with any other key, is refused where the document is
+read (`gate-scope-undeclared`, `gate-invalid`).
+
+Coverage is matched, not assumed. The full run covers every scope of its
+check; a scope covers only itself. So a narrow pass never satisfies a
+broader requirement — `unit backend` passing says nothing about `unit` —
+and a gate that needs both says so by requiring both.
+
+**The newest relevant answer is the gate's answer.** For a full-run
+requirement every run of the check is relevant; for a scope, that scope
+and the full run. A failed, errored or cancelled rerun supersedes an
+earlier pass, and one still running holds the gate `pending`. Passes that
+are not about this head, narrow passes and denied requests (which ran
+nothing) supersede nothing. Ordering is request time, then end time, and
+on a tie a non-pass reads as the newer — never the order files were
+listed in. The ⚖ sheet names each requirement's coverage (`unit · full
+run`, `unit · scope fast`), so a ◫ chip reading a scoped pass beside a
+gate requiring the full run is never left unexplained.
+
 ### Evidence is bound to the commit
 
 A required check is met by one thing only: a record `verify.py` wrote,
 which `verify.outcome_now()` still reads as `passed`, whose source was
-**bound** and **clean**, and whose commit is the commit about to move.
+**bound** and **clean**, whose commit is the commit about to move, and
+which is the newest relevant answer for the requirement's coverage.
 
 The clean-source condition is the one that is easy to miss and hard to
 argue with. A check that ran with uncommitted files under it did not run
@@ -1413,7 +1457,22 @@ give two different reasons for one state:
 - **Merge & clean up asks before it parks the drive** — cheap, and it
   leaves the card, the branch, the worktree and every record untouched —
   **and again immediately before the merge**, for the same reason. That
-  second read is the one that closes the stale-evidence window.
+  second read narrows the stale-evidence window; what closes it is below.
+
+**The merge takes the commit the gate read.** Reading twice is not an
+atomic mutation, so on a gated board the validated head itself flows into
+the merge: the local merge and a phase member's merge take that SHA
+rather than the branch name, and a merge on origin runs `gh pr merge
+--match-head-commit <sha>`, which GitHub refuses if the pull request's
+head has moved. A `gh` that does not offer the flag is refused by name —
+there is no unconditional fallback over a gate. Cleanup is held to the
+same commit: a branch that gained commits after the gate read it keeps
+its worktree and its local branch, and the remote branch is deleted only
+while `ls-remote` shows nothing but what was merged, with a
+`--force-with-lease` on that exact value so a push landing in between
+makes git refuse. A phase member's workspace is cleared under the same
+rule against the commit the phase merged. An ungated board merges and
+cleans up exactly as it always did.
 
 Reading a gate runs nothing: no check, no relaunch, no card moved, no
 branch touched, nothing reaching a remote. Which is also why nothing
@@ -1444,6 +1503,19 @@ interchangeable:
   than none.
 - **`separate-reviewer`** — that approval authored by somebody other than
   the account that proposed the head.
+
+**An outstanding change request blocks, whoever else approved.** Per
+reviewer, the latest formal state stands — `APPROVED`,
+`CHANGES_REQUESTED` or `DISMISSED`, ordered by submission time. A later
+review from the *same* reviewer supersedes their earlier one, and a
+dismissal on GitHub clears it; another reviewer's approval clears nobody,
+and a `COMMENTED` review supersedes nothing. On a stale head the reading
+is conservative in both directions: an approval counts only at the
+commit it was given for, while a change request on an earlier commit
+stays outstanding until it is superseded or dismissed. This is bench's
+reading of the review objects the poll last saw — it is **not** GitHub's
+branch protection, whose required reviews, code owners and dismissal
+settings GitHub applies separately when it merges, and the sheet says so.
 
 **The same-account limitation, said out loud.** GitHub does not accept an
 approval or a change request from the account that opened a pull request.

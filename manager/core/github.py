@@ -700,23 +700,37 @@ def _complete(filename: str, stage: str) -> dict:
         # long as it takes; a push landing in between is a different
         # commit, and this is the read that is actually about the commit
         # the merge will take.
-        gates.require(gates.evaluate(filename, scope, task=task),
-                      "the merge")
+        decision = gates.evaluate(filename, scope, task=task)
+        gates.require(decision, "the merge")
+        # Reading twice narrows the window; it does not close it. So the
+        # commit this reading validated is the one the merge takes — the
+        # local merge by SHA, origin's with `--match-head-commit` — and a
+        # branch that moves after this line is a refusal or a kept branch,
+        # never an unverified commit in the base.
+        pinned = _pinned_head(decision, branch)
         on_origin = config.app_merge_on_origin()
+        merged_tip = pinned or _tip(branch)
+        # (an ungated board pins nothing, and calls them exactly as before)
+        pin = (pinned,) if pinned else ()
         if on_origin:
-            _merge_on_origin(filename, stage, branch)
+            _merge_on_origin(filename, stage, branch, *pin)
         else:
-            _merge_locally(filename, branch)
+            _merge_locally(filename, branch, *pin)
         merged = True
 
         # Nothing uncommitted is thrown away — the same rule a merged
         # phase member's workspace is cleared under. The work is in the
         # base branch by now, so nothing in there is *needed*; that is a
         # judgement about committed files, and an uncommitted change is
-        # exactly what it does not cover.
+        # exactly what it does not cover. Nor is a commit made after the
+        # gate read the head: the branch holding it is kept.
         worktree = config.WORKTREES / stem
         kept = ""
-        if worktree.exists():
+        now = _tip(branch)
+        if pinned and now and now != pinned:
+            kept = (f"{branch} has moved on to {now[:12]} since the gate read "
+                    f"{pinned[:12]}, and those commits were not merged")
+        elif worktree.exists():
             dirty = config.dirty_files(worktree)
             if dirty:
                 kept = (f"{len(dirty)} uncommitted change"
@@ -747,7 +761,7 @@ def _complete(filename: str, stage: str) -> dict:
         PR_STATE.pop(filename, None)
 
         # the merge succeeded, so the members' work is in main too
-        swept = _sweep(filename, task, brought)
+        swept = _sweep(filename, task, brought, merged_tip)
 
     move_task(filename, stage, "done", actor="you")
     state.broadcast({"type": "board"})
@@ -783,7 +797,69 @@ def _brought(task: dict, phase_branch: str) -> list[dict]:
     return brought
 
 
-def _clear_member(member: dict) -> str:
+def _tip(ref: str) -> str:
+    """The commit `ref` names right now, or "" when it names none."""
+    found = _run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"])
+    return found.stdout.strip() if found.returncode == 0 else ""
+
+
+def _pinned_head(decision: dict, branch: str) -> str | None:
+    """The commit a gated merge must take: the one the gate just validated.
+
+    An ungated board merges the branch as it always did, so it pins
+    nothing. A gated (or overridden) decision must name a commit on the
+    very branch this would merge — a gate that read another ref, or no
+    commit at all, has validated nothing this merge could take.
+    """
+    if decision.get("decision") == "ungated":
+        return None
+    head = decision.get("head") or {}
+    commit = head.get("commit")
+    if not commit or head.get("ref") != branch:
+        raise ValueError(
+            f"the gate read {head.get('ref') or 'no branch'} at "
+            f"{str(commit or 'no commit')[:12]}, and this would merge "
+            f"{branch} — nothing was merged, because a gate is only about the "
+            f"commit it read")
+    return commit
+
+
+def _gh_merge_is_conditional() -> bool:
+    """Can this gh make a merge conditional on the head it is told?"""
+    found = _run([config.GH_BIN, "pr", "merge", "--help"], timeout=30)
+    return "--match-head-commit" in (found.stdout + found.stderr)
+
+
+def _delete_remote_branch(rname: str, branch: str, merged: str,
+                          filename: str) -> bool:
+    """Delete `branch` on the remote only while it holds nothing but what
+    was merged — read with `ls-remote`, then deleted with a lease on that
+    exact value, so a push landing in between makes git refuse rather than
+    bench delete a commit nobody merged. Returns whether it was deleted."""
+    listed = _run(["git", "ls-remote", rname, f"refs/heads/{branch}"], timeout=60)
+    words = listed.stdout.split() if listed.returncode == 0 else None
+    if words == []:
+        return True                      # nothing there to delete
+    tip = words[0] if words else ""
+    if not tip or not (tip == merged or _contains(tip, merged)):
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": (f"{branch} kept on {rname} — it holds "
+                        f"{tip[:12] or 'something bench could not read'}, "
+                        f"which is not in what was merged")})
+        return False
+    pushed = _run(["git", "push", f"--force-with-lease=refs/heads/{branch}:{tip}",
+                   rname, "--delete", branch], timeout=60)
+    if pushed.returncode != 0:
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": (f"{branch} kept on {rname} — it moved while bench was "
+                        f"deleting it ({pushed.stderr.strip()[:100]})")})
+        return False
+    return True
+
+
+def _clear_member(member: dict, merged: str | None = None) -> str:
     """One merged member's workspace, cleared exactly as completing an
     ordinary card clears its own: the worktree, the local branch, the
     branch on the remote. Returns what to say when something was kept.
@@ -800,6 +876,11 @@ def _clear_member(member: dict) -> str:
     stem = member["file"][:-3]
     branch = f"task/{stem}"
     worktree = config.WORKTREES / stem
+    # A member branch that gained commits after the phase merged it holds
+    # work the merge did not carry; clearing it would delete that.
+    if merged and _branch_exists(branch) and not _contains(branch, merged):
+        return (f"{stem}: worktree and branch kept — {branch} has moved on "
+                f"since the phase merged it")
     try:
         if worktree.exists():
             dirty = _run(["git", "-C", str(worktree), "status",
@@ -819,7 +900,9 @@ def _clear_member(member: dict) -> str:
             _run(["git", "branch",
                   "-D" if config.app_merge_on_origin() else "-d", branch])
             rname = remote()
-            if rname:
+            if rname and merged:
+                _delete_remote_branch(rname, branch, merged, member["file"])
+            elif rname:
                 _run(["git", "push", rname, "--delete", branch], timeout=60)
     except (subprocess.SubprocessError, OSError) as exc:
         return f"{stem}: workspace kept — {str(exc)[:120]}"
@@ -828,7 +911,8 @@ def _clear_member(member: dict) -> str:
     return ""
 
 
-def _sweep(filename: str, task: dict, brought: list[dict]) -> list[dict]:
+def _sweep(filename: str, task: dict, brought: list[dict],
+           merged: str | None = None) -> list[dict]:
     """Finish the cards the phase finished.
 
     A member stops at `review/` on purpose — `done/` has always meant
@@ -846,7 +930,8 @@ def _sweep(filename: str, task: dict, brought: list[dict]) -> list[dict]:
     members = task.get("members") or []
     if not members:                      # a phase card listing nobody
         return []
-    kept = [note for note in (_clear_member(member) for member in brought) if note]
+    kept = [note for note in (_clear_member(member, merged) for member in brought)
+            if note]
     moved = move_together([(member["file"], member["stage"]) for member in brought
                            if member["stage"] != "done"],
                           "done", f"with phase {task['number'] or filename[:-3]}")
@@ -903,7 +988,7 @@ def _assert_lands_in_the_base(filename: str, target: str) -> None:
         f"itself has merged, retarget the card (⌖ replan) and finish it here")
 
 
-def _merge_locally(filename: str, branch: str) -> None:
+def _merge_locally(filename: str, branch: str, commit: str | None = None) -> None:
     """Single-player: merge into the application's own base branch and push.
 
     The target is the card's recorded PR target, asked here rather than
@@ -911,12 +996,18 @@ def _merge_locally(filename: str, branch: str) -> None:
     different answers. `_complete` has already refused anything but the
     application base (see `_assert_lands_in_the_base`); reading it again
     rather than assuming it is what keeps the branch names below honest.
+
+    `commit`, when a gate validated one, is what is merged — the SHA, not
+    the branch, so a commit landing on the branch after the gate read it
+    is not carried in. The message still names the branch.
     """
     target = plans.pr_base(filename)
     current = _run(["git", "branch", "--show-current"]).stdout.strip()
     if current != target:
         raise ValueError(f"the repo is on '{current}', not {target} — switch first")
-    result = _run(["git", "merge", "--no-edit", branch], timeout=120)
+    result = _run(["git", "merge", "--no-edit", "-m", f"Merge branch '{branch}'",
+                   commit] if commit else
+                  ["git", "merge", "--no-edit", branch], timeout=120)
     if result.returncode != 0:
         _run(["git", "merge", "--abort"])
         detail = (result.stdout.strip() or result.stderr.strip())[-160:]
@@ -933,22 +1024,41 @@ def _merge_locally(filename: str, branch: str) -> None:
                 "kind": "agent", "actor": "board", "file": filename,
                 "summary": f"merged locally but the push failed — push {target} "
                            f"yourself ({push.stderr.strip()[:100]})"})
+        elif commit and not _delete_remote_branch(rname, branch, commit,
+                                                  filename):
+            state.record_board_event({
+                "kind": "agent", "actor": "board", "file": filename,
+                "summary": f"pushed {target} (PR marked merged)"})
         else:
-            _run(["git", "push", rname, "--delete", branch], timeout=60)
+            if not commit:
+                _run(["git", "push", rname, "--delete", branch], timeout=60)
             state.record_board_event({
                 "kind": "agent", "actor": "board", "file": filename,
                 "summary": f"pushed {target} (PR marked merged) and deleted "
                            f"{branch} on {rname}"})
 
 
-def _merge_on_origin(filename: str, stage: str, branch: str) -> None:
+def _merge_on_origin(filename: str, stage: str, branch: str,
+                     commit: str | None = None) -> None:
     """Team mode: the merge commit is made by GitHub, on origin.
 
     Replicas keep converging only while local main advances by
     fast-forward, so the board never creates a merge commit of its own —
     it asks origin for one and lets the sync beat deliver it. Needs merge
     rights on the repo for whoever clicks, which the local path did not.
+
+    `commit`, when a gate validated one, makes the merge conditional:
+    `gh pr merge --match-head-commit` has GitHub refuse it if the pull
+    request's head is anything else by the time it merges. A gh that
+    cannot say that is refused rather than worked around — an
+    unconditional merge over a gate is the race the gate exists to close.
     """
+    if commit and gh_available() and not _gh_merge_is_conditional():
+        raise ValueError(
+            f"this board's gate validated {commit[:12]}, and the installed gh "
+            f"cannot make the merge conditional on it — `gh pr merge --help` "
+            f"offers no --match-head-commit. Nothing was merged: upgrade gh, "
+            f"because bench will not merge unconditionally over a gate")
     task = read_task(config.TASKS / stage / filename, stage)
     url = task.get("pr")
     if not url:
@@ -969,15 +1079,19 @@ def _merge_on_origin(filename: str, stage: str, branch: str) -> None:
             f"{filename}'s PR is open against {actual}, and the card's plan "
             f"targets {target} — nothing was merged. Settle which base is right "
             f"(⌖ replan, or change the PR on GitHub) first")
-    result = _gh_pr("merge", number, "--merge", timeout=180)
+    condition = ["--match-head-commit", commit] if commit else []
+    result = _gh_pr("merge", number, "--merge", *condition, timeout=180)
     if result.returncode != 0:
         detail = (result.stderr.strip() or result.stdout.strip())[-160:]
         raise ValueError(f"origin would not merge the PR — resolve it on GitHub ({detail})")
     state.record_board_event({
         "kind": "agent", "actor": "board", "file": filename,
-        "summary": f"merged {filename}'s PR on origin"})
+        "summary": (f"merged {filename}'s PR on origin"
+                    + (f" at {commit[:12]}" if commit else ""))})
     rname = remote()
-    if rname:
+    if rname and commit:
+        _delete_remote_branch(rname, branch, commit, filename)
+    elif rname:
         _run(["git", "push", rname, "--delete", branch], timeout=60)
     _catch_up_base(filename)
 

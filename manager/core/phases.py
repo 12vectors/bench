@@ -401,19 +401,25 @@ def _worktree(phase: dict) -> Path:
 
 
 def _merge_into_phase(phase: dict, branch: str, what: str,
-                      member: dict | None = None) -> bool:
+                      member: dict | None = None,
+                      commit: str | None = None) -> bool:
     """Merge `branch` into the phase branch — additively, never rebasing,
     never force-pushing. Returns whether anything landed.
+
+    `commit`, when a member gate validated one, is what is merged: the
+    SHA rather than the branch, so a commit landing on the member's branch
+    after its gate was read is not carried into the integration branch.
 
     A conflict is not something to be clever about: abort, leave the branch
     exactly as it was, and halt naming the files that collided.
     """
     worktree = _worktree(phase)
     phase_branch = agents.phase_branch(phase["file"])
-    if _contains(branch, phase_branch):
+    source = commit or branch
+    if _contains(source, phase_branch):
         return False
     result = _git("merge", "--no-ff", "--no-edit", "-m",
-                  f"phase: merge {branch} into {phase_branch}", branch,
+                  f"phase: merge {branch} into {phase_branch}", source,
                   cwd=worktree, timeout=180)
     if result.returncode != 0:
         conflicted = _git("diff", "--name-only", "--diff-filter=U",
@@ -526,7 +532,17 @@ def _merge_member(phase: dict, member: dict) -> None:
                         + (f" ({decision['summary']})"
                            if decision["gated"] else ""))
     if _branch_exists(branch):
-        _merge_into_phase(phase, branch, f"{member['number']}'s branch", member)
+        # The commit the gate just read, when it read one: a member gate
+        # is about that commit, and merging the branch by name would take
+        # whatever it has become since.
+        head = decision.get("head") or {}
+        pinned = head.get("commit") if decision["decision"] != "ungated" else None
+        if pinned and head.get("ref") != branch:
+            raise _Halt(f"{member['number']}'s member gate read "
+                        f"{head.get('ref')}, not {branch} — nothing was merged",
+                        member)
+        _merge_into_phase(phase, branch, f"{member['number']}'s branch", member,
+                          commit=pinned)
         _push_phase(phase)
     _record(phase, f"{member['number']} merged into {phase_branch}")
     _say(phase["file"], f"{phase['file']}: merged {member['number']} into {phase_branch}")

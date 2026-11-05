@@ -36,6 +36,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
 import stat
 import subprocess
 import sys
@@ -393,7 +394,8 @@ class EveryOutcomeIsItsOwn(VerifyCase):
         self.assertEqual(found["outcome"], "passed")
         self.assertEqual(found["reason"], "exit-zero")
         self.assertEqual(found["rc"], 0)
-        self.assertEqual(found["runner"], {"module": "verify", "version": 1})
+        self.assertEqual(found["runner"], {"module": "verify", "version": 1,
+                                           "revision": verify.RUNNER_REVISION})
 
     def test_an_assertion_failure_is_a_test_failure_and_says_rc(self):
         self.declares(self.one_check(run=str(self.executable("fails", FAILS))))
@@ -1203,11 +1205,17 @@ class TheBoardShowsWhatRan(VerifyCase):
             "outcome": outcome, "reason": None, "why": f"{outcome} fixture",
             "requested": time.time(), "started": time.time() - 2,
             "ended": time.time(), "duration": 2.0, "rc": None,
-            "command": "pytest",
+            "command": shlex.join([sys.executable]),
+            "argv": [sys.executable],
             "root": {"policy": "worktree", "path": str(self.tree)},
             "source": dict(self.bound),
+            # the program and runner identities the runner records, so a
+            # fixture's pass is bound the way a real one is (review R2)
+            "program": verify.program_identity(
+                [sys.executable], self.tree, verify._search_path()),
             "prepare": [], "location": "local",
-            "runner": {"module": "verify", "version": 1},
+            "runner": {"module": "verify", "version": 1,
+                       "revision": verify.RUNNER_REVISION},
             "log": str(verify.log_path_of(f"ev:verification@{name}")),
         }
         record.update(extra)

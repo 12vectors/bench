@@ -468,6 +468,10 @@ DIAGNOSTICS = {
         "Declare it in the document's top-level \"checks\" list. A gate "
         "naming nothing is indistinguishable from no gate at all, so it is "
         "refused rather than resolved to an empty requirement."),
+    "gate-scope-undeclared": (
+        "a gate requires a scope its check does not declare",
+        "Declare the scope under the check's \"scopes\", or require the "
+        "check as a bare name — which means its unscoped full run."),
     "gate-review-unknown": (
         "a gate asks for a review policy bench has no word for",
         "Use one of the review policy words. `none` gates nothing, `bench` "
@@ -1534,16 +1538,20 @@ def pin(manifest: dict) -> dict:
 BASELINE = {
     "work": {
         "cwd": "worktree",
-        "writable": [("worktree", "the card's own worktree — the run edits and "
-                                  "commits here and nowhere else")],
+        "writable": [("worktree", "the card's own worktree — where the run is "
+                                  "meant to edit and commit. Intended, not "
+                                  "confined: nothing at the OS level stops a "
+                                  "process writing elsewhere")],
         "publication": {"commit": True, "push": False, "publish": False},
         "deny": ["push", "publish", "force-push", "rebase", "reshape-lifecycle"],
         "why": "implement, check and commit inside the worktree bench prepared",
     },
     "act-pr": {
         "cwd": "worktree",
-        "writable": [("worktree", "the card's own worktree — the run commits "
-                                  "and pushes so the PR updates")],
+        "writable": [("worktree", "the card's own worktree — where the run is "
+                                  "meant to commit and push so the PR updates. "
+                                  "Intended, not confined: nothing at the OS "
+                                  "level stops a process writing elsewhere")],
         "publication": {"commit": True, "push": True, "publish": False},
         "deny": ["publish", "force-push", "rebase", "reshape-lifecycle"],
         "why": "address the review on an open PR and push the result",
@@ -1571,6 +1579,30 @@ DENIALS = {
     "reshape-lifecycle": ("the branch, worktree and base bench planned may not "
                           "be changed by the run"),
 }
+
+
+def _isolation(table: dict) -> dict:
+    """Whether anything holds a run's writes inside its intended scope.
+
+    Read off the same capability table `requires` is checked against, so
+    the summary and the refusal can never disagree: `filesystem-sandbox`
+    enforced by something installed would make the intended scope a
+    boundary, and nothing shipped enforces it.
+    """
+    entry = table.get("filesystem-sandbox") or {}
+    enforced = entry.get("enforcement") == "enforced"
+    return {
+        "enforced": enforced,
+        "by": entry.get("by"),
+        "why": ("filesystem-sandbox is enforced here, so writes are held "
+                "inside the intended scope"
+                if enforced else
+                "not enforced — filesystem-sandbox is not supported by this "
+                "adapter or backend, so the writable scope is where the run "
+                "is meant to write, not a boundary it is held inside. Command "
+                "rules narrow what it may launch; they do not confine a "
+                "process"),
+    }
 
 
 def _requirement_problem(name: str, table: dict) -> str | None:
@@ -1970,9 +2002,15 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
         "verify": verify,
         "denied": denied,
         "publication": publication,
-        "writable": [{"root": word, "path": available.get(word), "why": why}
+        # where the run is *meant* to write — intended scope, said as such,
+        # because the only thing that could make it a boundary is the
+        # `filesystem-sandbox` capability and `isolation` says whether
+        # anything here enforces that
+        "writable": [{"root": word, "path": available.get(word), "why": why,
+                      "enforcement": "intended"}
                      for word, why in baseline["writable"]
                      if available.get(word)],
+        "isolation": _isolation(table),
         "requires": requires,
         "guarantees": {
             "configured": sorted(set(configured)),
@@ -2162,7 +2200,8 @@ def freshness(frozen: dict) -> dict:
 PUBLIC = ("v", "intent", "why", "revision", "policyId", "runner", "source",
           "adapter", "capabilities", "cwd", "roots", "commands", "uiCommands",
           "context", "bundle", "prepare", "verify", "denied", "publication",
-          "writable", "requires", "guarantees", "notes", "blockers",
+          "writable", "isolation", "requires", "guarantees", "notes",
+          "blockers",
           # codes and remedies bench wrote — never anything read off disk
           "diagnostics",
           "task",
@@ -2392,12 +2431,18 @@ REVIEW_POLICIES = {
               "against this exact head. Independent of GitHub: it is bench's "
               "own record of what its reviewer found"),
     "github": ("a formal GitHub review state of APPROVED on the pull "
-               "request at this head. A COMMENTED review is not an approval, "
-               "however it is worded"),
+               "request at this head, and no reviewer's change request still "
+               "outstanding at any commit. A COMMENTED review is not an "
+               "approval, however it is worded. This is bench's reading of "
+               "the review objects, not GitHub's branch protection, which "
+               "GitHub applies separately"),
     "separate-reviewer": ("a formal GitHub APPROVED authored by somebody "
-                          "other than the account that proposed the head. "
-                          "Bench never switches accounts or asks for a second "
-                          "credential to satisfy this — it reports it unmet"),
+                          "other than the account that proposed the head, "
+                          "and no reviewer's change request still "
+                          "outstanding. Bench never switches accounts or asks "
+                          "for a second credential to satisfy this — it "
+                          "reports it unmet. Not GitHub's branch protection, "
+                          "which GitHub applies separately"),
 }
 
 GATE_POLICY_VERSION = 1
@@ -2524,17 +2569,42 @@ def gate_policy(doc: dict | None = None) -> dict:
                             f"the '{scope}' gate's \"checks\" is not a list of "
                             f"declared check names")
                 raw_checks = []
-            seen: set[str] = set()
-            for name in raw_checks or []:
-                name = str(name).strip()
+            seen: set[tuple] = set()
+            for raw_req in raw_checks or []:
+                # A requirement is a check and the coverage it needs. A bare
+                # name is the legacy spelling and means the *unscoped full
+                # run* — a scoped run of the same check is a different
+                # argument list, and a narrow pass must never satisfy a
+                # requirement written as the whole check.
+                wanted_scope = None
+                if isinstance(raw_req, dict):
+                    extra = [k for k in raw_req if k not in ("check", "scope")]
+                    if extra:
+                        trouble.add("gate-invalid",
+                                    f"the '{scope}' gate has a requirement "
+                                    f"declaring {extra[0]!r} — a requirement "
+                                    f"object takes \"check\" and an optional "
+                                    f"\"scope\"")
+                        continue
+                    name = str(raw_req.get("check") or "").strip()
+                    if raw_req.get("scope") is not None:
+                        wanted_scope = str(raw_req["scope"]).strip()
+                else:
+                    name = str(raw_req).strip()
                 if not NAME_RE.match(name):
                     trouble.add("name-invalid",
                                 f"the '{scope}' gate requires the check "
                                 f"{name!r} — names match [a-z0-9][a-z0-9._-]*")
                     continue
-                if name in seen:
+                if wanted_scope is not None and not NAME_RE.match(wanted_scope):
+                    trouble.add("name-invalid",
+                                f"the '{scope}' gate requires the scope "
+                                f"{wanted_scope!r} of '{name}' — names match "
+                                f"[a-z0-9][a-z0-9._-]*")
                     continue
-                seen.add(name)
+                if (name, wanted_scope) in seen:
+                    continue
+                seen.add((name, wanted_scope))
                 found = known.get(name)
                 if found is None:
                     trouble.add(
@@ -2552,7 +2622,22 @@ def gate_policy(doc: dict | None = None) -> dict:
                                 f"'{name}', which cannot be run as one: "
                                 f"{found.get('why')}")
                     continue
-                checks.append(found)
+                if wanted_scope is not None and \
+                        wanted_scope not in (found.get("scopes") or {}):
+                    offered = ", ".join(sorted(found.get("scopes") or {})) \
+                        or "none"
+                    trouble.add(
+                        "gate-scope-undeclared",
+                        f"the '{scope}' gate requires the scope "
+                        f"'{wanted_scope}' of the check '{name}', which that "
+                        f"check does not declare (it offers: {offered}). "
+                        f"Evidence is filed under the scope a run asked for, "
+                        f"so a scope nothing declares could never be met")
+                    continue
+                checks.append({
+                    **found, "gateScope": wanted_scope,
+                    "requirement": (f"{name}:{wanted_scope}"
+                                    if wanted_scope else name)})
             raw_review = entry.get("review")
             if raw_review is not None:
                 word = str(raw_review).strip()
@@ -2587,7 +2672,9 @@ def gate_policy(doc: dict | None = None) -> dict:
 
     revision = _digest(
         str(GATE_POLICY_VERSION), doc.get("revision") or "",
-        json.dumps({s: {"checks": [c["revision"] for c in v["checks"]],
+        json.dumps({s: {"checks": [[c["revision"], c["gateScope"]]
+                                   if c["gateScope"] else c["revision"]
+                                   for c in v["checks"]],
                         "review": v["review"]}
                     for s, v in scopes.items()}, sort_keys=True),
         json.dumps(overrides, sort_keys=True))
@@ -2619,7 +2706,9 @@ def gate_policy_public(found: dict) -> dict:
             "scope": scope, "why": entry["why"], "declared": entry["declared"],
             "gated": entry["gated"], "review": entry["review"],
             "reviewWhy": entry["reviewWhy"],
-            "checks": [{"name": c["name"], "run": c["run"], "root": c["root"],
+            "checks": [{"name": c["name"], "scope": c["gateScope"],
+                        "requirement": c["requirement"],
+                        "run": c["run"], "root": c["root"],
                         "checkId": c["checkId"], "required": c["required"],
                         "help": c["help"]} for c in entry["checks"]],
         } for scope, entry in found["scopes"].items()},

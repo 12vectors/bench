@@ -1691,6 +1691,24 @@ function guaranteeLines(found) {
   ].filter(Boolean);
 }
 
+/* Where a run is meant to write is not where it is held. The intended
+   scope and the OS isolation are two rows, and the second says plainly
+   that nothing enforces it — read from the profile's own `isolation`, or,
+   for a record frozen before that existed, from the capability table. */
+function isolated(p) {
+  if (p.isolation) return !!p.isolation.enforced;
+  const cap = (p.capabilities || {})['filesystem-sandbox'] || {};
+  return cap.enforcement === 'enforced';
+}
+
+function isolationLine(p) {
+  if (p.isolation) return p.isolation.why;
+  return isolated(p)
+    ? 'filesystem-sandbox is enforced here'
+    : 'not enforced — no filesystem-sandbox, so the writable scope is '
+      + 'intended rather than a boundary';
+}
+
 async function profileSheet(task, intent) {
   intent = intent || profileIntentFor(task);
   const wrap = $('#sheetwrap');
@@ -1723,8 +1741,9 @@ async function profileSheet(task, intent) {
 
   const rows = [
     ['Runs in', p.cwd.path || p.cwd.policy, `the ${p.cwd.policy} root`],
-    ['Writable', (p.writable || []).map(w => w.path).join(', ') || 'nothing',
+    ['Intended writes', (p.writable || []).map(w => w.path).join(', ') || 'nothing',
       (p.writable || []).length ? (p.writable[0].why || '') : 'read-only run'],
+    ['OS isolation', isolated(p) ? 'enforced' : 'none enforced', isolationLine(p)],
     ['Policy', p.source.kind === 'legacy'
       ? 'the legacy settings'
       : (p.source.identity || 'a profile document'),
@@ -2205,12 +2224,21 @@ function gateChip(task) {
 /* One requirement, as a row. The reason and the remedy are the point of
    the panel: "it failed", "nobody asked for it" and "a dependency would
    not install" send a reader to three different places. */
+/* A check requirement names the coverage it needs: a bare check is its
+   unscoped full run, and a scope is only itself — so a scoped pass on the
+   ◫ chip beside a gate requiring the full run is never left unexplained. */
+function requirementLabel(r) {
+  if (r.kind === 'review') return `review · ${r.name}`;
+  if (r.kind !== 'check') return r.name;
+  return `${r.check || r.name} · ${r.scope ? 'scope ' + r.scope : 'full run'}`;
+}
+
 function gateRow(r) {
   const cls = { met: 'pass', unmet: 'fail', pending: 'accent',
                 overridden: 'fail' }[r.state] || '';
   const glyph = { met: '✓', unmet: '✕', pending: '◌',
                   overridden: '!' }[r.state] || '·';
-  const name = r.kind === 'review' ? `review · ${r.name}` : r.name;
+  const name = requirementLabel(r);
   return `<div class="check-row ${cls}" title="${esc(r.why || '')}">` +
     `<span class="glyph">${glyph}</span>` +
     `<span class="name">${esc(name)}</span>` +
@@ -2981,7 +3009,8 @@ function cardFor(task) {
   } else if (policy && policy.kind === 'file') {
     chips.push({ label: 'profile', pre: '⚿', cls: '', profile: true,
       title: `The execution profile a launch on this card would ride — what `
-           + `it may run, where it may write, which files it is given and `
+           + `it may run, where it is meant to write (intended scope, no `
+           + `OS isolation), which files it is given and `
            + `what is blocked. From ${policy.identity}.` });
   }
   // what bench's own verification runs found on this card — a
@@ -4294,6 +4323,10 @@ function permissionsPanel(agent) {
     `<div class="check-row"><span class="glyph">↑</span>` +
     `<span class="name">may</span>` +
     `<span class="state">${esc(may.join(', ') || 'change nothing')}</span></div>` +
+    `<div class="check-row ${isolated(found) ? 'pass' : 'none'}"><span class="glyph">·</span>` +
+    `<span class="name">writes</span>` +
+    `<span class="state">${esc(((found.writable || []).map(w => w.root).join(', ')
+      || 'none') + ' intended · OS isolation: ' + isolationLine(found))}</span></div>` +
     `<div class="check-row fail"><span class="glyph">✕</span>` +
     `<span class="name">blocked</span>` +
     `<span class="state">${esc((found.denied || []).map(d => d.capability).join(', ') || 'nothing named')}</span></div>` +

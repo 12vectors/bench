@@ -581,19 +581,26 @@ class EvidenceIsBoundToTheCommit(GateCase):
     def test_a_scope_is_part_of_what_the_evidence_is_about(self):
         """A gate requires the check, and a scoped run of it is a run of
         a different argument list — so it satisfies the gate only if the
-        operator declared the gate against that scope's own check."""
-        self.gated(scopes_for_check={"fast": ["-k", "fast"]})
+        operator declared the gate against that scope (review R1: this
+        case used to read `allowed`, which let a narrow pass stand in for
+        the whole check)."""
+        document = self.gated(scopes_for_check={"fast": ["-k", "fast"]})
         self.commit_in(self.wt)
         self.manifest()
         found = self.ask(scope="fast")
         self.assertEqual(found["outcome"], "passed")
         self.assertEqual(found["scopeArgs"], ["-k", "fast"])
         decision = self.decide()
-        # the record is for the check the gate names, and the gate says
-        # which scope it was — so a reader can see what was actually run
-        self.assertEqual(decision["decision"], "allowed")
+        # the bare name is the unscoped full run, and nothing ran that
+        self.assertEqual(decision["decision"], "blocked")
         row = decision["requirements"][0]
+        self.assertEqual(row["reason"], "not-run")
         self.assertEqual(row["history"][0]["scope"], "fast")
+        # declared against the scope, the same evidence meets it
+        document["gates"]["acceptance"]["checks"] = [
+            {"check": "unit", "scope": "fast"}]
+        self.declares(document)
+        self.assertEqual(self.decide()["decision"], "allowed")
 
     def test_every_unmet_reason_carries_a_remedy_of_its_own(self):
         for reason in gates.REASONS:

@@ -138,6 +138,9 @@ REASONS = {
     "never-asked": "nothing asked for it",
     "source-changed": "the source it ran against has changed since",
     "policy-changed": "the policy or the check's definition has changed since",
+    "program-changed": ("the program the check or a preparation step ran has "
+                        "changed at its path since, or was never identified"),
+    "runner-changed": "bench's own runner has changed since it ran",
     "head-changed": "the pull request's head has moved on since, so the "
                     "result is about an earlier revision",
     "pr-ended": "the pull request has been merged or closed since, so the "
@@ -309,6 +312,132 @@ def source_identity(root: Path) -> dict:
     found["bound"] = True
     found["sourceId"] = f"src:{_digest(*parts)[:16]}"
     return found
+
+
+# ── what the program actually was ──────────────────────────────────────
+#
+# A path and an argument list name a program; they do not pin one. An
+# operator-local executable replaced at the same path is a different check
+# with the same name, so the bytes are part of what a pass is about.
+#
+# Three kinds of file are bound, each because the verdict comes from it:
+# the **executable** as it resolves (on the child's PATH, symlinks
+# followed), the **interpreter** a script's `#!` line names — one level,
+# no further — and every **argument** that is an absolute path to a file
+# outside the execution root, which is how `python3 /opt/ci/check.py`
+# hands an interpreter its real program. A file *inside* the root is the
+# source identity's to bind, and is not repeated here.
+#
+# What it does not bind, said where it is bound: the libraries, modules
+# and services those programs load in turn. That closure is unbounded,
+# and claiming it would be the sandbox nothing here provides.
+
+PROGRAM_WHY = ("the executable, the interpreter its #! line names and any "
+               "absolute file argument outside the root are hashed, so a "
+               "file replaced at the same path is a different program. This "
+               "pins what was invoked; it is not a sandbox, and it does not "
+               "bind the libraries, modules or services those programs load")
+
+# The runner itself is part of what a verdict is about: how an exit status
+# became an outcome is this module's code. Hashed once, at import — the
+# code actually running, whatever the file on disk has become since.
+try:
+    RUNNER_REVISION = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+except OSError:                       # pragma: no cover — we were imported
+    RUNNER_REVISION = None
+
+_HASHED: dict[tuple, str] = {}
+
+
+def _hash_file(path: Path) -> str:
+    """One file's sha256, memoised on everything a replacement changes —
+    the inode, the size, and both times, including the ctime nobody can
+    set — so asking twice costs a stat rather than a read."""
+    info = path.stat()
+    key = (str(path), info.st_dev, info.st_ino, info.st_size,
+           info.st_mtime_ns, info.st_ctime_ns)
+    found = _HASHED.get(key)
+    if found is None:
+        found = hashlib.sha256(path.read_bytes()).hexdigest()
+        if len(_HASHED) > 500:
+            _HASHED.clear()
+        _HASHED[key] = found
+    return found
+
+
+def _shebang(path: Path, search_path: str | None) -> str | None:
+    """The interpreter a script's first line names, resolved — `env`
+    indirection included, since that is how most scripts name one."""
+    try:
+        with path.open("rb") as handle:
+            first = handle.readline(512)
+    except OSError:
+        return None
+    if not first.startswith(b"#!"):
+        return None
+    words = first[2:].decode("utf-8", "replace").split()
+    if not words:
+        return None
+    if Path(words[0]).name == "env":
+        names = [w for w in words[1:] if not w.startswith("-")]
+        return shutil.which(names[0], path=search_path) if names else words[0]
+    return words[0]
+
+
+def program_identity(argv: list[str], root: Path | str,
+                     search_path: str | None) -> dict:
+    """What `argv` would execute, as content. `programId` digests every
+    bound file; an identity that could not be established is `bound:
+    False` and is never reusable as proof that a program is unchanged."""
+    found: dict = {"programId": None, "bound": False, "files": [],
+                   "why": PROGRAM_WHY}
+    if not argv:
+        found["why"] = "there is no program to identify"
+        return found
+    exe = argv[0]
+    resolved = exe if "/" in exe else shutil.which(exe, path=search_path)
+    if not resolved:
+        found["why"] = (f"{exe} does not resolve on the check's PATH, so the "
+                        f"program it would run cannot be identified")
+        return found
+    wanted = [("executable", Path(resolved))]
+    interpreter = _shebang(Path(resolved), search_path)
+    if interpreter:
+        wanted.append(("interpreter", Path(interpreter)))
+    inside = Path(str(root)).resolve()
+    for token in argv[1:]:
+        if not token.startswith("/"):
+            continue
+        candidate = Path(token)
+        try:
+            real = candidate.resolve()
+        except OSError:
+            continue
+        if real.is_file() and not real.is_relative_to(inside):
+            wanted.append(("argument", candidate))
+    parts: list[str] = []
+    for role, path in wanted:
+        try:
+            real = path.resolve(strict=True)
+            digest = _hash_file(real)
+        except (OSError, RuntimeError) as exc:
+            found["why"] = (f"the {role} {path} could not be read "
+                            f"({getattr(exc, 'strerror', None) or exc}), so the "
+                            f"program cannot be identified")
+            found["files"] = []
+            return found
+        found["files"].append({"role": role, "path": str(real),
+                               "sha256": digest})
+        parts += [role, str(real), digest]
+    found["bound"] = True
+    found["programId"] = f"prog:{_digest(*parts)[:16]}"
+    return found
+
+
+def _search_path() -> str | None:
+    """The PATH a check's executable is resolved on — the child's, which
+    `child_env` copies from the board's own environment."""
+    return config.child_env().get("PATH")
 
 
 # ── the environment a check is given ───────────────────────────────────
@@ -825,7 +954,8 @@ def _request_shell(check: str, task: str, scope: str | None, intent: str,
     return {
         "v": VERSION,
         "id": evidence,
-        "runner": {"module": "verify", "version": VERSION},
+        "runner": {"module": "verify", "version": VERSION,
+                   "revision": RUNNER_REVISION},
         "task": task, "stage": stage, "agent": agent, "actor": actor,
         "intent": intent, "check": check, "scope": scope,
         "requested": when,
@@ -974,6 +1104,10 @@ def _execute(record: dict, check: dict, root: Path, owned: bool) -> dict:
                 "they are held inside"),
     }
     record["source"] = source_identity(root)
+    # The bytes behind the argument list, read before the process starts:
+    # a file replaced at the same path afterwards is a different program,
+    # and `freshness` compares this to say so.
+    record["program"] = program_identity(record["argv"], root, env.get("PATH"))
     _store(record)
 
     waited = time.time()
@@ -1037,6 +1171,7 @@ def _prepare(record: dict, check: dict, root: Path, env: dict,
     _store(record)
     for step in steps:
         argv = [step["executable"], *step["argv"]]
+        program = program_identity(argv, root, env.get("PATH"))
         log.write(f"\nbench: preparing — {step['name']}".encode("utf-8"))
         if step["network"]:
             log.write(b" (declared as needing the network; bench enforces no "
@@ -1055,6 +1190,7 @@ def _prepare(record: dict, check: dict, root: Path, env: dict,
             "outcome": "prepared" if result["outcome"] == "passed"
                        else result["outcome"],
             "reason": result["reason"], "why": result["why"],
+            "program": program,
         }
         record["prepare"].append(entry)
         _store(record)
@@ -1341,6 +1477,44 @@ def freshness(record: dict) -> dict:
                       "tracked or untracked files in the checkout have "
                       "changed since it ran, so it did not run against this "
                       "code")
+    # The program and the runner: what was invoked, and the code that read
+    # its exit status. Both fail closed — a record that names no identity
+    # cannot say the program is unchanged, so it is not reused as a pass.
+    runner = (record.get("runner") or {}).get("revision")
+    if not runner or runner != RUNNER_REVISION:
+        moved("runner-changed",
+              "bench's own runner has changed since this ran"
+              if runner else
+              "this was recorded by a runner that named no revision of "
+              "itself, so it cannot be shown to be the runner here now")
+    program = record.get("program")
+    search = _search_path()
+    if not program or not program.get("bound"):
+        moved("program-changed",
+              (program or {}).get("why") if program and not program.get("bound")
+              else "the record names no program identity, so the executable "
+                   "it ran cannot be shown to be unchanged")
+    elif program_identity(list(record.get("argv") or []), root,
+                          search).get("programId") != program.get("programId"):
+        moved("program-changed",
+              "the check's executable, its interpreter or a file it was "
+              "handed has changed since it ran — a program replaced at the "
+              "same path is a different check")
+    for step in record.get("prepare") or []:
+        if step.get("outcome") != "prepared":
+            continue
+        frozen = step.get("program")
+        try:
+            argv = shlex.split(str(step.get("command") or ""))
+        except ValueError:
+            argv = []
+        if not frozen or not frozen.get("bound") or \
+                program_identity(argv, root, search).get("programId") \
+                != frozen.get("programId"):
+            moved("program-changed",
+                  f"the preparation step '{step.get('name')}' runs a program "
+                  f"that has changed, or was never identified, since it ran")
+            break
     frozen_policy = record.get("policyRevision")
     frozen_context = record.get("contextIds")
     if frozen_policy or frozen_context:
@@ -1441,7 +1615,7 @@ PUBLIC = ("v", "id", "runner", "task", "stage", "agent", "actor", "intent",
           "command", "scopeArgs", "root", "source", "env", "outcome",
           "reason", "why", "rc", "started", "ended", "duration", "timeout",
           "checkId", "checkRevision", "required", "help", "queued",
-          "duplicate",
+          "duplicate", "program",
           # present only on a diagnosis's own record: which doctor fixture
           # it ran at. A reader must be able to tell a doctor's run from a
           # card's, and an absent key is a card's.
