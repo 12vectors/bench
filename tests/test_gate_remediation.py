@@ -678,9 +678,35 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         """Nothing moved, so the base fast-forwards to precisely the commit
         the gate read, and the workspace is cleaned up as before."""
         self.verified()
-        self.github.complete_task(CARD, "review")
+        result = self.github.complete_task(CARD, "review")
         self.assertEqual(self.tip("main"), self.head)
         self.assertFalse(self.wt.exists())
+        self.assertEqual(result, {"merged": True, "swept": []},
+                         "a whole merge reports exactly what it always did")
+        self.assertEqual(self.stage_of(CARD), "done")
+
+    def test_a_head_that_moved_past_the_gate_is_a_partial_completion(self):
+        """The validated commit merged; the newer one did not. The card is
+        not Done — its newest work is not in the base — so it stays where
+        it was, and the result and the ticker say the completion is
+        partial rather than leaving `merged: true` to read as accepted."""
+        self.verified()
+        late: list[str] = []
+        self.at_the_boundary(
+            lambda: late.append(self.commit_in(self.wt, "a late commit\n")))
+        result = self.github.complete_task(CARD, "review")
+        self.assertTrue(result["merged"], "the gated commit did merge")
+        self.assertTrue(result.get("partial"), result)
+        self.assertEqual(result.get("stage"), "review")
+        self.assertEqual(result["unmerged"]["merged"], self.head)
+        self.assertEqual(result["unmerged"]["tip"], late[0])
+        self.assertEqual(self.stage_of(CARD), "review",
+                         "newer unmerged work was marked Done")
+        text = (self.tasks / "review" / CARD).read_text(encoding="utf-8")
+        self.assertIn("**Status:** Review", text)
+        said = " ".join(e["summary"] for e in __import__("state").BOARD_EVENTS)
+        self.assertIn("partly completed", said)
+        self.assertIn("stays in review/", said)
 
     def test_a_merge_commit_still_names_the_branch(self):
         from tests.test_integration_gates import git
@@ -815,10 +841,13 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         late: list[str] = []
         self.at_the_boundary(
             lambda: late.append(self.commit_in(self.wt, "local only\n")))
-        self.github.complete_task(CARD, "review")
+        result = self.github.complete_task(CARD, "review")
         self.assertEqual(self.tip(f"task/{CARD[:-3]}"), late[0],
                          "-D removed a commit nobody merged")
         self.assertTrue(self.wt.is_dir())
+        self.assertTrue(result.get("partial"), result)
+        self.assertEqual(self.stage_of(CARD), "review",
+                         "origin merged the gated head, not the local commit")
 
     # — a phase member's workspace —
 
@@ -902,11 +931,43 @@ class APhaseMergesTheGatedCommit(unittest.TestCase):
 
         self.addCleanup(setattr, phases, "_say", original)
         phases._say = lands
-        phases._merge_member(cards[PHASE], member)
+        whole = phases._merge_member(cards[PHASE], member)
         self.assertTrue(late)
         self.assertTrue(phases._contains(verified, PHASE_BRANCH))
         self.assertFalse(phases._contains(late[0], PHASE_BRANCH),
                          "a commit the member gate never read was merged")
+        # and nothing says the member is in when only part of it is: not
+        # the log (which the lane reads as "merged in"), not the ticker,
+        # and not the pass, which must not go on to the next member
+        self.assertFalse(whole, "a partial merge read as the whole member")
+        number = member["number"]
+        log = phases.log_entries(c.text(PHASE))
+        self.assertFalse([e for e in log if e.startswith(f"{number} merged into ")],
+                         log)
+        self.assertTrue([e for e in log if e.startswith(f"{number} partly merged")],
+                        log)
+        said = c.summaries()
+        self.assertFalse([s for s in said if f"merged {number} into" in s], said)
+        self.assertTrue([s for s in said if "moved on" in s and late[0][:12] in s],
+                        said)
+
+    def test_a_whole_member_merge_still_says_merged(self):
+        import phases
+        from tests.test_phase_runs import ONE, PHASE
+        c = self.case
+        c.start()
+        found = verify.request(check="unit", task=ONE,
+                               stage=c.stage_of(ONE), actor="you")
+        self.assertEqual(found["outcome"], "passed", found["why"])
+        verify.forget_cached()
+        gates.forget_cached()
+        cards = phases._cards()[0]
+        member = next(m for m in phases._snapshot(cards[PHASE], cards)["members"]
+                      if m["file"] == ONE)
+        self.assertTrue(phases._merge_member(cards[PHASE], member))
+        log = phases.log_entries(c.text(PHASE))
+        self.assertTrue([e for e in log
+                         if e.startswith(f"{member['number']} merged into ")], log)
 
 
 class IntendedWritesAreNotAnOsBoundary(GateCase):

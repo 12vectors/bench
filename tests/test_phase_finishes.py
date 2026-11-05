@@ -317,6 +317,45 @@ class AFinishedPhase(PhaseEnding):
         self.assertFalse((config.WORKTREES / ONE[:-3]).exists(),
                          "the clean one still went")
 
+    def test_a_member_that_moved_on_during_the_merge_is_not_swept_to_done(self):
+        """A member branch gaining a commit between the phase's merge being
+        chosen and its workspace being cleared holds work `main` did not
+        get. Its workspace is kept — and so is its card, in review/: Done
+        would claim the newer work merged."""
+        self.run_phase()
+        two = config.WORKTREES / TWO[:-3]
+        original = config.app_merge_on_origin
+        late: list[str] = []
+
+        def boundary():
+            if not late:
+                (two / "late.txt").write_text("after the phase\n", encoding="utf-8")
+                git(two, "add", "-A")
+                git(two, "commit", "-q", "-m", "late")
+                late.append(git(two, "rev-parse", "HEAD").stdout.strip())
+            return original()
+
+        self.addCleanup(setattr, config, "app_merge_on_origin", original)
+        config.app_merge_on_origin = boundary
+        state.BOARD_EVENTS.clear()
+
+        result = self.complete()
+
+        self.assertTrue(late, "the boundary fired")
+        self.assertEqual(self.stage_of(ONE), "done", "the whole member still went")
+        self.assertEqual(self.stage_of(TWO), "review",
+                         "a member with unmerged commits was marked Done")
+        self.assertIn("**Status:** Review", self.text(TWO))
+        self.assertEqual(result["swept"], [ONE])
+        self.assertEqual(result.get("kept"), [TWO], result)
+        self.assertNotIn("partial", result, "the phase card's own merge was whole")
+        self.assertTrue(self.branch_exists(f"task/{TWO[:-3]}"))
+        self.assertTrue(two.is_dir())
+        ending = self.ending()
+        self.assertIn("1 card merged into it went to done/", ending)
+        self.assertIn("moved on", ending)
+        self.assertIn("stays in review/", ending)
+
     def test_a_phase_that_merged_nothing_says_so_and_moves_nobody(self):
         """The card is still the person's to drag to done/ — what it must
         not do is claim an ending for work that never landed."""
@@ -505,6 +544,17 @@ class TheSheetSaysSo(unittest.TestCase):
 
     def test_the_toast_names_how_many_went(self):
         self.assertIn("const went = (data.swept || []).length;", self.html)
+
+    def test_merged_alone_does_not_claim_done(self):
+        """`merged: true` means a commit landed, not that the card is
+        accepted: a partial completion is told as one, before the toast
+        that says the card went to done/ can be reached."""
+        at = self.html.index("$('#sh-ship')")
+        body = self.html[at:self.html.index("await loadState();", at)]
+        self.assertIn("data.partial", body)
+        self.assertLess(body.index("data.partial"),
+                        body.index("merged and cleaned up"))
+        self.assertIn("partly completed", body)
 
 
 if __name__ == "__main__":

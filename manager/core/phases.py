@@ -512,7 +512,10 @@ def _launch(phase: dict, member: dict) -> None:
                         f"{member['title']}")
 
 
-def _merge_member(phase: dict, member: dict) -> None:
+def _merge_member(phase: dict, member: dict) -> bool:
+    """Merge one green member into the phase branch. Returns whether the
+    whole member is in: False when its branch moved on past the commit the
+    gate read, which merged that commit and nothing after it."""
     branch = f"task/{member['file'][:-3]}"
     phase_branch = agents.phase_branch(phase["file"])
     # Asked again, here, with the branch about to be merged: `_snapshot`
@@ -544,8 +547,22 @@ def _merge_member(phase: dict, member: dict) -> None:
         _merge_into_phase(phase, branch, f"{member['number']}'s branch", member,
                           commit=pinned)
         _push_phase(phase)
+        # A push landing after the gate read the head merged that commit
+        # and not the newer ones. The log line the lane reads as "merged
+        # in" would claim the rest, so it is not written; the next pass
+        # reads the member as unmerged and asks its gate about the new tip.
+        tip = _git("rev-parse", "--verify", "--quiet", branch).stdout.strip()
+        if pinned and tip and tip != pinned and not _contains(branch, phase_branch):
+            _record(phase, f"{member['number']} partly merged into {phase_branch} "
+                           f"at {pinned[:12]}")
+            _say(phase["file"], f"{phase['file']}: merged {pinned[:12]} of "
+                                f"{member['number']}'s branch into {phase_branch}; "
+                                f"{branch} has moved on to {tip[:12]}, which is "
+                                f"not merged — the next pass asks its gate again")
+            return False
     _record(phase, f"{member['number']} merged into {phase_branch}")
     _say(phase["file"], f"{phase['file']}: merged {member['number']} into {phase_branch}")
+    return True
 
 
 def _finish(phase: dict) -> None:
@@ -587,7 +604,8 @@ def _do_pass(phase: dict, snapshot: dict, by_number: dict[str, dict]) -> list[st
         if member["state"] == "halt":
             raise _Halt(member["why"], member)
         if member["state"] == "ready":
-            _merge_member(phase, member)
+            if not _merge_member(phase, member):
+                return []                        # partly in: read it again
             member["state"] = "merged"
             phase = _reread(phase) or phase      # the log rewrote the card
             continue

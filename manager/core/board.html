@@ -2270,7 +2270,9 @@ function gatePanel(decision) {
         `${head.commit ? String(head.commit).slice(0, 12) : 'not resolved'} `
         + `(${head.ref || 'unknown branch'})`,
         head.commit ? '' : 'fail') +
-    (decision.gated
+    // A policy that does not resolve is not `gated` either, and it is not
+    // absent: its refusal is the requirement, and it is unmet.
+    (decision.gated || (decision.blockers || []).length
       ? (decision.requirements || []).map(gateRow).join('')
       : row('·', 'no requirement',
             'this board declares no gate for this, so nothing is required '
@@ -2376,8 +2378,11 @@ async function gateSheet(task) {
       : '') +
     `<p class="why">What this board requires comes from ` +
     `${esc(policy.source && policy.source.identity || 'the legacy settings')}` +
-    `. ${policy.configured ? '' : 'No gate is configured, so nothing here is ' +
-      'required and nothing is proved. '}` +
+    `. ${(policy.blockers || []).length
+      ? 'That policy does not resolve, so every gate here is blocked until it ' +
+        'is fixed — that is not the same as having no gate. '
+      : policy.configured ? '' : 'No gate is configured, so nothing here is ' +
+        'required and nothing is proved. '}` +
     `Evidence and these records are local to this board.</p>` +
     (policy.blockers || []).map(b =>
       `<div class="check-row fail"><span class="glyph">✕</span>` +
@@ -3492,9 +3497,22 @@ function completeSheet(task, from) {
     if (!res.ok) { toast(data.error || 'completion failed — the card stays', true); }
     else {
       const went = (data.swept || []).length;
-      toast(data.merged ? `${task.file} merged and cleaned up` +
-              (went ? ` — ${went} card${went === 1 ? '' : 's'} went to done/ with it` : '')
-            : `${task.file} moved to done`);
+      const kept = (data.kept || []).length;
+      /* `merged` says a commit landed, not that the card is accepted: a
+         branch that moved past the gated commit leaves the card where it
+         was, and the toast must not say done/ about it. */
+      if (data.partial) {
+        toast(`${task.file} partly completed — ${String(data.unmerged.merged).slice(0, 12)} ` +
+              `merged, but ${data.unmerged.branch} has moved on and is not merged; ` +
+              `the card stays in ${data.stage}/`, true);
+      } else {
+        toast((data.merged ? `${task.file} merged and cleaned up` +
+                (went ? ` — ${went} card${went === 1 ? '' : 's'} went to done/ with it` : '')
+              : `${task.file} moved to done`) +
+              (kept ? ` · ${kept} card${kept === 1 ? '' : 's'} moved on since the phase ` +
+                      `merged ${kept === 1 ? 'it' : 'them'} and stay${kept === 1 ? 's' : ''} put` : ''),
+              kept > 0);
+      }
     }
     await loadState();
   });

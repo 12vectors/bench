@@ -684,6 +684,8 @@ def _complete(filename: str, stage: str) -> dict:
 
     merged = False
     swept: list[dict] = []
+    held: list[dict] = []
+    unmerged: dict | None = None
     if _branch_exists(branch):
         # The same target the whole card has used, validated once more
         # before the one irreversible step: a target that has disappeared
@@ -730,6 +732,9 @@ def _complete(filename: str, stage: str) -> dict:
         if pinned and now and now != pinned:
             kept = (f"{branch} has moved on to {now[:12]} since the gate read "
                     f"{pinned[:12]}, and those commits were not merged")
+            # What merged is a historical head; the card's newest work is
+            # not in the base, so the card is not Done (see below).
+            unmerged = {"branch": branch, "merged": pinned, "tip": now}
         elif worktree.exists():
             dirty = config.dirty_files(worktree)
             if dirty:
@@ -758,14 +763,34 @@ def _complete(filename: str, stage: str) -> dict:
             state.record_board_event({
                 "kind": "agent", "actor": "board", "file": filename,
                 "summary": f"cleaned up: worktree and local branch for {stem} removed"})
-        PR_STATE.pop(filename, None)
+        if not unmerged:
+            # a branch with unmerged commits still has a PR worth watching
+            PR_STATE.pop(filename, None)
 
         # the merge succeeded, so the members' work is in main too
-        swept = _sweep(filename, task, brought, merged_tip)
+        swept, held = _sweep(filename, task, brought, merged_tip)
 
+    result = {"merged": merged, "swept": [card["file"] for card in swept]}
+    if held:
+        result["kept"] = [card["file"] for card in held]
+    if unmerged:
+        # `done/` means the card's work is in the base, and its newest
+        # commits are not: the gated commit merged, the card stays where
+        # it was, and the completion says it was partial rather than
+        # leaving `merged` to be read as accepted.
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": (f"{filename} partly completed — merged "
+                        f"{unmerged['merged'][:12]}, the commit the gate read; "
+                        f"{unmerged['branch']} has moved on to "
+                        f"{unmerged['tip'][:12]}, which is not merged, so the "
+                        f"card stays in {stage}/")})
+        state.broadcast({"type": "board"})
+        result.update({"partial": True, "stage": stage, "unmerged": unmerged})
+        return result
     move_task(filename, stage, "done", actor="you")
     state.broadcast({"type": "board"})
-    return {"merged": merged, "swept": [card["file"] for card in swept]}
+    return result
 
 
 def _brought(task: dict, phase_branch: str) -> list[dict]:
@@ -911,8 +936,15 @@ def _clear_member(member: dict, merged: str | None = None) -> str:
     return ""
 
 
+def _moved_on(member: dict, merged: str | None) -> bool:
+    """Has this member's branch gained commits the phase's merge did not
+    carry? Then its newest work is not in the base, whatever its card says."""
+    branch = f"task/{member['file'][:-3]}"
+    return bool(merged and _branch_exists(branch) and not _contains(branch, merged))
+
+
 def _sweep(filename: str, task: dict, brought: list[dict],
-           merged: str | None = None) -> list[dict]:
+           merged: str | None = None) -> tuple[list[dict], list[dict]]:
     """Finish the cards the phase finished.
 
     A member stops at `review/` on purpose — `done/` has always meant
@@ -926,22 +958,34 @@ def _sweep(filename: str, task: dict, brought: list[dict],
     the phase and how many went with it, rather than five moves scrolling
     past. What was *not* swept is named too — a phase that left cards
     behind is a phase somebody still has to look at.
+
+    A member whose branch moved on after the phase merged it is the one
+    exception among those brought: only part of its work is in the base,
+    so its workspace is kept (`_clear_member`) and so is its card, where it
+    is. Returns (moved, held) — the cards that went to done/, and those.
     """
     members = task.get("members") or []
     if not members:                      # a phase card listing nobody
-        return []
+        return [], []
+    held = [member for member in brought if _moved_on(member, merged)]
+    whole = [member for member in brought if member not in held]
     kept = [note for note in (_clear_member(member, merged) for member in brought)
             if note]
-    moved = move_together([(member["file"], member["stage"]) for member in brought
+    moved = move_together([(member["file"], member["stage"]) for member in whole
                            if member["stage"] != "done"],
                           "done", f"with phase {task['number'] or filename[:-3]}")
     left = len(members) - len(brought)
     name = (member_entry(task["number"], task["title"]) if task["number"]
             else task["title"])
     summary = f"phase {name} finished — "
-    summary += (f"{_cards(len(brought))} merged into it went to done/, worktrees "
-                f"and branches cleaned up" if brought
-                else "it had merged nothing, so no card went with it")
+    summary += (f"{_cards(len(whole))} merged into it went to done/, worktrees "
+                f"and branches cleaned up" if whole
+                else "it had merged nothing, so no card went with it"
+                if not held else "no card went to done/ with it")
+    for member in held:
+        summary += (f" · {member['file'][:-3]} has moved on since the phase "
+                    f"merged it, so only part of it is merged and it stays in "
+                    f"{member['stage']}/")
     if left:
         summary += (f" · {_cards(left)} it never merged "
                     + ("stays where it is" if left == 1 else "stay where they are"))
@@ -951,7 +995,7 @@ def _sweep(filename: str, task: dict, brought: list[dict],
         state.record_board_event({
             "kind": "agent", "actor": "board", "file": filename,
             "summary": f"{note} — nothing uncommitted is thrown away"})
-    return moved
+    return moved, held
 
 
 def _cards(count: int) -> str:
