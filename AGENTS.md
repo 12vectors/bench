@@ -44,7 +44,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports → taskfiles → plans / profiles → reviews → verify → gates → doctor → events / github / drive / sync → agents → phases → watch / httpd → board.py
+config → state / reports → taskfiles → plans / profiles → reviews → verify → gates → doctor → events / github / drive / sync → settings → agents → phases → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -81,6 +81,10 @@ config → state / reports → taskfiles → plans / profiles → reviews → ve
 - `github.py` — PR opening, Copilot requests, review/CI polling
 - `drive.py` — runs the project driver, tracks the one live drive
 - `sync.py` — origin/main as the shared board: push on move, pull on a beat
+- `settings.py` — how this board is configured, assembled from the
+  modules above and nowhere else: it names the states so nothing reads as
+  a pass, compares two resolutions so a change can be previewed, and
+  writes one file. No second parser, by construction
 - `agents.py` — headless work/review jobs, launched through the adapter
 - `phases.py` — a phase run: its own branch, its cards merged into it one
   at a time. A beat, not an agent; it holds no registry of where a phase is
@@ -641,7 +645,7 @@ an agent is working; a blinking caret means output is still arriving. Night
 theme by default; the header button switches to Daylight. Tokens live at the
 top of `manager/board.html`.
 
-The board has four views (header switcher):
+The board has five views (header switcher):
 
 - **Board** — the kanban, live, and only what you are holding yourself: a
   phase's members are drawn elsewhere, with the phase card standing for
@@ -682,6 +686,17 @@ The board has four views (header switcher):
   merges on a report") — whether a launch of this kind would even start
   on this board and what is not proved about that (see "Readiness:
   asking before paying") — and per-file diff stats from its worktree.
+- **Settings** — how this board is configured, what has actually been
+  verified, and what to configure next: the checks, the acceptance
+  requirements, the review configuration, the overrides, the intended
+  agent access against the isolation actually enforced, the diagnostic
+  coverage, the installation and every setting's provenance — each with a
+  state word rather than a colour, so "no gate configured" can never read
+  as a passed gate. It is also the one place a policy is *edited*, in four
+  separate steps of which only the last writes (see "Settings: reading the
+  configuration, and changing it safely"). The switcher carries a mark
+  when this board's execution policy refuses something, for the reason
+  the Phases mark exists: the thing it refuses is the next launch.
 
 The header carries one more chip, and unlike the sync and phase chips it
 is always there: **⚕ readiness** opens the execution inspector. Those two
