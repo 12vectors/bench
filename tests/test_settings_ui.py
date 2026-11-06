@@ -341,6 +341,62 @@ class LayoutIsOneColumn(Source):
                                     f"{name} draws a control with no name")
 
 
+class TheBrowserCaseIsWellFormed(unittest.TestCase):
+    """The measurable half lives in a real browser, and this is the half of
+    *that* a stdlib suite can check: the file compiles, it declares the
+    sizes the card names, and no two screenshots share a path — a second
+    shot to the same name overwrites the first one's evidence."""
+
+    CASE = REPO / "verify" / "browser_cases" / "case_settings.py"
+
+    def test_the_case_compiles(self):
+        compile(self.CASE.read_text(encoding="utf-8"), str(self.CASE), "exec")
+
+    def test_it_measures_the_narrow_layout_and_the_zoomed_viewport(self):
+        src = self.CASE.read_text(encoding="utf-8")
+        widths = eval(re.search(r"WIDTHS = (\[.*?\])", src, re.S).group(1))
+        self.assertIn((390, 780), widths, "390px is not measured")
+        self.assertIn((640, 400), widths,
+                      "the 200% zoom CSS viewport is not measured")
+        self.assertIn("bv.layout_problems", src)
+        self.assertIn("horizontal overflow", src)
+
+    def test_every_section_is_visited(self):
+        src = self.CASE.read_text(encoding="utf-8")
+        sections = eval(re.search(r"SECTIONS = (\[.*?\])", src, re.S).group(1))
+        self.assertEqual(["overview", "verification", "acceptance", "access",
+                          "diagnostics", "installation", "policy"], sections)
+
+    def test_no_two_screenshots_share_a_path(self):
+        from collections import Counter
+        src = self.CASE.read_text(encoding="utf-8")
+        widths = eval(re.search(r"WIDTHS = (\[.*?\])", src, re.S).group(1))
+        names = []
+        for name in re.findall(r'shot\(f?"([^"]+)"\)', src):
+            if "{w}x{h}" in name and "sections" in name:
+                names += [name.replace("{w}x{h}", f"{w}x{h}")
+                          for w, h in widths]
+            elif "{w}x{h}" in name:
+                names += [name.replace("{w}x{h}", f"{w}x{h}")
+                          for w, h in [(1440, 900), (390, 780)]]
+            else:
+                names.append(name)
+        self.assertGreater(len(names), 10)
+        self.assertEqual([], [n for n, c in Counter(names).items() if c > 1])
+
+    def test_it_reads_real_backend_state_rather_than_page_strings(self):
+        """The card's own requirement: the configured state is read back
+        from the backend after an apply, not from the draft the page still
+        holds."""
+        src = self.CASE.read_text(encoding="utf-8")
+        # the apply is confirmed by what the *backend* then resolves, not
+        # by the draft the page still holds
+        self.assertIn(".policy.kind === 'file'", src)
+        self.assertIn("S.draft === null", src)
+        self.assertIn("S.doctor.report.ran", src)
+        self.assertIn("S.settings.page.history", src)
+
+
 class TheIntentsAndScopesComeFromTheServer(Source):
     def test_the_editor_offers_exactly_the_launch_intents_bench_has(self):
         body = self.body("settingsPolicy")
