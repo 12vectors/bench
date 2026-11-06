@@ -2341,7 +2341,8 @@ function verifyChip(task) {
   return {
     label: `${v.passed}/${v.checks}`, pre: '◫', glyph, cls: tint, verify: true,
     title: `Verification bench ran itself: ${word}. ${v.passed} of ${v.checks} `
-         + `named check${v.checks === 1 ? '' : 's'} passed. Evidence is `
+         + `named check${v.checks === 1 ? '' : 's'} passed`
+         + `${v.notRun ? `; ${v.notRun} not run yet` : ''}. Evidence is `
          + `${v.location === 'local' ? 'local to this board' : v.location}. `
          + `Opening this runs nothing.`,
   };
