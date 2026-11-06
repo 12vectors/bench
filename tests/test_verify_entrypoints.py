@@ -1054,10 +1054,12 @@ class RemotePlaywright(Fixture):
         src = (VERIFY / "browser_cases" / "case_board.py").read_text()
         body = src[src.index("def test_the_readiness_inspector"):]
         body = body[:body.index("\nclass ")]
-        self.assertLess(body.index('shot("readiness-open")'),
-                        body.index("self.assertEqual([], bv.layout_problems(m))"))
-        # the assertion itself is still there, unweakened
-        self.assertIn("self.assertEqual([], bv.layout_problems(m))", body)
+        self.assertLess(body.index('shot(f"readiness-open-{w}x{h}")'),
+                        body.index('self.assertEqual([], bv.layout_problems(m), f"at {size}")'))
+        # the assertion itself is still there, unweakened, at every size
+        # including the zoomed one
+        self.assertIn('self.assertEqual([], bv.layout_problems(m), f"at {size}")', body)
+        self.assertIn("for w, h in WIDTHS + [ZOOMED]:", body)
 
 
 if __name__ == "__main__":

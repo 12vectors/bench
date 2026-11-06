@@ -608,10 +608,14 @@
   #sheetwrap.open{display:flex}
   .sheet{
     width:min(460px,92vw);display:flex;flex-direction:column;gap:12px;
+    /* the wrapper is the viewport less its 18vh top padding: a long sheet
+       (readiness) scrolls inside itself rather than running off the bottom */
+    max-height:calc(82vh - 16px);overflow-y:auto;overscroll-behavior:contain;
     padding:18px;background:var(--canvas);border:1px solid var(--border);
     border-radius:12px;box-shadow:0 30px 60px -30px rgba(0,0,0,.8);
     animation:rise .16s ease;
   }
+  .sheet > *{flex-shrink:0}
   .sheet .stitle{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:600}
   .sheet .stitle .mono{font-size:11.5px;font-weight:400;color:var(--dim)}
   .sheet p{margin:0;font-size:12.5px;line-height:1.55;color:var(--muted)}

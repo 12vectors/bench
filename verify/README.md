@@ -10,7 +10,7 @@ checkout it is pointed at** and leaves a record of what it ran:
 | `verify/backend` | `python3 -m unittest discover -s tests -t . -v` — the whole suite, as CI runs it; **any skipped test is a setup error** | `node` on PATH and markdown-it-py, or their tests skip and the check refuses |
 | `verify/docs` | `site/build.py --out <artifacts>/site`, then requires a written file for every route in `site/pages.json` | markdown-it-py (`site/requirements.txt`) |
 | `verify/preflight` | `docs`: the docs interpreter imports markdown-it; `backend`: `node --version` runs on the check's PATH and markdown-it imports; `browser`: a Chromium starts with its sandbox. A profile's required `prepare` step | as the check it prepares |
-| `verify/browser` | the board UI in a sandboxed Chromium against a real disposable bench backend: stages and cards drawn, layout at 1440/1280/1024 px, the four views, keyboard reach and focus ring on the readiness inspector, accessible names; screenshots required | a Chromium that can start its sandbox |
+| `verify/browser` | the board UI in a sandboxed Chromium against a real disposable bench backend: stages and cards drawn, layout at 1440/1280/1024 px, the four views, keyboard reach and focus ring on the readiness inspector, the readiness dialog inside the viewport at 1440×900, 1280×800, 1024×768 and 640×400, accessible names; screenshots required | a Chromium that can start its sandbox |
 
 The plain command still works and still needs nothing:
 `python3 -m unittest discover -s tests`. `verify/backend` wraps it; it
@@ -258,18 +258,33 @@ environment.
 Chromium cannot start its sandbox on this host, and the check refuses
 rather than disabling it. That blocker stands for the local path.
 
-**Remote path (`PW_WS`): all five cases ran, 4 passed and 1 failed — the
-check is red.** Run at `4b1d3fb` against the official 1.62.0 image under
-the rules above, with renderer user namespaces seen differing from the
-container's while a page was open. The board, layout, views and
-accessibility cases held. The readiness case failed on a measurement of
-the product: the readiness dialog extends outside the 800 px viewport
-(`y=145, height=10385`). That is a defect in the board's own CSS, outside
-this directory's scope; the assertion stands, and `verify/browser` reads
-`failed` until the board is fixed. The `readiness-open` screenshot is
-taken before that measurement is asserted, and a failed run keeps its
-screenshot list and hashes and the backend log in its artifacts. **No
-gate requires the browser check**, and none should until it passes.
+**Remote path (`PW_WS`), historical red: 4 of 5 at `4b1d3fb`.** Run
+against the official 1.62.0 image under the rules above, with renderer
+user namespaces seen differing from the container's while a page was
+open. The board, layout, views and accessibility cases held. The
+readiness case failed on a measurement of the product: the readiness
+dialog extended outside the 800 px viewport (`y=145, height=10385`) — a
+defect in the board's own CSS. That record is kept as it was: it is the
+evidence the assertion catches the defect, and the run that produced it
+kept its screenshot list and hashes and the backend log in its artifacts
+(the `readiness-open` screenshot is taken before the measurement is
+asserted).
+
+**Remote path, since the fix: 5 of 5 on an uncommitted working tree.**
+With the board's CSS change and the extended readiness case still
+uncommitted, the same remote path ran all five cases and every one held.
+The readiness case now measures the dialog at four viewport sizes —
+1440×900, 1280×800, 1024×768 and 640×400. The last is a **CSS viewport
+approximation** of 1280×800 at 200% zoom (the same CSS pixels), **not**
+actual browser zoom: no zoom level was set, and device-pixel-ratio and
+zoom-specific rendering were not exercised.
+
+Those runs were against a dirty working tree, so their records carry a
+digest of uncommitted changes rather than a commit a gate could bind to;
+they show the fix holds, and they are **not acceptance evidence**. That
+is a clean run of the committed change, which has not happened yet and
+is not claimed here. **No gate requires the browser check**, and nothing
+here activates one or stands for an audit of it.
 
 Separately, a
 small independent smoke (outside this directory) ran Playwright's Firefox
