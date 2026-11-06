@@ -1992,6 +1992,9 @@ function paintDoctorSheet(report, intent) {
           'is never implied by another stage.' : ''}</span></div>`;
     }).join('');
 
+  // the sheet scrolls inside itself and this replaces it: a stage run from
+  // near its end, or an intent tab, must not drop the reader at the top
+  markScroll('v:sheet:doctor', wrap.querySelector('.sheet'));
   wrap.innerHTML =
     `<div class="sheet" role="dialog" aria-label="execution readiness inspector">` +
     head(report.summary.failed ? `${report.summary.failed} to look at`
@@ -2022,6 +2025,7 @@ function paintDoctorSheet(report, intent) {
     `<pre>${esc(doctorDetail(report))}</pre></details>` +
     `<div class="sbtns"><button id="sh-nodoc">Close<small>Nothing was ` +
     `started, and nothing was pinned.</small></button></div></div>`;
+  restoreScroll('v:sheet:doctor', wrap.querySelector('.sheet'));
   $('#sh-nodoc').addEventListener('click', closeSheet);
   wrap.querySelectorAll('[data-doctorintent]').forEach(btn =>
     btn.addEventListener('click', () =>
@@ -3438,7 +3442,12 @@ async function rawMove(file, from, to) {
   return true;
 }
 
-function closeSheet() { $('#sheetwrap').classList.remove('open'); $('#sheetwrap').innerHTML = ''; }
+function closeSheet() {
+  $('#sheetwrap').classList.remove('open');
+  $('#sheetwrap').innerHTML = '';
+  // a place belongs to the sheet that was open: the next one opens at the top
+  delete scrollMarks['v:sheet:doctor'];
+}
 
 function completeSheet(task, from) {
   const d = S.state.drive;

@@ -316,6 +316,26 @@ class RenderersKeepPlaceTests(unittest.TestCase):
         self.assertEqual(body.count("restoreScroll(key, body);"), 2,
                          "both of renderDrawer()'s painted paths must restore")
 
+    def test_the_readiness_sheet_keeps_its_place_across_a_repaint(self):
+        """The readiness sheet scrolls inside itself, and it is repainted
+        in place — on an intent tab, and after an active stage whose
+        button sits near its end. The new `.sheet` node starts at 0, so
+        without the pair a person who ran a stage lands back at the top."""
+        body = self.body("paintDoctorSheet")
+        self.order(body,
+                   "markScroll('v:sheet:doctor', wrap.querySelector('.sheet'))",
+                   "wrap.innerHTML =",
+                   "restoreScroll('v:sheet:doctor', wrap.querySelector('.sheet'))")
+
+    def test_a_fresh_readiness_sheet_opens_at_the_top(self):
+        """The mark belongs to one open sheet. Closing it forgets the
+        place, and opening it paints a loading sheet first, so the mark
+        a first paint takes is that sheet's 0 — a new reading is a fresh
+        look, not the last visit's offset."""
+        self.assertIn("delete scrollMarks['v:sheet:doctor']", self.body("closeSheet"))
+        body = lift(r"^async function doctorSheet\(.*?\n\}\n", "doctorSheet()")
+        self.order(body, "wrap.innerHTML =", "paintDoctorSheet(report, mode)")
+
     # ── the two behaviours that were already right ──
 
     def test_the_log_still_sticks_to_the_bottom(self):
@@ -380,6 +400,9 @@ class RenderersKeepPlaceTests(unittest.TestCase):
             ".c-strip": "markScroll('v:cstrip'",     # #cstrip, the stage strip
             "#logbody": "markScroll('log'",
             "#drawerbody": "markScroll(S.drawerKey",
+            # a sheet scrolls inside itself; the readiness sheet is the one
+            # long enough to need it and the one repainted in place
+            ".sheet": "markScroll('v:sheet:doctor'",
         }
         declared = set()
         for sel, rule in re.findall(r"^  ([#.][\w-]+)\{([^}]*)\}", self.html, re.M):
