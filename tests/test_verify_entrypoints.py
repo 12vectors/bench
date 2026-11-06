@@ -63,19 +63,145 @@ class Fixture(unittest.TestCase):
     def write_test(self, name, body):
         (self.root / "tests" / name).write_text(textwrap.dedent(body))
 
-    def run_entry(self, entry, *args, cwd=None, env_extra=None, root_arg=True):
+    def run_entry(self, entry, *args, cwd=None, env_extra=None, root_arg=True,
+                  dirs=True):
+        # this suite may itself be run by bench, which sets BENCH_VERIFY
         env = {k: v for k, v in os.environ.items()
-               if not k.startswith("BENCH_VERIFY_")}
+               if not k.startswith("BENCH_VERIFY")}
         env.update(env_extra or {})
         argv = [sys.executable, str(VERIFY / entry)]
         if root_arg:
             argv += ["--root", str(self.root)]
-        argv += ["--artifacts", str(self.artifacts), "--scratch", str(self.base), *args]
+        if dirs:
+            argv += ["--artifacts", str(self.artifacts), "--scratch", str(self.base)]
+        argv += list(args)
         r = subprocess.run(argv, cwd=str(cwd or self.base), env=env,
                            capture_output=True, text=True, timeout=300)
-        result = self.artifacts / "result.json"
-        data = json.loads(result.read_text()) if result.is_file() else None
+        # every run gets a fresh directory under --artifacts, and says which
+        lines = [ln[len("record: "):] for ln in r.stdout.splitlines()
+                 if ln.startswith("record: ")]
+        result = Path(lines[-1]) if lines else None
+        data = json.loads(result.read_text()) if result and result.is_file() else None
         return r, data
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    # a zombie is dead for this purpose; it only waits to be reaped
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().split()[2] != "Z"
+    except OSError:
+        return False
+
+
+class Freshness(Fixture):
+    """A record is about this run. Nothing a previous run left behind, and
+    nothing the run itself changed in the candidate, may stand in a pass."""
+
+    def test_each_run_gets_its_own_artifacts_directory(self):
+        self.write_test("test_a.py", """
+            import unittest
+            class T(unittest.TestCase):
+                def test_ok(self): pass
+        """)
+        self.commit()
+        r1, one = self.run_entry("backend")
+        r2, two = self.run_entry("backend")
+        self.assertEqual(PASS, r2.returncode, r2.stdout + r2.stderr)
+        self.assertNotEqual(one["artifacts"]["dir"], two["artifacts"]["dir"])
+        for d in (one, two):
+            self.assertTrue(Path(d["artifacts"]["dir"]).is_relative_to(self.artifacts.resolve()))
+
+    def test_a_docs_build_cannot_pass_on_a_previous_runs_output(self):
+        (self.root / "site").mkdir()
+        (self.root / "site" / "pages.json").write_text(json.dumps({"pages": [{"path": "/"}]}))
+        build = self.root / "site" / "build.py"
+        build.write_text("import sys\nfrom pathlib import Path\n"
+                         "o = Path(sys.argv[sys.argv.index('--out') + 1])\n"
+                         "o.mkdir(parents=True, exist_ok=True)\n"
+                         "(o / 'index.html').write_text('old build')\n")
+        self.commit()
+        r, data = self.run_entry("docs", "--require-module", "json")
+        self.assertEqual(PASS, r.returncode, r.stdout + r.stderr)
+        build.write_text("# deliberately writes nothing and exits zero\n")
+        self.commit()
+        r, data = self.run_entry("docs", "--require-module", "json")
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("wrote no output", data["reason"])
+
+    def test_a_suite_that_changes_the_candidate_is_not_a_pass(self):
+        (self.root / "tracked.txt").write_text("before\n")
+        self.write_test("test_a.py", """
+            import unittest
+            from pathlib import Path
+            class T(unittest.TestCase):
+                def test_rewrites(self):
+                    Path("tracked.txt").write_text("after\\n")
+        """)
+        self.commit()
+        r, data = self.run_entry("backend")
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("changed during the run", data["reason"])
+        self.assertNotEqual(data["candidate"]["sourceDigest"],
+                            data["candidate"]["after"]["sourceDigest"])
+
+    def test_a_clean_run_reads_the_same_source_afterwards(self):
+        self.write_test("test_a.py", """
+            import unittest
+            class T(unittest.TestCase):
+                def test_ok(self): pass
+        """)
+        self.commit()
+        r, data = self.run_entry("backend")
+        self.assertEqual(PASS, r.returncode, r.stdout + r.stderr)
+        self.assertEqual(data["candidate"]["sourceDigest"],
+                         data["candidate"]["after"]["sourceDigest"])
+        self.assertFalse(data["candidate"]["after"]["dirty"])
+
+    def test_artifacts_inside_the_candidate_are_refused(self):
+        self.write_test("test_a.py", """
+            import unittest
+            class T(unittest.TestCase):
+                def test_ok(self): pass
+        """)
+        self.commit()
+        self.artifacts = self.root / "out"
+        r, data = self.run_entry("backend")
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertFalse((self.root / "out").exists())
+
+    def test_an_unusable_scratch_writes_no_record_into_the_working_directory(self):
+        blocker = self.base / "a-file"
+        blocker.write_text("not a directory\n")
+        self.commit()
+        env = {k: v for k, v in os.environ.items() if not k.startswith("BENCH_VERIFY_")}
+        r = subprocess.run([sys.executable, str(VERIFY / "backend"),
+                            "--scratch", str(blocker / "sub")],
+                           cwd=str(self.root), env=env, capture_output=True, text=True,
+                           timeout=60)
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertFalse((self.root / "result.json").exists())
+        self.assertIn("no record was written", r.stderr)
+
+    def test_stale_or_empty_artifacts_are_refused(self):
+        since = benchverify.time.time()
+        old = self.base / "old.png"
+        old.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 2000)
+        os.utime(old, (since - 60, since - 60))
+        empty = self.base / "empty.json"
+        empty.write_text("")
+        fresh = self.base / "fresh.json"
+        fresh.write_text("{}")
+        with self.assertRaises(benchverify.SetupError) as c:
+            benchverify.require_fresh([old], since)
+        self.assertIn("before this run", str(c.exception))
+        with self.assertRaises(benchverify.SetupError):
+            benchverify.require_fresh([empty], since)
+        hashes = benchverify.require_fresh([fresh], since)
+        self.assertEqual(benchverify.sha256_file(fresh), hashes[str(fresh)]["sha256"])
 
 
 class CandidateRoot(Fixture):
@@ -196,6 +322,97 @@ class Backend(Fixture):
         self.assertEqual(FAIL, r.returncode, r.stdout + r.stderr)
         self.assertEqual("failed", data["outcome"])
         self.assertEqual(1, data["tests"]["failures"])
+
+    def test_an_error_inside_a_test_is_still_a_failure(self):
+        self.write_test("test_a.py", """
+            import unittest
+            class T(unittest.TestCase):
+                def test_raises(self): raise RuntimeError("product bug")
+        """)
+        self.commit()
+        r, data = self.run_entry("backend")
+        self.assertEqual(FAIL, r.returncode, r.stdout + r.stderr)
+        self.assertEqual(1, data["tests"]["errors"])
+
+    def test_a_test_module_that_cannot_import_is_a_setup_error(self):
+        self.write_test("test_a.py", """
+            import unittest
+            class T(unittest.TestCase):
+                def test_ok(self): pass
+        """)
+        self.write_test("test_b.py", """
+            import bench_verify_no_such_dependency
+            import unittest
+            class T(unittest.TestCase):
+                def test_never(self): pass
+        """)
+        self.commit()
+        r, data = self.run_entry("backend")
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("tests.test_b", data["reason"])
+        self.assertIn("bench_verify_no_such_dependency", data["reason"])
+        self.assertEqual(["tests.test_b"], data["tests"]["importFailures"])
+
+    def test_a_suite_whose_every_test_skipped_is_a_setup_error(self):
+        self.write_test("test_a.py", """
+            import unittest
+            class T(unittest.TestCase):
+                @unittest.skip("needs a service")
+                def test_one(self): pass
+        """)
+        self.commit()
+        r, data = self.run_entry("backend")
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("skipped", data["reason"])
+
+    def test_one_skip_among_passes_is_a_setup_error_naming_why(self):
+        # what an installed service PATH without node produced: "OK
+        # (skipped=121)", read as a pass of the whole suite
+        self.write_test("test_a.py", """
+            import unittest
+            class T(unittest.TestCase):
+                def test_ran(self): pass
+                def test_needs_node(self):
+                    raise unittest.SkipTest("node not available — chip behaviour unrun")
+        """)
+        self.commit()
+        r, data = self.run_entry("backend")
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("1 of 2 tests skipped", data["reason"])
+        self.assertIn("node not available", data["reason"])
+        self.assertEqual(1, data["tests"]["skipped"])
+        self.assertIn("node not available — chip behaviour unrun",
+                      data["tests"]["skipReasons"][0])
+        log = Path(data["artifacts"]["log"]).read_text()
+        self.assertIn("skipped 'node not available", log)
+        # the plain command a project already runs is unchanged by this
+        plain = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s",
+                                "tests", "-t", "."], cwd=self.root,
+                               capture_output=True, text=True)
+        self.assertEqual(0, plain.returncode, plain.stderr)
+        self.assertIn("skipped=1", plain.stderr)
+
+    def test_a_timeout_takes_the_suites_descendants_down_too(self):
+        pidfile = self.base / "grandchild.pid"
+        self.write_test("test_a.py", f"""
+            import subprocess, time, unittest
+            from pathlib import Path
+            class T(unittest.TestCase):
+                def test_hangs(self):
+                    p = subprocess.Popen(["sleep", "300"])
+                    Path({str(pidfile)!r}).write_text(str(p.pid))
+                    time.sleep(300)
+        """)
+        self.commit()
+        r, data = self.run_entry("backend", "--timeout", "3")
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("did not finish within 3", data["reason"])
+        pid = int(pidfile.read_text())
+        self.addCleanup(lambda: alive(pid) and os.kill(pid, 9))
+        deadline = benchverify.time.time() + 5
+        while alive(pid) and benchverify.time.time() < deadline:
+            benchverify.time.sleep(0.1)
+        self.assertFalse(alive(pid), f"grandchild {pid} outlived the timeout")
 
     def test_zero_discovered_tests_is_a_setup_error(self):
         self.commit()
@@ -340,6 +557,24 @@ class BrowserSetup(Fixture):
         self.assertEqual("setup-error", data["outcome"])
         self.assertIn("no-such-browser", data["reason"])
 
+    def fake_browser(self, message):
+        exe = self.base / "fake-chrome"
+        exe.write_text(f"#!/bin/sh\necho {message!r} >&2\nexit 1\n")
+        exe.chmod(0o755)
+        return exe
+
+    def test_a_browser_that_will_not_start_still_records_its_exact_argv(self):
+        exe = self.fake_browser("FATAL: No usable sandbox!")
+        self.root = REPO       # a real core, so the disposable backend serves
+        r, data = self.run_entry("browser", "--cases", str(VERIFY / "browser_cases"),
+                                 env_extra={"BENCH_VERIFY_BROWSER": str(exe)})
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("sandbox", data["reason"])
+        argv = data["browser"]["argv"]
+        self.assertEqual(str(exe), argv[0])
+        self.assertIn("--remote-debugging-pipe", argv)
+        self.assertFalse([a for a in argv if "sandbox" in a], argv)
+
     def test_zero_discovered_browser_tests_is_a_setup_error(self):
         empty = self.base / "empty-cases"
         empty.mkdir()
@@ -347,6 +582,132 @@ class BrowserSetup(Fixture):
             "BENCH_VERIFY_BROWSER": sys.executable})
         self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
         self.assertIn("zero", data["reason"])
+
+
+class Preflight(Fixture):
+    """The preparation step a profile declares before a check, so bench
+    itself records `prepare-failed` — not a test failure — when the
+    machine cannot run the check at all."""
+
+    def test_an_importable_dependency_prepares(self):
+        self.commit()
+        r, data = self.run_entry("preflight", "docs", "--require-module", "json")
+        self.assertEqual(PASS, r.returncode, r.stdout + r.stderr)
+        self.assertTrue(data["dependency"]["importable"])
+
+    def test_a_missing_dependency_does_not_prepare(self):
+        self.commit()
+        r, data = self.run_entry("preflight", "docs", "--require-module",
+                                 "bench_verify_no_such_module")
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("bench_verify_no_such_module", data["reason"])
+
+    def test_a_browser_that_cannot_start_its_sandbox_does_not_prepare(self):
+        exe = self.base / "fake-chrome"
+        exe.write_text("#!/bin/sh\necho 'No usable sandbox!' >&2\nexit 1\n")
+        exe.chmod(0o755)
+        self.commit()
+        r, data = self.run_entry("preflight", "browser",
+                                 env_extra={"BENCH_VERIFY_BROWSER": str(exe)})
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("sandbox", data["reason"])
+        self.assertEqual(str(exe), data["browser"]["argv"][0])
+
+    def test_no_browser_does_not_prepare(self):
+        self.commit()
+        r, data = self.run_entry("preflight", "browser", env_extra={
+            "BENCH_VERIFY_BROWSER": str(self.base / "absent")})
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+
+    def fake_node(self):
+        node = self.base / "fake-node"
+        node.write_text("#!/bin/sh\necho v22.0.0-fixture\n")
+        node.chmod(0o755)
+        return node
+
+    def test_backend_prepares_when_node_runs_and_the_module_imports(self):
+        self.commit()
+        r, data = self.run_entry("preflight", "backend", "--node", str(self.fake_node()),
+                                 "--require-module", "json")
+        self.assertEqual(PASS, r.returncode, r.stdout + r.stderr)
+        self.assertEqual("v22.0.0-fixture", data["node"]["version"])
+        self.assertTrue(data["dependency"]["importable"])
+
+    def test_backend_without_node_does_not_prepare(self):
+        self.commit()
+        r, data = self.run_entry("preflight", "backend", "--node",
+                                 "bench-verify-no-such-node", "--require-module", "json")
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("node", data["reason"])
+        self.assertIn("skip", data["reason"])
+
+    def test_backend_without_markdown_it_does_not_prepare(self):
+        self.commit()
+        r, data = self.run_entry("preflight", "backend", "--node", str(self.fake_node()),
+                                 "--require-module", "bench_verify_no_such_module")
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("bench_verify_no_such_module", data["reason"])
+
+
+class UnderBench(Fixture):
+    """Run by bench's own verify.request: BENCH_VERIFY names the evidence,
+    HOME is the per-root home bench keeps, TMPDIR is a directory bench
+    removes the moment the check ends. A record that lived under TMPDIR
+    was a path printed about a file that no longer existed."""
+
+    def bench_env(self, evidence="ev-verification-0123456789ab"):
+        home, tmp = self.base / "bench-home", self.base / "bench-tmp"
+        home.mkdir()
+        tmp.mkdir()
+        return home, tmp, {"BENCH_VERIFY": evidence, "HOME": str(home),
+                           "TMPDIR": str(tmp)}
+
+    def passing(self):
+        self.write_test("test_a.py", """
+            import unittest
+            class T(unittest.TestCase):
+                def test_ok(self): pass
+        """)
+        self.commit()
+
+    def test_the_record_and_log_outlive_bench_removing_tmpdir(self):
+        self.passing()
+        home, tmp, env = self.bench_env()
+        r, data = self.run_entry("backend", env_extra=env, dirs=False)
+        self.assertEqual(PASS, r.returncode, r.stdout + r.stderr)
+        shutil.rmtree(tmp)  # what verify._cleanup does after the check
+        record = Path(r.stdout.split("record: ")[-1].strip())
+        self.assertTrue(record.is_file(), record)
+        self.assertTrue(record.is_relative_to(
+            home / "bench-verification-artifacts" / "ev-verification-0123456789ab"))
+        data = json.loads(record.read_text())
+        self.assertTrue(Path(data["artifacts"]["log"]).is_file())
+        self.assertEqual("bench-home", data["artifacts"]["kept"])
+        self.assertEqual("ev-verification-0123456789ab", data["artifacts"]["evidence"])
+
+    def test_explicit_artifacts_beat_the_bench_home(self):
+        self.passing()
+        home, tmp, env = self.bench_env()
+        r, data = self.run_entry("backend", "--artifacts", str(self.artifacts),
+                                 env_extra=env, dirs=False)
+        self.assertEqual(PASS, r.returncode, r.stdout + r.stderr)
+        self.assertTrue(Path(data["artifacts"]["dir"]).is_relative_to(self.artifacts.resolve()))
+        self.assertFalse((home / "bench-verification-artifacts").exists())
+
+    def test_an_evidence_id_cannot_climb_out_of_the_home(self):
+        self.passing()
+        home, tmp, env = self.bench_env(evidence="../../escape")
+        r, data = self.run_entry("backend", env_extra=env, dirs=False)
+        self.assertEqual(PASS, r.returncode, r.stdout + r.stderr)
+        self.assertTrue(Path(data["artifacts"]["dir"]).resolve().is_relative_to(
+            (home / "bench-verification-artifacts").resolve()))
+
+    def test_outside_bench_the_default_is_unchanged(self):
+        self.passing()
+        r, data = self.run_entry("backend", "--scratch", str(self.base), dirs=False)
+        self.assertEqual(PASS, r.returncode, r.stdout + r.stderr)
+        self.assertEqual(Path(data["work"]) / "artifacts", Path(data["artifacts"]["dir"]))
+        self.assertEqual("work-directory", data["artifacts"]["kept"])
 
 
 if __name__ == "__main__":

@@ -10,7 +10,10 @@ working without this file — with the child environment built rather than
 inherited (see benchverify.py) and the whole log kept.
 
 Exit 0 when tests ran and all passed, 1 when any failed or errored, 2 when
-nothing trustworthy ran: not a bench checkout, or zero tests discovered.
+nothing trustworthy ran: not a bench checkout, zero tests discovered, a
+test module that would not import, or any test skipped. The plain command
+still reads skips as OK; this one does not, because the suite's skips are
+all missing dependencies (node, markdown-it-py) or platform tools.
 """
 
 import re
@@ -28,21 +31,52 @@ TIMEOUT = 3600
 
 def body(run: bv.Run) -> str:
     argv = [run.args.python, "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"]
-    code, out = run.run_logged(argv, "unittest.log", TIMEOUT)
+    code, out = run.run_logged(argv, "unittest.log", run.timeout(TIMEOUT))
     ran = re.search(r"^Ran (\d+) tests? in ", out, re.M)
     summary = re.search(r"^(OK|FAILED)( \((.*)\))?\s*$", out, re.M)
     counts = dict(re.findall(r"(failures|errors|skipped|expected failures|"
                              r"unexpected successes)=(\d+)",
                              summary.group(3) or "")) if summary else {}
+    # A module unittest could not import is reported as one errored
+    # "test" — but nothing in it ran, so it is coverage missing rather
+    # than a product failure (usually a dependency this machine lacks).
+    unimportable = sorted(set(re.findall(
+        r"^(?:ImportError: )?Failed to import test module: (\S+)", out, re.M)))
+    causes = sorted(set(re.findall(r"^(\w*(?:Import|NotFound)Error: .+)$", out, re.M))
+                    - {f"ImportError: Failed to import test module: {m}"
+                       for m in unimportable})
     run.record["tests"] = {
         "ran": int(ran.group(1)) if ran else None,
-        **{k.replace(" ", "_"): int(v) for k, v in counts.items()}}
+        **{k.replace(" ", "_"): int(v) for k, v in counts.items()},
+        "importFailures": unimportable}
     if not ran:
         raise bv.SetupError(f"unittest printed no 'Ran N tests' line (exit {code}); "
                             f"the suite did not run — see {run.record['artifacts']['log']}")
     n = int(ran.group(1))
     if n == 0:
         raise bv.SetupError("zero tests discovered under tests/ — nothing was checked")
+    if unimportable:
+        raise bv.SetupError(
+            f"{len(unimportable)} test module(s) could not be imported, so their "
+            f"tests never ran: {', '.join(unimportable)}"
+            + (f" ({'; '.join(causes)[:600]})" if causes else "")
+            + f" — install what they need, or fix the import; see "
+              f"{run.record['artifacts']['log']}")
+    # Strict where the plain command is lenient: a skip is a test that
+    # did not run, and in this suite every skip is a dependency or a
+    # platform fact this machine lacks (node, markdown-it-py, lsof).
+    # "OK (skipped=121)" is not a pass of the whole suite.
+    skipped = int(counts.get("skipped", 0))
+    reasons = sorted(set(re.findall(r"^(.+? \.\.\. skipped .+)$", out, re.M)))
+    run.record["tests"]["skipReasons"] = reasons
+    if skipped:
+        why = sorted({m.group(1) for r in reasons
+                      if (m := re.search(r"skipped (.+)$", r))})
+        raise bv.SetupError(
+            f"{skipped} of {n} tests skipped, so they never ran: "
+            + "; ".join(why)[:600]
+            + f" — provide what they need (verify/preflight backend says what is "
+              f"missing); see {run.record['artifacts']['log']}")
     if code != 0 or not summary or summary.group(1) != "OK":
         raise bv.CheckFailed(f"{n} tests ran, unittest exit {code}: "
                              f"{summary.group(0).strip() if summary else 'no summary'}")

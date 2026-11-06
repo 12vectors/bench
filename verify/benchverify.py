@@ -45,6 +45,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import select
 import shutil
 import signal
@@ -215,12 +216,16 @@ class Run:
         p.add_argument("--root", help="candidate checkout (default: "
                        "BENCH_VERIFY_ROOT, else the working directory)")
         p.add_argument("--artifacts", help="where the record, logs and "
-                       "outputs go (default: BENCH_VERIFY_ARTIFACTS, else "
-                       "inside the work directory)")
+                       "outputs go (default: BENCH_VERIFY_ARTIFACTS; under "
+                       "bench's runner, HOME/bench-verification-artifacts/"
+                       "<evidence id>; else inside the work directory)")
         p.add_argument("--scratch", help="where the work directory is made "
                        "(default: BENCH_VERIFY_SCRATCH, else TMPDIR)")
         p.add_argument("--python", default=sys.executable,
                        help="interpreter the product runs under (default: this one)")
+        p.add_argument("--timeout", type=float, default=None,
+                       help="seconds the product's own process may take "
+                       "(default: the check's)")
         self.needs = needs
         self.record: dict = {"v": 1, "runner": {"version": VERSION, "check": check}}
 
@@ -228,18 +233,49 @@ class Run:
         self.args = self.parser.parse_args(argv)
         return self.args
 
+    def timeout(self, default: float) -> float:
+        return self.args.timeout if self.args.timeout else default
+
     def start(self) -> None:
         a = self.args
         self.started = time.time()
+        self.root, selected = resolve_root(a.root)
         scratch = Path(a.scratch or os.environ.get("BENCH_VERIFY_SCRATCH")
                        or tempfile.gettempdir()).expanduser().resolve()
-        scratch.mkdir(parents=True, exist_ok=True)
-        self.work = Path(tempfile.mkdtemp(prefix=f"bench-verify-{self.check}-",
-                                          dir=scratch))
         art = a.artifacts or os.environ.get("BENCH_VERIFY_ARTIFACTS")
-        self.artifacts = Path(art).expanduser().resolve() if art else self.work / "artifacts"
-        self.artifacts.mkdir(parents=True, exist_ok=True)
-        self.root, selected = resolve_root(a.root)
+        art_base = Path(art).expanduser().resolve() if art else None
+        kept, evidence = ("explicit" if art_base else "work-directory"), None
+        if art_base is None and os.environ.get("BENCH_VERIFY") and os.environ.get("HOME"):
+            # Under bench's own runner TMPDIR is removed the moment the
+            # check ends, taking a work directory made there with it; the
+            # HOME bench gives a root is the one directory it keeps.
+            evidence = re.sub(r"[^A-Za-z0-9._-]", "_", os.environ["BENCH_VERIFY"]).lstrip(".") \
+                or "unnamed"
+            art_base = (Path(os.environ["HOME"]).expanduser().resolve()
+                        / "bench-verification-artifacts" / evidence)
+            kept = "bench-home"
+        # Anything written inside the candidate would change the source
+        # the record is about, and a generated file there reads as drift.
+        for label, where in (("--scratch", scratch), ("--artifacts", art_base)):
+            if where is not None and where.is_relative_to(self.root):
+                raise SetupError(f"{label} {where} is inside the candidate {self.root}; "
+                                 f"a run writes nothing into the checkout it judges")
+        try:
+            scratch.mkdir(parents=True, exist_ok=True)
+            self.work = Path(tempfile.mkdtemp(prefix=f"bench-verify-{self.check}-",
+                                              dir=scratch))
+            if art_base is None:
+                self.artifacts = self.work / "artifacts"
+                self.artifacts.mkdir()
+            else:
+                # A directory of this run's own, made fresh: an output a
+                # previous run left behind can never be read as this one's.
+                art_base.mkdir(parents=True, exist_ok=True)
+                stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                self.artifacts = Path(tempfile.mkdtemp(prefix=f"{self.check}-{stamp}-",
+                                                       dir=art_base))
+        except OSError as exc:
+            raise SetupError(f"no usable work or artifacts directory: {exc}")
         self.record.update({
             "check": self.check, "started": now(),
             "runner": {**self.record["runner"], "path": str(RUNNER),
@@ -248,7 +284,8 @@ class Run:
                        "python": sys.executable, "pythonVersion": platform.python_version(),
                        "platform": platform.platform()},
             "candidate": {"root": str(self.root), "selectedBy": selected},
-            "work": str(self.work), "artifacts": {}})
+            "work": str(self.work),
+            "artifacts": {"dir": str(self.artifacts), "kept": kept, "evidence": evidence}})
         require_paths(self.root, self.needs)
         self.record["candidate"].update(candidate_identity(self.root))
         self.record["candidate"]["selectedBy"] = selected
@@ -261,13 +298,32 @@ class Run:
         self.record["artifacts"][name] = str(path)
         return path
 
+    def drift(self) -> str | None:
+        """The source read again after the run. A record names one
+        revision; a suite that changed the checkout under it ran against
+        something else, and that is not a pass of the revision named."""
+        before = self.record.get("candidate", {}).get("sourceDigest")
+        if before is None:
+            return None
+        after = candidate_identity(self.root)
+        self.record["candidate"]["after"] = {k: after.get(k) for k in
+                                             ("revision", "dirty", "sourceDigest")}
+        if after["sourceDigest"] != before:
+            return (f"the candidate changed during the run (source digest "
+                    f"{before[:16]}… before, {after['sourceDigest'][:16]}… after); "
+                    f"the result is not about the recorded revision")
+        return None
+
     def finish(self, status: int, reason: str | None) -> int:
         self.record.update({"outcome": OUTCOME[status], "exitStatus": status,
                             "reason": reason, "finished": now(),
                             "seconds": round(time.time() - getattr(self, "started", time.time()), 2)})
-        out = (getattr(self, "artifacts", None) or Path.cwd()) / "result.json"
-        out.write_text(json.dumps(self.record, indent=2, sort_keys=True) + "\n",
-                       encoding="utf-8")
+        art = getattr(self, "artifacts", None)
+        out = None
+        if art is not None:
+            out = art / "result.json"
+            out.write_text(json.dumps(self.record, indent=2, sort_keys=True) + "\n",
+                           encoding="utf-8")
         tmp = getattr(self, "work", None)
         if tmp is not None:
             shutil.rmtree(tmp / "tmp", ignore_errors=True)
@@ -279,17 +335,32 @@ class Run:
              "revision": c.get("revision"), "dirty": c.get("dirty"),
              "sourceDigest": c.get("sourceDigest"), "tests": self.record.get("tests")},
             sort_keys=True))
-        print(f"record: {out}")
+        if out is not None:
+            print(f"record: {out}")
+        else:
+            # Nowhere of its own to write: the record goes to stderr and
+            # nothing is written into the working directory, which is
+            # usually the very checkout being judged.
+            print("bench-verify: no record was written (no usable artifacts "
+                  "directory); the record follows\n"
+                  + json.dumps(self.record, sort_keys=True), file=sys.stderr)
         return status
 
     def main(self, body, argv=None) -> int:
         self.parse(argv)
         try:
             self.start()
-            detail = body(self)
+            try:
+                detail = body(self)
+            except CheckFailed as exc:
+                drifted = self.drift()
+                if drifted:
+                    raise SetupError(f"{drifted}; it also reported: {exc}")
+                return self.finish(FAILED, str(exc))
+            drifted = self.drift()
+            if drifted:
+                raise SetupError(drifted)
             return self.finish(PASSED, detail)
-        except CheckFailed as exc:
-            return self.finish(FAILED, str(exc))
         except SetupError as exc:
             return self.finish(SETUP_ERROR, str(exc))
         except Exception as exc:  # noqa: BLE001 — the harness itself broke
@@ -304,16 +375,88 @@ class Run:
             fh.write(f"# bench-verify {self.check} {now()}\n# cwd {cwd}\n# argv {argv}\n"
                      f"# candidate revision {self.record['candidate'].get('revision')}\n")
             fh.flush()
-            try:
-                r = subprocess.run(argv, cwd=str(cwd), env=self.env, stdout=fh,
-                                   stderr=subprocess.STDOUT, timeout=timeout)
-                code = r.returncode
-            except subprocess.TimeoutExpired:
-                fh.write(f"\n# timed out after {timeout}s\n")
+            code, timed_out = run_group(argv, cwd, self.env, fh, timeout)
+            if timed_out:
+                fh.write(f"\n# timed out after {timeout}s; process group killed\n")
                 raise SetupError(f"{argv[1:]} did not finish within {timeout}s (log {log})")
             fh.write(f"\n# exit {code}\n")
         self.record["command"]["exitStatus"] = code
         return code, log.read_text(encoding="utf-8", errors="replace")
+
+
+def _kill_group(pgid: int, sig: int) -> None:
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def run_group(argv: list[str], cwd: Path, env: dict, out, timeout: float) -> tuple[int | None, bool]:
+    """Run argv as the leader of a process group of its own, and take the
+    whole group down when it ends or times out. subprocess.run would kill
+    the direct child only, leaving a forked backend or a browser running
+    on after the check had already been reported."""
+    proc = subprocess.Popen(argv, cwd=str(cwd), env=env, stdout=out,
+                            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                            start_new_session=True)
+    try:
+        code = proc.wait(timeout)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        _kill_group(proc.pid, signal.SIGTERM)
+        try:
+            proc.wait(5)
+        except subprocess.TimeoutExpired:
+            pass
+        code, timed_out = None, True
+    # whatever the suite left behind in its group goes with it
+    _kill_group(proc.pid, signal.SIGKILL)
+    if proc.poll() is None:
+        proc.wait(5)
+    return code, timed_out
+
+
+def probe_module(run: "Run", module: str, timeout: float = 60) -> None:
+    """Can the product's interpreter import what the check needs? Asked
+    before the check, so a missing dependency is a setup error with the
+    remedy rather than a build that failed."""
+    try:
+        probe = subprocess.run([run.args.python, "-c", f"import {module}"],
+                               env=run.env, capture_output=True, text=True,
+                               timeout=timeout, cwd=str(run.work))
+        ok, why = probe.returncode == 0, probe.stderr.strip()[-300:]
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        ok, why = False, str(exc)
+    run.record["dependency"] = {"module": module, "python": run.args.python,
+                                "importable": ok}
+    if not ok:
+        raise SetupError(
+            f"{run.args.python} cannot import {module} ({why}): install "
+            f"site/requirements.txt into a virtualenv you own (python3 -m venv <dir> "
+            f"&& <dir>/bin/pip install -r site/requirements.txt) and pass "
+            f"--python <dir>/bin/python")
+
+
+def require_fresh(paths, since: float) -> dict:
+    """Each artifact a pass rests on must exist, be non-empty and have
+    been written by this run. Returns their sizes and hashes for the
+    record; anything else is a setup error, never a pass."""
+    out, bad = {}, []
+    for p in map(Path, paths):
+        try:
+            st = p.stat()
+        except OSError:
+            bad.append(f"{p}: missing")
+            continue
+        if not p.is_file() or st.st_size == 0:
+            bad.append(f"{p}: empty or not a file")
+        elif st.st_mtime < since - 1:
+            bad.append(f"{p}: written before this run started")
+        else:
+            out[str(p)] = {"bytes": st.st_size, "sha256": sha256_file(p)}
+    if bad:
+        raise SetupError("artifacts a pass requires are not this run's: " + "; ".join(bad))
+    return out
 
 
 # ── layout measurements ───────────────────────────────────────────────
@@ -427,13 +570,18 @@ class Browser:
             os.dup2(from_w, 4)
 
         self.argv = browser_argv(exe, profile)
-        with open(log, "ab") as err:
-            self.proc = subprocess.Popen(self.argv, preexec_fn=wire,
-                                         pass_fds=tuple(sorted({to_r, from_w, 3, 4})),
-                                         stdin=subprocess.DEVNULL,
-                                         stdout=subprocess.DEVNULL, stderr=err,
-                                         env=env, close_fds=True,
-                                         start_new_session=True)
+        try:
+            with open(log, "ab") as err:
+                self.proc = subprocess.Popen(self.argv, preexec_fn=wire,
+                                             pass_fds=tuple(sorted({to_r, from_w, 3, 4})),
+                                             stdin=subprocess.DEVNULL,
+                                             stdout=subprocess.DEVNULL, stderr=err,
+                                             env=env, close_fds=True,
+                                             start_new_session=True)
+        except OSError as exc:
+            for fd in (to_r, from_w, self._to_w, self._from_r):
+                os.close(fd)
+            raise SetupError(f"the browser could not be executed: {exc}") from None
         os.close(to_r)
         os.close(from_w)
         self._buf, self._id, self.session = b"", 0, None

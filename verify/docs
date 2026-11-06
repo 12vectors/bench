@@ -19,7 +19,6 @@ judged: the dependency is missing or a route's output is absent.
 """
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -42,19 +41,12 @@ def target_for(out: Path, route: str) -> Path:
 
 
 def body(run: bv.Run) -> str:
-    module = run.args.require_module
-    probe = subprocess.run([run.args.python, "-c", f"import {module}"],
-                           env=run.env, capture_output=True, text=True)
-    run.record["dependency"] = {"module": module, "python": run.args.python,
-                                "importable": probe.returncode == 0}
-    if probe.returncode != 0:
-        raise bv.SetupError(
-            f"{run.args.python} cannot import {module}: install site/requirements.txt "
-            f"into a virtualenv you own (python3 -m venv <dir> && <dir>/bin/pip install "
-            f"-r site/requirements.txt) and pass --python <dir>/bin/python")
+    bv.probe_module(run, run.args.require_module)
+    # run.artifacts is this run's own fresh directory, so nothing a
+    # previous build wrote can be counted here
     out = run.artifact("site", run.artifacts / "site")
     code, _ = run.run_logged([run.args.python, "site/build.py", "--out", str(out)],
-                             "site-build.log", TIMEOUT)
+                             "site-build.log", run.timeout(TIMEOUT))
     if code != 0:
         raise bv.CheckFailed(f"site/build.py exited {code} — see "
                              f"{run.record['artifacts']['log']}")
@@ -66,7 +58,8 @@ def body(run: bv.Run) -> str:
     if not routes:
         raise bv.SetupError("site/pages.json names zero routes — nothing to check")
     written = [r for r in routes
-               if target_for(out, r).is_file() and target_for(out, r).stat().st_size > 0]
+               if target_for(out, r).is_file() and target_for(out, r).stat().st_size > 0
+               and target_for(out, r).stat().st_mtime >= run.started - 1]
     missing = [r for r in routes if r not in written]
     run.record["routes"] = {"declared": routes, "written": written, "missing": missing}
     if missing:

@@ -7,13 +7,27 @@ checkout it is pointed at** and leaves a record of what it ran:
 
 | Entrypoint | What it runs | Needs |
 | --- | --- | --- |
-| `verify/backend` | `python3 -m unittest discover -s tests -t . -v` — the whole suite, as CI runs it | stdlib only |
+| `verify/backend` | `python3 -m unittest discover -s tests -t . -v` — the whole suite, as CI runs it; **any skipped test is a setup error** | `node` on PATH and markdown-it-py, or their tests skip and the check refuses |
 | `verify/docs` | `site/build.py --out <artifacts>/site`, then requires a written file for every route in `site/pages.json` | markdown-it-py (`site/requirements.txt`) |
+| `verify/preflight` | `docs`: the docs interpreter imports markdown-it; `backend`: `node --version` runs on the check's PATH and markdown-it imports; `browser`: a Chromium starts with its sandbox. A profile's required `prepare` step | as the check it prepares |
 | `verify/browser` | the board UI in a sandboxed Chromium against a real disposable bench backend: stages and cards drawn, layout at 1440/1280/1024 px, the four views, keyboard reach and focus ring on the readiness inspector, accessible names; screenshots required | a Chromium that can start its sandbox |
 
 The plain command still works and still needs nothing:
 `python3 -m unittest discover -s tests`. `verify/backend` wraps it; it
-does not replace it.
+does not replace it. The two differ on purpose about skips: the plain
+command prints `OK (skipped=N)` and exits 0, while `verify/backend`
+exits 2 naming every skip reason (kept in the log and in
+`tests.skipReasons`). Every skip in this suite is a missing dependency
+or platform tool (`node not available`, `markdown-it-py is not
+installed`, `lsof`), so a skip is coverage that did not run.
+
+**Correction to earlier evidence.** An installed-runner run under a
+service PATH without node reported `1996 tests ran: OK (skipped=121)`
+and was recorded as `passed`. That was **not** full-suite evidence: 121
+tests never ran. It now reads `setup-error` (and, with the
+`backend-deps` preparation, `prepare-failed`). The full local run with
+the interactive `python3` (1999 tests, no skips) remains valid; the
+service environment is not yet ready for full verification.
 
 ## Which checkout is tested
 
@@ -41,18 +55,56 @@ the host's. A copy outside git (a release artifact) is likewise run with
 | --- | --- | --- |
 | 0 | `passed` | the checks ran and every one held |
 | 1 | `failed` | a check ran and said no: a test failed, the build refused, a measurement was out of bounds |
-| 2 | `setup-error` | nothing trustworthy ran: not a bench checkout, a dependency missing, **zero tests discovered**, a browser that would not start (including no sandbox), **a required artifact absent** |
+| 2 | `setup-error` | nothing trustworthy ran: not a bench checkout, a dependency missing, **zero tests discovered**, **a test module that could not be imported**, **any test skipped**, a browser that would not start (including no sandbox), **a required artifact absent or not written by this run**, **the candidate changed during the run**, a timeout |
 
 A setup error is never a pass and never a skip. A browser case that
-skips is counted as a setup error.
+skips is counted as a setup error. In `verify/backend` an error *inside*
+a test (an exception the product raised) is still `failed`; only a module
+unittest could not import is `setup-error`, because none of its tests ran.
+
+**Bench's own runner does not see that distinction.** Installed
+`verify.request` records any non-zero check exit as `failed`, so exit 2
+from a check reads `failed` in bench's evidence (the check's own record
+and log say `setup-error`). What bench *can* record as something other
+than a test failure is a required preparation step that did not complete
+— `prepare-failed`, check never run. That is why the examples declare
+`verify/preflight` as each check's required `prepare`: a missing docs
+dependency or a browser that cannot start its sandbox is caught there and
+recorded in the right word. Setup errors the preflight cannot foresee
+(an unimportable test module, a disposable backend that will not start,
+source drift) still read `failed` in bench's evidence.
+
+A timeout kills the child's whole process group (each child is started
+in a session of its own), so a forked backend or browser does not outlive
+the check; leftovers in the group are killed when the child exits, too.
 
 ## The record
 
-`<artifacts>/result.json`, plus the full log(s). `--artifacts` or
-`BENCH_VERIFY_ARTIFACTS` choose where; otherwise a work directory under
-`--scratch`, `BENCH_VERIFY_SCRATCH`, or `TMPDIR` — which, under bench, is
-the verification directory bench made. Nothing is written to a fixed
-system path. The record holds: the candidate root and how it was chosen,
+`result.json`, plus the full log(s), in a directory **made fresh for this
+run**: `--artifacts D` (or `BENCH_VERIFY_ARTIFACTS`) names the parent and
+each run creates `D/<check>-<UTC time>-<random>/` beneath it, so nothing a
+previous run left in `D` can be read as this run's output. Without it,
+**under bench's runner** (`BENCH_VERIFY` names the evidence) the parent is
+`$HOME/bench-verification-artifacts/<evidence id>/`: bench removes the
+check's `TMPDIR` as soon as the check ends, and the per-root `HOME` it
+gives is the one directory it keeps. The work directory (scratch) stays
+under `TMPDIR` and goes with it. The record says which applied
+(`artifacts.kept`: `explicit`, `bench-home` or `work-directory`). Outside
+bench, and with no `--artifacts`, it is `artifacts/` inside a fresh work
+directory under `--scratch`, `BENCH_VERIFY_SCRATCH`, or `TMPDIR`. Those
+kept directories are not pruned by anything here. The path is printed as the last line
+(`record: <path>`). Artifacts or scratch inside the candidate are refused.
+If no artifacts directory can be made at all, the record goes to stderr
+and **nothing is written to the working directory**. Nothing is written
+to a fixed system path. Browser screenshots and the metrics file must
+also be non-empty and modified since the run started; their sizes and
+SHA-256 are recorded.
+
+The candidate's identity is read twice, before and after the product ran
+(`candidate.after`). A different source digest afterwards turns the run
+into `setup-error`: the result is not about the revision the record
+names. Generated output goes outside the candidate by default, so a
+clean run does not read as drift. The record holds: the candidate root and how it was chosen,
 its git revision, whether it was dirty and a digest of every uncommitted
 change; the runner's own path, argv, cwd and interpreter; the exact child
 argv, cwd and exit status; the names (never the values) of the stripped
@@ -89,7 +141,9 @@ Playwright's download cache (`PLAYWRIGHT_BROWSERS_PATH` or
 
 ## Preparing dependencies
 
-- backend: none.
+- backend: `node` on the PATH bench runs checks with, and markdown-it-py
+  for the interpreter (`--python`). `verify/preflight backend` checks
+  both; the examples declare it as `backend-deps`.
 - docs: a virtualenv you own, outside the checkout (a venv inside it would
   make the checkout dirty, and dirty evidence satisfies no gate):
 
@@ -99,16 +153,34 @@ Playwright's download cache (`PLAYWRIGHT_BROWSERS_PATH` or
   Without it the docs check is `setup-error`, naming this remedy.
 - browser: an existing Chromium, as above.
 
+`verify/preflight docs|backend|browser` checks exactly those things and
+nothing else — the interpreter imports `markdown_it`; a Chromium is found
+and really starts, with its sandbox, on `about:blank` — exiting 0 or 2.
+It installs nothing. It exists to be a profile's required `prepare` step.
+
+Under bench the installed runner points `HOME` into a directory it made
+for the verification, so Playwright's cache under your real `~` is **not**
+found there and the preflight reports "no Chromium found". Set
+`BENCH_VERIFY_BROWSER` in the board's environment (bench passes it
+through to the check) or put a Chromium on the board's `PATH`.
+
 ## Registering them with bench — inactive examples
 
 `verify/examples/` holds two profile documents in the installed schema
 (`manager/core/profiles.example.json`). Neither is active anywhere until a
 person installs it.
 
-- `profiles.registration.json` — declares the five named checks
-  (`bench-backend`, `bench-docs`, `bench-browser` rooted at `worktree`;
-  `bench-backend-proposed`, `bench-docs-proposed` rooted at `review`) and
-  which intent may ask for which. **No `gates` block: registering a check
+- `profiles.registration.json` — declares three named checks,
+  `bench-backend`, `bench-docs` and `bench-browser`, each at execution
+  root **`source`** (a detached checkout bench makes of the card's branch
+  tip), and offers **the same three names to `work`, `act-pr` and
+  `review`**. One name per check is what lets a review's run and a work
+  run produce evidence the same gate requirement reads. Each check names a
+  required `prepare` step (`backend-deps`, `docs-deps`, `browser-start`,
+  all `verify/preflight`). `review` alone is also offered
+  `bench-backend-proposed` and `bench-docs-proposed` at root `review`
+  (the checkout pinned at the PR head): optional, and named differently so
+  no gate requiring `bench-backend` can be met by them. **No `gates` block: registering a check
   makes nothing mandatory**, and every gate reads `ungated`. It keeps the
   legacy `python3 -m unittest` grant for `work` and `act-pr` as a named
   command grant, because a document replaces the legacy resolution for the
@@ -122,9 +194,34 @@ person installs it.
   check is not required, so a host without a browser sandbox does not
   refuse every merge.
 
-Checks run in `worktree`/`review` roots, so a gate is met only by a run
-against the exact committed head with nothing uncommitted — commit, then
-ask.
+`source` rather than `worktree` or `review`, and the limit that comes
+with it: a `source` checkout is clean by construction and bound to a
+commit, so its evidence is what a gate reads — but it checks out the
+card's branch **as this application checkout has it**. For a review whose
+pull request head is ahead of the local branch (someone else pushed),
+the evidence names the older local commit and a gate comparing it to the
+head it is about to merge reads `other-commit`, not a pass. **No
+same-head assurance is claimed for a review's `source` run.** A `review`
+root runs at the pinned PR head instead, but is a different check name in
+this schema (one root per name), so the `-proposed` variants are evidence
+about the proposed head for the reviewer, not gate evidence. Commit, then
+ask: `source` sees only what is committed. Activate no gate until these
+checks have actually run, with their dependencies, in the operator's own
+environment.
+
+## Browser: what has and has not run
+
+The five-case `verify/browser` suite (Chromium over CDP) has **never
+passed** on this host: Chromium cannot start its sandbox, and the check
+refuses rather than disabling it. That blocker stands. Separately, a
+small independent smoke (outside this directory) ran Playwright's Firefox
+with its default sandbox settings against the candidate's disposable
+backend, and checked that the five fixture cards render, the 1440 px
+layout does not overflow, and the Phases view switches. It is **not** the
+Chromium suite, not Settings evidence, not broad layout or accessibility
+coverage, and not an approval. Firefox showed seccomp filters but shared
+user/pid/net namespaces, so **no strong OS isolation is claimed**.
+`verify/browser` has no Firefox driver.
 
 ## Activating, and rolling back
 
@@ -136,8 +233,8 @@ failing) on the machine that will run it:
    exists (and copy it aside if so), and the current `BOARD_AGENT_PROFILES`
    and `BOARD_AGENT_COMMANDS` lines in `manager/local/.env`.
 2. Copy the chosen example to `manager/local/profiles.json` (or point
-   `BOARD_AGENT_PROFILES` at it), adjusting `run` if the docs check needs
-   `--python <venv>/bin/python`.
+   `BOARD_AGENT_PROFILES` at it), adjusting the `run` of both `bench-docs`
+   and `docs-deps` if the docs check needs `--python <venv>/bin/python`.
 3. `python3 manager/core/board.py --doctor` — every intent must resolve
    with no blocker, and the gate block with no refusal.
 4. Restart the board.
