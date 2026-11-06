@@ -167,12 +167,23 @@ class OneSlotBuilderTests(unittest.TestCase):
         cls.html = BOARD.read_text(encoding="utf-8")
 
     def test_hover_actions_and_command_chips_share_the_machine(self):
-        self.assertEqual(len(re.findall(r"(?<!function )wireAction\(btn,", self.html)), 7,
-                         "exactly seven call sites: the slot builder, the "
+        self.assertEqual(len(re.findall(r"(?<!function )wireAction\(btn,", self.html)), 8,
+                         "exactly eight call sites: the slot builder, the "
                          "$-command chips, the ⌸ archive chip, a phase "
                          "lane's head, the ↻ rerun of a named check, the "
-                         "readiness inspector's active stages and the ⚖ "
-                         "sheet's gate override — all on the one machine")
+                         "readiness inspector's active stages, the ⚖ "
+                         "sheet's gate override and the Settings view's own "
+                         "executing diagnostic stages — all on the one "
+                         "machine")
+
+    def test_applying_a_settings_change_is_on_the_same_machine(self):
+        """The one other armed action this card's machine owes a mention:
+        it is keyed by its own element rather than `btn`, so the count
+        above does not see it, and it must still be armed rather than
+        fired on a single click."""
+        self.assertIn("wireAction(apply,", self.html)
+        self.assertRegex(self.html,
+                         r"wireAction\(apply,[\s\S]{0,200}confirm: 'write it\?'")
         self.assertNotIn("btn.firstChild.textContent", self.html,
                          "the old per-chip label swap is the fork this kills")
         self.assertNotIn("btn.lastElementChild.textContent", self.html)
