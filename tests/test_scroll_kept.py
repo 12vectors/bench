@@ -396,6 +396,10 @@ class RenderersKeepPlaceTests(unittest.TestCase):
             ".f-rail": "markScroll('v:rail'",        # #frail, the sessions list
             "#view-focus": "markScroll('v:focus'",
             "#view-phases": "markScroll('v:phases'",   # the lanes, down
+            # Settings is one long column repainted in place: a section
+            # switch, a validation coming back and an applied change all
+            # rewrite it, and none of them should move the reader
+            "#view-settings": "markScroll('v:settings'",
             ".lstages": "markScroll('v:lanestages:'",  # one lane, sideways
             ".c-strip": "markScroll('v:cstrip'",     # #cstrip, the stage strip
             "#logbody": "markScroll('log'",

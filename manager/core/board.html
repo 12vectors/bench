@@ -463,6 +463,101 @@
   .also .card{flex:1 1 240px;cursor:default}
   .also .card:hover{transform:none;border-color:var(--border-soft)}
 
+  /* ── settings ──
+     One scrolling column, one section at a time. A column rather than a
+     grid because this view has to survive 390px and 200% zoom without a
+     horizontal scrollbar, and a two-column reading of a settings page is
+     the first thing that breaks there. Everything wraps; nothing is
+     nowrap but a hash. */
+  #view-settings{flex-direction:column;overflow-y:auto}
+  .s-top{display:flex;flex-direction:column;gap:10px;padding:14px 18px 0}
+  .s-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .s-head h1{margin:0;font-size:20px;font-weight:600;letter-spacing:-.015em}
+  .s-head .mono{font-size:11.5px;color:var(--dim)}
+  .s-head .r{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+  .s-nav{display:flex;gap:6px;flex-wrap:wrap}
+  .s-body{display:flex;flex-direction:column;gap:14px;padding:14px 18px 24px;
+    max-width:980px;min-width:0}
+  .s-body .panel{min-width:0}
+  .s-body p{margin:0;font-size:12.5px;line-height:1.55;color:var(--muted)}
+  .s-body p.lead{color:var(--text);font-size:13.5px}
+  .s-body p.bad{color:var(--alarm)}
+  .s-body ul{margin:0;padding-left:18px;font-size:12.5px;color:var(--muted);
+    line-height:1.55}
+  .s-body ul li{margin:2px 0}
+  .s-body code{font-family:var(--mono);font-size:11.5px;color:var(--text);
+    overflow-wrap:anywhere}
+  /* a state word, never a colour on its own: the word is always there */
+  .sw{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);
+    font-size:11px;padding:2px 7px;border-radius:99px;border:1px solid var(--border);
+    color:var(--dim);white-space:nowrap}
+  .sw::before{content:"";width:6px;height:6px;border-radius:99px;
+    background:currentColor;flex:none}
+  .sw.verified{color:var(--calm);border-color:color-mix(in oklab, var(--calm) 45%, transparent)}
+  .sw.failed,.sw.invalid,.sw.blocked,.sw.stale{color:var(--alarm);
+    border-color:color-mix(in oklab, var(--alarm) 45%, transparent)}
+  .sw.unsupported{color:var(--muted);border-style:dashed}
+  .sw.configured-untested{color:var(--accent);
+    border-color:color-mix(in oklab, var(--accent) 45%, transparent)}
+  .srow{display:flex;align-items:flex-start;gap:10px;padding:9px 0;
+    border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .srow:last-child{border-bottom:none}
+  .srow .sname{flex:1 1 180px;min-width:0;font-size:13px;color:var(--text);
+    font-weight:500}
+  .srow .sdetail{flex:3 1 260px;min-width:0;font-size:12.5px;color:var(--muted)}
+  .srow .sright{margin-left:auto;display:flex;gap:6px;align-items:center;
+    flex-wrap:wrap}
+  .srec{display:flex;flex-direction:column;gap:6px;padding:11px 12px;
+    border:1px solid var(--border-soft);border-radius:9px;background:var(--sunken)}
+  .srec.high{border-color:color-mix(in oklab, var(--alarm) 45%, transparent)}
+  .srec .st{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+  .srec .st strong{font-size:13px;font-weight:600;color:var(--text)}
+  .srec .pri{font-family:var(--mono);font-size:10.5px;color:var(--dim);
+    text-transform:uppercase;letter-spacing:.06em}
+  .srec.high .pri{color:var(--alarm)}
+  .srec .supply{font-size:12.5px;color:var(--text)}
+  .srec .inert{font-size:11.5px;color:var(--dim)}
+  /* the key/value table settings and roots are drawn in — wraps, so a long
+     path does not push the page sideways */
+  .skv{display:grid;grid-template-columns:minmax(120px,auto) minmax(0,1fr);
+    gap:2px 12px;font-size:12.5px}
+  .skv dt{font-family:var(--mono);font-size:11.5px;color:var(--muted);
+    overflow-wrap:anywhere}
+  .skv dd{margin:0;color:var(--text);overflow-wrap:anywhere}
+  .skv dd .why{display:block;color:var(--dim);font-size:11.5px}
+  /* the editor: four steps, each its own button, and a field error that
+     names its field */
+  .s-edit{display:flex;flex-direction:column;gap:10px}
+  .s-edit .frow{display:flex;flex-direction:column;gap:4px;min-width:0}
+  .s-edit label{font-size:11px;font-weight:600;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--muted)}
+  .s-edit input[type=text],.s-edit input[type=number],.s-edit textarea,
+  .s-edit select{
+    font:inherit;font-size:12.5px;color:var(--text);background:var(--sunken);
+    border:1px solid var(--border);border-radius:7px;padding:7px 9px;
+    width:100%;min-width:0;max-width:100%}
+  .s-edit textarea{font-family:var(--mono);font-size:11.5px;min-height:120px;
+    resize:vertical}
+  .s-edit input:focus,.s-edit textarea:focus,.s-edit select:focus{
+    outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+  .s-edit input:disabled,.s-edit select:disabled{color:var(--dim);cursor:not-allowed}
+  .s-edit .fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+    gap:10px}
+  .s-edit .item{display:flex;flex-direction:column;gap:9px;padding:11px;
+    border:1px solid var(--border-soft);border-radius:9px;background:var(--sunken)}
+  .s-edit .ihead{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .s-edit .ihead .label{flex:1}
+  .s-edit .ferr{font-size:12px;color:var(--alarm);line-height:1.5}
+  .s-edit .ferr .fld{font-family:var(--mono);font-size:11px}
+  .s-edit .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .s-edit .cb{display:flex;align-items:center;gap:7px;font-size:12.5px;
+    color:var(--text);text-transform:none;letter-spacing:0;font-weight:400}
+  .s-edit .cb input{width:auto;min-width:0}
+  .s-diff{display:flex;flex-direction:column;gap:5px;font-size:12.5px}
+  .s-diff .d{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap}
+  .s-diff .d .k{font-family:var(--mono);font-size:11px;color:var(--dim);
+    flex:none;min-width:116px}
+
   /* ── phases: a swimlane each ── */
   /* The room the five columns could never spare. One lane per phase, the
      same five stages left to right, and the cards are the cards — full
@@ -690,6 +785,10 @@
     <button data-view="phases">Phases</button>
     <button data-view="flight">Sessions</button>
     <button data-view="focus">Focus</button>
+    <!-- the label is written by renderViews(): the mark that says this
+         board's execution policy refuses something, learned from whichever
+         view you are on -->
+    <button data-view="settings">Settings</button>
   </nav>
   <span class="spacer"></span>
   <div class="phasechips" id="phasechips" hidden></div>
@@ -734,6 +833,18 @@
     </div>
     <div class="c-grid" id="cgrid"></div>
     <div class="also" id="calso"></div>
+  </div>
+
+  <!-- settings: how this board is configured, what that licenses a reader
+       to believe, and what to configure next. Everything in it is resolved
+       by the server from the authorities that already answer for it;
+       nothing here parses a settings file. -->
+  <div class="view" id="view-settings">
+    <div class="s-top">
+      <div class="s-head" id="shead"></div>
+      <nav class="s-nav" id="snav" aria-label="settings sections"></nav>
+    </div>
+    <div class="s-body" id="sbody"></div>
   </div>
 </main>
 
@@ -783,6 +894,18 @@ const S = {
   // and because "nothing failing when you last looked" is the only thing
   // a cached reading may ever be shown as saying
   doctor: null,
+  // {at, page, fetching}: the whole Settings reading, fetched on demand
+  // rather than carried in the state payload — it resolves all three
+  // intents, hashes every approved input and asks git for the tool's own
+  // revision. Held so switching section repaints without asking again.
+  settings: null,
+  settingsSection: 'overview',
+  // The draft being edited, and nothing else: {document, revision, checked,
+  // preview, dirty}. `revision` is the one the editor was opened at, sent
+  // back with an apply so a save made over somebody else's is refused
+  // rather than silently winning. Null until the editor is opened — the
+  // page holds no draft for a section nobody opened.
+  draft: null,
   openFolds: new Set(),  // expanded output folds, kept across renders
   fileView: null,        // {dir, name, content} open in the drawer
   drawerKey: null,       // which document the drawer last painted, for its scroll mark
@@ -1285,6 +1408,29 @@ function renderViews() {
     : running
       ? `${running} phase${running > 1 ? 's' : ''} running — a swimlane each`
       : 'One swimlane per phase: its cards, its log, its controls';
+  renderSettingsTab();
+}
+
+/* The same crossing, for configuration: a policy that refuses something
+   has to be learnable from whichever view you are on, because the thing it
+   refuses is the next launch. The mark is the alarm every other blocked
+   thing wears, and it appears only when the cheap reading in the state
+   payload says there is something to say — a board on the legacy settings
+   has a switcher that reads exactly as it did before this view existed. */
+function renderSettingsTab() {
+  const btn = document.querySelector('#views button[data-view="settings"]');
+  if (!btn) return;
+  const s = S.state?.settings || {};
+  btn.innerHTML = 'Settings' + (s.invalid ? '<span class="vhalt"></span>' : '');
+  btn.title = s.invalid
+    ? (s.problem || 'this board\'s execution policy refuses something') +
+      ' — open Settings for the field and the remedy'
+    : s.configured
+      ? `${s.checks} named check${s.checks === 1 ? '' : 's'}` +
+        (s.gated.length ? `, gating ${s.gated.join(', ')}`
+                        : ', and no gate requiring any of them')
+      : 'How this board is configured, what has been verified, and what to ' +
+        'configure next';
 }
 
 function setView(view) {
@@ -1309,7 +1455,8 @@ function setView(view) {
    narrowed to a few characters still shows it. It is the in-flight glyph
    the CI and copilot chips already use, not an emoji, and a quiet board
    is the plain title, byte for byte. */
-const VIEW_TITLES = { board: 'bench', phases: 'phases', flight: 'sessions', focus: 'focus' };
+const VIEW_TITLES = { board: 'bench', phases: 'phases', flight: 'sessions',
+  focus: 'focus', settings: 'settings' };
 const WORKING_MARK = '◌';
 
 function tabTitle(project, view, working) {
@@ -1341,6 +1488,11 @@ function render() {
   renderDoctor();
   if (S.view === 'flight') renderFlight();
   else if (S.view === 'focus') renderFocus();
+  // render() runs on every SSE frame. Repainting the policy editor from
+  // under a half-typed field would lose the edit, so a dirty draft holds
+  // the paint: every other change to this view comes from a handler that
+  // calls renderSettings() itself.
+  else if (S.view === 'settings') { if (!settingsEditing()) renderSettings(); }
   else renderCards();
   renderBar();
   renderLog();
@@ -3654,6 +3806,1108 @@ function phaseMembers(t) {
   return `<div class="pmembers"><div class="phead">Cards` +
     `<span class="mono">${t.members.length} in run order</span></div>` +
     rows + halt + `</div>`;
+}
+
+/* ── settings ─────────────────────────────────────────────────────────── */
+
+/* How this board is configured, what has actually been verified, and what
+   to configure next.
+
+   Everything drawn here is resolved by the server from the authority that
+   already answers for it — `profiles.resolve()` for what a run may do,
+   `profiles.gate_policy()` for what a merge must have, `verify`'s records
+   for what the checks found, `gates.evaluate()` for whether a merge may
+   happen. This page compiles no grant, parses no settings file and decides
+   no outcome: a second reader of the same document could disagree with the
+   launch, which is the one defect this view must not introduce.
+
+   Opening it is a GET. It starts no process, runs no project command,
+   launches no model, pins nothing and writes nothing. */
+
+const SETTINGS_SECTIONS = [
+  ['overview', 'Overview'],
+  ['verification', 'Verification'],
+  ['acceptance', 'Acceptance & reviews'],
+  ['access', 'Agent access'],
+  ['diagnostics', 'Check configuration'],
+  ['installation', 'Installation'],
+  ['policy', 'Edit policy'],
+];
+
+/* The state word, always as a word. Colour carries no meaning on its own
+   here: a test failure, a permission denial and an unconfigured gate must
+   not collapse into "red", and "not configured" must never be able to read
+   as a pass. */
+function stateWord(word, states) {
+  const why = (states || {})[word] || '';
+  return `<span class="sw ${esc(word)}" title="${esc(why)}">${esc(word)}</span>`;
+}
+
+function settingsEditing() {
+  return S.settingsSection === 'policy' && S.draft && S.draft.dirty;
+}
+
+function renderSettings() {
+  if (!S.settings && !S.settingsFetching) fetchSettings();
+  const head = $('#shead'), nav = $('#snav'), body = $('#sbody');
+  const page = S.settings && S.settings.page;
+  if (!page) {
+    head.innerHTML = `<h1>Settings</h1><span class="mono">reading…</span>`;
+    nav.innerHTML = '';
+    body.innerHTML = S.settingsError
+      ? `<div class="panel"><p class="bad">${esc(S.settingsError)}</p></div>`
+      : `<div class="panel"><p>Resolving this board's configuration. ` +
+        `Nothing is being run.</p></div>`;
+    return;
+  }
+  const section = SETTINGS_SECTIONS.some(([k]) => k === S.settingsSection)
+    ? S.settingsSection : 'overview';
+  head.innerHTML =
+    `<h1>Settings</h1>` +
+    `<span class="mono">${esc(page.overview.policy.identity ||
+      'no execution policy document')}</span>` +
+    `<span class="r">` +
+    `<button class="chip2" id="s-inspect" aria-label="check configuration">` +
+    `Check configuration</button>` +
+    `<button class="chip2" id="s-reread" aria-label="re-read the settings">` +
+    `Re-read</button></span>`;
+  nav.innerHTML = SETTINGS_SECTIONS.map(([key, label]) =>
+    `<button class="chip2 ${key === section ? 'accent' : ''}" ` +
+    `data-ssection="${esc(key)}" aria-current="${key === section}" ` +
+    `aria-label="${esc(label)} settings">${esc(label)}</button>`).join('');
+  markScroll('v:settings', $('#view-settings'));
+  body.innerHTML = settingsSection(section, page);
+  restoreScroll('v:settings', $('#view-settings'));
+
+  $('#s-reread').addEventListener('click', () => fetchSettings(true));
+  // The read-only action, named for what it is. It reuses the doctor's own
+  // GET — the same resolver, read at the one distance that costs nothing —
+  // and renders its findings in the Check configuration section. It runs
+  // no project program and invokes no adapter hook.
+  $('#s-inspect').addEventListener('click', () => {
+    S.settingsSection = 'diagnostics';
+    inspectConfiguration();
+  });
+  body.querySelectorAll('[data-ssection]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      S.settingsSection = btn.dataset.ssection;
+      renderSettings();
+    }));
+  nav.querySelectorAll('[data-ssection]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      S.settingsSection = btn.dataset.ssection;
+      renderSettings();
+    }));
+  if (section === 'policy') wirePolicyEditor(page);
+  if (section === 'diagnostics') wireDiagnostics();
+}
+
+async function fetchSettings(force) {
+  if (S.settingsFetching) return;
+  if (!force && S.settings) return;
+  S.settingsFetching = true;
+  S.settingsError = null;
+  try {
+    const res = await fetch('/api/settings');
+    const data = await res.json();
+    if (res.ok && data.settings) {
+      S.settings = { at: Date.now(), page: data.settings };
+      // the draft is re-read with the page: an apply that landed elsewhere
+      // moved the revision, and editing on top of a stale one would be the
+      // conflict the server exists to refuse
+      if (!S.draft || !S.draft.dirty) S.draft = null;
+    } else {
+      S.settingsError = data.error || 'the settings could not be read';
+    }
+  } catch (e) {
+    S.settingsError = e.message || 'the board could not be asked';
+  } finally {
+    S.settingsFetching = false;
+    if (S.view === 'settings') renderSettings();
+  }
+}
+
+function settingsSection(key, page) {
+  if (key === 'verification') return settingsVerification(page);
+  if (key === 'acceptance') return settingsAcceptance(page);
+  if (key === 'access') return settingsAccess(page);
+  if (key === 'diagnostics') return settingsDiagnostics(page);
+  if (key === 'installation') return settingsInstallation(page);
+  if (key === 'policy') return settingsPolicy(page);
+  return settingsOverview(page);
+}
+
+/* ── overview ─────────────────────────────────────────────────────────── */
+
+function settingsOverview(page) {
+  const o = page.overview;
+  const rows = o.rows.map(row =>
+    `<div class="srow"><span class="sname">${esc(row.label)}</span>` +
+    `<span class="sdetail">${esc(row.detail)}</span>` +
+    `<span class="sright">${stateWord(row.state, o.states)}` +
+    `<button class="chip2" data-ssection="${esc(row.section)}" ` +
+    `aria-label="open ${esc(row.label)}">open</button></span></div>`).join('');
+  const recs = page.recommendations.length
+    ? page.recommendations.map(r =>
+        `<div class="srec ${esc(r.priority)}">` +
+        `<div class="st"><span class="pri">${esc(r.priority)}</span>` +
+        `<strong>${esc(r.title)}</strong>${stateWord(r.state, o.states)}</div>` +
+        `<p>${esc(r.why)}</p>` +
+        `<p class="supply"><b>You supply:</b> ${esc(r.supply)}</p>` +
+        (r.prerequisites.length
+          ? `<p><b>First:</b> ${esc(r.prerequisites.join('; '))}</p>` : '') +
+        `<div class="acts">` +
+        `<button class="chip2" data-ssection="${esc(r.section)}" ` +
+        `aria-label="open the setting for ${esc(r.title)}">open the setting` +
+        `</button>` +
+        (r.setting ? `<span class="mono" style="color:var(--dim)">` +
+          `${esc(r.setting)}</span>` : '') + `</div>` +
+        `<span class="inert">${esc(r.inert)}</span></div>`).join('')
+    : `<p>Nothing to recommend from what is configured here. That is not a ` +
+      `statement that the configuration is sufficient — only that bench has ` +
+      `no refusal, no unsatisfiable requirement and no missing registration ` +
+      `to point at.</p>`;
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">Current setup</span>` +
+    `<span class="r">${esc(page.location)}</span></div>` +
+    `<p class="lead">How this board is configured, and what each of those ` +
+    `words licenses you to believe.</p>` +
+    (o.policy.problem ? `<p class="bad">${esc(o.policy.problem)}</p>` : '') +
+    (o.legacy ? `<p>${esc(o.legacyIsAllowed)}</p>` : '') +
+    rows + `</div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Useful improvements</span>` +
+    `<span class="r">${page.recommendations.length} to consider</span></div>` +
+    recs + `</div>` +
+    `<details class="fold"><summary>what each state word means</summary>` +
+    `<pre>${esc(Object.entries(o.states)
+      .map(([w, why]) => `${w}\n  ${why}`).join('\n\n'))}</pre></details>`;
+}
+
+/* ── verification ─────────────────────────────────────────────────────── */
+
+function settingsVerification(page) {
+  const v = page.verification, states = page.states;
+  const checks = v.checks.length ? v.checks.map(c =>
+    `<div class="srow"><span class="sname">${esc(c.name)}` +
+    `${c.help ? `<span class="sdetail"> — ${esc(c.help)}</span>` : ''}</span>` +
+    `<span class="sdetail"><code>${esc(c.run)}</code><br>` +
+    `runs in the <b>${esc(c.root)}</b> checkout — ${esc(c.rootWhy || '')}<br>` +
+    `executable <code>${esc(c.executable || '')}</code>, arguments ` +
+    `<code>${esc(JSON.stringify(c.argv))}</code><br>` +
+    `scopes: ${Object.keys(c.scopes).length
+      ? esc(Object.entries(c.scopes).map(([w, a]) =>
+          `${w} → ${JSON.stringify(a)}`).join('; '))
+      : 'none declared, so only the full run may be asked for'}<br>` +
+    `asked for by: ${c.intents.length ? esc(c.intents.join(', '))
+      : 'no launch intent — nothing may ask bench to run it'}<br>` +
+    `preparation: ${c.prepare.length ? esc(c.prepare.join(', '))
+      : 'none'} · timeout ${esc(String(c.timeout))}s</span>` +
+    `<span class="sright">` +
+    (c.requiredBy.length
+      ? `<span class="chip2 ok" title="a gate requires this check">` +
+        `required: ${esc(c.requirement.join(', '))}</span>`
+      : `<span class="chip2 dim" title="${esc(v.registrationIsNotRequirement)}">` +
+        `registered, not required</span>`) +
+    stateWord(c.state, states) +
+    `<span class="mono" style="color:var(--dim)" title="the check identity ` +
+    `its evidence is bound to">${esc(String(c.checkId).slice(0, 14))}</span>` +
+    `</span></div>`).join('')
+    : `<p>No check is registered, so bench runs none of its own here. The ` +
+      `account of whether the work passes is then the agent's own sentence, ` +
+      `which is not evidence.</p>`;
+  const steps = v.prepare.length ? v.prepare.map(s =>
+    `<div class="srow"><span class="sname">${esc(s.name)}</span>` +
+    `<span class="sdetail"><code>${esc(s.run)}</code><br>` +
+    `network: ${s.network
+      ? 'declared — it runs with whatever network this machine has, and ' +
+        'nothing here bounds that (network-policy is pending)'
+      : 'not declared'}<br>` +
+    `prepares: ${s.usedBy.length ? esc(s.usedBy.join(', '))
+      : 'nothing — no check references it'}</span></div>`).join('')
+    : `<p>No preparation step is declared.</p>`;
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">Who provides what</span>` +
+    `<span class="r">${esc(v.state)}</span></div>` +
+    `<p class="lead"><b>${esc(v.ownership)}</b></p>` +
+    `<p>${esc(v.ownershipDetail)}</p>` +
+    `<div class="skv">` + v.responsibilities.map(r =>
+      `<dt>${esc(r.who)}</dt><dd>${esc(r.what)}</dd>`).join('') + `</div>` +
+    `</div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Registered checks</span>` +
+    `<span class="r">${v.checks.length}</span></div>` +
+    (v.problems.length ? v.problems.map(p =>
+      `<p class="bad">${esc(p.code)}${p.field ? ` (${esc(p.field)})` : ''} — ` +
+      `${esc(p.why)}</p>`).join('') : '') +
+    checks +
+    `<p>${esc(v.registrationIsNotRequirement)}</p>` +
+    `<p>${esc(v.evidenceScope)}</p>` +
+    `<div class="acts" style="display:flex;gap:8px;flex-wrap:wrap">` +
+    `<button class="chip2" data-ssection="policy" ` +
+    `aria-label="register or edit a check">register or edit a check</button>` +
+    `</div></div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Preparation</span>` +
+    `<span class="r">${v.prepare.length}</span></div>` +
+    `<p>${esc(v.preparationIsNotVerification)}</p>` + steps + `</div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Where a check runs</span>` +
+    `<span class="r">declared, not sandboxed</span></div>` +
+    `<div class="skv">` + Object.entries(v.roots).map(([w, why]) =>
+      `<dt>${esc(w)}</dt><dd>${esc(why)}</dd>`).join('') + `</div>` +
+    `<p>${esc(v.rootsNote)}</p>` +
+    `<ul>${v.trustLimits.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` +
+    `<details class="fold"><summary>the environment a check is not given` +
+    `</summary><pre>${esc(v.envDenied.join('\n'))}</pre></details>` +
+    `</div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Asking a developer for one</span>` +
+    `<span class="r">a worked example</span></div>` +
+    `<p>${esc(v.example.why)}</p>` +
+    `<pre class="mono" style="margin:0;font-size:11.5px;overflow:auto;` +
+    `background:var(--sunken);padding:10px;border-radius:7px">` +
+    `${esc(JSON.stringify(v.example.document, null, 2))}</pre>` +
+    `<p>${esc(v.example.then)}</p>` +
+    `<ul>${v.checklist.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` +
+    `</div>`;
+}
+
+/* ── acceptance, reviews and overrides ────────────────────────────────── */
+
+function settingsAcceptance(page) {
+  const a = page.acceptance, states = page.states;
+  const scopes = Object.entries(a.policy.scopes).map(([scope, entry]) =>
+    `<div class="srow"><span class="sname">${esc(scope)}</span>` +
+    `<span class="sdetail">${esc(a.scopes[scope] || entry.why)}<br>` +
+    `requires: ${entry.checks.length
+      ? esc(entry.checks.map(c => c.requirement).join(', '))
+      : 'no check'} · review: <b>${esc(entry.review)}</b><br>` +
+    `${esc(entry.reviewWhy || '')}</span>` +
+    `<span class="sright">${stateWord(
+      entry.gated ? 'configured-untested' : 'not-configured', states)}` +
+    `<span class="chip2 ${entry.gated ? 'ok' : 'dim'}" ` +
+    `title="${esc(entry.gated ? 'this mutation is gated'
+                              : a.ungatedIsNotAPass)}">` +
+    `${entry.gated ? 'gated' : 'ungated'}</span></span></div>`).join('');
+  const modes = a.reviewModes.map(m =>
+    `<div class="srow"><span class="sname">${esc(m.name)}</span>` +
+    `<span class="sdetail">${esc(m.why)}` +
+    (m.unavailableWhy ? `<br><b>${esc(m.unavailableWhy)}</b>` : '') +
+    `</span><span class="sright">` +
+    (m.available ? `<span class="chip2">offered</span>`
+      : `<span class="chip2 bad">not available here</span>`) +
+    `</span></div>`).join('');
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">What must be true before a merge</span>` +
+    `<span class="r">${esc(a.state)}</span></div>` +
+    (a.policy.blockers.length
+      ? a.policy.blockers.map(b => `<p class="bad">${esc(b)}</p>`).join('')
+      : '') +
+    `<p class="lead">Three scopes, because three different commits merge.</p>` +
+    scopes +
+    `<p>${esc(a.ungatedIsNotAPass)}</p>` +
+    `<div class="acts"><button class="chip2" data-ssection="policy" ` +
+    `aria-label="edit the gate policy">edit the gate policy</button></div>` +
+    `<p>${esc(a.editingIsNotMerging)}</p></div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Review requirements</span>` +
+    `<span class="r">two records, kept apart</span></div>` + modes +
+    `<p>${esc(a.sameAccount)}</p>` +
+    `<p>${esc(a.outstandingChanges)}</p>` +
+    `<p>${esc(a.notBranchProtection)}</p></div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Evidence binding</span>` +
+    `<span class="r">per commit</span></div>` +
+    `<p>${esc(a.headBinding)}</p><p>${esc(a.coverage)}</p>` +
+    `<p>${esc(a.supersede)}</p>` +
+    `<details class="fold"><summary>why a requirement reads unmet, and the ` +
+    `remedy for each</summary><pre>${esc(Object.entries(a.reasons)
+      .map(([k, why]) => `${k}\n  ${why}\n  remedy: ${a.remedies[k] || '—'}`)
+      .join('\n\n'))}</pre></details>` +
+    `<details class="fold"><summary>what each gate decision means</summary>` +
+    `<pre>${esc(Object.entries(a.decisions)
+      .map(([k, why]) => `${k}\n  ${why}`).join('\n\n'))}</pre></details>` +
+    `</div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Overrides</span>` +
+    `<span class="r">${a.overrides.allowed ? 'enabled' : 'disabled'}</span>` +
+    `</div><p>${esc(a.overrides.why)}</p><p>${esc(a.overrideLaw)}</p>` +
+    (a.overrides.actors.length
+      ? `<p>Restricted to: <code>${esc(a.overrides.actors.join(', '))}</code></p>`
+      : '') + `</div>` +
+    settingsCi(page);
+}
+
+/* Bench-run checks, external CI and review — three things one green tick
+   would collapse. The same project test program can feed the first two,
+   which is exactly why the distinction is stated rather than inferred. */
+function settingsCi(page) {
+  const c = page.ci;
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">Bench checks, CI and review</span>` +
+    `<span class="r">three different things</span></div>` +
+    Object.entries(c.kinds).map(([key, k]) =>
+      `<div class="srow"><span class="sname">${esc(k.label)}</span>` +
+      `<span class="sdetail">${esc(k.what)}<br>run by: ${esc(k.who)}<br>` +
+      `authority: <code>${esc(k.authority)}</code></span>` +
+      `<span class="sright"><span class="chip2 ${k.gateable ? '' : 'dim'}" ` +
+      `title="${esc(k.gateable ? 'a gate can require this'
+                               : 'a gate cannot require this')}">` +
+      `${k.gateable ? 'can gate' : 'cannot gate'}</span></span></div>`).join('') +
+    `<ul>${c.limits.map(l => `<li>${esc(l)}</li>`).join('')}</ul>` +
+    `<p>${esc(c.noDeployment)}</p>` +
+    `<p>External CI is polled every ${esc(String(c.ci.interval))}s; ` +
+    `gh ${c.ci.ghAvailable ? 'is available' : 'is not available here'}. ` +
+    `${esc(c.ci.why)}</p>` +
+    `<details class="fold"><summary>named as follow-up, not approximated` +
+    `</summary><pre>${esc(c.followUp.join('\n\n'))}</pre></details></div>`;
+}
+
+/* ── agent access ─────────────────────────────────────────────────────── */
+
+function settingsAccess(page) {
+  const a = page.access, states = page.states;
+  const intents = Object.entries(a.intents).map(([intent, found]) => {
+    if (found.error) {
+      return `<div class="srow"><span class="sname">${esc(intent)}</span>` +
+        `<span class="sdetail bad">${esc(found.error)}</span></div>`;
+    }
+    const s = found.summary || {};
+    return `<div class="srow"><span class="sname">${esc(intent)}</span>` +
+      `<span class="sdetail">` +
+      `works in: <b>${esc((found.cwd || {}).policy || '—')}</b><br>` +
+      `grants: ${(found.commands || []).length
+        ? esc(found.commands.map(g => g.name).join(', ')) : 'none'}<br>` +
+      `may ask bench to run: ${(s.checks || []).length
+        ? esc(s.checks.join(', ')) : 'no named check'}<br>` +
+      `approved inputs: ${(found.context || []).length
+        ? esc(found.context.map(i =>
+            `${i.name} (${i.status})`).join(', ')) : 'none'}<br>` +
+      `writable (intended): ${(found.writable || []).length
+        ? esc(found.writable.map(w => w.root || w.path || '').join(', '))
+        : 'nothing'}<br>` +
+      `denied: ${(found.denied || []).length
+        ? esc(found.denied.map(d => d.capability).join(', ')) : 'nothing'}` +
+      `</span><span class="sright">${stateWord(found.state, states)}` +
+      (found.blockers && found.blockers.length
+        ? `<span class="chip2 bad" title="${esc(found.blockers[0])}">` +
+          `will not start</span>` : '') + `</span></div>` +
+      ((found.fields || []).filter(f => f.why).length
+        ? (found.fields || []).filter(f => f.why).map(f =>
+            `<p class="bad">${esc(f.code)}` +
+            `${f.field ? ` (${esc(f.field)})` : ''} — ${esc(f.why)}` +
+            `${f.remedy ? ` <i>${esc(f.remedy)}</i>` : ''}</p>`).join('')
+        : '');
+  }).join('');
+  const frozen = a.frozen.length ? a.frozen.map(f =>
+    `<div class="srow"><span class="sname">${esc(f.name || f.agent)}</span>` +
+    `<span class="sdetail">${esc(f.mode || '')} on ${esc(f.task || '—')}<br>` +
+    `frozen policy <code>${esc(String(f.policyId).slice(0, 14))}</code> — ` +
+    `${esc(f.why)}` +
+    (f.freshness && f.freshness.moved
+      ? `<br><b>the settings have moved since it launched; this run keeps ` +
+        `what it rode</b>` : '') + `</span></div>`).join('')
+    : `<p>No run with a recorded manifest is alive, so there is nothing an ` +
+      `edit here could be mistaken for changing.</p>`;
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">Four different facts</span>` +
+    `<span class="r">configured is not enforced</span></div>` +
+    `<div class="skv">` + Object.entries(a.facts).map(([k, why]) =>
+      `<dt>${esc(k)}</dt><dd>${esc(why)}</dd>`).join('') + `</div></div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Resolved profiles</span>` +
+    `<span class="r">${esc(a.adapter.name)} ${esc(a.adapter.version || '')}` +
+    `</span></div>` + intents +
+    `<div class="acts"><button class="chip2" data-ssection="policy" ` +
+    `aria-label="edit what a run may do">edit what a run may do</button>` +
+    `</div></div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">What is actually enforced, and by whom</span>` +
+    `<span class="r">${Object.keys(a.capabilities).length} capabilities` +
+    `</span></div>` +
+    // Four words and never a fifth: `enforced`, `prefix-allowlist`,
+    // `prompt-only`, `pending`. The server's own table, named party
+    // included — the page does not decide how strongly anything holds.
+    `<div class="skv">` + Object.entries(a.capabilities).map(([name, cap]) =>
+      `<dt>${esc(name)}</dt><dd>${esc(cap.enforcement)} — by ` +
+      `${esc(cap.by || 'nothing')}<span class="why">${esc(cap.why || '')}` +
+      `</span></dd>`).join('') + `</div>` +
+    `<p>Narrowed by prefix match, not confined. Asked for, enforced by ` +
+    `nothing yet. Those two readings are different from "enforced", and ` +
+    `the word on each row says which applies.</p>` +
+    ((a.adapter.unsupported || []).length
+      ? `<p>The installed adapter declares these unsupported, in those ` +
+        `words: <code>${esc(a.adapter.unsupported.join(', '))}</code>. A ` +
+        `profile that <i>requires</i> one is refused rather than reported ` +
+        `as honoured — there is no pretend switch for it here.</p>` : '') +
+    `</div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Runs in flight</span>` +
+    `<span class="r">frozen, not current</span></div>` + frozen + `</div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">The board's own $ commands</span>` +
+    `<span class="r">${a.uiCommands.length}</span></div>` +
+    (a.uiCommands.length
+      ? a.uiCommands.map(c =>
+          `<div class="srow"><span class="sname">${esc(c.name)}</span>` +
+          `<span class="sdetail">${esc(c.help || '')}</span>` +
+          `<span class="sright"><span class="chip2 dim" ` +
+          `title="${esc(a.facts['ui-registration'])}">no agent grant` +
+          `</span></span></div>`).join('')
+      : `<p>None registered.</p>`) + `</div>`;
+}
+
+/* ── check configuration and diagnostics ──────────────────────────────── */
+
+function settingsDiagnostics(page) {
+  const d = page.diagnostics;
+  const report = S.doctor && S.doctor.report;
+  const findings = report
+    ? (report.findings.length
+        ? report.findings.map(f => {
+            const cls = f.outcome === 'failed' ? 'bad'
+              : f.outcome === 'passed' ? 'ok' : 'dim';
+            return `<div class="srow"><span class="sname">${esc(f.name)}` +
+              `${f.intent ? ` · ${esc(f.intent)}` : ''}</span>` +
+              `<span class="sdetail">${esc(f.about)}<br>${esc(f.detail)}` +
+              (f.remedy ? `<br><b>Remedy:</b> ${esc(f.remedy)}` : '') +
+              `</span><span class="sright">` +
+              `<span class="chip2 ${cls}">${esc(f.outcome)}</span>` +
+              `<span class="mono" style="color:var(--dim)" ` +
+              `title="${esc((d.evidence[f.evidence] || {}).proves || '')}">` +
+              `${esc(f.evidence)}</span>` +
+              (f.code ? `<span class="mono" style="color:var(--dim)">` +
+                `${esc(f.code)}</span>` : '') + `</span></div>`;
+          }).join('')
+        : `<p>The inspection found nothing to report.</p>`)
+    : `<p>Nothing has been inspected in this reading. <b>Check ` +
+      `configuration</b> resolves the policy and reads the approved inputs; ` +
+      `it runs no project program and spends nothing.</p>`;
+  const stages = d.coverage.map(row => {
+    const mode = d.modes[row.mode];
+    const ran = report ? report.ran.includes(row.mode) : false;
+    const path = mode.uiPath || {};
+    return `<div class="srow"><span class="sname">${esc(mode.label)}</span>` +
+      `<span class="sdetail">${esc(mode.does)}<br>` +
+      `<b>proves:</b> ${esc(row.proves)}<br>` +
+      `<b>does not prove:</b> ${esc(row.doesNotProve)}` +
+      ((mode.sideEffects || []).length
+        ? `<br><b>side effects:</b> ${esc(mode.sideEffects.join('; '))}` : '') +
+      (path.available
+        ? `<br><b>how to run it:</b> ${esc(path.how)}` +
+          (path.approval ? ` (${esc(path.approval)})` : '')
+        : `<br><b>no control here.</b> ${esc(path.how || '')}` +
+          (path.approval ? ` — ${esc(path.approval)}` : '')) +
+      `</span><span class="sright">` +
+      `<span class="chip2 ${ran ? 'ok' : 'dim'}">` +
+      `${ran ? 'run in this reading' : 'not asked'}</span>` +
+      (path.available && row.mode !== 'inspect'
+        ? `<button class="chip2" data-sdoctor="${esc(row.mode)}" ` +
+          `aria-label="run ${esc(mode.label)}">` +
+          `${actLabel('run it', 'run it?', 'running…')}</button>`
+        : row.mode === 'inspect'
+          ? `<button class="chip2" data-sinspect="1" ` +
+            `aria-label="check configuration">check configuration</button>`
+          : `<span class="chip2 dim" title="${esc(path.approval || '')}">` +
+            `not offered here</span>`) +
+      `</span></div>`;
+  }).join('');
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">Check configuration</span>` +
+    `<span class="r">${report ? 'read ' + esc(fmtShort(report.generated))
+                              : 'read-only inspection'}</span></div>` +
+    `<p class="lead">${esc(d.inspectIs)}</p>` +
+    `<p>Read-only inspection cannot: ${esc(d.cannot.join(', '))}.</p>` +
+    (report && report.summary.failed
+      ? `<p class="bad">${esc(report.summary.line)}</p>`
+      : report ? `<p>${esc(report.summary.line)}</p>` : '') +
+    `<div class="acts"><button class="chip2" data-sinspect="1" ` +
+    `aria-label="check configuration now">Check configuration</button></div>` +
+    findings + `</div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Four levels, and what each is worth</span>` +
+    `<span class="r">inspection is not execution</span></div>` +
+    `<p>${esc(d.unknownIsNotPassed)}</p>` + stages + `</div>` +
+    `<details class="fold"><summary>every diagnostic bench can produce, and ` +
+    `its remedy</summary><pre>${esc(Object.entries(d.diagnosticCodes)
+      .map(([code, x]) => `${code}\n  ${x.title}\n  ${x.remedy}`)
+      .join('\n\n'))}</pre></details>` +
+    `<details class="fold"><summary>what a diagnosis withholds</summary>` +
+    `<pre>${esc(Object.entries(d.redaction)
+      .map(([k, why]) => `${k}: ${why}`).join('\n\n'))}</pre></details>`;
+}
+
+function wireDiagnostics() {
+  const body = $('#sbody');
+  body.querySelectorAll('[data-sinspect]').forEach(btn =>
+    btn.addEventListener('click', () => inspectConfiguration()));
+  body.querySelectorAll('[data-sdoctor]').forEach(btn => {
+    const mode = btn.dataset.sdoctor;
+    const spec = (S.settings.page.diagnostics.modes || {})[mode] || {};
+    wireAction(btn, `${BOARD_ACT}settings-doctor::${mode}`, {
+      label: spec.label || mode, confirm: 'run it?', busy: 'running…',
+      run: () => settingsDoctorRun(mode),
+    });
+  });
+}
+
+/* The read-only action, under its decided name. It is a GET of the
+   doctor's own report with no mode named, which is inspection: the policy
+   resolved for every intent, the approved inputs read, bench's own broken
+   fixtures through the same resolver. No project program, no adapter hook,
+   no model, nothing pinned. */
+async function inspectConfiguration() {
+  S.settingsSection = 'diagnostics';
+  S.doctorReading = true;
+  renderSettings();
+  try {
+    const res = await fetch('/api/doctor');
+    const data = await res.json();
+    if (res.ok && data.doctor) {
+      S.doctor = { at: Date.now(), report: data.doctor };
+      renderDoctor();
+    } else {
+      toast(data.error || 'the configuration could not be inspected', true);
+    }
+  } catch (e) {
+    toast(e.message || 'the board could not be asked', true);
+  } finally {
+    S.doctorReading = false;
+    renderSettings();
+  }
+}
+
+/* The executing stages, which are a different thing and say so. Each one
+   is armed, names its side effects beside it, and goes through the board's
+   existing `/api/doctor/run` — this page invents no run endpoint. */
+async function settingsDoctorRun(mode) {
+  try {
+    const res = await fetch('/api/doctor/run', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modes: [mode] }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.doctor) {
+      toast(data.error || 'the stage could not be run', true);
+      return false;
+    }
+    S.doctor = { at: Date.now(), report: data.doctor };
+    renderDoctor();
+    renderSettings();
+    return true;
+  } catch (e) {
+    toast(e.message || 'the board could not be asked', true);
+    return false;
+  }
+}
+
+/* ── installation and configuration sources ───────────────────────────── */
+
+function settingsInstallation(page) {
+  const i = page.installation;
+  const roots = i.roots.map(r =>
+    `<dt>${esc(r.name)}</dt><dd><code>${esc(r.path)}</code>` +
+    `<span class="why">${esc(r.holds)}</span></dd>`).join('');
+  const rows = page.settings.map(s =>
+    `<div class="srow"><span class="sname">${esc(s.key)}` +
+    `<span class="sdetail"> — ${esc(s.why)}</span></span>` +
+    `<span class="sdetail">value: <code>${esc(s.value || '(empty)')}</code>` +
+    `${s.redacted ? ' <b>(redacted)</b>' : ''}<br>` +
+    `${s.running !== null
+      ? `<b>the running board has <code>${esc(s.running)}</code> — the file ` +
+        `has moved since it started</b><br>` : ''}` +
+    `default: <code>${esc(s.default || '(empty)')}</code><br>` +
+    `${esc(s.how)}<br>${esc(s.appliesWhy)}</span>` +
+    `<span class="sright">` +
+    `<span class="chip2 ${s.locked ? 'bad' : 'dim'}" ` +
+    `title="${esc(s.how)}">${esc(s.source)}` +
+    `${s.locked ? ' · locked' : ''}</span></span></div>`).join('');
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">This installation</span>` +
+    `<span class="r">${esc(i.mode)}</span></div>` +
+    `<div class="skv">` +
+    `<dt>build</dt><dd>${esc(i.version)}</dd>` +
+    `<dt>source revision</dt><dd>` +
+    (i.revisionKnown
+      ? `<code>${esc(i.revision)}</code>` +
+        (i.described ? `<span class="why">${esc(i.described)}</span>` : '')
+      : `unknown<span class="why">${esc(i.revisionWhy)}</span>`) + `</dd>` +
+    `<dt>mode</dt><dd>${esc(i.mode)}<span class="why">${esc(i.modeWhy)}` +
+    `</span></dd>` + roots + `</div>` +
+    (i.problems.length
+      ? i.problems.map(p => `<p class="bad">${esc(p)}</p>`).join('') : '') +
+    `</div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Two git identities</span>` +
+    `<span class="r">resolved independently</span></div>` +
+    `<div class="skv">` +
+    `<dt>application</dt><dd><code>${esc(i.git.application.repo)}</code>` +
+    `<span class="why">base ${esc(i.git.application.base)} · remote ` +
+    `${esc(i.git.application.remote || 'none')} · merge ` +
+    `${i.git.application.mergeOnOrigin ? 'on origin' : 'locally'} · gh ` +
+    `${i.git.application.ghAvailable ? 'available' : 'unavailable'}</span>` +
+    `<span class="why">${esc(i.git.application.what)}</span></dd>` +
+    `<dt>work state</dt><dd><code>${esc(i.git.workState.repo ||
+      'no repository — the board will not commit here')}</code>` +
+    `<span class="why">base ${esc(i.git.workState.base)} · remote ` +
+    `${esc(i.git.workState.remote || 'none')}</span>` +
+    `<span class="why">${esc(i.git.workState.what)}</span></dd>` +
+    `</div>` +
+    `<p>Syncing is ${i.sync.enabled ? 'on' : 'off'}; moves ` +
+    `${i.sync.commitMoves ? 'commit themselves' : 'do not commit'}. ` +
+    `${esc(i.sync.what)}</p>` +
+    ((i.sync.status.notes || []).length
+      ? (i.sync.status.notes || []).map(n =>
+          `<p class="bad">${esc(n.summary || '')}</p>`).join('') : '') +
+    `<details class="fold"><summary>what stays local, and what is shared` +
+    `</summary><pre>${esc([
+      ...i.localOnly.map(x => `local: ${x.what}\n  ${x.why}`),
+      ...i.shared.map(x => `shared: ${x.what}\n  ${x.why}`)].join('\n\n'))}` +
+    `</pre></details></div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Separate operations</span>` +
+    `<span class="r">not this page</span></div>` +
+    `<div class="skv">` + i.separateOperations.map(o =>
+      `<dt>${esc(o.what)}</dt><dd>${esc(o.where)}</dd>`).join('') +
+    `</div></div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Settings and where each value came from</span>` +
+    `<span class="r">read-only here</span></div>` +
+    `<p>${esc(page.editing.envIsReadOnly)}</p>` + rows + `</div>`;
+}
+
+/* ── the editor: four steps, and only the last one writes ──────────────── */
+
+function settingsPolicy(page) {
+  const d = page.editing.draft;
+  if (!S.draft) {
+    S.draft = { document: JSON.parse(JSON.stringify(d.document)),
+                revision: d.revision, checked: null, preview: null,
+                dirty: false, raw: null };
+  }
+  const draft = S.draft;
+  const errs = (draft.checked && draft.checked.errors) || [];
+  const byField = (field) => errs.filter(e => (e.field || '') === field);
+  const fieldErrors = (field) => byField(field).map(e =>
+    `<p class="ferr"><span class="fld">${esc(e.code || '')}</span> ` +
+    `${esc(e.why || '')}${e.remedy ? ` <i>${esc(e.remedy)}</i>` : ''}</p>`)
+    .join('');
+  const names = (draft.document.checks || [])
+    .map(c => String((c || {}).name || '')).filter(Boolean);
+
+  const checkItems = (draft.document.checks || []).map((c, n) =>
+    `<div class="item"><div class="ihead"><span class="label">check ${n + 1}` +
+    `</span><button class="chip2 bad" data-drop="checks:${n}" ` +
+    `aria-label="remove check ${n + 1}">remove</button></div>` +
+    `<div class="fgrid">` +
+    field(`checks:${n}:name`, 'name', (c || {}).name || '') +
+    field(`checks:${n}:run`, 'command', (c || {}).run || '') +
+    select(`checks:${n}:root`, 'runs in', (c || {}).root || 'worktree',
+           Object.keys(page.verification.roots)) +
+    field(`checks:${n}:timeout`, 'timeout (s)',
+          (c || {}).timeout === undefined ? '' : String(c.timeout), 'number') +
+    field(`checks:${n}:prepare`, 'preparation steps (comma separated)',
+          ((c || {}).prepare || []).join(', ')) +
+    field(`checks:${n}:scopes`, 'scopes (one per line: name = arg arg)',
+          Object.entries((c || {}).scopes || {})
+            .map(([w, a]) => `${w} = ${(a || []).join(' ')}`).join('\n'),
+          'area') +
+    `</div></div>`).join('');
+
+  const stepItems = (draft.document.prepare || []).map((p, n) =>
+    `<div class="item"><div class="ihead"><span class="label">step ${n + 1}` +
+    `</span><button class="chip2 bad" data-drop="prepare:${n}" ` +
+    `aria-label="remove preparation step ${n + 1}">remove</button></div>` +
+    `<div class="fgrid">` +
+    field(`prepare:${n}:name`, 'name', (p || {}).name || '') +
+    field(`prepare:${n}:run`, 'command', (p || {}).run || '') +
+    checkbox(`prepare:${n}:network`, 'needs the network',
+             (p || {}).network === true) +
+    `</div></div>`).join('');
+
+  const intentItems = page.overview.policy.kind !== null
+    ? ['work', 'act-pr', 'review'].map(intent => {
+        const prof = ((draft.document.profiles || {})[intent]) || {};
+        const want = (prof.verify || []).map(String);
+        return `<div class="item"><div class="ihead">` +
+          `<span class="label">${esc(intent)}</span></div>` +
+          (names.length
+            ? names.map(name => checkbox(
+                `profiles:${intent}:verify:${name}`,
+                `may ask bench to run ${name}`, want.includes(name))).join('')
+            : `<p>No check is declared yet, so there is nothing for this ` +
+              `intent to ask for.</p>`) + `</div>`;
+      }).join('')
+    : '';
+
+  const gateItems = Object.keys(page.acceptance.scopes).map(scope => {
+    const gate = ((draft.document.gates || {})[scope]) || {};
+    const want = (gate.checks || []).map(c =>
+      typeof c === 'string' ? c : String((c || {}).check || ''));
+    const modes = page.acceptance.reviewModes;
+    return `<div class="item"><div class="ihead">` +
+      `<span class="label">${esc(scope)}</span>` +
+      `<span class="mono" style="color:var(--dim)">` +
+      `${esc(page.acceptance.scopes[scope])}</span></div>` +
+      (names.length
+        ? names.map(name => checkbox(`gates:${scope}:checks:${name}`,
+            `require ${name} (full run)`, want.includes(name))).join('')
+        : `<p>No check is declared yet, so this gate can require none.</p>`) +
+      `<div class="frow"><label for="f-gates:${esc(scope)}:review">review` +
+      `</label><select id="f-gates:${esc(scope)}:review" ` +
+      `data-field="gates:${scope}:review" aria-label="${esc(scope)} review ` +
+      `requirement">` + modes.map(m =>
+        `<option value="${esc(m.name)}"` +
+        `${(gate.review || 'none') === m.name ? ' selected' : ''}` +
+        `${m.available ? '' : ' disabled'}>${esc(m.name)}` +
+        `${m.available ? '' : ' — not available on this board'}</option>`)
+        .join('') + `</select></div></div>`;
+  }).join('');
+
+  const over = ((draft.document.gates || {}).overrides) || {};
+  const changes = draft.preview
+    ? (draft.preview.changes.length
+        ? `<div class="s-diff">` + draft.preview.changes.map(c =>
+            `<div class="d"><span class="k">${esc(c.kind)}</span>` +
+            `<span>${esc(c.what)} — ${esc(c.detail)}` +
+            (c.before !== undefined
+              ? `<br><span class="mono" style="color:var(--dim)">` +
+                `before ${esc(JSON.stringify(c.before))} → after ` +
+                `${esc(JSON.stringify(c.after))}</span>` : '') +
+            `</span></div>`).join('') + `</div>`
+        : `<p>Nothing would change.</p>`)
+    : `<p>Nothing has been previewed. <b>Preview</b> compares two ` +
+      `resolutions and writes nothing.</p>`;
+
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">Edit the execution policy</span>` +
+    `<span class="r">${esc(d.identity || d.path)}</span></div>` +
+    `<p class="lead">Four steps, and only the last one writes.</p>` +
+    `<div class="skv">` + page.editing.steps.map(s =>
+      `<dt>${esc(s.step)}</dt><dd>${esc(s.what)}</dd>`).join('') + `</div>` +
+    `<p>${esc(d.appliesWhy)}</p>` +
+    (d.parseError ? `<p class="bad">${esc(d.parseError)} — the structured ` +
+      `fields below start from an empty document; applying would replace ` +
+      `the file.</p>` : '') +
+    (d.unknownKeys.length
+      ? `<p>Keys this editor does not understand are preserved exactly: ` +
+        `<code>${esc(d.unknownKeys.join(', '))}</code>.</p>` : '') +
+    `<p>${esc(page.editing.secrets)}</p>` +
+    `<div class="acts" id="s-steps">` +
+    `<button class="chip2" id="s-validate" aria-label="validate the draft">` +
+    `Validate</button>` +
+    `<button class="chip2" id="s-preview" aria-label="preview the change">` +
+    `Preview</button>` +
+    `<button class="chip2 ${draft.checked && draft.checked.ok ? 'ok' : 'dim'}" ` +
+    `id="s-apply" aria-label="apply the change"` +
+    `${draft.checked && draft.checked.ok ? '' : ' disabled'}>` +
+    `${actLabel('Apply', 'write it?', 'writing…')}</button>` +
+    `<button class="chip2" id="s-discard" aria-label="discard the draft">` +
+    `Discard</button>` +
+    `<span class="mono" style="color:var(--dim)">revision ` +
+    `${esc((draft.revision || 'none').slice(0, 12))}` +
+    `${draft.dirty ? ' · edited' : ''}</span></div>` +
+    (draft.checked
+      ? (draft.checked.ok
+          ? `<p>The draft validates. Nothing has been written.</p>`
+          : `<p class="bad">${draft.checked.errors.length} thing` +
+            `${draft.checked.errors.length === 1 ? '' : 's'} would be ` +
+            `refused. Nothing has been written.</p>`)
+      : `<p>Not validated yet. Apply stays unavailable until a validation ` +
+        `of this draft comes back clean.</p>`) +
+    fieldErrors('') + `</div>` +
+    `<div class="panel s-edit"><div class="phead">` +
+    `<span class="label">Checks</span>` +
+    `<span class="r">${names.length}</span></div>` +
+    fieldErrors('checks') + checkItems +
+    `<div class="acts"><button class="chip2" data-add="checks" ` +
+    `aria-label="add a check">add a check</button></div></div>` +
+    `<div class="panel s-edit"><div class="phead">` +
+    `<span class="label">Preparation steps</span>` +
+    `<span class="r">${(draft.document.prepare || []).length}</span></div>` +
+    fieldErrors('prepare') + stepItems +
+    `<div class="acts"><button class="chip2" data-add="prepare" ` +
+    `aria-label="add a preparation step">add a step</button></div></div>` +
+    `<div class="panel s-edit"><div class="phead">` +
+    `<span class="label">What each launch intent may ask for</span>` +
+    `<span class="r">profiles</span></div>` +
+    fieldErrors('profiles') + intentItems + `</div>` +
+    `<div class="panel s-edit"><div class="phead">` +
+    `<span class="label">Gates</span>` +
+    `<span class="r">per guarded mutation</span></div>` +
+    fieldErrors('gates') + gateItems +
+    `<div class="item"><div class="ihead"><span class="label">overrides` +
+    `</span></div>` +
+    checkbox('gates:overrides:allow', 'allow an unmet gate to be proceeded ' +
+             'over, on the record', over.allow === true) +
+    field('gates:overrides:actors', 'restricted to these git identities ' +
+          '(comma separated; empty means any)',
+          (over.actors || []).join(', ')) + `</div></div>` +
+    `<div class="panel s-edit"><div class="phead">` +
+    `<span class="label">Consequence preview</span>` +
+    `<span class="r">${draft.preview ? 'read' : 'not read'}</span></div>` +
+    changes +
+    (draft.preview ? `<p>${esc(draft.preview.evidence.why)}` +
+      (draft.preview.evidence.invalidated.length
+        ? ` (${draft.preview.evidence.count} recorded pass` +
+          `${draft.preview.evidence.count === 1 ? '' : 'es'} affected)` : '') +
+      `</p>` +
+      (draft.preview.pending.length
+        ? `<p class="bad">Cards waiting in review/ whose merge decision ` +
+          `would change: ` + esc(draft.preview.pending.map(p =>
+            `${p.file} (${p.before} → ${p.after})`).join('; ')) + `</p>`
+        : `<p>No card waiting in review/ changes its merge decision.</p>`) +
+      `<ul>${draft.preview.sideEffects.map(e =>
+        `<li>${esc(e)}</li>`).join('')}</ul>` : '') + `</div>` +
+    `<details class="fold"><summary>the whole document as JSON — the escape ` +
+    `hatch for anything these fields do not cover</summary>` +
+    `<div class="s-edit" style="padding-top:8px">` +
+    `<div class="frow"><label for="s-raw">document</label>` +
+    `<textarea id="s-raw" spellcheck="false" aria-label="the whole execution ` +
+    `policy document as JSON">${esc(draft.raw !== null ? draft.raw
+      : JSON.stringify(draft.document, null, 2))}</textarea></div>` +
+    `<div class="acts"><button class="chip2" id="s-useraw" ` +
+    `aria-label="use this JSON as the draft">use this JSON</button></div>` +
+    `</div></details>`;
+}
+
+/* The three field primitives. Ids are `f-<path>` and the path is what the
+   change handler writes into the draft, so a field cannot be wired to one
+   place and read from another. */
+function field(path, label, value, kind) {
+  const id = 'f-' + path;
+  if (kind === 'area') {
+    return `<div class="frow"><label for="${esc(id)}">${esc(label)}</label>` +
+      `<textarea id="${esc(id)}" data-field="${esc(path)}" spellcheck="false" ` +
+      `style="min-height:58px" aria-label="${esc(label)}">${esc(value)}` +
+      `</textarea></div>`;
+  }
+  return `<div class="frow"><label for="${esc(id)}">${esc(label)}</label>` +
+    `<input id="${esc(id)}" type="${kind === 'number' ? 'number' : 'text'}" ` +
+    `data-field="${esc(path)}" value="${esc(value)}" spellcheck="false" ` +
+    `aria-label="${esc(label)}"></div>`;
+}
+
+function select(path, label, value, options) {
+  const id = 'f-' + path;
+  return `<div class="frow"><label for="${esc(id)}">${esc(label)}</label>` +
+    `<select id="${esc(id)}" data-field="${esc(path)}" ` +
+    `aria-label="${esc(label)}">` + options.map(o =>
+      `<option value="${esc(o)}"${o === value ? ' selected' : ''}>` +
+      `${esc(o)}</option>`).join('') + `</select></div>`;
+}
+
+function checkbox(path, label, on) {
+  const id = 'f-' + path;
+  return `<div class="frow"><label class="cb" for="${esc(id)}">` +
+    `<input id="${esc(id)}" type="checkbox" data-field="${esc(path)}" ` +
+    `${on ? 'checked' : ''} aria-label="${esc(label)}">${esc(label)}` +
+    `</label></div>`;
+}
+
+/* Writing one field into the draft. The path says where: `checks:2:name`,
+   `gates:member:checks:unit`, `profiles:review:verify:proposed`. Nothing
+   here validates — that is the server's answer, one request later, from
+   the parser a launch rides. */
+function writeField(path, el) {
+  const parts = path.split(':');
+  const doc = S.draft.document;
+  const value = el.type === 'checkbox' ? el.checked : el.value;
+  if (parts[0] === 'checks' || parts[0] === 'prepare') {
+    const list = doc[parts[0]] = doc[parts[0]] || [];
+    const item = list[Number(parts[1])] = list[Number(parts[1])] || {};
+    const key = parts[2];
+    if (key === 'network') item.network = value === true;
+    else if (key === 'timeout') {
+      if (String(value).trim() === '') delete item.timeout;
+      else item.timeout = Number(value);
+    } else if (key === 'prepare') {
+      const names = String(value).split(',').map(s => s.trim()).filter(Boolean);
+      if (names.length) item.prepare = names; else delete item.prepare;
+    } else if (key === 'scopes') {
+      const scopes = {};
+      for (const line of String(value).split('\n')) {
+        if (!line.trim()) continue;
+        const [name, rest] = line.split('=');
+        const args = String(rest || '').trim().split(/\s+/).filter(Boolean);
+        if (name.trim()) scopes[name.trim()] = args;
+      }
+      if (Object.keys(scopes).length) item.scopes = scopes;
+      else delete item.scopes;
+    } else item[key] = value;
+  } else if (parts[0] === 'profiles') {
+    const profiles = doc.profiles = doc.profiles || {};
+    const prof = profiles[parts[1]] = profiles[parts[1]] || {};
+    const want = new Set((prof.verify || []).map(String));
+    if (value) want.add(parts[3]); else want.delete(parts[3]);
+    if (want.size) prof.verify = [...want]; else delete prof.verify;
+  } else if (parts[0] === 'gates') {
+    const gates = doc.gates = doc.gates || {};
+    if (parts[1] === 'overrides') {
+      const over = gates.overrides = gates.overrides || {};
+      if (parts[2] === 'allow') over.allow = value === true;
+      else {
+        const actors = String(value).split(',').map(s => s.trim())
+          .filter(Boolean);
+        if (actors.length) over.actors = actors; else delete over.actors;
+      }
+    } else {
+      const gate = gates[parts[1]] = gates[parts[1]] || {};
+      if (parts[2] === 'review') {
+        if (value === 'none') delete gate.review; else gate.review = value;
+      } else {
+        const want = (gate.checks || []).map(c =>
+          typeof c === 'string' ? c : String((c || {}).check || ''));
+        const set = new Set(want);
+        if (value) set.add(parts[3]); else set.delete(parts[3]);
+        if (set.size) gate.checks = [...set]; else delete gate.checks;
+      }
+    }
+  }
+  if (!doc.v) doc.v = S.settings.page.editing.draft.schemaVersion;
+  S.draft.dirty = true;
+  // an edited draft is no longer the one that validated, so Apply goes
+  // back behind a fresh validation rather than firing on a stale pass
+  S.draft.checked = null;
+  S.draft.preview = null;
+  S.draft.raw = null;
+}
+
+function wirePolicyEditor(page) {
+  const body = $('#sbody');
+  body.querySelectorAll('[data-field]').forEach(el => {
+    const handler = () => {
+      writeField(el.dataset.field, el);
+      renderSettings();
+      const again = document.getElementById(el.id);
+      if (again && el.type !== 'checkbox' && el.tagName !== 'SELECT') {
+        again.focus();
+        try { again.setSelectionRange(again.value.length, again.value.length); }
+        catch (e) { /* number inputs refuse a selection range */ }
+      } else if (again) again.focus();
+    };
+    el.addEventListener(el.type === 'checkbox' || el.tagName === 'SELECT'
+      ? 'change' : 'change', handler);
+  });
+  body.querySelectorAll('[data-add]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.add;
+      const doc = S.draft.document;
+      doc[key] = doc[key] || [];
+      doc[key].push(key === 'checks'
+        ? { name: '', run: '', root: 'worktree' } : { name: '', run: '' });
+      if (!doc.v) doc.v = page.editing.draft.schemaVersion;
+      S.draft.dirty = true;
+      S.draft.checked = null;
+      S.draft.preview = null;
+      renderSettings();
+    }));
+  body.querySelectorAll('[data-drop]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const [key, n] = btn.dataset.drop.split(':');
+      (S.draft.document[key] || []).splice(Number(n), 1);
+      S.draft.dirty = true;
+      S.draft.checked = null;
+      S.draft.preview = null;
+      renderSettings();
+    }));
+  const raw = body.querySelector('#s-raw');
+  if (raw) raw.addEventListener('input', () => { S.draft.raw = raw.value; });
+  const useRaw = body.querySelector('#s-useraw');
+  if (useRaw) useRaw.addEventListener('click', () => {
+    try {
+      const parsed = JSON.parse(S.draft.raw !== null ? S.draft.raw : raw.value);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        toast('a policy document is a JSON object', true);
+        return;
+      }
+      S.draft.document = parsed;
+      S.draft.dirty = true;
+      S.draft.checked = null;
+      S.draft.preview = null;
+      S.draft.raw = null;
+      renderSettings();
+    } catch (e) {
+      toast('that is not valid JSON: ' + e.message, true);
+    }
+  });
+  // Discard is a discard: the draft goes, nothing is written, and the
+  // settings as they stand are read again.
+  body.querySelector('#s-discard').addEventListener('click', () => {
+    S.draft = null;
+    fetchSettings(true);
+    toast('draft discarded — nothing was written');
+  });
+  body.querySelector('#s-validate').addEventListener('click',
+    () => settingsPost('validate'));
+  body.querySelector('#s-preview').addEventListener('click',
+    () => settingsPost('preview'));
+  const apply = body.querySelector('#s-apply');
+  wireAction(apply, `${BOARD_ACT}settings-apply`, {
+    label: 'Apply', confirm: 'write it?', busy: 'writing…',
+    run: () => settingsApply(),
+  });
+}
+
+/* The one header a cross-origin form cannot set, and a cross-origin fetch
+   cannot send without a preflight this board does not answer. The server
+   refuses a policy change without it — see `httpd.origin_problem`. */
+const SETTINGS_HEADERS = { 'Content-Type': 'application/json',
+                           'X-Bench-Settings': '1' };
+
+async function settingsPost(step) {
+  try {
+    const res = await fetch(`/api/settings/${step}`, {
+      method: 'POST', headers: SETTINGS_HEADERS,
+      body: JSON.stringify({ document: S.draft.document }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      toast(data.error || `the draft could not be ${step}d`, true);
+      return;
+    }
+    if (step === 'validate') {
+      S.draft.checked = data.validation;
+      toast(data.validation.ok
+        ? 'the draft validates — nothing was written'
+        : `${data.validation.errors.length} would be refused — nothing was written`,
+        !data.validation.ok);
+    } else {
+      S.draft.preview = data.preview;
+      S.draft.checked = { ok: data.preview.ok, errors: data.preview.errors,
+                          revision: data.preview.revision };
+      toast('previewed — nothing was written');
+    }
+    renderSettings();
+  } catch (e) {
+    toast(e.message || 'the board could not be asked', true);
+  }
+}
+
+async function settingsApply() {
+  try {
+    const res = await fetch('/api/settings/apply', {
+      method: 'POST', headers: SETTINGS_HEADERS,
+      body: JSON.stringify({ document: S.draft.document,
+                             revision: S.draft.revision }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      toast(data.error || 'the settings were not written', true);
+      // a conflict is not a bad document: re-read, so the next apply is
+      // made against the revision that is actually current
+      if (data.conflict) { S.draft = null; fetchSettings(true); }
+      return false;
+    }
+    S.draft = null;
+    await fetchSettings(true);
+    toast(`written — ${data.applied.appliesWhy}`);
+    return true;
+  } catch (e) {
+    toast(e.message || 'the board could not be asked', true);
+    return false;
+  }
 }
 
 /* What the drawer is showing, as a key its scroll position can be filed

@@ -274,31 +274,33 @@ ACCESS_FACTS = {
 
 FIELD_OF = {
     "policy-unreadable": "",
+    "name-invalid": "",
     "grant-invalid": "profiles",
     "grant-duplicate": "profiles",
-    "grant-unrunnable": "profiles",
-    "grant-root-unknown": "profiles",
+    "grant-reserved": "profiles",
     "grant-root-unavailable": "profiles",
-    "context-invalid": "context",
     "context-unreadable": "context",
+    "context-refused": "context",
     "context-duplicate": "context",
-    "context-root-unknown": "context",
-    "context-too-big": "context",
-    "context-secret": "context",
-    "context-directory": "context",
     "check-invalid": "checks",
-    "check-undeclared": "profiles",
     "check-root-unsafe": "checks",
+    "check-reshapes-repository": "checks",
+    "check-names-credential": "checks",
     "check-duplicate": "checks",
+    "check-undeclared": "profiles",
+    "check-unrunnable": "checks",
     "prepare-invalid": "prepare",
+    "prepare-reshapes-repository": "prepare",
+    "prepare-names-credential": "prepare",
+    "prepare-duplicate": "prepare",
     "prepare-undeclared": "checks",
+    "deny-unknown": "profiles",
     "publication-widened": "profiles",
-    "requirement-unknown": "requires",
     "requirement-unsupported": "requires",
-    "gate-invalid": "gates",
     "gate-scope-unknown": "gates",
-    "gate-scope-undeclared": "gates",
+    "gate-invalid": "gates",
     "gate-check-undeclared": "gates",
+    "gate-scope-undeclared": "gates",
     "gate-review-unknown": "gates",
 }
 
@@ -1421,9 +1423,14 @@ def recommendations(doc: dict | None = None) -> list[dict]:
                    "one",
             section="acceptance", state="configured-untested"))
 
+    # Priority first, then the order they were appended in — which is the
+    # order a person should read them. A broken document is why every
+    # intent is blocked, so it leads; sorting by name would have put the
+    # consequences above the cause.
     order = {"high": 0, "medium": 1, "low": 2}
-    out.sort(key=lambda r: (order[r["priority"]], r["id"]))
-    return out
+    return [rec for _, rec in
+            sorted(enumerate(out),
+                   key=lambda pair: (order[pair[1]["priority"]], pair[0]))]
 
 
 def accepted_overrides_unrestricted(policy: dict) -> bool:
