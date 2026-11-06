@@ -1943,6 +1943,186 @@ changes nothing. And it will not validate anything but its own fixtures —
 the application's real suite, its services and its data are never what a
 diagnosis runs against.
 
+## Settings: reading the configuration, and changing it safely
+
+Everything above is configuration an operator sets up. Until this, the
+only way to *read* it was a JSON document and a terminal, and the only
+way to change it was a text editor. The **Settings** view — the fifth,
+beside Board, Phases, Sessions and Focus — is where it is read instead:
+**how is this bench configured, what has actually been verified, and what
+should I configure next?**
+
+It owns no policy. Every value in it comes from the authority that
+already answers for that question — `profiles.resolve()` for what a run
+may do and read, `profiles.gate_policy()` for what a merge must have,
+`verify`'s own records for what the project's checks found,
+`gates.evaluate()` for whether a merge may happen, `config` for the roots
+and each setting's provenance. There is deliberately no second reader of
+the profile document: a draft is parsed by the same function a launch is
+(`profiles.document_from`, which is `document_at` minus the disk read)
+and resolved by the same reading the readiness inspector takes, so a
+field error on the page is the diagnostic a launch would produce, with
+the same code.
+
+Opening it is a GET. Assembling the page resolves the policy, reads
+records already on disk and asks git for the tool's own revision. It runs
+no project program, invokes no adapter hook, launches no model, pins
+nothing and writes nothing — which is why Settings is a view and not an
+action.
+
+### Eight words, so that nothing reads as a pass
+
+The one word this page exists to refuse is a ninth covering all of them.
+Each of these is a different thing to do next, so each gets a word, and
+**the word carries the meaning** — colour never stands alone:
+
+| state | what it licenses you to believe |
+| --- | --- |
+| `not-configured` | nobody configured this. Not a fault, and **not a pass**: nothing is required and nothing is proved |
+| `configured-untested` | what it would do is resolved; that it does it is not established |
+| `unsupported` | nothing installed here can deliver it, so bench reports it rather than promising it |
+| `invalid` | the configuration declares it and bench refuses it — with the code and the remedy |
+| `blocked` | it could not be asked: a permission, a dependency or a capability was missing before anything ran |
+| `failed` | it ran and said no |
+| `stale` | it passed, and what it was about has changed since |
+| `verified` | bench itself ran it and recorded a pass bound to the exact source it ran against |
+
+So "no gate configured" can never render as a passed gate, a registered
+check is drawn as *registered, not required*, and a guarantee nothing
+enforces wears `unsupported` rather than a switch that pretends.
+
+### Six sections, and a seventh that writes
+
+- **Overview** — one row per thing that is set up (checks, acceptance
+  requirements, review configuration, overrides, intended agent access,
+  actual isolation, diagnostic coverage), each with its state word, and
+  **prioritised recommendations** derived from what is actually
+  configured. Each recommendation says why it matters, what *you* must
+  supply — which is often not a setting at all but a program your team
+  writes — what has to be true first, and which section to open. Reading
+  one changes nothing: no setting, permission or gate is altered by a
+  recommendation, and one that could not be satisfied honestly is not
+  offered.
+- **Verification** — leads with **"Your team provides the checks; Bench
+  runs them."** Every registered check with its approved executable and
+  argument list, its execution location and what that location is (and is
+  not — a checkout is not a sandbox), its declared scopes, which launch
+  intents may ask for it, its preparation steps, and whether a gate
+  actually requires it. Preparation is explained apart from verification,
+  because a preparation step that fails means the checks *did not run*.
+  There is a worked example that reuses a test suite the project already
+  has, and a checklist for asking a developer to supply one.
+- **Acceptance & reviews** — the three scopes drawn apart, because three
+  different commits merge; the review policies with the ones this board
+  cannot enforce marked unavailable and why (a board with no usable `gh`
+  cannot read GitHub's formal review objects at all); the same-account
+  limitation; head binding, coverage matching and what makes a pass stop
+  counting; and the override policy, which forges nothing. Beside it, the
+  three things one green tick would collapse — **Bench-run checks**,
+  **external CI status** and **review requirements** — with the mapping
+  bench does not have named as follow-up rather than approximated. A
+  green GitHub status is never converted into evidence for a named Bench
+  check, and nothing here deploys anything.
+- **Agent access** — the resolved profile for each launch intent, the
+  approved context with its provenance, the capability table with how
+  strongly each thing holds and who answers for it, and the four facts an
+  exit code cannot tell apart: UI registration, agent capability, prompt
+  instruction, gate requirement. A run in flight is drawn with the policy
+  it *froze* at launch, which is a different fact from what the settings
+  say now — and an edit here reaches none of them.
+- **Check configuration** — the renamed read-only action, and a section
+  of its own. It is `doctor.report([])`: the policy resolved for every
+  intent, the approved inputs read, bench's own deliberately broken
+  fixtures through the same resolver. The four stages are kept apart with
+  what each proves and does not, every stage nobody asked for reads `not
+  asked`, and the stage that spends tokens has **no control on this page**
+  at all — the operator instruction is printed instead of a button that
+  would not work.
+- **Installation** — the build and its source revision (`unknown` when
+  the tool is not a git checkout, because a release artifact has no
+  commit and bench will not invent one), the installation mode, all four
+  roots, both git identities resolved independently, sync configuration
+  and status, what stays local against what is shared, and the operations
+  this page does **not** perform: merging source, updating the install,
+  cutting a release, deploying the site. Then every catalogued setting
+  with its effective value, the source that decided it
+  (default / `manager/local/.env` / the process environment), whether it
+  is locked, and when a change to it applies.
+- **Edit policy** — the seventh, and the only one that writes.
+
+### What is editable, and what is shown instead
+
+One file: the execution policy document (`manager/local/profiles.json`,
+or wherever `BOARD_AGENT_PROFILES` points). That is where checks,
+preparation steps, approved context, command grants and gates live, and
+it is read fresh on every launch — so a change applies to the next launch
+and never to a run already in flight.
+
+`manager/local/.env` is **read-only here**, and the page says why rather
+than offering a control. `config` snapshots that file at import, so a
+value written from the page would not be in force until a restart; and a
+key the real environment also sets would not be in force at all. A
+control that loses to a higher-precedence source is worse than no
+control, so each row names the source that won and how to change it
+there.
+
+### Four steps, and only the last one writes
+
+1. **Edit** the draft. Nothing is written, and leaving the page discards
+   it.
+2. **Validate** — the draft through bench's own parser and resolver, with
+   each refusal's code and the field it is about. Writes nothing.
+3. **Preview** — two resolutions compared, never a prediction: what the
+   requirements become, what a run may do, which recorded passes stop
+   counting (changing a check's definition changes its identity, so every
+   pass of it reads `stale` — it is not deleted and it is not re-run), and
+   which cards waiting in `review/` would change their merge decision.
+   Writes nothing.
+4. **Apply** — armed, and refused rather than repaired. An invalid
+   document is never written; a revision that moved under the editor is a
+   **conflict** naming the current one, not a last-writer-win; unknown
+   top-level keys from the file on disk are preserved; the write is an
+   `os.replace` of a temporary file in the same directory, so a failed
+   write leaves the previous document byte for byte.
+
+A sanitized line goes into `manager/local/state/settings/history.jsonl`
+per applied change: the time, the revisions, the keys that changed, and
+the actor **where one is actually known**. This board records no
+authenticated identity, so an unknown actor is written down as unknown —
+a forged attribution is worse than an absent one. No values: a settings
+file can hold a path out of somebody's home directory.
+
+**And applying cannot move work.** It writes one file. It starts no
+agent, moves no card, merges nothing, publishes nothing, re-runs no check
+and restarts nothing; a gate takes effect the next time the mutation it
+guards is attempted, not because a file was saved. A run already in
+flight keeps the manifest it launched with, because that manifest is a
+record on disk and nothing here touches it.
+
+### Writing a policy is an authority boundary
+
+The board binds to loopback and has no authentication, and that is the
+whole threat model: a page on another origin, opened in the same browser,
+can post to `http://127.0.0.1:26071` without ever reading a reply. So the
+one route on this server that edits policy is held to a stricter door than
+the rest, in the server rather than in the page, and none of it trusts a
+field in the body — a JSON content type (so a cross-origin form, which
+may only send form encodings, is not a request this parses), a custom
+header (which a form cannot set at all, and a cross-origin `fetch` can
+only set by asking for a CORS preflight that nothing here answers), and
+an `Origin`/`Sec-Fetch-Site` check for the browsers that send them. A
+loopback client that is not a browser sends the header and is allowed,
+which is correct: it already has the operator's own filesystem access.
+
+Check registration is not a file-write or shell endpoint either. A
+compound command, a pipeline, a redirection, a substitution, a relative
+executable, a path climbing out, the application checkout as an execution
+root and an argument naming a credential are each refused where the
+document is read — by `profiles`, the same parser that refuses them for a
+launch. Secrets are not managed here: credential-shaped names and values
+are masked on the way out, and a submitted mask is refused rather than
+written back over the value it hid.
+
 ## Pull requests
 
 A card entering `review/` with a `task/<stem>` branch gets a PR opened for
