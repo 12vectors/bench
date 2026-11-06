@@ -174,15 +174,24 @@ class EveryValueComesFromTheResolver(unittest.TestCase):
     the same document. These assert equality with the authority rather
     than equality with a literal."""
 
-    def test_the_resolved_profiles_equal_profiles_resolve(self):
+    def test_the_resolved_profiles_equal_the_readiness_reading(self):
+        """`doctor.intent_reading` is the convention both the inspector and
+        this page take: a board-level reading has no card, so it resolves
+        against the path a worktree would be at rather than leaving the
+        word out and refusing every grant that runs in one."""
         found = run(
+            "import doctor\n"
             "page = settings.page()\n"
             "R = {i: [page['access']['intents'][i]['commands'],\n"
-            "         [g['name'] for g in profiles.resolve(i)['commands']]]\n"
+            "         [g['name'] for g in\n"
+            "          doctor.intent_reading(i, None)['commands']]]\n"
             "     for i in profiles.INTENTS}", doc=FULL)
         for intent, (shown, resolved) in found.items():
             self.assertEqual([g["name"] for g in shown], resolved,
                              f"{intent}'s grants are not the resolver's")
+        self.assertIn("bench-verify",
+                      [g["name"] for g in found["work"][0]],
+                      "a configured check reaches no grant to ask for it")
 
     def test_the_gate_policy_equals_profiles_gate_policy(self):
         same = run("page = settings.page()\n"

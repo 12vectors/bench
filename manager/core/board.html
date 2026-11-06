@@ -555,8 +555,10 @@
   .s-edit .cb input{width:auto;min-width:0}
   .s-diff{display:flex;flex-direction:column;gap:5px;font-size:12.5px}
   .s-diff .d{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap}
+  /* the change kind, read as a label beside its sentence. No fixed width:
+     at 390px a reserved column is exactly what pushes the page sideways */
   .s-diff .d .k{font-family:var(--mono);font-size:11px;color:var(--dim);
-    flex:none;min-width:116px}
+    flex:none}
 
   /* ── phases: a swimlane each ── */
   /* The room the five columns could never spare. One lane per phase, the
@@ -4053,7 +4055,7 @@ function settingsVerification(page) {
     `<p>${esc(v.preparationIsNotVerification)}</p>` + steps + `</div>` +
     `<div class="panel"><div class="phead">` +
     `<span class="label">Where a check runs</span>` +
-    `<span class="r">declared, not sandboxed</span></div>` +
+    `<span class="r">a location, not a sandbox</span></div>` +
     `<div class="skv">` + Object.entries(v.roots).map(([w, why]) =>
       `<dt>${esc(w)}</dt><dd>${esc(why)}</dd>`).join('') + `</div>` +
     `<p>${esc(v.rootsNote)}</p>` +
