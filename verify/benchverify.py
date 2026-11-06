@@ -1,0 +1,679 @@
+"""What the verify/ entrypoints share: which checkout is the candidate,
+what the child is given, and what the record says afterwards.
+
+Stdlib only, like the suite it runs. Three exit statuses and no others:
+
+    0  passed        the checks ran and every one held
+    1  failed        a check ran and said no — read the log
+    2  setup-error   nothing trustworthy could be run: not a bench
+                     checkout, a dependency missing, zero tests found,
+                     a browser that would not start, an artifact a pass
+                     requires that is not there
+
+A setup error is never a pass and never a skip. It is also not a test
+failure, which is why it has its own number: "fix the product" and "fix
+the machine" send a person to different places.
+
+## The candidate is where you are, not where this file is
+
+`--root`, else `BENCH_VERIFY_ROOT`, else the working directory. Never the
+directory this script was installed in: bench runs a named check with its
+working directory set to the checkout under test (`worktree`, `source` or
+`review`), and a runner that tested its own installation instead would
+pass the operator's copy while the candidate went unexamined. The record
+says which of the three selected the root, and whether the runner itself
+lives inside it.
+
+## What the child is given
+
+Built, not inherited. Every `BOARD_*`, `AGENT_*`, `BENCH_*`, `GIT_*`,
+`GH_*` and `GITHUB_*` name is removed, as is anything credential-shaped
+and anything that turns a browser sandbox off. `HOME`, the XDG
+directories, `TMPDIR` and the package caches point into a work directory
+made for this run, and git reads a configuration written there. That
+*directs* where a well-behaved suite writes. It is not an OS sandbox: a
+test with a path can still read or write anywhere this user can.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import datetime
+import glob
+import hashlib
+import json
+import os
+import platform
+import select
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+VERSION = "bench-verify/1"
+PASSED, FAILED, SETUP_ERROR = 0, 1, 2
+OUTCOME = {PASSED: "passed", FAILED: "failed", SETUP_ERROR: "setup-error"}
+
+ISOLATION = ("directed, not confined: HOME, XDG, TMPDIR and caches point into "
+             "this run's work directory and inherited board/agent/git settings "
+             "are removed; this is not an OS sandbox")
+
+STRIP_PREFIXES = ("BOARD_", "AGENT_", "BENCH_", "GIT_", "GH_", "GITHUB_",
+                  "PLAYWRIGHT_")
+STRIP_NAMES = {"PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONUSERBASE",
+               "CHROME_DEVEL_SANDBOX", "SSH_AUTH_SOCK", "GNUPGHOME"}
+STRIP_SHAPES = ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "CREDENTIAL")
+
+RUNNER = Path(__file__).resolve()
+
+
+class SetupError(Exception):
+    """Nothing trustworthy could be run. Exit 2, never a pass."""
+
+
+class CheckFailed(Exception):
+    """A check ran and said no. Exit 1."""
+
+
+# ── the candidate ─────────────────────────────────────────────────────
+
+
+def resolve_root(arg: str | None, env=os.environ) -> tuple[Path, str]:
+    if arg:
+        return Path(arg).expanduser().resolve(), "--root"
+    if env.get("BENCH_VERIFY_ROOT"):
+        return Path(env["BENCH_VERIFY_ROOT"]).expanduser().resolve(), "BENCH_VERIFY_ROOT"
+    return Path.cwd().resolve(), "cwd"
+
+
+def require_paths(root: Path, needed: list[str]) -> None:
+    if not root.is_dir():
+        raise SetupError(f"candidate root {root} is not a directory")
+    missing = [n for n in needed if not (root / n).exists()]
+    if missing:
+        raise SetupError(f"candidate root {root} is not a bench checkout this "
+                         f"check can run: it has no {', '.join(missing)}. Run from "
+                         f"the checkout under test, or pass --root")
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
+    # GIT_DIR or GIT_WORK_TREE inherited from a hook would point this
+    # at some other repository; identity is read with neither.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True,
+                          env=env)
+
+
+def _tree_digest(root: Path, files) -> str:
+    h = hashlib.sha256()
+    for rel in sorted(files):
+        p = root / rel
+        h.update(rel.encode() + b"\0")
+        if p.is_file() and not p.is_symlink():
+            with open(p, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 16), b""):
+                    h.update(chunk)
+        elif p.is_symlink():
+            h.update(b"link:" + os.readlink(p).encode())
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+SKIP_DIRS = {".git", "__pycache__", "dist", "state", ".worktrees"}
+
+
+def candidate_identity(root: Path) -> dict:
+    """The revision and a digest of everything uncommitted. Outside git
+    — a release artifact, a copy — there is no revision, and the record
+    says so rather than borrowing the revision of a repository the root
+    happens to sit in."""
+    top = _git(root, "rev-parse", "--show-toplevel")
+    toplevel = Path(top.stdout.decode().strip()).resolve() if top.returncode == 0 else None
+    if toplevel is None or toplevel != root:
+        files = [str(p.relative_to(root)) for p in root.rglob("*")
+                 if p.is_file() and not (SKIP_DIRS & set(p.relative_to(root).parts))]
+        note = ("not a git checkout" if toplevel is None else
+                f"not a git top level (inside {toplevel}, e.g. a vendored "
+                f"install): no revision of its own")
+        return {"root": str(root), "revision": None, "revisionNote": note,
+                "gitToplevel": str(toplevel) if toplevel else None,
+                "dirty": None, "sourceDigest": "tree:" + _tree_digest(root, files)}
+    head = _git(root, "rev-parse", "--verify", "HEAD^{commit}")
+    rev = head.stdout.decode().strip() if head.returncode == 0 else None
+    status = _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all").stdout
+    diff = _git(root, "diff", "HEAD", "--binary").stdout if rev else b""
+    untracked = [e[3:].decode() for e in status.split(b"\0") if e.startswith(b"?? ")]
+    h = hashlib.sha256((rev or "").encode() + b"\0" + status + b"\0" + diff)
+    h.update(_tree_digest(root, untracked).encode())
+    return {"root": str(root), "revision": rev,
+            "revisionNote": None if rev else "git checkout with no commit",
+            "gitToplevel": str(toplevel), "dirty": bool(status.strip()),
+            "sourceDigest": "git:" + h.hexdigest()}
+
+
+# ── the child's environment ───────────────────────────────────────────
+
+
+def child_env(work: Path, parent=None) -> tuple[dict, list[str]]:
+    parent = dict(os.environ if parent is None else parent)
+    env, stripped = {}, []
+    for k, v in parent.items():
+        if (k.startswith(STRIP_PREFIXES) or k in STRIP_NAMES
+                or any(s in k.upper() for s in STRIP_SHAPES)):
+            stripped.append(k)
+            continue
+        env[k] = v
+    home, tmp, cache = work / "home", work / "tmp", work / "cache"
+    for d in (home / ".config", home / ".local" / "share", home / ".local" / "state",
+              tmp, cache):
+        d.mkdir(parents=True, exist_ok=True)
+    (home / ".gitconfig").write_text(
+        "[user]\n\tname = bench-verify\n\temail = bench-verify@localhost.invalid\n"
+        "[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n"
+        "[tag]\n\tgpgsign = false\n", encoding="utf-8")
+    env.update({
+        "HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_CACHE_HOME": str(cache), "XDG_DATA_HOME": str(home / ".local" / "share"),
+        "XDG_STATE_HOME": str(home / ".local" / "state"),
+        "TMPDIR": str(tmp), "TMP": str(tmp), "TEMP": str(tmp),
+        "PIP_CACHE_DIR": str(cache / "pip"), "npm_config_cache": str(cache / "npm"),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "GIT_CONFIG_GLOBAL": str(home / ".gitconfig"), "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+    })
+    return env, sorted(stripped)
+
+
+DIRECTED = ("HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME",
+            "XDG_STATE_HOME", "TMPDIR", "PIP_CACHE_DIR", "npm_config_cache",
+            "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "PYTHONDONTWRITEBYTECODE")
+
+
+# ── one run and its record ────────────────────────────────────────────
+
+
+def now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+class Run:
+    """One entrypoint invocation: its work directory, its artifacts and
+    the record written at the end whatever happened."""
+
+    def __init__(self, check: str, description: str, needs: list[str]):
+        self.check = check
+        self.parser = argparse.ArgumentParser(prog=f"verify/{check}",
+                                              description=description)
+        p = self.parser
+        p.add_argument("--root", help="candidate checkout (default: "
+                       "BENCH_VERIFY_ROOT, else the working directory)")
+        p.add_argument("--artifacts", help="where the record, logs and "
+                       "outputs go (default: BENCH_VERIFY_ARTIFACTS, else "
+                       "inside the work directory)")
+        p.add_argument("--scratch", help="where the work directory is made "
+                       "(default: BENCH_VERIFY_SCRATCH, else TMPDIR)")
+        p.add_argument("--python", default=sys.executable,
+                       help="interpreter the product runs under (default: this one)")
+        self.needs = needs
+        self.record: dict = {"v": 1, "runner": {"version": VERSION, "check": check}}
+
+    def parse(self, argv=None):
+        self.args = self.parser.parse_args(argv)
+        return self.args
+
+    def start(self) -> None:
+        a = self.args
+        self.started = time.time()
+        scratch = Path(a.scratch or os.environ.get("BENCH_VERIFY_SCRATCH")
+                       or tempfile.gettempdir()).expanduser().resolve()
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.work = Path(tempfile.mkdtemp(prefix=f"bench-verify-{self.check}-",
+                                          dir=scratch))
+        art = a.artifacts or os.environ.get("BENCH_VERIFY_ARTIFACTS")
+        self.artifacts = Path(art).expanduser().resolve() if art else self.work / "artifacts"
+        self.artifacts.mkdir(parents=True, exist_ok=True)
+        self.root, selected = resolve_root(a.root)
+        self.record.update({
+            "check": self.check, "started": now(),
+            "runner": {**self.record["runner"], "path": str(RUNNER),
+                       "insideCandidate": RUNNER.is_relative_to(self.root),
+                       "argv": sys.argv, "cwd": os.getcwd(),
+                       "python": sys.executable, "pythonVersion": platform.python_version(),
+                       "platform": platform.platform()},
+            "candidate": {"root": str(self.root), "selectedBy": selected},
+            "work": str(self.work), "artifacts": {}})
+        require_paths(self.root, self.needs)
+        self.record["candidate"].update(candidate_identity(self.root))
+        self.record["candidate"]["selectedBy"] = selected
+        self.env, stripped = child_env(self.work)
+        self.record["environment"] = {
+            "stripped": stripped, "isolation": ISOLATION,
+            "directed": {k: self.env[k] for k in DIRECTED}}
+
+    def artifact(self, name: str, path: Path) -> Path:
+        self.record["artifacts"][name] = str(path)
+        return path
+
+    def finish(self, status: int, reason: str | None) -> int:
+        self.record.update({"outcome": OUTCOME[status], "exitStatus": status,
+                            "reason": reason, "finished": now(),
+                            "seconds": round(time.time() - getattr(self, "started", time.time()), 2)})
+        out = (getattr(self, "artifacts", None) or Path.cwd()) / "result.json"
+        out.write_text(json.dumps(self.record, indent=2, sort_keys=True) + "\n",
+                       encoding="utf-8")
+        tmp = getattr(self, "work", None)
+        if tmp is not None:
+            shutil.rmtree(tmp / "tmp", ignore_errors=True)
+        word = OUTCOME[status].upper()
+        print(f"bench-verify {self.check}: {word}" + (f" — {reason}" if reason else ""))
+        c = self.record.get("candidate", {})
+        print("bench-verify summary: " + json.dumps(
+            {"check": self.check, "outcome": OUTCOME[status],
+             "revision": c.get("revision"), "dirty": c.get("dirty"),
+             "sourceDigest": c.get("sourceDigest"), "tests": self.record.get("tests")},
+            sort_keys=True))
+        print(f"record: {out}")
+        return status
+
+    def main(self, body, argv=None) -> int:
+        self.parse(argv)
+        try:
+            self.start()
+            detail = body(self)
+            return self.finish(PASSED, detail)
+        except CheckFailed as exc:
+            return self.finish(FAILED, str(exc))
+        except SetupError as exc:
+            return self.finish(SETUP_ERROR, str(exc))
+        except Exception as exc:  # noqa: BLE001 — the harness itself broke
+            return self.finish(SETUP_ERROR, f"runner error: {type(exc).__name__}: {exc}")
+
+    def run_logged(self, argv: list[str], log_name: str, timeout: float,
+                   cwd: Path | None = None) -> tuple[int, str]:
+        cwd = cwd or self.root
+        log = self.artifact("log", self.artifacts / log_name)
+        self.record["command"] = {"argv": argv, "cwd": str(cwd), "timeout": timeout}
+        with open(log, "w", encoding="utf-8") as fh:
+            fh.write(f"# bench-verify {self.check} {now()}\n# cwd {cwd}\n# argv {argv}\n"
+                     f"# candidate revision {self.record['candidate'].get('revision')}\n")
+            fh.flush()
+            try:
+                r = subprocess.run(argv, cwd=str(cwd), env=self.env, stdout=fh,
+                                   stderr=subprocess.STDOUT, timeout=timeout)
+                code = r.returncode
+            except subprocess.TimeoutExpired:
+                fh.write(f"\n# timed out after {timeout}s\n")
+                raise SetupError(f"{argv[1:]} did not finish within {timeout}s (log {log})")
+            fh.write(f"\n# exit {code}\n")
+        self.record["command"]["exitStatus"] = code
+        return code, log.read_text(encoding="utf-8", errors="replace")
+
+
+# ── layout measurements ───────────────────────────────────────────────
+
+
+def layout_problems(m: dict) -> list[str]:
+    """What a measurement says is wrong. `boxes` maps a selector to
+    [x, y, width, height] from getBoundingClientRect, or None when the
+    element was not found — which is a problem, not a pass."""
+    vw, vh = m["viewport"]["width"], m["viewport"]["height"]
+    out = []
+    if m["scrollWidth"] > vw + 1:
+        out.append(f"horizontal overflow: the document is {m['scrollWidth']}px "
+                   f"wide in a {vw}px viewport")
+    for sel, box in m["boxes"].items():
+        if box is None:
+            out.append(f"{sel}: not found")
+            continue
+        x, y, w, h = box
+        if w <= 0 or h <= 0:
+            out.append(f"{sel}: has no rendered size ({w}x{h})")
+        elif x < -1 or x + w > vw + 1:
+            out.append(f"{sel}: extends outside the {vw}px viewport "
+                       f"horizontally (x={x}, width={w})")
+        elif y < -1 or y + h > vh + 1:
+            out.append(f"{sel}: extends outside the {vh}px viewport "
+                       f"vertically (y={y}, height={h})")
+    return out
+
+
+# ── a browser, with its sandbox ───────────────────────────────────────
+
+
+def browser_launch_blocker(log_text: str) -> str:
+    if "No usable sandbox" in log_text or "sandbox" in log_text.lower():
+        return ("the browser could not start its sandbox on this host. bench "
+                "verify will not disable the sandbox (no --no-sandbox, no "
+                "environment override) to obtain a pass; run on a host that "
+                "provides one (unprivileged user namespaces, or the setuid "
+                "chrome-sandbox helper installed by an administrator). Browser "
+                "log: " + log_text.strip()[-600:])
+    return "the browser exited before answering: " + log_text.strip()[-600:]
+
+
+def browser_argv(exe: str, profile: Path) -> list[str]:
+    return [exe, "--headless", "--remote-debugging-pipe",
+            f"--user-data-dir={profile}", "--no-first-run",
+            "--no-default-browser-check", "--disable-extensions",
+            "--disable-background-networking", "--disable-sync",
+            "--disable-component-update", "--no-proxy-server",
+            "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
+            "--force-device-scale-factor=1", "--disable-gpu", "about:blank"]
+
+
+PLAYWRIGHT_GLOBS = (
+    "chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell",
+    "chromium-*/chrome-linux64/chrome",
+)
+PATH_NAMES = ("chromium", "chromium-browser", "google-chrome",
+              "google-chrome-stable", "chrome-headless-shell")
+
+
+def find_browser(env=os.environ) -> tuple[str, str]:
+    """An explicit BENCH_VERIFY_BROWSER, else a Chromium on PATH, else one
+    Playwright already downloaded. Nothing is downloaded or installed
+    here; finding none is a setup error naming where it looked."""
+    explicit = env.get("BENCH_VERIFY_BROWSER")
+    if explicit:
+        if not (os.path.isfile(explicit) and os.access(explicit, os.X_OK)):
+            raise SetupError(f"BENCH_VERIFY_BROWSER={explicit} is not an "
+                             f"executable file")
+        return explicit, "BENCH_VERIFY_BROWSER"
+    for name in PATH_NAMES:
+        found = shutil.which(name, path=env.get("PATH"))
+        if found:
+            return found, f"PATH ({name})"
+    cache = env.get("PLAYWRIGHT_BROWSERS_PATH") or os.path.join(
+        env.get("HOME", "~"), ".cache", "ms-playwright")
+    for pattern in PLAYWRIGHT_GLOBS:
+        for f in sorted(glob.glob(os.path.join(os.path.expanduser(cache), pattern)),
+                        reverse=True):
+            if os.access(f, os.X_OK):
+                return f, f"playwright cache ({cache})"
+    raise SetupError(f"no Chromium found: set BENCH_VERIFY_BROWSER, put one of "
+                     f"{', '.join(PATH_NAMES)} on PATH, or install Playwright's "
+                     f"Chromium into {cache}. Nothing is installed by this check")
+
+
+def sha256_file(path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+class Browser:
+    """Chrome DevTools Protocol over --remote-debugging-pipe. Launched
+    with its sandbox and nothing that weakens it; a host that cannot
+    give it one is a setup error, never a fallback."""
+
+    def __init__(self, exe: str, profile: Path, env: dict, origin: str, log: Path):
+        self.origin = origin.rstrip("/")
+        self.log = log
+        profile.mkdir(parents=True, exist_ok=True)
+        to_r, self._to_w = os.pipe()
+        self._from_r, from_w = os.pipe()
+
+        def wire():
+            os.dup2(to_r, 3)
+            os.dup2(from_w, 4)
+
+        self.argv = browser_argv(exe, profile)
+        with open(log, "ab") as err:
+            self.proc = subprocess.Popen(self.argv, preexec_fn=wire,
+                                         pass_fds=tuple(sorted({to_r, from_w, 3, 4})),
+                                         stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.DEVNULL, stderr=err,
+                                         env=env, close_fds=True,
+                                         start_new_session=True)
+        os.close(to_r)
+        os.close(from_w)
+        self._buf, self._id, self.session = b"", 0, None
+        self.console: list[dict] = []
+        try:
+            tid = self.call("Target.createTarget", {"url": "about:blank"})["targetId"]
+            self.session = self.call("Target.attachToTarget",
+                                     {"targetId": tid, "flatten": True})["sessionId"]
+            for domain in ("Page", "Runtime", "Accessibility"):
+                self.call(f"{domain}.enable")
+        except SetupError as exc:
+            text = log.read_text(errors="replace") if log.exists() else ""
+            self.close()
+            raise SetupError(browser_launch_blocker(text or str(exc))) from None
+
+    def call(self, method: str, params: dict | None = None, timeout: float = 20.0):
+        self._id += 1
+        msg = {"id": self._id, "method": method, "params": params or {}}
+        if self.session and not method.startswith(("Target.", "Browser.")):
+            msg["sessionId"] = self.session
+        try:
+            os.write(self._to_w, json.dumps(msg).encode() + b"\0")
+        except OSError as exc:
+            raise SetupError(f"browser pipe closed: {exc}")
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            for reply in self._read():
+                if reply.get("id") == self._id:
+                    if "error" in reply:
+                        raise SetupError(f"CDP {method}: {reply['error']}")
+                    return reply.get("result", {})
+                if reply.get("method") == "Runtime.exceptionThrown":
+                    self.console.append(reply["params"])
+        raise SetupError(f"CDP {method} timed out")
+
+    def _read(self):
+        r, _, _ = select.select([self._from_r], [], [], 0.5)
+        if not r:
+            if self.proc.poll() is not None:
+                raise SetupError(f"browser exited {self.proc.returncode}")
+            return []
+        chunk = os.read(self._from_r, 1 << 20)
+        if not chunk:
+            raise SetupError("browser closed the pipe")
+        self._buf += chunk
+        out = []
+        while b"\0" in self._buf:
+            one, self._buf = self._buf.split(b"\0", 1)
+            out.append(json.loads(one))
+        return out
+
+    def goto(self, path: str) -> None:
+        if not path.startswith("/"):
+            raise SetupError(f"refusing to navigate to {path!r}: a path on the "
+                             f"disposable backend only")
+        self.call("Page.navigate", {"url": self.origin + path})
+        if not self.wait("document.readyState === 'complete'", 15):
+            raise SetupError(f"{path} did not finish loading")
+
+    def eval(self, expression: str):
+        res = self.call("Runtime.evaluate", {"expression": expression,
+                                             "returnByValue": True,
+                                             "awaitPromise": True})
+        if res.get("exceptionDetails"):
+            d = res["exceptionDetails"]
+            raise CheckFailed(f"page script error: {d.get('text')} "
+                              f"{d.get('exception', {}).get('description', '')[:300]}")
+        return res.get("result", {}).get("value")
+
+    def wait(self, expression: str, timeout: float = 10.0) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.eval(f"!!({expression})"):
+                return True
+            time.sleep(0.15)
+        return False
+
+    def viewport(self, width: int, height: int) -> None:
+        self.call("Emulation.setDeviceMetricsOverride",
+                  {"width": width, "height": height, "deviceScaleFactor": 1,
+                   "mobile": False})
+
+    def key(self, key: str, shift: bool = False) -> None:
+        vk = {"Tab": 9, "Enter": 13, "Escape": 27}.get(key, 0)
+        for kind in ("rawKeyDown", "keyUp"):
+            self.call("Input.dispatchKeyEvent",
+                      {"type": kind, "key": key, "code": key,
+                       "windowsVirtualKeyCode": vk, "modifiers": 8 if shift else 0})
+
+    def click(self, selector: str) -> None:
+        box = self.eval(f"(() => {{ const e = document.querySelector({json.dumps(selector)});"
+                        f" if (!e) return null; const r = e.getBoundingClientRect();"
+                        f" return [r.x + r.width / 2, r.y + r.height / 2]; }})()")
+        if not box:
+            raise CheckFailed(f"{selector}: not found to click")
+        for kind in ("mousePressed", "mouseReleased"):
+            self.call("Input.dispatchMouseEvent", {"type": kind, "x": box[0], "y": box[1],
+                                                   "button": "left", "clickCount": 1})
+
+    def screenshot(self, path: Path) -> Path:
+        res = self.call("Page.captureScreenshot", {"format": "png"})
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(base64.b64decode(res["data"]))
+        return path
+
+    def ax_nodes(self) -> list[dict]:
+        return self.call("Accessibility.getFullAXTree").get("nodes", [])
+
+    def close(self) -> None:
+        try:
+            if self.proc.poll() is None:
+                self.call("Browser.close", timeout=3)
+        except (SetupError, OSError):
+            pass
+        try:
+            self.proc.wait(5)
+        except subprocess.TimeoutExpired:
+            os.killpg(self.proc.pid, signal.SIGKILL)
+            self.proc.wait(5)
+        for fd in (self._to_w, self._from_r):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+# ── a disposable bench backend ────────────────────────────────────────
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+FIXTURE_CARDS = {
+    "backlog": [("01-write-the-onboarding-guide", "Write the onboarding guide", "Medium")],
+    "to-do": [("02-tidy-the-settings-reference", "Tidy the settings reference", "Low")],
+    "in-progress": [("03-measure-the-board-layout", "Measure the board layout", "High")],
+    "review": [("04-check-keyboard-focus", "Check keyboard focus", "High")],
+    "done": [("05-ship-the-first-release", "Ship the first release", "Medium")],
+}
+STATUS = {"backlog": "Backlog", "to-do": "To Do", "in-progress": "In Progress",
+          "review": "Review", "done": "Done"}
+
+
+class Backend:
+    """The candidate's own manager/core, copied into a disposable tool
+    install and served in the external layout against an application
+    repository and a work state made here. Nothing is shared with any
+    other board: the port is allocated on loopback, `gh` is a stub that
+    refuses, and the board's state directory is inside this fixture."""
+
+    def __init__(self, root: Path, base: Path, env: dict, python: str):
+        self.base = base
+        self.tool, self.app = base / "tool", base / "app"
+        self.work, self.trees = base / "work", base / "worktrees"
+        shutil.copytree(root / "manager" / "core", self.tool / "manager" / "core",
+                        ignore=shutil.ignore_patterns("__pycache__"), symlinks=True)
+        (self.tool / "manager" / "local").mkdir(parents=True)
+        (self.tool / "manager" / "local" / ".env").write_text("", encoding="utf-8")
+        bindir = base / "bin"
+        bindir.mkdir()
+        gh = bindir / "gh"
+        gh.write_text("#!/bin/sh\necho 'bench-verify gh stub: no network' >&2\nexit 1\n")
+        gh.chmod(0o755)
+        self.env = dict(env)
+        for repo in (self.app, self.work):
+            repo.mkdir()
+            self._git(repo, "init", "-q", "-b", "main")
+            (repo / "README.md").write_text("bench-verify fixture\n")
+        self.trees.mkdir()
+        for stage, cards in FIXTURE_CARDS.items():
+            d = self.work / "tasks" / stage
+            d.mkdir(parents=True)
+            for stem, title, prio in cards:
+                (d / f"{stem}.md").write_text(
+                    f"# {title}\n\n**Status:** {STATUS[stage]}\n**Priority:** {prio}\n\n"
+                    f"A disposable card made by bench-verify.\n", encoding="utf-8")
+        (self.work / "tasks" / "archive").mkdir()
+        for repo in (self.app, self.work):
+            self._git(repo, "add", "-A")
+            self._git(repo, "commit", "-q", "-m", "bench-verify fixture")
+        self.port = free_port()
+        self.url = f"http://127.0.0.1:{self.port}"
+        self.env.update({
+            "BOARD_APP_ROOT": str(self.app), "BOARD_WORK_ROOT": str(self.work),
+            "BOARD_WORKTREES": str(self.trees), "BOARD_PORT": str(self.port),
+            "BOARD_GH_BIN": str(gh), "BOARD_PR_POLL_INTERVAL": "3600",
+            "BOARD_PHASE_INTERVAL": "3600", "BOARD_SYNC": "0",
+            "BOARD_COMMIT_MOVES": "0", "BOARD_TITLE": "bench-verify fixture"})
+        self.python = python
+        self.log = base / "board.log"
+        self.proc = None
+
+    def _git(self, repo: Path, *args: str) -> None:
+        r = subprocess.run(["git", "-C", str(repo), *args], env=self.env,
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SetupError(f"fixture git {' '.join(args)}: {r.stderr.strip()}")
+
+    def start(self, timeout: float = 30.0) -> "Backend":
+        fh = open(self.log, "ab")
+        self.argv = [self.python, str(self.tool / "manager" / "core" / "board.py"),
+                     "--port", str(self.port), "--no-open"]
+        self.proc = subprocess.Popen(self.argv, cwd=str(self.tool), env=self.env,
+                                     stdout=fh, stderr=subprocess.STDOUT,
+                                     stdin=subprocess.DEVNULL, start_new_session=True)
+        fh.close()
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.proc.poll() is not None:
+                raise SetupError(f"the disposable backend exited {self.proc.returncode}: "
+                                 + self.log.read_text(errors="replace")[-1500:])
+            try:
+                code, _ = self.get("/api/state", timeout=2)
+                if code == 200:
+                    return self
+            except OSError:
+                pass
+            time.sleep(0.2)
+        raise SetupError("the disposable backend did not answer /api/state")
+
+    def get(self, path: str, timeout: float = 10) -> tuple[int, bytes]:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        try:
+            with opener.open(self.url + path, timeout=timeout) as resp:
+                return resp.status, resp.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read()
+
+    def stop(self) -> None:
+        if self.proc and self.proc.poll() is None:
+            os.killpg(self.proc.pid, signal.SIGTERM)
+            try:
+                self.proc.wait(10)
+            except subprocess.TimeoutExpired:
+                os.killpg(self.proc.pid, signal.SIGKILL)
+                self.proc.wait(5)
+
+
+# Set by verify/browser for the cases it discovers.
+SESSION: dict = {}

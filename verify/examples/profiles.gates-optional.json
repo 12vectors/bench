@@ -1,0 +1,126 @@
+{
+  "v": 1,
+  "_doc": [
+    "OPTIONAL GATES, on top of profiles.registration.json (identical apart",
+    "from this block and this note). Supplying a check does not make it",
+    "mandatory; this file is the separate decision that does. Inactive.",
+    "",
+    "member and acceptance require the full backend suite; integration and",
+    "acceptance also require the docs build and a Bench review verdict of",
+    "APPROVE bound to the exact head (review: bench). bench records which",
+    "run reviewed; it does NOT establish that the reviewer is independent of",
+    "the author, and separate-reviewer is not used because one GitHub",
+    "account cannot formally review its own pull request.",
+    "",
+    "bench-browser is deliberately not required: on a host whose Chromium",
+    "cannot start its sandbox it is a setup error every time, and a gate on",
+    "it would refuse every merge. Add it once a host has shown it passing.",
+    "",
+    "Evidence must be bound to a clean committed head: commit, then ask.",
+    "overrides stay off."
+  ],
+  "checks": [
+    {
+      "name": "bench-backend",
+      "run": "python3 verify/backend",
+      "root": "worktree",
+      "timeout": 1800,
+      "required": false,
+      "help": "the full unittest suite of this checkout, child env sanitised"
+    },
+    {
+      "name": "bench-docs",
+      "run": "python3 verify/docs",
+      "root": "worktree",
+      "timeout": 600,
+      "required": false,
+      "help": "site/build.py of this checkout; every pages.json route must be written"
+    },
+    {
+      "name": "bench-browser",
+      "run": "python3 verify/browser",
+      "root": "worktree",
+      "timeout": 900,
+      "required": false,
+      "help": "the board UI in a sandboxed Chromium against a disposable backend"
+    },
+    {
+      "name": "bench-backend-proposed",
+      "run": "python3 verify/backend",
+      "root": "review",
+      "timeout": 1800,
+      "required": false,
+      "help": "the full suite at the head the pull request proposes"
+    },
+    {
+      "name": "bench-docs-proposed",
+      "run": "python3 verify/docs",
+      "root": "review",
+      "timeout": 600,
+      "required": false,
+      "help": "the docs build at the head the pull request proposes"
+    }
+  ],
+  "profiles": {
+    "work": {
+      "commands": [
+        {
+          "name": "unit-tests",
+          "run": "python3 -m unittest",
+          "root": "worktree"
+        }
+      ],
+      "verify": [
+        "bench-backend",
+        "bench-docs",
+        "bench-browser"
+      ]
+    },
+    "act-pr": {
+      "commands": [
+        {
+          "name": "unit-tests",
+          "run": "python3 -m unittest",
+          "root": "worktree"
+        }
+      ],
+      "verify": [
+        "bench-backend",
+        "bench-docs",
+        "bench-browser"
+      ]
+    },
+    "review": {
+      "commands": [],
+      "verify": [
+        "bench-backend-proposed",
+        "bench-docs-proposed"
+      ]
+    }
+  },
+  "gates": {
+    "member": {
+      "checks": [
+        "bench-backend"
+      ]
+    },
+    "integration": {
+      "checks": [
+        "bench-backend",
+        "bench-docs"
+      ],
+      "review": "bench"
+    },
+    "acceptance": {
+      "checks": [
+        "bench-backend",
+        "bench-docs"
+      ],
+      "review": "bench"
+    },
+    "overrides": {
+      "allow": false,
+      "actors": []
+    }
+  }
+}

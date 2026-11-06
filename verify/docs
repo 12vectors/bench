@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""Build the candidate's docs site and check every route was written.
+
+    verify/docs                      # the checkout you are standing in
+    verify/docs --root <checkout>
+
+Runs the candidate's own `site/build.py --out <artifacts>/site`, keeps
+the log and the built site, then reads `site/pages.json` itself and
+requires a non-empty file for every route it names — a build that exits
+zero having written nothing is not a docs build.
+
+The builder needs markdown-it-py (site/requirements.txt). It is not
+installed here: prepare it in a virtualenv you own and pass that
+interpreter with --python.
+
+Exit 0 when the build passed and every route is present, 1 when the build
+itself refused (a renamed heading, a broken link), 2 when it could not be
+judged: the dependency is missing or a route's output is absent.
+"""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+# the runner must not leave bytecode in the checkout it is judging
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import benchverify as bv  # noqa: E402
+
+TIMEOUT = 600
+
+
+def target_for(out: Path, route: str) -> Path:
+    # the builder's own rule, restated so the check does not ask the
+    # thing it is checking where its outputs are
+    if not route.endswith("/"):
+        return out / route.lstrip("/")
+    inner = route.strip("/")
+    return (out / inner / "index.html") if inner else (out / "index.html")
+
+
+def body(run: bv.Run) -> str:
+    module = run.args.require_module
+    probe = subprocess.run([run.args.python, "-c", f"import {module}"],
+                           env=run.env, capture_output=True, text=True)
+    run.record["dependency"] = {"module": module, "python": run.args.python,
+                                "importable": probe.returncode == 0}
+    if probe.returncode != 0:
+        raise bv.SetupError(
+            f"{run.args.python} cannot import {module}: install site/requirements.txt "
+            f"into a virtualenv you own (python3 -m venv <dir> && <dir>/bin/pip install "
+            f"-r site/requirements.txt) and pass --python <dir>/bin/python")
+    out = run.artifact("site", run.artifacts / "site")
+    code, _ = run.run_logged([run.args.python, "site/build.py", "--out", str(out)],
+                             "site-build.log", TIMEOUT)
+    if code != 0:
+        raise bv.CheckFailed(f"site/build.py exited {code} — see "
+                             f"{run.record['artifacts']['log']}")
+    try:
+        pages = json.loads((run.root / "site" / "pages.json").read_text())["pages"]
+        routes = [p["path"] for p in pages]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise bv.SetupError(f"site/pages.json could not be read for its routes: {exc}")
+    if not routes:
+        raise bv.SetupError("site/pages.json names zero routes — nothing to check")
+    written = [r for r in routes
+               if target_for(out, r).is_file() and target_for(out, r).stat().st_size > 0]
+    missing = [r for r in routes if r not in written]
+    run.record["routes"] = {"declared": routes, "written": written, "missing": missing}
+    if missing:
+        raise bv.SetupError(f"the build exited 0 but wrote no output for "
+                            f"{', '.join(missing)}")
+    return f"{len(written)} routes built into {out}"
+
+
+if __name__ == "__main__":
+    run = bv.Run("docs", __doc__.splitlines()[0], ["site/build.py", "site/pages.json"])
+    run.parser.add_argument("--require-module", default="markdown_it",
+                            help="the module the builder needs (default markdown_it)")
+    sys.exit(run.main(body))

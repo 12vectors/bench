@@ -1,0 +1,52 @@
+{
+  "v": 1,
+  "_doc": [
+    "REGISTRATION ONLY. Makes bench's own verify/ entrypoints available as",
+    "named checks a run may ask for. It declares NO gates block, so every",
+    "gate reads `ungated`: nothing is required and nothing is proved by",
+    "registering a check. Inactive until a person copies it to",
+    "manager/local/profiles.json (or points BOARD_AGENT_PROFILES at it).",
+    "",
+    "Each `run` is relative to the check's execution root — the card's",
+    "worktree, or the checkout bench pinned for a PR review — so the program",
+    "that runs is the one committed in the candidate, never the operator's",
+    "installation or the application's main checkout.",
+    "",
+    "work and act-pr keep the legacy grant BOARD_AGENT_COMMANDS gave them",
+    "(`python3 -m unittest`) as a named command grant: writing a document",
+    "replaces the legacy resolution for an intent it configures, so a",
+    "document that dropped it would quietly take the agent's own test runs",
+    "away."
+  ],
+  "checks": [
+    {"name": "bench-backend", "run": "python3 verify/backend", "root": "worktree",
+     "timeout": 1800, "required": false,
+     "help": "the full unittest suite of this checkout, child env sanitised"},
+    {"name": "bench-docs", "run": "python3 verify/docs", "root": "worktree",
+     "timeout": 600, "required": false,
+     "help": "site/build.py of this checkout; every pages.json route must be written"},
+    {"name": "bench-browser", "run": "python3 verify/browser", "root": "worktree",
+     "timeout": 900, "required": false,
+     "help": "the board UI in a sandboxed Chromium against a disposable backend"},
+    {"name": "bench-backend-proposed", "run": "python3 verify/backend", "root": "review",
+     "timeout": 1800, "required": false,
+     "help": "the full suite at the head the pull request proposes"},
+    {"name": "bench-docs-proposed", "run": "python3 verify/docs", "root": "review",
+     "timeout": 600, "required": false,
+     "help": "the docs build at the head the pull request proposes"}
+  ],
+  "profiles": {
+    "work": {
+      "commands": [{"name": "unit-tests", "run": "python3 -m unittest", "root": "worktree"}],
+      "verify": ["bench-backend", "bench-docs", "bench-browser"]
+    },
+    "act-pr": {
+      "commands": [{"name": "unit-tests", "run": "python3 -m unittest", "root": "worktree"}],
+      "verify": ["bench-backend", "bench-docs", "bench-browser"]
+    },
+    "review": {
+      "commands": [],
+      "verify": ["bench-backend-proposed", "bench-docs-proposed"]
+    }
+  }
+}

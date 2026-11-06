@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Run the candidate's whole unittest suite, as CI does, and say what ran.
+
+    verify/backend                     # the checkout you are standing in
+    verify/backend --root <checkout>   # or one you name
+
+It is `python3 -m unittest discover -s tests -t . -v` in the candidate
+root and nothing more — no third-party runner, so the plain command keeps
+working without this file — with the child environment built rather than
+inherited (see benchverify.py) and the whole log kept.
+
+Exit 0 when tests ran and all passed, 1 when any failed or errored, 2 when
+nothing trustworthy ran: not a bench checkout, or zero tests discovered.
+"""
+
+import re
+import sys
+from pathlib import Path
+
+# the runner must not leave bytecode in the checkout it is judging
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import benchverify as bv  # noqa: E402
+
+TIMEOUT = 3600
+
+
+def body(run: bv.Run) -> str:
+    argv = [run.args.python, "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"]
+    code, out = run.run_logged(argv, "unittest.log", TIMEOUT)
+    ran = re.search(r"^Ran (\d+) tests? in ", out, re.M)
+    summary = re.search(r"^(OK|FAILED)( \((.*)\))?\s*$", out, re.M)
+    counts = dict(re.findall(r"(failures|errors|skipped|expected failures|"
+                             r"unexpected successes)=(\d+)",
+                             summary.group(3) or "")) if summary else {}
+    run.record["tests"] = {
+        "ran": int(ran.group(1)) if ran else None,
+        **{k.replace(" ", "_"): int(v) for k, v in counts.items()}}
+    if not ran:
+        raise bv.SetupError(f"unittest printed no 'Ran N tests' line (exit {code}); "
+                            f"the suite did not run — see {run.record['artifacts']['log']}")
+    n = int(ran.group(1))
+    if n == 0:
+        raise bv.SetupError("zero tests discovered under tests/ — nothing was checked")
+    if code != 0 or not summary or summary.group(1) != "OK":
+        raise bv.CheckFailed(f"{n} tests ran, unittest exit {code}: "
+                             f"{summary.group(0).strip() if summary else 'no summary'}")
+    return f"{n} tests ran: {summary.group(0).strip()}"
+
+
+if __name__ == "__main__":
+    sys.exit(bv.Run("backend", __doc__.splitlines()[0],
+                    ["manager/core/board.py", "tests"]).main(body))
