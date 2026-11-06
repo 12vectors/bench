@@ -93,9 +93,15 @@ def body(run: bv.Run) -> str:
     if n == 0:
         raise bv.SetupError(f"zero browser cases discovered in {cases}")
 
-    exe, how = bv.find_browser()
-    run.record["browser"] = {"path": exe, "foundBy": how, "sha256": bv.sha256_file(exe),
-                             "sandbox": "required (never disabled)"}
+    mode = bv.browser_mode()
+    run.record["browser"] = {"mode": mode}
+    if mode == "remote-playwright":
+        remote = bv.remote_setup(run)
+    else:
+        exe, how = bv.find_browser()
+        run.record["browser"].update({"path": exe, "foundBy": how,
+                                      "sha256": bv.sha256_file(exe),
+                                      "sandbox": "required (never disabled)"})
     bv.require_paths(run.root, ["manager/core/board.html"])
 
     backend = bv.Backend(run.root, run.work / "fixture", run.env, run.args.python)
@@ -108,11 +114,18 @@ def body(run: bv.Run) -> str:
                                  "work": str(backend.work),
                                  "coreCopiedFrom": str(run.root / "manager" / "core")}
         blog = run.artifact("browserLog", run.artifacts / "browser.log")
-        profile = run.work / "profile"
-        # recorded before the launch: a browser that will not start is the
-        # case where the exact command line matters most
-        run.record["browser"]["argv"] = bv.browser_argv(exe, profile)
-        browser = bv.Browser(exe, profile, run.env, backend.url, blog)
+        if mode == "remote-playwright":
+            run.record["browser"]["argv"] = remote
+            browser = bv.RemoteBrowser(remote, run.env, backend.url, blog)
+            run.record["browser"].update({"serverVersion": browser.version,
+                                          "launchOptions": browser.launch_options,
+                                          "exposeNetwork": browser.expose_network})
+        else:
+            profile = run.work / "profile"
+            # recorded before the launch: a browser that will not start is the
+            # case where the exact command line matters most
+            run.record["browser"]["argv"] = bv.browser_argv(exe, profile)
+            browser = bv.Browser(exe, profile, run.env, backend.url, blog)
         shots = run.artifacts / "screens"
         bv.SESSION.clear()
         bv.SESSION.update({"browser": browser, "backend": backend, "shots": shots,

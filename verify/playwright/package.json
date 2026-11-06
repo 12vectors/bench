@@ -1,0 +1,9 @@
+{
+  "name": "bench-verify-playwright",
+  "private": true,
+  "description": "The pinned Playwright client verify/browser speaks to a remote run-server through (PW_WS). playwright-core downloads no browser.",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "playwright-core": "1.62.0"
+  }
+}

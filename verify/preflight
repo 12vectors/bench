@@ -60,6 +60,18 @@ def body(run: bv.Run) -> str:
                 f"with, or pass --node <path>")
         bv.probe_module(run, run.args.require_module)
         return f"{node} {version}; {run.args.python} imports {run.args.require_module}"
+    if bv.browser_mode() == "remote-playwright":
+        argv = bv.remote_setup(run)
+        run.record["browser"]["argv"] = argv
+        log = run.artifact("browserLog", run.artifacts / "browser.log")
+        # origin is never navigated to: this only proves the connection
+        browser = bv.RemoteBrowser(argv, run.env, "http://127.0.0.1:9", log)
+        browser.close()
+        run.record["browser"].update({"serverVersion": browser.version,
+                                      "launchOptions": browser.launch_options,
+                                      "exposeNetwork": browser.expose_network})
+        return (f"{browser.version} answered over the Playwright protocol at "
+                f"{run.record['browser']['endpoint']} (sandbox: {bv.REMOTE_SANDBOX})")
     exe, how = bv.find_browser()
     profile = run.work / "profile"
     run.record["browser"] = {"path": exe, "foundBy": how, "sha256": bv.sha256_file(exe),

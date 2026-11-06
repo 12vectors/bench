@@ -67,7 +67,7 @@ class Fixture(unittest.TestCase):
                   dirs=True):
         # this suite may itself be run by bench, which sets BENCH_VERIFY
         env = {k: v for k, v in os.environ.items()
-               if not k.startswith("BENCH_VERIFY")}
+               if not k.startswith("BENCH_VERIFY") and k != "PW_WS"}
         env.update(env_extra or {})
         argv = [sys.executable, str(VERIFY / entry)]
         if root_arg:
@@ -708,6 +708,141 @@ class UnderBench(Fixture):
         self.assertEqual(PASS, r.returncode, r.stdout + r.stderr)
         self.assertEqual(Path(data["work"]) / "artifacts", Path(data["artifacts"]["dir"]))
         self.assertEqual("work-directory", data["artifacts"]["kept"])
+
+
+PLAYWRIGHT = VERIFY / "playwright"
+
+# A stand-in for playwright-core with the one surface the adapter uses.
+# It records what connect() was handed, so the test reads the adapter's
+# real forwarding rather than a description of it.
+FAKE_PLAYWRIGHT = """
+const fs = require('fs'), path = require('path');
+const out = path.join(__dirname, 'connect.json');
+const page = {
+  on() {}, async goto(url) { this.url = url; },
+  async evaluate(expr) { if (expr === 'boom()') throw new Error('boom is not defined');
+                         return {expr}; },
+  async setViewportSize() {}, keyboard: {async press() {}},
+  mouse: {async click() {}}, async screenshot() { return Buffer.from('png'); },
+};
+const context = {async newPage() { return page; },
+                 async newCDPSession() { return {async send(m) { return {nodes: [], m}; }}; }};
+const browser = {version() { return '999.0-fake'; }, async newContext(o) {
+                   fs.writeFileSync(path.join(__dirname, 'context.json'), JSON.stringify(o));
+                   return context; },
+                 async close() {}};
+exports.chromium = {async connect(ws, opts) {
+  fs.writeFileSync(out, JSON.stringify({ws, opts})); return browser; }};
+"""
+
+
+class RemotePlaywright(Fixture):
+    """The devbox's browser: Chromium in the official Playwright image,
+    reached over the Playwright protocol (not raw CDP) at an explicit,
+    loopback-only PW_WS. Without PW_WS nothing here changes."""
+
+    def test_only_a_loopback_ws_endpoint_is_accepted(self):
+        for ok in ("ws://127.0.0.1:39123/", "ws://localhost:39123/",
+                   "ws://[::1]:39123/", "ws://127.0.0.1:39123"):
+            self.assertEqual(ok, benchverify.validate_ws_endpoint(ok))
+        for bad in ("ws://100.69.10.127:3000/", "ws://0.0.0.0:3000/",
+                    "wss://example.com:443/", "http://127.0.0.1:3000/",
+                    "ws://127.0.0.1/", "ws://u:p@127.0.0.1:3000/",
+                    "ws://127.0.0.1:3000/?x=1", "ws://127.0.0.1:3000/#f",
+                    "ws://127.0.0.1.evil.example:3000/", "", "ws://127.0.0.1:99999/"):
+            with self.assertRaises(benchverify.SetupError, msg=bad):
+                benchverify.validate_ws_endpoint(bad)
+
+    def test_pw_ws_never_reaches_the_child(self):
+        work = self.base / "w"
+        env = benchverify.child_env(work, {"PATH": "/bin", "PW_WS": "ws://127.0.0.1:1/"})[0]
+        self.assertNotIn("PW_WS", env)
+
+    def test_an_endpoint_off_loopback_is_a_setup_error_before_any_browser(self):
+        self.root = REPO
+        r, data = self.run_entry("browser", "--cases", str(VERIFY / "browser_cases"),
+                                 env_extra={"PW_WS": "ws://100.69.10.127:3000/"})
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("loopback", data["reason"])
+        self.assertEqual("remote-playwright", data["browser"]["mode"])
+
+    def test_without_pw_ws_the_local_path_is_selected(self):
+        r, data = self.run_entry("browser", "--cases", str(VERIFY / "browser_cases"),
+                                 env_extra={"BENCH_VERIFY_BROWSER": str(self.base / "absent")})
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertEqual("local-cdp", data["browser"]["mode"])
+
+    def test_the_client_is_pinned_exactly(self):
+        pkg = json.loads((PLAYWRIGHT / "package.json").read_text())
+        self.assertEqual({"playwright-core": "1.62.0"}, pkg["dependencies"])
+        lock = json.loads((PLAYWRIGHT / "package-lock.json").read_text())
+        self.assertEqual("1.62.0", lock["packages"]["node_modules/playwright-core"]["version"])
+        self.assertEqual("1.62.0", benchverify.playwright_pin())
+
+    def test_the_adapter_argv_carries_the_endpoint_and_nothing_weakens_the_sandbox(self):
+        argv = benchverify.remote_argv("/usr/bin/node", Path("/m"), "ws://127.0.0.1:1/")
+        self.assertEqual("/usr/bin/node", argv[0])
+        self.assertIn("ws://127.0.0.1:1/", argv)
+        self.assertFalse([a for a in argv if "no-sandbox" in a], argv)
+
+    def fake_modules(self, version="1.62.0"):
+        mods = self.base / "node_modules"
+        pc = mods / "playwright-core"
+        pc.mkdir(parents=True)
+        (pc / "package.json").write_text(json.dumps(
+            {"name": "playwright-core", "version": version, "main": "index.js"}))
+        (pc / "index.js").write_text(FAKE_PLAYWRIGHT)
+        return mods, pc
+
+    def remote(self, mods):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not available")
+        return benchverify.RemoteBrowser(
+            benchverify.remote_argv(node, mods, "ws://127.0.0.1:39123/"),
+            {"PATH": os.environ.get("PATH", "/bin"), "HOME": str(self.base)},
+            "http://127.0.0.1:8", self.base / "adapter.log")
+
+    def test_the_adapter_forwards_the_sandbox_and_loopback_exposure(self):
+        mods, pc = self.fake_modules()
+        b = self.remote(mods)
+        try:
+            self.assertEqual("999.0-fake", b.version)
+            self.assertEqual({"expr": "!!(1)"}, b.eval("!!(1)"))
+            with self.assertRaises(benchverify.CheckFailed):
+                b.eval("boom()")
+        finally:
+            b.close()
+        seen = json.loads((pc / "connect.json").read_text())
+        self.assertEqual("ws://127.0.0.1:39123/", seen["ws"])
+        self.assertEqual("<loopback>", seen["opts"]["exposeNetwork"])
+        launch = json.loads(seen["opts"]["headers"]["x-playwright-launch-options"])
+        self.assertIs(True, launch["chromiumSandbox"])
+        self.assertFalse([a for a in launch.get("args", []) if "sandbox" in a])
+        ctx = json.loads((pc / "context.json").read_text())
+        self.assertEqual(1, ctx["deviceScaleFactor"])
+        self.assertEqual({"chromiumSandbox": True}, b.launch_options)
+
+    def test_a_client_other_than_the_pin_is_refused(self):
+        mods, _ = self.fake_modules("1.61.0")
+        with self.assertRaises(benchverify.SetupError) as cm:
+            self.remote(mods)
+        self.assertIn("1.61.0", str(cm.exception))
+
+    def test_missing_modules_are_a_setup_error_naming_the_install(self):
+        with self.assertRaises(benchverify.SetupError) as cm:
+            self.remote(self.base / "nowhere")
+        self.assertIn("npm ci", str(cm.exception))
+
+    def test_an_adapter_that_dies_is_a_setup_error_not_a_hang(self):
+        fake = self.base / "dies.py"
+        fake.write_text("import sys; print('{\"event\": \"ready\", \"version\": \"x\"}', "
+                        "flush=True); sys.stdin.readline(); sys.exit(3)\n")
+        b = benchverify.RemoteBrowser([sys.executable, str(fake)], dict(os.environ),
+                                      "http://127.0.0.1:8", self.base / "a.log")
+        with self.assertRaises(benchverify.SetupError):
+            b.eval("1")
+        b.close()
 
 
 if __name__ == "__main__":

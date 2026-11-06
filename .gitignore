@@ -6,5 +6,7 @@ __pycache__/
 .claude/settings.local.json
 .DS_Store
 site/dist/
+# verify/browser's pinned Playwright client, installed from its lockfile
+verify/playwright/node_modules/
 # wrangler's local cache, written by a deploy from this checkout
 .wrangler/

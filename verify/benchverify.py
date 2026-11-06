@@ -69,7 +69,10 @@ ISOLATION = ("directed, not confined: HOME, XDG, TMPDIR and caches point into "
 STRIP_PREFIXES = ("BOARD_", "AGENT_", "BENCH_", "GIT_", "GH_", "GITHUB_",
                   "PLAYWRIGHT_")
 STRIP_NAMES = {"PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONUSERBASE",
-               "CHROME_DEVEL_SANDBOX", "SSH_AUTH_SOCK", "GNUPGHOME"}
+               "CHROME_DEVEL_SANDBOX", "SSH_AUTH_SOCK", "GNUPGHOME",
+               # the remote browser endpoint is validated and handed to the
+               # Playwright adapter as an argument, and to nothing else
+               "PW_WS"}
 STRIP_SHAPES = ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "CREDENTIAL")
 
 RUNNER = Path(__file__).resolve()
@@ -553,7 +556,36 @@ def sha256_file(path) -> str:
     return h.hexdigest()
 
 
-class Browser:
+class PageOps:
+    """What a case does with a page, written once over `eval` and the
+    three primitives each transport supplies."""
+
+    def goto(self, path: str) -> None:
+        if not path.startswith("/"):
+            raise SetupError(f"refusing to navigate to {path!r}: a path on the "
+                             f"disposable backend only")
+        self._navigate(self.origin + path)
+        if not self.wait("document.readyState === 'complete'", 15):
+            raise SetupError(f"{path} did not finish loading")
+
+    def wait(self, expression: str, timeout: float = 10.0) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.eval(f"!!({expression})"):
+                return True
+            time.sleep(0.15)
+        return False
+
+    def click(self, selector: str) -> None:
+        box = self.eval(f"(() => {{ const e = document.querySelector({json.dumps(selector)});"
+                        f" if (!e) return null; const r = e.getBoundingClientRect();"
+                        f" return [r.x + r.width / 2, r.y + r.height / 2]; }})()")
+        if not box:
+            raise CheckFailed(f"{selector}: not found to click")
+        self._click_at(box[0], box[1])
+
+
+class Browser(PageOps):
     """Chrome DevTools Protocol over --remote-debugging-pipe. Launched
     with its sandbox and nothing that weakens it; a host that cannot
     give it one is a setup error, never a fallback."""
@@ -633,13 +665,8 @@ class Browser:
             out.append(json.loads(one))
         return out
 
-    def goto(self, path: str) -> None:
-        if not path.startswith("/"):
-            raise SetupError(f"refusing to navigate to {path!r}: a path on the "
-                             f"disposable backend only")
-        self.call("Page.navigate", {"url": self.origin + path})
-        if not self.wait("document.readyState === 'complete'", 15):
-            raise SetupError(f"{path} did not finish loading")
+    def _navigate(self, url: str) -> None:
+        self.call("Page.navigate", {"url": url})
 
     def eval(self, expression: str):
         res = self.call("Runtime.evaluate", {"expression": expression,
@@ -650,14 +677,6 @@ class Browser:
             raise CheckFailed(f"page script error: {d.get('text')} "
                               f"{d.get('exception', {}).get('description', '')[:300]}")
         return res.get("result", {}).get("value")
-
-    def wait(self, expression: str, timeout: float = 10.0) -> bool:
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if self.eval(f"!!({expression})"):
-                return True
-            time.sleep(0.15)
-        return False
 
     def viewport(self, width: int, height: int) -> None:
         self.call("Emulation.setDeviceMetricsOverride",
@@ -671,14 +690,9 @@ class Browser:
                       {"type": kind, "key": key, "code": key,
                        "windowsVirtualKeyCode": vk, "modifiers": 8 if shift else 0})
 
-    def click(self, selector: str) -> None:
-        box = self.eval(f"(() => {{ const e = document.querySelector({json.dumps(selector)});"
-                        f" if (!e) return null; const r = e.getBoundingClientRect();"
-                        f" return [r.x + r.width / 2, r.y + r.height / 2]; }})()")
-        if not box:
-            raise CheckFailed(f"{selector}: not found to click")
+    def _click_at(self, x: float, y: float) -> None:
         for kind in ("mousePressed", "mouseReleased"):
-            self.call("Input.dispatchMouseEvent", {"type": kind, "x": box[0], "y": box[1],
+            self.call("Input.dispatchMouseEvent", {"type": kind, "x": x, "y": y,
                                                    "button": "left", "clickCount": 1})
 
     def screenshot(self, path: Path) -> Path:
@@ -705,6 +719,217 @@ class Browser:
             try:
                 os.close(fd)
             except OSError:
+                pass
+
+
+# ── a browser elsewhere, over the Playwright protocol ─────────────────
+#
+# Where the host cannot sandbox a browser, Chromium runs in the official
+# Playwright image (as pwuser, Playwright's seccomp profile) behind
+# `playwright run-server --unsafe`, published on loopback only. PW_WS
+# names it, explicitly; without PW_WS none of this is reached and the
+# local path above is unchanged. Python's Playwright does not forward
+# launch options through connect() the way @playwright/test does, so the
+# client is a small pinned JS adapter (verify/playwright) that sends them
+# exactly as @playwright/test does — never a raw CDP socket to the server.
+
+PLAYWRIGHT_DIR = RUNNER.parent / "playwright"
+ADAPTER = PLAYWRIGHT_DIR / "adapter.cjs"
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+REMOTE_SANDBOX = ("requested: chromiumSandbox true via x-playwright-launch-options; "
+                  "honoured only by a run-server started with --unsafe, which the "
+                  "client cannot observe — prove it by renderer user namespaces")
+
+
+def browser_mode(env=os.environ) -> str:
+    return "remote-playwright" if env.get("PW_WS") else "local-cdp"
+
+
+def validate_ws_endpoint(url: str) -> str:
+    """A ws:// URL on loopback with an explicit port and nothing else.
+    The run-server behind it runs --unsafe, so an endpoint anywhere but
+    this machine's loopback is refused rather than connected to."""
+    from urllib.parse import urlsplit
+    why = None
+    try:
+        u = urlsplit(url)
+        port = u.port
+    except ValueError as exc:
+        u, port, why = None, None, str(exc)
+    if u is not None and why is None:
+        if u.scheme != "ws":
+            why = f"scheme {u.scheme or '(none)'} (only ws://)"
+        elif u.username is not None or u.password is not None:
+            why = "credentials in the URL"
+        elif u.hostname not in LOOPBACK_HOSTS:
+            why = f"host {u.hostname or '(none)'} is not loopback"
+        elif port is None or not 0 < port < 65536:
+            why = "no explicit port"
+        elif u.query or u.fragment or "?" in url or "#" in url:
+            why = "a query or fragment"
+        elif u.path and not re.fullmatch(r"/[A-Za-z0-9._/-]*", u.path):
+            why = f"path {u.path!r}"
+    if why:
+        raise SetupError(f"PW_WS={url!r} is not a loopback Playwright endpoint ({why}): "
+                         f"publish run-server on 127.0.0.1 only and set "
+                         f"PW_WS=ws://127.0.0.1:<port>/")
+    return url
+
+
+def playwright_pin() -> str:
+    pkg = json.loads((PLAYWRIGHT_DIR / "package.json").read_text(encoding="utf-8"))
+    return pkg["dependencies"]["playwright-core"]
+
+
+def playwright_modules(env=os.environ) -> Path:
+    explicit = env.get("BENCH_VERIFY_PLAYWRIGHT_MODULES")
+    return Path(explicit).expanduser().resolve() if explicit else PLAYWRIGHT_DIR / "node_modules"
+
+
+def remote_argv(node: str, modules: Path, ws: str) -> list[str]:
+    return [node, str(ADAPTER), "--ws", ws, "--modules", str(modules),
+            "--expect-version", playwright_pin()]
+
+
+def remote_setup(run: "Run") -> list[str]:
+    """Everything the remote path needs, recorded before it is used, so
+    a refusal still says what was asked for."""
+    rec = run.record.setdefault("browser", {})
+    rec.update({"mode": "remote-playwright", "sandbox": REMOTE_SANDBOX})
+    ws = validate_ws_endpoint(os.environ.get("PW_WS", ""))
+    node = shutil.which("node", path=os.environ.get("PATH"))
+    modules = playwright_modules()
+    rec.update({"endpoint": ws, "client": "playwright-core " + playwright_pin(),
+                "adapter": str(ADAPTER), "adapterSha256": sha256_file(ADAPTER),
+                "modules": str(modules), "node": node})
+    if not node:
+        raise SetupError("no node on PATH for the Playwright adapter: put node on the "
+                         "PATH this check runs with")
+    return remote_argv(node, modules, ws)
+
+
+class RemoteBrowser(PageOps):
+    """The adapter as a child process: one JSON request per line in, one
+    reply per line out, each bounded by a timeout."""
+
+    def __init__(self, argv: list[str], env: dict, origin: str, log: Path,
+                 ready_timeout: float = 60.0):
+        self.origin = origin.rstrip("/")
+        self.log = log
+        self.argv = argv
+        self.console: list[dict] = []
+        self._id, self._buf = 0, b""
+        log.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(log, "ab") as err:
+                self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE,
+                                             stdout=subprocess.PIPE, stderr=err,
+                                             env=env, start_new_session=True)
+        except OSError as exc:
+            raise SetupError(f"the Playwright adapter could not be executed: {exc}") from None
+        try:
+            ready = self._next(ready_timeout, "connecting to the remote browser")
+        except SetupError:
+            self.close()
+            raise
+        if ready.get("event") != "ready":
+            self.close()
+            raise SetupError(f"the Playwright adapter did not connect: "
+                             f"{ready.get('error') or ready}")
+        self.version = ready.get("version")
+        self.client = ready.get("client")
+        self.launch_options = ready.get("launchOptions")
+        self.expose_network = ready.get("exposeNetwork")
+
+    def _next(self, timeout: float, doing: str) -> dict:
+        deadline = time.time() + timeout
+        fd = self.proc.stdout.fileno()
+        while b"\n" not in self._buf:
+            left = deadline - time.time()
+            if left <= 0:
+                raise SetupError(f"the Playwright adapter timed out {doing}")
+            r, _, _ = select.select([fd], [], [], min(left, 0.5))
+            if r:
+                chunk = os.read(fd, 1 << 20)
+                if not chunk:
+                    tail = self.log.read_text(errors="replace")[-600:] if self.log.exists() else ""
+                    raise SetupError(f"the Playwright adapter exited while {doing}"
+                                     + (f": {tail.strip()}" if tail.strip() else ""))
+                self._buf += chunk
+        line, self._buf = self._buf.split(b"\n", 1)
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            raise SetupError(f"the Playwright adapter said something unreadable: {line[:200]!r}")
+        if msg.get("event") == "fatal":
+            raise SetupError(f"the Playwright adapter refused: {msg.get('error')}")
+        return msg
+
+    def request(self, op: str, timeout: float = 30.0, **params):
+        self._id += 1
+        try:
+            self.proc.stdin.write(json.dumps({"id": self._id, "op": op, **params}).encode()
+                                  + b"\n")
+            self.proc.stdin.flush()
+        except (OSError, ValueError) as exc:
+            raise SetupError(f"the Playwright adapter is gone: {exc}") from None
+        while True:
+            reply = self._next(timeout, op)
+            if reply.get("id") == self._id:
+                break
+        self.console.extend(reply.get("console") or [])
+        if not reply.get("ok"):
+            if reply.get("kind") == "page":
+                raise CheckFailed(f"page script error: {reply.get('error')}")
+            raise SetupError(f"Playwright {op}: {reply.get('error')}")
+        return reply.get("result")
+
+    def _navigate(self, url: str) -> None:
+        self.request("goto", url=url)
+
+    def eval(self, expression: str):
+        return self.request("eval", expression=expression)
+
+    def viewport(self, width: int, height: int) -> None:
+        self.request("viewport", width=width, height=height)
+
+    def key(self, key: str, shift: bool = False) -> None:
+        self.request("key", key=key, shift=shift)
+
+    def _click_at(self, x: float, y: float) -> None:
+        self.request("click", x=x, y=y)
+
+    def screenshot(self, path: Path) -> Path:
+        data = self.request("screenshot")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(base64.b64decode(data))
+        return path
+
+    def ax_nodes(self) -> list[dict]:
+        return (self.request("ax") or {}).get("nodes", [])
+
+    def close(self) -> None:
+        if self.proc.poll() is None:
+            try:
+                self.proc.stdin.write(b'{"op": "close"}\n')
+                self.proc.stdin.flush()
+            except (OSError, ValueError):
+                pass
+        try:
+            self.proc.wait(10)
+        except subprocess.TimeoutExpired:
+            pass
+        # the adapter and anything it started go with it
+        try:
+            os.killpg(self.proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        if self.proc.poll() is None:
+            self.proc.wait(5)
+        for f in (self.proc.stdin, self.proc.stdout):
+            try:
+                f.close()
+            except (OSError, ValueError):
                 pass
 
 

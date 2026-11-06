@@ -164,6 +164,49 @@ found there and the preflight reports "no Chromium found". Set
 `BENCH_VERIFY_BROWSER` in the board's environment (bench passes it
 through to the check) or put a Chromium on the board's `PATH`.
 
+## A browser in a container: `PW_WS`
+
+Where the host cannot sandbox Chromium, it runs in the official
+Playwright image instead — `mcr.microsoft.com/playwright:v1.62.0-noble`,
+as `pwuser`, under Playwright's seccomp profile, behind `npx
+playwright@1.62.0 run-server --unsafe` published on `127.0.0.1` only —
+and `PW_WS=ws://127.0.0.1:<port>/` tells `verify/browser` and
+`verify/preflight browser` to use it. **Without `PW_WS` nothing changes**:
+the local CDP path above runs exactly as before (`browser.mode` reads
+`local-cdp`; with it, `remote-playwright`).
+
+- **The endpoint is validated, then passed as an argument.** `ws://`, a
+  loopback host (`127.0.0.1`, `localhost`, `::1`), an explicit port, no
+  credentials, query or fragment — anything else is `setup-error` before
+  a connection is made, because the server behind it runs `--unsafe`.
+  `PW_WS` itself is stripped from every child's environment; only the
+  adapter receives it, on its command line.
+- **Playwright protocol, not raw CDP.** Python's Playwright does not send
+  launch options through `connect()` the way `@playwright/test` does, so
+  the client is `verify/playwright/adapter.cjs` on `playwright-core`
+  pinned exactly (`package.json` + `package-lock.json`, `1.62.0`). It
+  connects with the same `x-playwright-launch-options` header
+  `@playwright/test` uses for `connectOptions` + `launchOptions` —
+  `{"chromiumSandbox": true}` — and `exposeNetwork: '<loopback>'`, so the
+  browser reaches the disposable backend on this machine's loopback
+  through the adapter and nothing else. A client version other than the
+  pin is refused. The accessibility tree is read through a CDP session
+  Playwright tunnels over that same connection.
+- **What the client cannot see.** A run-server started without `--unsafe`
+  silently drops `chromiumSandbox: true` and adds `--no-sandbox`. Nothing
+  on this side can observe that, so the record says `requested`, not
+  `enforced`: prove the sandbox while a page is open by checking each
+  renderer's user namespace differs from the container's.
+- **Installing the client** (no browser is downloaded; playwright-core
+  ships none): `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --ignore-scripts`
+  in `verify/playwright` (its `node_modules/` is gitignored, so the
+  checkout stays clean), or into a directory of your own made from the
+  same two files, named by `BENCH_VERIFY_PLAYWRIGHT_MODULES`. `node` must
+  be on the PATH the check runs with.
+
+The cases, their assertions and the required artifacts are the same on
+both paths.
+
 ## Registering them with bench — inactive examples
 
 `verify/examples/` holds two profile documents in the installed schema
