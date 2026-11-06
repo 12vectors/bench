@@ -697,7 +697,7 @@ def access(doc: dict | None = None) -> dict:
     readings = {}
     for intent in profiles.INTENTS:
         try:
-            found = profiles.resolve(intent, policy=doc)
+            found = doctor.intent_reading(intent, None, policy=doc)
         except (ValueError, OSError) as exc:
             readings[intent] = {"intent": intent, "error": str(exc)}
             continue
@@ -919,10 +919,31 @@ def _intent_check_names(doc: dict, intent: str) -> set[str]:
     """Which checks one intent may ask bench to run, read off the resolved
     profile rather than off the document a second time."""
     try:
-        found = profiles.resolve(intent, policy=doc)
+        found = doctor.intent_reading(intent, None, policy=doc)
     except (ValueError, OSError):
         return set()
     return {c["name"] for c in found.get("verify") or []}
+
+
+def _access_words(doc: dict, intent: str) -> dict:
+    """One intent's access, reduced to what a preview compares.
+
+    Names rather than whole structures: a reader wants "this run gains the
+    `build` grant", not a diff of two resolved manifests. Hashes and paths
+    are deliberately out — they move for reasons that are not a change to
+    what the run may do.
+    """
+    try:
+        found = doctor.intent_reading(intent, None, policy=doc)
+    except (ValueError, OSError) as exc:
+        return {"error": str(exc)}
+    return {
+        "grants": sorted(g["name"] for g in found.get("commands") or []),
+        "checks": sorted(c["name"] for c in found.get("verify") or []),
+        "inputs": sorted(i["name"] for i in found.get("context") or []),
+        "denied": sorted(d["capability"] for d in found.get("denied") or []),
+        "blocked": bool(found.get("blockers")),
+    }
 
 
 # ── acceptance, reviews and overrides ──────────────────────────────────
@@ -1553,7 +1574,9 @@ def read_draft(payload: dict) -> dict:
     if not isinstance(found, dict):
         raise ValueError("the submitted document is not a JSON object — send "
                          "the whole document under \"document\"")
-    if MASK in json.dumps(found):
+    # `ensure_ascii=False`, because the mask is not ASCII and the default
+    # would escape it into `•` and miss it entirely.
+    if MASK in json.dumps(found, ensure_ascii=False):
         raise ValueError(
             f"the submitted document contains the redaction mark {MASK!r}. A "
             f"masked value is never written back as the mask: put the real "
@@ -1581,7 +1604,9 @@ def validate(payload: dict) -> dict:
     intents = {}
     for intent in profiles.INTENTS:
         try:
-            resolved = profiles.resolve(intent, policy=doc)
+            # the reading the readiness inspector takes, so a draft is
+            # judged exactly as the board's own policy is
+            resolved = doctor.intent_reading(intent, None, policy=doc)
         except (ValueError, OSError) as exc:
             errors.append({"code": "resolve-failed", "field": "",
                            "why": f"'{intent}' could not be resolved: {exc}"})
@@ -1916,6 +1941,7 @@ def _record_change(path: Path, *, before: str, after: str, document: dict,
                 and isinstance((document.get("gates") or {}).get(scope), dict)),
         },
     }
+    entry["recorded"] = True
     try:
         target = history_path()
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1926,8 +1952,6 @@ def _record_change(path: Path, *, before: str, after: str, document: dict,
         # must not undo a write that already succeeded, and saying so is
         # better than pretending it was recorded.
         entry["recorded"] = False
-        return entry
-    entry["recorded"] = True
     return entry
 
 

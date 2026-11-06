@@ -4205,9 +4205,10 @@ function settingsAccess(page) {
     `<span class="sdetail">${esc(f.mode || '')} on ${esc(f.task || '—')}<br>` +
     `frozen policy <code>${esc(String(f.policyId).slice(0, 14))}</code> — ` +
     `${esc(f.why)}` +
-    (f.freshness && f.freshness.moved
+    (f.freshness && f.freshness.fresh === false
       ? `<br><b>the settings have moved since it launched; this run keeps ` +
-        `what it rode</b>` : '') + `</span></div>`).join('')
+        `what it rode</b> — ${esc((f.freshness.changed || []).join('; '))}`
+      : '') + `</span></div>`).join('')
     : `<p>No run with a recorded manifest is alive, so there is nothing an ` +
       `edit here could be mistaken for changing.</p>`;
   return `<div class="panel"><div class="phead">` +
@@ -4546,6 +4547,7 @@ function settingsPolicy(page) {
     const want = (gate.checks || []).map(c =>
       typeof c === 'string' ? c : String((c || {}).check || ''));
     const modes = page.acceptance.reviewModes;
+    const chosen = gate.review || 'none';
     return `<div class="item"><div class="ihead">` +
       `<span class="label">${esc(scope)}</span>` +
       `<span class="mono" style="color:var(--dim)">` +
@@ -4557,12 +4559,13 @@ function settingsPolicy(page) {
       `<div class="frow"><label for="f-gates:${esc(scope)}:review">review` +
       `</label><select id="f-gates:${esc(scope)}:review" ` +
       `data-field="gates:${scope}:review" aria-label="${esc(scope)} review ` +
-      `requirement">` + modes.map(m =>
-        `<option value="${esc(m.name)}"` +
-        `${(gate.review || 'none') === m.name ? ' selected' : ''}` +
-        `${m.available ? '' : ' disabled'}>${esc(m.name)}` +
-        `${m.available ? '' : ' — not available on this board'}</option>`)
-        .join('') + `</select></div></div>`;
+      `requirement">` + modes.map(m => {
+        const word = m.name;
+        return `<option value="${esc(word)}"` +
+          `${chosen === word ? ' selected' : ''}` +
+          `${m.available ? '' : ' disabled'}>${esc(word)}` +
+          `${m.available ? '' : ' — not available on this board'}</option>`;
+      }).join('') + `</select></div></div>`;
   }).join('');
 
   const over = ((draft.document.gates || {}).overrides) || {};
@@ -4656,7 +4659,8 @@ function settingsPolicy(page) {
       (draft.preview.pending.length
         ? `<p class="bad">Cards waiting in review/ whose merge decision ` +
           `would change: ` + esc(draft.preview.pending.map(p =>
-            `${p.file} (${p.before} → ${p.after})`).join('; ')) + `</p>`
+            p.file + ' (' + p.before + ' → ' + p.after + ')').join('; ')) +
+          `</p>`
         : `<p>No card waiting in review/ changes its merge decision.</p>`) +
       `<ul>${draft.preview.sideEffects.map(e =>
         `<li>${esc(e)}</li>`).join('')}</ul>` : '') + `</div>` +

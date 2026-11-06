@@ -282,16 +282,31 @@ def example_worktree() -> Path:
     return config.WORKTREES / "a-card"
 
 
-def _intent_reading(intent: str, worktree: Path | str | None) -> dict:
+def _intent_reading(intent: str, worktree: Path | str | None,
+                    policy: dict | None = None) -> dict:
     """One intent's resolved profile, through the resolver a launch rides.
 
     `review` is asked with no pinned checkout, because resolving one is
     not a reading: a PR review's checkout is provisioned by the launch,
     and the inspector must not create one to look at it. The reading says
     so rather than inventing a path.
+
+    `policy` is passed straight through, for the two callers that read a
+    document other than this board's: the fixture readings below, and the
+    Settings editor validating a draft.
     """
     return profiles.resolve(intent, worktree=None if intent == "review"
-                            else (worktree or example_worktree()))
+                            else (worktree or example_worktree()),
+                            policy=policy)
+
+
+# The same reading, named for callers outside this module. `settings.py`
+# shows the operator what each intent resolves to and validates drafts
+# against it, and both have to be the reading the inspector takes — a
+# Settings page that resolved with its own worktree convention would show
+# a `grant-root-unavailable` the readiness inspector does not, about
+# nothing. One function, one convention.
+intent_reading = _intent_reading
 
 
 def _public_intent(found: dict) -> dict:
