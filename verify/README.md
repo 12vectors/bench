@@ -254,9 +254,24 @@ environment.
 
 ## Browser: what has and has not run
 
-The five-case `verify/browser` suite (Chromium over CDP) has **never
-passed** on this host: Chromium cannot start its sandbox, and the check
-refuses rather than disabling it. That blocker stands. Separately, a
+**Local path (Chromium over CDP on the host): never run positively.**
+Chromium cannot start its sandbox on this host, and the check refuses
+rather than disabling it. That blocker stands for the local path.
+
+**Remote path (`PW_WS`): all five cases ran, 4 passed and 1 failed — the
+check is red.** Run at `4b1d3fb` against the official 1.62.0 image under
+the rules above, with renderer user namespaces seen differing from the
+container's while a page was open. The board, layout, views and
+accessibility cases held. The readiness case failed on a measurement of
+the product: the readiness dialog extends outside the 800 px viewport
+(`y=145, height=10385`). That is a defect in the board's own CSS, outside
+this directory's scope; the assertion stands, and `verify/browser` reads
+`failed` until the board is fixed. The `readiness-open` screenshot is
+taken before that measurement is asserted, and a failed run keeps its
+screenshot list and hashes and the backend log in its artifacts. **No
+gate requires the browser check**, and none should until it passes.
+
+Separately, a
 small independent smoke (outside this directory) ran Playwright's Firefox
 with its default sandbox settings against the candidate's disposable
 backend, and checked that the five fixture cards render, the 1440 px

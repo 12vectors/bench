@@ -844,6 +844,106 @@ class RemotePlaywright(Fixture):
             b.eval("1")
         b.close()
 
+    HUNG = textwrap.dedent("""
+        import json, subprocess, sys, time
+        child = subprocess.Popen(["sleep", "300"])
+        open(sys.argv[1], "w").write(str(child.pid))
+        if sys.argv[2] == "ready":
+            print(json.dumps({"event": "ready", "version": "x"}), flush=True)
+        time.sleep(300)   # never answers, never reads its stdin
+    """)
+
+    def hung(self, mode):
+        fake, pidfile = self.base / "hung.py", self.base / "child.pid"
+        fake.write_text(self.HUNG)
+        return [sys.executable, str(fake), str(pidfile), mode], pidfile
+
+    def wait_for(self, path):
+        for _ in range(100):
+            if path.is_file() and path.read_text():
+                return int(path.read_text())
+            import time
+            time.sleep(0.05)
+        self.fail(f"{path} never written")
+
+    def test_a_hung_operation_times_out_and_takes_its_children_with_it(self):
+        import time
+        argv, pidfile = self.hung("ready")
+        b = benchverify.RemoteBrowser(argv, dict(os.environ), "http://127.0.0.1:8",
+                                      self.base / "a.log")
+        child = self.wait_for(pidfile)
+        t = time.time()
+        with self.assertRaises(benchverify.SetupError) as cm:
+            b.request("eval", timeout=1, expression="1")
+        self.assertIn("timed out", str(cm.exception))
+        self.assertLess(time.time() - t, 5)
+        t = time.time()
+        b.close()
+        self.assertLess(time.time() - t, 15)
+        self.assertFalse(alive(b.proc.pid), "the adapter outlived close()")
+        self.assertFalse(alive(child), "the adapter's child outlived close()")
+
+    def test_an_adapter_that_never_connects_times_out_and_is_cleaned_up(self):
+        argv, pidfile = self.hung("silent")
+        with self.assertRaises(benchverify.SetupError) as cm:
+            benchverify.RemoteBrowser(argv, dict(os.environ), "http://127.0.0.1:8",
+                                      self.base / "a.log", ready_timeout=1)
+        self.assertIn("timed out", str(cm.exception))
+        self.assertFalse(alive(self.wait_for(pidfile)), "the adapter's child outlived it")
+
+    FAILING_CASES = textwrap.dedent("""
+        import unittest
+        import benchverify as bv
+        S = bv.SESSION
+        def png(name):
+            p = S["shots"] / f"{name}.png"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"\\x89PNG\\r\\n\\x1a\\n" + b"\\0" * 2000)
+            S["required"].append(p)
+        class T(unittest.TestCase):
+            def test_a_holds(self):
+                S["metrics"]["a"] = 1
+                png("a")
+            def test_b_fails_after_its_screenshot(self):
+                png("b")
+                self.assertEqual(1, 2, "deliberate")
+    """)
+
+    def test_a_failing_case_keeps_its_screenshots_hashes_and_backend_log(self):
+        if not shutil.which("node"):
+            self.skipTest("node not available")
+        mods, _ = self.fake_modules()
+        cases = self.base / "cases"
+        cases.mkdir()
+        (cases / "case_failing.py").write_text(self.FAILING_CASES)
+        self.root = REPO
+        r, data = self.run_entry("browser", "--cases", str(cases), env_extra={
+            "PW_WS": "ws://127.0.0.1:39123/",
+            "BENCH_VERIFY_PLAYWRIGHT_MODULES": str(mods)})
+        self.assertEqual(FAIL, r.returncode, r.stdout + r.stderr)
+        self.assertEqual("failed", data["outcome"])
+        shutil.rmtree(data["work"], ignore_errors=True)   # what a runner's cleanup does
+        art = Path(data["artifacts"]["dir"])
+        shots = data["artifacts"]["screenshots"]
+        self.assertEqual(["a.png", "b.png"], sorted(Path(p).name for p in shots))
+        hashes = data["artifacts"]["screenshotHashes"]
+        self.assertEqual(sorted(shots), sorted(hashes))
+        for p, h in hashes.items():
+            self.assertTrue(Path(p).is_file(), p)
+            self.assertEqual(benchverify.sha256_file(p), h["sha256"])
+        log = Path(data["artifacts"]["backendLog"])
+        self.assertTrue(log.is_file(), log)
+        self.assertTrue(log.is_relative_to(art), log)
+
+    def test_the_readiness_dialog_is_photographed_before_it_is_measured(self):
+        src = (VERIFY / "browser_cases" / "case_board.py").read_text()
+        body = src[src.index("def test_the_readiness_inspector"):]
+        body = body[:body.index("\nclass ")]
+        self.assertLess(body.index('shot("readiness-open")'),
+                        body.index("self.assertEqual([], bv.layout_problems(m))"))
+        # the assertion itself is still there, unweakened
+        self.assertIn("self.assertEqual([], bv.layout_problems(m))", body)
+
 
 if __name__ == "__main__":
     unittest.main()

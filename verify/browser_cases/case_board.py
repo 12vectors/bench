@@ -152,8 +152,10 @@ class Readiness(unittest.TestCase):
         b.wait("!document.querySelector('#sheetwrap').innerText.includes('…')", 10)
         m = measure(["#sheetwrap [role=dialog]"])
         S["metrics"]["readinessSheet"] = m
-        self.assertEqual([], bv.layout_problems(m))
+        # taken first: a dialog that does not fit is the screenshot a
+        # person most needs to see
         shot("readiness-open")
+        self.assertEqual([], bv.layout_problems(m))
         b.key("Escape")
         self.assertTrue(b.wait("!document.querySelector('#sheetwrap').classList.contains('open')",
                                5), "Escape did not close the readiness dialog")

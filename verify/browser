@@ -29,6 +29,7 @@ verdict: the screenshots are for a person to look at.
 
 import io
 import json
+import shutil
 import sys
 import traceback
 import unittest
@@ -137,12 +138,22 @@ def body(run: bv.Run) -> str:
         if browser is not None:
             browser.close()
         backend.stop()
+        # the fixture lives in the work directory, which a runner removes;
+        # the backend's log is kept beside the rest of the artifacts
+        if backend.log.exists():
+            shutil.copy2(backend.log, run.artifact("backendLog",
+                                                   run.artifacts / "backend.log"))
     log = run.artifact("log", run.artifacts / "cases.log")
     log.write_text(stream.getvalue(), encoding="utf-8")
     metrics = run.artifact("metrics", run.artifacts / "metrics.json")
     metrics.write_text(json.dumps(bv.SESSION["metrics"], indent=2, sort_keys=True))
     run.record["cases"]["results"] = result.outcomes
     run.record["cases"]["ran"] = result.testsRun
+    # recorded whatever the outcome: a failed run's screenshots are its evidence
+    run.record["artifacts"]["screenshots"] = [str(p) for p in bv.SESSION["required"]]
+    run.record["artifacts"]["screenshotHashes"] = {
+        str(p): {"bytes": p.stat().st_size, "sha256": bv.sha256_file(p)}
+        for p in bv.SESSION["required"] if p.is_file()}
 
     if result.setup_errors:
         raise bv.SetupError("; ".join(result.setup_errors)[:3000])
@@ -166,7 +177,6 @@ def body(run: bv.Run) -> str:
     # this run's directory is fresh, and each file must also have been
     # written since the run started: nothing left over stands in a pass
     run.record["artifacts"]["hashes"] = bv.require_fresh([*required, metrics], run.started)
-    run.record["artifacts"]["screenshots"] = [str(p) for p in required]
     return f"{n} browser cases held; {len(required)} screenshots in {shots}"
 
 
