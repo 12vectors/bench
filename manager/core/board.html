@@ -4186,9 +4186,14 @@ function settingsAccess(page) {
       `approved inputs: ${(found.context || []).length
         ? esc(found.context.map(i =>
             `${i.name} (${i.status})`).join(', ')) : 'none'}<br>` +
-      `writable (intended): ${(found.writable || []).length
+      `intended writes: ${(found.writable || []).length
         ? esc(found.writable.map(w => w.root || w.path || '').join(', '))
         : 'nothing'}<br>` +
+      // the headline and the retraction in one line, never a headline
+      // that reads as a boundary with the caveat folded away below it
+      `OS isolation: ${esc((found.isolation || {}).enforced
+        ? 'enforced by ' + ((found.isolation || {}).by || 'the backend')
+        : 'none enforced')} — ${esc((found.isolation || {}).why || '')}<br>` +
       `denied: ${(found.denied || []).length
         ? esc(found.denied.map(d => d.capability).join(', ')) : 'nothing'}` +
       `</span><span class="sright">${stateWord(found.state, states)}` +

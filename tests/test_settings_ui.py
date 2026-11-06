@@ -201,6 +201,15 @@ class TheWordCarriesTheMeaning(Source):
         self.assertIn("frozen, not current", body)
         self.assertIn("this run keeps what it rode", self.html)
 
+    def test_intended_writes_and_os_isolation_are_two_rows(self):
+        """The headline must not read as a boundary that a folded-away
+        caveat then retracts."""
+        body = self.body("settingsAccess")
+        self.assertIn("intended writes:", body)
+        self.assertIn("OS isolation:", body)
+        self.assertIn("none enforced", body)
+        self.assertIn("found.isolation", body)
+
 
 class FourStepsAndOnlyTheLastWrites(Source):
     def test_validate_and_preview_are_their_own_requests(self):
