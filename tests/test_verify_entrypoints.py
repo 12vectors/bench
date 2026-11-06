@@ -753,6 +753,29 @@ class RemotePlaywright(Fixture):
             with self.assertRaises(benchverify.SetupError, msg=bad):
                 benchverify.validate_ws_endpoint(bad)
 
+    SECRET = "s3cretTOKEN"
+    LEAKY = ("ws://user:s3cretTOKEN@127.0.0.1:3000/", "ws://127.0.0.1:3000/?token=s3cretTOKEN",
+             "ws://127.0.0.1:3000/#s3cretTOKEN", "ws://s3cretTOKEN.example:3000/",
+             "ws://127.0.0.1:3000/s3cretTOKEN%00", "s3cretTOKEN://127.0.0.1:3000/",
+             "ws://127.0.0.1:s3cretTOKEN/", "ws://[s3cretTOKEN/")
+
+    def test_an_invalid_endpoint_is_never_echoed(self):
+        for bad in self.LEAKY:
+            with self.assertRaises(benchverify.SetupError, msg=bad) as cm:
+                benchverify.validate_ws_endpoint(bad)
+            self.assertNotIn(self.SECRET, str(cm.exception), bad)
+            self.assertIn("PW_WS", str(cm.exception))
+
+    def test_an_invalid_endpoint_reaches_no_record_or_output(self):
+        self.root = REPO
+        bad = "ws://user:s3cretTOKEN@127.0.0.1:3000/?token=s3cretTOKEN"
+        r, data = self.run_entry("browser", "--cases", str(VERIFY / "browser_cases"),
+                                 env_extra={"PW_WS": bad})
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertNotIn(self.SECRET, r.stdout + r.stderr)
+        self.assertNotIn(self.SECRET, json.dumps(data))
+        self.assertNotIn("endpoint", data["browser"])
+
     def test_pw_ws_never_reaches_the_child(self):
         work = self.base / "w"
         env = benchverify.child_env(work, {"PATH": "/bin", "PW_WS": "ws://127.0.0.1:1/"})[0]
@@ -934,6 +957,24 @@ class RemotePlaywright(Fixture):
         log = Path(data["artifacts"]["backendLog"])
         self.assertTrue(log.is_file(), log)
         self.assertTrue(log.is_relative_to(art), log)
+
+    def test_no_two_screenshots_share_a_path(self):
+        # a second shot to the same path overwrites the first one's evidence
+        import re
+        from collections import Counter
+        src = (VERIFY / "browser_cases" / "case_board.py").read_text()
+        widths = re.search(r"WIDTHS = (\[.*\])", src).group(1)
+        views = re.search(r'for view in (\[[^\]]*\])', src).group(1)
+        names = []
+        for name in re.findall(r'shot\(f?"([^"]+)"\)', src):
+            if "{w}x{h}" in name:
+                names += [name.replace("{w}x{h}", f"{w}x{h}") for w, h in eval(widths)]
+            elif "{view}" in name:
+                names += [name.replace("{view}", v) for v in eval(views)]
+            else:
+                names.append(name)
+        self.assertGreater(len(names), 5)
+        self.assertEqual([], [n for n, c in Counter(names).items() if c > 1])
 
     def test_the_readiness_dialog_is_photographed_before_it_is_measured(self):
         src = (VERIFY / "browser_cases" / "case_board.py").read_text()

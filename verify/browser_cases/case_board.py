@@ -75,7 +75,8 @@ class Board(unittest.TestCase):
         self.assertEqual([], [e.get("exceptionDetails", {}).get("text") for e in b.console],
                          "the page threw while loading")
         S["metrics"]["board"] = {"stages": stages, "title": b.eval("document.title")}
-        shot("board-1440x900")
+        # not board-1440x900: the layout case takes that one at the same size
+        shot("board-drawn-1440x900")
 
     def test_layout_fits_the_viewport_at_common_widths(self):
         found = {}

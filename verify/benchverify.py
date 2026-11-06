@@ -748,31 +748,35 @@ def browser_mode(env=os.environ) -> str:
 def validate_ws_endpoint(url: str) -> str:
     """A ws:// URL on loopback with an explicit port and nothing else.
     The run-server behind it runs --unsafe, so an endpoint anywhere but
-    this machine's loopback is refused rather than connected to."""
+    this machine's loopback is refused rather than connected to.
+
+    A refused value is never repeated, in whole or in part: it may carry
+    a credential or a token, and this message reaches durable records.
+    The reason is one of a fixed set of words."""
     from urllib.parse import urlsplit
     why = None
     try:
         u = urlsplit(url)
         port = u.port
-    except ValueError as exc:
-        u, port, why = None, None, str(exc)
+    except ValueError:
+        u, port, why = None, None, "not a parseable URL"
     if u is not None and why is None:
         if u.scheme != "ws":
-            why = f"scheme {u.scheme or '(none)'} (only ws://)"
+            why = "the scheme is not ws://"
         elif u.username is not None or u.password is not None:
-            why = "credentials in the URL"
+            why = "it carries credentials"
         elif u.hostname not in LOOPBACK_HOSTS:
-            why = f"host {u.hostname or '(none)'} is not loopback"
+            why = "the host is not loopback"
         elif port is None or not 0 < port < 65536:
-            why = "no explicit port"
+            why = "it has no valid explicit port"
         elif u.query or u.fragment or "?" in url or "#" in url:
-            why = "a query or fragment"
+            why = "it carries a query or fragment"
         elif u.path and not re.fullmatch(r"/[A-Za-z0-9._/-]*", u.path):
-            why = f"path {u.path!r}"
+            why = "the path has characters other than letters, digits, . _ / -"
     if why:
-        raise SetupError(f"PW_WS={url!r} is not a loopback Playwright endpoint ({why}): "
-                         f"publish run-server on 127.0.0.1 only and set "
-                         f"PW_WS=ws://127.0.0.1:<port>/")
+        raise SetupError(f"PW_WS is not a loopback Playwright endpoint ({why}; the value "
+                         f"is not repeated here): publish run-server on 127.0.0.1 only "
+                         f"and set PW_WS=ws://127.0.0.1:<port>/")
     return url
 
 
