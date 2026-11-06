@@ -2100,6 +2100,34 @@ there.
    `os.replace` of a temporary file in the same directory, so a failed
    write leaves the previous document byte for byte.
 
+A setup, end to end, for a project whose team already has a test
+command. Open **Settings → Verification**, read who owns what, then
+**Edit policy** and register the command as a named check:
+
+```jsonc
+{
+  "v": 1,
+  "checks": [{"name": "unit",
+              "run": "python3 -m unittest discover -s tests",
+              "root": "worktree",
+              "scopes": {"fast": ["-k", "fast"]},
+              "timeout": 900}],
+  "profiles": {"work":   {"verify": ["unit"]},
+               "act-pr": {"verify": ["unit"]},
+               "review": {"verify": ["unit"]}}
+}
+```
+
+**Validate**, **Preview**, **Apply**. Nothing is mandatory yet: every gate
+still reads `ungated`, and the check's row says *registered, not
+required*. Exercise it — ask for it from a card's `◫` evidence sheet, and
+see it fail once on purpose — and only then, as a separate decision, add
+the gate:
+
+```jsonc
+"gates": {"acceptance": {"checks": ["unit"]}}
+```
+
 A sanitized line goes into `manager/local/state/settings/history.jsonl`
 per applied change: the time, the revisions, the keys that changed, and
 the actor **where one is actually known**. This board records no

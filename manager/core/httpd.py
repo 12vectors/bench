@@ -782,8 +782,11 @@ class Handler(BaseHTTPRequestHandler):
                     # A render, not an automation. The page reloads the
                     # settings; nothing here moves a card, starts a run or
                     # advances anything that was waiting.
+                    # `other`, deliberately: a configuration change is not
+                    # an agent, a move or a phase, and filing it under one
+                    # of those would put the wrong glyph on the ticker.
                     state.record_board_event({
-                        "kind": "agent", "actor": "you",
+                        "kind": "other", "actor": "you",
                         "summary": (f"settings: {result['identity']} written "
                                     f"({', '.join(result['history']['changedKeys']) or 'no key changed'})"
                                     f" — applies at the next launch")})

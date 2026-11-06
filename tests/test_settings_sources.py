@@ -456,6 +456,97 @@ class InstallationAndSources(unittest.TestCase):
         self.assertNotIn("tasks/", local)
 
 
+class AllThreeInstallationsReportThemselves(unittest.TestCase):
+    """Vendored, source-hosted and external — the three layouts bench
+    ships, each reporting what it actually is.
+
+    The failure this catches is a page that says "external" because the
+    developer who wrote it happened to run an external board, or that
+    reports a revision for a release artifact that has no commit.
+    """
+
+    def _probe(self, core: Path, extra: dict, cwd: Path) -> dict:
+        import tempfile as tf
+        with tf.TemporaryDirectory() as tmp:
+            env = {"TEST_STATE": str(Path(tmp) / "state"),
+                   "BOARD_AGENT_PROFILES": ""}
+            (Path(tmp) / "state").mkdir()
+            env.update(extra)
+            out = subprocess.run(
+                [sys.executable, "-c",
+                 PRELUDE + "R = settings.installation()"
+                           "\nprint(json.dumps(R))", str(core)],
+                env=child_env(env), text=True, capture_output=True,
+                cwd=str(cwd))
+        if out.returncode != 0:
+            raise AssertionError(f"probe failed: {out.stderr[-3000:]}")
+        return json.loads(out.stdout.splitlines()[-1])
+
+    def test_a_source_checkout_says_source(self):
+        found = self._probe(CORE, {}, REPO)
+        self.assertEqual("source", found["mode"])
+        self.assertIn("the repository it sits in", found["modeWhy"])
+        self.assertTrue(found["revisionKnown"])
+
+    def test_an_external_layout_says_external_and_keeps_the_roots_apart(self):
+        import shutil
+        import tempfile as tf
+        tmp = Path(tf.mkdtemp(prefix="bench-settings-ext-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        app, work = tmp / "app", tmp / "work"
+        for repo in (app, work):
+            repo.mkdir(parents=True)
+            subprocess.run(["git", "-C", str(repo), "init", "-q", "-b", "main"],
+                           check=True, capture_output=True)
+        (work / "tasks").mkdir()
+        found = self._probe(CORE, {"BOARD_APP_ROOT": str(app),
+                                   "BOARD_WORK_ROOT": str(work)}, REPO)
+        self.assertEqual("external", found["mode"])
+        self.assertIn("nothing of bench's is in the application's history",
+                      found["modeWhy"])
+        roots = {r["name"]: r["path"] for r in found["roots"]}
+        self.assertEqual(str(app), roots["the application"])
+        self.assertEqual(str(work), roots["the work state"])
+        self.assertNotEqual(roots["the application"], roots["the tool"])
+
+    def test_a_vendored_install_says_vendored(self):
+        import shutil
+        import tempfile as tf
+        tmp = Path(tf.mkdtemp(prefix="bench-settings-vendored-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        host = tmp / "host"
+        core = host / ".task-manager" / "manager" / "core"
+        shutil.copytree(CORE, core,
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        (core.parent / "local").mkdir()
+        (host / ".task-manager" / "tasks").mkdir()
+        subprocess.run(["git", "-C", str(host), "init", "-q", "-b", "main"],
+                       check=True, capture_output=True)
+        found = self._probe(core, {}, host)
+        self.assertEqual("vendored", found["mode"])
+        self.assertIn("inside the application it manages", found["modeWhy"])
+        roots = {r["name"]: r["path"] for r in found["roots"]}
+        self.assertEqual(str(host), roots["the application"])
+        self.assertEqual(str(host / ".task-manager"), roots["the tool"])
+
+    def test_a_copy_outside_git_reports_an_unknown_revision(self):
+        """A release artifact unpacked from a tarball has no commit of its
+        own, and bench will not invent one."""
+        import shutil
+        import tempfile as tf
+        tmp = Path(tf.mkdtemp(prefix="bench-settings-artifact-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        core = tmp / "install" / "manager" / "core"
+        shutil.copytree(CORE, core,
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        (core.parent / "local").mkdir()
+        (tmp / "install" / "tasks").mkdir()
+        found = self._probe(core, {}, tmp)
+        self.assertFalse(found["revisionKnown"])
+        self.assertIsNone(found["revision"])
+        self.assertIn("will not invent one", found["revisionWhy"])
+
+
 class ProvenanceIsObservedNotGuessed(unittest.TestCase):
     def test_a_setting_in_the_environment_is_locked_and_says_where(self):
         rows = run("R = settings.catalog()", doc=FULL,
