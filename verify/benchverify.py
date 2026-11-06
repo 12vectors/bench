@@ -82,6 +82,78 @@ class SetupError(Exception):
     """Nothing trustworthy could be run. Exit 2, never a pass."""
 
 
+# ── children that do not outlive the wrapper ──────────────────────────
+#
+# Every process this harness starts leads a session of its own, so a
+# timeout can take its whole group down. That also puts it out of reach
+# of the group signal bench's installed runner cancels a check with
+# (SIGTERM, then SIGKILL after a grace period). Two things close the gap,
+# and neither depends on cleanup finishing inside that grace:
+#   - SIGTERM: the handler SIGKILLs every live child group at once, then
+#     raises Cancelled so the finally blocks unwind and the record says so;
+#   - SIGKILL (no handler runs): each child was started with the kernel's
+#     parent-death signal, so it is killed when the wrapper dies.
+
+class Cancelled(KeyboardInterrupt):
+    """The wrapper was told to stop. A KeyboardInterrupt so unittest lets
+    it through rather than recording it as one case's error."""
+
+
+CHILDREN: list = []
+_PR_SET_PDEATHSIG = 1
+
+
+def _libc():
+    try:
+        import ctypes
+        return ctypes.CDLL(None, use_errno=True)
+    except (OSError, AttributeError):
+        return None
+
+
+_LIBC = _libc() if sys.platform.startswith("linux") else None
+
+
+def die_with_parent(then=None):
+    """A preexec_fn: SIGKILL this child when the wrapper dies, and exit
+    at once if it already has. `then` runs afterwards, in the child."""
+    parent = os.getpid()
+
+    def preexec():
+        if _LIBC is not None:
+            _LIBC.prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
+        if os.getppid() != parent:
+            os._exit(1)
+        if then is not None:
+            then()
+    return preexec
+
+
+def spawn(argv, **kw):
+    """Popen in a session of its own, tied to the wrapper's life, and
+    registered so a cancellation can take it down."""
+    proc = subprocess.Popen(argv, start_new_session=True,
+                            preexec_fn=die_with_parent(kw.pop("preexec_fn", None)), **kw)
+    CHILDREN.append(proc)
+    return proc
+
+
+def kill_children() -> None:
+    for proc in CHILDREN:
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+
+def _on_sigterm(signum, frame):
+    kill_children()
+    if not getattr(_on_sigterm, "fired", False):
+        _on_sigterm.fired = True
+        raise Cancelled("SIGTERM")
+
+
 class CheckFailed(Exception):
     """A check ran and said no. Exit 1."""
 
@@ -351,6 +423,16 @@ class Run:
 
     def main(self, body, argv=None) -> int:
         self.parse(argv)
+        signal.signal(signal.SIGTERM, _on_sigterm)
+        try:
+            return self._main(body)
+        except Cancelled as exc:
+            kill_children()
+            self.record["cancelled"] = str(exc) or "SIGTERM"
+            return self.finish(SETUP_ERROR, f"cancelled ({exc}) before a verdict; "
+                                            f"every child process was killed")
+
+    def _main(self, body) -> int:
         try:
             self.start()
             try:
@@ -399,9 +481,8 @@ def run_group(argv: list[str], cwd: Path, env: dict, out, timeout: float) -> tup
     whole group down when it ends or times out. subprocess.run would kill
     the direct child only, leaving a forked backend or a browser running
     on after the check had already been reported."""
-    proc = subprocess.Popen(argv, cwd=str(cwd), env=env, stdout=out,
-                            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                            start_new_session=True)
+    proc = spawn(argv, cwd=str(cwd), env=env, stdout=out,
+                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
     try:
         code = proc.wait(timeout)
         timed_out = False
@@ -604,12 +685,11 @@ class Browser(PageOps):
         self.argv = browser_argv(exe, profile)
         try:
             with open(log, "ab") as err:
-                self.proc = subprocess.Popen(self.argv, preexec_fn=wire,
-                                             pass_fds=tuple(sorted({to_r, from_w, 3, 4})),
-                                             stdin=subprocess.DEVNULL,
-                                             stdout=subprocess.DEVNULL, stderr=err,
-                                             env=env, close_fds=True,
-                                             start_new_session=True)
+                self.proc = spawn(self.argv, preexec_fn=wire,
+                                  pass_fds=tuple(sorted({to_r, from_w, 3, 4})),
+                                  stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.DEVNULL, stderr=err,
+                                  env=env, close_fds=True)
         except OSError as exc:
             for fd in (to_r, from_w, self._to_w, self._from_r):
                 os.close(fd)
@@ -826,9 +906,8 @@ class RemoteBrowser(PageOps):
         log.parent.mkdir(parents=True, exist_ok=True)
         try:
             with open(log, "ab") as err:
-                self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE,
-                                             stdout=subprocess.PIPE, stderr=err,
-                                             env=env, start_new_session=True)
+                self.proc = spawn(argv, stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=err, env=env)
         except OSError as exc:
             raise SetupError(f"the Playwright adapter could not be executed: {exc}") from None
         try:
@@ -1016,9 +1095,8 @@ class Backend:
         fh = open(self.log, "ab")
         self.argv = [self.python, str(self.tool / "manager" / "core" / "board.py"),
                      "--port", str(self.port), "--no-open"]
-        self.proc = subprocess.Popen(self.argv, cwd=str(self.tool), env=self.env,
-                                     stdout=fh, stderr=subprocess.STDOUT,
-                                     stdin=subprocess.DEVNULL, start_new_session=True)
+        self.proc = spawn(self.argv, cwd=str(self.tool), env=self.env,
+                          stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
         fh.close()
         deadline = time.time() + timeout
         while time.time() < deadline:

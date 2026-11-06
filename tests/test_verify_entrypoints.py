@@ -958,6 +958,80 @@ class RemotePlaywright(Fixture):
         self.assertTrue(log.is_file(), log)
         self.assertTrue(log.is_relative_to(art), log)
 
+    SLEEPING_CASE = textwrap.dedent("""
+        import json, os, time, unittest
+        import benchverify as bv
+        S = bv.SESSION
+        class T(unittest.TestCase):
+            def test_waits_to_be_cancelled(self):
+                tmp = os.environ["BV_MARKER"] + ".tmp"
+                with open(tmp, "w") as fh:
+                    json.dump({"backend": S["backend"].proc.pid,
+                               "adapter": S["browser"].proc.pid}, fh)
+                os.rename(tmp, os.environ["BV_MARKER"])
+                time.sleep(120)
+    """)
+
+    def cancel_run(self, sig):
+        """The installed runner's way: the wrapper leads a session of its
+        own and is signalled as a group (verify.py: SIGTERM, 5s, SIGKILL)."""
+        import signal
+        import time
+        if not shutil.which("node"):
+            self.skipTest("node not available")
+        mods, _ = self.fake_modules()
+        cases = self.base / "cases"
+        cases.mkdir()
+        (cases / "case_sleep.py").write_text(self.SLEEPING_CASE)
+        marker = self.base / "marker.json"
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("BENCH_VERIFY") and k != "PW_WS"}
+        # BV_MARKER reaches the case because the case runs in the wrapper
+        env.update({"PW_WS": "ws://127.0.0.1:39123/", "BV_MARKER": str(marker),
+                    "BENCH_VERIFY_PLAYWRIGHT_MODULES": str(mods)})
+        proc = subprocess.Popen(
+            [sys.executable, str(VERIFY / "browser"), "--root", str(REPO), "--cases",
+             str(cases), "--artifacts", str(self.artifacts), "--scratch", str(self.base)],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            start_new_session=True)
+        self.addCleanup(lambda: proc.poll() is None and os.killpg(proc.pid, signal.SIGKILL))
+        deadline = time.time() + 60
+        while not marker.exists():
+            self.assertIsNone(proc.poll(), proc.stdout.read() if proc.poll() is not None else "")
+            self.assertLess(time.time(), deadline, "the case never started")
+            time.sleep(0.1)
+        pids = json.loads(marker.read_text())
+        for pid in pids.values():
+            self.addCleanup(lambda p=pid: alive(p) and os.kill(p, signal.SIGKILL))
+        t = time.time()
+        os.killpg(proc.pid, sig)
+        out, _ = proc.communicate(timeout=30)
+        elapsed = time.time() - t
+        for _ in range(40):          # a death signal is delivered, not awaited
+            if not any(alive(p) for p in pids.values()):
+                break
+            time.sleep(0.05)
+        for name, pid in pids.items():
+            self.assertFalse(alive(pid), f"the {name} (pid {pid}) outlived the cancellation")
+        return proc.returncode, out, elapsed
+
+    def test_sigterm_unwinds_and_takes_backend_and_browser_with_it(self):
+        import signal
+        rc, out, elapsed = self.cancel_run(signal.SIGTERM)
+        self.assertEqual(SETUP, rc, out)
+        # well inside the runner's 5s grace, so its SIGKILL is never needed
+        self.assertLess(elapsed, 5, out)
+        record = Path(out.split("record: ")[-1].strip())
+        data = json.loads(record.read_text())
+        self.assertEqual("setup-error", data["outcome"])
+        self.assertIn("cancelled", data["reason"])
+        self.assertEqual("SIGTERM", data["cancelled"])
+
+    def test_sigkill_of_the_wrapper_still_leaves_no_backend_or_browser(self):
+        import signal
+        rc, out, _ = self.cancel_run(signal.SIGKILL)
+        self.assertEqual(-signal.SIGKILL, rc)
+
     def test_no_two_screenshots_share_a_path(self):
         # a second shot to the same path overwrites the first one's evidence
         import re
