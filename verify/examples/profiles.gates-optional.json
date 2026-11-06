@@ -1,0 +1,156 @@
+{
+  "v": 1,
+  "_doc": [
+    "OPTIONAL GATES, on top of profiles.registration.json (identical apart",
+    "from this block and this note). Supplying a check does not make it",
+    "mandatory; this file is the separate decision that does. Inactive.",
+    "",
+    "member and acceptance require the full backend suite; integration and",
+    "acceptance also require the docs build and a Bench review verdict of",
+    "APPROVE bound to the exact head (review: bench). Because every intent",
+    "asks for the same names at root `source`, a review's own bench-backend",
+    "run is evidence the acceptance gate can read, provided it ran against",
+    "the commit about to merge. bench records which run reviewed; it does",
+    "NOT establish that the reviewer is independent of the author, and",
+    "separate-reviewer is not used because one GitHub account cannot",
+    "formally review its own pull request.",
+    "",
+    "bench-backend refuses any skipped test and is prepared by",
+    "`verify/preflight backend` (node + markdown-it-py), so a service PATH",
+    "without node holds the gate as prepare-failed rather than passing",
+    "`OK (skipped=121)`. This example has no PR-head (`review` root)",
+    "variant: a review's bench-backend is the card's branch tip, not the",
+    "pinned pull request head. Do not activate a gate until these checks",
+    "have run in the operator's own environment.",
+    "",
+    "bench-docs is gated: on a machine whose docs interpreter lacks",
+    "markdown-it-py it is prepare-failed every time and the gate holds.",
+    "That is the intended reading \u2014 prepare the interpreter, do not drop",
+    "the requirement to get a merge through.",
+    "",
+    "bench-browser is deliberately not required: on a host whose Chromium",
+    "cannot start its sandbox it is prepare-failed every time, and a gate on",
+    "it would refuse every merge. Add it once a host has shown it passing.",
+    "",
+    "Evidence must be bound to a clean committed head: commit, then ask.",
+    "overrides stay off."
+  ],
+  "prepare": [
+    {
+      "name": "backend-deps",
+      "run": "python3 verify/preflight backend",
+      "required": true,
+      "help": "node runs on the check's PATH and the interpreter imports markdown_it"
+    },
+    {
+      "name": "docs-deps",
+      "run": "python3 verify/preflight docs",
+      "required": true,
+      "help": "the docs builder's interpreter can import markdown_it"
+    },
+    {
+      "name": "browser-start",
+      "run": "python3 verify/preflight browser",
+      "required": true,
+      "help": "a Chromium is found and starts WITH its sandbox"
+    }
+  ],
+  "checks": [
+    {
+      "name": "bench-backend",
+      "run": "python3 verify/backend",
+      "root": "source",
+      "prepare": [
+        "backend-deps"
+      ],
+      "timeout": 1800,
+      "required": false,
+      "help": "the full unittest suite of this commit, no skips, child env sanitised"
+    },
+    {
+      "name": "bench-docs",
+      "run": "python3 verify/docs",
+      "root": "source",
+      "prepare": [
+        "docs-deps"
+      ],
+      "timeout": 600,
+      "required": false,
+      "help": "site/build.py of this commit; every pages.json route must be written"
+    },
+    {
+      "name": "bench-browser",
+      "run": "python3 verify/browser",
+      "root": "source",
+      "prepare": [
+        "browser-start"
+      ],
+      "timeout": 900,
+      "required": false,
+      "help": "the board UI in a sandboxed Chromium against a disposable backend"
+    }
+  ],
+  "profiles": {
+    "work": {
+      "commands": [
+        {
+          "name": "unit-tests",
+          "run": "python3 -m unittest",
+          "root": "worktree"
+        }
+      ],
+      "verify": [
+        "bench-backend",
+        "bench-docs",
+        "bench-browser"
+      ]
+    },
+    "act-pr": {
+      "commands": [
+        {
+          "name": "unit-tests",
+          "run": "python3 -m unittest",
+          "root": "worktree"
+        }
+      ],
+      "verify": [
+        "bench-backend",
+        "bench-docs",
+        "bench-browser"
+      ]
+    },
+    "review": {
+      "commands": [],
+      "verify": [
+        "bench-backend",
+        "bench-docs",
+        "bench-browser"
+      ]
+    }
+  },
+  "gates": {
+    "member": {
+      "checks": [
+        "bench-backend"
+      ]
+    },
+    "integration": {
+      "checks": [
+        "bench-backend",
+        "bench-docs"
+      ],
+      "review": "bench"
+    },
+    "acceptance": {
+      "checks": [
+        "bench-backend",
+        "bench-docs"
+      ],
+      "review": "bench"
+    },
+    "overrides": {
+      "allow": false,
+      "actors": []
+    }
+  }
+}

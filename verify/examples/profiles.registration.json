@@ -1,0 +1,92 @@
+{
+  "v": 1,
+  "_doc": [
+    "REGISTRATION ONLY. Makes bench's own verify/ entrypoints available as",
+    "named checks a run may ask for. It declares NO gates block, so every",
+    "gate reads `ungated`: nothing is required and nothing is proved by",
+    "registering a check. Inactive until a person copies it to",
+    "manager/local/profiles.json (or points BOARD_AGENT_PROFILES at it).",
+    "",
+    "One name per check, asked for by work, act-pr and review alike. Each",
+    "runs at root `source`: a detached checkout bench makes of the card's",
+    "branch tip, so the program that runs is the one committed in the",
+    "candidate (never the operator's installation or the application's main",
+    "checkout), the source is clean by construction, and the evidence is",
+    "bound to the commit a gate reads. A review's `source` is the card's",
+    "branch tip in this checkout, not the pull request head bench pins for",
+    "the review: when the two differ the evidence names the branch commit,",
+    "and a gate compares that against the head it is about to merge. It is",
+    "NOT evidence about the pull request's proposed head.",
+    "",
+    "For that, review alone also offers bench-backend-proposed and",
+    "bench-docs-proposed at root `review`: the detached checkout bench pinned",
+    "to the head the pull request proposes. They are optional and differently",
+    "named on purpose, so no gate that requires bench-backend can be satisfied",
+    "by them, and no same-head assurance is claimed for the `source` names.",
+    "",
+    "bench-backend refuses ANY skipped test (setup-error): the suite skips",
+    "rather than fails without node or markdown-it-py, and `OK (skipped=121)`",
+    "is not a pass of the whole suite. Its required preparation,",
+    "`verify/preflight backend`, makes that prepare-failed by name instead.",
+    "",
+    "Each check names a REQUIRED preparation step, verify/preflight. Bench",
+    "records a non-zero check exit as `failed`, whatever the check meant by",
+    "it — it has no other word. A required step that exits non-zero is",
+    "`prepare-failed`, with the check never run, which is the honest word",
+    "for a missing dependency or a browser that cannot start its sandbox.",
+    "Other setup errors inside a check (a test module that cannot import, a",
+    "disposable backend that will not start) still exit 2 and still read",
+    "`failed` in bench's evidence; the check's own record and log say",
+    "setup-error.",
+    "",
+    "bench-docs and its preflight use `python3`. The docs builder needs",
+    "markdown-it-py: point both at a virtualenv you own (append",
+    "`--python /abs/venv/bin/python` to both runs) or it is prepare-failed.",
+    "",
+    "work and act-pr keep the legacy grant BOARD_AGENT_COMMANDS gave them",
+    "(`python3 -m unittest`) as a named command grant: writing a document",
+    "replaces the legacy resolution for an intent it configures, so a",
+    "document that dropped it would quietly take the agent's own test runs",
+    "away."
+  ],
+  "prepare": [
+    {"name": "backend-deps", "run": "python3 verify/preflight backend", "required": true,
+     "help": "node runs on the check's PATH and the interpreter imports markdown_it"},
+    {"name": "docs-deps", "run": "python3 verify/preflight docs", "required": true,
+     "help": "the docs builder's interpreter can import markdown_it"},
+    {"name": "browser-start", "run": "python3 verify/preflight browser", "required": true,
+     "help": "a Chromium is found and starts WITH its sandbox"}
+  ],
+  "checks": [
+    {"name": "bench-backend", "run": "python3 verify/backend", "root": "source",
+     "prepare": ["backend-deps"], "timeout": 1800, "required": false,
+     "help": "the full unittest suite of this commit, no skips, child env sanitised"},
+    {"name": "bench-backend-proposed", "run": "python3 verify/backend", "root": "review",
+     "prepare": ["backend-deps"], "timeout": 1800, "required": false,
+     "help": "the full suite at the head the pull request proposes (review only)"},
+    {"name": "bench-docs-proposed", "run": "python3 verify/docs", "root": "review",
+     "prepare": ["docs-deps"], "timeout": 600, "required": false,
+     "help": "the docs build at the head the pull request proposes (review only)"},
+    {"name": "bench-docs", "run": "python3 verify/docs", "root": "source",
+     "prepare": ["docs-deps"], "timeout": 600, "required": false,
+     "help": "site/build.py of this commit; every pages.json route must be written"},
+    {"name": "bench-browser", "run": "python3 verify/browser", "root": "source",
+     "prepare": ["browser-start"], "timeout": 900, "required": false,
+     "help": "the board UI in a sandboxed Chromium against a disposable backend"}
+  ],
+  "profiles": {
+    "work": {
+      "commands": [{"name": "unit-tests", "run": "python3 -m unittest", "root": "worktree"}],
+      "verify": ["bench-backend", "bench-docs", "bench-browser"]
+    },
+    "act-pr": {
+      "commands": [{"name": "unit-tests", "run": "python3 -m unittest", "root": "worktree"}],
+      "verify": ["bench-backend", "bench-docs", "bench-browser"]
+    },
+    "review": {
+      "commands": [],
+      "verify": ["bench-backend", "bench-docs", "bench-browser",
+                 "bench-backend-proposed", "bench-docs-proposed"]
+    }
+  }
+}

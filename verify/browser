@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""Drive the candidate's board UI in a real browser against a real,
+disposable bench backend, and measure it.
+
+    verify/browser                      # the checkout you are standing in
+    verify/browser --root <checkout>
+
+What it does, in order, and each step is a setup error if it cannot:
+
+1. discovers the cases (`verify/browser_cases/case_*.py`, unittest) —
+   zero discovered is a setup error, not an empty pass;
+2. finds a Chromium (BENCH_VERIFY_BROWSER, PATH, or Playwright's cache —
+   nothing is downloaded);
+3. copies the candidate's manager/core into a disposable tool install and
+   serves it on a loopback port in the external layout, with its own
+   application and work-state repositories and a few cards;
+4. launches the browser **with its sandbox**. A host that cannot give it
+   one is reported as exactly that. Nothing here passes --no-sandbox or
+   any environment that weakens it, so there is no unsandboxed pass;
+5. runs the cases, which navigate, click, tab, measure boxes and
+   overflow, read the accessibility tree and take screenshots;
+6. requires every screenshot a case declared, as a real PNG, and the
+   metrics file. A pass with an artifact missing is a setup error.
+
+Exit 0 all cases held, 1 a measured assertion failed, 2 setup error.
+Layout and accessibility checks are measurements, never an aesthetic
+verdict: the screenshots are for a person to look at.
+"""
+
+import io
+import json
+import shutil
+import sys
+import traceback
+import unittest
+from pathlib import Path
+
+# the runner must not leave bytecode in the checkout it is judging
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import benchverify as bv  # noqa: E402
+
+PNG = b"\x89PNG\r\n\x1a\n"
+
+
+class Result(unittest.TextTestResult):
+    """Keeps a case that hit a setup problem apart from one whose
+    assertion failed: the first says nothing about the product."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.setup_errors: list[str] = []
+        self.outcomes: list[dict] = []
+
+    def addSuccess(self, test):
+        super().addSuccess(test)
+        self.outcomes.append({"case": test.id(), "outcome": "passed"})
+
+    def addFailure(self, test, err):
+        super().addFailure(test, err)
+        self.outcomes.append({"case": test.id(), "outcome": "failed",
+                              "detail": str(err[1])[:2000]})
+
+    def addError(self, test, err):
+        super().addError(test, err)
+        kind = "failed" if issubclass(err[0], bv.CheckFailed) else "setup-error"
+        if kind == "setup-error":
+            self.setup_errors.append(f"{test.id()}: {err[0].__name__}: {err[1]}")
+        self.outcomes.append({"case": test.id(), "outcome": kind,
+                              "detail": f"{err[0].__name__}: {err[1]}"[:2000]})
+
+    def addSkip(self, test, reason):
+        # a skipped browser case is not coverage
+        super().addSkip(test, reason)
+        self.setup_errors.append(f"{test.id()}: skipped ({reason})")
+        self.outcomes.append({"case": test.id(), "outcome": "setup-error",
+                              "detail": f"skipped: {reason}"})
+
+
+def body(run: bv.Run) -> str:
+    cases = Path(run.args.cases).resolve() if run.args.cases else \
+        run.root / "verify" / "browser_cases"
+    run.record["cases"] = {"dir": str(cases)}
+    if not cases.is_dir():
+        raise bv.SetupError(f"no browser cases directory at {cases}")
+    loader = unittest.TestLoader()
+    suite = loader.discover(str(cases), pattern="case_*.py", top_level_dir=str(cases))
+    if loader.errors:
+        raise bv.SetupError("browser cases failed to import: " + " | ".join(
+            e.strip().splitlines()[-1] for e in loader.errors))
+    n = suite.countTestCases()
+    run.record["cases"]["discovered"] = n
+    if n == 0:
+        raise bv.SetupError(f"zero browser cases discovered in {cases}")
+
+    mode = bv.browser_mode()
+    run.record["browser"] = {"mode": mode}
+    if mode == "remote-playwright":
+        remote = bv.remote_setup(run)
+    else:
+        exe, how = bv.find_browser()
+        run.record["browser"].update({"path": exe, "foundBy": how,
+                                      "sha256": bv.sha256_file(exe),
+                                      "sandbox": "required (never disabled)"})
+    bv.require_paths(run.root, ["manager/core/board.html"])
+
+    backend = bv.Backend(run.root, run.work / "fixture", run.env, run.args.python)
+    run.artifact("backendLog", backend.log)
+    browser = None
+    try:
+        backend.start()
+        run.record["backend"] = {"url": backend.url, "argv": backend.argv,
+                                 "tool": str(backend.tool), "app": str(backend.app),
+                                 "work": str(backend.work),
+                                 "coreCopiedFrom": str(run.root / "manager" / "core")}
+        blog = run.artifact("browserLog", run.artifacts / "browser.log")
+        if mode == "remote-playwright":
+            run.record["browser"]["argv"] = remote
+            browser = bv.RemoteBrowser(remote, run.env, backend.url, blog)
+            run.record["browser"].update({"serverVersion": browser.version,
+                                          "launchOptions": browser.launch_options,
+                                          "exposeNetwork": browser.expose_network})
+        else:
+            profile = run.work / "profile"
+            # recorded before the launch: a browser that will not start is the
+            # case where the exact command line matters most
+            run.record["browser"]["argv"] = bv.browser_argv(exe, profile)
+            browser = bv.Browser(exe, profile, run.env, backend.url, blog)
+        shots = run.artifacts / "screens"
+        bv.SESSION.clear()
+        bv.SESSION.update({"browser": browser, "backend": backend, "shots": shots,
+                           "metrics": {}, "required": []})
+        stream = io.StringIO()
+        result = unittest.TextTestRunner(stream=stream, verbosity=2,
+                                         resultclass=Result).run(suite)
+    finally:
+        if browser is not None:
+            browser.close()
+        backend.stop()
+        # the fixture lives in the work directory, which a runner removes;
+        # the backend's log is kept beside the rest of the artifacts
+        if backend.log.exists():
+            shutil.copy2(backend.log, run.artifact("backendLog",
+                                                   run.artifacts / "backend.log"))
+    log = run.artifact("log", run.artifacts / "cases.log")
+    log.write_text(stream.getvalue(), encoding="utf-8")
+    metrics = run.artifact("metrics", run.artifacts / "metrics.json")
+    metrics.write_text(json.dumps(bv.SESSION["metrics"], indent=2, sort_keys=True))
+    run.record["cases"]["results"] = result.outcomes
+    run.record["cases"]["ran"] = result.testsRun
+    # recorded whatever the outcome: a failed run's screenshots are its evidence
+    run.record["artifacts"]["screenshots"] = [str(p) for p in bv.SESSION["required"]]
+    run.record["artifacts"]["screenshotHashes"] = {
+        str(p): {"bytes": p.stat().st_size, "sha256": bv.sha256_file(p)}
+        for p in bv.SESSION["required"] if p.is_file()}
+
+    if result.setup_errors:
+        raise bv.SetupError("; ".join(result.setup_errors)[:3000])
+    if result.failures or result.errors:
+        names = [o["case"].rsplit(".", 1)[-1] for o in result.outcomes
+                 if o["outcome"] == "failed"]
+        raise bv.CheckFailed(f"{len(names)} of {result.testsRun} browser cases failed: "
+                             f"{', '.join(names)} — see {log}")
+    if result.testsRun != n:
+        raise bv.SetupError(f"{n} cases discovered but {result.testsRun} ran")
+    required = bv.SESSION["required"]
+    if not required:
+        raise bv.SetupError("the cases declared no screenshots; a browser pass "
+                            "requires its artifacts")
+    bad = [str(p) for p in required
+           if not (p.is_file() and p.read_bytes()[:8] == PNG and p.stat().st_size > 1000)]
+    if bad:
+        raise bv.SetupError(f"required screenshots missing or not PNG: {', '.join(bad)}")
+    if not bv.SESSION["metrics"]:
+        raise bv.SetupError("the cases recorded no measurements")
+    # this run's directory is fresh, and each file must also have been
+    # written since the run started: nothing left over stands in a pass
+    run.record["artifacts"]["hashes"] = bv.require_fresh([*required, metrics], run.started)
+    return f"{n} browser cases held; {len(required)} screenshots in {shots}"
+
+
+if __name__ == "__main__":
+    run = bv.Run("browser", __doc__.splitlines()[0], ["manager/core/board.py"])
+    run.parser.add_argument("--cases", help="directory of case_*.py (default: "
+                            "verify/browser_cases in the candidate)")
+    try:
+        sys.exit(run.main(body))
+    except SystemExit:
+        raise
+    except BaseException:
+        traceback.print_exc()
+        sys.exit(bv.SETUP_ERROR)

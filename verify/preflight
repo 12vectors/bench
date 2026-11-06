@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""Can this machine run a check at all? Asked before the check, as a
+required preparation step.
+
+    verify/preflight docs [--python <interpreter>]   # markdown-it importable
+    verify/preflight backend [--python <interpreter>] [--node <node>]
+                                                     # node runs, markdown-it importable
+    verify/preflight browser                         # a Chromium starts, sandboxed
+
+Bench's own runner records a required preparation step that exits
+non-zero as `prepare-failed`, with the check never run. That is the point
+of this file: the check's own exit 2 (setup-error) is read by the installed
+runner as an ordinary non-zero, i.e. `failed`, because bench has no word
+for "the check could not be run" except a preparation that did not
+complete. Declaring this as the check's `prepare` is what puts a missing
+dependency or a browser that cannot start its sandbox in the right word.
+
+`browser` really launches the browser, with its sandbox, on about:blank
+and closes it again. It passes nothing that weakens the sandbox; a host
+that cannot provide one fails here, by name, and the check never starts.
+
+Exit 0 ready, 2 not ready. Nothing is installed or downloaded.
+"""
+
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+# the runner must not leave bytecode in the checkout it is judging
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import benchverify as bv  # noqa: E402
+
+
+def body(run: bv.Run) -> str:
+    what = run.args.target
+    if what == "docs":
+        bv.probe_module(run, run.args.require_module)
+        return f"{run.args.python} imports {run.args.require_module}"
+    if what == "backend":
+        # the suite skips, rather than fails, without these; verify/backend
+        # refuses any skip, and this says which dependency it was first
+        node = shutil.which(run.args.node, path=run.env.get("PATH"))
+        version = None
+        if node:
+            try:
+                r = subprocess.run([node, "--version"], env=run.env, cwd=str(run.work),
+                                   capture_output=True, text=True, timeout=30)
+                version = r.stdout.strip() if r.returncode == 0 else None
+            except (OSError, subprocess.TimeoutExpired):
+                version = None
+        run.record["node"] = {"name": run.args.node, "path": node, "version": version}
+        if not version:
+            raise bv.SetupError(
+                f"no working {run.args.node} on this check's PATH "
+                f"({run.env.get('PATH')}): the suite's page-rule tests would skip, and "
+                f"verify/backend refuses a skip. Put node on the PATH bench runs checks "
+                f"with, or pass --node <path>")
+        bv.probe_module(run, run.args.require_module)
+        return f"{node} {version}; {run.args.python} imports {run.args.require_module}"
+    if bv.browser_mode() == "remote-playwright":
+        argv = bv.remote_setup(run)
+        run.record["browser"]["argv"] = argv
+        log = run.artifact("browserLog", run.artifacts / "browser.log")
+        # origin is never navigated to: this only proves the connection
+        browser = bv.RemoteBrowser(argv, run.env, "http://127.0.0.1:9", log)
+        browser.close()
+        run.record["browser"].update({"serverVersion": browser.version,
+                                      "launchOptions": browser.launch_options,
+                                      "exposeNetwork": browser.expose_network})
+        return (f"{browser.version} answered over the Playwright protocol at "
+                f"{run.record['browser']['endpoint']} (sandbox: {bv.REMOTE_SANDBOX})")
+    exe, how = bv.find_browser()
+    profile = run.work / "profile"
+    run.record["browser"] = {"path": exe, "foundBy": how, "sha256": bv.sha256_file(exe),
+                             "sandbox": "required (never disabled)",
+                             "argv": bv.browser_argv(exe, profile)}
+    log = run.artifact("browserLog", run.artifacts / "browser.log")
+    # origin is never navigated to: this only proves the browser starts
+    browser = bv.Browser(exe, profile, run.env, "http://127.0.0.1:9", log)
+    try:
+        version = browser.call("Browser.getVersion").get("product")
+    finally:
+        browser.close()
+    run.record["browser"]["version"] = version
+    return f"{version} started with its sandbox and answered over CDP"
+
+
+if __name__ == "__main__":
+    run = bv.Run("preflight", __doc__.splitlines()[0], ["manager/core/board.py"])
+    run.parser.add_argument("target", choices=("docs", "backend", "browser"))
+    run.parser.add_argument("--require-module", default="markdown_it",
+                            help="the module the docs builder and the site tests "
+                                 "need (default markdown_it)")
+    run.parser.add_argument("--node", default="node",
+                            help="the node the page-rule tests need (default: "
+                                 "node on the check's PATH)")
+    sys.exit(run.main(body))
