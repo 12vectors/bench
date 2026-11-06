@@ -31,7 +31,7 @@ BOARD = Path(__file__).resolve().parents[1] / "manager" / "core" / "board.html"
 # The pieces the title is made of, lifted from the page as written.
 PARTS = (
     r"function runningAgents\(\) \{.*?\n\}",
-    r"const VIEW_TITLES = \{[^\n]*\};",
+    r"const VIEW_TITLES = \{[^}]*\};",
     r"const WORKING_MARK = '[^']+';",
     r"function tabTitle\(project, view, working\) \{.*?\n\}",
     r"let shownTitle = null;",
@@ -138,9 +138,9 @@ console.log(JSON.stringify(writes));
         only the view word."""
         state = {"project": "bench", "agents": _running(2)}
         self.assertEqual(
-            [self.title(state, v) for v in ("board", "flight", "focus")],
+            [self.title(state, v) for v in ("board", "flight", "focus", "settings")],
             ["2◌ · bench · bench", "2◌ · bench · sessions",
-             "2◌ · bench · focus"])
+             "2◌ · bench · focus", "2◌ · bench · settings"])
 
     def test_a_finished_run_returns_the_tab_to_the_plain_title(self):
         """No reload: the frame after the last agent stops is a plain
