@@ -4220,7 +4220,8 @@ function settingsOverview(page) {
         : 'None registered',
       help: !v.checks.length ? row.checks.detail
         : !required ? 'Registered is not passed, and no merge requires one.' : '',
-      problems: v.problems.map(p => `${p.code} — ${p.why}`) },
+      // plain text throughout, not markup: sline escapes every field
+      problems: v.problems.map(p => p.code + ' — ' + p.why) },
     { label: 'Merge rules', section: 'acceptance', act: 'Edit merge rules',
       state: row.acceptance.state, title: row.acceptance.detail,
       value: a.policy.blockers.length ? 'Invalid'
@@ -4234,7 +4235,7 @@ function settingsOverview(page) {
     { label: 'Reviews', section: 'acceptance', act: 'Edit merge rules',
       aria: 'edit the review requirements', state: row.review.state,
       value: reviews.length
-        ? reviews.map(([s, e]) => `${SCOPE_LABEL[s] || s}: ${e.review}`).join(' · ')
+        ? reviews.map(([s, e]) => (SCOPE_LABEL[s] || s) + ': ' + e.review).join(' · ')
         : 'Not required' },
     { label: 'Overrides', section: 'acceptance', act: 'View',
       aria: 'view the override policy', state: row.overrides.state,
@@ -4248,7 +4249,7 @@ function settingsOverview(page) {
         intents.map(([n]) => n).join(', ') +
         (blocked.length ? ` · ${blocked.length} will not start` : ''),
       problems: blocked.map(([n, f]) =>
-        `${n}: ${f.error || (f.blockers || [])[0] || 'blocked'}`) },
+        n + ': ' + (f.error || (f.blockers || [])[0] || 'blocked')) },
     { label: 'OS isolation', section: 'access', act: 'Details',
       aria: 'details of OS isolation', state: row.isolation.state,
       title: row.isolation.detail,
@@ -4260,12 +4261,12 @@ function settingsOverview(page) {
     { label: 'Diagnostics', inspect: true, act: 'Check configuration',
       state: report && report.summary.failed ? 'failed' : row.diagnostics.state,
       value: report
-        ? (report.summary.failed ? `${report.summary.failed} failed` : 'Inspected')
+        ? (report.summary.failed ? report.summary.failed + ' failed' : 'Inspected')
         : 'Not inspected',
       help: report ? report.summary.line
         : 'Read-only: no project program runs and nothing is spent.' },
     { label: 'Installation', section: 'installation', act: 'View installation',
-      value: `${i.mode} · ${i.version}`, problems: i.problems },
+      value: i.mode + ' · ' + i.version, problems: i.problems },
     { label: 'Policy document', section: 'policy', act: 'Advanced editor',
       aria: 'open the advanced policy editor',
       value: o.policy.identity || 'None — the legacy settings apply',
@@ -4322,9 +4323,11 @@ function settingsVerification(page) {
   const ed = S.sedit && S.sedit.kind === 'check' ? (ensureDraft(page), S.sedit) : null;
   const rows = v.checks.map(c => sline({
     label: c.name, value: c.run, code: true, states, state: c.state,
+    // plain text, not markup: sline escapes every one of these fields
     help: checkSummary(c),
-    title: `executable ${c.executable || ''} · arguments ${JSON.stringify(c.argv)} · ` +
-      `check identity ${String(c.checkId).slice(0, 14)} · ${c.rootWhy || ''}`,
+    title: 'executable ' + (c.executable || '') + ' · arguments ' +
+      JSON.stringify(c.argv) + ' · check identity ' +
+      String(c.checkId).slice(0, 14) + ' · ' + (c.rootWhy || ''),
     // registered is not required, and neither is a pass: the chip says
     // which, and the definition rides on its title
     chips: c.requiredBy.length
@@ -4332,7 +4335,7 @@ function settingsVerification(page) {
         `required: ${esc(c.requirement.join(', '))}</span>`
       : `<span class="chip2 dim" title="${esc(v.registrationIsNotRequirement)}">` +
         `Optional</span>`,
-    edit: 'check', name: c.name, act: 'Edit', aria: `edit the check ${c.name}`,
+    edit: 'check', name: c.name, act: 'Edit', aria: 'edit the check ' + c.name,
     after: ed && ed.anchor === c.name ? checkEditor(page, ed.index) : '',
   })).join('');
   const orphan = ed && !v.checks.some(c => c.name === ed.anchor)
@@ -4392,7 +4395,7 @@ function settingsAcceptance(page) {
     label: SCOPE_LABEL[scope] || scope, sub: scope, states,
     value: (entry.checks.length
       ? entry.checks.map(c => c.requirement).join(', ') : 'No check required') +
-      ` · review: ${entry.review}`,
+      ' · review: ' + entry.review,
     help: a.scopes[scope] || entry.why,
     title: entry.reviewWhy || '',
     state: entry.gated ? 'configured-untested' : 'not-configured',
@@ -4452,7 +4455,7 @@ function settingsCi(page) {
     `<span class="label">Three separate signals</span>` +
     `<span class="r">green CI is not a Bench check</span></div>` +
     Object.values(c.kinds).map(k => sline({ label: k.label, value: k.who,
-      help: k.what, title: `authority: ${k.authority}`,
+      help: k.what, title: 'authority: ' + k.authority,
       chips: `<span class="chip2 ${k.gateable ? '' : 'dim'}" ` +
         `title="${esc(k.gateable ? 'a merge rule can require this'
                                  : 'a merge rule cannot require this')}">` +
@@ -4720,8 +4723,9 @@ function settingsInstallation(page) {
   const rows = page.settings.map(s => sline({
     label: s.key, code: true,
     value: (s.value || '(empty)') + (s.redacted ? ' (redacted)' : ''),
+    // plain text, not markup: sline escapes every one of these fields
     help: s.why + (s.source !== 'default' && s.default !== s.value
-      ? ` · default ${s.default || '(empty)'}` : ''),
+      ? ' · default ' + (s.default || '(empty)') : ''),
     title: s.how,
     chips: `<span class="chip2 ${s.locked ? 'bad' : 'dim'}" ` +
       `title="${esc(s.how)}">${esc(SOURCE_WORD[s.source] || s.source)}` +
@@ -4730,7 +4734,7 @@ function settingsInstallation(page) {
         ? `<span class="chip2" title="${esc(s.appliesWhy)}">` +
           `${s.appliesAt === 'fresh' ? 'no restart' : 'needs restart'}</span>` : ''),
     problems: s.running !== null
-      ? [`the running board has ${s.running} — the file has moved since it started`]
+      ? ['the running board has ' + s.running + ' — the file has moved since it started']
       : [],
   })).join('');
   return `<div class="panel"><div class="phead">` +
@@ -4929,12 +4933,13 @@ function reviewSelect(page, scope, chosen) {
   return `<div class="frow"><label for="f-gates:${esc(scope)}:review">review` +
     `</label><select id="f-gates:${esc(scope)}:review" ` +
     `data-field="gates:${scope}:review" aria-label="${esc(scope)} review ` +
-    `requirement">` + page.acceptance.reviewModes.map(m =>
-      `<option value="${esc(m.name)}"` +
-      `${chosen === m.name ? ' selected' : ''}` +
-      `${m.available ? '' : ' disabled'}>${esc(m.name)}` +
-      `${m.available ? '' : ' — not available on this board'}</option>`).join('') +
-    `</select></div>`;
+    `requirement">` + page.acceptance.reviewModes.map(m => {
+      const word = m.name;
+      return `<option value="${esc(word)}"` +
+        `${chosen === word ? ' selected' : ''}` +
+        `${m.available ? '' : ' disabled'}>${esc(word)}` +
+        `${m.available ? '' : ' — not available on this board'}</option>`;
+    }).join('') + `</select></div>`;
 }
 
 function draftCheckNames() {
@@ -4998,10 +5003,11 @@ function gateEditor(page, scope) {
     (names.length
       ? names.map(name => {
           const entry = entries[want.indexOf(name)];
+          // plain text: checkbox() escapes its label
           const coverage = entry && typeof entry === 'object' && entry.scope
-            ? ` (scope ${entry.scope})` : want.includes(name) ? ' (full run)' : '';
+            ? ' (scope ' + entry.scope + ')' : want.includes(name) ? ' (full run)' : '';
           return checkbox(`gates:${scope}:checks:${name}`,
-                          `require ${name}${coverage}`, want.includes(name));
+                          'require ' + name + coverage, want.includes(name));
         }).join('')
       : `<p>No check is declared, so this rule can require none. Add one in ` +
         `Checks first.</p>`) +
