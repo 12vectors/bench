@@ -68,6 +68,19 @@ class ExceptionsStayOnTheFace(Source):
         self.assertIn("if (c.phase) return true;", body,
                       "phase navigation is how a member reaches its parent")
 
+    def test_a_resting_drive_is_a_tool_not_a_face_chip(self):
+        """Only a running or refused drive changes the next action; the
+        idle `drive ✳` chip would otherwise sit on every review card with
+        a branch whenever a driver exists."""
+        idle = next(l for l in self.card.splitlines()
+                    if "label: 'drive', glyph: '✳'" in l)
+        self.assertIn("face: false", idle)
+        refused = next(l for l in self.card.splitlines()
+                       if "label: 'drive', glyph: '✕'" in l)
+        self.assertNotIn("face: false", refused)
+        self.assertIn("if (c.face !== undefined) return c.face;",
+                      self.body("chipOnFace"))
+
     def test_a_gate_that_is_not_met_is_never_quiet(self):
         """Required missing checks read through the gate chip, which is
         blocked (bad), waiting (accent) or overridden (bad) whenever it is

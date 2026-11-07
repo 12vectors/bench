@@ -3366,7 +3366,9 @@ function cardFor(task) {
       chips.push({ label: 'no branch', glyph: '', cls: 'dim',
         title: 'No work attached: no agent ran on this task, so there is no branch to PR, review or drive. ▸ start work runs from in-progress.' });
     } else if (S.state.hasDriver && hasBranch) {
-      chips.push({ label: 'drive', glyph: '✳', cls: 'accent', act: 'go',
+      // a resting drive is a tool, not a state: it lives in the ⋯ menu,
+      // and only a running or refused drive earns the face
+      chips.push({ label: 'drive', glyph: '✳', cls: 'accent', act: 'go', face: false,
         title: "Launch the app locally from this task's worktree" });
     } else if (!S.state.hasDriver) {
       chips.push({ label: 'no driver', glyph: '', cls: 'dim',
