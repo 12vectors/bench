@@ -461,7 +461,7 @@ class ASurfaceOfItsOwn(Source):
         self.assertEqual(["overview", "verification", "acceptance", "access",
                           "diagnostics", "installation", "policy"],
                          [r[0] for r in rows])
-        self.assertIn("<h1 tabindex=\"-1\">${esc(title)}</h1>",
+        self.assertIn("<h1 id=\"s-title\" tabindex=\"-1\">${esc(title)}</h1>",
                       self.body("renderSettingsNow"))
 
     def test_narrow_screens_get_a_named_sections_button_not_a_squeezed_column(self):

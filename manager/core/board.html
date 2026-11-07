@@ -4291,7 +4291,7 @@ function renderSettingsNow() {
     ? S.settingsSection : 'overview';
   const [, title, , subtitle] = SETTINGS_SECTIONS.find(([k]) => k === section);
   head.innerHTML =
-    `<div class="s-titles"><h1 tabindex="-1">${esc(title)}</h1>` +
+    `<div class="s-titles"><h1 id="s-title" tabindex="-1">${esc(title)}</h1>` +
     `<p class="s-sub">${esc(subtitle)}</p>` +
     `<p class="s-ident">Execution policy: ` +
     (page.overview.policy.identity
