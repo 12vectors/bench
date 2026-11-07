@@ -176,6 +176,14 @@ class Navigation(unittest.TestCase):
                 self.assertEqual([], problems, f"{section} at {w}x{h}")
             shot(f"settings-sections-{w}x{h}")
         S["metrics"]["settingsLayout"] = found
+        # said in the artifact itself, so nobody reads the 640x400 shots as
+        # a zoom test: no browser zoom level was set for them
+        S["metrics"]["settingsZoom"] = {
+            "viewport": "640x400",
+            "kind": "css-viewport-approximation",
+            "of": "1280x800 at 200% zoom",
+            "actualBrowserZoom": False,
+        }
 
 
 class EmptyAndConfiguredAndErrorStates(unittest.TestCase):
