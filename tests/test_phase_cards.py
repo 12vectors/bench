@@ -329,10 +329,17 @@ class TheChipOnAMemberCard(unittest.TestCase):
         return self.html[start:start + 600]
 
     def chip_row(self) -> str:
-        row = re.search(r"const chipRow = chips\.length.*?\.join\(''\) \+ '</div>'",
-                        self.html, re.S)
-        self.assertIsNotNone(row, "board.html lost its chip row")
+        # one builder renders a chip for the card's face and for its tools
+        row = re.search(r"const chipHtml = \(c\) => \{.*?\n  \};", self.html, re.S)
+        self.assertIsNotNone(row, "board.html lost its chip builder")
         return row.group(0)
+
+    def test_the_phase_chip_stays_on_the_face(self):
+        """Parent/member navigation is not chrome: the chip is on the card's
+        face, not only in its tools."""
+        start = self.html.index("function chipOnFace(")
+        body = self.html[start:self.html.index("\n}\n", start)]
+        self.assertIn("if (c.phase) return true;", body)
 
     def test_the_chip_is_pushed_into_the_footer_chip_row(self):
         block = self.chip_block()

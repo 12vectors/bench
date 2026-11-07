@@ -106,7 +106,8 @@ class TheChipOnTheCard(unittest.TestCase):
                          "one glyph, two places: the tray and the card's chip")
 
     def test_it_is_the_last_chip_in_the_row(self):
-        chips = self.html.index("const chipRow = chips.length")
+        # the chips are rendered by one builder, for the face and the tools
+        chips = self.html.index("const chipHtml = (c) =>")
         commands = self.html.index("for (const cmd of (S.state.commands || []))")
         self.assertLess(commands, self.push.start(),
                         "the archive chip is pushed after every tool chip")

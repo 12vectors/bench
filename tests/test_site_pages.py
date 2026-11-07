@@ -101,6 +101,7 @@ class EveryRouteRendersInTheArticleLayout(BuiltSite):
                       "/concepts/claiming-a-card/",
                       "/concepts/agents-on-the-board/",
                       "/concepts/execution-plans/",
+                      "/concepts/settings/",
                       "/concepts/pull-requests/",
                       "/concepts/team-mode/",
                       "/concepts/three-layer-law/",

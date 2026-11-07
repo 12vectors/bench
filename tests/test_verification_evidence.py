@@ -1350,6 +1350,136 @@ class TheBoardShowsWhatRan(VerifyCase):
 # ── the api the page and the shim both use ─────────────────────────────
 
 
+class TheChipAppearsBeforeTheFirstRun(VerifyCase):
+    """The card's ◫ reading on a board whose policy offers a check that
+    nothing has asked for yet. The sheet behind the chip lists it as
+    `not-run` and arms its rerun; without the chip there is no way to
+    reach that sheet, so the first run could never be asked for."""
+
+    COLLECTED = {"stages": [{"slug": "in-progress", "tasks": [{"file": CARD}]}]}
+
+    _fixture = TheBoardShowsWhatRan._fixture
+
+    def setUp(self):
+        super().setUp()
+        self.tree = self.worktree()
+        self.bound = verify.source_identity(self.tree)
+
+    def chip(self) -> dict | None:
+        return verify.board(self.COLLECTED).get(CARD)
+
+    def two_checks(self) -> dict:
+        recorder = str(self.executable("recorder", RECORDER))
+        return {"v": 1,
+                "checks": [{"name": "unit", "run": recorder, "root": "worktree"},
+                           {"name": "lint", "run": recorder, "root": "worktree",
+                            "required": False}],
+                "profiles": {"work": {"verify": ["unit", "lint"]}}}
+
+    def test_a_registered_unused_check_gives_the_card_a_not_run_chip(self):
+        self.declares(self.one_check())
+        found = self.chip()
+        self.assertIsNotNone(found, "a check the card may ask for, and no chip "
+                                    "to open the sheet that asks for it")
+        self.assertEqual(found["outcome"], "not-run")
+        self.assertEqual((found["passed"], found["checks"]), (0, 1))
+        self.assertEqual(found["notRun"], 1)
+        self.assertFalse(found["live"])
+        self.assertEqual(self.invocations(), [], "reading the board ran a check")
+
+    def test_optional_checks_count_and_a_pass_beside_them_is_not_a_pass(self):
+        self.declares(self.two_checks())
+        self.assertEqual((self.chip()["checks"], self.chip()["notRun"]), (2, 2))
+        self._fixture("unit", "passed")
+        verify.forget_cached()
+        found = self.chip()
+        self.assertEqual(found["outcome"], "not-run",
+                         "one check never ran, so the card is not verified")
+        self.assertEqual((found["passed"], found["checks"]), (1, 2))
+
+    def test_names_are_counted_once_however_often_they_ran(self):
+        self.declares(self.one_check())
+        self._fixture("unit-old", "passed", check="unit", id="ev:verification@u1",
+                      requested=time.time() - 50)
+        self._fixture("unit-new", "passed", check="unit", id="ev:verification@u2")
+        found = self.chip()
+        self.assertEqual((found["passed"], found["checks"]), (1, 1))
+        self.assertEqual(found["notRun"], 0)
+
+    def test_a_failure_stale_or_running_record_still_outranks_not_run(self):
+        self.declares(self.two_checks())
+        for outcome in ("failed", "running"):
+            self._fixture("unit", outcome)
+            verify.forget_cached()
+            self.assertEqual(self.chip()["outcome"], outcome)
+        self._fixture("unit", "passed",
+                      source={"commit": "a" * 40, "bound": False,
+                              "sourceId": "src:unbound@x", "dirty": [],
+                              "why": "unbound"})
+        verify.forget_cached()
+        self.assertEqual(self.chip()["outcome"], "stale")
+
+    def test_current_policy_counts_even_after_an_old_run_froze_none(self):
+        # a completed run launched under a policy with no checks at all
+        self.manifest()
+        self.declares(self.one_check())
+        found = self.chip()
+        self.assertIsNotNone(found)
+        self.assertEqual(found["outcome"], "not-run")
+        # ...and that run's frozen policy still decides what *it* may ask
+        refused = self.ask("unit")
+        self.assertEqual(refused["outcome"], "denied")
+        self.assertEqual(refused["reason"], "unknown-check")
+        self.assertEqual(self.invocations(), [])
+
+    def test_a_config_change_is_read_without_waiting_for_the_cache(self):
+        self.assertIsNone(self.chip())
+        self.declares(self.one_check())
+        self.assertEqual(self.chip()["checks"], 1)
+        self.declares(self.two_checks())
+        self.assertEqual(self.chip()["checks"], 2)
+        (self.local / "profiles.json").unlink()
+        self.assertIsNone(self.chip())
+
+    def test_legacy_unconfigured_and_invalid_boards_offer_nothing(self):
+        self.assertIsNone(self.chip(), "legacy: no document, no chip")
+        self.declares({"v": 1, "profiles": {"work": {}}})
+        self.assertIsNone(self.chip(), "a document declaring no check")
+        self.declares("{ not json")
+        self.assertIsNone(self.chip(), "a broken document offers nothing a "
+                                       "manual request would not refuse")
+        self.declares({"v": 1, "checks": [{"name": "unit", "run": "a | b"}],
+                       "profiles": {"work": {"verify": ["unit"]}}})
+        self.assertIsNone(self.chip(), "an invalid check is refused, not offered")
+
+    def test_a_source_check_is_offered_whatever_stage_the_card_is_in(self):
+        # a `source` check needs no card worktree, and a done or to-do card
+        # may keep one — so no stage hides what the current policy offers
+        self.declares(self.one_check(root="source"))
+        for slug in ("backlog", "to-do", "in-progress", "review", "done"):
+            collected = {"stages": [{"slug": slug, "tasks": [{"file": CARD}]}]}
+            found = verify.board(collected).get(CARD)
+            self.assertIsNotNone(found, slug)
+            self.assertEqual((found["outcome"], found["passed"],
+                              found["checks"]), ("not-run", 0, 1), slug)
+        self.assertEqual(self.invocations(), [], "reading the board ran a check")
+        self.assertEqual(verify.all_evidence(), [])
+
+    def test_a_legacy_board_leaves_every_stage_uncluttered(self):
+        for slug in ("backlog", "done"):
+            collected = {"stages": [{"slug": slug, "tasks": [{"file": CARD}]}]}
+            self.assertEqual(verify.board(collected), {}, slug)
+
+    def test_reading_the_board_creates_no_checkout_and_no_record(self):
+        doc = self.one_check(root="source")
+        self.declares(doc)
+        before = sorted(p.name for p in config.WORKTREES.iterdir())
+        self.assertEqual(self.chip()["outcome"], "not-run")
+        self.assertEqual(sorted(p.name for p in config.WORKTREES.iterdir()), before)
+        self.assertEqual(verify.all_evidence(), [])
+        self.assertFalse(config.CONTEXT_DIR.exists(), "nothing was pinned")
+
+
 class TheApiIsOneDoor(VerifyCase):
     def test_the_state_payload_carries_the_per_card_reading(self):
         self.declares(self.one_check())

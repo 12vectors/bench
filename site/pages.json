@@ -136,6 +136,17 @@
       "lede": "An operator used to find a mistyped policy the expensive way: move a card, click start work, watch the run refuse. The doctor answers the same questions in milliseconds, and says how far each answer is from the thing you actually care about.",
       "source": "AGENTS.md",
       "from": "## Readiness: asking before paying",
+      "to": "## Settings: reading the configuration, and changing it safely"
+    },
+    {
+      "path": "/concepts/settings/",
+      "title": "Settings",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "How this bench is configured, what has actually been verified, and what to configure next — read from the resolvers that already answer for it, and changed through validate, preview and an explicit apply.",
+      "lede": "Everything bench resolves was configuration an operator set up in a JSON document and read back in a terminal. The Settings view is the same facts in one place, in words, with the distinction between them kept — and the one file it edits is written atomically, over the exact revision the editor was shown.",
+      "source": "AGENTS.md",
+      "from": "## Settings: reading the configuration, and changing it safely",
       "to": "## Pull requests"
     },
     {

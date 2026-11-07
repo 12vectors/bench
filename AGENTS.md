@@ -44,7 +44,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports → taskfiles → plans / profiles → reviews → verify → gates → doctor → events / github / drive / sync → agents → phases → watch / httpd → board.py
+config → state / reports → taskfiles → plans / profiles → reviews → verify → gates → doctor → events / github / drive / sync → settings → agents → phases → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -81,6 +81,10 @@ config → state / reports → taskfiles → plans / profiles → reviews → ve
 - `github.py` — PR opening, Copilot requests, review/CI polling
 - `drive.py` — runs the project driver, tracks the one live drive
 - `sync.py` — origin/main as the shared board: push on move, pull on a beat
+- `settings.py` — how this board is configured, assembled from the
+  modules above and nowhere else: it names the states so nothing reads as
+  a pass, compares two resolutions so a change can be previewed, and
+  writes one file. No second parser, by construction
 - `agents.py` — headless work/review jobs, launched through the adapter
 - `phases.py` — a phase run: its own branch, its cards merged into it one
   at a time. A beat, not an agent; it holds no registry of where a phase is
@@ -147,9 +151,9 @@ without an undo in the same breath. Cards in the working stages
 (in-progress, review) cannot be archived; finish or walk them back first.
 
 The same action sits on the card, for the common tidy-up the length of the
-board is too far to drag: a **⌸** chip at the right-hand end of the footer
-row, wearing the tray's own glyph, arming on the first click and firing on
-the second. It is there on exactly the cards the tray accepts — a working
+board is too far to drag: a **⌸ archive** tool in the card's **⋯** menu
+and in its detail view, wearing the tray's own glyph, arming on the first
+click and firing on the second. It is there on exactly the cards the tray accepts — a working
 card has no chip at all rather than one that refuses — and it is one
 action, not two: the same request, the same ⌘Z toast, the same count on
 the tray. Which stages may be archived from is answered once, by the
@@ -641,7 +645,7 @@ an agent is working; a blinking caret means output is still arriving. Night
 theme by default; the header button switches to Daylight. Tokens live at the
 top of `manager/board.html`.
 
-The board has four views (header switcher):
+The board has five views (header switcher):
 
 - **Board** — the kanban, live, and only what you are holding yourself: a
   phase's members are drawn elsewhere, with the phase card standing for
@@ -653,7 +657,8 @@ The board has four views (header switcher):
   it). With `BOARD_SYNC` on, a second header chip appears — and only
   appears — when sync stops converging, saying whether it is behind
   (origin unreachable, self-healing) or stalled on something only a human
-  can settle.
+  can settle. A card's face is kept quiet (see "The card face and its
+  tools" below).
 - **Phases** — a swimlane each: where the members the Board stopped drawing
   actually live (see "The Phases view: a swimlane each"). The switcher
   itself carries how many phases are running and a mark when one has
@@ -682,6 +687,53 @@ The board has four views (header switcher):
   merges on a report") — whether a launch of this kind would even start
   on this board and what is not proved about that (see "Readiness:
   asking before paying") — and per-file diff stats from its worktree.
+- **Settings** — how this board is configured, what has actually been
+  verified, and what to configure next: the checks, the merge rules, the
+  review configuration, the overrides, the intended agent access against
+  the isolation actually enforced, the diagnostic coverage, the
+  installation and every setting's provenance — each value in words with
+  a state word beside it, so "no gate configured" can never read as a
+  passed gate. It is also the one place a policy is *edited*, in four
+  separate steps of which only the last writes (see "Settings: reading the
+  configuration, and changing it safely"). The switcher carries a mark
+  when this board's execution policy refuses something, for the reason
+  the Phases mark exists: the thing it refuses is the next launch.
+
+### The card face and its tools
+
+A card shows what you need to choose the next action, and the column says
+the rest. The face has one ID (`#76` in the top row; a title that repeats
+the card's own number is drawn without it), the title, the owner, `HIGH`
+when it is, and a status pill **only when something has changed the next
+action**: an agent working or reviewing, `approved` or `changes asked`, a
+`run failed`, a halted or unstarted phase, `completing`, or `idle` (in
+progress, nobody on it, nothing changed for a day). A card sitting in its
+column as expected wears no pill: `queued` in to-do/ was the column's
+word repeated.
+
+The chips follow the same rule. Anything bad or live stays on the face:
+failed or stale Bench evidence, an unmet or overridden merge gate, red CI,
+conflicts, a PR open against the wrong base, changes requested by
+Copilot, a policy that does not parse, a running drive or command. So do
+phase navigation and a non-default branch plan. Everything else — the
+profile, a plan the phase already explains, passing evidence, the pinned
+review record, a met gate, CI that passed, the PR link, the drive, the
+`$` commands and archive — is in the card's **⋯** tools. It is one labelled
+button (`Tools for #76`) that opens in place and closes on Escape, giving
+focus back. Nothing is dropped: the tools list every chip the card has,
+built and wired by the same code as the face. A required check that has
+not run cannot be hidden this way, because it reads through the gate chip,
+and an unmet gate is always on the face.
+
+The card's detail view carries all of it in one place: every tool and
+action the card has, and a **Signals** block with Bench checks, external
+CI, review and the merge gate as four separate rows, each in its own
+words. Green CI is labelled as not a Bench check, and a board with no gate
+says that nothing is required, which is not a pass. Cards are reachable by
+keyboard. Tab lands on a card, Enter or Space opens its detail view,
+focusing a card shows the same actions as hovering it, and closing the
+detail view returns focus to the card. Board and Phases draw the same
+card.
 
 The header carries one more chip, and unlike the sync and phase chips it
 is always there: **⚕ readiness** opens the execution inspector. Those two
@@ -1943,6 +1995,238 @@ changes nothing. And it will not validate anything but its own fixtures —
 the application's real suite, its services and its data are never what a
 diagnosis runs against.
 
+## Settings: reading the configuration, and changing it safely
+
+Everything above is configuration an operator sets up. Until this, the
+only way to *read* it was a JSON document and a terminal, and the only
+way to change it was a text editor. The **Settings** view — the fifth,
+beside Board, Phases, Sessions and Focus — is where it is read instead:
+**how is this bench configured, what has actually been verified, and what
+should I configure next?**
+
+It owns no policy. Every value in it comes from the authority that
+already answers for that question — `profiles.resolve()` for what a run
+may do and read, `profiles.gate_policy()` for what a merge must have,
+`verify`'s own records for what the project's checks found,
+`gates.evaluate()` for whether a merge may happen, `config` for the roots
+and each setting's provenance. There is deliberately no second reader of
+the profile document: a draft is parsed by the same function a launch is
+(`profiles.document_from`, which is `document_at` minus the disk read)
+and resolved by the same reading the readiness inspector takes, so a
+field error on the page is the diagnostic a launch would produce, with
+the same code.
+
+Opening it is a GET. Assembling the page resolves the policy, reads
+records already on disk and asks git for the tool's own revision. It runs
+no project program, invokes no adapter hook, launches no model, pins
+nothing and writes nothing — which is why Settings is a view and not an
+action.
+
+### Eight words, so that nothing reads as a pass
+
+The one word this page exists to refuse is a ninth covering all of them.
+Each of these is a different thing to do next, so each gets a word, and
+**the word carries the meaning** — colour never stands alone:
+
+| state | what it licenses you to believe |
+| --- | --- |
+| `not-configured` | nobody configured this. Not a fault, and **not a pass**: nothing is required and nothing is proved |
+| `configured-untested` | what it would do is resolved; that it does it is not established |
+| `unsupported` | nothing installed here can deliver it, so bench reports it rather than promising it |
+| `invalid` | the configuration declares it and bench refuses it — with the code and the remedy |
+| `blocked` | it could not be asked: a permission, a dependency or a capability was missing before anything ran |
+| `failed` | it ran and said no |
+| `stale` | it passed, and what it was about has changed since |
+| `verified` | bench itself ran it and recorded a pass bound to the exact source it ran against |
+
+So "no gate configured" can never render as a passed gate, a registered
+check is drawn as *registered, not required*, and a guarantee nothing
+enforces wears `unsupported` rather than a switch that pretends.
+
+### Seven sections, values first
+
+Every section leads with the same row: what the setting is, its
+effective value in words, at most one short helper line, its state word,
+and one action that goes somewhere specific: **Edit checks**, **Edit
+merge rules**, **View access**, **Check configuration**. A problem is drawn
+under the row it is about. Tutorials, ownership tables, capability
+inventories, worked examples and definitions are in closed folds under
+each section, one click away, so they are not the first thing you read.
+Two limitations stay in view because they change what a merge or a run
+means: a board with no merge requirements says so, and agent writes are
+an intended scope, with OS isolation `Unavailable`.
+
+- **Overview** — one row each for checks (`1 registered · Optional`, or
+  `None registered`), merge rules (`No merge requirements`, or what each
+  rule requires, or `Invalid`), reviews, overrides, agent access (`3
+  profiles: work, act-pr, review`), OS isolation, diagnostics (`Not
+  inspected` until you ask), the installation and the policy document.
+  Under them, **Suggested next steps** opens on its own only when one is
+  high priority. Each suggestion says why it matters, what *you* must
+  supply (often a program your team writes, not a setting), what has to
+  be true first, and which section to open. A suggestion does not change
+  any setting.
+- **Checks** — every registered check: its command, where it runs, its
+  scopes, which launches may ask for it, its preparation and its time
+  limit on one line. Beside that, `Optional` or the merge rule that
+  requires it, and an **Edit** button. **Add a check** and **Edit** open
+  the editor in place. Who provides checks (**"Your team provides the
+  checks; Bench runs them."**), where a check runs and what that location
+  is not (a checkout is not a sandbox), and a worked example with a
+  checklist for asking a developer are all folded underneath.
+- **Merge rules** — the three guarded merges as rows: a phase member into
+  its phase branch, a phase's acceptance, and a card's merge. Each row
+  shows what it requires and its review policy, reads `gated` or
+  `ungated`, and has an **Edit** button that opens it in place. Overrides
+  get a row too. Beside them, **Three separate signals** keeps Bench-run
+  checks, external CI and review requirements apart: green CI never
+  counts as a named Bench check. Review policies (including the
+  same-account limitation and the ones this board cannot read), how
+  evidence is bound to the merging commit, and what an override records
+  are folded underneath.
+- **Agent access** — one row per launch intent: where it works, its
+  grants, the checks it may ask for and its approved inputs, with
+  `intended writes: … · OS isolation: none enforced` on its own line. Runs
+  in flight are shown with the policy they *froze* at launch, which an
+  edit here does not reach. The four facts an exit code cannot tell apart
+  and the capability table are folded underneath.
+- **Diagnostics** — **Check configuration**, the read-only inspection
+  (`doctor.report([])`), and the four stages with each one's side effects
+  next to its control. Every stage nobody asked for reads `not asked`. The
+  stage that spends tokens has **no control on this page** at all; the
+  operator instruction is printed instead.
+- **Installation** — a summary first: the build and source revision
+  (`unknown` for a release artifact, which has no commit), the mode,
+  both git identities and sync. Then every catalogued setting with its
+  value, its source (`default`, `local .env` or `environment`, with
+  `locked` where the environment wins) and a restart chip only where it
+  differs from the rest. Where values come from, and when a change
+  applies, is said once above the list, not on every row. Paths, what stays
+  local, and the operations this page does **not** perform are folded
+  underneath.
+- **Advanced policy** — the whole document, field by field and as JSON:
+  checks, preparation steps, what each launch may ask for, merge rules
+  and overrides.
+
+### Editing in context, on one draft
+
+A check is edited in **Checks** and a merge rule in **Merge rules**,
+where you read them. There is still exactly one mechanism. The
+contextual editors and **Advanced policy** all write into the same
+draft and use the same step bar (Validate, Preview, Apply, Discard
+draft), so a change started in one place and finished in another is
+validated, previewed and applied once. A refusal about the item being
+edited is drawn at its fields. Every other refusal in the draft is drawn
+in the step bar, so none is hidden because its part of the document is
+not on screen. **Close** puts the editor away, keeps the draft and
+returns focus to the **Edit** button it came from. While a draft has
+unsaved edits, every other section shows **Unsaved draft** with the way
+back to it and the way to discard it. Ticking a check in a merge rule
+adds its full run; a requirement on a declared scope that someone wrote
+by hand stays as written.
+
+### What is editable, and what is shown instead
+
+One file: the execution policy document (`manager/local/profiles.json`,
+or wherever `BOARD_AGENT_PROFILES` points). That is where checks,
+preparation steps, approved context, command grants and gates live, and
+it is read fresh on every launch — so a change applies to the next launch
+and never to a run already in flight.
+
+`manager/local/.env` is **read-only here**, and the page says why rather
+than offering a control. `config` snapshots that file at import, so a
+value written from the page would not be in force until a restart; and a
+key the real environment also sets would not be in force at all. A
+control that loses to a higher-precedence source is worse than no
+control, so each row names the source that won and how to change it
+there.
+
+### Four steps, and only the last one writes
+
+1. **Edit** the draft. Nothing is written, and leaving the page discards
+   it.
+2. **Validate** — the draft through bench's own parser and resolver, with
+   each refusal's code and the field it is about. Writes nothing.
+3. **Preview** — two resolutions compared, never a prediction: what the
+   requirements become, what a run may do, which recorded passes stop
+   counting (changing a check's definition changes its identity, so every
+   pass of it reads `stale` — it is not deleted and it is not re-run), and
+   which cards waiting in `review/` would change their merge decision.
+   Writes nothing.
+4. **Apply** — armed, and refused rather than repaired. An invalid
+   document is never written; a revision that moved under the editor is a
+   **conflict** naming the current one, not a last-writer-win; unknown
+   top-level keys from the file on disk are preserved; the write is an
+   `os.replace` of a temporary file in the same directory, so a failed
+   write leaves the previous document byte for byte.
+
+A setup, end to end, for a project whose team already has a test
+command. Open **Settings → Checks**, unfold who owns what, then **Add a
+check** and register the command as a named check — which, written out
+as the document **Advanced policy** shows, is:
+
+```jsonc
+{
+  "v": 1,
+  "checks": [{"name": "unit",
+              "run": "python3 -m unittest discover -s tests",
+              "root": "worktree",
+              "scopes": {"fast": ["-k", "fast"]},
+              "timeout": 900}],
+  "profiles": {"work":   {"verify": ["unit"]},
+               "act-pr": {"verify": ["unit"]},
+               "review": {"verify": ["unit"]}}
+}
+```
+
+**Validate**, **Preview**, **Apply**. Nothing is mandatory yet: every gate
+still reads `ungated`, and the check's row says `Optional`. Exercise it —
+ask for it from a card's `◫` evidence sheet, and see it fail once on
+purpose — and only then, as a separate decision, add the gate with
+**Merge rules → Card merge → Edit**:
+
+```jsonc
+"gates": {"acceptance": {"checks": ["unit"]}}
+```
+
+A sanitized line goes into `manager/local/state/settings/history.jsonl`
+per applied change: the time, the revisions, the keys that changed, and
+the actor **where one is actually known**. This board records no
+authenticated identity, so an unknown actor is written down as unknown —
+a forged attribution is worse than an absent one. No values: a settings
+file can hold a path out of somebody's home directory.
+
+**And applying cannot move work.** It writes one file. It starts no
+agent, moves no card, merges nothing, publishes nothing, re-runs no check
+and restarts nothing; a gate takes effect the next time the mutation it
+guards is attempted, not because a file was saved. A run already in
+flight keeps the manifest it launched with, because that manifest is a
+record on disk and nothing here touches it.
+
+### Writing a policy is an authority boundary
+
+The board binds to loopback and has no authentication, and that is the
+whole threat model: a page on another origin, opened in the same browser,
+can post to `http://127.0.0.1:26071` without ever reading a reply. So the
+one route on this server that edits policy is held to a stricter door than
+the rest, in the server rather than in the page, and none of it trusts a
+field in the body — a JSON content type (so a cross-origin form, which
+may only send form encodings, is not a request this parses), a custom
+header (which a form cannot set at all, and a cross-origin `fetch` can
+only set by asking for a CORS preflight that nothing here answers), and
+an `Origin`/`Sec-Fetch-Site` check for the browsers that send them. A
+loopback client that is not a browser sends the header and is allowed,
+which is correct: it already has the operator's own filesystem access.
+
+Check registration is not a file-write or shell endpoint either. A
+compound command, a pipeline, a redirection, a substitution, a relative
+executable, a path climbing out, the application checkout as an execution
+root and an argument naming a credential are each refused where the
+document is read — by `profiles`, the same parser that refuses them for a
+launch. Secrets are not managed here: credential-shaped names and values
+are masked on the way out, and a submitted mask is refused rather than
+written back over the value it hid.
+
 ## Pull requests
 
 A card entering `review/` with a `task/<stem>` branch gets a PR opened for
@@ -2123,11 +2407,14 @@ itself included, opens into `main` as it always did.
 
 The card wears that verdict in the design system's state colours:
 approved → pine (`--calm`) border and an `approved` pill; changes asked →
-terracotta (`--alarm`) and a `changes asked` pill; otherwise it stays the
-neutral `waiting on you`. Tool chips (CI, copilot, PR, drive) are
-destinations, not statuses: they live in the card's footer row, never
-squeezed into the author row — `CI ✓` (pine), `CI ✕` (terracotta), `◌`
-while in flight — with hover actions staying in the status pill's slot.
+terracotta (`--alarm`) and a `changes asked` pill; otherwise it wears no
+pill, since the Review column already says it is waiting on you. Tool
+chips (CI, copilot, PR, drive) are destinations, not statuses. Their full
+set is in the card's **⋯** tools and its detail view (see "The card face
+and its tools"). The ones that change what you do next stay in the
+card's footer row, never in the author row: `CI ✕` (terracotta), `◌`
+while in flight, a live drive. Hover actions stay in the status pill's
+slot.
 Merging into `main` remains yours — the board never merges into `main`. It
 does merge into a branch of its own: a phase's integration branch is the
 board's, and merging into it is bookkeeping in the same family as

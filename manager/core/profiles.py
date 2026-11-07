@@ -696,6 +696,18 @@ def document_at(path: Path | None) -> dict:
                             f"be read ({exc}) — fix it or unset "
                             f"BOARD_AGENT_PROFILES; bench will not fall back to "
                             f"the legacy grants under a policy you meant to change")}
+    return document_from(raw, path)
+
+
+def document_from(raw: str, path: Path) -> dict:
+    """The same reading, from text already in hand rather than off disk.
+
+    Split out for the one caller that has a document nobody has written
+    yet: the Settings editor, validating a draft. It must get the answer a
+    launch would get — the same parser, the same codes, the same revision
+    — and the only way to guarantee that is for there to be one parser.
+    `document_at` is this function plus the read.
+    """
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:

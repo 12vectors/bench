@@ -204,7 +204,7 @@ def slots() -> threading.BoundedSemaphore:
 _EPOCH = 0
 _FRESH_TTL = 10.0
 _FRESH: dict[str, tuple[float, dict]] = {}
-_BOARD: tuple[int, frozenset, dict] | None = None
+_BOARD: tuple[tuple, frozenset, dict] | None = None
 
 
 def _key(task: str, check: str, scope: str | None) -> str:
@@ -1697,7 +1697,10 @@ def rollup(filename: str, manifest: dict | None = None) -> dict:
 
 def board(collected: dict) -> dict:
     """The compact per-card reading the board view needs: how many checks
-    a card has evidence for and the worst thing any of them says.
+    a card has evidence for or may ask for, and the worst thing any of
+    them says. A check the current policy offers and nothing has asked for
+    counts as `not-run` on every card — whatever its stage, since a
+    `source` check needs no worktree and a done card may keep one.
 
     Only cards with something to say appear, which is the law every other
     chip on this board follows — a board nobody configured checks on gets
@@ -1706,18 +1709,22 @@ def board(collected: dict) -> dict:
     global _BOARD
     files = frozenset(task["file"] for stage in collected.get("stages", [])
                       for task in stage["tasks"])
+    # One file read, so an edited policy is seen on the next reading
+    # rather than after the bucket turns over.
+    doc = profiles.document()
     with state.LOCK:
         epoch = _EPOCH
     # The key carries a time bucket as well as the epoch, because a pass
     # can go stale without anything being stored — the source moved under
     # it. Epoch alone would hold a `passed` chip on a card whose code has
     # changed for as long as nothing else was verified.
-    stamp = (epoch, int(time.time() / _FRESH_TTL))
+    stamp = (epoch, int(time.time() / _FRESH_TTL), doc["revision"])
     if _BOARD is not None and _BOARD[0] == stamp and _BOARD[1] == files:
         return _BOARD[2]
 
     worst = ("failed", "prepare-failed", "error", "denied", "stale",
-             "cancelled", "running", "preparing", "passed")
+             "cancelled", "running", "preparing", "not-run", "passed")
+    offered = _offered(doc) if files else ()
     found: dict = {}
     by_task: dict[str, list[dict]] = {}
     for record in all_evidence():
@@ -1725,6 +1732,9 @@ def board(collected: dict) -> dict:
         if task not in files:
             continue
         by_task.setdefault(task, []).append(record)
+    if offered:
+        for filename in files:
+            by_task.setdefault(filename, [])
     for filename, records in by_task.items():
         # One row per check: the chip summarises a card, and an older run
         # of the same check is history the sheet shows rather than a
@@ -1735,28 +1745,63 @@ def board(collected: dict) -> dict:
         records = list(latest.values())
         readings = [outcome_now(r) for r in records]
         outcomes = [r["outcome"] for r in readings]
+        # A check the card may ask for and nothing has: the sheet's
+        # `not-run` row, counted by name so a check run ten times is one.
+        unasked = [n for n in offered
+                   if n not in latest]
+        outcomes += ["not-run"] * len(unasked)
         pick = next((w for w in worst if w in outcomes), outcomes[0])
         found[filename] = {
             "outcome": pick,
-            "checks": len({r.get("check") for r in records}),
+            "checks": len(set(latest) | set(unasked)),
             "passed": outcomes.count("passed"),
             "failed": outcomes.count("failed"),
+            "notRun": len(unasked),
             "live": any(r.get("outcome") in LIVE for r in records),
-            "latest": max((r.get("ended") or r.get("requested") or 0)
-                          for r in records),
+            "latest": max([(r.get("ended") or r.get("requested") or 0)
+                           for r in records], default=None),
             "location": "local",
         }
     _BOARD = (stamp, files, found)
     return found
 
 
+_OFFERED: tuple | None = None
+
+
+def _offered(doc: dict) -> tuple[str, ...]:
+    """The names a person's request from the evidence sheet may ask for
+    right now — the `work` reading `/api/evidence` resolves fresh, through
+    the same resolver, once per policy revision and time bucket rather than
+    once per card. Only the worktree path differs between cards, and a
+    `work` check never depends on it. A profile with blockers offers
+    nothing, because `request()` would refuse every name. Resolving writes
+    nothing: no pin, no checkout, no fetch."""
+    global _OFFERED
+    key = (doc["revision"], int(time.time() / _FRESH_TTL))
+    if _OFFERED is not None and _OFFERED[0] == key:
+        return _OFFERED[1]
+    names: tuple[str, ...] = ()
+    if doc["kind"] == "file":
+        try:
+            found = profiles.resolve("work", worktree=config.WORKTREES / "_",
+                                     policy=doc)
+        except (ValueError, OSError):
+            found = {"blockers": ["unresolvable"]}
+        if not found["blockers"]:
+            names = tuple(dict.fromkeys(c["name"] for c in available(found)))
+    _OFFERED = (key, names)
+    return names
+
+
 def forget_cached() -> None:
     """Drop the memoised readings. Nothing on the serving path calls it —
     the epoch and the TTL do that work — but a test, and anything that
     changes a root under the board's feet, needs the door."""
-    global _BOARD
+    global _BOARD, _OFFERED
     _FRESH.clear()
     _BOARD = None
+    _OFFERED = None
 
 
 def line(record: dict) -> str:

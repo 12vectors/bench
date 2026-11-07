@@ -217,6 +217,31 @@
      tidy-up, not somewhere the card is asking you to go. Hover, armed and
      busy all outrank this rule, so it never dulls a live state. */
   .chip2.arch{margin-left:auto;color:var(--dim);border-color:transparent}
+  /* the tools: every destination and action a card has, one labelled
+     control away instead of a row of operational chrome on every face.
+     Closed by default; on a card it lists what the face does not already
+     show, and in the detail view (outside .card) it lists everything. */
+  .card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .moretools{
+    flex:none;min-width:24px;min-height:24px;padding:0 6px;border-radius:99px;
+    background:transparent;border:1px solid transparent;color:var(--dim);
+    font-size:13px;line-height:1;cursor:pointer;
+  }
+  .moretools:hover,.moretools:focus-visible,.moretools[aria-expanded="true"]{
+    border-color:var(--border);color:var(--accent)}
+  .cardtools{display:none;align-items:center;gap:5px;flex-wrap:wrap;
+    padding-top:9px;border-top:1px solid var(--line)}
+  .cardtools.open{display:flex}
+  .cardtools .tlabel{font-family:var(--mono);font-size:10.5px;color:var(--dim);
+    text-transform:uppercase;letter-spacing:.06em}
+  .cardtools .tacts{display:contents}
+  .card .cardtools .onface{display:none}
+  .card .cardtools .chip2.arch{margin-left:0}
+  .dtools{display:flex;padding:10px 18px 0;border-top:none}
+  .dtools .tlabel{width:100%}
+  .card.has-acts:focus-within .toprow .pill.status,
+  .card.has-acts:focus-within .toprow .high{display:none}
+  .card .title{overflow-wrap:anywhere}
   .card .whorow{display:flex;align-items:center;gap:7px;min-width:0}
   .card .initial{
     display:flex;align-items:center;justify-content:center;width:18px;height:18px;flex:none;
@@ -240,7 +265,7 @@
      the pointer approaches it. padding + negative margin widen the slot's
      hitbox without moving anything; clicks landing there die at the slot. */
   .hoveracts{display:none;gap:4px;animation:fadein .12s ease;padding:4px;margin:-4px}
-  .card:hover .hoveracts,.hoveracts:has(.armed),.hoveracts:has(.busy){display:flex}
+  .card:hover .hoveracts,.card:focus-within .hoveracts,.hoveracts:has(.armed),.hoveracts:has(.busy){display:flex}
   .card.has-acts:hover .toprow .pill.status,
   .card.has-acts:hover .toprow .high,
   .card.has-acts:has(.hoveracts .armed) .toprow .pill.status,
@@ -462,6 +487,124 @@
   .also{display:flex;gap:10px;padding:0 18px 18px;flex-wrap:wrap}
   .also .card{flex:1 1 240px;cursor:default}
   .also .card:hover{transform:none;border-color:var(--border-soft)}
+
+  /* ── settings ──
+     One scrolling column, one section at a time. A column rather than a
+     grid because this view has to survive 390px and 200% zoom without a
+     horizontal scrollbar, and a two-column reading of a settings page is
+     the first thing that breaks there. Everything wraps; nothing is
+     nowrap but a hash. */
+  #view-settings{flex-direction:column;overflow-y:auto}
+  .s-top{display:flex;flex-direction:column;gap:10px;padding:14px 18px 0}
+  .s-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .s-head h1{margin:0;font-size:20px;font-weight:600;letter-spacing:-.015em}
+  .s-head .mono{font-size:11.5px;color:var(--dim)}
+  .s-head .r{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+  .s-nav{display:flex;gap:6px;flex-wrap:wrap}
+  .s-body{display:flex;flex-direction:column;gap:14px;padding:14px 18px 24px;
+    max-width:980px;min-width:0}
+  .s-body .panel{min-width:0}
+  .s-body p{margin:0;font-size:12.5px;line-height:1.55;color:var(--muted)}
+  .s-body p.lead{color:var(--text);font-size:13.5px}
+  .s-body p.bad{color:var(--alarm)}
+  .s-body ul{margin:0;padding-left:18px;font-size:12.5px;color:var(--muted);
+    line-height:1.55}
+  .s-body ul li{margin:2px 0}
+  .s-body code{font-family:var(--mono);font-size:11.5px;color:var(--text);
+    overflow-wrap:anywhere}
+  /* a state word, never a colour on its own: the word is always there */
+  .sw{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);
+    font-size:11px;padding:2px 7px;border-radius:99px;border:1px solid var(--border);
+    color:var(--dim);white-space:nowrap}
+  .sw::before{content:"";width:6px;height:6px;border-radius:99px;
+    background:currentColor;flex:none}
+  .sw.verified{color:var(--calm);border-color:color-mix(in oklab, var(--calm) 45%, transparent)}
+  .sw.failed,.sw.invalid,.sw.blocked,.sw.stale{color:var(--alarm);
+    border-color:color-mix(in oklab, var(--alarm) 45%, transparent)}
+  .sw.unsupported{color:var(--muted);border-style:dashed}
+  .sw.configured-untested{color:var(--accent);
+    border-color:color-mix(in oklab, var(--accent) 45%, transparent)}
+  .srow{display:flex;align-items:flex-start;gap:10px;padding:9px 0;
+    border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .srow:last-child{border-bottom:none}
+  .srow .sname{flex:1 1 180px;min-width:0;font-size:13px;color:var(--text);
+    font-weight:500}
+  .srow .sdetail{flex:3 1 260px;min-width:0;font-size:12.5px;color:var(--muted)}
+  .srow .sright{margin-left:auto;display:flex;gap:6px;align-items:center;
+    flex-wrap:wrap}
+  /* the common row: label, effective value with one helper line, then the
+     state word and the one action. The value is the headline. */
+  .sline .sval{flex:3 1 260px;min-width:0;font-size:13px;color:var(--text);
+    overflow-wrap:anywhere}
+  .shelp{display:block;margin-top:2px;font-size:12px;color:var(--dim);
+    font-weight:400;line-height:1.45}
+  .shelp.mono{font-family:var(--mono);font-size:11px}
+  .sval .fold{margin-top:4px}
+  .s-body p.sprob{margin:-4px 0 6px;font-size:12px}
+  .s-body p.snote{color:var(--text)}
+  .sref{max-width:none;padding:2px 0}
+  .sref summary{padding:4px 0}
+  .srefbody{display:flex;flex-direction:column;gap:8px;padding:8px 0 4px 14px;
+    min-width:0}
+  .srefbody pre{margin:0;overflow-x:auto;max-width:100%}
+  .sdraft{border-color:color-mix(in oklab, var(--accent) 45%, transparent)}
+  .sdraft .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .s-inline{margin:2px 0 10px;border-color:color-mix(in oklab, var(--accent) 40%, var(--border-soft))}
+  .s-conseq{display:flex;flex-direction:column;gap:6px;padding:10px 0 0;
+    border-top:1px solid var(--line)}
+  #s-steps{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .srec{display:flex;flex-direction:column;gap:6px;padding:11px 12px;
+    border:1px solid var(--border-soft);border-radius:9px;background:var(--sunken)}
+  .srec.high{border-color:color-mix(in oklab, var(--alarm) 45%, transparent)}
+  .srec .st{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+  .srec .st strong{font-size:13px;font-weight:600;color:var(--text)}
+  .srec .pri{font-family:var(--mono);font-size:10.5px;color:var(--dim);
+    text-transform:uppercase;letter-spacing:.06em}
+  .srec.high .pri{color:var(--alarm)}
+  .srec .supply{font-size:12.5px;color:var(--text)}
+  .srec .inert{font-size:11.5px;color:var(--dim)}
+  /* the key/value table settings and roots are drawn in — wraps, so a long
+     path does not push the page sideways */
+  .skv{display:grid;grid-template-columns:minmax(120px,auto) minmax(0,1fr);
+    gap:2px 12px;font-size:12.5px}
+  .skv dt{font-family:var(--mono);font-size:11.5px;color:var(--muted);
+    overflow-wrap:anywhere}
+  .skv dd{margin:0;color:var(--text);overflow-wrap:anywhere}
+  .skv dd .why{display:block;color:var(--dim);font-size:11.5px}
+  /* the editor: four steps, each its own button, and a field error that
+     names its field */
+  .s-edit{display:flex;flex-direction:column;gap:10px}
+  .s-edit .frow{display:flex;flex-direction:column;gap:4px;min-width:0}
+  .s-edit label{font-size:11px;font-weight:600;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--muted)}
+  .s-edit input[type=text],.s-edit input[type=number],.s-edit textarea,
+  .s-edit select{
+    font:inherit;font-size:12.5px;color:var(--text);background:var(--sunken);
+    border:1px solid var(--border);border-radius:7px;padding:7px 9px;
+    width:100%;min-width:0;max-width:100%}
+  .s-edit textarea{font-family:var(--mono);font-size:11.5px;min-height:120px;
+    resize:vertical}
+  .s-edit input:focus,.s-edit textarea:focus,.s-edit select:focus{
+    outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+  .s-edit input:disabled,.s-edit select:disabled{color:var(--dim);cursor:not-allowed}
+  .s-edit .fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+    gap:10px}
+  .s-edit .item{display:flex;flex-direction:column;gap:9px;padding:11px;
+    border:1px solid var(--border-soft);border-radius:9px;background:var(--sunken)}
+  .s-edit .ihead{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .s-edit .ihead .label{flex:1}
+  .s-edit .ferr{font-size:12px;color:var(--alarm);line-height:1.5}
+  .s-edit .ferr .fld{font-family:var(--mono);font-size:11px}
+  .s-edit .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .s-edit .cb{display:flex;align-items:center;gap:7px;font-size:12.5px;
+    color:var(--text);text-transform:none;letter-spacing:0;font-weight:400}
+  .s-edit .cb input{width:auto;min-width:0}
+  .s-diff{display:flex;flex-direction:column;gap:5px;font-size:12.5px}
+  .s-diff .d{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap}
+  /* the change kind, read as a label beside its sentence. No fixed width:
+     at 390px a reserved column is exactly what pushes the page sideways */
+  .s-diff .d .k{font-family:var(--mono);font-size:11px;color:var(--dim);
+    flex:none}
 
   /* ── phases: a swimlane each ── */
   /* The room the five columns could never spare. One lane per phase, the
@@ -690,6 +833,10 @@
     <button data-view="phases">Phases</button>
     <button data-view="flight">Sessions</button>
     <button data-view="focus">Focus</button>
+    <!-- the label is written by renderViews(): the mark that says this
+         board's execution policy refuses something, learned from whichever
+         view you are on -->
+    <button data-view="settings">Settings</button>
   </nav>
   <span class="spacer"></span>
   <div class="phasechips" id="phasechips" hidden></div>
@@ -734,6 +881,18 @@
     </div>
     <div class="c-grid" id="cgrid"></div>
     <div class="also" id="calso"></div>
+  </div>
+
+  <!-- settings: how this board is configured, what that licenses a reader
+       to believe, and what to configure next. Everything in it is resolved
+       by the server from the authorities that already answer for it;
+       nothing here parses a settings file. -->
+  <div class="view" id="view-settings">
+    <div class="s-top">
+      <div class="s-head" id="shead"></div>
+      <nav class="s-nav" id="snav" aria-label="settings sections"></nav>
+    </div>
+    <div class="s-body" id="sbody"></div>
   </div>
 </main>
 
@@ -783,6 +942,25 @@ const S = {
   // and because "nothing failing when you last looked" is the only thing
   // a cached reading may ever be shown as saying
   doctor: null,
+  // {at, page, fetching}: the whole Settings reading, fetched on demand
+  // rather than carried in the state payload — it resolves all three
+  // intents, hashes every approved input and asks git for the tool's own
+  // revision. Held so switching section repaints without asking again.
+  settings: null,
+  settingsSection: 'overview',
+  // The draft being edited, and nothing else: {document, revision, checked,
+  // preview, dirty}. `revision` is the one the editor was opened at, sent
+  // back with an apply so a save made over somebody else's is refused
+  // rather than silently winning. Null until the editor is opened — the
+  // page holds no draft for a section nobody opened.
+  draft: null,
+  // The contextual editor open on that draft, if any: {kind: 'check',
+  // index, anchor} in Checks, {kind: 'gate', scope} or {kind: 'overrides'}
+  // in Merge rules. It edits the same draft as the advanced editor.
+  sedit: null,
+  // The card whose ⋯ tools are open, by file — one at a time, and held
+  // here so a redraw does not close it under the person using it.
+  cardMenu: null,
   openFolds: new Set(),  // expanded output folds, kept across renders
   fileView: null,        // {dir, name, content} open in the drawer
   drawerKey: null,       // which document the drawer last painted, for its scroll mark
@@ -1285,6 +1463,29 @@ function renderViews() {
     : running
       ? `${running} phase${running > 1 ? 's' : ''} running — a swimlane each`
       : 'One swimlane per phase: its cards, its log, its controls';
+  renderSettingsTab();
+}
+
+/* The same crossing, for configuration: a policy that refuses something
+   has to be learnable from whichever view you are on, because the thing it
+   refuses is the next launch. The mark is the alarm every other blocked
+   thing wears, and it appears only when the cheap reading in the state
+   payload says there is something to say — a board on the legacy settings
+   has a switcher that reads exactly as it did before this view existed. */
+function renderSettingsTab() {
+  const btn = document.querySelector('#views button[data-view="settings"]');
+  if (!btn) return;
+  const s = S.state?.settings || {};
+  btn.innerHTML = 'Settings' + (s.invalid ? '<span class="vhalt"></span>' : '');
+  btn.title = s.invalid
+    ? (s.problem || 'this board\'s execution policy refuses something') +
+      ' — open Settings for the field and the remedy'
+    : s.configured
+      ? `${s.checks} named check${s.checks === 1 ? '' : 's'}` +
+        (s.gated.length ? `, gating ${s.gated.join(', ')}`
+                        : ', and no gate requiring any of them')
+      : 'How this board is configured, what has been verified, and what to ' +
+        'configure next';
 }
 
 function setView(view) {
@@ -1309,7 +1510,8 @@ function setView(view) {
    narrowed to a few characters still shows it. It is the in-flight glyph
    the CI and copilot chips already use, not an emoji, and a quiet board
    is the plain title, byte for byte. */
-const VIEW_TITLES = { board: 'bench', phases: 'phases', flight: 'sessions', focus: 'focus' };
+const VIEW_TITLES = { board: 'bench', phases: 'phases', flight: 'sessions',
+  focus: 'focus', settings: 'settings' };
 const WORKING_MARK = '◌';
 
 function tabTitle(project, view, working) {
@@ -1341,6 +1543,11 @@ function render() {
   renderDoctor();
   if (S.view === 'flight') renderFlight();
   else if (S.view === 'focus') renderFocus();
+  // render() runs on every SSE frame. Repainting the policy editor from
+  // under a half-typed field would lose the edit, so a dirty draft holds
+  // the paint: every other change to this view comes from a handler that
+  // calls renderSettings() itself.
+  else if (S.view === 'settings') { if (!settingsEditing()) renderSettings(); }
   else renderCards();
   renderBar();
   renderLog();
@@ -2187,7 +2394,8 @@ function verifyChip(task) {
   return {
     label: `${v.passed}/${v.checks}`, pre: '◫', glyph, cls: tint, verify: true,
     title: `Verification bench ran itself: ${word}. ${v.passed} of ${v.checks} `
-         + `named check${v.checks === 1 ? '' : 's'} passed. Evidence is `
+         + `named check${v.checks === 1 ? '' : 's'} passed`
+         + `${v.notRun ? `; ${v.notRun} not run yet` : ''}. Evidence is `
          + `${v.location === 'local' ? 'local to this board' : v.location}. `
          + `Opening this runs nothing.`,
   };
@@ -2736,6 +2944,46 @@ function canArchive(task) {
   return (S.state.archiveFrom || []).includes(task.stage);
 }
 
+/* A card names itself once. Task files are titled `# 76 — Simplify …`, and
+   the card already wears `#76` in its top row, so the title drops a
+   leading number only when it is this card's own — anything else in a
+   title is the author's and stays. */
+function cardTitle(task) {
+  const title = String(task.title || '');
+  const m = title.match(/^\s*#?(\d+)\s*[—–:.\-]+\s*(.+)$/);
+  if (m && task.number && canonicalNumber(m[1]) === canonicalNumber(task.number)) return m[2];
+  return title;
+}
+
+/* Which chips are worth a place on the card's face. The face carries the
+   things that change the next decision — a failure, a stale or unmet
+   requirement, a conflict, a live drive or command, a phase to navigate
+   to — and the rest live one labelled menu away, and in the task's detail
+   view. A chip is never dropped: it moves. Required evidence that is
+   missing reads through the gate chip, which is on the face whenever it
+   is anything but met. */
+function chipOnFace(c, task) {
+  if (c.face !== undefined) return c.face;
+  if (c.cls === 'bad' || c.cls === 'accent') return true;
+  if (c.phase) return true;
+  if (c.plan) return !task.phase && !task.isPhase;
+  return false;
+}
+
+/* Focus back onto a card after a redraw rebuilt it: the visible view's
+   copy, then a control inside it when one is named. A redraw is how every
+   card change lands, so a keyboard user would otherwise be dropped to the
+   top of the page by their own keystroke. */
+function focusCard(file, inner) {
+  requestAnimationFrame(() => {
+    const card = [...document.querySelectorAll('.view.on article.card')]
+      .find(c => c.dataset.file === file);
+    if (!card) return;
+    const target = (inner && card.querySelector(inner)) || card;
+    target.focus();
+  });
+}
+
 function cardFor(task) {
   const el = document.createElement('article');
   const agent = agentOnTask(task.file);
@@ -2760,15 +3008,21 @@ function cardFor(task) {
   el.draggable = !completing;
 
   let tint = working ? 'var(--accent)' : STAGE_TINT[task.stage];
+  // The column already says the routine status, so the pill is drawn only
+  // when something promotes it: live work, a verdict, a failure, a halt,
+  // an idle card. "queued" in to-do/ is the column's word, not news.
+  let promoted = !!agent || working;
   let pill = agent && agent.mode === 'review'
     ? { text: 'reviewing', tint: 'var(--accent)', bg: mix('var(--accent)', 16) }
     : pillFor(task.stage, working);
   if (!agent && verdict === 'green') {
     pill = { text: 'approved', tint: 'var(--calm)', bg: mix('var(--calm)', 18) };
     tint = 'var(--calm)';
+    promoted = true;
   } else if (!agent && verdict === 'red') {
     pill = { text: 'changes asked', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16) };
     tint = 'var(--alarm)';
+    promoted = true;
   }
   if (flight && flight.idle) {
     // the state the card could not tell from a run in flight: a phase in
@@ -2778,6 +3032,7 @@ function cardFor(task) {
     pill = { text: flight.pill, tint: 'var(--idle)', bg: 'var(--sunken)',
              title: flight.line };
     tint = 'var(--idle)';
+    promoted = true;
   }
   if (failure) {
     // the newest thing that happened here, and the only actionable one:
@@ -2785,6 +3040,7 @@ function cardFor(task) {
     pill = { text: 'run failed', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16),
              title: failure.excerpt };
     tint = 'var(--alarm)';
+    promoted = true;
   }
   if (flight && flight.bad) {
     // a halt is held, not scrolled past — and on this view the phase card
@@ -2792,6 +3048,7 @@ function cardFor(task) {
     pill = { text: 'halted', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16),
              title: flight.line };
     tint = 'var(--alarm)';
+    promoted = true;
   }
   if (completing) {
     // live work outranks every settled reading: the branch behind an
@@ -2799,6 +3056,18 @@ function cardFor(task) {
     pill = { text: 'completing', tint: 'var(--accent)', bg: mix('var(--accent)', 16),
              title: 'merge & clean up is running — the card comes back when it lands in done/' };
     tint = 'var(--accent)';
+    promoted = true;
+  }
+  // a card in in-progress/ that nobody is working on and nothing has
+  // touched for a day: the board is misreporting what is happening, which
+  // is exactly the kind of exception the face exists to show
+  const idle = !promoted && task.stage === 'in-progress' && !task.isPhase
+    && (Date.now() / 1000 - task.mtime) / 86400 >= 1;
+  if (idle) {
+    pill = { text: 'idle', tint: 'var(--idle)', bg: 'var(--sunken)',
+             title: `nothing has run or changed here for ${ago(task.mtime)} — `
+                  + '▸ start work, or walk it back to to-do/' };
+    promoted = true;
   }
   const high = (task.priority || '').toLowerCase() === 'high';
   const top = [
@@ -2816,8 +3085,10 @@ function cardFor(task) {
     // never guesses around it: a launch refuses until it is settled.
     (task.planDrift || []).length
       ? `<span class="pill drift" title="${esc(task.planDrift.join(' · '))}">plan drift</span>` : '',
-    `<span class="pill status${completing ? ' breathing' : ''}" style="background:${pill.bg};color:${pill.tint}"` +
-      `${pill.title ? ` title="${esc(pill.title)}"` : ''}>${pill.text}</span>`,
+    promoted
+      ? `<span class="pill status${completing ? ' breathing' : ''}" style="background:${pill.bg};color:${pill.tint}"` +
+        `${pill.title ? ` title="${esc(pill.title)}"` : ''}>${pill.text}</span>`
+      : '',
   ];
 
   // two actions per state, max — whatever you'd actually do without opening the card
@@ -2940,12 +3211,15 @@ function cardFor(task) {
     else if (task.stage === 'in-progress') who = 'unattended';
     else if (task.stage === 'review') who = 'needs your eyes';
     else who = 'merged';
-    meta = 'edited ' + ago(task.mtime) + ' ago';
-    if (task.stage === 'in-progress' && (Date.now() / 1000 - task.mtime) / 86400 >= 1) meta += ' · idle';
+    // when the file last changed is in the detail view; on the face it was
+    // chatter, and the one reading of it that matters is the idle pill
+    meta = '';
   }
+  // the owner, or the agent holding it — and on a card in in-progress/
+  // that nobody holds, that it is unattended. Everywhere else the column
+  // already says what an unowned card is, so the row is not drawn at all.
+  const showWho = !!agent || !!task.assignee || task.stage === 'in-progress';
   const extras = [];
-  if (!high && task.priority) extras.push(esc(task.priority.toLowerCase()));
-  if (task.type) extras.push(esc(task.type.toLowerCase()));
 
   let liveLine = '';
   if (completing) {
@@ -3092,7 +3366,9 @@ function cardFor(task) {
       chips.push({ label: 'no branch', glyph: '', cls: 'dim',
         title: 'No work attached: no agent ran on this task, so there is no branch to PR, review or drive. ▸ start work runs from in-progress.' });
     } else if (S.state.hasDriver && hasBranch) {
-      chips.push({ label: 'drive', glyph: '✳', cls: 'accent', act: 'go',
+      // a resting drive is a tool, not a state: it lives in the ⋯ menu,
+      // and only a running or refused drive earns the face
+      chips.push({ label: 'drive', glyph: '✳', cls: 'accent', act: 'go', face: false,
         title: "Launch the app locally from this task's worktree" });
     } else if (!S.state.hasDriver) {
       chips.push({ label: 'no driver', glyph: '', cls: 'dim',
@@ -3119,8 +3395,7 @@ function cardFor(task) {
     chips.push({ label: 'archive', pre: '⌸', cls: 'arch', arch: true,
       title: 'Archive this card — out of every column, never deleted. ⌘Z brings it back.' });
   }
-  const chipRow = chips.length
-    ? '<div class="chiprow">' + chips.map(c => {
+  const chipHtml = (c) => {
         const g = c.glyph ? `<span class="g2">${c.glyph}</span>` : '';
         const p = c.pre ? `<span class="g2">${c.pre}</span>` : '';
         if (c.arch) return `<button class="chip2 ${c.cls}" data-arch="1" title="${esc(c.title)}">${p}${actLabel(c.label, 'archive it?', 'archiving…')}</button>`;
@@ -3134,16 +3409,48 @@ function cardFor(task) {
         if (c.review) return `<button class="chip2 ${c.cls}" data-review="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.cmd) return `<button class="chip2 ${c.cls}" data-cmd="${esc(c.cmd)}" title="${esc(c.title)}">${actLabel(c.label, 'run it?', 'running…')}${g}</button>`;
         return `<span class="chip2 ${c.cls}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</span>`;
-      }).join('') + '</div>'
+  };
+  // the face carries the exceptions; every chip, the face's included, is
+  // in the card's tools — opened from the ⋯ button, and drawn in full in
+  // the detail view, so nothing a chip did is lost by not being on the face
+  const face = chips.filter(c => chipOnFace(c, task));
+  const chipRow = face.length
+    ? '<div class="chiprow">' + face.map(chipHtml).join('') + '</div>'
     : '';
+  const ref = task.number ? '#' + task.number : task.file.slice(0, 10);
+  const menuOpen = S.cardMenu === task.file;
+  const tools = chips.map(c => chipHtml(chipOnFace(c, task)
+    ? { ...c, cls: `${c.cls} onface` } : c)).join('');
 
   el.innerHTML =
     `<div class="toprow">${top.join('')}</div>` +
-    `<div class="title">${esc(task.title)}</div>` +
-    `<div class="whorow"><span class="initial">${esc(initial)}</span><span class="who">${esc(who)}</span>` +
-    modelChip(agent) +
-    `<span class="meta">${esc(meta)}${extras.length ? ' · ' + extras.join(' · ') : ''}</span></div>` +
-    chipRow + driveWell + liveLine;
+    `<div class="title">${esc(cardTitle(task))}</div>` +
+    (showWho
+      ? `<div class="whorow"><span class="initial">${esc(initial)}</span><span class="who">${esc(who)}</span>` +
+        modelChip(agent) +
+        `<span class="meta">${esc(meta)}${extras.length ? ' · ' + extras.join(' · ') : ''}</span></div>`
+      : '') +
+    chipRow + driveWell + liveLine +
+    `<div class="cardtools${menuOpen ? ' open' : ''}" role="group" ` +
+    `aria-label="${esc(`Tools for ${ref}`)}"><span class="tlabel">tools</span>` +
+    `<span class="tacts"></span>${tools}</div>`;
+  el.dataset.file = task.file;
+  // the card itself is reachable: Tab lands on it, Enter or Space opens
+  // its detail view, and focus-within reveals the same actions hover does
+  el.tabIndex = 0;
+  el.addEventListener('keydown', (e) => {
+    if (e.target === el && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      showDetail(task);
+    } else if (e.key === 'Escape' && S.cardMenu === task.file) {
+      e.stopPropagation();
+      S.cardMenu = null;
+      renderCards();
+      focusCard(task.file, '[data-more]');
+    }
+  });
+  // a click between two tools is not a click on the card
+  el.querySelector('.cardtools').addEventListener('click', (e) => e.stopPropagation());
   el.querySelectorAll('a.chip2').forEach(a =>
     a.addEventListener('click', (e) => e.stopPropagation()));
   el.querySelectorAll('[data-phase]').forEach(btn =>
@@ -3195,8 +3502,36 @@ function cardFor(task) {
       btn.title = act.title;
       wireAction(btn, `${task.file}::${act.label}`, act);
       slot.appendChild(btn);
+      // the same action, keyed the same, in the tools: the detail view
+      // carries it there, and an armed window is one window wherever the
+      // second click lands
+      const twin = document.createElement('button');
+      twin.className = 'chip2 onface';
+      twin.innerHTML = `<span class="g2">${act.glyph}</span>${actLabel(act.label, act.confirm, act.busy)}`;
+      twin.title = act.title;
+      wireAction(twin, `${task.file}::${act.label}`, act);
+      el.querySelector('.cardtools .tacts').appendChild(twin);
     }
     el.querySelector('.toprow').appendChild(slot);
+  }
+  // the tools menu: one labelled control on every card that has anything
+  // in it, at the end of the top row, so the face stays quiet and nothing
+  // a chip used to do is more than one keystroke away
+  if (chips.length) {
+    const more = document.createElement('button');
+    more.className = 'moretools';
+    more.dataset.more = task.file;
+    more.textContent = '⋯';
+    more.title = 'Tools — profile, branch, PR, checks, drive, archive';
+    more.setAttribute('aria-label', `Tools for ${ref}`);
+    more.setAttribute('aria-expanded', String(menuOpen));
+    more.addEventListener('click', (e) => {
+      e.stopPropagation();
+      S.cardMenu = S.cardMenu === task.file ? null : task.file;
+      renderCards();
+      focusCard(task.file, S.cardMenu ? '.cardtools.open .chip2:not(.onface)' : '[data-more]');
+    });
+    el.querySelector('.toprow').appendChild(more);
   }
 
   el.addEventListener('dragstart', (e) => {
@@ -3656,6 +3991,1464 @@ function phaseMembers(t) {
     rows + halt + `</div>`;
 }
 
+/* ── settings ─────────────────────────────────────────────────────────── */
+
+/* How this board is configured, what has actually been verified, and what
+   to configure next.
+
+   Everything drawn here is resolved by the server from the authority that
+   already answers for it — `profiles.resolve()` for what a run may do,
+   `profiles.gate_policy()` for what a merge must have, `verify`'s records
+   for what the checks found, `gates.evaluate()` for whether a merge may
+   happen. This page compiles no grant, parses no settings file and decides
+   no outcome: a second reader of the same document could disagree with the
+   launch, which is the one defect this view must not introduce.
+
+   Opening it is a GET. It starts no process, runs no project command,
+   launches no model, pins nothing and writes nothing. */
+
+const SETTINGS_SECTIONS = [
+  ['overview', 'Overview'],
+  ['verification', 'Checks'],
+  ['acceptance', 'Merge rules'],
+  ['access', 'Agent access'],
+  ['diagnostics', 'Diagnostics'],
+  ['installation', 'Installation'],
+  ['policy', 'Advanced policy'],
+];
+
+/* The three guarded mutations, named for what merges. The scope word
+   stays beside the label, because it is the key the document uses. */
+const SCOPE_LABEL = {
+  member: 'Phase member merge',
+  integration: 'Phase acceptance',
+  acceptance: 'Card merge',
+};
+
+/* The state word, always as a word. Colour carries no meaning on its own
+   here: a test failure, a permission denial and an unconfigured gate must
+   not collapse into "red", and "not configured" must never be able to read
+   as a pass. */
+function stateWord(word, states) {
+  const why = (states || {})[word] || '';
+  return `<span class="sw ${esc(word)}" title="${esc(why)}">${esc(word)}</span>`;
+}
+
+/* The sections that hold an editor on the one shared draft: the advanced
+   policy editor, and the contextual editors in Checks and Merge rules. A
+   stream repaint is held while one of them has unsaved edits in it. */
+const EDITING_SECTIONS = ['policy', 'verification', 'acceptance'];
+
+function settingsEditing() {
+  if (EDITING_SECTIONS.includes(S.settingsSection) && !!(S.draft && S.draft.dirty)) return true;
+  // a field being typed in is an edit in progress even before it reaches
+  // the draft — the JSON field only does on "use this JSON" — so a
+  // background repaint must not take focus or the half-typed text from it
+  const el = document.activeElement;
+  return !!(el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) &&
+            $('#sbody').contains(el));
+}
+
+/* Which folds in the section are open. Explanations live in folds now
+   (card 76), and every repaint rebuilds them closed — so one the person
+   opened would snap shut on the next SSE frame or the 30s refetch. A fold
+   is known by its id, else by its summary's words, which is what a person
+   recognises it by too. */
+function settingsFoldKey(d) {
+  const s = d.querySelector(':scope > summary');
+  return d.id || (s ? s.textContent.trim() : '');
+}
+
+function openSettingsFolds(body) {
+  return new Set([...body.querySelectorAll('details[open]')]
+    .map(settingsFoldKey).filter(Boolean));
+}
+
+/* Whether the section being drawn carries the draft's step bar, so the
+   unsaved-draft notice is shown everywhere else and never twice. */
+function draftBarShown(section) {
+  if (section === 'policy') return true;
+  const ed = S.sedit;
+  if (!ed) return false;
+  return ed.kind === 'check' ? section === 'verification' : section === 'acceptance';
+}
+
+function renderSettings() {
+  if (!S.settings && !S.settingsFetching) fetchSettings();
+  const head = $('#shead'), nav = $('#snav'), body = $('#sbody');
+  const page = S.settings && S.settings.page;
+  if (!page) {
+    head.innerHTML = `<h1>Settings</h1><span class="mono">reading…</span>`;
+    nav.innerHTML = '';
+    body.innerHTML = S.settingsError
+      ? `<div class="panel"><p class="bad">${esc(S.settingsError)}</p></div>`
+      : `<div class="panel"><p>Resolving this board's configuration. ` +
+        `Nothing is being run.</p></div>`;
+    return;
+  }
+  const section = SETTINGS_SECTIONS.some(([k]) => k === S.settingsSection)
+    ? S.settingsSection : 'overview';
+  head.innerHTML =
+    `<h1>Settings</h1>` +
+    `<span class="mono">${esc(page.overview.policy.identity ||
+      'no execution policy document')}</span>` +
+    `<span class="r">` +
+    `<button class="chip2" id="s-inspect" aria-label="check configuration">` +
+    `Check configuration</button>` +
+    `<button class="chip2" id="s-reread" aria-label="re-read the settings">` +
+    `Re-read</button></span>`;
+  nav.innerHTML = SETTINGS_SECTIONS.map(([key, label]) =>
+    `<button class="chip2 ${key === section ? 'accent' : ''}" ` +
+    `data-ssection="${esc(key)}" aria-current="${key === section}" ` +
+    `aria-label="${esc(label)} settings">${esc(label)}</button>`).join('');
+  markScroll('v:settings', $('#view-settings'));
+  // A draft is one thing however it was started, so wherever the page is
+  // it says there is one — and offers the way back to it and the way out.
+  const notice = S.draft && S.draft.dirty && !draftBarShown(section)
+    ? `<div class="panel sdraft" role="status"><p><b>Unsaved draft.</b> ` +
+      `Nothing has been written; leaving the page discards it.</p>` +
+      `<div class="acts"><button class="chip2" data-sdraft="open" ` +
+      `aria-label="return to the unsaved draft">Return to the draft</button>` +
+      `<button class="chip2" data-sdraft="discard" aria-label="discard the ` +
+      `unsaved draft">Discard draft</button></div></div>`
+    : '';
+  // folds stay as the person left them across a repaint of the same
+  // section; a different section starts with its own folds closed
+  const keepOpen = body.dataset.ssection === section ? openSettingsFolds(body)
+    : new Set();
+  body.innerHTML = notice + settingsSection(section, page);
+  body.dataset.ssection = section;
+  body.querySelectorAll('details').forEach(d => {
+    if (keepOpen.has(settingsFoldKey(d))) d.open = true;
+  });
+  restoreScroll('v:settings', $('#view-settings'));
+
+  $('#s-reread').addEventListener('click', () => fetchSettings(true));
+  // The read-only action, named for what it is. It reuses the doctor's own
+  // GET — the same resolver, read at the one distance that costs nothing —
+  // and renders its findings in the Diagnostics section. It runs no project
+  // program and invokes no adapter hook.
+  $('#s-inspect').addEventListener('click', () => {
+    S.settingsSection = 'diagnostics';
+    inspectConfiguration();
+  });
+  body.querySelectorAll('[data-sinspect]').forEach(btn =>
+    btn.addEventListener('click', () => inspectConfiguration()));
+  [...body.querySelectorAll('[data-ssection]'),
+   ...nav.querySelectorAll('[data-ssection]')].forEach(btn =>
+    btn.addEventListener('click', () => {
+      S.settingsSection = btn.dataset.ssection;
+      renderSettings();
+    }));
+  body.querySelectorAll('[data-sedit]').forEach(btn =>
+    btn.addEventListener('click', () =>
+      openEditor(page, btn.dataset.sedit, btn.dataset.sname)));
+  body.querySelectorAll('[data-sdraft]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      if (btn.dataset.sdraft === 'discard') {
+        S.draft = null; S.sedit = null;
+        fetchSettings(true);
+        toast('draft discarded — nothing was written');
+        return;
+      }
+      S.settingsSection = S.sedit
+        ? (S.sedit.kind === 'check' ? 'verification' : 'acceptance') : 'policy';
+      renderSettings();
+    }));
+  if (body.querySelector('#s-steps')) wirePolicyEditor(page);
+  if (section === 'diagnostics') wireDiagnostics();
+}
+
+async function fetchSettings(force) {
+  if (S.settingsFetching) return;
+  if (!force && S.settings) return;
+  S.settingsFetching = true;
+  S.settingsError = null;
+  try {
+    const res = await fetch('/api/settings');
+    const data = await res.json();
+    if (res.ok && data.settings) {
+      S.settings = { at: Date.now(), page: data.settings };
+      // the draft is re-read with the page: an apply that landed elsewhere
+      // moved the revision, and editing on top of a stale one would be the
+      // conflict the server exists to refuse
+      if (!S.draft || !S.draft.dirty) S.draft = null;
+    } else {
+      S.settingsError = data.error || 'the settings could not be read';
+    }
+  } catch (e) {
+    S.settingsError = e.message || 'the board could not be asked';
+  } finally {
+    S.settingsFetching = false;
+    if (S.view === 'settings') renderSettings();
+  }
+}
+
+function settingsSection(key, page) {
+  if (key === 'verification') return settingsVerification(page);
+  if (key === 'acceptance') return settingsAcceptance(page);
+  if (key === 'access') return settingsAccess(page);
+  if (key === 'diagnostics') return settingsDiagnostics(page);
+  if (key === 'installation') return settingsInstallation(page);
+  if (key === 'policy') return settingsPolicy(page);
+  return settingsOverview(page);
+}
+
+/* ── overview ─────────────────────────────────────────────────────────── */
+
+/* One row of the page's common layout: what the setting is, its effective
+   value with at most one short helper sentence, its state word, and the
+   one action that goes somewhere specific. Problems are drawn under the
+   row they are about, never collected somewhere else. */
+function sline(o) {
+  const action = o.inspect
+    ? `<button class="chip2" data-sinspect="1" aria-label="${esc(o.act)}">` +
+      `${esc(o.act)}</button>`
+    : o.edit
+      ? `<button class="chip2" data-sedit="${esc(o.edit)}" ` +
+        `data-sname="${esc(o.name || '')}" aria-label="${esc(o.aria || o.act)}">` +
+        `${esc(o.act)}</button>`
+      : o.section
+        ? `<button class="chip2" data-ssection="${esc(o.section)}" ` +
+          `aria-label="${esc(o.aria || `${o.act}: ${o.label}`)}">${esc(o.act)}</button>`
+        : '';
+  return `<div class="srow sline"><span class="sname">${esc(o.label)}` +
+    (o.sub ? `<span class="shelp mono">${esc(o.sub)}</span>` : '') + `</span>` +
+    `<span class="sval"${o.title ? ` title="${esc(o.title)}"` : ''}>` +
+    (o.code ? `<code>${esc(o.value)}</code>` : esc(o.value)) +
+    (o.help ? `<span class="shelp">${esc(o.help)}</span>` : '') + `</span>` +
+    `<span class="sright">${o.chips || ''}` +
+    `${o.state ? stateWord(o.state, o.states) : ''}${action}</span></div>` +
+    (o.problems || []).map(p => `<p class="bad sprob">${esc(p)}</p>`).join('') +
+    (o.after || '');
+}
+
+/* Reference material: closed by default, one click away, and never the
+   thing a section leads with. */
+function sref(summary, inner) {
+  return `<details class="fold sref"><summary>${esc(summary)}</summary>` +
+    `<div class="srefbody">${inner}</div></details>`;
+}
+
+function settingsOverview(page) {
+  const o = page.overview, v = page.verification, a = page.acceptance;
+  const acc = page.access, i = page.installation, states = o.states;
+  const row = {};
+  for (const r of o.rows) row[r.id] = r;
+  const scopes = Object.entries(a.policy.scopes);
+  const gated = scopes.filter(([, e]) => e.gated);
+  const reviews = scopes.filter(([, e]) => e.review !== 'none');
+  const required = v.checks.filter(c => c.requiredBy.length).length;
+  const intents = Object.entries(acc.intents);
+  const blocked = intents.filter(([, f]) => f.error || (f.blockers || []).length);
+  const report = S.doctor && S.doctor.report;
+  const lines = [
+    { label: 'Checks', section: 'verification', act: 'Edit checks',
+      state: row.checks.state, title: row.checks.detail,
+      value: v.checks.length
+        ? `${v.checks.length} registered · ` +
+          (required ? `${required} required by a merge rule` : 'Optional')
+        : 'None registered',
+      help: !v.checks.length ? row.checks.detail
+        : !required ? 'Registered is not passed, and no merge requires one.' : '',
+      // plain text throughout, not markup: sline escapes every field
+      problems: v.problems.map(p => p.code + ' — ' + p.why) },
+    { label: 'Merge rules', section: 'acceptance', act: 'Edit merge rules',
+      state: row.acceptance.state, title: row.acceptance.detail,
+      value: a.policy.blockers.length ? 'Invalid'
+        : gated.length
+          ? gated.map(([s, e]) => `${SCOPE_LABEL[s] || s}: ` +
+              (e.checks.map(c => c.requirement).join(', ') || 'review only')).join(' · ')
+          : 'No merge requirements',
+      help: !gated.length && !a.policy.blockers.length
+        ? 'Nothing is required before a merge, so a merge proves nothing.' : '',
+      problems: a.policy.blockers },
+    { label: 'Reviews', section: 'acceptance', act: 'Edit merge rules',
+      aria: 'edit the review requirements', state: row.review.state,
+      value: reviews.length
+        ? reviews.map(([s, e]) => (SCOPE_LABEL[s] || s) + ': ' + e.review).join(' · ')
+        : 'Not required' },
+    { label: 'Overrides', section: 'acceptance', act: 'View',
+      aria: 'view the override policy', state: row.overrides.state,
+      value: a.overrides.allowed
+        ? (a.overrides.actors.length
+            ? `Allowed for ${a.overrides.actors.join(', ')}` : 'Allowed for anyone')
+        : 'Off' },
+    { label: 'Agent access', section: 'access', act: 'View access',
+      state: row.access.state, title: row.access.detail,
+      value: `${intents.length} profile${intents.length === 1 ? '' : 's'}: ` +
+        intents.map(([n]) => n).join(', ') +
+        (blocked.length ? ` · ${blocked.length} will not start` : ''),
+      problems: blocked.map(([n, f]) =>
+        n + ': ' + (f.error || (f.blockers || [])[0] || 'blocked')) },
+    { label: 'OS isolation', section: 'access', act: 'Details',
+      aria: 'details of OS isolation', state: row.isolation.state,
+      title: row.isolation.detail,
+      value: row.isolation.state === 'unsupported' ? 'Unavailable'
+        : 'Declared by the adapter',
+      help: row.isolation.state === 'unsupported'
+        ? 'Write locations are intended, not enforced: nothing confines a run to them.'
+        : '' },
+    { label: 'Diagnostics', inspect: true, act: 'Check configuration',
+      state: report && report.summary.failed ? 'failed' : row.diagnostics.state,
+      value: report
+        ? (report.summary.failed ? report.summary.failed + ' failed' : 'Inspected')
+        : 'Not inspected',
+      help: report ? report.summary.line
+        : 'Read-only: no project program runs and nothing is spent.' },
+    { label: 'Installation', section: 'installation', act: 'View installation',
+      value: i.mode + ' · ' + i.version, problems: i.problems },
+    { label: 'Policy document', section: 'policy', act: 'Advanced editor',
+      aria: 'open the advanced policy editor',
+      value: o.policy.identity || 'None — the legacy settings apply',
+      help: o.legacy
+        ? 'Agents run; no named check or merge rule exists until a document declares one.'
+        : '',
+      problems: o.policy.problem ? [o.policy.problem] : [] },
+  ];
+  const recs = page.recommendations;
+  const urgent = recs.some(r => r.priority === 'high');
+  const recList = recs.map(r =>
+    `<div class="srec ${esc(r.priority)}">` +
+    `<div class="st"><span class="pri">${esc(r.priority)}</span>` +
+    `<strong>${esc(r.title)}</strong>${stateWord(r.state, states)}</div>` +
+    `<p>${esc(r.why)}</p>` +
+    `<p class="supply"><b>You supply:</b> ${esc(r.supply)}</p>` +
+    (r.prerequisites.length
+      ? `<p><b>First:</b> ${esc(r.prerequisites.join('; '))}</p>` : '') +
+    `<div class="acts">` +
+    `<button class="chip2" data-ssection="${esc(r.section)}" ` +
+    `aria-label="open the setting for ${esc(r.title)}">open the setting` +
+    `</button>` +
+    (r.setting ? `<span class="mono" style="color:var(--dim)">` +
+      `${esc(r.setting)}</span>` : '') + `</div></div>`).join('');
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">Current setup</span>` +
+    `<span class="r">${esc(page.location)}</span></div>` +
+    lines.map(l => sline({ ...l, states })).join('') + `</div>` +
+    (recs.length
+      ? `<details class="fold sref srecs"${urgent ? ' open' : ''}>` +
+        `<summary>Suggested next steps (${recs.length})</summary>` +
+        `<div class="srefbody">${recList}</div></details>`
+      : '') +
+    sref('What each state word means',
+      `<div class="skv">` + Object.entries(o.states).map(([w, why]) =>
+        `<dt>${esc(w)}</dt><dd>${esc(why)}</dd>`).join('') + `</div>`);
+}
+
+/* ── verification ─────────────────────────────────────────────────────── */
+
+function checkSummary(c) {
+  const bits = [`runs in the ${c.root} checkout`];
+  const scopes = Object.keys(c.scopes || {});
+  if (scopes.length) bits.push(`scopes ${scopes.join(', ')}`);
+  bits.push(c.intents.length ? `asked for by ${c.intents.join(', ')}`
+    : 'no launch intent may ask for it');
+  if (c.prepare.length) bits.push(`prepared by ${c.prepare.join(', ')}`);
+  bits.push(`${c.timeout}s limit`);
+  return bits.join(' · ');
+}
+
+function settingsVerification(page) {
+  const v = page.verification, states = page.states;
+  const ed = S.sedit && S.sedit.kind === 'check' ? (ensureDraft(page), S.sedit) : null;
+  const rows = v.checks.map(c => sline({
+    label: c.name, value: c.run, code: true, states, state: c.state,
+    // plain text, not markup: sline escapes every one of these fields
+    help: checkSummary(c),
+    title: 'executable ' + (c.executable || '') + ' · arguments ' +
+      JSON.stringify(c.argv) + ' · check identity ' +
+      String(c.checkId).slice(0, 14) + ' · ' + (c.rootWhy || ''),
+    // registered is not required, and neither is a pass: the chip says
+    // which, and the definition rides on its title
+    chips: c.requiredBy.length
+      ? `<span class="chip2 ok" title="a merge rule requires this check">` +
+        `required: ${esc(c.requirement.join(', '))}</span>`
+      : `<span class="chip2 dim" title="${esc(v.registrationIsNotRequirement)}">` +
+        `Optional</span>`,
+    edit: 'check', name: c.name, act: 'Edit', aria: 'edit the check ' + c.name,
+    after: ed && ed.anchor === c.name ? checkEditor(page, ed.index) : '',
+  })).join('');
+  const orphan = ed && !v.checks.some(c => c.name === ed.anchor)
+    ? checkEditor(page, ed.index) : '';
+  const steps = v.prepare.map(s => sline({
+    label: s.name, value: s.run, code: true,
+    help: (s.usedBy.length ? `prepares ${s.usedBy.join(', ')}`
+      : 'prepares nothing — no check references it') +
+      (s.network ? ' · uses the network, unbounded' : ''),
+  })).join('');
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">Checks</span>` +
+    `<span class="r">${v.checks.length} registered</span></div>` +
+    (v.problems.length ? v.problems.map(p =>
+      `<p class="bad">${esc(p.code)}${p.field ? ` (${esc(p.field)})` : ''} — ` +
+      `${esc(p.why)}</p>`).join('') : '') +
+    (v.checks.length ? rows
+      : `<p>No check is registered, so bench runs none of its own. An agent ` +
+        `saying the tests pass is then its own word, not evidence.</p>`) +
+    orphan +
+    `<div class="acts"><button class="chip2" data-sedit="new-check" ` +
+    `aria-label="add a check">Add a check</button>` +
+    `<button class="chip2" data-ssection="policy" aria-label="edit checks in ` +
+    `the advanced policy editor">Advanced editor</button></div></div>` +
+    (v.prepare.length
+      ? `<div class="panel"><div class="phead"><span class="label">Preparation` +
+        `</span><span class="r">${v.prepare.length}</span></div>` +
+        `<p>${esc(v.preparationIsNotVerification)}</p>` + steps + `</div>`
+      : '') +
+    sref(v.ownership,
+      `<p>${esc(v.ownershipDetail)}</p>` +
+      `<div class="skv">` + v.responsibilities.map(r =>
+        `<dt>${esc(r.who)}</dt><dd>${esc(r.what)}</dd>`).join('') + `</div>` +
+      `<p>${esc(v.registrationIsNotRequirement)}</p>` +
+      `<p>${esc(v.evidenceScope)}</p>`) +
+    sref('Where a check runs — a location, not a sandbox',
+      `<div class="skv">` + Object.entries(v.roots).map(([w, why]) =>
+        `<dt>${esc(w)}</dt><dd>${esc(why)}</dd>`).join('') + `</div>` +
+      `<p>${esc(v.rootsNote)}</p>` +
+      `<ul>${v.trustLimits.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` +
+      `<p>The environment a check is not given:</p>` +
+      `<pre>${esc(v.envDenied.join('\n'))}</pre>`) +
+    sref('A worked example, and what to ask a developer for',
+      `<p>${esc(v.example.why)}</p>` +
+      `<pre>${esc(JSON.stringify(v.example.document, null, 2))}</pre>` +
+      `<p>${esc(v.example.then)}</p>` +
+      `<ul>${v.checklist.map(c => `<li>${esc(c)}</li>`).join('')}</ul>`);
+}
+
+/* ── acceptance, reviews and overrides ────────────────────────────────── */
+
+function settingsAcceptance(page) {
+  const a = page.acceptance, states = page.states;
+  const ed = S.sedit && S.sedit.kind !== 'check' ? (ensureDraft(page), S.sedit) : null;
+  const anyGated = Object.values(a.policy.scopes).some(e => e.gated);
+  const scopes = Object.entries(a.policy.scopes).map(([scope, entry]) => sline({
+    label: SCOPE_LABEL[scope] || scope, sub: scope, states,
+    value: (entry.checks.length
+      ? entry.checks.map(c => c.requirement).join(', ') : 'No check required') +
+      ' · review: ' + entry.review,
+    help: a.scopes[scope] || entry.why,
+    title: entry.reviewWhy || '',
+    state: entry.gated ? 'configured-untested' : 'not-configured',
+    // ungated wears the dim register and the definition on its title —
+    // never the colour of a pass
+    chips: `<span class="chip2 ${entry.gated ? 'ok' : 'dim'}" ` +
+      `title="${esc(entry.gated ? 'this mutation is gated' : a.ungatedIsNotAPass)}">` +
+      `${entry.gated ? 'gated' : 'ungated'}</span>`,
+    edit: 'gate', name: scope, act: 'Edit', aria: `edit the ${scope} merge rule`,
+    after: ed && ed.kind === 'gate' && ed.scope === scope ? gateEditor(page, scope) : '',
+  })).join('');
+  const over = a.overrides;
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">Merge rules</span>` +
+    `<span class="r">${esc(a.state)}</span></div>` +
+    (a.policy.blockers.length
+      ? a.policy.blockers.map(b => `<p class="bad">${esc(b)}</p>`).join('')
+      : '') +
+    // the one limitation that changes what a merge means, kept in view
+    (!anyGated ? `<p class="snote">${esc(a.ungatedIsNotAPass)}</p>` : '') +
+    scopes +
+    sline({ label: 'Overrides', states,
+      value: over.allowed
+        ? (over.actors.length ? `Allowed for ${over.actors.join(', ')}` : 'Allowed for anyone')
+        : 'Off',
+      help: over.allowed ? 'Recorded against one commit; never a pass.'
+        : 'An unmet merge rule stays unmet.',
+      edit: 'overrides', act: 'Edit', aria: 'edit the override policy',
+      after: ed && ed.kind === 'overrides' ? overridesEditor(page) : '' }) +
+    `</div>` +
+    settingsCi(page) +
+    sref('Review policies, and which this board can read',
+      a.reviewModes.map(m => sline({ label: m.name,
+        value: m.available ? 'Offered' : 'Unavailable here',
+        help: m.unavailableWhy || m.why })).join('') +
+      `<p>${esc(a.sameAccount)}</p>` +
+      `<p>${esc(a.outstandingChanges)}</p>` +
+      `<p>${esc(a.notBranchProtection)}</p>`) +
+    sref('How evidence is bound to the commit that merges',
+      `<p>${esc(a.headBinding)}</p><p>${esc(a.coverage)}</p>` +
+      `<p>${esc(a.supersede)}</p>` +
+      `<pre>${esc(Object.entries(a.reasons)
+        .map(([k, why]) => `${k}\n  ${why}\n  remedy: ${a.remedies[k] || '—'}`)
+        .join('\n\n'))}</pre>` +
+      `<pre>${esc(Object.entries(a.decisions)
+        .map(([k, why]) => `${k}\n  ${why}`).join('\n\n'))}</pre>`) +
+    sref('What an override records',
+      `<p>${esc(over.why)}</p><p>${esc(a.overrideLaw)}</p>`);
+}
+
+/* Bench-run checks, external CI and review — three things one green tick
+   would collapse. The same project test program can feed the first two,
+   which is exactly why each keeps a row of its own. */
+function settingsCi(page) {
+  const c = page.ci;
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">Three separate signals</span>` +
+    `<span class="r">green CI is not a Bench check</span></div>` +
+    Object.values(c.kinds).map(k => sline({ label: k.label, value: k.who,
+      help: k.what, title: 'authority: ' + k.authority,
+      chips: `<span class="chip2 ${k.gateable ? '' : 'dim'}" ` +
+        `title="${esc(k.gateable ? 'a merge rule can require this'
+                                 : 'a merge rule cannot require this')}">` +
+        `${k.gateable ? 'can gate' : 'cannot gate'}</span>` })).join('') +
+    `<p>External CI is polled every ${esc(String(c.ci.interval))}s; ` +
+    `gh ${c.ci.ghAvailable ? 'is available' : 'is not available here'}.</p>` +
+    sref('What these signals cannot stand in for',
+      `<p>${esc(c.ci.why)}</p>` +
+      `<ul>${c.limits.map(l => `<li>${esc(l)}</li>`).join('')}</ul>` +
+      `<p>${esc(c.noDeployment)}</p>` +
+      `<pre>${esc(c.followUp.join('\n\n'))}</pre>`) +
+    `</div>`;
+}
+
+/* ── agent access ─────────────────────────────────────────────────────── */
+
+function settingsAccess(page) {
+  const a = page.access, states = page.states;
+  const intents = Object.entries(a.intents).map(([intent, found]) => {
+    if (found.error) {
+      return `<div class="srow"><span class="sname">${esc(intent)}</span>` +
+        `<span class="sdetail bad">${esc(found.error)}</span></div>`;
+    }
+    const s = found.summary || {};
+    const iso = found.isolation || {};
+    return `<div class="srow sline"><span class="sname">${esc(intent)}</span>` +
+      `<span class="sval" title="${esc(`grants: ${(found.commands || []).length
+        ? found.commands.map(g => g.name).join(', ') : 'none'} · denied: ` +
+        `${(found.denied || []).length
+          ? found.denied.map(d => d.capability).join(', ') : 'nothing'}`)}">` +
+      `works in <b>${esc((found.cwd || {}).policy || '—')}</b> · ` +
+      `${(found.commands || []).length} grant` +
+      `${(found.commands || []).length === 1 ? '' : 's'} · ` +
+      `checks: ${(s.checks || []).length ? esc(s.checks.join(', ')) : 'none'} · ` +
+      `inputs: ${(found.context || []).length
+        ? esc(found.context.map(i => `${i.name} (${i.status})`).join(', '))
+        : 'none'}` +
+      // the headline and the retraction in one line, never a headline
+      // that reads as a boundary with the caveat folded away below it
+      `<span class="shelp">intended writes: ${(found.writable || []).length
+        ? esc(found.writable.map(w => w.root || w.path || '').join(', '))
+        : 'nothing'} · OS isolation: ${esc(iso.enforced
+        ? 'enforced by ' + (iso.by || 'the backend')
+        : 'none enforced')}</span></span>` +
+      `<span class="sright">${stateWord(found.state, states)}` +
+      (found.blockers && found.blockers.length
+        ? `<span class="chip2 bad" title="${esc(found.blockers[0])}">` +
+          `will not start</span>` : '') + `</span></div>` +
+      ((found.fields || []).filter(f => f.why).length
+        ? (found.fields || []).filter(f => f.why).map(f =>
+            `<p class="bad sprob">${esc(f.code)}` +
+            `${f.field ? ` (${esc(f.field)})` : ''} — ${esc(f.why)}` +
+            `${f.remedy ? ` <i>${esc(f.remedy)}</i>` : ''}</p>`).join('')
+        : '');
+  }).join('');
+  const frozen = a.frozen.length ? a.frozen.map(f =>
+    `<div class="srow"><span class="sname">${esc(f.name || f.agent)}</span>` +
+    `<span class="sdetail">${esc(f.mode || '')} on ${esc(f.task || '—')} · ` +
+    `policy <code>${esc(String(f.policyId).slice(0, 14))}</code>` +
+    (f.freshness && f.freshness.fresh === false
+      ? `<br><b>the settings have moved since it launched; this run keeps ` +
+        `what it rode</b> — ${esc((f.freshness.changed || []).join('; '))}`
+      : '') + `</span></div>`).join('')
+    : `<p>No run is in flight.</p>`;
+  // said once for the section rather than once per profile: it is the
+  // same adapter, and the same answer, for all three
+  const isoWhy = Object.values(a.intents).map(f => (f.isolation || {}).why)
+    .find(Boolean);
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">Profiles</span>` +
+    `<span class="r">${esc(a.adapter.name)} ${esc(a.adapter.version || '')}` +
+    `</span></div>` +
+    (isoWhy ? `<p class="snote">${esc(isoWhy)}</p>` : '') + intents +
+    `<div class="acts"><button class="chip2" data-ssection="policy" ` +
+    `aria-label="edit what a run may do">edit what a run may do</button>` +
+    `</div></div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Runs in flight</span>` +
+    `<span class="r">frozen, not current</span></div>` + frozen + `</div>` +
+    sref('Four different facts: configured is not enforced',
+      `<div class="skv">` + Object.entries(a.facts).map(([k, why]) =>
+        `<dt>${esc(k)}</dt><dd>${esc(why)}</dd>`).join('') + `</div>`) +
+    // Four words and never a fifth: `enforced`, `prefix-allowlist`,
+    // `prompt-only`, `pending`. The server's own table, named party
+    // included — the page does not decide how strongly anything holds.
+    sref(`What is actually enforced, and by whom ` +
+      `(${Object.keys(a.capabilities).length} capabilities)`,
+      `<div class="skv">` + Object.entries(a.capabilities).map(([name, cap]) =>
+        `<dt>${esc(name)}</dt><dd>${esc(cap.enforcement)} — by ` +
+        `${esc(cap.by || 'nothing')}<span class="why">${esc(cap.why || '')}` +
+        `</span></dd>`).join('') + `</div>` +
+      ((a.adapter.unsupported || []).length
+        ? `<p>The installed adapter declares these unsupported, in those ` +
+          `words: <code>${esc(a.adapter.unsupported.join(', '))}</code>. A ` +
+          `profile that <i>requires</i> one is refused rather than reported ` +
+          `as honoured — there is no pretend switch for it here.</p>` : '')) +
+    sref(`The board's own $ commands (${a.uiCommands.length})`,
+      a.uiCommands.length
+        ? a.uiCommands.map(c => sline({ label: c.name, value: c.help || '',
+            chips: `<span class="chip2 dim" ` +
+              `title="${esc(a.facts['ui-registration'])}">no agent grant</span>` }))
+            .join('')
+        : `<p>None registered.</p>`);
+}
+
+/* ── check configuration and diagnostics ──────────────────────────────── */
+
+function settingsDiagnostics(page) {
+  const d = page.diagnostics;
+  const report = S.doctor && S.doctor.report;
+  const findings = report
+    ? (report.findings.length
+        ? report.findings.map(f => {
+            const cls = f.outcome === 'failed' ? 'bad'
+              : f.outcome === 'passed' ? 'ok' : 'dim';
+            return `<div class="srow"><span class="sname">${esc(f.name)}` +
+              `${f.intent ? ` · ${esc(f.intent)}` : ''}</span>` +
+              `<span class="sdetail">${esc(f.about)}<br>${esc(f.detail)}` +
+              (f.remedy ? `<br><b>Remedy:</b> ${esc(f.remedy)}` : '') +
+              `</span><span class="sright">` +
+              `<span class="chip2 ${cls}">${esc(f.outcome)}</span>` +
+              `<span class="mono" style="color:var(--dim)" ` +
+              `title="${esc((d.evidence[f.evidence] || {}).proves || '')}">` +
+              `${esc(f.evidence)}</span>` +
+              (f.code ? `<span class="mono" style="color:var(--dim)">` +
+                `${esc(f.code)}</span>` : '') + `</span></div>`;
+          }).join('')
+        : `<p>The inspection found nothing to report.</p>`)
+    : '';
+  const stages = d.coverage.map(row => {
+    const mode = d.modes[row.mode];
+    const ran = report ? report.ran.includes(row.mode) : false;
+    const path = mode.uiPath || {};
+    return `<div class="srow sline"><span class="sname">${esc(mode.label)}</span>` +
+      `<span class="sval">${esc(mode.does)}` +
+      // what an armed stage would do stays beside its control
+      ((mode.sideEffects || []).length
+        ? `<span class="shelp"><b>side effects:</b> ` +
+          `${esc(mode.sideEffects.join('; '))}</span>` : '') +
+      (path.available
+        ? (row.mode === 'inspect' ? '' : `<span class="shelp">${esc(path.how)}` +
+            `${path.approval ? ` (${esc(path.approval)})` : ''}</span>`)
+        : `<span class="shelp"><b>no control here.</b> ${esc(path.how || '')}` +
+          `${path.approval ? ` — ${esc(path.approval)}` : ''}</span>`) +
+      `<details class="fold"><summary>what it proves</summary>` +
+      `<p><b>proves:</b> ${esc(row.proves)}</p>` +
+      `<p><b>does not prove:</b> ${esc(row.doesNotProve)}</p></details>` +
+      `</span><span class="sright">` +
+      `<span class="chip2 ${ran ? 'ok' : 'dim'}">` +
+      `${ran ? 'run in this reading' : 'not asked'}</span>` +
+      (path.available && row.mode !== 'inspect'
+        ? `<button class="chip2" data-sdoctor="${esc(row.mode)}" ` +
+          `aria-label="run ${esc(mode.label)}">` +
+          `${actLabel('run it', 'run it?', 'running…')}</button>`
+        : row.mode === 'inspect'
+          ? `<button class="chip2" data-sinspect="1" ` +
+            `aria-label="check configuration">check configuration</button>`
+          : `<span class="chip2 dim" title="${esc(path.approval || '')}">` +
+            `not offered here</span>`) +
+      `</span></div>`;
+  }).join('');
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">Check configuration</span>` +
+    `<span class="r">${report ? 'read ' + esc(fmtShort(report.generated))
+                              : 'Not inspected'}</span></div>` +
+    `<p>Read-only: resolves the policy and reads the approved inputs. ` +
+    `No project program runs and nothing is spent.</p>` +
+    (report && report.summary.failed
+      ? `<p class="bad">${esc(report.summary.line)}</p>`
+      : report ? `<p>${esc(report.summary.line)}</p>` : '') +
+    `<div class="acts"><button class="chip2" data-sinspect="1" ` +
+    `aria-label="check configuration now">Check configuration</button></div>` +
+    findings + `</div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Stages</span>` +
+    `<span class="r">inspection is not execution</span></div>` +
+    `<p>${esc(d.unknownIsNotPassed)}</p>` + stages + `</div>` +
+    sref('What inspection is, and what it cannot do',
+      `<p>${esc(d.inspectIs)}</p>` +
+      `<p>Read-only inspection cannot: ${esc(d.cannot.join(', '))}.</p>`) +
+    sref('Every diagnostic bench can produce, and its remedy',
+      `<pre>${esc(Object.entries(d.diagnosticCodes)
+        .map(([code, x]) => `${code}\n  ${x.title}\n  ${x.remedy}`)
+        .join('\n\n'))}</pre>`) +
+    sref('What a diagnosis withholds',
+      `<pre>${esc(Object.entries(d.redaction)
+        .map(([k, why]) => `${k}: ${why}`).join('\n\n'))}</pre>`);
+}
+
+function wireDiagnostics() {
+  const body = $('#sbody');
+  body.querySelectorAll('[data-sdoctor]').forEach(btn => {
+    const mode = btn.dataset.sdoctor;
+    const spec = (S.settings.page.diagnostics.modes || {})[mode] || {};
+    wireAction(btn, `${BOARD_ACT}settings-doctor::${mode}`, {
+      label: spec.label || mode, confirm: 'run it?', busy: 'running…',
+      run: () => settingsDoctorRun(mode),
+    });
+  });
+}
+
+/* The read-only action, under its decided name. It is a GET of the
+   doctor's own report with no mode named, which is inspection: the policy
+   resolved for every intent, the approved inputs read, bench's own broken
+   fixtures through the same resolver. No project program, no adapter hook,
+   no model, nothing pinned. */
+async function inspectConfiguration() {
+  S.settingsSection = 'diagnostics';
+  S.doctorReading = true;
+  renderSettings();
+  try {
+    const res = await fetch('/api/doctor');
+    const data = await res.json();
+    if (res.ok && data.doctor) {
+      S.doctor = { at: Date.now(), report: data.doctor };
+      renderDoctor();
+    } else {
+      toast(data.error || 'the configuration could not be inspected', true);
+    }
+  } catch (e) {
+    toast(e.message || 'the board could not be asked', true);
+  } finally {
+    S.doctorReading = false;
+    renderSettings();
+  }
+}
+
+/* The executing stages, which are a different thing and say so. Each one
+   is armed, names its side effects beside it, and goes through the board's
+   existing `/api/doctor/run` — this page invents no run endpoint. */
+async function settingsDoctorRun(mode) {
+  try {
+    const res = await fetch('/api/doctor/run', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modes: [mode] }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.doctor) {
+      toast(data.error || 'the stage could not be run', true);
+      return false;
+    }
+    S.doctor = { at: Date.now(), report: data.doctor };
+    renderDoctor();
+    renderSettings();
+    return true;
+  } catch (e) {
+    toast(e.message || 'the board could not be asked', true);
+    return false;
+  }
+}
+
+/* ── installation and configuration sources ───────────────────────────── */
+
+const SOURCE_WORD = { environment: 'environment', 'local-file': 'local .env',
+                      default: 'default' };
+
+function settingsInstallation(page) {
+  const i = page.installation;
+  const app = i.git.application, work = i.git.workState;
+  // the provenance and restart rule most rows share is said once, and a
+  // row says only where it differs
+  const restarts = page.settings.filter(s => s.appliesAt === 'restart').length;
+  const common = restarts * 2 >= page.settings.length ? 'restart' : 'fresh';
+  const commonWhy = (page.settings.find(s => s.appliesAt === common) || {}).appliesWhy;
+  const rows = page.settings.map(s => sline({
+    label: s.key, code: true,
+    value: (s.value || '(empty)') + (s.redacted ? ' (redacted)' : ''),
+    // plain text, not markup: sline escapes every one of these fields
+    help: s.why + (s.source !== 'default' && s.default !== s.value
+      ? ' · default ' + (s.default || '(empty)') : ''),
+    title: s.how,
+    chips: `<span class="chip2 ${s.locked ? 'bad' : 'dim'}" ` +
+      `title="${esc(s.how)}">${esc(SOURCE_WORD[s.source] || s.source)}` +
+      `${s.locked ? ' · locked' : ''}</span>` +
+      (s.appliesAt !== common
+        ? `<span class="chip2" title="${esc(s.appliesWhy)}">` +
+          `${s.appliesAt === 'fresh' ? 'no restart' : 'needs restart'}</span>` : ''),
+    problems: s.running !== null
+      ? ['the running board has ' + s.running + ' — the file has moved since it started']
+      : [],
+  })).join('');
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">This installation</span>` +
+    `<span class="r">${esc(i.mode)}</span></div>` +
+    (i.problems.length
+      ? i.problems.map(p => `<p class="bad">${esc(p)}</p>`).join('') : '') +
+    `<div class="skv">` +
+    `<dt>build</dt><dd>${esc(i.version)}</dd>` +
+    `<dt>source revision</dt><dd>` +
+    (i.revisionKnown
+      ? `<code>${esc(i.revision)}</code>` +
+        (i.described ? `<span class="why">${esc(i.described)}</span>` : '')
+      : `unknown<span class="why">${esc(i.revisionWhy)}</span>`) + `</dd>` +
+    `<dt>mode</dt><dd>${esc(i.mode)}<span class="why">${esc(i.modeWhy)}` +
+    `</span></dd>` +
+    `<dt>application</dt><dd>base ${esc(app.base)} · remote ` +
+    `${esc(app.remote || 'none')} · merges ` +
+    `${app.mergeOnOrigin ? 'on origin' : 'locally'} · gh ` +
+    `${app.ghAvailable ? 'available' : 'unavailable'}</dd>` +
+    `<dt>work state</dt><dd>${work.repo
+      ? `base ${esc(work.base)} · remote ${esc(work.remote || 'none')}`
+      : 'no repository — the board will not commit here'}</dd>` +
+    `<dt>sync</dt><dd>${i.sync.enabled ? 'on' : 'off'} · moves ` +
+    `${i.sync.commitMoves ? 'commit themselves' : 'do not commit'}</dd>` +
+    `</div>` +
+    ((i.sync.status.notes || []).length
+      ? (i.sync.status.notes || []).map(n =>
+          `<p class="bad">${esc(n.summary || '')}</p>`).join('') : '') +
+    `</div>` +
+    `<div class="panel"><div class="phead">` +
+    `<span class="label">Settings</span>` +
+    `<span class="r">read-only here</span></div>` +
+    `<p class="snote">Each value comes from the process environment, else ` +
+    `<code>manager/local/.env</code>, else its default; change it where it ` +
+    `is set. Unless a row says otherwise, ${esc(commonWhy || '')}.</p>` + rows +
+    sref('Why these are not edited on this page',
+      `<p>${esc(page.editing.envIsReadOnly)}</p>`) + `</div>` +
+    sref('Roots and repositories, with their paths',
+      `<div class="skv">` + i.roots.map(r =>
+        `<dt>${esc(r.name)}</dt><dd><code>${esc(r.path)}</code>` +
+        `<span class="why">${esc(r.holds)}</span></dd>`).join('') +
+      `<dt>application repo</dt><dd><code>${esc(app.repo)}</code>` +
+      `<span class="why">${esc(app.what)}</span></dd>` +
+      `<dt>work-state repo</dt><dd><code>${esc(work.repo || 'none')}</code>` +
+      `<span class="why">${esc(work.what)}</span></dd></div>` +
+      `<p>${esc(i.sync.what)}</p>`) +
+    sref('What stays local, and what is shared',
+      `<pre>${esc([
+        ...i.localOnly.map(x => `local: ${x.what}\n  ${x.why}`),
+        ...i.shared.map(x => `shared: ${x.what}\n  ${x.why}`)].join('\n\n'))}</pre>`) +
+    sref('Operations this page does not perform',
+      `<div class="skv">` + i.separateOperations.map(o =>
+        `<dt>${esc(o.what)}</dt><dd>${esc(o.where)}</dd>`).join('') + `</div>`);
+}
+
+/* ── one draft: the contextual editors and the advanced one ────────────── */
+
+/* The draft every editor on this page writes into. There is one, so an
+   edit started in Checks, carried on in Merge rules and finished in the
+   advanced editor is one change — validated, previewed and applied once,
+   through the same four steps, of which only the last one writes. */
+function ensureDraft(page) {
+  const d = page.editing.draft;
+  if (!S.draft) {
+    S.draft = { document: JSON.parse(JSON.stringify(d.document)),
+                revision: d.revision, checked: null, preview: null,
+                dirty: false, raw: null };
+  }
+  return S.draft;
+}
+
+/* Opening a contextual editor. A check is edited at its index in the
+   document as written; one that is not there (an invalid document, or a
+   check resolved from a command grant) goes to the advanced editor rather
+   than being edited somewhere it does not live. */
+function openEditor(page, kind, name) {
+  const draft = ensureDraft(page);
+  if (kind === 'check') {
+    const index = (draft.document.checks || []).findIndex(c => c && c.name === name);
+    if (index < 0) {
+      toast(`${name} is not declared as a check in the document — edit it in ` +
+            `the advanced editor`, true);
+      S.settingsSection = 'policy';
+      renderSettings();
+      return;
+    }
+    S.sedit = { kind, index, anchor: name };
+  } else if (kind === 'new-check') {
+    const list = draft.document.checks = draft.document.checks || [];
+    list.push({ name: '', run: '', root: 'worktree' });
+    if (!draft.document.v) draft.document.v = page.editing.draft.schemaVersion;
+    draft.dirty = true;
+    draft.checked = null;
+    draft.preview = null;
+    S.sedit = { kind: 'check', index: list.length - 1, anchor: null };
+  } else if (kind === 'overrides') {
+    S.sedit = { kind };
+  } else {
+    S.sedit = { kind, scope: name };
+  }
+  renderSettings();
+  requestAnimationFrame(() => {
+    const first = document.querySelector('#s-editor [data-field]');
+    if (first) first.focus();
+  });
+}
+
+function errorLines(errs) {
+  return errs.map(e =>
+    `<p class="ferr"><span class="fld">${esc(e.code || '')}</span> ` +
+    `${esc(e.why || '')}${e.remedy ? ` <i>${esc(e.remedy)}</i>` : ''}</p>`)
+    .join('');
+}
+
+function draftErrors(keep) {
+  return ((S.draft.checked && S.draft.checked.errors) || []).filter(keep);
+}
+
+/* The four steps, wherever the draft is being edited. `here` is the
+   caller's own share of the field errors, drawn at its fields; the bar
+   draws every other one, so an error is never hidden because it belongs
+   to a part of the document that is not on screen. */
+function draftBar(page, here) {
+  const draft = S.draft;
+  const errs = (draft.checked && draft.checked.errors) || [];
+  const ok = !!(draft.checked && draft.checked.ok);
+  const elsewhere = errs.filter(e => !here(e));
+  return `<div class="acts" id="s-steps">` +
+    `<button class="chip2" id="s-validate" aria-label="validate the draft">` +
+    `Validate</button>` +
+    `<button class="chip2" id="s-preview" aria-label="preview the change">` +
+    `Preview</button>` +
+    `<button class="chip2 ${ok ? 'ok' : 'dim'}" id="s-apply" ` +
+    `aria-label="apply the change"${ok ? '' : ' disabled'}>` +
+    `${actLabel('Apply', 'write it?', 'writing…')}</button>` +
+    `<button class="chip2" id="s-discard" aria-label="discard the draft">` +
+    `Discard draft</button>` +
+    (S.sedit && S.settingsSection !== 'policy'
+      ? `<button class="chip2" id="s-close" aria-label="close the editor and ` +
+        `keep the draft">Close</button>` : '') +
+    `<span class="mono" style="color:var(--dim)">revision ` +
+    `${esc((draft.revision || 'none').slice(0, 12))}` +
+    `${draft.dirty ? ' · edited' : ''}</span></div>` +
+    (draft.checked
+      ? (ok
+          ? `<p>The draft validates. Nothing has been written.</p>`
+          : `<p class="bad">${errs.length} thing` +
+            `${errs.length === 1 ? '' : 's'} would be refused. Nothing has ` +
+            `been written.</p>`)
+      : `<p>Not validated yet. Apply stays unavailable until a validation ` +
+        `of this draft comes back clean.</p>`) +
+    errorLines(elsewhere) + draftConsequences();
+}
+
+/* What applying would change: two resolutions compared by the server,
+   never a prediction made here. */
+function draftConsequences() {
+  const draft = S.draft;
+  if (!draft.preview) {
+    return `<p>Nothing has been previewed. <b>Preview</b> compares the draft ` +
+      `with what is in force and writes nothing.</p>`;
+  }
+  return `<div class="s-conseq"><div class="phead">` +
+    `<span class="label">If you apply</span>` +
+    `<span class="r">${draft.preview.changes.length} change` +
+    `${draft.preview.changes.length === 1 ? '' : 's'}</span></div>` +
+    (draft.preview.changes.length
+      ? `<div class="s-diff">` + draft.preview.changes.map(c =>
+          `<div class="d"><span class="k">${esc(c.kind)}</span>` +
+          `<span>${esc(c.what)} — ${esc(c.detail)}` +
+          (c.before !== undefined
+            ? `<br><span class="mono" style="color:var(--dim)">` +
+              `before ${esc(JSON.stringify(c.before))} → after ` +
+              `${esc(JSON.stringify(c.after))}</span>` : '') +
+          `</span></div>`).join('') + `</div>`
+      : `<p>Nothing would change.</p>`) +
+    `<p>${esc(draft.preview.evidence.why)}` +
+    (draft.preview.evidence.invalidated.length
+      ? ` (${draft.preview.evidence.count} recorded pass` +
+        `${draft.preview.evidence.count === 1 ? '' : 'es'} affected)` : '') +
+    `</p>` +
+    (draft.preview.pending.length
+      ? `<p class="bad">Cards waiting in review/ whose merge decision ` +
+        `would change: ` + esc(draft.preview.pending.map(p =>
+          p.file + ' (' + p.before + ' → ' + p.after + ')').join('; ')) +
+        `</p>`
+      : `<p>No card waiting in review/ changes its merge decision.</p>`) +
+    `<ul>${draft.preview.sideEffects.map(e =>
+      `<li>${esc(e)}</li>`).join('')}</ul></div>`;
+}
+
+/* The review requirement for one gate scope, with the policies this board
+   cannot enforce offered disabled and saying why. */
+function reviewSelect(page, scope, chosen) {
+  return `<div class="frow"><label for="f-gates:${esc(scope)}:review">review` +
+    `</label><select id="f-gates:${esc(scope)}:review" ` +
+    `data-field="gates:${scope}:review" aria-label="${esc(scope)} review ` +
+    `requirement">` + page.acceptance.reviewModes.map(m => {
+      const word = m.name;
+      return `<option value="${esc(word)}"` +
+        `${chosen === word ? ' selected' : ''}` +
+        `${m.available ? '' : ' disabled'}>${esc(word)}` +
+        `${m.available ? '' : ' — not available on this board'}</option>`;
+    }).join('') + `</select></div>`;
+}
+
+function draftCheckNames() {
+  return (S.draft.document.checks || [])
+    .map(c => String((c || {}).name || '')).filter(Boolean);
+}
+
+/* Editing one check where it is listed: its own fields, which launch
+   intents may ask for it, the refusals about it at the fields, and the
+   shared step bar. */
+function checkEditor(page, n) {
+  const c = (S.draft.document.checks || [])[n] || {};
+  const name = String(c.name || '');
+  const mine = (e) => ['checks', 'profiles', 'prepare'].includes(e.field || '-')
+    && (!name || String(e.why || '').includes(`'${name}'`));
+  return `<div class="item s-edit s-inline" id="s-editor" role="group" ` +
+    `aria-label="${esc(name ? `edit the check ${name}` : 'a new check')}">` +
+    `<div class="ihead"><span class="label">` +
+    `${esc(name ? `Editing ${name}` : 'New check')}</span>` +
+    `<button class="chip2 bad" data-drop="checks:${n}" ` +
+    `aria-label="remove this check from the draft">remove</button></div>` +
+    errorLines(draftErrors(mine)) +
+    `<div class="fgrid">` +
+    field(`checks:${n}:name`, 'name', c.name || '') +
+    field(`checks:${n}:run`, 'command', c.run || '') +
+    select(`checks:${n}:root`, 'runs in', c.root || 'worktree',
+           Object.keys(page.verification.roots)) +
+    field(`checks:${n}:timeout`, 'timeout (s)',
+          c.timeout === undefined ? '' : String(c.timeout), 'number') +
+    field(`checks:${n}:prepare`, 'preparation steps (comma separated)',
+          (c.prepare || []).join(', ')) +
+    field(`checks:${n}:scopes`, 'scopes (one per line: name = arg arg)',
+          Object.entries(c.scopes || {})
+            .map(([w, a]) => `${w} = ${(a || []).join(' ')}`).join('\n'), 'area') +
+    `</div>` +
+    (name
+      ? `<p>Which launches may ask bench to run it:</p>` +
+        ['work', 'act-pr', 'review'].map(intent => {
+          const want = ((((S.draft.document.profiles || {})[intent]) || {})
+            .verify || []).map(String);
+          return checkbox(`profiles:${intent}:verify:${name}`, intent,
+                          want.includes(name));
+        }).join('')
+      : `<p>Name the check, then choose which launches may ask for it.</p>`) +
+    draftBar(page, mine) + `</div>`;
+}
+
+/* Editing one merge rule where it is listed. A requirement on a declared
+   scope is kept as written — see writeField — and labelled with it. */
+function gateEditor(page, scope) {
+  const gate = ((S.draft.document.gates || {})[scope]) || {};
+  const entries = gate.checks || [];
+  const want = entries.map(c => typeof c === 'string' ? c : String((c || {}).check || ''));
+  const names = draftCheckNames();
+  const mine = (e) => (e.field || '-') === 'gates';
+  return `<div class="item s-edit s-inline" id="s-editor" role="group" ` +
+    `aria-label="${esc(`edit the ${scope} merge rule`)}">` +
+    `<div class="ihead"><span class="label">` +
+    `${esc(`Editing ${SCOPE_LABEL[scope] || scope}`)}</span></div>` +
+    errorLines(draftErrors(mine)) +
+    (names.length
+      ? names.map(name => {
+          const entry = entries[want.indexOf(name)];
+          // plain text: checkbox() escapes its label
+          const coverage = entry && typeof entry === 'object' && entry.scope
+            ? ' (scope ' + entry.scope + ')' : want.includes(name) ? ' (full run)' : '';
+          return checkbox(`gates:${scope}:checks:${name}`,
+                          'require ' + name + coverage, want.includes(name));
+        }).join('')
+      : `<p>No check is declared, so this rule can require none. Add one in ` +
+        `Checks first.</p>`) +
+    reviewSelect(page, scope, gate.review || 'none') +
+    draftBar(page, mine) + `</div>`;
+}
+
+function overridesEditor(page) {
+  const over = ((S.draft.document.gates || {}).overrides) || {};
+  const mine = (e) => (e.field || '-') === 'gates';
+  return `<div class="item s-edit s-inline" id="s-editor" role="group" ` +
+    `aria-label="edit the override policy">` +
+    `<div class="ihead"><span class="label">Editing overrides</span></div>` +
+    errorLines(draftErrors(mine)) +
+    checkbox('gates:overrides:allow', 'allow an unmet merge rule to be ' +
+             'proceeded over, on the record', over.allow === true) +
+    field('gates:overrides:actors', 'restricted to these git identities ' +
+          '(comma separated; empty means any)', (over.actors || []).join(', ')) +
+    draftBar(page, mine) + `</div>`;
+}
+
+/* ── the advanced editor: the whole document ───────────────────────────── */
+
+function settingsPolicy(page) {
+  const d = page.editing.draft;
+  const draft = ensureDraft(page);
+  const errs = (draft.checked && draft.checked.errors) || [];
+  const byField = (field) => errs.filter(e => (e.field || '') === field);
+  const fieldErrors = (field) => errorLines(byField(field));
+  const names = draftCheckNames();
+  // the panels below draw these at their fields; the bar draws the rest
+  const shown = (e) => ['checks', 'prepare', 'profiles', 'gates'].includes(e.field || '');
+
+  const checkItems = (draft.document.checks || []).map((c, n) =>
+    `<div class="item"><div class="ihead"><span class="label">check ${n + 1}` +
+    `</span><button class="chip2 bad" data-drop="checks:${n}" ` +
+    `aria-label="remove check ${n + 1}">remove</button></div>` +
+    `<div class="fgrid">` +
+    field(`checks:${n}:name`, 'name', (c || {}).name || '') +
+    field(`checks:${n}:run`, 'command', (c || {}).run || '') +
+    select(`checks:${n}:root`, 'runs in', (c || {}).root || 'worktree',
+           Object.keys(page.verification.roots)) +
+    field(`checks:${n}:timeout`, 'timeout (s)',
+          (c || {}).timeout === undefined ? '' : String(c.timeout), 'number') +
+    field(`checks:${n}:prepare`, 'preparation steps (comma separated)',
+          ((c || {}).prepare || []).join(', ')) +
+    field(`checks:${n}:scopes`, 'scopes (one per line: name = arg arg)',
+          Object.entries((c || {}).scopes || {})
+            .map(([w, a]) => `${w} = ${(a || []).join(' ')}`).join('\n'),
+          'area') +
+    `</div></div>`).join('');
+
+  const stepItems = (draft.document.prepare || []).map((p, n) =>
+    `<div class="item"><div class="ihead"><span class="label">step ${n + 1}` +
+    `</span><button class="chip2 bad" data-drop="prepare:${n}" ` +
+    `aria-label="remove preparation step ${n + 1}">remove</button></div>` +
+    `<div class="fgrid">` +
+    field(`prepare:${n}:name`, 'name', (p || {}).name || '') +
+    field(`prepare:${n}:run`, 'command', (p || {}).run || '') +
+    checkbox(`prepare:${n}:network`, 'needs the network',
+             (p || {}).network === true) +
+    `</div></div>`).join('');
+
+  const intentItems = page.overview.policy.kind !== null
+    ? ['work', 'act-pr', 'review'].map(intent => {
+        const prof = ((draft.document.profiles || {})[intent]) || {};
+        const want = (prof.verify || []).map(String);
+        return `<div class="item"><div class="ihead">` +
+          `<span class="label">${esc(intent)}</span></div>` +
+          (names.length
+            ? names.map(name => checkbox(
+                `profiles:${intent}:verify:${name}`,
+                `may ask bench to run ${name}`, want.includes(name))).join('')
+            : `<p>No check is declared yet, so there is nothing for this ` +
+              `intent to ask for.</p>`) + `</div>`;
+      }).join('')
+    : '';
+
+  const gateItems = Object.keys(page.acceptance.scopes).map(scope => {
+    const gate = ((draft.document.gates || {})[scope]) || {};
+    const want = (gate.checks || []).map(c =>
+      typeof c === 'string' ? c : String((c || {}).check || ''));
+    return `<div class="item"><div class="ihead">` +
+      `<span class="label">${esc(SCOPE_LABEL[scope] || scope)}</span>` +
+      `<span class="mono" style="color:var(--dim)">` +
+      `${esc(scope)}</span></div>` +
+      (names.length
+        ? names.map(name => checkbox(`gates:${scope}:checks:${name}`,
+            `require ${name}`, want.includes(name))).join('')
+        : `<p>No check is declared yet, so this gate can require none.</p>`) +
+      reviewSelect(page, scope, gate.review || 'none') + `</div>`;
+  }).join('');
+
+  const over = ((draft.document.gates || {}).overrides) || {};
+
+  return `<div class="panel"><div class="phead">` +
+    `<span class="label">The whole execution policy</span>` +
+    `<span class="r">${esc(d.identity || d.path)}</span></div>` +
+    `<p>Checks and Merge rules edit parts of this same draft; ` +
+    `${esc(d.appliesWhy)}.</p>` +
+    (d.parseError ? `<p class="bad">${esc(d.parseError)} — the structured ` +
+      `fields below start from an empty document; applying would replace ` +
+      `the file.</p>` : '') +
+    (d.unknownKeys.length
+      ? `<p>Keys this editor does not understand are preserved exactly: ` +
+        `<code>${esc(d.unknownKeys.join(', '))}</code>.</p>` : '') +
+    draftBar(page, shown) +
+    sref('The four steps, and secrets',
+      `<div class="skv">` + page.editing.steps.map(s =>
+        `<dt>${esc(s.step)}</dt><dd>${esc(s.what)}</dd>`).join('') + `</div>` +
+      `<p>${esc(page.editing.secrets)}</p>`) +
+    `</div>` +
+    `<div class="panel s-edit"><div class="phead">` +
+    `<span class="label">Checks</span>` +
+    `<span class="r">${names.length}</span></div>` +
+    fieldErrors('checks') + checkItems +
+    `<div class="acts"><button class="chip2" data-add="checks" ` +
+    `aria-label="add a check">add a check</button></div></div>` +
+    `<div class="panel s-edit"><div class="phead">` +
+    `<span class="label">Preparation steps</span>` +
+    `<span class="r">${(draft.document.prepare || []).length}</span></div>` +
+    fieldErrors('prepare') + stepItems +
+    `<div class="acts"><button class="chip2" data-add="prepare" ` +
+    `aria-label="add a preparation step">add a step</button></div></div>` +
+    `<div class="panel s-edit"><div class="phead">` +
+    `<span class="label">What each launch intent may ask for</span>` +
+    `<span class="r">profiles</span></div>` +
+    fieldErrors('profiles') + intentItems + `</div>` +
+    `<div class="panel s-edit"><div class="phead">` +
+    `<span class="label">Merge rules</span>` +
+    `<span class="r">per guarded mutation</span></div>` +
+    fieldErrors('gates') + gateItems +
+    `<div class="item"><div class="ihead"><span class="label">overrides` +
+    `</span></div>` +
+    checkbox('gates:overrides:allow', 'allow an unmet gate to be proceeded ' +
+             'over, on the record', over.allow === true) +
+    field('gates:overrides:actors', 'restricted to these git identities ' +
+          '(comma separated; empty means any)',
+          (over.actors || []).join(', ')) + `</div></div>` +
+    `<details class="fold" id="s-rawfold"><summary>the whole document as ` +
+    `JSON — for anything these fields do not cover</summary>` +
+    `<div class="s-edit" style="padding-top:8px">` +
+    `<div class="frow"><label for="s-raw">document</label>` +
+    `<textarea id="s-raw" spellcheck="false" aria-label="the whole execution ` +
+    `policy document as JSON">${esc(draft.raw !== null ? draft.raw
+      : JSON.stringify(draft.document, null, 2))}</textarea></div>` +
+    `<div class="acts"><button class="chip2" id="s-useraw" ` +
+    `aria-label="use this JSON as the draft">use this JSON</button></div>` +
+    `</div></details>`;
+}
+
+/* The three field primitives. Ids are `f-<path>` and the path is what the
+   change handler writes into the draft, so a field cannot be wired to one
+   place and read from another. */
+function field(path, label, value, kind) {
+  const id = 'f-' + path;
+  if (kind === 'area') {
+    return `<div class="frow"><label for="${esc(id)}">${esc(label)}</label>` +
+      `<textarea id="${esc(id)}" data-field="${esc(path)}" spellcheck="false" ` +
+      `style="min-height:58px" aria-label="${esc(label)}">${esc(value)}` +
+      `</textarea></div>`;
+  }
+  return `<div class="frow"><label for="${esc(id)}">${esc(label)}</label>` +
+    `<input id="${esc(id)}" type="${kind === 'number' ? 'number' : 'text'}" ` +
+    `data-field="${esc(path)}" value="${esc(value)}" spellcheck="false" ` +
+    `aria-label="${esc(label)}"></div>`;
+}
+
+function select(path, label, value, options) {
+  const id = 'f-' + path;
+  return `<div class="frow"><label for="${esc(id)}">${esc(label)}</label>` +
+    `<select id="${esc(id)}" data-field="${esc(path)}" ` +
+    `aria-label="${esc(label)}">` + options.map(o =>
+      `<option value="${esc(o)}"${o === value ? ' selected' : ''}>` +
+      `${esc(o)}</option>`).join('') + `</select></div>`;
+}
+
+function checkbox(path, label, on) {
+  const id = 'f-' + path;
+  return `<div class="frow"><label class="cb" for="${esc(id)}">` +
+    `<input id="${esc(id)}" type="checkbox" data-field="${esc(path)}" ` +
+    `${on ? 'checked' : ''} aria-label="${esc(label)}">${esc(label)}` +
+    `</label></div>`;
+}
+
+/* Writing one field into the draft. The path says where: `checks:2:name`,
+   `gates:member:checks:unit`, `profiles:review:verify:proposed`. Nothing
+   here validates — that is the server's answer, one request later, from
+   the parser a launch rides. */
+function writeField(path, el) {
+  const parts = path.split(':');
+  const doc = S.draft.document;
+  const value = el.type === 'checkbox' ? el.checked : el.value;
+  if (parts[0] === 'checks' || parts[0] === 'prepare') {
+    const list = doc[parts[0]] = doc[parts[0]] || [];
+    const item = list[Number(parts[1])] = list[Number(parts[1])] || {};
+    const key = parts[2];
+    if (key === 'network') item.network = value === true;
+    else if (key === 'timeout') {
+      if (String(value).trim() === '') delete item.timeout;
+      else item.timeout = Number(value);
+    } else if (key === 'prepare') {
+      const names = String(value).split(',').map(s => s.trim()).filter(Boolean);
+      if (names.length) item.prepare = names; else delete item.prepare;
+    } else if (key === 'scopes') {
+      const scopes = {};
+      for (const line of String(value).split('\n')) {
+        if (!line.trim()) continue;
+        const [name, rest] = line.split('=');
+        const args = String(rest || '').trim().split(/\s+/).filter(Boolean);
+        if (name.trim()) scopes[name.trim()] = args;
+      }
+      if (Object.keys(scopes).length) item.scopes = scopes;
+      else delete item.scopes;
+    } else item[key] = value;
+  } else if (parts[0] === 'profiles') {
+    const profiles = doc.profiles = doc.profiles || {};
+    const prof = profiles[parts[1]] = profiles[parts[1]] || {};
+    const want = new Set((prof.verify || []).map(String));
+    if (value) want.add(parts[3]); else want.delete(parts[3]);
+    if (want.size) prof.verify = [...want]; else delete prof.verify;
+  } else if (parts[0] === 'gates') {
+    const gates = doc.gates = doc.gates || {};
+    if (parts[1] === 'overrides') {
+      const over = gates.overrides = gates.overrides || {};
+      if (parts[2] === 'allow') over.allow = value === true;
+      else {
+        const actors = String(value).split(',').map(s => s.trim())
+          .filter(Boolean);
+        if (actors.length) over.actors = actors; else delete over.actors;
+      }
+    } else {
+      const gate = gates[parts[1]] = gates[parts[1]] || {};
+      if (parts[2] === 'review') {
+        if (value === 'none') delete gate.review; else gate.review = value;
+      } else {
+        // entries are kept as written: ticking a check adds its full run,
+        // unticking removes every requirement on it, and a scoped
+        // `{"check": …, "scope": …}` someone else wrote is never flattened
+        const nameOf = (c) => typeof c === 'string' ? c : String((c || {}).check || '');
+        let list = (gate.checks || []).slice();
+        if (value && !list.some(c => nameOf(c) === parts[3])) list.push(parts[3]);
+        if (!value) list = list.filter(c => nameOf(c) !== parts[3]);
+        if (list.length) gate.checks = list; else delete gate.checks;
+      }
+    }
+  }
+  if (!doc.v) doc.v = S.settings.page.editing.draft.schemaVersion;
+  S.draft.dirty = true;
+  // an edited draft is no longer the one that validated, so Apply goes
+  // back behind a fresh validation rather than firing on a stale pass
+  S.draft.checked = null;
+  S.draft.preview = null;
+  S.draft.raw = null;
+}
+
+function wirePolicyEditor(page) {
+  const body = $('#sbody');
+  body.querySelectorAll('[data-field]').forEach(el => {
+    const handler = () => {
+      writeField(el.dataset.field, el);
+      renderSettings();
+      const again = document.getElementById(el.id);
+      if (again && el.type !== 'checkbox' && el.tagName !== 'SELECT') {
+        again.focus();
+        try { again.setSelectionRange(again.value.length, again.value.length); }
+        catch (e) { /* number inputs refuse a selection range */ }
+      } else if (again) again.focus();
+    };
+    el.addEventListener(el.type === 'checkbox' || el.tagName === 'SELECT'
+      ? 'change' : 'change', handler);
+  });
+  body.querySelectorAll('[data-add]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.add;
+      const doc = S.draft.document;
+      doc[key] = doc[key] || [];
+      doc[key].push(key === 'checks'
+        ? { name: '', run: '', root: 'worktree' } : { name: '', run: '' });
+      if (!doc.v) doc.v = page.editing.draft.schemaVersion;
+      S.draft.dirty = true;
+      S.draft.checked = null;
+      S.draft.preview = null;
+      renderSettings();
+    }));
+  body.querySelectorAll('[data-drop]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const [key, n] = btn.dataset.drop.split(':');
+      (S.draft.document[key] || []).splice(Number(n), 1);
+      // the contextual editor was about the item that has just gone
+      if (S.sedit && S.sedit.kind === 'check') S.sedit = null;
+      S.draft.dirty = true;
+      S.draft.checked = null;
+      S.draft.preview = null;
+      renderSettings();
+    }));
+  const raw = body.querySelector('#s-raw');
+  if (raw) raw.addEventListener('input', () => { S.draft.raw = raw.value; });
+  const useRaw = body.querySelector('#s-useraw');
+  if (useRaw) useRaw.addEventListener('click', () => {
+    try {
+      const parsed = JSON.parse(S.draft.raw !== null ? S.draft.raw : raw.value);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        toast('a policy document is a JSON object', true);
+        return;
+      }
+      S.draft.document = parsed;
+      S.draft.dirty = true;
+      S.draft.checked = null;
+      S.draft.preview = null;
+      S.draft.raw = null;
+      renderSettings();
+    } catch (e) {
+      toast('that is not valid JSON: ' + e.message, true);
+    }
+  });
+  // Discard is a discard: the draft goes, nothing is written, and the
+  // settings as they stand are read again.
+  body.querySelector('#s-discard').addEventListener('click', () => {
+    S.draft = null; S.sedit = null;
+    fetchSettings(true);
+    toast('draft discarded — nothing was written');
+  });
+  // Close puts the contextual editor away and keeps the draft: the notice
+  // at the top of every section says it is there, and focus goes back to
+  // the Edit button it was opened from
+  const close = body.querySelector('#s-close');
+  if (close) close.addEventListener('click', () => {
+    const was = S.sedit || {};
+    S.sedit = null;
+    renderSettings();
+    const back = [...$('#sbody').querySelectorAll('[data-sedit]')].find(b =>
+      b.dataset.sedit === (was.kind === 'check' ? 'check' : was.kind) &&
+      b.dataset.sname === (was.kind === 'check' ? (was.anchor || '') : (was.scope || '')));
+    if (back) back.focus();
+  });
+  body.querySelector('#s-validate').addEventListener('click',
+    () => settingsPost('validate'));
+  body.querySelector('#s-preview').addEventListener('click',
+    () => settingsPost('preview'));
+  const apply = body.querySelector('#s-apply');
+  wireAction(apply, `${BOARD_ACT}settings-apply`, {
+    label: 'Apply', confirm: 'write it?', busy: 'writing…',
+    run: () => settingsApply(),
+  });
+}
+
+/* The one header a cross-origin form cannot set, and a cross-origin fetch
+   cannot send without a preflight this board does not answer. The server
+   refuses a policy change without it — see `httpd.origin_problem`. */
+const SETTINGS_HEADERS = { 'Content-Type': 'application/json',
+                           'X-Bench-Settings': '1' };
+
+async function settingsPost(step) {
+  try {
+    const res = await fetch(`/api/settings/${step}`, {
+      method: 'POST', headers: SETTINGS_HEADERS,
+      body: JSON.stringify({ document: S.draft.document }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      toast(data.error || `the draft could not be ${step}d`, true);
+      return;
+    }
+    if (step === 'validate') {
+      S.draft.checked = data.validation;
+      toast(data.validation.ok
+        ? 'the draft validates — nothing was written'
+        : `${data.validation.errors.length} would be refused — nothing was written`,
+        !data.validation.ok);
+    } else {
+      S.draft.preview = data.preview;
+      S.draft.checked = { ok: data.preview.ok, errors: data.preview.errors,
+                          revision: data.preview.revision };
+      toast('previewed — nothing was written');
+    }
+    renderSettings();
+  } catch (e) {
+    toast(e.message || 'the board could not be asked', true);
+  }
+}
+
+async function settingsApply() {
+  try {
+    const res = await fetch('/api/settings/apply', {
+      method: 'POST', headers: SETTINGS_HEADERS,
+      body: JSON.stringify({ document: S.draft.document,
+                             revision: S.draft.revision }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      toast(data.error || 'the settings were not written', true);
+      // a conflict is not a bad document: re-read, so the next apply is
+      // made against the revision that is actually current
+      if (data.conflict) { S.sedit = null; S.draft = null; fetchSettings(true); }
+      return false;
+    }
+    // what was written is read back from the server, not kept from the
+    // draft: a refresh shows the same thing this does
+    S.draft = null;
+    S.sedit = null;
+    await fetchSettings(true);
+    toast(`written — ${data.applied.appliesWhy}`);
+    return true;
+  } catch (e) {
+    toast(e.message || 'the board could not be asked', true);
+    return false;
+  }
+}
+
 /* What the drawer is showing, as a key its scroll position can be filed
    under. Per document, deliberately: a different card is different
    content, so it has no mark of its own and opens at the top — which is
@@ -3707,11 +5500,21 @@ function renderDrawer() {
     `<span class="pill" style="background:${pill.bg};color:${pill.tint}">${pill.text}</span>` +
     `<span class="spacer"></span>` +
     `<button id="closeDrawer">Close</button></div>` +
+    `<div id="drawertools"></div>` +
     failBlock +
+    signalsBlock(t) +
     planBlock(t) +
     phaseMembers(t) +
     `<div class="dbody">${md(t.body)}</div>` +
     `<div class="dmeta">${esc(t.stage)}/${esc(t.file)} · ${t.words} words · edited ${esc(when)}</div>`;
+  // every tool and action the card has, built by the card's own builder
+  // and wired by it — so the detail view cannot offer a tool the card
+  // would not, or wire one differently
+  const tools = cardFor(t).querySelector('.cardtools');
+  if (tools && tools.querySelectorAll('button, a').length) {
+    tools.classList.add('open', 'dtools');
+    $('#drawertools').replaceWith(tools);
+  }
   panel.classList.add('open');
   restoreScroll(key, body);
   body.querySelectorAll('[data-member]').forEach(row =>
@@ -3719,7 +5522,62 @@ function renderDrawer() {
       const member = findTask(row.dataset.member);
       if (member) showDetail(member);
     }));
-  $('#closeDrawer').addEventListener('click', () => { S.selected = null; renderCards(); });
+  $('#closeDrawer').addEventListener('click', () => {
+    S.selected = null;
+    renderCards();
+    // back to the card the detail view was opened from
+    focusCard(t.file);
+  });
+}
+
+/* Four signals a single green tick would collapse, each in its own words
+   and with the revision it is about: what bench itself ran, what external
+   CI said, what reviewers said, and what the merge gate decides from
+   them. Green CI is not a named check, and no gate is not a pass — so each
+   row says only what its own authority said. */
+function signalsBlock(t) {
+  const rows = [];
+  const v = (S.state.verify || {})[t.file];
+  if (v) {
+    const [, , word] = verifyState(v.outcome);
+    rows.push(['Bench checks', `${word} · ${v.passed} of ${v.checks} passed` +
+      `${v.notRun ? ` · ${v.notRun} not run` : ''}`,
+      verifyState(v.outcome)[0] === 'fail' ? 'bad' : '']);
+  }
+  const pr = (S.state.prs || {})[t.file];
+  if (t.pr || pr) {
+    const ci = pr && pr.ci;
+    rows.push(['External CI', ci
+      ? ({ pass: 'passing', fail: 'failing', running: 'running' }[ci] || ci) +
+        (pr.detail ? ` · ${pr.detail}` : '') + ' — not a Bench check'
+      : 'no CI result', ci === 'fail' ? 'bad' : '']);
+    const verdict = prVerdict(t);
+    rows.push(['Review', ({ green: 'approved', red: 'changes requested',
+      pending: 'no verdict yet' }[verdict] || 'no pull request') +
+      (pr && pr.copilot ? ` · copilot ${pr.copilot}` : ''),
+      verdict === 'red' ? 'bad' : '']);
+  }
+  const r = (S.state.reviews || {})[t.file];
+  if (r) {
+    const [, word] = REVIEW_LABELS[r.label] || REVIEW_LABELS.none;
+    rows.push(['Pinned review', `${word} · ${(r.head || 'unrecorded').slice(0, 12)}`,
+      r.label === 'superseded' ? 'bad' : '']);
+  }
+  const g = (S.state.gates || {})[t.file];
+  if (g) {
+    const [cls, , word] = gateState(g.decision);
+    rows.push(['Merge gate', `${word} — ${g.summary}`, cls === 'bad' ? 'bad' : '']);
+  } else if (rows.length) {
+    rows.push(['Merge gate', 'no gate configured — nothing is required before a '
+      + 'merge, and that is not a pass', '']);
+  }
+  if (!rows.length) return '';
+  return `<div class="pmembers"><div class="phead">Signals` +
+    `<span class="mono">kept apart</span></div>` +
+    rows.map(([k, v2, cls]) => `<div class="prow flat${cls === 'bad' ? ' bad' : ''}">` +
+      `<span class="pstage">${esc(k)}</span>` +
+      `<span class="ptitle">${esc(v2)}</span></div>`).join('') +
+    `</div>`;
 }
 
 function allRecentEvents() {

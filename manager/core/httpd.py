@@ -23,6 +23,7 @@ import phases
 import plans
 import profiles
 import reviews
+import settings
 import state
 import sync
 import taskfiles
@@ -136,6 +137,71 @@ def gates_payload(name: str, stage: str) -> dict:
     }
 
 
+# ── writing a policy is an authority boundary ──────────────────────────
+#
+# Everything else this server does is bookkeeping about work: a move, a
+# launch, a verification request. Changing the execution policy is
+# different in kind — it is what *decides* what a launch may do and what a
+# merge must have — so the one mutation on this board that edits policy is
+# held to a stricter door than the rest, and the door is checked in the
+# server rather than in the page.
+#
+# The board binds to loopback and has no authentication, which is the
+# whole threat model here: a page on another origin, opened in the same
+# browser, can post to `http://127.0.0.1:26071` without ever reading a
+# reply. Three things together refuse that, and none of them trusts a
+# field in the body:
+#
+# - a JSON content type, so a cross-origin HTML form (which may only send
+#   form encodings) is not a request this will parse;
+# - a custom header, which a form cannot set at all and a cross-origin
+#   `fetch` can only set by asking for a CORS preflight — and nothing
+#   here answers `OPTIONS`, so the preflight fails and the real request
+#   is never sent;
+# - an `Origin`/`Sec-Fetch-Site` check, for the browsers that send them:
+#   a stated origin that is not this board's is refused by name.
+#
+# A loopback client that is not a browser — `curl`, a script, a test —
+# sends the header and is allowed, which is correct: it already has the
+# operator's own filesystem access and could edit the file directly.
+
+SETTINGS_HEADER = "X-Bench-Settings"
+SETTINGS_TOKEN = "1"
+LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]", "::1")
+
+
+def origin_problem(headers, port: int) -> str | None:
+    """Why this request may not change policy, or None.
+
+    Read from headers only. Nothing in the body may make a request
+    trusted: that is what a forged post would fill in.
+    """
+    ctype = (headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    if ctype != "application/json":
+        return (f"a policy change must be sent as application/json "
+                f"(this was {ctype or 'nothing'}). Nothing was changed.")
+    if (headers.get(SETTINGS_HEADER) or "").strip() != SETTINGS_TOKEN:
+        return (f"a policy change must carry the {SETTINGS_HEADER}: "
+                f"{SETTINGS_TOKEN} header. A cross-origin form cannot set it "
+                f"and a cross-origin fetch cannot send it without a "
+                f"preflight this board does not answer. Nothing was changed.")
+    site = (headers.get("Sec-Fetch-Site") or "").strip().lower()
+    if site and site not in ("same-origin", "none"):
+        return (f"this request states Sec-Fetch-Site: {site}, so it did not "
+                f"come from this board's own page. Nothing was changed.")
+    origin = (headers.get("Origin") or "").strip()
+    if origin and origin.lower() != "null":
+        parsed = urlparse(origin)
+        host = (parsed.hostname or "").lower()
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            return (f"this request states Origin: {origin}, which is not this "
+                    f"board. Nothing was changed.")
+        if parsed.port and parsed.port != port:
+            return (f"this request states Origin: {origin}, which is a "
+                    f"different board on this machine. Nothing was changed.")
+    return None
+
+
 def state_payload() -> dict:
     with state.LOCK:
         sessions = sorted(
@@ -175,6 +241,11 @@ def state_payload() -> dict:
         # frozen policy be told apart from the settings as they stand —
         # the whole per-intent reading is `/api/profile`, on demand.
         "policy": policy_payload(),
+        # the cheap half of the Settings reading: whether a policy document
+        # is in force, whether it refuses anything, how many checks it
+        # declares and which scopes it gates. One file read and one gate
+        # resolution — the whole page is `/api/settings`, on demand.
+        "settings": settings.board_summary(),
         # what bench's own verification runs found, per card: the worst
         # thing any of them says and how many there are. Cheap, and empty
         # on a board nobody declared a check on — the whole reading is
@@ -428,6 +499,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"doctor": doctor_payload([])})
             except (ValueError, OSError) as exc:
                 self._json(409, {"error": str(exc)})
+        elif path == "/api/settings":
+            # The whole Settings reading: effective configuration, what it
+            # licenses a reader to believe, what to configure next, and the
+            # draft to edit.
+            #
+            # A GET, and it stays one. Assembling it resolves the policy,
+            # reads records already on disk and asks git for the tool's own
+            # revision. It runs no project program, invokes no adapter
+            # hook, launches no model, pins nothing and writes nothing —
+            # which is why opening Settings is not an action.
+            try:
+                self._json(200, {"settings": settings.page()})
+            except (ValueError, OSError) as exc:
+                self._json(409, {"error": str(exc)})
+        elif path == "/api/settings/history":
+            self._json(200, {"history": settings.history()})
         elif path == "/api/diff":
             agent_id = (parse_qs(url.query).get("agent") or [""])[0]
             try:
@@ -661,6 +748,50 @@ class Handler(BaseHTTPRequestHandler):
                     "override": result["override"],
                     "duplicate": result["duplicate"],
                     "gate": gates.public(result["decision"])})
+            elif path in ("/api/settings/validate", "/api/settings/preview",
+                          "/api/settings/apply"):
+                # Three steps, three requests, on purpose. Validate and
+                # preview write nothing at all; only apply writes, and it
+                # writes one file over the exact revision the editor was
+                # shown. All three go through the policy door above, the
+                # read-only two included — a request this server will not
+                # act on should not be parsed differently depending on
+                # which of them it is.
+                problem = origin_problem(self.headers, config.PORT)
+                if problem:
+                    self._json(403, {"error": problem})
+                    return
+                payload = self._read_body()
+                if path == "/api/settings/validate":
+                    self._json(200, {"validation": settings.validate(payload)})
+                elif path == "/api/settings/preview":
+                    self._json(200, {"preview": settings.preview(payload)})
+                else:
+                    try:
+                        result = settings.apply(
+                            payload, actor=taskfiles.actor_name() or None)
+                    except settings.Conflict as exc:
+                        # Its own status, because the answer is different
+                        # from a refused document: nothing is wrong with
+                        # what was sent, a newer save landed first, and the
+                        # editor has to re-read before it can apply.
+                        self._json(409, {"error": str(exc),
+                                         "conflict": True,
+                                         "current": exc.current})
+                        return
+                    # A render, not an automation. The page reloads the
+                    # settings; nothing here moves a card, starts a run or
+                    # advances anything that was waiting.
+                    # `other`, deliberately: a configuration change is not
+                    # an agent, a move or a phase, and filing it under one
+                    # of those would put the wrong glyph on the ticker.
+                    state.record_board_event({
+                        "kind": "other", "actor": "you",
+                        "summary": (f"settings: {result['identity']} written "
+                                    f"({', '.join(result['history']['changedKeys']) or 'no key changed'})"
+                                    f" — applies at the next launch")})
+                    state.broadcast({"type": "board"})
+                    self._json(200, {"applied": result})
             elif path == "/api/verify/cancel":
                 payload = self._read_body()
                 self._json(200, verify.cancel(payload["id"]))

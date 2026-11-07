@@ -10,7 +10,7 @@ checkout it is pointed at** and leaves a record of what it ran:
 | `verify/backend` | `python3 -m unittest discover -s tests -t . -v` — the whole suite, as CI runs it; **any skipped test is a setup error** | `node` on PATH and markdown-it-py, or their tests skip and the check refuses |
 | `verify/docs` | `site/build.py --out <artifacts>/site`, then requires a written file for every route in `site/pages.json` | markdown-it-py (`site/requirements.txt`) |
 | `verify/preflight` | `docs`: the docs interpreter imports markdown-it; `backend`: `node --version` runs on the check's PATH and markdown-it imports; `browser`: a Chromium starts with its sandbox. A profile's required `prepare` step | as the check it prepares |
-| `verify/browser` | the board UI in a sandboxed Chromium against a real disposable bench backend: stages and cards drawn, layout at 1440/1280/1024 px, the four views, keyboard reach and focus ring on the readiness inspector, the readiness dialog inside the viewport at 1440×900, 1280×800, 1024×768 and 640×400, accessible names; screenshots required | a Chromium that can start its sandbox |
+| `verify/browser` | the board UI in a sandboxed Chromium against a real disposable bench backend: stages and cards drawn, layout at 1440/1280/1024 px, the five views, keyboard reach and focus ring on the readiness inspector, the readiness dialog inside the viewport at 1440×900, 1280×800, 1024×768 and 640×400, accessible names; and the Settings view — every section at 1440/1024/640×400/390 px, the empty, refused and configured states read from the backend's own resolution, the draft→validate→preview→apply round trip, Check configuration reporting `ran == ['inspect']`, and accessible names in all seven sections; screenshots required | a Chromium that can start its sandbox |
 
 The plain command still works and still needs nothing:
 `python3 -m unittest discover -s tests`. `verify/backend` wraps it; it
@@ -317,10 +317,60 @@ delete it if there was none), restore the two `.env` lines byte for byte,
 re-run `--doctor`, restart. Runs already in flight keep the manifest they
 launched with either way.
 
+## The Settings page
+
+It exists now (card 74), and its cases are **permanent members of the
+product suites** rather than a runner of their own:
+
+- `tests/test_settings_sources.py` — the reading, across five fixtures
+  (default/legacy, partial, full, invalid, unsupported), asserted as
+  equalities against `profiles.resolve`, `profiles.gate_policy_public`
+  and `profiles.document_checks` rather than against literals. Two cases
+  record what `subprocess.run`/`Popen` launch during a page read and
+  during Check configuration, and allow nothing but `git` and `gh`.
+- `tests/test_settings_editing.py` — draft, validate, preview, apply;
+  conflict, write failure, unknown-key preservation, reference removal,
+  a locked setting, and a frozen manifest left untouched by a later save.
+- `tests/test_settings_security.py` — a real board on a loopback port,
+  refusing a forged write four ways; shell-shaped check declarations;
+  secret masking; and that an apply moves no card, cuts no branch and
+  makes no commit in either repository.
+- `tests/test_settings_ui.py` — the view's source invariants, plus five
+  that stand behind the browser case (it compiles, it measures 390 px and
+  the zoomed viewport, it visits every section, no two screenshots share
+  a path).
+- `verify/browser_cases/case_settings.py` — the measurable half, in a
+  browser, against the disposable backend's real state.
+
+`verify/future/settings-acceptance.md` is the reference those were
+written from; it records which of its cases landed where, and which did
+not.
+
+Card 76 extended the same suites rather than adding a runner. In
+`case_settings.py`, `InContextEditing` covers editing a check in Checks
+(apply, then read back after a reload), a refused edit drawn in the editor
+and discarded with the revision unchanged, and a merge rule previewed at
+390px, closed with focus returned, announced as an unsaved draft
+elsewhere and discarded. In `case_board.py`, `CardFace` covers one ID and no
+routine status or face chips on the fixture cards (one of which has a
+long title that repeats its own number), the ⋯ tools by keyboard with
+focus returned, the detail view carrying every tool, and no overflow at
+390px or the 200%-zoom CSS viewport. `tests/test_card_face.py` holds the
+card's source-level invariants. **None of these browser cases has been
+run yet**, for the reasons below. Phase-branch cards, failed or stale
+evidence and invalid settings in the browser need fixtures this backend
+does not make yet. They are covered at source level and by the backend
+suites, not in a browser.
+
+**The Settings browser case has not been run on this host.** The local
+CDP path cannot start Chromium's sandbox here (below), and the remote
+`PW_WS` path needs a container and a `node` client this environment did
+not make available to the run that wrote these cases. It is **blocked**,
+not passing: no screenshot, no metric and no accessibility tree from it
+exists yet.
+
 ## Not covered here
 
-The Settings page does not exist; its acceptance cases are kept as a
-future reference in `verify/future/settings-acceptance.md` and are run by
-nothing. These checks do not cover live lifecycle behaviour (real agents,
-PRs, merges), GitHub, or any real network service, and a pass here means
-these programs passed, not that bench is free of defects.
+These checks do not cover live lifecycle behaviour (real agents, PRs,
+merges), GitHub, or any real network service, and a pass here means these
+programs passed, not that bench is free of defects.
