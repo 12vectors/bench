@@ -658,12 +658,44 @@ class PageOps:
         return False
 
     def click(self, selector: str) -> None:
-        box = self.eval(f"(() => {{ const e = document.querySelector({json.dumps(selector)});"
-                        f" if (!e) return null; const r = e.getBoundingClientRect();"
-                        f" return [r.x + r.width / 2, r.y + r.height / 2]; }})()")
-        if not box:
+        """A person's click: the target is brought into view first, and a
+        click that would land on something else is refused by name.
+
+        Mouse input is dispatched at viewport coordinates, so a control
+        below the fold used to be "clicked" at a point outside the window
+        — hitting nothing, raising nothing, and surfacing seconds later as
+        a timeout about whatever the click should have done."""
+        hit = self.eval(CLICK_TARGET_JS % json.dumps(selector))
+        if not hit:
             raise CheckFailed(f"{selector}: not found to click")
-        self._click_at(box[0], box[1])
+        if hit.get("problem"):
+            raise CheckFailed(f"{selector}: {hit['problem']}")
+        self._click_at(hit["x"], hit["y"])
+
+
+# Resolves a selector to the point a click should land on, or says why
+# there is none. `scrollIntoView` moves whichever scrollers hold the
+# element; `elementFromPoint` then confirms the point is the element
+# itself (or inside it) rather than an overlay, a sticky header or a
+# collapsed fold's neighbour.
+CLICK_TARGET_JS = """(() => {
+  const e = document.querySelector(%s);
+  if (!e) return null;
+  e.scrollIntoView({block: 'center', inline: 'center'});
+  const r = e.getBoundingClientRect();
+  if (r.width <= 0 || r.height <= 0)
+    return {problem: 'not visible to click (it has no box: hidden, or inside a closed fold)'};
+  const x = r.x + r.width / 2, y = r.y + r.height / 2;
+  if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight)
+    return {problem: `outside the ${innerWidth}x${innerHeight} viewport at ${Math.round(x)},${Math.round(y)} even after scrolling`};
+  const at = document.elementFromPoint(x, y);
+  if (!at || !(at === e || e.contains(at))) {
+    const name = at ? at.tagName.toLowerCase() + (at.id ? '#' + at.id : '') +
+      (at.className && typeof at.className === 'string' ? '.' + at.className.trim().split(/\\s+/).join('.') : '') : 'nothing';
+    return {problem: `a click at its centre would land on ${name}, not on it`};
+  }
+  return {x, y};
+})()"""
 
 
 class Browser(PageOps):
