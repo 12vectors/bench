@@ -489,122 +489,274 @@
   .also .card:hover{transform:none;border-color:var(--border-soft)}
 
   /* ── settings ──
-     One scrolling column, one section at a time. A column rather than a
-     grid because this view has to survive 390px and 200% zoom without a
-     horizontal scrollbar, and a two-column reading of a settings page is
-     the first thing that breaks there. Everything wraps; nothing is
-     nowrap but a hash. */
+     A configuration surface of its own: a sidebar of sections beside one
+     scrolling content column of white panels on a pale grey-blue ground.
+     Every token is scoped to #view-settings, so Board, Phases, Sessions and
+     Focus keep the board's own look. The content is a column rather than a
+     grid because it has to survive 390px and 200% zoom without a horizontal
+     scrollbar; everything wraps, and nothing is nowrap but a state word.
+     Below 760px the sidebar folds into one "Sections" button that opens the
+     same list in the flow — an explicit control, never a squeezed column. */
   #view-settings{flex-direction:column;overflow-y:auto}
-  .s-top{display:flex;flex-direction:column;gap:10px;padding:14px 18px 0}
-  .s-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
-  .s-head h1{margin:0;font-size:20px;font-weight:600;letter-spacing:-.015em}
-  .s-head .mono{font-size:11.5px;color:var(--dim)}
-  .s-head .r{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
-  .s-nav{display:flex;gap:6px;flex-wrap:wrap}
-  .s-body{display:flex;flex-direction:column;gap:14px;padding:14px 18px 24px;
+  #view-settings{
+    --s-bg:var(--bg); --s-panel:var(--surface); --s-subtle:var(--sunken);
+    --s-ink:var(--text); --s-muted:var(--muted); --s-faint:#7f9ca3;
+    --s-line:var(--border-soft); --s-line-strong:var(--border);
+    --s-primary:var(--accent); --s-on-primary:var(--on-accent);
+    --s-current:color-mix(in oklab, var(--accent) 16%, transparent);
+    --s-warn:#e5b866; --s-warn-bg:color-mix(in oklab, #e5b866 13%, transparent);
+    --s-warn-line:color-mix(in oklab, #e5b866 45%, transparent);
+    background:var(--s-bg);color:var(--s-ink);font-size:14px;line-height:1.55;
+  }
+  :root[data-theme="light"] #view-settings{
+    --s-bg:#edf2f5; --s-panel:#ffffff; --s-subtle:#f4f7f9;
+    --s-ink:#11353d; --s-muted:#4b6871; --s-faint:#557179;
+    --s-line:#dbe4e8; --s-line-strong:#c4d3d8;
+    --s-primary:#0b6a78; --s-on-primary:#ffffff;
+    --s-current:#e1eef0;
+    --s-warn:#82510a; --s-warn-bg:#fcf3e2; --s-warn-line:#e6c486;
+  }
+  .s-shell{flex:1 0 auto;display:grid;align-items:start;
+    grid-template-columns:minmax(200px,244px) minmax(0,1fr)}
+  /* the sidebar stays put while the content scrolls past it */
+  .s-side{position:sticky;top:0;display:flex;flex-direction:column;gap:14px;
+    padding:28px 14px 28px 22px;min-width:0}
+  .s-sidehead{margin:0;padding:0 12px;font-size:19px;font-weight:600;
+    letter-spacing:-.01em;color:var(--s-ink)}
+  .s-nav{display:flex;flex-direction:column;gap:18px}
+  .s-navgroup{display:flex;flex-direction:column;gap:2px}
+  .s-navhead{padding:0 12px 4px;font-size:13px;font-weight:500;color:var(--s-faint)}
+  .s-nav button{display:flex;align-items:center;gap:10px;min-height:40px;
+    padding:8px 12px;border:none;border-left:3px solid transparent;
+    border-radius:0 8px 8px 0;background:transparent;text-align:left;
+    font-size:14.5px;font-weight:400;color:var(--s-muted)}
+  .s-nav button:hover{background:var(--s-subtle);color:var(--s-ink);
+    border-left-color:transparent}
+  /* current is told three ways: the bar, the weight, and aria-current */
+  .s-nav button[aria-current="page"]{background:var(--s-current);color:var(--s-ink);
+    font-weight:600;border-left-color:var(--s-primary)}
+  .s-navtoggle{display:none}
+  .s-main{display:flex;flex-direction:column;min-width:0;padding:0 28px 40px 14px}
+  .s-top{display:flex;flex-direction:column;gap:10px;padding:28px 0 0;
     max-width:980px;min-width:0}
-  .s-body .panel{min-width:0}
-  .s-body p{margin:0;font-size:12.5px;line-height:1.55;color:var(--muted)}
-  .s-body p.lead{color:var(--text);font-size:13.5px}
+  .s-head{display:flex;align-items:flex-start;gap:12px 20px;flex-wrap:wrap}
+  .s-titles{flex:1 1 320px;min-width:0}
+  .s-head h1{margin:0;font-size:27px;line-height:1.2;font-weight:600;
+    letter-spacing:-.018em;color:var(--s-ink)}
+  .s-head h1:focus{outline:none}
+  .s-sub{margin:6px 0 0;font-size:15px;color:var(--s-muted)}
+  .s-ident{margin:8px 0 0;font-size:13px;color:var(--s-faint);overflow-wrap:anywhere}
+  .s-ident code{font-family:var(--mono);font-size:12.5px;color:var(--s-muted)}
+  .s-headacts{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .s-body{display:flex;flex-direction:column;gap:20px;padding:22px 0 24px;
+    max-width:980px;min-width:0}
+  #view-settings .panel{min-width:0;gap:4px;padding:22px 24px;background:var(--s-panel);
+    border:1px solid var(--s-line);border-radius:12px;box-shadow:none}
+  :root[data-theme="light"] #view-settings .panel{box-shadow:0 1px 2px rgba(17,53,61,.04)}
+  #view-settings .panel .phead{display:flex;align-items:baseline;gap:6px 12px;
+    flex-wrap:wrap;margin-bottom:6px}
+  .s-ptitle{margin:0;font-size:17.5px;font-weight:600;letter-spacing:-.01em;
+    color:var(--s-ink)}
+  #view-settings .panel .phead .r{margin-left:auto;font-family:var(--sans);
+    font-size:13px;color:var(--s-faint)}
+  .s-body p{margin:0;font-size:14px;line-height:1.6;color:var(--s-muted)}
+  .s-body p.lead{color:var(--s-ink);font-size:15px}
   .s-body p.bad{color:var(--alarm)}
-  .s-body ul{margin:0;padding-left:18px;font-size:12.5px;color:var(--muted);
-    line-height:1.55}
-  .s-body ul li{margin:2px 0}
-  .s-body code{font-family:var(--mono);font-size:11.5px;color:var(--text);
+  .s-body ul{margin:0;padding-left:20px;font-size:14px;color:var(--s-muted);
+    line-height:1.6}
+  .s-body ul li{margin:3px 0}
+  .s-body code{font-family:var(--mono);font-size:12.5px;color:var(--s-ink);
     overflow-wrap:anywhere}
+  .s-body pre{font-family:var(--mono);font-size:12.5px;line-height:1.55;
+    color:var(--s-ink);background:var(--s-subtle);border:1px solid var(--s-line);
+    border-radius:8px;padding:10px 12px;margin:0;white-space:pre-wrap;
+    overflow-wrap:anywhere;overflow-x:auto;max-width:100%}
   /* a state word, never a colour on its own: the word is always there */
-  .sw{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);
-    font-size:11px;padding:2px 7px;border-radius:99px;border:1px solid var(--border);
-    color:var(--dim);white-space:nowrap}
+  .sw{display:inline-flex;align-items:center;gap:6px;font-family:var(--sans);
+    font-size:12.5px;font-weight:500;line-height:1.3;padding:3px 9px;
+    border-radius:6px;border:1px solid var(--s-line-strong);
+    color:var(--s-muted);background:var(--s-panel);white-space:nowrap}
   .sw::before{content:"";width:6px;height:6px;border-radius:99px;
     background:currentColor;flex:none}
   .sw.verified{color:var(--calm);border-color:color-mix(in oklab, var(--calm) 45%, transparent)}
   .sw.failed,.sw.invalid,.sw.blocked,.sw.stale{color:var(--alarm);
     border-color:color-mix(in oklab, var(--alarm) 45%, transparent)}
-  .sw.unsupported{color:var(--muted);border-style:dashed}
-  .sw.configured-untested{color:var(--accent);
-    border-color:color-mix(in oklab, var(--accent) 45%, transparent)}
-  .srow{display:flex;align-items:flex-start;gap:10px;padding:9px 0;
-    border-bottom:1px solid var(--line);flex-wrap:wrap}
-  .srow:last-child{border-bottom:none}
-  .srow .sname{flex:1 1 180px;min-width:0;font-size:13px;color:var(--text);
-    font-weight:500}
-  .srow .sdetail{flex:3 1 260px;min-width:0;font-size:12.5px;color:var(--muted)}
-  .srow .sright{margin-left:auto;display:flex;gap:6px;align-items:center;
-    flex-wrap:wrap}
+  .sw.unsupported{color:var(--s-muted);border-style:dashed}
+  .sw.configured-untested{color:var(--s-primary);
+    border-color:color-mix(in oklab, var(--s-primary) 40%, transparent)}
+  /* badges are facts and buttons are actions: a badge has no hover, is not
+     a pill, and always says its meaning in words */
+  .sbadge{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;
+    border-radius:6px;border:1px solid var(--s-line-strong);
+    background:var(--s-subtle);font-size:12.5px;font-weight:500;line-height:1.35;
+    color:var(--s-muted)}
+  .sbadge.warn{color:var(--s-warn);background:var(--s-warn-bg);
+    border-color:var(--s-warn-line)}
+  .sbadge.warn::before{content:"!";font-weight:700}
+  .sbadge.ok{color:var(--calm);border-color:color-mix(in oklab, var(--calm) 45%, transparent)}
+  .sbadge.bad{color:var(--alarm);border-color:color-mix(in oklab, var(--alarm) 45%, transparent)}
+  .sbadge.dim{border-style:dashed}
+  /* buttons in three registers: solid for the primary action, outlined for
+     the secondary ones, and a text link for going somewhere */
+  #view-settings .sb{position:relative;display:inline-flex;align-items:center;
+    justify-content:center;gap:6px;min-height:40px;padding:8px 16px;
+    font-family:var(--sans);font-size:14px;font-weight:500;line-height:1.25;
+    border-radius:8px;border:1px solid var(--s-line-strong);
+    background:var(--s-panel);color:var(--s-ink);text-align:center}
+  #view-settings .sb:hover{border-color:var(--s-primary);color:var(--s-primary)}
+  #view-settings .sb.primary{background:var(--s-primary);border-color:var(--s-primary);
+    color:var(--s-on-primary)}
+  #view-settings .sb.primary:hover{filter:brightness(1.08);color:var(--s-on-primary)}
+  #view-settings .sb.danger{color:var(--alarm)}
+  #view-settings .sb.danger:hover{border-color:var(--alarm);color:var(--alarm)}
+  #view-settings .sb.link{border-color:transparent;background:transparent;
+    padding:8px 6px;color:var(--s-primary);text-decoration:underline;
+    text-decoration-thickness:1px;text-underline-offset:3px}
+  #view-settings .sb.link:hover{text-decoration-thickness:2px;border-color:transparent}
+  #view-settings .sb:disabled{cursor:not-allowed;background:var(--s-subtle);
+    border-color:var(--s-line);color:var(--s-faint);filter:none}
+  #view-settings .sb:focus-visible,#view-settings .s-nav button:focus-visible,
+  #view-settings summary:focus-visible{outline:2px solid var(--s-primary);outline-offset:2px}
+  #view-settings button.sb.armed{color:var(--alarm);border-color:var(--alarm);
+    background:var(--s-panel)}
+  #view-settings button.sb.busy{color:var(--s-primary);border-color:var(--s-primary);
+    background:var(--s-panel);cursor:default}
   /* the common row: label, effective value with one helper line, then the
      state word and the one action. The value is the headline. */
-  .sline .sval{flex:3 1 260px;min-width:0;font-size:13px;color:var(--text);
-    overflow-wrap:anywhere}
-  .shelp{display:block;margin-top:2px;font-size:12px;color:var(--dim);
-    font-weight:400;line-height:1.45}
-  .shelp.mono{font-family:var(--mono);font-size:11px}
-  .sval .fold{margin-top:4px}
-  .s-body p.sprob{margin:-4px 0 6px;font-size:12px}
-  .s-body p.snote{color:var(--text)}
-  .sref{max-width:none;padding:2px 0}
-  .sref summary{padding:4px 0}
-  .srefbody{display:flex;flex-direction:column;gap:8px;padding:8px 0 4px 14px;
+  .srow{display:flex;align-items:flex-start;gap:8px 18px;padding:16px 0;
+    border-bottom:1px solid var(--s-line);flex-wrap:wrap}
+  .srow:last-child{border-bottom:none}
+  .srow .sname{flex:1 1 170px;min-width:0;font-size:14.5px;color:var(--s-ink);
+    font-weight:500;overflow-wrap:anywhere}
+  .srow .sname.code{font-family:var(--mono);font-size:13px}
+  .srow .sdetail{flex:3 1 280px;min-width:0;font-size:14px;color:var(--s-muted)}
+  .srow .sright{margin-left:auto;display:flex;gap:8px 12px;align-items:center;
+    flex-wrap:wrap}
+  .sline .sval{flex:3 1 280px;min-width:0;font-size:15.5px;font-weight:500;
+    color:var(--s-ink);overflow-wrap:anywhere}
+  .sline .sval code{font-size:13px;font-weight:400}
+  .sval .sbadge{font-size:14px}
+  .shelp{display:block;margin-top:3px;font-size:13.5px;color:var(--s-muted);
+    font-weight:400;line-height:1.5}
+  .shelp.mono{font-family:var(--mono);font-size:12px;color:var(--s-faint)}
+  #view-settings .sval .fold{margin-top:6px}
+  .s-body p.sprob{margin:-6px 0 10px;font-size:13.5px}
+  .s-body p.snote{color:var(--s-ink)}
+  /* reference material: a disclosure in the reader's face, closed */
+  #view-settings .fold{max-width:none}
+  #view-settings .fold summary{display:flex;align-items:center;gap:8px;min-height:40px;
+    font-family:var(--sans);font-size:14px;font-weight:500;color:var(--s-primary)}
+  #view-settings .fold summary::before{content:"›";display:inline-block;
+    font-size:17px;line-height:1;transition:transform .12s ease}
+  #view-settings .fold[open] > summary::before{content:"›";transform:rotate(90deg)}
+  #view-settings .fold summary::-webkit-details-marker{display:none}
+  .sref{padding:0 4px}
+  .srefbody{display:flex;flex-direction:column;gap:10px;padding:6px 0 10px 20px;
     min-width:0}
   .srefbody pre{margin:0;overflow-x:auto;max-width:100%}
-  .sdraft{border-color:color-mix(in oklab, var(--accent) 45%, transparent)}
-  .sdraft .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-  .s-inline{margin:2px 0 10px;border-color:color-mix(in oklab, var(--accent) 40%, var(--border-soft))}
-  .s-conseq{display:flex;flex-direction:column;gap:6px;padding:10px 0 0;
-    border-top:1px solid var(--line)}
-  #s-steps{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  .srec{display:flex;flex-direction:column;gap:6px;padding:11px 12px;
-    border:1px solid var(--border-soft);border-radius:9px;background:var(--sunken)}
-  .srec.high{border-color:color-mix(in oklab, var(--alarm) 45%, transparent)}
-  .srec .st{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
-  .srec .st strong{font-size:13px;font-weight:600;color:var(--text)}
-  .srec .pri{font-family:var(--mono);font-size:10.5px;color:var(--dim);
-    text-transform:uppercase;letter-spacing:.06em}
-  .srec.high .pri{color:var(--alarm)}
-  .srec .supply{font-size:12.5px;color:var(--text)}
-  .srec .inert{font-size:11.5px;color:var(--dim)}
+  #view-settings .panel.sdraft{border-color:color-mix(in oklab, var(--s-primary) 45%, transparent)}
+  .s-body .acts{display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+    margin-top:12px}
+  .s-inline{margin:4px 0 14px;border-color:color-mix(in oklab, var(--s-primary) 40%, var(--s-line))}
+  .s-conseq{display:flex;flex-direction:column;gap:8px;padding:14px 0 0;
+    border-top:1px solid var(--s-line)}
+  #s-steps{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .s-rev{font-family:var(--mono);font-size:12px;color:var(--s-faint)}
+  .srec{display:flex;flex-direction:column;gap:8px;padding:16px 18px;
+    border:1px solid var(--s-line);border-radius:10px;background:var(--s-subtle)}
+  .srec.high{border-color:var(--s-warn-line)}
+  .srec .st{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap}
+  .srec .st strong{font-size:15px;font-weight:600;color:var(--s-ink)}
+  .srec .supply{color:var(--s-ink)}
+  /* one registered check: its name and purpose, the facts that decide where
+     and how long it runs, its actions, then the command in full */
+  .scard{display:flex;flex-direction:column;gap:12px;padding:18px 0;
+    border-bottom:1px solid var(--s-line);min-width:0}
+  .scard:last-of-type{border-bottom:none}
+  .scard .shd{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap}
+  .scard h3{margin:0;flex:1 1 160px;min-width:0;font-size:16.5px;font-weight:600;
+    color:var(--s-ink);overflow-wrap:anywhere}
+  .sfacts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));
+    gap:12px 20px;margin:0}
+  .sfacts div{min-width:0}
+  .sfacts dt{font-size:13px;color:var(--s-faint)}
+  .sfacts dd{margin:2px 0 0;font-size:14.5px;font-weight:500;color:var(--s-ink);
+    overflow-wrap:anywhere}
+  .sfacts dd .shelp{font-weight:400}
+  #view-settings .scmd summary code{font-size:12.5px;font-weight:400;
+    overflow-wrap:anywhere;min-width:0}
+  .s-stage{display:flex;flex-direction:column;gap:6px}
   /* the key/value table settings and roots are drawn in — wraps, so a long
      path does not push the page sideways */
   .skv{display:grid;grid-template-columns:minmax(120px,auto) minmax(0,1fr);
-    gap:2px 12px;font-size:12.5px}
-  .skv dt{font-family:var(--mono);font-size:11.5px;color:var(--muted);
+    gap:6px 16px;font-size:14px}
+  .skv dt{font-family:var(--mono);font-size:12.5px;color:var(--s-muted);
     overflow-wrap:anywhere}
-  .skv dd{margin:0;color:var(--text);overflow-wrap:anywhere}
-  .skv dd .why{display:block;color:var(--dim);font-size:11.5px}
+  .skv dd{margin:0;color:var(--s-ink);overflow-wrap:anywhere}
+  .skv dd .why{display:block;color:var(--s-faint);font-size:13px}
   /* the editor: four steps, each its own button, and a field error that
      names its field */
-  .s-edit{display:flex;flex-direction:column;gap:10px}
-  .s-edit .frow{display:flex;flex-direction:column;gap:4px;min-width:0}
-  .s-edit label{font-size:11px;font-weight:600;letter-spacing:.06em;
-    text-transform:uppercase;color:var(--muted)}
+  .s-edit{display:flex;flex-direction:column;gap:14px}
+  .s-edit .frow{display:flex;flex-direction:column;gap:6px;min-width:0}
+  .s-edit label{font-size:13.5px;font-weight:500;color:var(--s-ink)}
   .s-edit input[type=text],.s-edit input[type=number],.s-edit textarea,
   .s-edit select{
-    font:inherit;font-size:12.5px;color:var(--text);background:var(--sunken);
-    border:1px solid var(--border);border-radius:7px;padding:7px 9px;
-    width:100%;min-width:0;max-width:100%}
-  .s-edit textarea{font-family:var(--mono);font-size:11.5px;min-height:120px;
+    font:inherit;font-size:14px;color:var(--s-ink);background:var(--s-panel);
+    border:1px solid var(--s-line-strong);border-radius:8px;padding:9px 11px;
+    min-height:42px;width:100%;min-width:0;max-width:100%}
+  .s-edit textarea{font-family:var(--mono);font-size:12.5px;min-height:140px;
     resize:vertical}
   .s-edit input:focus,.s-edit textarea:focus,.s-edit select:focus{
-    outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
-  .s-edit input:disabled,.s-edit select:disabled{color:var(--dim);cursor:not-allowed}
-  .s-edit .fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
-    gap:10px}
-  .s-edit .item{display:flex;flex-direction:column;gap:9px;padding:11px;
-    border:1px solid var(--border-soft);border-radius:9px;background:var(--sunken)}
-  .s-edit .ihead{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
-  .s-edit .ihead .label{flex:1}
-  .s-edit .ferr{font-size:12px;color:var(--alarm);line-height:1.5}
-  .s-edit .ferr .fld{font-family:var(--mono);font-size:11px}
-  .s-edit .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  .s-edit .cb{display:flex;align-items:center;gap:7px;font-size:12.5px;
-    color:var(--text);text-transform:none;letter-spacing:0;font-weight:400}
-  .s-edit .cb input{width:auto;min-width:0}
-  .s-diff{display:flex;flex-direction:column;gap:5px;font-size:12.5px}
-  .s-diff .d{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap}
+    outline:2px solid var(--s-primary);outline-offset:1px;border-color:var(--s-primary)}
+  .s-edit input:disabled,.s-edit select:disabled{color:var(--s-faint);cursor:not-allowed}
+  .s-edit .fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));
+    gap:14px 18px}
+  .s-edit .item{display:flex;flex-direction:column;gap:12px;padding:18px;
+    border:1px solid var(--s-line);border-radius:10px;background:var(--s-subtle)}
+  .s-edit .ihead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .s-edit .ihead .label{flex:1;font-size:15px;font-weight:600;letter-spacing:0;
+    text-transform:none;color:var(--s-ink)}
+  .s-edit .ferr{font-size:13.5px;color:var(--alarm);line-height:1.5}
+  .s-edit .ferr .fld{font-family:var(--mono);font-size:12px}
+  .s-edit .acts{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .s-edit .cb{display:flex;align-items:center;gap:10px;min-height:40px;font-size:14px;
+    color:var(--s-ink);text-transform:none;letter-spacing:0;font-weight:400}
+  .s-edit .cb input{width:auto;min-width:0;margin:0 3px;transform:scale(1.25);
+    accent-color:var(--s-primary)}
+  .s-diff{display:flex;flex-direction:column;gap:8px;font-size:14px}
+  .s-diff .d{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
   /* the change kind, read as a label beside its sentence. No fixed width:
      at 390px a reserved column is exactly what pushes the page sideways */
-  .s-diff .d .k{font-family:var(--mono);font-size:11px;color:var(--dim);
+  .s-diff .d .k{font-family:var(--mono);font-size:12px;color:var(--s-faint);
     flex:none}
+  .s-conseq .label{font-size:15px;font-weight:600;letter-spacing:0;
+    text-transform:none;color:var(--s-ink)}
+  /* narrow screens: one column, and the sections behind one named button */
+  @media (max-width:760px){
+    .s-shell{grid-template-columns:minmax(0,1fr)}
+    .s-side{position:static;padding:18px 16px 0;gap:10px}
+    .s-sidehead{padding:0}
+    .s-navtoggle{display:flex;align-items:center;justify-content:space-between;
+      gap:10px;min-height:48px;padding:10px 14px;border:1px solid var(--s-line-strong);
+      border-radius:10px;background:var(--s-panel);color:var(--s-ink);
+      font-size:15px;font-weight:500;text-align:left}
+    .s-navtoggle:hover{color:var(--s-ink)}
+    .s-navtoggle .now{color:var(--s-primary);font-weight:600}
+    .s-navtoggle::after{content:"▾";color:var(--s-muted)}
+    .s-navtoggle[aria-expanded="true"]::after{content:"▴"}
+    .s-navtoggle:focus-visible{outline:2px solid var(--s-primary);outline-offset:2px}
+    .s-nav{display:none;padding:10px 6px;background:var(--s-panel);
+      border:1px solid var(--s-line);border-radius:10px}
+    .s-nav.open{display:flex}
+    .s-nav button{min-height:46px}
+    .s-main{padding:0 16px 32px}
+    .s-top{padding-top:18px}
+    .s-head h1{font-size:23px}
+    #view-settings .panel{padding:18px 16px}
+    #view-settings .sb{min-height:44px}
+    #view-settings .fold summary{min-height:44px}
+    .s-edit .cb{min-height:44px}
+  }
 
   /* ── phases: a swimlane each ── */
   /* The room the five columns could never spare. One lane per phase, the
@@ -888,11 +1040,21 @@
        by the server from the authorities that already answer for it;
        nothing here parses a settings file. -->
   <div class="view" id="view-settings">
-    <div class="s-top">
-      <div class="s-head" id="shead"></div>
-      <nav class="s-nav" id="snav" aria-label="settings sections"></nav>
+    <div class="s-shell">
+      <!-- the sections: a sidebar on a desktop, one named button that opens
+           the same list below 760px -->
+      <aside class="s-side" id="sside">
+        <p class="s-sidehead">Settings</p>
+        <button class="s-navtoggle" id="snavtoggle" aria-expanded="false"
+                aria-controls="snav"><span>Section: <span class="now"
+                id="snavnow">Overview</span></span></button>
+        <nav class="s-nav" id="snav" aria-label="settings sections"></nav>
+      </aside>
+      <div class="s-main">
+        <div class="s-top"><div class="s-head" id="shead"></div></div>
+        <div class="s-body" id="sbody"></div>
+      </div>
     </div>
-    <div class="s-body" id="sbody"></div>
   </div>
 </main>
 
@@ -4007,14 +4169,23 @@ function phaseMembers(t) {
    Opening it is a GET. It starts no process, runs no project command,
    launches no model, pins nothing and writes nothing. */
 
+/* Each section: its key, its label, the sidebar group it sits in, and the
+   one sentence its page leads with. Order is the sidebar's order. */
 const SETTINGS_SECTIONS = [
-  ['overview', 'Overview'],
-  ['verification', 'Checks'],
-  ['acceptance', 'Merge rules'],
-  ['access', 'Agent access'],
-  ['diagnostics', 'Diagnostics'],
-  ['installation', 'Installation'],
-  ['policy', 'Advanced policy'],
+  ['overview', 'Overview', 'Configure',
+   'How this board is configured, and what to configure next.'],
+  ['verification', 'Checks', 'Configure',
+   'The programs your team provides to check the work. Bench runs them and records what they found.'],
+  ['acceptance', 'Merge rules', 'Configure',
+   'What must be true before work merges, and who may proceed over a rule.'],
+  ['access', 'Agent access', 'Configure',
+   'What each kind of agent run may do, and what is actually enforced.'],
+  ['diagnostics', 'Diagnostics', 'Inspect',
+   'Inspect the configuration without running anything, or run the execution diagnostics deliberately.'],
+  ['installation', 'Installation', 'Inspect',
+   'Where this board lives, how it is wired, and where each setting comes from.'],
+  ['policy', 'Advanced policy', 'Advanced',
+   'The whole execution policy document, field by field and as JSON.'],
 ];
 
 /* The three guarded mutations, named for what merges. The scope word
@@ -4073,12 +4244,39 @@ function draftBarShown(section) {
   return ed.kind === 'check' ? section === 'verification' : section === 'acceptance';
 }
 
+/* Which control in Settings has keyboard focus, as a selector a repaint
+   can find again. Every SSE frame rebuilds the section, and a rebuilt
+   button is a new element: without this a keyboard user tabbing through
+   the sidebar or the rows is thrown back to the top of the document. */
+function settingsFocusKey() {
+  const el = document.activeElement;
+  if (!el || el === document.body || !$('#view-settings').contains(el)) return null;
+  if (el.id) return '#' + CSS.escape(el.id);
+  for (const a of ['ssection', 'sedit', 'sinspect', 'sdoctor', 'sdraft', 'drop', 'add']) {
+    if (el.dataset[a] === undefined) continue;
+    const name = el.dataset.sname !== undefined
+      ? `[data-sname="${CSS.escape(el.dataset.sname)}"]` : '';
+    return (el.closest('#snav') ? '#snav ' : '#sbody ') +
+      `[data-${a}="${CSS.escape(el.dataset[a])}"]${name}`;
+  }
+  return null;
+}
+
 function renderSettings() {
+  const focusKey = settingsFocusKey();
+  renderSettingsNow();
+  if (!focusKey) return;
+  const again = document.querySelector(focusKey);
+  if (again && document.activeElement !== again) again.focus({ preventScroll: true });
+}
+
+function renderSettingsNow() {
   if (!S.settings && !S.settingsFetching) fetchSettings();
   const head = $('#shead'), nav = $('#snav'), body = $('#sbody');
   const page = S.settings && S.settings.page;
   if (!page) {
-    head.innerHTML = `<h1>Settings</h1><span class="mono">reading…</span>`;
+    head.innerHTML = `<div class="s-titles"><h1>Settings</h1>` +
+      `<p class="s-sub">Reading this board's configuration…</p></div>`;
     nav.innerHTML = '';
     body.innerHTML = S.settingsError
       ? `<div class="panel"><p class="bad">${esc(S.settingsError)}</p></div>`
@@ -4088,28 +4286,59 @@ function renderSettings() {
   }
   const section = SETTINGS_SECTIONS.some(([k]) => k === S.settingsSection)
     ? S.settingsSection : 'overview';
+  const [, title, , subtitle] = SETTINGS_SECTIONS.find(([k]) => k === section);
   head.innerHTML =
-    `<h1>Settings</h1>` +
-    `<span class="mono">${esc(page.overview.policy.identity ||
-      'no execution policy document')}</span>` +
-    `<span class="r">` +
-    `<button class="chip2" id="s-inspect" aria-label="check configuration">` +
-    `Check configuration</button>` +
-    `<button class="chip2" id="s-reread" aria-label="re-read the settings">` +
-    `Re-read</button></span>`;
-  nav.innerHTML = SETTINGS_SECTIONS.map(([key, label]) =>
-    `<button class="chip2 ${key === section ? 'accent' : ''}" ` +
-    `data-ssection="${esc(key)}" aria-current="${key === section}" ` +
-    `aria-label="${esc(label)} settings">${esc(label)}</button>`).join('');
+    `<div class="s-titles"><h1 tabindex="-1">${esc(title)}</h1>` +
+    `<p class="s-sub">${esc(subtitle)}</p>` +
+    `<p class="s-ident">Execution policy: ` +
+    (page.overview.policy.identity
+      ? `<code>${esc(page.overview.policy.identity)}</code>`
+      : 'no execution policy document') + `</p></div>` +
+    `<div class="s-headacts">` +
+    // Diagnostics carries Check configuration as its own primary action,
+    // so the page head offers it everywhere else
+    (section === 'diagnostics' ? '' :
+      `<button class="sb" id="s-inspect" aria-label="check configuration">` +
+      `Check configuration</button>`) +
+    `<button class="sb link" id="s-reread" aria-label="re-read the settings">` +
+    `Re-read</button></div>`;
+  // grouped as the sidebar reads, in SETTINGS_SECTIONS order; the current
+  // section is marked by aria-current, its bar and its weight together
+  const groups = [];
+  for (const [key, label, group] of SETTINGS_SECTIONS) {
+    if (!groups.length || groups[groups.length - 1].name !== group)
+      groups.push({ name: group, items: [] });
+    groups[groups.length - 1].items.push([key, label]);
+  }
+  nav.innerHTML = groups.map((g, n) =>
+    `<div class="s-navgroup" role="group" aria-labelledby="snavg-${n}">` +
+    `<span class="s-navhead" id="snavg-${n}">${esc(g.name)}</span>` +
+    g.items.map(([key, label]) =>
+      `<button data-ssection="${esc(key)}" ` +
+      `aria-current="${key === section ? 'page' : 'false'}" ` +
+      `aria-label="${esc(label)} settings">${esc(label)}</button>`).join('') +
+    `</div>`).join('');
+  nav.classList.toggle('open', !!S.settingsNavOpen);
+  const toggle = $('#snavtoggle');
+  toggle.setAttribute('aria-expanded', String(!!S.settingsNavOpen));
+  $('#snavnow').textContent = title;
+  if (!toggle.dataset.wired) {
+    toggle.dataset.wired = '1';
+    toggle.addEventListener('click', () => {
+      S.settingsNavOpen = !S.settingsNavOpen;
+      $('#snav').classList.toggle('open', S.settingsNavOpen);
+      toggle.setAttribute('aria-expanded', String(S.settingsNavOpen));
+    });
+  }
   markScroll('v:settings', $('#view-settings'));
   // A draft is one thing however it was started, so wherever the page is
   // it says there is one — and offers the way back to it and the way out.
   const notice = S.draft && S.draft.dirty && !draftBarShown(section)
-    ? `<div class="panel sdraft" role="status"><p><b>Unsaved draft.</b> ` +
+    ? `<div class="panel sdraft" role="status"><p class="lead"><b>Unsaved draft.</b> ` +
       `Nothing has been written; leaving the page discards it.</p>` +
-      `<div class="acts"><button class="chip2" data-sdraft="open" ` +
+      `<div class="acts"><button class="sb primary" data-sdraft="open" ` +
       `aria-label="return to the unsaved draft">Return to the draft</button>` +
-      `<button class="chip2" data-sdraft="discard" aria-label="discard the ` +
+      `<button class="sb danger" data-sdraft="discard" aria-label="discard the ` +
       `unsaved draft">Discard draft</button></div></div>`
     : '';
   // folds stay as the person left them across a repaint of the same
@@ -4128,17 +4357,40 @@ function renderSettings() {
   // GET — the same resolver, read at the one distance that costs nothing —
   // and renders its findings in the Diagnostics section. It runs no project
   // program and invokes no adapter hook.
-  $('#s-inspect').addEventListener('click', () => {
+  const inspect = $('#s-inspect');
+  if (inspect) inspect.addEventListener('click', () => {
     S.settingsSection = 'diagnostics';
     inspectConfiguration();
+    // the head's button is not drawn on Diagnostics; its heading takes focus
+    $('#shead h1').focus({ preventScroll: true });
   });
   body.querySelectorAll('[data-sinspect]').forEach(btn =>
     btn.addEventListener('click', () => inspectConfiguration()));
-  [...body.querySelectorAll('[data-ssection]'),
-   ...nav.querySelectorAll('[data-ssection]')].forEach(btn =>
+  // a link in the content goes to another section, and focus goes with it
+  // to that section's heading, so the next Tab reads on from there
+  body.querySelectorAll('[data-ssection]').forEach(btn =>
     btn.addEventListener('click', () => {
       S.settingsSection = btn.dataset.ssection;
       renderSettings();
+      $('#view-settings').scrollTop = 0;
+      $('#shead h1').focus({ preventScroll: true });
+    }));
+  // Choosing from the sidebar keeps focus where the person is: on the
+  // section they chose, or — below 760px, where the list closes — on the
+  // button that opens it again
+  nav.querySelectorAll('[data-ssection]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      S.settingsSection = btn.dataset.ssection;
+      S.settingsNavOpen = false;
+      renderSettings();
+      $('#view-settings').scrollTop = 0;
+      const toggle = $('#snavtoggle');
+      if (toggle.offsetParent !== null) toggle.focus();
+      else {
+        const here = $('#snav').querySelector(
+          `[data-ssection="${S.settingsSection}"]`);
+        if (here) here.focus();
+      }
     }));
   body.querySelectorAll('[data-sedit]').forEach(btn =>
     btn.addEventListener('click', () =>
@@ -4201,21 +4453,28 @@ function settingsSection(key, page) {
    one action that goes somewhere specific. Problems are drawn under the
    row they are about, never collected somewhere else. */
 function sline(o) {
+  // an action in its register: doing something is an outlined button, and
+  // going somewhere (a section) is a text link
   const action = o.inspect
-    ? `<button class="chip2" data-sinspect="1" aria-label="${esc(o.act)}">` +
+    ? `<button class="sb" data-sinspect="1" aria-label="${esc(o.act)}">` +
       `${esc(o.act)}</button>`
     : o.edit
-      ? `<button class="chip2" data-sedit="${esc(o.edit)}" ` +
+      ? `<button class="sb" data-sedit="${esc(o.edit)}" ` +
         `data-sname="${esc(o.name || '')}" aria-label="${esc(o.aria || o.act)}">` +
         `${esc(o.act)}</button>`
       : o.section
-        ? `<button class="chip2" data-ssection="${esc(o.section)}" ` +
+        ? `<button class="sb link" data-ssection="${esc(o.section)}" ` +
           `aria-label="${esc(o.aria || `${o.act}: ${o.label}`)}">${esc(o.act)}</button>`
         : '';
-  return `<div class="srow sline"><span class="sname">${esc(o.label)}` +
+  // a value that is itself a state — Optional, Not inspected, No merge
+  // requirements — is drawn as a badge in its tone, its words unchanged
+  const tag = o.tag ? `<span class="sbadge ${esc(o.tag[0])}">${esc(o.tag[1])}</span>` : '';
+  return `<div class="srow sline"><span class="sname${o.labelCode ? ' code' : ''}">` +
+    `${esc(o.label)}` +
     (o.sub ? `<span class="shelp mono">${esc(o.sub)}</span>` : '') + `</span>` +
     `<span class="sval"${o.title ? ` title="${esc(o.title)}"` : ''}>` +
-    (o.code ? `<code>${esc(o.value)}</code>` : esc(o.value)) +
+    (o.code ? `<code>${esc(o.value)}</code>` : esc(o.value || '')) +
+    (o.value && tag ? ' ' : '') + tag +
     (o.help ? `<span class="shelp">${esc(o.help)}</span>` : '') + `</span>` +
     `<span class="sright">${o.chips || ''}` +
     `${o.state ? stateWord(o.state, o.states) : ''}${action}</span></div>` +
@@ -4228,6 +4487,15 @@ function sline(o) {
 function sref(summary, inner) {
   return `<details class="fold sref"><summary>${esc(summary)}</summary>` +
     `<div class="srefbody">${inner}</div></details>`;
+}
+
+/* One white panel: a heading a screen reader can jump to, an optional
+   short fact on the right (already markup — escape it at the call), and
+   the panel's rows. */
+function spanel(title, meta, inner, cls) {
+  return `<section class="panel${cls ? ' ' + cls : ''}"><div class="phead">` +
+    `<h2 class="s-ptitle">${esc(title)}</h2>` +
+    (meta ? `<span class="r">${meta}</span>` : '') + `</div>${inner}</section>`;
 }
 
 function settingsOverview(page) {
@@ -4246,20 +4514,24 @@ function settingsOverview(page) {
     { label: 'Checks', section: 'verification', act: 'Edit checks',
       state: row.checks.state, title: row.checks.detail,
       value: v.checks.length
-        ? `${v.checks.length} registered · ` +
-          (required ? `${required} required by a merge rule` : 'Optional')
+        ? `${v.checks.length} registered` +
+          (required ? ` · ${required} required by a merge rule` : '')
         : 'None registered',
+      tag: v.checks.length && !required ? ['dim', 'Optional'] : null,
       help: !v.checks.length ? row.checks.detail
         : !required ? 'Registered is not passed, and no merge requires one.' : '',
       // plain text throughout, not markup: sline escapes every field
       problems: v.problems.map(p => p.code + ' — ' + p.why) },
     { label: 'Merge rules', section: 'acceptance', act: 'Edit merge rules',
       state: row.acceptance.state, title: row.acceptance.detail,
-      value: a.policy.blockers.length ? 'Invalid'
+      value: a.policy.blockers.length ? ''
         : gated.length
           ? gated.map(([s, e]) => `${SCOPE_LABEL[s] || s}: ` +
               (e.checks.map(c => c.requirement).join(', ') || 'review only')).join(' · ')
-          : 'No merge requirements',
+          : '',
+      // the absence that changes what a merge means wears amber, in words
+      tag: a.policy.blockers.length ? ['bad', 'Invalid']
+        : gated.length ? null : ['warn', 'No merge requirements'],
       help: !gated.length && !a.policy.blockers.length
         ? 'Nothing is required before a merge, so a merge proves nothing.' : '',
       problems: a.policy.blockers },
@@ -4284,8 +4556,8 @@ function settingsOverview(page) {
     { label: 'OS isolation', section: 'access', act: 'Details',
       aria: 'details of OS isolation', state: row.isolation.state,
       title: row.isolation.detail,
-      value: row.isolation.state === 'unsupported' ? 'Unavailable'
-        : 'Declared by the adapter',
+      value: row.isolation.state === 'unsupported' ? '' : 'Declared by the adapter',
+      tag: row.isolation.state === 'unsupported' ? ['warn', 'Unavailable'] : null,
       help: row.isolation.state === 'unsupported'
         ? 'Write locations are intended, not enforced: nothing confines a run to them.'
         : '' },
@@ -4293,7 +4565,8 @@ function settingsOverview(page) {
       state: report && report.summary.failed ? 'failed' : row.diagnostics.state,
       value: report
         ? (report.summary.failed ? report.summary.failed + ' failed' : 'Inspected')
-        : 'Not inspected',
+        : '',
+      tag: report ? null : ['dim', 'Not inspected'],
       help: report ? report.summary.line
         : 'Read-only: no project program runs and nothing is spent.' },
     { label: 'Installation', section: 'installation', act: 'View installation',
@@ -4308,28 +4581,35 @@ function settingsOverview(page) {
   ];
   const recs = page.recommendations;
   const urgent = recs.some(r => r.priority === 'high');
+  const sectionLabel = (key) =>
+    (SETTINGS_SECTIONS.find(([k]) => k === key) || [])[1] || 'the setting';
   const recList = recs.map(r =>
     `<div class="srec ${esc(r.priority)}">` +
-    `<div class="st"><span class="pri">${esc(r.priority)}</span>` +
+    `<div class="st"><span class="sbadge ${r.priority === 'high' ? 'warn' : 'dim'}">` +
+    `${esc(r.priority)} priority</span>` +
     `<strong>${esc(r.title)}</strong>${stateWord(r.state, states)}</div>` +
     `<p>${esc(r.why)}</p>` +
     `<p class="supply"><b>You supply:</b> ${esc(r.supply)}</p>` +
     (r.prerequisites.length
       ? `<p><b>First:</b> ${esc(r.prerequisites.join('; '))}</p>` : '') +
     `<div class="acts">` +
-    `<button class="chip2" data-ssection="${esc(r.section)}" ` +
-    `aria-label="open the setting for ${esc(r.title)}">open the setting` +
-    `</button>` +
-    (r.setting ? `<span class="mono" style="color:var(--dim)">` +
-      `${esc(r.setting)}</span>` : '') + `</div></div>`).join('');
-  return `<div class="panel"><div class="phead">` +
-    `<span class="label">Current setup</span>` +
-    `<span class="r">${esc(page.location)}</span></div>` +
-    lines.map(l => sline({ ...l, states })).join('') + `</div>` +
+    `<button class="sb link" data-ssection="${esc(r.section)}" ` +
+    `aria-label="open the setting for ${esc(r.title)}">` +
+    `Open ${esc(sectionLabel(r.section))}</button>` +
+    (r.setting ? `<code>${esc(r.setting)}</code>` : '') + `</div></div>`).join('');
+  // the current setup in three groups, as a reader asks about it: what
+  // work must pass, what an agent may do, and this board itself
+  const byLabel = {};
+  for (const l of lines) byLabel[l.label] = l;
+  const group = (labels) => labels.map(n => sline({ ...byLabel[n], states })).join('');
+  return spanel('Verification and merging', esc(page.location),
+      group(['Checks', 'Merge rules', 'Reviews', 'Overrides'])) +
+    spanel('Agent runs', '', group(['Agent access', 'OS isolation'])) +
+    spanel('This board', '', group(['Diagnostics', 'Installation', 'Policy document'])) +
     (recs.length
-      ? `<details class="fold sref srecs"${urgent ? ' open' : ''}>` +
+      ? `<section class="panel"><details class="fold sref srecs"${urgent ? ' open' : ''}>` +
         `<summary>Suggested next steps (${recs.length})</summary>` +
-        `<div class="srefbody">${recList}</div></details>`
+        `<div class="srefbody">${recList}</div></details></section>`
       : '') +
     sref('What each state word means',
       `<div class="skv">` + Object.entries(o.states).map(([w, why]) =>
@@ -4338,64 +4618,82 @@ function settingsOverview(page) {
 
 /* ── verification ─────────────────────────────────────────────────────── */
 
-function checkSummary(c) {
-  const bits = [`runs in the ${c.root} checkout`];
+/* One registered check, as configured — never as a result. Name and
+   purpose first, then the facts that decide where and for how long it
+   runs, its action, and the command itself, which stays readable in full
+   in the disclosure's own line. */
+function checkBlock(page, c, editor) {
+  const v = page.verification;
   const scopes = Object.keys(c.scopes || {});
-  if (scopes.length) bits.push(`scopes ${scopes.join(', ')}`);
-  bits.push(c.intents.length ? `asked for by ${c.intents.join(', ')}`
-    : 'no launch intent may ask for it');
-  if (c.prepare.length) bits.push(`prepared by ${c.prepare.join(', ')}`);
-  bits.push(`${c.timeout}s limit`);
-  return bits.join(' · ');
+  const fact = (k, val, help) => `<div><dt>${esc(k)}</dt><dd>${val}` +
+    (help ? `<span class="shelp">${esc(help)}</span>` : '') + `</dd></div>`;
+  return `<article class="scard" aria-label="${esc('check ' + c.name)}">` +
+    `<div class="shd"><h3>${esc(c.name)}</h3>` +
+    // registered is not required, and neither is a pass: the badge says
+    // which, and the definition rides on its title
+    (c.requiredBy.length
+      ? `<span class="sbadge ok" title="a merge rule requires this check">` +
+        `required: ${esc(c.requirement.join(', '))}</span>`
+      : `<span class="sbadge dim" title="${esc(v.registrationIsNotRequirement)}">` +
+        `Optional</span>`) +
+    stateWord(c.state, page.states) +
+    `<button class="sb" data-sedit="check" data-sname="${esc(c.name)}" ` +
+    `aria-label="${esc('edit the check ' + c.name)}">Edit</button></div>` +
+    (c.help ? `<p class="lead">${esc(c.help)}</p>`
+      : `<p>No description is recorded for this check in the policy.</p>`) +
+    `<dl class="sfacts">` +
+    fact('Runs in', `the <code>${esc(c.root)}</code> checkout`, c.rootWhy || '') +
+    fact('Preparation', c.prepare.length
+      ? c.prepare.map(p => `<code>${esc(p)}</code>`).join(', ') : 'None') +
+    fact('Time limit', `${esc(String(c.timeout))} seconds`) +
+    fact('May be asked for by', c.intents.length
+      ? esc(c.intents.join(', ')) : 'No launch intent') +
+    (scopes.length ? fact('Scopes', scopes.map(s => `<code>${esc(s)}</code>`).join(', ')) : '') +
+    `</dl>` +
+    `<details class="fold scmd"><summary>Command <code>${esc(c.run)}</code></summary>` +
+    `<div class="srefbody"><div class="skv">` +
+    `<dt>executable</dt><dd><code>${esc(c.executable || '')}</code></dd>` +
+    `<dt>arguments</dt><dd><code>${esc(JSON.stringify(c.argv))}</code></dd>` +
+    scopes.map(s => `<dt>scope ${esc(s)}</dt><dd><code>` +
+      `${esc(JSON.stringify(c.scopes[s]))}</code></dd>`).join('') +
+    `<dt>check identity</dt><dd><code>${esc(String(c.checkId))}</code></dd>` +
+    `</div></div></details>` + editor + `</article>`;
 }
 
 function settingsVerification(page) {
   const v = page.verification, states = page.states;
   const ed = S.sedit && S.sedit.kind === 'check' ? (ensureDraft(page), S.sedit) : null;
-  const rows = v.checks.map(c => sline({
-    label: c.name, value: c.run, code: true, states, state: c.state,
-    // plain text, not markup: sline escapes every one of these fields
-    help: checkSummary(c),
-    title: 'executable ' + (c.executable || '') + ' · arguments ' +
-      JSON.stringify(c.argv) + ' · check identity ' +
-      String(c.checkId).slice(0, 14) + ' · ' + (c.rootWhy || ''),
-    // registered is not required, and neither is a pass: the chip says
-    // which, and the definition rides on its title
-    chips: c.requiredBy.length
-      ? `<span class="chip2 ok" title="a merge rule requires this check">` +
-        `required: ${esc(c.requirement.join(', '))}</span>`
-      : `<span class="chip2 dim" title="${esc(v.registrationIsNotRequirement)}">` +
-        `Optional</span>`,
-    edit: 'check', name: c.name, act: 'Edit', aria: 'edit the check ' + c.name,
-    after: ed && ed.anchor === c.name ? checkEditor(page, ed.index) : '',
-  })).join('');
+  const rows = v.checks.map(c => checkBlock(page, c,
+    ed && ed.anchor === c.name ? checkEditor(page, ed.index) : '')).join('');
   const orphan = ed && !v.checks.some(c => c.name === ed.anchor)
     ? checkEditor(page, ed.index) : '';
   const steps = v.prepare.map(s => sline({
-    label: s.name, value: s.run, code: true,
+    label: s.name, value: s.run, code: true, states,
     help: (s.usedBy.length ? `prepares ${s.usedBy.join(', ')}`
       : 'prepares nothing — no check references it') +
       (s.network ? ' · uses the network, unbounded' : ''),
+    tag: s.network ? ['warn', 'Network: not bounded'] : null,
   })).join('');
-  return `<div class="panel"><div class="phead">` +
-    `<span class="label">Checks</span>` +
-    `<span class="r">${v.checks.length} registered</span></div>` +
-    (v.problems.length ? v.problems.map(p =>
-      `<p class="bad">${esc(p.code)}${p.field ? ` (${esc(p.field)})` : ''} — ` +
-      `${esc(p.why)}</p>`).join('') : '') +
-    (v.checks.length ? rows
-      : `<p>No check is registered, so bench runs none of its own. An agent ` +
-        `saying the tests pass is then its own word, not evidence.</p>`) +
-    orphan +
-    `<div class="acts"><button class="chip2" data-sedit="new-check" ` +
-    `aria-label="add a check">Add a check</button>` +
-    `<button class="chip2" data-ssection="policy" aria-label="edit checks in ` +
-    `the advanced policy editor">Advanced editor</button></div></div>` +
-    (v.prepare.length
-      ? `<div class="panel"><div class="phead"><span class="label">Preparation` +
-        `</span><span class="r">${v.prepare.length}</span></div>` +
-        `<p>${esc(v.preparationIsNotVerification)}</p>` + steps + `</div>`
-      : '') +
+  return spanel('Registered checks', `${v.checks.length} registered`,
+      `<p>This is configuration, not results. What a check found is ` +
+      `recorded per card — open a card's ◫ evidence to read it.</p>` +
+      (v.problems.length ? v.problems.map(p =>
+        `<p class="bad">${esc(p.code)}${p.field ? ` (${esc(p.field)})` : ''} — ` +
+        `${esc(p.why)}</p>`).join('') : '') +
+      (v.checks.length ? rows
+        : `<p class="lead">No check is registered, so bench runs none of its ` +
+          `own. An agent saying the tests pass is then its own word, not ` +
+          `evidence.</p>`) +
+      orphan +
+      `<div class="acts"><button class="sb primary" data-sedit="new-check" ` +
+      `aria-label="add a check">Add a check</button>` +
+      `<button class="sb link" data-ssection="policy" aria-label="edit checks in ` +
+      `the advanced policy editor">Advanced editor</button></div>`) +
+    spanel('Preparation steps', `${v.prepare.length} declared`,
+      `<p>${esc(v.preparationIsNotVerification)}</p>` +
+      (v.prepare.length ? steps
+        : `<p>No preparation step is declared. Add one in the advanced editor ` +
+          `when a check needs dependencies installed first.</p>`)) +
     sref(v.ownership,
       `<p>${esc(v.ownershipDetail)}</p>` +
       `<div class="skv">` + v.responsibilities.map(r =>
@@ -4430,33 +4728,30 @@ function settingsAcceptance(page) {
     help: a.scopes[scope] || entry.why,
     title: entry.reviewWhy || '',
     state: entry.gated ? 'configured-untested' : 'not-configured',
-    // ungated wears the dim register and the definition on its title —
-    // never the colour of a pass
-    chips: `<span class="chip2 ${entry.gated ? 'ok' : 'dim'}" ` +
+    // ungated is a consequential absence: amber, in words, with the
+    // definition on its title — never the colour of a pass
+    chips: `<span class="sbadge ${entry.gated ? 'ok' : 'warn'}" ` +
       `title="${esc(entry.gated ? 'this mutation is gated' : a.ungatedIsNotAPass)}">` +
       `${entry.gated ? 'gated' : 'ungated'}</span>`,
     edit: 'gate', name: scope, act: 'Edit', aria: `edit the ${scope} merge rule`,
     after: ed && ed.kind === 'gate' && ed.scope === scope ? gateEditor(page, scope) : '',
   })).join('');
   const over = a.overrides;
-  return `<div class="panel"><div class="phead">` +
-    `<span class="label">Merge rules</span>` +
-    `<span class="r">${esc(a.state)}</span></div>` +
-    (a.policy.blockers.length
-      ? a.policy.blockers.map(b => `<p class="bad">${esc(b)}</p>`).join('')
-      : '') +
-    // the one limitation that changes what a merge means, kept in view
-    (!anyGated ? `<p class="snote">${esc(a.ungatedIsNotAPass)}</p>` : '') +
-    scopes +
-    sline({ label: 'Overrides', states,
-      value: over.allowed
-        ? (over.actors.length ? `Allowed for ${over.actors.join(', ')}` : 'Allowed for anyone')
-        : 'Off',
-      help: over.allowed ? 'Recorded against one commit; never a pass.'
-        : 'An unmet merge rule stays unmet.',
-      edit: 'overrides', act: 'Edit', aria: 'edit the override policy',
-      after: ed && ed.kind === 'overrides' ? overridesEditor(page) : '' }) +
-    `</div>` +
+  return spanel('Merge rules', esc(a.state),
+      (a.policy.blockers.length
+        ? a.policy.blockers.map(b => `<p class="bad">${esc(b)}</p>`).join('')
+        : '') +
+      // the one limitation that changes what a merge means, kept in view
+      (!anyGated ? `<p class="snote">${esc(a.ungatedIsNotAPass)}</p>` : '') +
+      scopes +
+      sline({ label: 'Overrides', states,
+        value: over.allowed
+          ? (over.actors.length ? `Allowed for ${over.actors.join(', ')}` : 'Allowed for anyone')
+          : 'Off',
+        help: over.allowed ? 'Recorded against one commit; never a pass.'
+          : 'An unmet merge rule stays unmet.',
+        edit: 'overrides', act: 'Edit', aria: 'edit the override policy',
+        after: ed && ed.kind === 'overrides' ? overridesEditor(page) : '' })) +
     settingsCi(page) +
     sref('Review policies, and which this board can read',
       a.reviewModes.map(m => sline({ label: m.name,
@@ -4482,12 +4777,10 @@ function settingsAcceptance(page) {
    which is exactly why each keeps a row of its own. */
 function settingsCi(page) {
   const c = page.ci;
-  return `<div class="panel"><div class="phead">` +
-    `<span class="label">Three separate signals</span>` +
-    `<span class="r">green CI is not a Bench check</span></div>` +
+  return spanel('Three separate signals', 'green CI is not a Bench check',
     Object.values(c.kinds).map(k => sline({ label: k.label, value: k.who,
       help: k.what, title: 'authority: ' + k.authority,
-      chips: `<span class="chip2 ${k.gateable ? '' : 'dim'}" ` +
+      chips: `<span class="sbadge ${k.gateable ? '' : 'dim'}" ` +
         `title="${esc(k.gateable ? 'a merge rule can require this'
                                  : 'a merge rule cannot require this')}">` +
         `${k.gateable ? 'can gate' : 'cannot gate'}</span>` })).join('') +
@@ -4497,8 +4790,7 @@ function settingsCi(page) {
       `<p>${esc(c.ci.why)}</p>` +
       `<ul>${c.limits.map(l => `<li>${esc(l)}</li>`).join('')}</ul>` +
       `<p>${esc(c.noDeployment)}</p>` +
-      `<pre>${esc(c.followUp.join('\n\n'))}</pre>`) +
-    `</div>`;
+      `<pre>${esc(c.followUp.join('\n\n'))}</pre>`));
 }
 
 /* ── agent access ─────────────────────────────────────────────────────── */
@@ -4533,7 +4825,7 @@ function settingsAccess(page) {
         : 'none enforced')}</span></span>` +
       `<span class="sright">${stateWord(found.state, states)}` +
       (found.blockers && found.blockers.length
-        ? `<span class="chip2 bad" title="${esc(found.blockers[0])}">` +
+        ? `<span class="sbadge bad" title="${esc(found.blockers[0])}">` +
           `will not start</span>` : '') + `</span></div>` +
       ((found.fields || []).filter(f => f.why).length
         ? (found.fields || []).filter(f => f.why).map(f =>
@@ -4555,17 +4847,13 @@ function settingsAccess(page) {
   // same adapter, and the same answer, for all three
   const isoWhy = Object.values(a.intents).map(f => (f.isolation || {}).why)
     .find(Boolean);
-  return `<div class="panel"><div class="phead">` +
-    `<span class="label">Profiles</span>` +
-    `<span class="r">${esc(a.adapter.name)} ${esc(a.adapter.version || '')}` +
-    `</span></div>` +
-    (isoWhy ? `<p class="snote">${esc(isoWhy)}</p>` : '') + intents +
-    `<div class="acts"><button class="chip2" data-ssection="policy" ` +
-    `aria-label="edit what a run may do">edit what a run may do</button>` +
-    `</div></div>` +
-    `<div class="panel"><div class="phead">` +
-    `<span class="label">Runs in flight</span>` +
-    `<span class="r">frozen, not current</span></div>` + frozen + `</div>` +
+  return spanel('Profiles',
+      `${esc(a.adapter.name)} ${esc(a.adapter.version || '')}`,
+      (isoWhy ? `<p class="snote">${esc(isoWhy)}</p>` : '') + intents +
+      `<div class="acts"><button class="sb link" data-ssection="policy" ` +
+      `aria-label="edit what a run may do">Edit what a run may do</button>` +
+      `</div>`) +
+    spanel('Runs in flight', 'frozen, not current', frozen) +
     sref('Four different facts: configured is not enforced',
       `<div class="skv">` + Object.entries(a.facts).map(([k, why]) =>
         `<dt>${esc(k)}</dt><dd>${esc(why)}</dd>`).join('') + `</div>`) +
@@ -4586,7 +4874,7 @@ function settingsAccess(page) {
     sref(`The board's own $ commands (${a.uiCommands.length})`,
       a.uiCommands.length
         ? a.uiCommands.map(c => sline({ label: c.name, value: c.help || '',
-            chips: `<span class="chip2 dim" ` +
+            chips: `<span class="sbadge dim" ` +
               `title="${esc(a.facts['ui-registration'])}">no agent grant</span>` }))
             .join('')
         : `<p>None registered.</p>`);
@@ -4607,16 +4895,16 @@ function settingsDiagnostics(page) {
               `<span class="sdetail">${esc(f.about)}<br>${esc(f.detail)}` +
               (f.remedy ? `<br><b>Remedy:</b> ${esc(f.remedy)}` : '') +
               `</span><span class="sright">` +
-              `<span class="chip2 ${cls}">${esc(f.outcome)}</span>` +
-              `<span class="mono" style="color:var(--dim)" ` +
-              `title="${esc((d.evidence[f.evidence] || {}).proves || '')}">` +
-              `${esc(f.evidence)}</span>` +
-              (f.code ? `<span class="mono" style="color:var(--dim)">` +
-                `${esc(f.code)}</span>` : '') + `</span></div>`;
+              `<span class="sbadge ${cls}">${esc(f.outcome)}</span>` +
+              `<code title="${esc((d.evidence[f.evidence] || {}).proves || '')}">` +
+              `${esc(f.evidence)}</code>` +
+              (f.code ? `<code>${esc(f.code)}</code>` : '') + `</span></div>`;
           }).join('')
         : `<p>The inspection found nothing to report.</p>`)
     : '';
-  const stages = d.coverage.map(row => {
+  // One stage as a row: what it does, its side effects beside its control,
+  // what it proves folded underneath, and whether this reading asked it.
+  const stage = (row) => {
     const mode = d.modes[row.mode];
     const ran = report ? report.ran.includes(row.mode) : false;
     const path = mode.uiPath || {};
@@ -4624,46 +4912,57 @@ function settingsDiagnostics(page) {
       `<span class="sval">${esc(mode.does)}` +
       // what an armed stage would do stays beside its control
       ((mode.sideEffects || []).length
-        ? `<span class="shelp"><b>side effects:</b> ` +
+        ? `<span class="shelp"><b>Side effects:</b> ` +
           `${esc(mode.sideEffects.join('; '))}</span>` : '') +
       (path.available
         ? (row.mode === 'inspect' ? '' : `<span class="shelp">${esc(path.how)}` +
             `${path.approval ? ` (${esc(path.approval)})` : ''}</span>`)
-        : `<span class="shelp"><b>no control here.</b> ${esc(path.how || '')}` +
+        : `<span class="shelp"><b>no control here.</b> <code>${esc(path.how || '')}</code>` +
           `${path.approval ? ` — ${esc(path.approval)}` : ''}</span>`) +
-      `<details class="fold"><summary>what it proves</summary>` +
-      `<p><b>proves:</b> ${esc(row.proves)}</p>` +
-      `<p><b>does not prove:</b> ${esc(row.doesNotProve)}</p></details>` +
+      `<details class="fold"><summary>What it proves</summary>` +
+      `<p><b>Proves:</b> ${esc(row.proves)}</p>` +
+      `<p><b>Does not prove:</b> ${esc(row.doesNotProve)}</p></details>` +
       `</span><span class="sright">` +
-      `<span class="chip2 ${ran ? 'ok' : 'dim'}">` +
+      `<span class="sbadge ${ran ? 'ok' : 'dim'}">` +
       `${ran ? 'run in this reading' : 'not asked'}</span>` +
       (path.available && row.mode !== 'inspect'
-        ? `<button class="chip2" data-sdoctor="${esc(row.mode)}" ` +
+        ? `<button class="sb" data-sdoctor="${esc(row.mode)}" ` +
           `aria-label="run ${esc(mode.label)}">` +
-          `${actLabel('run it', 'run it?', 'running…')}</button>`
-        : row.mode === 'inspect'
-          ? `<button class="chip2" data-sinspect="1" ` +
-            `aria-label="check configuration">check configuration</button>`
-          : `<span class="chip2 dim" title="${esc(path.approval || '')}">` +
+          `${actLabel('Run it', 'run it?', 'running…')}</button>`
+        : row.mode === 'inspect' ? ''
+          : `<span class="sbadge dim" title="${esc(path.approval || '')}">` +
             `not offered here</span>`) +
       `</span></div>`;
-  }).join('');
-  return `<div class="panel"><div class="phead">` +
-    `<span class="label">Check configuration</span>` +
-    `<span class="r">${report ? 'read ' + esc(fmtShort(report.generated))
-                              : 'Not inspected'}</span></div>` +
-    `<p>Read-only: resolves the policy and reads the approved inputs. ` +
-    `No project program runs and nothing is spent.</p>` +
-    (report && report.summary.failed
-      ? `<p class="bad">${esc(report.summary.line)}</p>`
-      : report ? `<p>${esc(report.summary.line)}</p>` : '') +
-    `<div class="acts"><button class="chip2" data-sinspect="1" ` +
-    `aria-label="check configuration now">Check configuration</button></div>` +
-    findings + `</div>` +
-    `<div class="panel"><div class="phead">` +
-    `<span class="label">Stages</span>` +
-    `<span class="r">inspection is not execution</span></div>` +
-    `<p>${esc(d.unknownIsNotPassed)}</p>` + stages + `</div>` +
+  };
+  // inspection, execution, and the one stage with no control: three
+  // different things, so three panels rather than one list of stages
+  const isInspect = (row) => row.mode === 'inspect';
+  const offered = (row) => ((d.modes[row.mode] || {}).uiPath || {}).available;
+  const inspectRows = d.coverage.filter(isInspect);
+  const execRows = d.coverage.filter(r => !isInspect(r) && offered(r));
+  const handRows = d.coverage.filter(r => !isInspect(r) && !offered(r));
+  return spanel('Check configuration',
+      report ? 'read ' + esc(fmtShort(report.generated)) : 'Not inspected',
+      `<p class="lead">Read-only: resolves the policy and reads the approved ` +
+      `inputs. No project program runs and nothing is spent.</p>` +
+      (report && report.summary.failed
+        ? `<p class="bad">${esc(report.summary.line)}</p>`
+        : report ? `<p>${esc(report.summary.line)}</p>` : '') +
+      `<div class="acts"><button class="sb primary" data-sinspect="1" ` +
+      `aria-label="check configuration now">Check configuration</button></div>` +
+      findings + inspectRows.map(stage).join('')) +
+    spanel('Execution diagnostics', 'inspection is not execution',
+      `<p>${esc(d.unknownIsNotPassed)}</p>` +
+      `<p>Each of these runs real processes. It arms on the first click and ` +
+      `runs on the second, with its side effects written beside it.</p>` +
+      (execRows.length ? execRows.map(stage).join('')
+        : `<p>No execution stage is offered from this page.</p>`)) +
+    (handRows.length
+      ? spanel('Run from a terminal', 'not offered here',
+          `<p>These stages have no control on this page. An operator runs ` +
+          `them deliberately, with the command and the authorisation shown.</p>` +
+          handRows.map(stage).join(''))
+      : '') +
     sref('What inspection is, and what it cannot do',
       `<p>${esc(d.inspectIs)}</p>` +
       `<p>Read-only inspection cannot: ${esc(d.cannot.join(', '))}.</p>`) +
@@ -4752,24 +5051,24 @@ function settingsInstallation(page) {
   const common = restarts * 2 >= page.settings.length ? 'restart' : 'fresh';
   const commonWhy = (page.settings.find(s => s.appliesAt === common) || {}).appliesWhy;
   const rows = page.settings.map(s => sline({
-    label: s.key, code: true,
+    label: s.key, labelCode: true, code: true,
     value: (s.value || '(empty)') + (s.redacted ? ' (redacted)' : ''),
     // plain text, not markup: sline escapes every one of these fields
     help: s.why + (s.source !== 'default' && s.default !== s.value
       ? ' · default ' + (s.default || '(empty)') : ''),
     title: s.how,
-    chips: `<span class="chip2 ${s.locked ? 'bad' : 'dim'}" ` +
+    chips: `<span class="sbadge ${s.locked ? 'bad' : 'dim'}" ` +
       `title="${esc(s.how)}">${esc(SOURCE_WORD[s.source] || s.source)}` +
       `${s.locked ? ' · locked' : ''}</span>` +
       (s.appliesAt !== common
-        ? `<span class="chip2" title="${esc(s.appliesWhy)}">` +
+        ? `<span class="sbadge" title="${esc(s.appliesWhy)}">` +
           `${s.appliesAt === 'fresh' ? 'no restart' : 'needs restart'}</span>` : ''),
     problems: s.running !== null
       ? ['the running board has ' + s.running + ' — the file has moved since it started']
       : [],
   })).join('');
-  return `<div class="panel"><div class="phead">` +
-    `<span class="label">This installation</span>` +
+  return `<section class="panel"><div class="phead">` +
+    `<h2 class="s-ptitle">This installation</h2>` +
     `<span class="r">${esc(i.mode)}</span></div>` +
     (i.problems.length
       ? i.problems.map(p => `<p class="bad">${esc(p)}</p>`).join('') : '') +
@@ -4795,15 +5094,15 @@ function settingsInstallation(page) {
     ((i.sync.status.notes || []).length
       ? (i.sync.status.notes || []).map(n =>
           `<p class="bad">${esc(n.summary || '')}</p>`).join('') : '') +
-    `</div>` +
-    `<div class="panel"><div class="phead">` +
-    `<span class="label">Settings</span>` +
+    `</section>` +
+    `<section class="panel"><div class="phead">` +
+    `<h2 class="s-ptitle">Settings and their sources</h2>` +
     `<span class="r">read-only here</span></div>` +
     `<p class="snote">Each value comes from the process environment, else ` +
     `<code>manager/local/.env</code>, else its default; change it where it ` +
     `is set. Unless a row says otherwise, ${esc(commonWhy || '')}.</p>` + rows +
     sref('Why these are not edited on this page',
-      `<p>${esc(page.editing.envIsReadOnly)}</p>`) + `</div>` +
+      `<p>${esc(page.editing.envIsReadOnly)}</p>`) + `</section>` +
     sref('Roots and repositories, with their paths',
       `<div class="skv">` + i.roots.map(r =>
         `<dt>${esc(r.name)}</dt><dd><code>${esc(r.path)}</code>` +
@@ -4894,20 +5193,22 @@ function draftBar(page, here) {
   const errs = (draft.checked && draft.checked.errors) || [];
   const ok = !!(draft.checked && draft.checked.ok);
   const elsewhere = errs.filter(e => !here(e));
+  // Apply is the one primary action, and it stays disabled — not merely
+  // grey — until a validation of this exact draft came back clean
   return `<div class="acts" id="s-steps">` +
-    `<button class="chip2" id="s-validate" aria-label="validate the draft">` +
+    `<button class="sb" id="s-validate" aria-label="validate the draft">` +
     `Validate</button>` +
-    `<button class="chip2" id="s-preview" aria-label="preview the change">` +
+    `<button class="sb" id="s-preview" aria-label="preview the change">` +
     `Preview</button>` +
-    `<button class="chip2 ${ok ? 'ok' : 'dim'}" id="s-apply" ` +
+    `<button class="sb ${ok ? 'primary' : ''}" id="s-apply" ` +
     `aria-label="apply the change"${ok ? '' : ' disabled'}>` +
     `${actLabel('Apply', 'write it?', 'writing…')}</button>` +
-    `<button class="chip2" id="s-discard" aria-label="discard the draft">` +
+    `<button class="sb danger" id="s-discard" aria-label="discard the draft">` +
     `Discard draft</button>` +
     (S.sedit && S.settingsSection !== 'policy'
-      ? `<button class="chip2" id="s-close" aria-label="close the editor and ` +
+      ? `<button class="sb link" id="s-close" aria-label="close the editor and ` +
         `keep the draft">Close</button>` : '') +
-    `<span class="mono" style="color:var(--dim)">revision ` +
+    `<span class="s-rev">revision ` +
     `${esc((draft.revision || 'none').slice(0, 12))}` +
     `${draft.dirty ? ' · edited' : ''}</span></div>` +
     (draft.checked
@@ -4938,7 +5239,7 @@ function draftConsequences() {
           `<div class="d"><span class="k">${esc(c.kind)}</span>` +
           `<span>${esc(c.what)} — ${esc(c.detail)}` +
           (c.before !== undefined
-            ? `<br><span class="mono" style="color:var(--dim)">` +
+            ? `<br><span class="s-rev">` +
               `before ${esc(JSON.stringify(c.before))} → after ` +
               `${esc(JSON.stringify(c.after))}</span>` : '') +
           `</span></div>`).join('') + `</div>`
@@ -4990,8 +5291,8 @@ function checkEditor(page, n) {
     `aria-label="${esc(name ? `edit the check ${name}` : 'a new check')}">` +
     `<div class="ihead"><span class="label">` +
     `${esc(name ? `Editing ${name}` : 'New check')}</span>` +
-    `<button class="chip2 bad" data-drop="checks:${n}" ` +
-    `aria-label="remove this check from the draft">remove</button></div>` +
+    `<button class="sb danger" data-drop="checks:${n}" ` +
+    `aria-label="remove this check from the draft">Remove</button></div>` +
     errorLines(draftErrors(mine)) +
     `<div class="fgrid">` +
     field(`checks:${n}:name`, 'name', c.name || '') +
@@ -5073,9 +5374,9 @@ function settingsPolicy(page) {
   const shown = (e) => ['checks', 'prepare', 'profiles', 'gates'].includes(e.field || '');
 
   const checkItems = (draft.document.checks || []).map((c, n) =>
-    `<div class="item"><div class="ihead"><span class="label">check ${n + 1}` +
-    `</span><button class="chip2 bad" data-drop="checks:${n}" ` +
-    `aria-label="remove check ${n + 1}">remove</button></div>` +
+    `<div class="item"><div class="ihead"><span class="label">Check ${n + 1}` +
+    `</span><button class="sb danger" data-drop="checks:${n}" ` +
+    `aria-label="remove check ${n + 1}">Remove</button></div>` +
     `<div class="fgrid">` +
     field(`checks:${n}:name`, 'name', (c || {}).name || '') +
     field(`checks:${n}:run`, 'command', (c || {}).run || '') +
@@ -5092,9 +5393,9 @@ function settingsPolicy(page) {
     `</div></div>`).join('');
 
   const stepItems = (draft.document.prepare || []).map((p, n) =>
-    `<div class="item"><div class="ihead"><span class="label">step ${n + 1}` +
-    `</span><button class="chip2 bad" data-drop="prepare:${n}" ` +
-    `aria-label="remove preparation step ${n + 1}">remove</button></div>` +
+    `<div class="item"><div class="ihead"><span class="label">Step ${n + 1}` +
+    `</span><button class="sb danger" data-drop="prepare:${n}" ` +
+    `aria-label="remove preparation step ${n + 1}">Remove</button></div>` +
     `<div class="fgrid">` +
     field(`prepare:${n}:name`, 'name', (p || {}).name || '') +
     field(`prepare:${n}:run`, 'command', (p || {}).run || '') +
@@ -5107,7 +5408,7 @@ function settingsPolicy(page) {
         const prof = ((draft.document.profiles || {})[intent]) || {};
         const want = (prof.verify || []).map(String);
         return `<div class="item"><div class="ihead">` +
-          `<span class="label">${esc(intent)}</span></div>` +
+          `<span class="label"><code>${esc(intent)}</code></span></div>` +
           (names.length
             ? names.map(name => checkbox(
                 `profiles:${intent}:verify:${name}`,
@@ -5123,8 +5424,7 @@ function settingsPolicy(page) {
       typeof c === 'string' ? c : String((c || {}).check || ''));
     return `<div class="item"><div class="ihead">` +
       `<span class="label">${esc(SCOPE_LABEL[scope] || scope)}</span>` +
-      `<span class="mono" style="color:var(--dim)">` +
-      `${esc(scope)}</span></div>` +
+      `<code>${esc(scope)}</code></div>` +
       (names.length
         ? names.map(name => checkbox(`gates:${scope}:checks:${name}`,
             `require ${name}`, want.includes(name))).join('')
@@ -5134,9 +5434,12 @@ function settingsPolicy(page) {
 
   const over = ((draft.document.gates || {}).overrides) || {};
 
-  return `<div class="panel"><div class="phead">` +
-    `<span class="label">The whole execution policy</span>` +
-    `<span class="r">${esc(d.identity || d.path)}</span></div>` +
+  // every panel a heading of its own; the field labels are sentences, and
+  // the step bar is the same one the contextual editors draw
+  const head = (title, meta) => `<div class="phead"><h2 class="s-ptitle">` +
+    `${esc(title)}</h2><span class="r">${meta}</span></div>`;
+  return `<section class="panel">` +
+    head('The whole execution policy', `<code>${esc(d.identity || d.path)}</code>`) +
     `<p>Checks and Merge rules edit parts of this same draft; ` +
     `${esc(d.appliesWhy)}.</p>` +
     (d.parseError ? `<p class="bad">${esc(d.parseError)} — the structured ` +
@@ -5150,44 +5453,38 @@ function settingsPolicy(page) {
       `<div class="skv">` + page.editing.steps.map(s =>
         `<dt>${esc(s.step)}</dt><dd>${esc(s.what)}</dd>`).join('') + `</div>` +
       `<p>${esc(page.editing.secrets)}</p>`) +
-    `</div>` +
-    `<div class="panel s-edit"><div class="phead">` +
-    `<span class="label">Checks</span>` +
-    `<span class="r">${names.length}</span></div>` +
+    `</section>` +
+    `<section class="panel s-edit">` + head('Checks', `${names.length} in the draft`) +
     fieldErrors('checks') + checkItems +
-    `<div class="acts"><button class="chip2" data-add="checks" ` +
-    `aria-label="add a check">add a check</button></div></div>` +
-    `<div class="panel s-edit"><div class="phead">` +
-    `<span class="label">Preparation steps</span>` +
-    `<span class="r">${(draft.document.prepare || []).length}</span></div>` +
+    `<div class="acts"><button class="sb" data-add="checks" ` +
+    `aria-label="add a check">Add a check</button></div></section>` +
+    `<section class="panel s-edit">` +
+    head('Preparation steps', `${(draft.document.prepare || []).length} in the draft`) +
     fieldErrors('prepare') + stepItems +
-    `<div class="acts"><button class="chip2" data-add="prepare" ` +
-    `aria-label="add a preparation step">add a step</button></div></div>` +
-    `<div class="panel s-edit"><div class="phead">` +
-    `<span class="label">What each launch intent may ask for</span>` +
-    `<span class="r">profiles</span></div>` +
-    fieldErrors('profiles') + intentItems + `</div>` +
-    `<div class="panel s-edit"><div class="phead">` +
-    `<span class="label">Merge rules</span>` +
-    `<span class="r">per guarded mutation</span></div>` +
+    `<div class="acts"><button class="sb" data-add="prepare" ` +
+    `aria-label="add a preparation step">Add a step</button></div></section>` +
+    `<section class="panel s-edit">` +
+    head('What each launch intent may ask for', '<code>profiles</code>') +
+    fieldErrors('profiles') + intentItems + `</section>` +
+    `<section class="panel s-edit">` + head('Merge rules', 'per guarded mutation') +
     fieldErrors('gates') + gateItems +
-    `<div class="item"><div class="ihead"><span class="label">overrides` +
+    `<div class="item"><div class="ihead"><span class="label">Overrides` +
     `</span></div>` +
     checkbox('gates:overrides:allow', 'allow an unmet gate to be proceeded ' +
              'over, on the record', over.allow === true) +
     field('gates:overrides:actors', 'restricted to these git identities ' +
           '(comma separated; empty means any)',
-          (over.actors || []).join(', ')) + `</div></div>` +
-    `<details class="fold" id="s-rawfold"><summary>the whole document as ` +
-    `JSON — for anything these fields do not cover</summary>` +
+          (over.actors || []).join(', ')) + `</div></section>` +
+    `<section class="panel"><details class="fold" id="s-rawfold"><summary>The whole ` +
+    `document as JSON — for anything these fields do not cover</summary>` +
     `<div class="s-edit" style="padding-top:8px">` +
-    `<div class="frow"><label for="s-raw">document</label>` +
+    `<div class="frow"><label for="s-raw">Document</label>` +
     `<textarea id="s-raw" spellcheck="false" aria-label="the whole execution ` +
     `policy document as JSON">${esc(draft.raw !== null ? draft.raw
       : JSON.stringify(draft.document, null, 2))}</textarea></div>` +
-    `<div class="acts"><button class="chip2" id="s-useraw" ` +
-    `aria-label="use this JSON as the draft">use this JSON</button></div>` +
-    `</div></details>`;
+    `<div class="acts"><button class="sb" id="s-useraw" ` +
+    `aria-label="use this JSON as the draft">Use this JSON</button></div>` +
+    `</div></details></section>`;
 }
 
 /* The three field primitives. Ids are `f-<path>` and the path is what the

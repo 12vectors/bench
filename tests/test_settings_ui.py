@@ -90,8 +90,8 @@ class ReachableThroughNormalNavigation(Source):
         self.assertIn("renderSettings()", body)
 
     def test_every_section_is_reachable_from_the_nav(self):
-        body = self.body("renderSettings")
-        self.assertIn("SETTINGS_SECTIONS.map", body)
+        body = self.body("renderSettingsNow")
+        self.assertIn("of SETTINGS_SECTIONS", body)
         self.assertIn("data-ssection", body)
         for key in ("overview", "verification", "acceptance", "access",
                     "diagnostics", "installation", "policy"):
@@ -123,7 +123,7 @@ class ReachableThroughNormalNavigation(Source):
         """Card 76 put the explanations in folds. A repaint rebuilds them
         closed, so the open ones are read before and reopened after — for
         the same section only, so a new section starts closed."""
-        body = self.body("renderSettings")
+        body = self.body("renderSettingsNow")
         keep = body.index("openSettingsFolds(body)")
         paint = body.index("body.innerHTML = notice + settingsSection")
         reopen = body.index("if (keepOpen.has(settingsFoldKey(d))) d.open = true")
@@ -193,8 +193,8 @@ class OneResolver(Source):
         self.assertEqual(1, self.html.count('id="s-steps"'),
                          "one step bar, drawn by draftBar")
         # the draft survives navigating away, and says so wherever you are
-        self.assertIn("Unsaved draft.", self.body("renderSettings"))
-        self.assertIn("draftBarShown(section)", self.body("renderSettings"))
+        self.assertIn("Unsaved draft.", self.body("renderSettingsNow"))
+        self.assertIn("draftBarShown(section)", self.body("renderSettingsNow"))
 
     def test_a_contextual_editor_shows_every_error_somewhere(self):
         """Errors about the item being edited are drawn at its fields; the
@@ -232,13 +232,15 @@ class TheWordCarriesTheMeaning(Source):
     def test_ungated_is_never_drawn_as_a_pass(self):
         body = self.body("settingsAcceptance")
         self.assertIn("ungatedIsNotAPass", body)
-        # the chip for an ungated scope wears the dim register, not --calm
-        self.assertRegex(body, r"entry\.gated \? 'ok' : 'dim'")
+        # card 80: an ungated scope is a consequential absence, so its badge
+        # wears amber with the word — never --calm, never the colour of a pass
+        self.assertRegex(body, r"entry\.gated \? 'ok' : 'warn'")
 
     def test_a_registered_check_says_it_is_not_required(self):
         """Card 76 words it `Optional`, with the definition on the chip's
         title — and a required one says which rule requires it."""
-        body = self.body("settingsVerification")
+        body = self.body("checkBlock")
+        self.assertIn("checkBlock(page, c,", self.body("settingsVerification"))
         self.assertIn("Optional</span>", body)
         self.assertIn('title="${esc(v.registrationIsNotRequirement)}"', body)
         self.assertIn("required: ", body)
@@ -416,10 +418,11 @@ class LayoutIsOneColumn(Source):
     def test_every_control_carries_an_accessible_name(self):
         """Measured properly in the browser case; here, that no control in
         these renderers was written without one."""
-        for name in ("renderSettings", "settingsOverview", "settingsPolicy",
+        for name in ("renderSettingsNow", "settingsOverview", "settingsPolicy",
                      "settingsDiagnostics", "field", "select", "checkbox",
                      "sline", "draftBar", "checkEditor", "gateEditor",
-                     "overridesEditor", "reviewSelect", "settingsVerification"):
+                     "overridesEditor", "reviewSelect", "settingsVerification",
+                     "checkBlock", "settingsAccess", "settingsAcceptance"):
             body = self.body(name)
             buttons = len(re.findall(r"<(?:button|select|input|textarea)\b",
                                      body))
@@ -427,6 +430,131 @@ class LayoutIsOneColumn(Source):
             labels = len(re.findall(r"<label\b", body))
             self.assertGreaterEqual(labelled + labels, buttons,
                                     f"{name} draws a control with no name")
+
+
+class ASurfaceOfItsOwn(Source):
+    """Card 80: a sidebar of sections, white panels on a pale ground, three
+    button registers and badges that are not actions — scoped to Settings,
+    so no other view is redesigned by accident."""
+
+    SETTINGS_RENDERERS = ("renderSettingsNow", "sline", "spanel", "settingsOverview",
+                          "checkBlock", "settingsVerification", "settingsAcceptance",
+                          "settingsCi", "settingsAccess", "settingsDiagnostics",
+                          "settingsInstallation", "draftBar", "checkEditor",
+                          "gateEditor", "overridesEditor", "settingsPolicy")
+
+    def test_the_sections_sit_in_a_sidebar_with_the_current_one_marked(self):
+        self.assertIn('<aside class="s-side" id="sside">', self.html)
+        self.assertIn('<nav class="s-nav" id="snav" aria-label="settings sections">',
+                      self.html)
+        body = self.body("renderSettingsNow")
+        # told to assistive technology as well as drawn: aria-current="page"
+        self.assertIn("aria-current=\"${key === section ? 'page' : 'false'}\"", body)
+        self.assertIn('.s-nav button[aria-current="page"]', self.css())
+        # grouped, every group named for a screen reader
+        self.assertIn('role="group" aria-labelledby="snavg-${n}"', body)
+
+    def test_every_section_has_a_title_and_a_sentence(self):
+        sections = re.search(r"const SETTINGS_SECTIONS = \[(.*?)\n\];",
+                             self.html, re.S).group(1)
+        rows = re.findall(r"\['(\w+)', '([^']+)', '(\w+)',\s*'([^']+)'\]", sections)
+        self.assertEqual(["overview", "verification", "acceptance", "access",
+                          "diagnostics", "installation", "policy"],
+                         [r[0] for r in rows])
+        self.assertIn("<h1 tabindex=\"-1\">${esc(title)}</h1>",
+                      self.body("renderSettingsNow"))
+
+    def test_narrow_screens_get_a_named_sections_button_not_a_squeezed_column(self):
+        self.assertIn('id="snavtoggle" aria-expanded="false"', self.html)
+        self.assertIn('aria-controls="snav"', self.html)
+        css = self.css()
+        narrow = css[css.index("@media (max-width:760px)"):]
+        self.assertIn(".s-shell{grid-template-columns:minmax(0,1fr)}", narrow)
+        self.assertIn(".s-nav.open{display:flex}", narrow)
+        # usable hit areas on a phone: buttons, folds and checkboxes
+        for rule in ("#view-settings .sb{min-height:44px}",
+                     "#view-settings .fold summary{min-height:44px}",
+                     ".s-edit .cb{min-height:44px}"):
+            self.assertIn(rule, narrow)
+        body = self.body("renderSettingsNow")
+        self.assertIn("toggle.setAttribute('aria-expanded'", body)
+        self.assertIn("S.settingsNavOpen = false", body)
+
+    def test_the_tokens_are_scoped_so_other_views_are_not_redesigned(self):
+        """Every rule in the settings block that reaches a shared component
+        is prefixed with #view-settings, and no rule there restyles the
+        document, the header or a card."""
+        css = re.sub(r"/\*.*?\*/", "", self.css(), flags=re.S)
+        selectors = [s.strip() for block in re.findall(r"([^{}]+)\{", css)
+                     for s in block.split(",") if s.strip()
+                     and not s.strip().startswith("@media")]
+        for s in selectors:
+            for shared in (".panel", ".fold", ".sb", "summary"):
+                if re.search(re.escape(shared) + r"\b", s):
+                    self.assertIn("#view-settings", s, f"unscoped: {s}")
+            self.assertFalse(re.match(r"(body|html|header|\.card|\.view\b|main)", s),
+                             f"the settings block restyles {s}")
+            if s.startswith(":root"):
+                self.assertIn("#view-settings", s, f"a global token change: {s}")
+        # the light theme is the reference look; the dark one stays coherent
+        self.assertIn(':root[data-theme="light"] #view-settings{', css)
+        self.assertIn("--s-panel:#ffffff", css)
+
+    def test_actions_have_three_registers_and_badges_are_not_actions(self):
+        for name in self.SETTINGS_RENDERERS:
+            self.assertNotIn("chip2", self.body(name),
+                             f"{name} still draws a chip-sized control")
+        self.assertIn('class="sb primary"', self.body("settingsVerification"))
+        self.assertIn('class="sb primary" data-sinspect', self.body("settingsDiagnostics"))
+        self.assertIn('class="sb link" data-ssection', self.body("sline"))
+        # Apply is primary only once it may be pressed
+        self.assertIn("class=\"sb ${ok ? 'primary' : ''}\" id=\"s-apply\"",
+                      self.body("draftBar"))
+        css = self.css()
+        self.assertIn("#view-settings .sb.link{", css)
+        self.assertIn("text-decoration:underline", css)
+        # a badge has no hover, and amber says its meaning with a glyph too
+        self.assertNotIn(".sbadge:hover", css)
+        self.assertIn('.sbadge.warn::before{content:"!"', css)
+
+    def test_consequential_absence_is_amber_and_neutral_absence_is_not(self):
+        body = self.body("settingsOverview")
+        self.assertIn("['warn', 'No merge requirements']", body)
+        self.assertIn("['dim', 'Not inspected']", body)
+        self.assertIn("['dim', 'Optional']", body)
+        self.assertIn("['bad', 'Invalid']", body)
+
+    def test_checks_show_configuration_then_the_full_command(self):
+        body = self.body("checkBlock")
+        for fact in ("'Runs in'", "'Preparation'", "'Time limit'",
+                     "'May be asked for by'"):
+            self.assertIn(fact, body)
+        self.assertIn("c.help", body)
+        # the command stays readable in the disclosure's own line
+        self.assertIn("<summary>Command <code>${esc(c.run)}</code></summary>", body)
+        verification = self.body("settingsVerification")
+        self.assertIn("spanel('Preparation steps'", verification)
+        self.assertIn("This is configuration, not results.", verification)
+
+    def test_diagnostics_separates_inspection_from_execution(self):
+        body = self.body("settingsDiagnostics")
+        first = body.index("spanel('Check configuration'")
+        second = body.index("spanel('Execution diagnostics'")
+        third = body.index("spanel('Run from a terminal'")
+        self.assertLess(first, second)
+        self.assertLess(second, third)
+        # the stage with no control is still only instructions
+        self.assertIn("!isInspect(r) && !offered(r)", body)
+        self.assertIn("path.available && row.mode !== 'inspect'", body)
+
+    def test_a_repaint_gives_focus_back_to_the_control_that_had_it(self):
+        wrapper = self.body("renderSettings")
+        self.assertLess(wrapper.index("settingsFocusKey()"),
+                        wrapper.index("renderSettingsNow()"))
+        self.assertIn("again.focus({ preventScroll: true })", wrapper)
+        key = self.body("settingsFocusKey")
+        self.assertIn("CSS.escape(el.id)", key)
+        self.assertIn("'ssection', 'sedit'", key)
 
 
 class TheBrowserCaseIsWellFormed(unittest.TestCase):
