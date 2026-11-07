@@ -110,6 +110,31 @@ class ReachableThroughNormalNavigation(Source):
         self.assertIn("function settingsEditing()", self.html)
         self.assertIn("if (!settingsEditing()) renderSettings();", self.html)
 
+    def test_a_focused_field_holds_the_stream_repaint_too(self):
+        """The JSON field reaches the draft only on "use this JSON", so a
+        clean draft with a person typing in it is still an edit in
+        progress: the repaint waits rather than taking focus from it."""
+        body = self.body("settingsEditing")
+        self.assertIn("document.activeElement", body)
+        self.assertIn("INPUT|TEXTAREA|SELECT", body)
+        self.assertIn("$('#sbody').contains(el)", body)
+
+    def test_an_opened_fold_survives_a_repaint_of_its_section(self):
+        """Card 76 put the explanations in folds. A repaint rebuilds them
+        closed, so the open ones are read before and reopened after — for
+        the same section only, so a new section starts closed."""
+        body = self.body("renderSettings")
+        keep = body.index("openSettingsFolds(body)")
+        paint = body.index("body.innerHTML = notice + settingsSection")
+        reopen = body.index("if (keepOpen.has(settingsFoldKey(d))) d.open = true")
+        self.assertLess(keep, paint)
+        self.assertLess(paint, reopen)
+        self.assertIn("body.dataset.ssection === section", body)
+        # a fold is known by its id, else by its summary's words
+        key = self.body("settingsFoldKey")
+        self.assertIn("d.id ||", key)
+        self.assertIn(":scope > summary", key)
+
 
 class OneResolver(Source):
     def test_the_page_reads_the_servers_whole_settings_payload(self):
@@ -149,10 +174,45 @@ class OneResolver(Source):
         self.assertIn("revision: S.draft.revision", self.html)
 
     def test_the_draft_is_the_servers_document_including_unknown_keys(self):
+        self.assertIn("JSON.parse(JSON.stringify(d.document))",
+                      self.body("ensureDraft"))
         body = self.body("settingsPolicy")
-        self.assertIn("JSON.parse(JSON.stringify(d.document))", body)
+        self.assertIn("ensureDraft(page)", body)
         self.assertIn("d.unknownKeys", body)
         self.assertIn("preserved exactly", body)
+
+    def test_every_editor_rides_the_one_draft_and_the_one_step_bar(self):
+        """Card 76: a check is edited in Checks and a merge rule in Merge
+        rules, and both are the advanced editor's draft and its four steps
+        — not a second mechanism that could validate or write differently."""
+        for name in ("settingsPolicy", "checkEditor", "gateEditor",
+                     "overridesEditor"):
+            self.assertIn("draftBar(page, ", self.body(name), name)
+        for name in ("settingsVerification", "settingsAcceptance"):
+            self.assertIn("ensureDraft(page)", self.body(name), name)
+        self.assertEqual(1, self.html.count('id="s-steps"'),
+                         "one step bar, drawn by draftBar")
+        # the draft survives navigating away, and says so wherever you are
+        self.assertIn("Unsaved draft.", self.body("renderSettings"))
+        self.assertIn("draftBarShown(section)", self.body("renderSettings"))
+
+    def test_a_contextual_editor_shows_every_error_somewhere(self):
+        """Errors about the item being edited are drawn at its fields; the
+        bar draws every other one, so none is hidden off-screen."""
+        bar = self.body("draftBar")
+        self.assertIn("errs.filter(e => !here(e))", bar)
+        self.assertIn("errorLines(draftErrors(mine))", self.body("checkEditor"))
+        self.assertIn("errorLines(draftErrors(mine))", self.body("gateEditor"))
+
+    def test_a_scoped_requirement_is_never_flattened(self):
+        body = self.body("writeField")
+        self.assertIn("list.filter(c => nameOf(c) !== parts[3])", body)
+        self.assertNotIn("gate.checks = [...set]", body)
+
+    def test_a_successful_apply_reads_the_document_back(self):
+        body = self.body("settingsApply")
+        self.assertRegex(body, r"S\.draft = null;\s*S\.sedit = null;\s*"
+                               r"await fetchSettings\(true\)")
 
 
 class TheWordCarriesTheMeaning(Source):
@@ -176,9 +236,26 @@ class TheWordCarriesTheMeaning(Source):
         self.assertRegex(body, r"entry\.gated \? 'ok' : 'dim'")
 
     def test_a_registered_check_says_it_is_not_required(self):
+        """Card 76 words it `Optional`, with the definition on the chip's
+        title — and a required one says which rule requires it."""
         body = self.body("settingsVerification")
-        self.assertIn("registered, not required", body)
-        self.assertIn("registrationIsNotRequirement", body)
+        self.assertIn("Optional</span>", body)
+        self.assertIn('title="${esc(v.registrationIsNotRequirement)}"', body)
+        self.assertIn("required: ", body)
+
+    def test_the_overview_names_no_requirement_as_no_requirement(self):
+        """No gate is not a passed gate: the overview says so in words, and
+        a check nobody requires is Optional rather than anything green."""
+        body = self.body("settingsOverview")
+        self.assertIn("'No merge requirements'", body)
+        self.assertIn("'Not inspected'", body)
+        self.assertIn("'Unavailable'", body)
+        self.assertIn("'Optional'", body)
+        self.assertIn("'Invalid'", body)
+        # every row has a named route to its details or its editor
+        self.assertIn("act: 'Edit checks'", body)
+        self.assertIn("act: 'Edit merge rules'", body)
+        self.assertIn("act: 'Check configuration'", body)
 
     def test_an_unsupported_capability_is_not_a_pretend_switch(self):
         body = self.body("settingsAccess")
@@ -224,7 +301,7 @@ class FourStepsAndOnlyTheLastWrites(Source):
         self.assertRegex(body, r"confirm: 'write it\?'")
 
     def test_apply_is_unavailable_until_a_validation_came_back_clean(self):
-        body = self.body("settingsPolicy")
+        body = self.body("draftBar")
         self.assertRegex(body, r"id=\"s-apply\"[\s\S]{0,180}disabled")
         self.assertIn("Apply stays unavailable until a validation", body)
 
@@ -249,7 +326,7 @@ class FourStepsAndOnlyTheLastWrites(Source):
         self.assertIn("S.draft = null; fetchSettings(true)", body)
 
     def test_the_preview_draws_the_consequences_the_server_computed(self):
-        body = self.body("settingsPolicy")
+        body = self.body("draftConsequences")
         for field in ("draft.preview.changes", "draft.preview.evidence",
                       "draft.preview.pending", "draft.preview.sideEffects"):
             self.assertIn(field, body, field)
@@ -340,7 +417,9 @@ class LayoutIsOneColumn(Source):
         """Measured properly in the browser case; here, that no control in
         these renderers was written without one."""
         for name in ("renderSettings", "settingsOverview", "settingsPolicy",
-                     "settingsDiagnostics", "field", "select", "checkbox"):
+                     "settingsDiagnostics", "field", "select", "checkbox",
+                     "sline", "draftBar", "checkEditor", "gateEditor",
+                     "overridesEditor", "reviewSelect", "settingsVerification"):
             body = self.body(name)
             buttons = len(re.findall(r"<(?:button|select|input|textarea)\b",
                                      body))
@@ -417,7 +496,7 @@ class TheIntentsAndScopesComeFromTheServer(Source):
         self.assertIn("Object.keys(page.acceptance.scopes)", body)
 
     def test_a_review_mode_the_board_cannot_enforce_is_offered_disabled(self):
-        body = self.body("settingsPolicy")
+        body = self.body("reviewSelect")
         self.assertIn("m.available ? '' : ' disabled'", body)
         self.assertIn("not available on this board", body)
 

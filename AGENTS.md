@@ -151,9 +151,9 @@ without an undo in the same breath. Cards in the working stages
 (in-progress, review) cannot be archived; finish or walk them back first.
 
 The same action sits on the card, for the common tidy-up the length of the
-board is too far to drag: a **⌸** chip at the right-hand end of the footer
-row, wearing the tray's own glyph, arming on the first click and firing on
-the second. It is there on exactly the cards the tray accepts — a working
+board is too far to drag: a **⌸ archive** tool in the card's **⋯** menu
+and in its detail view, wearing the tray's own glyph, arming on the first
+click and firing on the second. It is there on exactly the cards the tray accepts — a working
 card has no chip at all rather than one that refuses — and it is one
 action, not two: the same request, the same ⌘Z toast, the same count on
 the tray. Which stages may be archived from is answered once, by the
@@ -657,7 +657,8 @@ The board has five views (header switcher):
   it). With `BOARD_SYNC` on, a second header chip appears — and only
   appears — when sync stops converging, saying whether it is behind
   (origin unreachable, self-healing) or stalled on something only a human
-  can settle.
+  can settle. A card's face is kept quiet (see "The card face and its
+  tools" below).
 - **Phases** — a swimlane each: where the members the Board stopped drawing
   actually live (see "The Phases view: a swimlane each"). The switcher
   itself carries how many phases are running and a mark when one has
@@ -687,16 +688,52 @@ The board has five views (header switcher):
   on this board and what is not proved about that (see "Readiness:
   asking before paying") — and per-file diff stats from its worktree.
 - **Settings** — how this board is configured, what has actually been
-  verified, and what to configure next: the checks, the acceptance
-  requirements, the review configuration, the overrides, the intended
-  agent access against the isolation actually enforced, the diagnostic
-  coverage, the installation and every setting's provenance — each with a
-  state word rather than a colour, so "no gate configured" can never read
-  as a passed gate. It is also the one place a policy is *edited*, in four
+  verified, and what to configure next: the checks, the merge rules, the
+  review configuration, the overrides, the intended agent access against
+  the isolation actually enforced, the diagnostic coverage, the
+  installation and every setting's provenance — each value in words with
+  a state word beside it, so "no gate configured" can never read as a
+  passed gate. It is also the one place a policy is *edited*, in four
   separate steps of which only the last writes (see "Settings: reading the
   configuration, and changing it safely"). The switcher carries a mark
   when this board's execution policy refuses something, for the reason
   the Phases mark exists: the thing it refuses is the next launch.
+
+### The card face and its tools
+
+A card shows what you need to choose the next action, and the column says
+the rest. The face has one ID (`#76` in the top row; a title that repeats
+the card's own number is drawn without it), the title, the owner, `HIGH`
+when it is, and a status pill **only when something has changed the next
+action**: an agent working or reviewing, `approved` or `changes asked`, a
+`run failed`, a halted or unstarted phase, `completing`, or `idle` (in
+progress, nobody on it, nothing changed for a day). A card sitting in its
+column as expected wears no pill: `queued` in to-do/ was the column's
+word repeated.
+
+The chips follow the same rule. Anything bad or live stays on the face:
+failed or stale Bench evidence, an unmet or overridden merge gate, red CI,
+conflicts, a PR open against the wrong base, changes requested by
+Copilot, a policy that does not parse, a running drive or command. So do
+phase navigation and a non-default branch plan. Everything else — the
+profile, a plan the phase already explains, passing evidence, the pinned
+review record, a met gate, CI that passed, the PR link, the drive, the
+`$` commands and archive — is in the card's **⋯** tools. It is one labelled
+button (`Tools for #76`) that opens in place and closes on Escape, giving
+focus back. Nothing is dropped: the tools list every chip the card has,
+built and wired by the same code as the face. A required check that has
+not run cannot be hidden this way, because it reads through the gate chip,
+and an unmet gate is always on the face.
+
+The card's detail view carries all of it in one place: every tool and
+action the card has, and a **Signals** block with Bench checks, external
+CI, review and the merge gate as four separate rows, each in its own
+words. Green CI is labelled as not a Bench check, and a board with no gate
+says that nothing is required, which is not a pass. Cards are reachable by
+keyboard. Tab lands on a card, Enter or Space opens its detail view,
+focusing a card shows the same actions as hovering it, and closing the
+detail view returns focus to the card. Board and Phases draw the same
+card.
 
 The header carries one more chip, and unlike the sync and phase chips it
 is always there: **⚕ readiness** opens the execution inspector. Those two
@@ -2006,64 +2043,87 @@ So "no gate configured" can never render as a passed gate, a registered
 check is drawn as *registered, not required*, and a guarantee nothing
 enforces wears `unsupported` rather than a switch that pretends.
 
-### Six sections, and a seventh that writes
+### Seven sections, values first
 
-- **Overview** — one row per thing that is set up (checks, acceptance
-  requirements, review configuration, overrides, intended agent access,
-  actual isolation, diagnostic coverage), each with its state word, and
-  **prioritised recommendations** derived from what is actually
-  configured. Each recommendation says why it matters, what *you* must
-  supply — which is often not a setting at all but a program your team
-  writes — what has to be true first, and which section to open. Reading
-  one changes nothing: no setting, permission or gate is altered by a
-  recommendation, and one that could not be satisfied honestly is not
-  offered.
-- **Verification** — leads with **"Your team provides the checks; Bench
-  runs them."** Every registered check with its approved executable and
-  argument list, its execution location and what that location is (and is
-  not — a checkout is not a sandbox), its declared scopes, which launch
-  intents may ask for it, its preparation steps, and whether a gate
-  actually requires it. Preparation is explained apart from verification,
-  because a preparation step that fails means the checks *did not run*.
-  There is a worked example that reuses a test suite the project already
-  has, and a checklist for asking a developer to supply one.
-- **Acceptance & reviews** — the three scopes drawn apart, because three
-  different commits merge; the review policies with the ones this board
-  cannot enforce marked unavailable and why (a board with no usable `gh`
-  cannot read GitHub's formal review objects at all); the same-account
-  limitation; head binding, coverage matching and what makes a pass stop
-  counting; and the override policy, which forges nothing. Beside it, the
-  three things one green tick would collapse — **Bench-run checks**,
-  **external CI status** and **review requirements** — with the mapping
-  bench does not have named as follow-up rather than approximated. A
-  green GitHub status is never converted into evidence for a named Bench
-  check, and nothing here deploys anything.
-- **Agent access** — the resolved profile for each launch intent, the
-  approved context with its provenance, the capability table with how
-  strongly each thing holds and who answers for it, and the four facts an
-  exit code cannot tell apart: UI registration, agent capability, prompt
-  instruction, gate requirement. A run in flight is drawn with the policy
-  it *froze* at launch, which is a different fact from what the settings
-  say now — and an edit here reaches none of them.
-- **Check configuration** — the renamed read-only action, and a section
-  of its own. It is `doctor.report([])`: the policy resolved for every
-  intent, the approved inputs read, bench's own deliberately broken
-  fixtures through the same resolver. The four stages are kept apart with
-  what each proves and does not, every stage nobody asked for reads `not
-  asked`, and the stage that spends tokens has **no control on this page**
-  at all — the operator instruction is printed instead of a button that
-  would not work.
-- **Installation** — the build and its source revision (`unknown` when
-  the tool is not a git checkout, because a release artifact has no
-  commit and bench will not invent one), the installation mode, all four
-  roots, both git identities resolved independently, sync configuration
-  and status, what stays local against what is shared, and the operations
-  this page does **not** perform: merging source, updating the install,
-  cutting a release, deploying the site. Then every catalogued setting
-  with its effective value, the source that decided it
-  (default / `manager/local/.env` / the process environment), whether it
-  is locked, and when a change to it applies.
-- **Edit policy** — the seventh, and the only one that writes.
+Every section leads with the same row: what the setting is, its
+effective value in words, at most one short helper line, its state word,
+and one action that goes somewhere specific: **Edit checks**, **Edit
+merge rules**, **View access**, **Check configuration**. A problem is drawn
+under the row it is about. Tutorials, ownership tables, capability
+inventories, worked examples and definitions are in closed folds under
+each section, one click away, so they are not the first thing you read.
+Two limitations stay in view because they change what a merge or a run
+means: a board with no merge requirements says so, and agent writes are
+an intended scope, with OS isolation `Unavailable`.
+
+- **Overview** — one row each for checks (`1 registered · Optional`, or
+  `None registered`), merge rules (`No merge requirements`, or what each
+  rule requires, or `Invalid`), reviews, overrides, agent access (`3
+  profiles: work, act-pr, review`), OS isolation, diagnostics (`Not
+  inspected` until you ask), the installation and the policy document.
+  Under them, **Suggested next steps** opens on its own only when one is
+  high priority. Each suggestion says why it matters, what *you* must
+  supply (often a program your team writes, not a setting), what has to
+  be true first, and which section to open. A suggestion does not change
+  any setting.
+- **Checks** — every registered check: its command, where it runs, its
+  scopes, which launches may ask for it, its preparation and its time
+  limit on one line. Beside that, `Optional` or the merge rule that
+  requires it, and an **Edit** button. **Add a check** and **Edit** open
+  the editor in place. Who provides checks (**"Your team provides the
+  checks; Bench runs them."**), where a check runs and what that location
+  is not (a checkout is not a sandbox), and a worked example with a
+  checklist for asking a developer are all folded underneath.
+- **Merge rules** — the three guarded merges as rows: a phase member into
+  its phase branch, a phase's acceptance, and a card's merge. Each row
+  shows what it requires and its review policy, reads `gated` or
+  `ungated`, and has an **Edit** button that opens it in place. Overrides
+  get a row too. Beside them, **Three separate signals** keeps Bench-run
+  checks, external CI and review requirements apart: green CI never
+  counts as a named Bench check. Review policies (including the
+  same-account limitation and the ones this board cannot read), how
+  evidence is bound to the merging commit, and what an override records
+  are folded underneath.
+- **Agent access** — one row per launch intent: where it works, its
+  grants, the checks it may ask for and its approved inputs, with
+  `intended writes: … · OS isolation: none enforced` on its own line. Runs
+  in flight are shown with the policy they *froze* at launch, which an
+  edit here does not reach. The four facts an exit code cannot tell apart
+  and the capability table are folded underneath.
+- **Diagnostics** — **Check configuration**, the read-only inspection
+  (`doctor.report([])`), and the four stages with each one's side effects
+  next to its control. Every stage nobody asked for reads `not asked`. The
+  stage that spends tokens has **no control on this page** at all; the
+  operator instruction is printed instead.
+- **Installation** — a summary first: the build and source revision
+  (`unknown` for a release artifact, which has no commit), the mode,
+  both git identities and sync. Then every catalogued setting with its
+  value, its source (`default`, `local .env` or `environment`, with
+  `locked` where the environment wins) and a restart chip only where it
+  differs from the rest. Where values come from, and when a change
+  applies, is said once above the list, not on every row. Paths, what stays
+  local, and the operations this page does **not** perform are folded
+  underneath.
+- **Advanced policy** — the whole document, field by field and as JSON:
+  checks, preparation steps, what each launch may ask for, merge rules
+  and overrides.
+
+### Editing in context, on one draft
+
+A check is edited in **Checks** and a merge rule in **Merge rules**,
+where you read them. There is still exactly one mechanism. The
+contextual editors and **Advanced policy** all write into the same
+draft and use the same step bar (Validate, Preview, Apply, Discard
+draft), so a change started in one place and finished in another is
+validated, previewed and applied once. A refusal about the item being
+edited is drawn at its fields. Every other refusal in the draft is drawn
+in the step bar, so none is hidden because its part of the document is
+not on screen. **Close** puts the editor away, keeps the draft and
+returns focus to the **Edit** button it came from. While a draft has
+unsaved edits, every other section shows **Unsaved draft** with the way
+back to it and the way to discard it. Ticking a check in a merge rule
+adds its full run; a requirement on a declared scope that someone wrote
+by hand stays as written.
 
 ### What is editable, and what is shown instead
 
@@ -2101,8 +2161,9 @@ there.
    write leaves the previous document byte for byte.
 
 A setup, end to end, for a project whose team already has a test
-command. Open **Settings → Verification**, read who owns what, then
-**Edit policy** and register the command as a named check:
+command. Open **Settings → Checks**, unfold who owns what, then **Add a
+check** and register the command as a named check — which, written out
+as the document **Advanced policy** shows, is:
 
 ```jsonc
 {
@@ -2119,10 +2180,10 @@ command. Open **Settings → Verification**, read who owns what, then
 ```
 
 **Validate**, **Preview**, **Apply**. Nothing is mandatory yet: every gate
-still reads `ungated`, and the check's row says *registered, not
-required*. Exercise it — ask for it from a card's `◫` evidence sheet, and
-see it fail once on purpose — and only then, as a separate decision, add
-the gate:
+still reads `ungated`, and the check's row says `Optional`. Exercise it —
+ask for it from a card's `◫` evidence sheet, and see it fail once on
+purpose — and only then, as a separate decision, add the gate with
+**Merge rules → Card merge → Edit**:
 
 ```jsonc
 "gates": {"acceptance": {"checks": ["unit"]}}
@@ -2346,11 +2407,14 @@ itself included, opens into `main` as it always did.
 
 The card wears that verdict in the design system's state colours:
 approved → pine (`--calm`) border and an `approved` pill; changes asked →
-terracotta (`--alarm`) and a `changes asked` pill; otherwise it stays the
-neutral `waiting on you`. Tool chips (CI, copilot, PR, drive) are
-destinations, not statuses: they live in the card's footer row, never
-squeezed into the author row — `CI ✓` (pine), `CI ✕` (terracotta), `◌`
-while in flight — with hover actions staying in the status pill's slot.
+terracotta (`--alarm`) and a `changes asked` pill; otherwise it wears no
+pill, since the Review column already says it is waiting on you. Tool
+chips (CI, copilot, PR, drive) are destinations, not statuses. Their full
+set is in the card's **⋯** tools and its detail view (see "The card face
+and its tools"). The ones that change what you do next stay in the
+card's footer row, never in the author row: `CI ✕` (terracotta), `◌`
+while in flight, a live drive. Hover actions stay in the status pill's
+slot.
 Merging into `main` remains yours — the board never merges into `main`. It
 does merge into a branch of its own: a phase's integration branch is the
 board's, and merging into it is bookkeeping in the same family as

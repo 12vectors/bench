@@ -346,6 +346,22 @@ product suites** rather than a runner of their own:
 written from; it records which of its cases landed where, and which did
 not.
 
+Card 76 extended the same suites rather than adding a runner. In
+`case_settings.py`, `InContextEditing` covers editing a check in Checks
+(apply, then read back after a reload), a refused edit drawn in the editor
+and discarded with the revision unchanged, and a merge rule previewed at
+390px, closed with focus returned, announced as an unsaved draft
+elsewhere and discarded. In `case_board.py`, `CardFace` covers one ID and no
+routine status or face chips on the fixture cards (one of which has a
+long title that repeats its own number), the ⋯ tools by keyboard with
+focus returned, the detail view carrying every tool, and no overflow at
+390px or the 200%-zoom CSS viewport. `tests/test_card_face.py` holds the
+card's source-level invariants. **None of these browser cases has been
+run yet**, for the reasons below. Phase-branch cards, failed or stale
+evidence and invalid settings in the browser need fixtures this backend
+does not make yet. They are covered at source level and by the backend
+suites, not in a browser.
+
 **The Settings browser case has not been run on this host.** The local
 CDP path cannot start Chromium's sandbox here (below), and the remote
 `PW_WS` path needs a container and a `node` client this environment did

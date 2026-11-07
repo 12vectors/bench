@@ -459,7 +459,12 @@ class DocumentTextIsRenderedInert(unittest.TestCase):
         for name in ("settingsVerification", "settingsAcceptance",
                      "settingsAccess", "settingsInstallation",
                      "settingsOverview", "settingsPolicy",
-                     "settingsDiagnostics", "settingsCi", "stateWord"):
+                     "settingsDiagnostics", "settingsCi", "stateWord",
+                     # card 76's shared row, reference fold, step bar and
+                     # contextual editors draw the same document text
+                     "sline", "sref", "draftBar", "draftConsequences",
+                     "reviewSelect", "checkEditor", "gateEditor",
+                     "overridesEditor", "errorLines"):
             start = html.index(f"function {name}(")
             body = html[start:html.index("\n}\n", start)]
             bare = []
@@ -477,6 +482,20 @@ class DocumentTextIsRenderedInert(unittest.TestCase):
         self.assertGreater(checked, 80,
                            "the scanner found almost no interpolations, so it "
                            "is not reading these renderers")
+
+    def test_the_shared_row_escapes_every_text_field_it_is_given(self):
+        """`sline` is where most settings text is drawn now, so each text
+        field it takes is escaped by it — and `chips` and `after`, the two
+        it takes as markup, are built by callers out of escaped parts."""
+        html = (CORE / "board.html").read_text(encoding="utf-8")
+        start = html.index("function sline(")
+        body = html[start:html.index("\n}\n", start)]
+        for field in ("o.label", "o.sub", "o.title", "o.value", "o.help",
+                      "o.act", "o.aria", "o.name", "o.edit", "o.section"):
+            self.assertIn(f"esc({field}", body, field)
+        self.assertIn("esc(p)", body, "a problem line is escaped")
+        start = html.index("function sref(")
+        self.assertIn("esc(summary)", html[start:html.index("\n}\n", start)])
 
     def test_the_escaper_covers_the_characters_that_make_markup(self):
         html = (CORE / "board.html").read_text(encoding="utf-8")
