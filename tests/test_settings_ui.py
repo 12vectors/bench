@@ -454,6 +454,12 @@ class ASurfaceOfItsOwn(Source):
         # grouped, every group named for a screen reader
         self.assertIn('role="group" aria-labelledby="snavg-${n}"', body)
 
+    def test_a_long_tasks_root_wraps_rather_than_widening_the_page(self):
+        """The header path is one token with no spaces; at 390px a long one
+        made the document 492px wide and pushed Settings off-screen."""
+        self.assertIn(".brand{min-width:0}", self.html)
+        self.assertIn(".brand .path{min-width:0;overflow-wrap:anywhere}", self.html)
+
     def test_every_section_has_a_title_and_a_sentence(self):
         sections = re.search(r"const SETTINGS_SECTIONS = \[(.*?)\n\];",
                              self.html, re.S).group(1)

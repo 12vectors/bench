@@ -87,6 +87,10 @@
   .brand{display:flex;align-items:baseline;gap:11px}
   .brand .mark{height:var(--logo-h);width:auto;fill:currentColor;flex:none}
   .brand .path{font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  /* A tasks root is one long token with nowhere to break, so at 390px it
+     would widen the whole page. Let it wrap anywhere instead.            */
+  .brand{min-width:0}
+  .brand .path{min-width:0;overflow-wrap:anywhere}
   .views{display:flex;gap:2px;padding:3px;background:var(--sunken);border:1px solid var(--border-soft);border-radius:8px}
   .views button{padding:5px 12px;border:1px solid transparent;border-radius:6px;font-size:12.5px;font-weight:500;color:var(--muted)}
   .views button:hover{color:var(--text);border-color:transparent}
