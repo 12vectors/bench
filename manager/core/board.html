@@ -504,6 +504,7 @@
     --s-line:var(--border-soft); --s-line-strong:var(--border);
     --s-primary:var(--accent); --s-on-primary:var(--on-accent);
     --s-current:color-mix(in oklab, var(--accent) 16%, transparent);
+    --s-ok:var(--calm);
     --s-warn:#e5b866; --s-warn-bg:color-mix(in oklab, #e5b866 13%, transparent);
     --s-warn-line:color-mix(in oklab, #e5b866 45%, transparent);
     background:var(--s-bg);color:var(--s-ink);font-size:14px;line-height:1.55;
@@ -514,6 +515,8 @@
     --s-line:#dbe4e8; --s-line-strong:#c4d3d8;
     --s-primary:#0b6a78; --s-on-primary:#ffffff;
     --s-current:#e1eef0;
+    /* the board's pine, one step darker so a badge's word clears 4.5:1 */
+    --s-ok:#4b6823;
     --s-warn:#82510a; --s-warn-bg:#fcf3e2; --s-warn-line:#e6c486;
   }
   .s-shell{flex:1 0 auto;display:grid;align-items:start;
@@ -578,7 +581,7 @@
     color:var(--s-muted);background:var(--s-panel);white-space:nowrap}
   .sw::before{content:"";width:6px;height:6px;border-radius:99px;
     background:currentColor;flex:none}
-  .sw.verified{color:var(--calm);border-color:color-mix(in oklab, var(--calm) 45%, transparent)}
+  .sw.verified{color:var(--s-ok);border-color:color-mix(in oklab, var(--s-ok) 45%, transparent)}
   .sw.failed,.sw.invalid,.sw.blocked,.sw.stale{color:var(--alarm);
     border-color:color-mix(in oklab, var(--alarm) 45%, transparent)}
   .sw.unsupported{color:var(--s-muted);border-style:dashed}
@@ -593,7 +596,7 @@
   .sbadge.warn{color:var(--s-warn);background:var(--s-warn-bg);
     border-color:var(--s-warn-line)}
   .sbadge.warn::before{content:"!";font-weight:700}
-  .sbadge.ok{color:var(--calm);border-color:color-mix(in oklab, var(--calm) 45%, transparent)}
+  .sbadge.ok{color:var(--s-ok);border-color:color-mix(in oklab, var(--s-ok) 45%, transparent)}
   .sbadge.bad{color:var(--alarm);border-color:color-mix(in oklab, var(--alarm) 45%, transparent)}
   .sbadge.dim{border-style:dashed}
   /* buttons in three registers: solid for the primary action, outlined for
@@ -753,7 +756,7 @@
     .s-top{padding-top:18px}
     .s-head h1{font-size:23px}
     #view-settings .panel{padding:18px 16px}
-    #view-settings .sb{min-height:44px}
+    #view-settings .sb{min-height:44px;min-inline-size:44px}
     #view-settings .fold summary{min-height:44px}
     .s-edit .cb{min-height:44px}
   }

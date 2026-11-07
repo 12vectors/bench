@@ -2045,6 +2045,26 @@ enforces wears `unsupported` rather than a switch that pretends.
 
 ### Seven sections, values first
 
+The sections sit in a **sidebar** on the left, in three groups —
+**Configure** (Overview, Checks, Merge rules, Agent access), **Inspect**
+(Diagnostics, Installation) and **Advanced** (Advanced policy) — with the
+current one marked by a bar, a heavier weight and `aria-current`, so none
+of the three is carried by colour alone. Each section opens with its own
+title and one sentence saying what it is for, and its content is a column
+of white panels on a pale grey-blue ground in Daylight (the night theme
+draws the same layout in the board's own tokens). Below 760px the sidebar
+folds into one **Section: …** button that opens the same list in place
+and closes once you choose; nothing is squeezed into a narrow column.
+Actions come in three registers: a solid button for the section's primary
+action (**Add a check**, **Check configuration**, an enabled **Apply**),
+outlined buttons for the rest, and underlined text links for going to
+another section. State badges are not buttons. `Optional` and `Not
+inspected` are neutral, and an absence that changes what a merge means —
+`No merge requirements`, an `ungated` rule, OS isolation `Unavailable` —
+is amber, with the words always there. All of it is scoped to the
+Settings view: Board, Phases, Sessions and Focus are drawn exactly as
+before.
+
 Every section leads with the same row: what the setting is, its
 effective value in words, at most one short helper line, its state word,
 and one action that goes somewhere specific: **Edit checks**, **Edit
@@ -2056,7 +2076,8 @@ Two limitations stay in view because they change what a merge or a run
 means: a board with no merge requirements says so, and agent writes are
 an intended scope, with OS isolation `Unavailable`.
 
-- **Overview** — one row each for checks (`1 registered · Optional`, or
+- **Overview** — three panels (verification and merging, agent runs, and
+  this board), with one row each for checks (`1 registered · Optional`, or
   `None registered`), merge rules (`No merge requirements`, or what each
   rule requires, or `Invalid`), reviews, overrides, agent access (`3
   profiles: work, act-pr, review`), OS isolation, diagnostics (`Not
@@ -2066,10 +2087,14 @@ an intended scope, with OS isolation `Unavailable`.
   supply (often a program your team writes, not a setting), what has to
   be true first, and which section to open. A suggestion does not change
   any setting.
-- **Checks** — every registered check: its command, where it runs, its
-  scopes, which launches may ask for it, its preparation and its time
-  limit on one line. Beside that, `Optional` or the merge rule that
-  requires it, and an **Edit** button. **Add a check** and **Edit** open
+- **Checks** — every registered check as its configuration, never as a
+  result: its name and the purpose its `help` records, then where it runs,
+  its preparation, its time limit and which launches may ask for it, then
+  its full command, with the executable, arguments and identity folded
+  under it. Beside the name, `Optional` or the merge rule that requires
+  it, and an **Edit** button. Preparation steps have a panel of their own,
+  which says so when none is declared. What a check *found* is per card,
+  in its `◫` evidence. **Add a check** and **Edit** open
   the editor in place. Who provides checks (**"Your team provides the
   checks; Bench runs them."**), where a check runs and what that location
   is not (a checkout is not a sandbox), and a worked example with a
@@ -2090,11 +2115,14 @@ an intended scope, with OS isolation `Unavailable`.
   in flight are shown with the policy they *froze* at launch, which an
   edit here does not reach. The four facts an exit code cannot tell apart
   and the capability table are folded underneath.
-- **Diagnostics** — **Check configuration**, the read-only inspection
-  (`doctor.report([])`), and the four stages with each one's side effects
-  next to its control. Every stage nobody asked for reads `not asked`. The
-  stage that spends tokens has **no control on this page** at all; the
-  operator instruction is printed instead.
+- **Diagnostics** — three panels, because they are three different
+  things. **Check configuration** is the read-only inspection
+  (`doctor.report([])`) and its findings. **Execution diagnostics** are the
+  stages that run real processes, each armed, with its side effects next
+  to its control. **Run from a terminal** holds the stage that spends
+  tokens, which has **no control on this page** at all; the operator
+  command is printed instead. Every stage nobody asked for reads `not
+  asked`.
 - **Installation** — a summary first: the build and source revision
   (`unknown` for a release artifact, which has no commit), the mode,
   both git identities and sync. Then every catalogued setting with its

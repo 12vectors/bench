@@ -362,6 +362,22 @@ evidence and invalid settings in the browser need fixtures this backend
 does not make yet. They are covered at source level and by the backend
 suites, not in a browser.
 
+Card 80 restyled Settings (sidebar, panels, button registers) and
+extended the same file again rather than adding a runner. Sections are
+chosen through `go_section`, which opens the narrow **Section: …** button
+first below 760px, as a person would, and the layout case measures the
+way to the sections instead of a sidebar that is folded away there.
+`SurfaceThemesAndHitAreas` takes the Overview, Checks and Diagnostics
+reference views in both themes at 1440×900 and 390×780, plus a contextual
+editor in both themes. It measures text contrast through a canvas, so
+`color-mix()` values read as the pixels they paint, and requires 4.5:1.
+It checks that the current section is marked by `aria-current`, weight
+and bar, and that a repaint keeps focus in the sidebar. It checks that
+the Sections button opens and closes with focus returned, that every
+visible control is at least 44×44 px at 390 px in every section, and that
+no `--s-*` token reaches another view. The 640×400 viewport is still a
+CSS-viewport approximation of 200% zoom, not actual browser zoom.
+
 **The Settings browser case has not been run on this host.** The local
 CDP path cannot start Chromium's sandbox here (below), and the remote
 `PW_WS` path needs a container and a `node` client this environment did

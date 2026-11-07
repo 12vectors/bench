@@ -472,7 +472,7 @@ class ASurfaceOfItsOwn(Source):
         self.assertIn(".s-shell{grid-template-columns:minmax(0,1fr)}", narrow)
         self.assertIn(".s-nav.open{display:flex}", narrow)
         # usable hit areas on a phone: buttons, folds and checkboxes
-        for rule in ("#view-settings .sb{min-height:44px}",
+        for rule in ("#view-settings .sb{min-height:44px;min-inline-size:44px}",
                      "#view-settings .fold summary{min-height:44px}",
                      ".s-edit .cb{min-height:44px}"):
             self.assertIn(rule, narrow)

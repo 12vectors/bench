@@ -60,25 +60,48 @@ def shot(name: str):
     return path
 
 
-def open_settings(width=1440, height=900, section="overview"):
+def go_section(section: str):
+    """Choose a section the way a person does at this width: straight from
+    the sidebar on a desktop, or — below 760px, where the sidebar folds
+    into one Sections button — by opening that button first."""
+    b = S["browser"]
+    item = f'#snav [data-ssection="{section}"]'
+    if b.eval(f"document.querySelector('{item}').offsetParent === null"):
+        b.click('#snavtoggle')
+        if not b.wait(f"document.querySelector('{item}').offsetParent !== null", 5):
+            raise bv.CheckFailed("the Sections button did not open the section list")
+    b.click(item)
+    if not b.wait(f"document.querySelector('{item}')"
+                  ".getAttribute('aria-current') === 'page'", 5):
+        raise bv.CheckFailed(f"the {section} section did not become current")
+
+
+def set_theme(theme: str):
+    """Through the header's own theme button, which is what a person uses."""
+    b = S["browser"]
+    if b.eval("document.documentElement.dataset.theme") != theme:
+        b.click('#themebtn')
+    if not b.wait(f"document.documentElement.dataset.theme === '{theme}'", 5):
+        raise bv.CheckFailed(f"the theme button did not switch to {theme}")
+
+
+def open_settings(width=1440, height=900, section="overview", theme="dark"):
     """The view, through the header switcher a person actually uses."""
     b = S["browser"]
     b.viewport(width, height)
     b.goto("/")
     if not b.wait("document.querySelectorAll('.drop[data-stage]').length >= 5", 15):
         raise bv.CheckFailed("the board never drew its five stage columns")
+    set_theme(theme)
     b.click('#views button[data-view="settings"]')
     if not b.wait("document.querySelector('#view-settings')"
                   ".classList.contains('on')", 5):
         raise bv.CheckFailed("the Settings switcher opened no view")
-    if not b.wait("document.querySelector('#snav').children.length >= 7", 15):
+    if not b.wait("document.querySelectorAll('#snav [data-ssection]').length >= 7", 15):
         raise bv.CheckFailed("the settings sections never arrived from the "
                              "backend")
     if section != "overview":
-        b.click(f'#snav [data-ssection="{section}"]')
-        if not b.wait(f"document.querySelector('#snav [data-ssection=\"{section}\"]')"
-                      ".getAttribute('aria-current') === 'true'", 5):
-            raise bv.CheckFailed(f"the {section} section did not become current")
+        go_section(section)
     b.eval("document.activeElement && document.activeElement.blur()")
     return b
 
@@ -124,12 +147,22 @@ class Navigation(unittest.TestCase):
         for w, h in WIDTHS:
             for section in SECTIONS:
                 b = open_settings(w, h, section)
-                m = measure(["#view-settings", "#shead", "#snav", "#sbody",
+                # The way to the sections — the current sidebar item on a
+                # desktop, the Sections button below 760px — must sit wholly
+                # inside the window. The section head scrolls with the
+                # content, so of it only the sideways fit is asserted.
+                way = ('#snavtoggle' if b.eval(
+                    "document.querySelector('#snavtoggle').offsetParent !== null")
+                    else '#snav [aria-current="page"]')
+                m = measure(["#view-settings", "#shead", "#sside", way, "#sbody",
                              "header", "#views"])
                 problems = bv.layout_problems(
                     {**m, "boxes": {k: v for k, v in m["boxes"].items()
-                                    if k in ("#shead", "#snav", "header",
-                                             "#views")}})
+                                    if k in (way, "header", "#views")}})
+                head = m["boxes"]["#shead"]
+                if not head or head[0] < -1 or head[0] + head[2] > w + 1:
+                    problems.append(f"the section head extends outside the "
+                                    f"{w}px viewport: {head}")
                 if m["scrollWidth"] > w + 1:
                     problems.append(f"horizontal overflow "
                                     f"{m['scrollWidth']}px > {w}px")
@@ -243,7 +276,7 @@ class EmptyAndConfiguredAndErrorStates(unittest.TestCase):
             "S.settings.page.editing.draft.document.checks.map(c => c.name)"))
 
         # and the configured state is what the backend now resolves
-        b.click('#snav [data-ssection="verification"]')
+        go_section("verification")
         if not b.wait("document.querySelector('#sbody').innerText"
                       ".includes('unit')", 10):
             raise bv.CheckFailed("the registered check is not drawn")
@@ -317,7 +350,7 @@ class InContextEditing(unittest.TestCase):
             raise bv.CheckFailed("the backend never resolved the applied edit")
         # a refresh is a new page: what it shows is the server's document
         b = open_settings(1440, 900, "verification")
-        self.assertIn("321s limit", b.eval("document.querySelector('#sbody').innerText"))
+        self.assertIn("321 seconds", b.eval("document.querySelector('#sbody').innerText"))
 
     def test_b_an_invalid_edit_is_refused_at_the_field_and_writes_nothing(self):
         b = open_settings(1440, 900, "verification")
@@ -363,7 +396,7 @@ class InContextEditing(unittest.TestCase):
                                " && document.activeElement.dataset.sedit === 'gate'", 5),
                         "closing the editor did not return focus to its Edit button")
         # and every other section says there is an unsaved draft
-        b.click('#snav [data-ssection="overview"]')
+        go_section("overview")
         self.assertTrue(b.wait("document.querySelector('#sbody').innerText"
                                ".includes('Unsaved draft.')", 5))
         shot("settings-unsaved-draft-390x780")
@@ -484,8 +517,8 @@ class RepaintsKeepYourPlace(unittest.TestCase):
         self.assertTrue(b.eval("document.querySelector('#s-rawfold').open"),
                         "a background repaint closed the fold the person opened")
         # and a section of its own starts with its folds closed
-        b.click('#snav [data-ssection="verification"]')
-        b.click('#snav [data-ssection="policy"]')
+        go_section("verification")
+        go_section("policy")
         self.assertFalse(b.eval("document.querySelector('#s-rawfold').open"))
 
     def test_a_field_being_typed_in_is_not_repainted_from_under(self):
@@ -502,6 +535,181 @@ class RepaintsKeepYourPlace(unittest.TestCase):
         self.assertEqual('{"v": 1, "half',
                          b.eval("document.querySelector('#s-raw').value"))
         b.eval("document.activeElement.blur()")
+
+
+# Contrast, measured rather than eyeballed. Every colour is resolved through
+# a 1x1 canvas, so color-mix() and oklab() values read as the pixels they
+# paint, and a translucent background is composited over its ancestors'.
+CONTRAST_JS = """(() => {
+  const ctx = document.createElement('canvas').getContext('2d', {willReadFrequently: true});
+  const rgba = (c) => { ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = '#000';
+    ctx.fillStyle = c; ctx.fillRect(0, 0, 1, 1);
+    const d = ctx.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
+  const over = (top, under) => top.slice(0, 3).map((v, i) =>
+    v * top[3] + under[i] * (1 - top[3])).concat(1);
+  const bg = (el) => { const stack = [];
+    for (let e = el; e; e = e.parentElement) stack.push(rgba(getComputedStyle(e).backgroundColor));
+    return stack.reverse().reduce((acc, c) => over(c, acc), [255, 255, 255, 1]); };
+  const lum = (c) => { const [r, g, b] = c.slice(0, 3).map(v => { v /= 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const out = {};
+  for (const sel of %s) {
+    const el = [...document.querySelectorAll(sel)].find(e => e.offsetParent !== null);
+    if (!el) { out[sel] = null; continue; }
+    const back = bg(el), fore = over(rgba(getComputedStyle(el).color), back);
+    const [a, b] = [lum(fore), lum(back)].sort((x, y) => y - x);
+    out[sel] = Math.round(((a + 0.05) / (b + 0.05)) * 100) / 100;
+  }
+  return out; })()"""
+
+CONTRAST_TEXT = ["#shead h1", "#shead .s-sub", "#shead .s-ident", ".s-navhead",
+                 '#snav button[aria-current="page"]',
+                 '#snav button[aria-current="false"]', "#sbody .s-ptitle",
+                 "#sbody .sline .sval", "#sbody .shelp", "#sbody .sb.link",
+                 "#sbody .sb.primary", "#sbody .sb:not(.link):not(.primary)",
+                 "#sbody .sbadge.warn", "#sbody .sbadge.dim", "#sbody .sw",
+                 "#sbody p"]
+
+# the three views the card's reference screenshots show. A contrast
+# selector a section does not draw is recorded as absent (null), not as a
+# pass
+REFERENCE_VIEWS = ["overview", "verification", "diagnostics"]
+
+
+class SurfaceThemesAndHitAreas(unittest.TestCase):
+    """Card 80: the reference views in both themes at a desktop and a phone
+    width, the current section told visually and to assistive technology,
+    the narrow Sections button, usable hit areas, measured contrast, and no
+    leak of the Settings tokens into the rest of the board. These run after
+    the round trip registered `unit`, so Checks draws a configured check."""
+
+    def test_the_reference_views_in_both_themes(self):
+        found = {}
+        for theme in ("light", "dark"):
+            for w, h in [(1440, 900), (390, 780)]:
+                for section in REFERENCE_VIEWS:
+                    b = open_settings(w, h, section, theme)
+                    m = measure(["#sbody"])
+                    self.assertLessEqual(m["scrollWidth"], w + 1,
+                                         f"{section} {theme} at {w}px overflows")
+                    ratios = b.eval(CONTRAST_JS % json.dumps(CONTRAST_TEXT))
+                    low = {k: v for k, v in ratios.items() if v is not None and v < 4.5}
+                    found[f"{section}-{theme}-{w}x{h}"] = ratios
+                    self.assertEqual({}, low, f"text under 4.5:1 in {section}, "
+                                              f"{theme}, {w}x{h}")
+        S["metrics"]["settingsContrast"] = found
+        # one screenshot per view, theme and width, each after its own open
+        for theme in ("light", "dark"):
+            for w, h in [(1440, 900), (390, 780)]:
+                open_settings(w, h, "overview", theme)
+                shot(f"settings-ref-overview-{theme}-{w}x{h}")
+                open_settings(w, h, "verification", theme)
+                shot(f"settings-ref-checks-{theme}-{w}x{h}")
+                open_settings(w, h, "diagnostics", theme)
+                shot(f"settings-ref-diagnostics-{theme}-{w}x{h}")
+
+    def test_a_contextual_editor_in_both_themes(self):
+        for theme in ("light", "dark"):
+            b = open_settings(1440, 900, "verification", theme)
+            edit_in_place("check", "unit")
+            b.eval("document.querySelector('#s-editor').scrollIntoView({block: 'start'})")
+            ratios = b.eval(CONTRAST_JS % json.dumps(
+                ["#s-editor label", "#s-editor input[type=text]", "#s-editor .label",
+                 "#s-editor #s-validate", "#s-editor #s-discard"]))
+            self.assertEqual({}, {k: v for k, v in ratios.items()
+                                  if v is not None and v < 4.5}, theme)
+            shot(f"settings-ref-editor-{theme}-1440x900")
+            b.click('#s-discard')
+            if not b.wait("S.draft === null && !!S.settings", 15):
+                raise bv.CheckFailed("Discard did not drop the draft")
+
+    def test_the_current_section_is_marked_three_ways(self):
+        b = open_settings(1440, 900, "acceptance", "light")
+        marks = b.eval("[...document.querySelectorAll('#snav [data-ssection]')].map(e => {"
+                       " const s = getComputedStyle(e); return {key: e.dataset.ssection,"
+                       " current: e.getAttribute('aria-current'), weight: s.fontWeight,"
+                       " bar: s.borderLeftColor, barWidth: s.borderLeftWidth,"
+                       " height: e.getBoundingClientRect().height}; })")
+        current = [m for m in marks if m["current"] == "page"]
+        others = [m for m in marks if m["current"] != "page"]
+        self.assertEqual(["acceptance"], [m["key"] for m in current])
+        self.assertTrue(all(m["current"] == "false" for m in others))
+        # the weight and the bar, not colour alone
+        self.assertGreaterEqual(int(current[0]["weight"]), 600)
+        self.assertTrue(all(int(m["weight"]) < 600 for m in others))
+        self.assertNotIn(current[0]["bar"], {m["bar"] for m in others})
+        self.assertTrue(all(m["height"] >= 40 for m in marks), marks)
+        self.assertEqual("Merge rules", b.eval("document.querySelector('#shead h1').textContent"))
+        S["metrics"]["settingsSidebarMarks"] = marks
+        # and the keyboard walks the sidebar in order, with a visible ring
+        b.eval("document.querySelector('#snav [data-ssection=\"overview\"]').focus()")
+        b.key("Tab")
+        self.assertEqual("verification", b.eval("document.activeElement.dataset.ssection"))
+        ring = b.eval("getComputedStyle(document.activeElement).outlineStyle")
+        self.assertNotEqual("none", ring, "the focused sidebar item shows no ring")
+        # a background repaint does not throw focus out of the sidebar
+        b.eval("render()")
+        self.assertEqual("verification", b.eval("document.activeElement.dataset"
+                                                " && document.activeElement.dataset.ssection"))
+        shot("settings-sidebar-focus-1440x900")
+
+    def test_narrow_screens_open_the_sections_from_one_named_button(self):
+        b = open_settings(390, 780, "overview", "light")
+        toggle = measure(["#snavtoggle"])["boxes"]["#snavtoggle"]
+        self.assertTrue(toggle and toggle[3] >= 44, f"the Sections button: {toggle}")
+        self.assertEqual("false", b.eval("document.querySelector('#snavtoggle')"
+                                         ".getAttribute('aria-expanded')"))
+        self.assertTrue(b.eval("[...document.querySelectorAll('#snav [data-ssection]')]"
+                               ".every(e => e.offsetParent === null)"),
+                        "the section list is drawn before the button opens it")
+        b.click('#snavtoggle')
+        self.assertEqual("true", b.eval("document.querySelector('#snavtoggle')"
+                                        ".getAttribute('aria-expanded')"))
+        heights = b.eval("[...document.querySelectorAll('#snav [data-ssection]')]"
+                         ".map(e => Math.round(e.getBoundingClientRect().height))")
+        self.assertEqual(7, len(heights))
+        self.assertTrue(all(h >= 44 for h in heights), heights)
+        self.assertLessEqual(measure(["#snav"])["scrollWidth"], 391)
+        shot("settings-narrow-sections-open-390x780")
+        b.click('#snav [data-ssection="diagnostics"]')
+        self.assertTrue(b.wait("document.querySelector('#snavtoggle')"
+                               ".getAttribute('aria-expanded') === 'false'", 5))
+        self.assertEqual("snavtoggle", b.eval("document.activeElement.id"),
+                         "choosing a section did not give focus back to the button")
+        self.assertEqual("Diagnostics", b.eval("document.querySelector('#snavnow').textContent"))
+        shot("settings-narrow-diagnostics-390x780")
+
+    def test_every_control_has_a_usable_hit_area_at_390px(self):
+        small = {}
+        for section in SECTIONS:
+            b = open_settings(390, 780, section)
+            found = b.eval("[...document.querySelectorAll('#view-settings button,"
+                           " #view-settings summary, #view-settings label.cb')]"
+                           ".filter(e => e.offsetParent !== null).map(e => {"
+                           " const r = e.getBoundingClientRect();"
+                           " return [e.id || e.dataset.ssection || e.dataset.sedit ||"
+                           " e.textContent.trim().slice(0, 30), Math.round(r.width),"
+                           " Math.round(r.height)]; }).filter(([, w, h]) => w < 44 || h < 44)")
+            if found:
+                small[section] = found
+        S["metrics"]["settingsSmallTargets"] = small
+        self.assertEqual({}, small, "controls under 44px at 390px")
+
+    def test_the_settings_tokens_do_not_leak_into_other_views(self):
+        b = open_settings(1440, 900, "overview", "light")
+        self.assertEqual("rgb(255, 255, 255)", b.eval(
+            "getComputedStyle(document.querySelector('#sbody .panel')).backgroundColor"))
+        b.click('#views button[data-view="board"]')
+        self.assertTrue(b.wait("document.querySelector('#view-board').classList.contains('on')", 5))
+        leaks = b.eval("['#view-board', '#view-phases', '#view-flight', '#view-focus', 'header']"
+                       ".map(s => [s, getComputedStyle(document.querySelector(s))"
+                       ".getPropertyValue('--s-panel').trim()]).filter(([, v]) => v)")
+        self.assertEqual([], leaks, "a Settings token reached another view")
+        # the board keeps the design system's own ground
+        self.assertEqual(b.eval("getComputedStyle(document.documentElement)"
+                                ".getPropertyValue('--bg').trim()"), "#dde9ec")
+        shot("settings-board-after-settings-light-1440x900")
 
 
 class ReadingRunsNothing(unittest.TestCase):
