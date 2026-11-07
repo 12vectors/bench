@@ -217,6 +217,31 @@
      tidy-up, not somewhere the card is asking you to go. Hover, armed and
      busy all outrank this rule, so it never dulls a live state. */
   .chip2.arch{margin-left:auto;color:var(--dim);border-color:transparent}
+  /* the tools: every destination and action a card has, one labelled
+     control away instead of a row of operational chrome on every face.
+     Closed by default; on a card it lists what the face does not already
+     show, and in the detail view (outside .card) it lists everything. */
+  .card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .moretools{
+    flex:none;min-width:24px;min-height:24px;padding:0 6px;border-radius:99px;
+    background:transparent;border:1px solid transparent;color:var(--dim);
+    font-size:13px;line-height:1;cursor:pointer;
+  }
+  .moretools:hover,.moretools:focus-visible,.moretools[aria-expanded="true"]{
+    border-color:var(--border);color:var(--accent)}
+  .cardtools{display:none;align-items:center;gap:5px;flex-wrap:wrap;
+    padding-top:9px;border-top:1px solid var(--line)}
+  .cardtools.open{display:flex}
+  .cardtools .tlabel{font-family:var(--mono);font-size:10.5px;color:var(--dim);
+    text-transform:uppercase;letter-spacing:.06em}
+  .cardtools .tacts{display:contents}
+  .card .cardtools .onface{display:none}
+  .card .cardtools .chip2.arch{margin-left:0}
+  .dtools{display:flex;padding:10px 18px 0;border-top:none}
+  .dtools .tlabel{width:100%}
+  .card.has-acts:focus-within .toprow .pill.status,
+  .card.has-acts:focus-within .toprow .high{display:none}
+  .card .title{overflow-wrap:anywhere}
   .card .whorow{display:flex;align-items:center;gap:7px;min-width:0}
   .card .initial{
     display:flex;align-items:center;justify-content:center;width:18px;height:18px;flex:none;
@@ -240,7 +265,7 @@
      the pointer approaches it. padding + negative margin widen the slot's
      hitbox without moving anything; clicks landing there die at the slot. */
   .hoveracts{display:none;gap:4px;animation:fadein .12s ease;padding:4px;margin:-4px}
-  .card:hover .hoveracts,.hoveracts:has(.armed),.hoveracts:has(.busy){display:flex}
+  .card:hover .hoveracts,.card:focus-within .hoveracts,.hoveracts:has(.armed),.hoveracts:has(.busy){display:flex}
   .card.has-acts:hover .toprow .pill.status,
   .card.has-acts:hover .toprow .high,
   .card.has-acts:has(.hoveracts .armed) .toprow .pill.status,
@@ -2891,6 +2916,46 @@ function canArchive(task) {
   return (S.state.archiveFrom || []).includes(task.stage);
 }
 
+/* A card names itself once. Task files are titled `# 76 — Simplify …`, and
+   the card already wears `#76` in its top row, so the title drops a
+   leading number only when it is this card's own — anything else in a
+   title is the author's and stays. */
+function cardTitle(task) {
+  const title = String(task.title || '');
+  const m = title.match(/^\s*#?(\d+)\s*[—–:.\-]+\s*(.+)$/);
+  if (m && task.number && canonicalNumber(m[1]) === canonicalNumber(task.number)) return m[2];
+  return title;
+}
+
+/* Which chips are worth a place on the card's face. The face carries the
+   things that change the next decision — a failure, a stale or unmet
+   requirement, a conflict, a live drive or command, a phase to navigate
+   to — and the rest live one labelled menu away, and in the task's detail
+   view. A chip is never dropped: it moves. Required evidence that is
+   missing reads through the gate chip, which is on the face whenever it
+   is anything but met. */
+function chipOnFace(c, task) {
+  if (c.face !== undefined) return c.face;
+  if (c.cls === 'bad' || c.cls === 'accent') return true;
+  if (c.phase) return true;
+  if (c.plan) return !task.phase && !task.isPhase;
+  return false;
+}
+
+/* Focus back onto a card after a redraw rebuilt it: the visible view's
+   copy, then a control inside it when one is named. A redraw is how every
+   card change lands, so a keyboard user would otherwise be dropped to the
+   top of the page by their own keystroke. */
+function focusCard(file, inner) {
+  requestAnimationFrame(() => {
+    const card = [...document.querySelectorAll('.view.on article.card')]
+      .find(c => c.dataset.file === file);
+    if (!card) return;
+    const target = (inner && card.querySelector(inner)) || card;
+    target.focus();
+  });
+}
+
 function cardFor(task) {
   const el = document.createElement('article');
   const agent = agentOnTask(task.file);
@@ -2915,15 +2980,21 @@ function cardFor(task) {
   el.draggable = !completing;
 
   let tint = working ? 'var(--accent)' : STAGE_TINT[task.stage];
+  // The column already says the routine status, so the pill is drawn only
+  // when something promotes it: live work, a verdict, a failure, a halt,
+  // an idle card. "queued" in to-do/ is the column's word, not news.
+  let promoted = !!agent || working;
   let pill = agent && agent.mode === 'review'
     ? { text: 'reviewing', tint: 'var(--accent)', bg: mix('var(--accent)', 16) }
     : pillFor(task.stage, working);
   if (!agent && verdict === 'green') {
     pill = { text: 'approved', tint: 'var(--calm)', bg: mix('var(--calm)', 18) };
     tint = 'var(--calm)';
+    promoted = true;
   } else if (!agent && verdict === 'red') {
     pill = { text: 'changes asked', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16) };
     tint = 'var(--alarm)';
+    promoted = true;
   }
   if (flight && flight.idle) {
     // the state the card could not tell from a run in flight: a phase in
@@ -2933,6 +3004,7 @@ function cardFor(task) {
     pill = { text: flight.pill, tint: 'var(--idle)', bg: 'var(--sunken)',
              title: flight.line };
     tint = 'var(--idle)';
+    promoted = true;
   }
   if (failure) {
     // the newest thing that happened here, and the only actionable one:
@@ -2940,6 +3012,7 @@ function cardFor(task) {
     pill = { text: 'run failed', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16),
              title: failure.excerpt };
     tint = 'var(--alarm)';
+    promoted = true;
   }
   if (flight && flight.bad) {
     // a halt is held, not scrolled past — and on this view the phase card
@@ -2947,6 +3020,7 @@ function cardFor(task) {
     pill = { text: 'halted', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16),
              title: flight.line };
     tint = 'var(--alarm)';
+    promoted = true;
   }
   if (completing) {
     // live work outranks every settled reading: the branch behind an
@@ -2954,6 +3028,18 @@ function cardFor(task) {
     pill = { text: 'completing', tint: 'var(--accent)', bg: mix('var(--accent)', 16),
              title: 'merge & clean up is running — the card comes back when it lands in done/' };
     tint = 'var(--accent)';
+    promoted = true;
+  }
+  // a card in in-progress/ that nobody is working on and nothing has
+  // touched for a day: the board is misreporting what is happening, which
+  // is exactly the kind of exception the face exists to show
+  const idle = !promoted && task.stage === 'in-progress' && !task.isPhase
+    && (Date.now() / 1000 - task.mtime) / 86400 >= 1;
+  if (idle) {
+    pill = { text: 'idle', tint: 'var(--idle)', bg: 'var(--sunken)',
+             title: `nothing has run or changed here for ${ago(task.mtime)} — `
+                  + '▸ start work, or walk it back to to-do/' };
+    promoted = true;
   }
   const high = (task.priority || '').toLowerCase() === 'high';
   const top = [
@@ -2971,8 +3057,10 @@ function cardFor(task) {
     // never guesses around it: a launch refuses until it is settled.
     (task.planDrift || []).length
       ? `<span class="pill drift" title="${esc(task.planDrift.join(' · '))}">plan drift</span>` : '',
-    `<span class="pill status${completing ? ' breathing' : ''}" style="background:${pill.bg};color:${pill.tint}"` +
-      `${pill.title ? ` title="${esc(pill.title)}"` : ''}>${pill.text}</span>`,
+    promoted
+      ? `<span class="pill status${completing ? ' breathing' : ''}" style="background:${pill.bg};color:${pill.tint}"` +
+        `${pill.title ? ` title="${esc(pill.title)}"` : ''}>${pill.text}</span>`
+      : '',
   ];
 
   // two actions per state, max — whatever you'd actually do without opening the card
@@ -3095,12 +3183,15 @@ function cardFor(task) {
     else if (task.stage === 'in-progress') who = 'unattended';
     else if (task.stage === 'review') who = 'needs your eyes';
     else who = 'merged';
-    meta = 'edited ' + ago(task.mtime) + ' ago';
-    if (task.stage === 'in-progress' && (Date.now() / 1000 - task.mtime) / 86400 >= 1) meta += ' · idle';
+    // when the file last changed is in the detail view; on the face it was
+    // chatter, and the one reading of it that matters is the idle pill
+    meta = '';
   }
+  // the owner, or the agent holding it — and on a card in in-progress/
+  // that nobody holds, that it is unattended. Everywhere else the column
+  // already says what an unowned card is, so the row is not drawn at all.
+  const showWho = !!agent || !!task.assignee || task.stage === 'in-progress';
   const extras = [];
-  if (!high && task.priority) extras.push(esc(task.priority.toLowerCase()));
-  if (task.type) extras.push(esc(task.type.toLowerCase()));
 
   let liveLine = '';
   if (completing) {
@@ -3274,8 +3365,7 @@ function cardFor(task) {
     chips.push({ label: 'archive', pre: '⌸', cls: 'arch', arch: true,
       title: 'Archive this card — out of every column, never deleted. ⌘Z brings it back.' });
   }
-  const chipRow = chips.length
-    ? '<div class="chiprow">' + chips.map(c => {
+  const chipHtml = (c) => {
         const g = c.glyph ? `<span class="g2">${c.glyph}</span>` : '';
         const p = c.pre ? `<span class="g2">${c.pre}</span>` : '';
         if (c.arch) return `<button class="chip2 ${c.cls}" data-arch="1" title="${esc(c.title)}">${p}${actLabel(c.label, 'archive it?', 'archiving…')}</button>`;
@@ -3289,16 +3379,48 @@ function cardFor(task) {
         if (c.review) return `<button class="chip2 ${c.cls}" data-review="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.cmd) return `<button class="chip2 ${c.cls}" data-cmd="${esc(c.cmd)}" title="${esc(c.title)}">${actLabel(c.label, 'run it?', 'running…')}${g}</button>`;
         return `<span class="chip2 ${c.cls}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</span>`;
-      }).join('') + '</div>'
+  };
+  // the face carries the exceptions; every chip, the face's included, is
+  // in the card's tools — opened from the ⋯ button, and drawn in full in
+  // the detail view, so nothing a chip did is lost by not being on the face
+  const face = chips.filter(c => chipOnFace(c, task));
+  const chipRow = face.length
+    ? '<div class="chiprow">' + face.map(chipHtml).join('') + '</div>'
     : '';
+  const ref = task.number ? '#' + task.number : task.file.slice(0, 10);
+  const menuOpen = S.cardMenu === task.file;
+  const tools = chips.map(c => chipHtml(chipOnFace(c, task)
+    ? { ...c, cls: `${c.cls} onface` } : c)).join('');
 
   el.innerHTML =
     `<div class="toprow">${top.join('')}</div>` +
-    `<div class="title">${esc(task.title)}</div>` +
-    `<div class="whorow"><span class="initial">${esc(initial)}</span><span class="who">${esc(who)}</span>` +
-    modelChip(agent) +
-    `<span class="meta">${esc(meta)}${extras.length ? ' · ' + extras.join(' · ') : ''}</span></div>` +
-    chipRow + driveWell + liveLine;
+    `<div class="title">${esc(cardTitle(task))}</div>` +
+    (showWho
+      ? `<div class="whorow"><span class="initial">${esc(initial)}</span><span class="who">${esc(who)}</span>` +
+        modelChip(agent) +
+        `<span class="meta">${esc(meta)}${extras.length ? ' · ' + extras.join(' · ') : ''}</span></div>`
+      : '') +
+    chipRow + driveWell + liveLine +
+    `<div class="cardtools${menuOpen ? ' open' : ''}" role="group" ` +
+    `aria-label="${esc(`Tools for ${ref}`)}"><span class="tlabel">tools</span>` +
+    `<span class="tacts"></span>${tools}</div>`;
+  el.dataset.file = task.file;
+  // the card itself is reachable: Tab lands on it, Enter or Space opens
+  // its detail view, and focus-within reveals the same actions hover does
+  el.tabIndex = 0;
+  el.addEventListener('keydown', (e) => {
+    if (e.target === el && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      showDetail(task);
+    } else if (e.key === 'Escape' && S.cardMenu === task.file) {
+      e.stopPropagation();
+      S.cardMenu = null;
+      renderCards();
+      focusCard(task.file, '[data-more]');
+    }
+  });
+  // a click between two tools is not a click on the card
+  el.querySelector('.cardtools').addEventListener('click', (e) => e.stopPropagation());
   el.querySelectorAll('a.chip2').forEach(a =>
     a.addEventListener('click', (e) => e.stopPropagation()));
   el.querySelectorAll('[data-phase]').forEach(btn =>
@@ -3350,8 +3472,36 @@ function cardFor(task) {
       btn.title = act.title;
       wireAction(btn, `${task.file}::${act.label}`, act);
       slot.appendChild(btn);
+      // the same action, keyed the same, in the tools: the detail view
+      // carries it there, and an armed window is one window wherever the
+      // second click lands
+      const twin = document.createElement('button');
+      twin.className = 'chip2 onface';
+      twin.innerHTML = `<span class="g2">${act.glyph}</span>${actLabel(act.label, act.confirm, act.busy)}`;
+      twin.title = act.title;
+      wireAction(twin, `${task.file}::${act.label}`, act);
+      el.querySelector('.cardtools .tacts').appendChild(twin);
     }
     el.querySelector('.toprow').appendChild(slot);
+  }
+  // the tools menu: one labelled control on every card that has anything
+  // in it, at the end of the top row, so the face stays quiet and nothing
+  // a chip used to do is more than one keystroke away
+  if (chips.length) {
+    const more = document.createElement('button');
+    more.className = 'moretools';
+    more.dataset.more = task.file;
+    more.textContent = '⋯';
+    more.title = 'Tools — profile, branch, PR, checks, drive, archive';
+    more.setAttribute('aria-label', `Tools for ${ref}`);
+    more.setAttribute('aria-expanded', String(menuOpen));
+    more.addEventListener('click', (e) => {
+      e.stopPropagation();
+      S.cardMenu = S.cardMenu === task.file ? null : task.file;
+      renderCards();
+      focusCard(task.file, S.cardMenu ? '.cardtools.open .chip2:not(.onface)' : '[data-more]');
+    });
+    el.querySelector('.toprow').appendChild(more);
   }
 
   el.addEventListener('dragstart', (e) => {
@@ -4973,11 +5123,21 @@ function renderDrawer() {
     `<span class="pill" style="background:${pill.bg};color:${pill.tint}">${pill.text}</span>` +
     `<span class="spacer"></span>` +
     `<button id="closeDrawer">Close</button></div>` +
+    `<div id="drawertools"></div>` +
     failBlock +
+    signalsBlock(t) +
     planBlock(t) +
     phaseMembers(t) +
     `<div class="dbody">${md(t.body)}</div>` +
     `<div class="dmeta">${esc(t.stage)}/${esc(t.file)} · ${t.words} words · edited ${esc(when)}</div>`;
+  // every tool and action the card has, built by the card's own builder
+  // and wired by it — so the detail view cannot offer a tool the card
+  // would not, or wire one differently
+  const tools = cardFor(t).querySelector('.cardtools');
+  if (tools && tools.querySelectorAll('button, a').length) {
+    tools.classList.add('open', 'dtools');
+    $('#drawertools').replaceWith(tools);
+  }
   panel.classList.add('open');
   restoreScroll(key, body);
   body.querySelectorAll('[data-member]').forEach(row =>
@@ -4985,7 +5145,62 @@ function renderDrawer() {
       const member = findTask(row.dataset.member);
       if (member) showDetail(member);
     }));
-  $('#closeDrawer').addEventListener('click', () => { S.selected = null; renderCards(); });
+  $('#closeDrawer').addEventListener('click', () => {
+    S.selected = null;
+    renderCards();
+    // back to the card the detail view was opened from
+    focusCard(t.file);
+  });
+}
+
+/* Four signals a single green tick would collapse, each in its own words
+   and with the revision it is about: what bench itself ran, what external
+   CI said, what reviewers said, and what the merge gate decides from
+   them. Green CI is not a named check, and no gate is not a pass — so each
+   row says only what its own authority said. */
+function signalsBlock(t) {
+  const rows = [];
+  const v = (S.state.verify || {})[t.file];
+  if (v) {
+    const [, , word] = verifyState(v.outcome);
+    rows.push(['Bench checks', `${word} · ${v.passed} of ${v.checks} passed` +
+      `${v.notRun ? ` · ${v.notRun} not run` : ''}`,
+      verifyState(v.outcome)[0] === 'fail' ? 'bad' : '']);
+  }
+  const pr = (S.state.prs || {})[t.file];
+  if (t.pr || pr) {
+    const ci = pr && pr.ci;
+    rows.push(['External CI', ci
+      ? ({ pass: 'passing', fail: 'failing', running: 'running' }[ci] || ci) +
+        (pr.detail ? ` · ${pr.detail}` : '') + ' — not a Bench check'
+      : 'no CI result', ci === 'fail' ? 'bad' : '']);
+    const verdict = prVerdict(t);
+    rows.push(['Review', ({ green: 'approved', red: 'changes requested',
+      pending: 'no verdict yet' }[verdict] || 'no pull request') +
+      (pr && pr.copilot ? ` · copilot ${pr.copilot}` : ''),
+      verdict === 'red' ? 'bad' : '']);
+  }
+  const r = (S.state.reviews || {})[t.file];
+  if (r) {
+    const [, word] = REVIEW_LABELS[r.label] || REVIEW_LABELS.none;
+    rows.push(['Pinned review', `${word} · ${(r.head || 'unrecorded').slice(0, 12)}`,
+      r.label === 'superseded' ? 'bad' : '']);
+  }
+  const g = (S.state.gates || {})[t.file];
+  if (g) {
+    const [cls, , word] = gateState(g.decision);
+    rows.push(['Merge gate', `${word} — ${g.summary}`, cls === 'bad' ? 'bad' : '']);
+  } else if (rows.length) {
+    rows.push(['Merge gate', 'no gate configured — nothing is required before a '
+      + 'merge, and that is not a pass', '']);
+  }
+  if (!rows.length) return '';
+  return `<div class="pmembers"><div class="phead">Signals` +
+    `<span class="mono">kept apart</span></div>` +
+    rows.map(([k, v2, cls]) => `<div class="prow flat${cls === 'bad' ? ' bad' : ''}">` +
+      `<span class="pstage">${esc(k)}</span>` +
+      `<span class="ptitle">${esc(v2)}</span></div>`).join('') +
+    `</div>`;
 }
 
 function allRecentEvents() {
