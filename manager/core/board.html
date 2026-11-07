@@ -4040,7 +4040,28 @@ function stateWord(word, states) {
 const EDITING_SECTIONS = ['policy', 'verification', 'acceptance'];
 
 function settingsEditing() {
-  return EDITING_SECTIONS.includes(S.settingsSection) && !!(S.draft && S.draft.dirty);
+  if (EDITING_SECTIONS.includes(S.settingsSection) && !!(S.draft && S.draft.dirty)) return true;
+  // a field being typed in is an edit in progress even before it reaches
+  // the draft — the JSON field only does on "use this JSON" — so a
+  // background repaint must not take focus or the half-typed text from it
+  const el = document.activeElement;
+  return !!(el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) &&
+            $('#sbody').contains(el));
+}
+
+/* Which folds in the section are open. Explanations live in folds now
+   (card 76), and every repaint rebuilds them closed — so one the person
+   opened would snap shut on the next SSE frame or the 30s refetch. A fold
+   is known by its id, else by its summary's words, which is what a person
+   recognises it by too. */
+function settingsFoldKey(d) {
+  const s = d.querySelector(':scope > summary');
+  return d.id || (s ? s.textContent.trim() : '');
+}
+
+function openSettingsFolds(body) {
+  return new Set([...body.querySelectorAll('details[open]')]
+    .map(settingsFoldKey).filter(Boolean));
 }
 
 /* Whether the section being drawn carries the draft's step bar, so the
@@ -4091,7 +4112,15 @@ function renderSettings() {
       `<button class="chip2" data-sdraft="discard" aria-label="discard the ` +
       `unsaved draft">Discard draft</button></div></div>`
     : '';
+  // folds stay as the person left them across a repaint of the same
+  // section; a different section starts with its own folds closed
+  const keepOpen = body.dataset.ssection === section ? openSettingsFolds(body)
+    : new Set();
   body.innerHTML = notice + settingsSection(section, page);
+  body.dataset.ssection = section;
+  body.querySelectorAll('details').forEach(d => {
+    if (keepOpen.has(settingsFoldKey(d))) d.open = true;
+  });
   restoreScroll('v:settings', $('#view-settings'));
 
   $('#s-reread').addEventListener('click', () => fetchSettings(true));

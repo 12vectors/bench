@@ -110,6 +110,31 @@ class ReachableThroughNormalNavigation(Source):
         self.assertIn("function settingsEditing()", self.html)
         self.assertIn("if (!settingsEditing()) renderSettings();", self.html)
 
+    def test_a_focused_field_holds_the_stream_repaint_too(self):
+        """The JSON field reaches the draft only on "use this JSON", so a
+        clean draft with a person typing in it is still an edit in
+        progress: the repaint waits rather than taking focus from it."""
+        body = self.body("settingsEditing")
+        self.assertIn("document.activeElement", body)
+        self.assertIn("INPUT|TEXTAREA|SELECT", body)
+        self.assertIn("$('#sbody').contains(el)", body)
+
+    def test_an_opened_fold_survives_a_repaint_of_its_section(self):
+        """Card 76 put the explanations in folds. A repaint rebuilds them
+        closed, so the open ones are read before and reopened after — for
+        the same section only, so a new section starts closed."""
+        body = self.body("renderSettings")
+        keep = body.index("openSettingsFolds(body)")
+        paint = body.index("body.innerHTML = notice + settingsSection")
+        reopen = body.index("if (keepOpen.has(settingsFoldKey(d))) d.open = true")
+        self.assertLess(keep, paint)
+        self.assertLess(paint, reopen)
+        self.assertIn("body.dataset.ssection === section", body)
+        # a fold is known by its id, else by its summary's words
+        key = self.body("settingsFoldKey")
+        self.assertIn("d.id ||", key)
+        self.assertIn(":scope > summary", key)
+
 
 class OneResolver(Source):
     def test_the_page_reads_the_servers_whole_settings_payload(self):

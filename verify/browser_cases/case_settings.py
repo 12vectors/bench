@@ -88,8 +88,12 @@ def draft_in(doc: dict) -> None:
     one control that can express a whole document, and the one a test can
     drive without typing into fourteen fields."""
     b = S["browser"]
-    b.eval("document.querySelector('#s-rawfold').open = true")
-    if not b.wait("!!document.querySelector('#s-raw')", 5):
+    # opened the way a person opens it: the fold sits at the bottom of a
+    # long section, so this also proves the click reaches it there
+    if not b.eval("document.querySelector('#s-rawfold').open"):
+        b.click('#s-rawfold > summary')
+    if not b.wait("document.querySelector('#s-rawfold').open"
+                  " && document.querySelector('#s-raw').offsetHeight > 0", 5):
         raise bv.CheckFailed("the raw document field never opened")
     b.eval("(() => { const t = document.querySelector('#s-raw');"
            f" t.value = {json.dumps(json.dumps(doc, indent=2))};"
@@ -447,6 +451,40 @@ class KeyboardAndScreenReader(unittest.TestCase):
                              f"controls with no accessible name in {section}")
         S["metrics"]["settingsAccessibility"] = found
         shot("settings-accessibility-1280x800")
+
+
+class RepaintsKeepYourPlace(unittest.TestCase):
+    """Every SSE frame, and the 30s safety refetch, repaints Settings.
+    Explanations live in folds since card 76, so a repaint that rebuilt
+    them closed snapped shut whatever a person had just opened — and took
+    focus and the caret out of the JSON field mid-typing."""
+
+    def test_an_opened_fold_survives_a_background_repaint(self):
+        b = open_settings(1440, 900, "policy")
+        b.click('#s-rawfold > summary')
+        self.assertTrue(b.wait("document.querySelector('#s-rawfold').open", 5))
+        b.eval("render()")
+        self.assertTrue(b.eval("document.querySelector('#s-rawfold').open"),
+                        "a background repaint closed the fold the person opened")
+        # and a section of its own starts with its folds closed
+        b.click('#snav [data-ssection="verification"]')
+        b.click('#snav [data-ssection="policy"]')
+        self.assertFalse(b.eval("document.querySelector('#s-rawfold').open"))
+
+    def test_a_field_being_typed_in_is_not_repainted_from_under(self):
+        b = open_settings(1440, 900, "policy")
+        b.click('#s-rawfold > summary')
+        self.assertTrue(b.wait("document.querySelector('#s-rawfold').open", 5))
+        b.click('#s-raw')
+        b.eval("(() => { const t = document.querySelector('#s-raw');"
+               " t.value = '{\"v\": 1, \"half'; t.dispatchEvent(new Event('input')); })()")
+        b.eval("window.__raw = document.querySelector('#s-raw'); render()")
+        self.assertTrue(b.eval("document.activeElement === window.__raw"
+                               " && document.activeElement.isConnected"),
+                        "a background repaint took focus out of the field")
+        self.assertEqual('{"v": 1, "half',
+                         b.eval("document.querySelector('#s-raw').value"))
+        b.eval("document.activeElement.blur()")
 
 
 class ReadingRunsNothing(unittest.TestCase):
