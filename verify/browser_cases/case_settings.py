@@ -228,7 +228,19 @@ class EmptyAndConfiguredAndErrorStates(unittest.TestCase):
                                  "backend: " +
                                  str(b.eval("S.settings && S.settings.page"
                                             ".overview.policy")))
-        self.assertIsNone(b.eval("S.draft"), "the draft outlived its apply")
+        # Apply drops the draft; Advanced policy, still on screen, then
+        # opens a fresh one from what the server now holds (ensureDraft).
+        # What must not survive is the *applied* draft: no unsaved edits,
+        # no validation or preview of the old text, the new revision, and
+        # exactly the document the backend resolved.
+        self.assertTrue(b.eval(
+            "(() => { const d = S.draft, e = S.settings.page.editing.draft;"
+            " return !d || (!d.dirty && d.checked === null && d.preview === null"
+            " && d.raw === null && d.revision === e.revision"
+            " && JSON.stringify(d.document) === JSON.stringify(e.document)); })()"),
+            "the draft outlived its apply: " + str(b.eval("S.draft")))
+        self.assertEqual(["unit"], b.eval(
+            "S.settings.page.editing.draft.document.checks.map(c => c.name)"))
 
         # and the configured state is what the backend now resolves
         b.click('#snav [data-ssection="verification"]')
@@ -288,8 +300,13 @@ class InContextEditing(unittest.TestCase):
         if not b.wait("!!(S.draft && S.draft.preview)", 15):
             raise bv.CheckFailed("preview never came back")
         self.assertIn("check-changed", b.eval("S.draft.preview.changes.map(c => c.kind)"))
-        self.assertIn("If you apply",
-                      b.eval("document.querySelector('#s-editor').innerText"))
+        # the consequence block is drawn in the editor itself. Its heading
+        # is styled upper-case, so it is read as written (textContent), not
+        # as Chromium's innerText renders it
+        self.assertEqual("If you apply", b.eval(
+            "(document.querySelector('#s-editor .s-conseq .label') || {}).textContent"))
+        self.assertIn("check-changed", b.eval(
+            "[...document.querySelectorAll('#s-editor .s-diff .k')].map(e => e.textContent)"))
         shot("settings-editor-check-1440x900")
         b.click('#s-apply')
         if not b.wait("document.querySelector('#s-apply').classList.contains('armed')", 5):
