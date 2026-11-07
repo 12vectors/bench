@@ -1026,7 +1026,12 @@ def free_port() -> int:
 
 
 FIXTURE_CARDS = {
-    "backlog": [("01-write-the-onboarding-guide", "Write the onboarding guide", "Medium")],
+    "backlog": [("01-write-the-onboarding-guide", "Write the onboarding guide", "Medium"),
+                # a title that repeats the card's own number, as real task
+                # files do, and runs long enough to wrap in a narrow column
+                ("06-a-long-title", "06 — A card whose title runs long enough to "
+                 "wrap across several lines of a narrow column without pushing "
+                 "the board sideways", "Low")],
     "to-do": [("02-tidy-the-settings-reference", "Tidy the settings reference", "Low")],
     "in-progress": [("03-measure-the-board-layout", "Measure the board layout", "High")],
     "review": [("04-check-keyboard-focus", "Check keyboard focus", "High")],

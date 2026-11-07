@@ -10,12 +10,16 @@ screenshots are taken for a person to do that.
 """
 
 import json
+import re
 import unittest
 
 import benchverify as bv
 
 STAGES = ["backlog", "to-do", "in-progress", "review", "done"]
-TITLES = [t for cards in bv.FIXTURE_CARDS.values() for _, t, _ in cards]
+# a card names itself once: a title that repeats its own number is drawn
+# without it, because the card's top row already carries `#06`
+TITLES = [re.sub(r"^\d+ — ", "", t)
+          for cards in bv.FIXTURE_CARDS.values() for _, t, _ in cards]
 WIDTHS = [(1440, 900), (1280, 800), (1024, 768)]
 # 1280x800 at 200% zoom: the CSS viewport a zoomed-in reader actually has
 ZOOMED = (640, 400)
@@ -101,6 +105,111 @@ class Board(unittest.TestCase):
             shot(f"board-{w}x{h}")
             self.assertEqual([], problems, f"at {w}x{h}")
         S["metrics"]["layout"] = found
+
+
+def card_sel(stem: str) -> str:
+    return f'#board article.card[data-file="{stem}.md"]'
+
+
+class CardFace(unittest.TestCase):
+    """Card 76: one ID, a readable title, no routine status, and every tool
+    one labelled control away — by pointer and by keyboard."""
+
+    def test_routine_cards_name_themselves_once_and_carry_no_chrome(self):
+        load()
+        b = S["browser"]
+        faces = b.eval("[...document.querySelectorAll('#board article.card')].map(c => ({"
+                       " file: c.dataset.file,"
+                       " refs: c.querySelectorAll('.ref').length,"
+                       " title: c.querySelector('.title').innerText,"
+                       " pills: c.querySelectorAll('.toprow .pill.status').length,"
+                       " faceChips: c.querySelectorAll(':scope > .chiprow .chip2').length,"
+                       " more: (c.querySelector('[data-more]') || {}).ariaLabel || null }))")
+        S["metrics"]["cardFaces"] = faces
+        self.assertEqual(len(TITLES), len(faces))
+        for f in faces:
+            self.assertEqual(1, f["refs"], f)
+            self.assertNotRegex(f["title"], r"^\s*#?\d+\s*[—–-]", f"{f['file']} repeats its ID")
+            # nothing in the fixture is live, failed, idle or awaiting a
+            # verdict, so the column says everything a pill would have
+            self.assertEqual(0, f["pills"], f"{f['file']} repeats its column's status")
+            self.assertEqual(0, f["faceChips"], f"{f['file']} has a row of chips on its face")
+        # cards with tools offer them through one labelled control
+        archivable = [f for f in faces if f["file"].split("/")[-1][:2] in ("01", "02", "05", "06")]
+        for f in archivable:
+            self.assertTrue(f["more"] and f["more"].startswith("Tools for #"), f)
+        shot("cards-quiet-1440x900")
+
+    def test_the_tools_menu_opens_and_closes_by_keyboard_and_returns_focus(self):
+        load(1280, 800)
+        b = S["browser"]
+        more = f"{card_sel('01-write-the-onboarding-guide')} [data-more]"
+        b.eval(f"document.querySelector('{more}').focus()")
+        b.key("Enter")
+        opened = b.wait(f"!!document.querySelector('{card_sel('01-write-the-onboarding-guide')}"
+                        " .cardtools.open')", 5)
+        self.assertTrue(opened, "Enter on ⋯ did not open the card's tools")
+        self.assertTrue(b.wait("!!document.activeElement.closest('.cardtools.open')", 5),
+                        "focus did not move into the opened tools")
+        self.assertEqual("true", b.eval(f"document.querySelector('{more}')"
+                                        ".getAttribute('aria-expanded')"))
+        labels = b.eval(f"[...document.querySelectorAll('{card_sel('01-write-the-onboarding-guide')}"
+                        " .cardtools.open .chip2:not(.onface)')].map(e => e.innerText.trim())")
+        self.assertTrue(any("archive" in l for l in labels), labels)
+        shot("cards-tools-open-1280x800")
+        b.key("Escape")
+        self.assertTrue(b.wait(f"!document.querySelector('{card_sel('01-write-the-onboarding-guide')}"
+                               " .cardtools.open')", 5), "Escape did not close the tools")
+        self.assertTrue(b.wait("document.activeElement && document.activeElement.dataset"
+                               " && document.activeElement.dataset.more"
+                               " === '01-write-the-onboarding-guide.md'", 5),
+                        "focus did not return to the ⋯ control")
+
+    def test_the_detail_view_carries_every_tool_and_gives_focus_back(self):
+        load(1280, 800)
+        b = S["browser"]
+        card = card_sel("02-tidy-the-settings-reference")
+        b.eval(f"document.querySelector('{card}').focus()")
+        b.key("Enter")
+        self.assertTrue(b.wait("document.querySelector('#drawer').classList.contains('open')", 5),
+                        "Enter on a focused card did not open its detail view")
+        tools = b.eval("[...document.querySelectorAll('#drawer .dtools .chip2')]"
+                       ".map(e => e.innerText.trim())")
+        S["metrics"]["detailTools"] = tools
+        self.assertTrue(any("archive" in t for t in tools), tools)
+        self.assertTrue(any("still true" in t for t in tools), tools)
+        shot("card-detail-1280x800")
+        b.click("#closeDrawer")
+        self.assertTrue(b.wait("document.activeElement && document.activeElement.dataset"
+                               " && document.activeElement.dataset.file"
+                               " === '02-tidy-the-settings-reference.md'", 5),
+                        "closing the detail view did not return focus to its card")
+
+    def test_cards_fit_at_390px_and_at_200_percent_zoom(self):
+        found = {}
+        for w, h in [(390, 780), ZOOMED]:
+            load(w, h)
+            b = S["browser"]
+            m = b.eval("(() => { const out = [];"
+                       " for (const c of document.querySelectorAll('#board article.card')) {"
+                       "  const r = c.getBoundingClientRect(),"
+                       "        t = c.querySelector('.title').getBoundingClientRect();"
+                       "  out.push({file: c.dataset.file, card: [r.x, r.width],"
+                       "            title: [t.x, t.width], scroll: c.scrollWidth,"
+                       "            client: c.clientWidth}); }"
+                       " return {scrollWidth: document.documentElement.scrollWidth,"
+                       "         cards: out}; })()")
+            found[f"{w}x{h}"] = m
+            self.assertLessEqual(m["scrollWidth"], w + 1,
+                                 f"page-wide horizontal overflow at {w}x{h}")
+            for c in m["cards"]:
+                self.assertLessEqual(c["scroll"], c["client"] + 1,
+                                     f"{c['file']} overflows its own card at {w}x{h}")
+                self.assertLessEqual(c["title"][0] + c["title"][1],
+                                     c["card"][0] + c["card"][1] + 1,
+                                     f"{c['file']}'s title is clipped at {w}x{h}")
+            shot(f"cards-{w}x{h}")
+        S["metrics"]["cardsNarrow"] = found
 
 
 class Views(unittest.TestCase):

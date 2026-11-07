@@ -88,7 +88,7 @@ def draft_in(doc: dict) -> None:
     one control that can express a whole document, and the one a test can
     drive without typing into fourteen fields."""
     b = S["browser"]
-    b.click('#sbody details.fold summary')
+    b.eval("document.querySelector('#s-rawfold').open = true")
     if not b.wait("!!document.querySelector('#s-raw')", 5):
         raise bv.CheckFailed("the raw document field never opened")
     b.eval("(() => { const t = document.querySelector('#s-raw');"
@@ -149,6 +149,14 @@ class EmptyAndConfiguredAndErrorStates(unittest.TestCase):
         text = b.eval("document.querySelector('#sbody').innerText")
         self.assertIn("not-configured", text)
         self.assertIn("no check is registered", text)
+        # card 76: values first, in the task's words, with the limitations
+        # that change what a merge means kept in view
+        for words in ("None registered", "No merge requirements",
+                      "Not inspected", "Unavailable", "3 profiles"):
+            self.assertIn(words, text)
+        # the recommendations are one click away rather than the headline
+        b.eval("document.querySelector('#sbody details.srecs').open = true")
+        text = b.eval("document.querySelector('#sbody').innerText")
         self.assertIn("Register your project's test program", text)
         self.assertIn("You supply:", text)
         # and nothing anywhere reads as a pass
@@ -225,7 +233,7 @@ class EmptyAndConfiguredAndErrorStates(unittest.TestCase):
             raise bv.CheckFailed("the registered check is not drawn")
         text = b.eval("document.querySelector('#sbody').innerText")
         self.assertIn("python3 -m unittest discover -s tests", text)
-        self.assertIn("registered, not required", text)
+        self.assertIn("Optional", text)
         self.assertIn("Your team provides the checks; Bench runs them.", text)
         S["metrics"]["settingsApplied"] = b.eval(
             "({kind: S.settings.page.overview.policy.kind,"
@@ -238,6 +246,111 @@ class EmptyAndConfiguredAndErrorStates(unittest.TestCase):
         self.assertTrue(history, "the applied change left no history entry")
         self.assertIn("checks", history[0]["changedKeys"])
         self.assertNotIn("unittest", json.dumps(history))
+
+
+def edit_in_place(kind: str, name: str):
+    """Open a contextual editor through its own Edit button."""
+    b = S["browser"]
+    button = f'#sbody [data-sedit="{kind}"][data-sname="{name}"]'
+    if not b.wait(f"!!document.querySelector('{button}')", 10):
+        raise bv.CheckFailed(f"no Edit button for the {kind} {name!r}")
+    b.click(button)
+    if not b.wait("!!document.querySelector('#s-editor')", 5):
+        raise bv.CheckFailed(f"Edit opened no editor for the {kind} {name!r}")
+
+
+def set_field(path: str, value):
+    S["browser"].eval(f"(() => {{ const e = document.querySelector('[data-field=\"{path}\"]');"
+                      f" if (e.type === 'checkbox') e.checked = {json.dumps(bool(value))};"
+                      f" else e.value = {json.dumps(str(value))};"
+                      " e.dispatchEvent(new Event('change', {bubbles: true})); })()")
+
+
+class InContextEditing(unittest.TestCase):
+    """Card 76: a check is edited in Checks and a merge rule in Merge rules,
+    on the advanced editor's draft and through its four steps. These run
+    after the round trip above registered `unit`, against the backend's
+    real document, and read every outcome back from the backend."""
+
+    def test_a_check_edit_applies_and_survives_a_reload(self):
+        b = open_settings(1440, 900, "verification")
+        edit_in_place("check", "unit")
+        set_field("checks:0:timeout", 321)
+        b.click('#s-validate')
+        if not b.wait("!!(S.draft && S.draft.checked && S.draft.checked.ok)", 15):
+            raise bv.CheckFailed("the contextual edit did not validate: " +
+                                 str(b.eval("S.draft && S.draft.checked")))
+        b.click('#s-preview')
+        if not b.wait("!!(S.draft && S.draft.preview)", 15):
+            raise bv.CheckFailed("preview never came back")
+        self.assertIn("check-changed", b.eval("S.draft.preview.changes.map(c => c.kind)"))
+        self.assertIn("If you apply",
+                      b.eval("document.querySelector('#s-editor').innerText"))
+        shot("settings-editor-check-1440x900")
+        b.click('#s-apply')
+        if not b.wait("document.querySelector('#s-apply').classList.contains('armed')", 5):
+            raise bv.CheckFailed("Apply did not arm on the first click")
+        b.click('#s-apply')
+        if not b.wait("S.draft === null && !!S.settings && S.settings.page.verification"
+                      ".checks.some(c => c.timeout === 321)", 20):
+            raise bv.CheckFailed("the backend never resolved the applied edit")
+        # a refresh is a new page: what it shows is the server's document
+        b = open_settings(1440, 900, "verification")
+        self.assertIn("321s limit", b.eval("document.querySelector('#sbody').innerText"))
+
+    def test_b_an_invalid_edit_is_refused_at_the_field_and_writes_nothing(self):
+        b = open_settings(1440, 900, "verification")
+        before = b.eval("S.settings.page.editing.draft.revision")
+        edit_in_place("check", "unit")
+        set_field("checks:0:run", "python3 -m unittest | tee out.txt")
+        b.click('#s-validate')
+        if not b.wait("!!(S.draft && S.draft.checked)", 15):
+            raise bv.CheckFailed("validate never came back")
+        self.assertFalse(b.eval("S.draft.checked.ok"), "a pipeline validated")
+        self.assertGreater(b.eval("document.querySelectorAll('#s-editor .ferr').length"), 0,
+                           "the refusal is not drawn in the editor")
+        self.assertTrue(b.eval("document.querySelector('#s-apply').disabled"))
+        S["metrics"]["settingsContextRefusal"] = b.eval(
+            "S.draft.checked.errors.map(e => e.code + '|' + (e.field || ''))")
+        shot("settings-editor-check-refused")
+        b.click('#s-discard')
+        if not b.wait("S.draft === null && !!S.settings", 15):
+            raise bv.CheckFailed("Discard did not drop the draft")
+        self.assertEqual(before, b.eval("S.settings.page.editing.draft.revision"),
+                         "a refused edit changed the document")
+
+    def test_c_a_merge_rule_previews_its_consequence_and_cancel_writes_nothing(self):
+        b = open_settings(390, 780, "acceptance")
+        before = b.eval("S.settings.page.editing.draft.revision")
+        edit_in_place("gate", "acceptance")
+        set_field("gates:acceptance:checks:unit", True)
+        b.click('#s-validate')
+        if not b.wait("!!(S.draft && S.draft.checked && S.draft.checked.ok)", 15):
+            raise bv.CheckFailed("requiring a declared check did not validate")
+        b.click('#s-preview')
+        if not b.wait("!!(S.draft && S.draft.preview)", 15):
+            raise bv.CheckFailed("preview never came back")
+        self.assertIn("gate-changed", b.eval("S.draft.preview.changes.map(c => c.kind)"))
+        m = measure(["#s-editor", "#s-apply"])
+        self.assertLessEqual(m["scrollWidth"], 391, "the editor widens the page at 390px")
+        self.assertEqual([], bv.layout_problems({**m, "boxes": {"#s-apply": m["boxes"]["#s-apply"]}}))
+        shot("settings-editor-merge-rule-390x780")
+        # Close keeps the draft, and focus goes back to the Edit button
+        b.click('#s-close')
+        self.assertTrue(b.wait("!document.querySelector('#s-editor')", 5))
+        self.assertTrue(b.wait("document.activeElement && document.activeElement.dataset"
+                               " && document.activeElement.dataset.sedit === 'gate'", 5),
+                        "closing the editor did not return focus to its Edit button")
+        # and every other section says there is an unsaved draft
+        b.click('#snav [data-ssection="overview"]')
+        self.assertTrue(b.wait("document.querySelector('#sbody').innerText"
+                               ".includes('Unsaved draft.')", 5))
+        shot("settings-unsaved-draft-390x780")
+        b.click('#sbody [data-sdraft="discard"]')
+        if not b.wait("S.draft === null && !!S.settings", 15):
+            raise bv.CheckFailed("discarding from the notice did not drop the draft")
+        self.assertEqual(before, b.eval("S.settings.page.editing.draft.revision"),
+                         "cancelling a merge-rule edit changed the document")
 
 
 class KeyboardAndScreenReader(unittest.TestCase):
