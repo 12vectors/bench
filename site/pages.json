@@ -157,6 +157,16 @@
       "description": "A card entering review gets a PR opened for it by the board; then review PR, copilot and act on PR, until it settles.",
       "source": "AGENTS.md",
       "from": "## Pull requests",
+      "to": "## Refining a card: comments and agent-proposed edits"
+    },
+    {
+      "path": "/concepts/refining-cards/",
+      "title": "Refining a card",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "Comment on a card, ask an agent to propose a revised brief, read the diff, then apply or discard it. Refining a card is not implementing it.",
+      "source": "AGENTS.md",
+      "from": "## Refining a card: comments and agent-proposed edits",
       "to": "## Phases"
     },
     {

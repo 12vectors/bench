@@ -44,7 +44,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports → taskfiles → plans / profiles → reviews → verify → gates → doctor → events / github / drive / sync → settings → agents → phases → watch / httpd → board.py
+config → state / reports → taskfiles → plans / profiles → reviews → verify → gates → doctor → events / github / drive / sync → settings → agents → phases → refine → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -88,6 +88,10 @@ config → state / reports → taskfiles → plans / profiles → reviews → ve
 - `agents.py` — headless work/review jobs, launched through the adapter
 - `phases.py` — a phase run: its own branch, its cards merged into it one
   at a time. A beat, not an agent; it holds no registry of where a phase is
+- `refine.py` — refining a card on the board: comments, the one
+  refinement job a person asks for, its validated proposal, and the
+  explicit Apply or Discard. The brief and the decisions live in the
+  card; this holds only machine-local job state
 - `watch.py` — 2s disk poller narrating moves made outside the API, and
   the gate that keeps a move a pull applied from triggering anything
 - `httpd.py` — HTTP routes, the SSE stream, serving the page
@@ -1169,7 +1173,7 @@ A `⚿` chip in the card's footer row, beside `⌖` and `CI`, opens the
 profile preflight: where the run would run, what it may write, every named
 command grant, every approved input with its readable status, what is
 blocked, and — at the top, in `--alarm` — any blocker with its remedy,
-before a launch. The sheet switches between the three intents, because
+before a launch. The sheet switches between the four intents, because
 which one a card hosts depends on what you are about to click. It is
 read-only: it resolves and hashes and pins nothing, so opening it costs
 nothing.
@@ -1788,7 +1792,7 @@ the Focus view beside **Permissions & inputs** and **Verification**.
 ### One evaluator, read from four distances
 
 The thing the doctor must not be is a second opinion. It owns no policy
-logic: it calls `profiles.resolve()` for each of the three launch
+logic: it calls `profiles.resolve()` for each of the four launch
 intents and reports the `diagnostics` that came back, it calls
 `verify.request()` to run a check, and it asks each adapter what *it*
 would generate. Every code it reports is one `profiles.DIAGNOSTICS`
@@ -2593,6 +2597,204 @@ whose work changes bench itself puts that code in the candidate
 application's base. It does not update the bench installation serving the
 board — that is the separate, deliberate promotion described in "An
 operator install, and the bench under test".
+
+## Refining a card: comments and agent-proposed edits
+
+A card is often not right the first time it is written, and the person
+who notices is usually looking at it on the board. Refining it there
+used to mean leaving the board to rewrite Markdown by hand. Now the
+card's detail view has a **Discussion** under the brief, and three
+actions that are deliberately three:
+
+- **Add comment** saves what you typed to the card, with your name and
+  the time. That is all it does. No agent is asked anything because a
+  comment exists, and no old comment is ever read as a fresh instruction.
+- **✎ Update card with agent** saves what you typed as a comment *and*
+  asks for one refinement of it — or, on a comment already in the
+  discussion, asks for a refinement of that one. It costs tokens, so it
+  arms on the first click and fires on the second.
+- **Apply** or **Discard** decides what came back. Until one of them is
+  clicked, the brief is exactly what it was.
+
+**Refining a card is not implementing it.** A refinement reads the card,
+its discussion and — where that grounds the requirement — the
+application's code, and proposes a revised **brief**: the description,
+the scope, the acceptance criteria and the notes. It creates no branch
+and no worktree, edits no application file, runs no command, moves no
+card, opens no pull request and never starts a work run. Changing the
+brief does not retarget a plan already recorded for the card either:
+**⌖ replan** and **▸ start work** stay the separate, explicit actions
+they always were.
+
+### Brief, history and discussion
+
+A card is three parts, and refining only works because they can be told
+apart by reading the file:
+
+- the **head** — the title and the `**Field:**` lines under it: the
+  card's identity, its lifecycle and its publication metadata (Status,
+  Assignee, Base branch, PR base, PR and the rest). A refinement never
+  touches it.
+- the **brief** — everything after the head up to the first piece of
+  history. The active requirement, and the only part a refinement may
+  propose to change.
+- the **history** — from the first dated report the board appended
+  (`## Work report — <date> (<name>)`, with the `---` above it), or a
+  `## Phase log`, `## Discussion` or `## Acceptance record` section,
+  to the end. Reports and reviews stay here, as history rather than as
+  requirements, and every write below carries them over byte for byte.
+
+The discussion is one section, `## Discussion`, created at the end of the
+card the first time something is said. Each entry is an `###` heading, a
+one-line machine-readable marker, and the text itself as a blockquote.
+Quoting is the safety: a comment that says `**Status:** Done`, `PR
+REVIEW: APPROVE` or `## Cards` is a line beginning with `>`, so it cannot
+pose as a header, a verdict marker or a phase list to anything that reads
+the card. The detail view draws the brief without the discussion and the
+discussion as plain text; nothing anyone typed is rendered as markup.
+
+### What you see while it works
+
+The comment that was the instruction stays where it is, and under it the
+refinement's state in words — `refining…`, then `proposal — not
+applied`, `failed`, `cancelled`, `applied`, `discarded`, or `superseded
+by a newer attempt`. A proposal shows the agent's explanation, which
+sections it touches, and a focused before/after diff of the brief, with
+**Apply** (armed) and **Discard** beside it. A refinement that is still
+running can be cancelled; one that failed shows why and offers **↻ Retry**.
+
+Apply replaces the brief, records an `Applied` decision in the
+discussion naming the comment and the proposal it incorporated, and
+commits the card once — in the **work state's** repository, through the
+same write-and-commit path every other board edit takes, never as an
+application commit. Discard records a `Discarded` decision and leaves the
+brief alone. Both outcomes stay readable in the card's history.
+
+### Why a refinement cannot do more
+
+The refinement is its own launch intent, `refine`, and it is the
+narrowest there is: no worktree, no command grant, no check to ask for,
+no edit tool and no shell, the last two withheld in the vendor's own
+tool roster rather than asked for in a prompt. It starts in the
+application checkout so it can read the code, and its only output is a
+proposal printed at the end of its run. Bench then validates it **on the
+server**, against the brief the run was given, and refuses — with nothing
+written — a proposal that:
+
+- is empty, or larger than 64 KiB;
+- contains the `# ` title or any `**Field:**` header line;
+- contains a history heading, a `<!-- bench:` marker, or a line the board
+  parses as a marker (`PR REVIEW`, `NOT READY`, `RELEVANCE REVIEW`,
+  `REFINEMENT …`);
+- changes a phase card's `## Cards` list;
+- invents an acceptance-criterion id, or uses one twice.
+
+A refused proposal reads `failed`, names the reason, and changes nothing.
+So does a run that ended without a proposal, one that declined (`the
+agent declined to refine the brief: …`), one that crashed, and one that
+was cancelled.
+
+It also only runs where it can be held to that. An adapter's
+`capabilities.json` must list `refine` among its `intents` and declare
+`read-only-tools` and `shell-withheld` as `enforced`; anything less is
+refused by name (`intent-unsupported`) rather than handed an intent it
+might run with implementation's stance. A profile document that gives
+`refine` commands, checks or preparation steps is refused
+(`intent-restricted`); the document's shared lists never apply to it.
+Both shipped adapters qualify. **⚕ readiness**, the Focus view's profile
+panel and **Settings → Agent access** show the `refine` intent beside the
+other three, with what it may do and what is refused — and reading any of
+them launches nothing. `BOARD_AGENT_MODEL_REFINE` picks its model.
+
+### Concurrency: nothing is lost, nothing is applied twice
+
+- **A proposal is bound to what it read** — the card's stage and the
+  revision of its brief. At Apply both are checked again under the write
+  lock, and the file is compared once more immediately before it is
+  replaced. A brief edited by hand, changed by a sync, or changed by
+  another applied proposal makes the proposal **stale**: Apply refuses,
+  the card says why, and **↻ Regenerate** asks again against the brief as
+  it now is. A card moved to another stage is stale the same way.
+- **Everything outside the brief is kept.** A comment another client
+  added, a report an agent appended, a header the board wrote — all of it
+  arrives between the proposal and the Apply without making it stale,
+  because Apply only ever replaces the brief and carries the rest over.
+- **One click, one job.** Each request carries an identity, so a double
+  click, a resent request or a refresh answers with the job it already
+  made. A comment with a refinement in flight or a proposal waiting gets
+  that one back. A comment whose last refinement ended is asked again only
+  through **↻ Retry**, which is how a deliberate retry is told apart from
+  an accidental replay.
+- **Apply and Discard are safe to repeat and exclude each other.** The
+  second Apply answers "already applied" and writes nothing; a Discard
+  after an Apply, or an Apply after a Discard, is refused. A decision a
+  replica already made — read off the card after a sync — is honoured
+  rather than made again.
+- **Restarts.** Proposals and job states are kept under
+  `manager/local/state/refine/`, machine-local like plans and manifests,
+  so a proposal waiting for a decision survives a restart. A refinement
+  that was running when the board stopped is marked failed, naming the
+  restart, and is never re-run by itself.
+- **Active implementation.** While a work or act-on-PR run is alive on
+  the card — or another agent, or a merge and clean up — refining and
+  applying are refused with the reason and the way through: hold the run
+  with **‖ hold** first. Nothing is stopped automatically, and a running
+  agent does not see comments added meanwhile. **Add comment** is always
+  available.
+- **Commit and sync, truthfully.** With `BOARD_COMMIT_MOVES` on, every
+  comment and decision is its own `board: <n> …` commit touching only the
+  card, and `BOARD_SYNC` publishes it like any move. With it off, the
+  card file is written and not committed, and the discussion panel says
+  so. Vendored and external layouts behave the same; externally, the
+  commits land in the work state's repository and the application's
+  history does not move.
+
+What is not shared, on purpose: a proposal nobody has decided yet exists
+on the board that asked for it. It is a suggestion, not a requirement,
+and it is never a second source of what the card says — the card is.
+
+### The persistence contract (v1)
+
+Written for the card that will read it next (#81, structured acceptance)
+and for anyone editing a card by hand. Every marker carries `"v": 1`.
+
+```markdown
+## Discussion
+
+<!-- bench:discussion v1 — written by the board. Entries are history: the brief above is the requirement. -->
+
+### Comment c-0a1b2c3d4e — ron · 2026-11-08 15:40 UTC
+<!-- bench:entry {"at": "2026-11-08T15:40:00Z", "author": "ron", "id": "c-0a1b2c3d4e", "kind": "comment", "v": 1} -->
+
+> The comment, quoted line by line.
+
+### Applied p-5f6a7b8c9d — ron · 2026-11-08 16:02 UTC
+<!-- bench:entry {"at": "…", "author": "ron", "briefAfter": "…", "briefBefore": "…", "comment": "c-0a1b2c3d4e", "id": "d-1a2b3c4d5e", "kind": "decision", "outcome": "applied", "proposal": "p-5f6a7b8c9d", "sections": ["Acceptance"], "affected": ["saved"], "v": 1} -->
+
+> What was applied, and the agent's explanation.
+```
+
+- An entry's identity is its `id` (`c-…` a comment, `d-…` a decision);
+  `kind` is `comment` or `decision`, and a decision's `outcome` is
+  `applied` or `discarded`, naming the `proposal` and the `comment` it
+  answered. `briefBefore`/`briefAfter` are short brief revisions.
+- **Acceptance criteria** keep a stable identity when they carry one on
+  their own line — `- [ ] Saving a comment runs nothing <!-- ac:no-run -->`.
+  Identity is the id, never the position, so reordering an unchanged
+  criterion changes nothing about it. A refinement may keep, reword or
+  remove an identified criterion and may add unidentified ones; it may
+  not invent an id.
+- **Acceptance records** are history, one per line, written by the board:
+  `<!-- bench:acceptance {"criterion": "no-run", "state": "accepted", "v": 1, …} -->`,
+  under `## Acceptance record`. When an applied refinement rewords or
+  removes an identified criterion, every record about it gains
+  `"recheck": true`, `"recheckReason"` and `"recheckAt"` — in the same
+  write that replaces the brief, so the two cannot disagree. Discard
+  changes neither. A card with no ids and no records keeps its Markdown
+  exactly, and no acceptance decision is invented for it.
+
+Fixtures that hold this contract to the code are in
+`tests/fixtures/refinement/`.
 
 ## Phases
 

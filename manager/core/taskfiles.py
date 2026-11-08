@@ -888,7 +888,7 @@ def move_together(moves: list[tuple[str, str]], target: str, note: str,
 # starting with `>`, so no header, marker or section reader in this module
 # — or the board's own regexes, which read the first match in the file —
 # can mistake it for the real thing. The persistence contract is versioned
-# (`v` in every marker) and documented in docs/card-refinement.md.
+# (`v` in every marker) and documented in AGENTS.md, "Refining a card".
 
 DISCUSSION_HEADING = "Discussion"
 DISCUSSION_VERSION = 1

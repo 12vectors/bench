@@ -52,6 +52,23 @@ side effects its prompt demands, and never a blanket allow-everything
 - `review` — read-only on the working tree: no edit tools, no commits.
   May read a PR (`gh pr view`, `gh pr diff`, read-only git) and post the
   verdict (`gh pr review`, `gh pr comment`).
+- `refine` — **Update card with agent**: read the card and the
+  application's code (the run starts in the application checkout, with no
+  worktree) and print a proposed brief on stdout. Nothing else at all:
+  withhold the vendor's edit tools **and its shell**, grant no command —
+  not `AGENT_COMMANDS`, not a profile's grants, not `bench-verify` — and
+  publish nothing. Bench parses the proposal, validates it and owns every
+  write. Claude: `--disallowedTools Edit Write NotebookEdit Bash` and no
+  allow-rule; opencode: `"edit": "deny"` and `"bash": {"*": "deny"}`.
+
+**An intent you do not recognise must be refused, not defaulted.** Both
+shipped `run` scripts exit 64 on an unknown `AGENT_MODE` before launching
+anything — a script that fell through to its `work` branch would hand a
+refinement implementation's stance. Core adds the matching half: an
+intent newer than the original three is launched only through an adapter
+whose `capabilities.json` lists it under `"intents"` (below), so an
+adapter written before `refine` existed is refused it by name
+(`intent-unsupported`) and keeps running the other three unchanged.
 
 ### The project's allowed commands (`AGENT_COMMANDS`)
 
@@ -142,11 +159,21 @@ understands: `enforced`, `prefix-allowlist` (a prefix match over the
 command line — narrowing, **not** a sandbox), `prompt-only`, `pending`.
 
     {"v": 1, "adapter": "claude", "version": "1",
+     "intents": ["work", "act-pr", "review", "refine"],
      "capabilities": {"command-allowlist": "prefix-allowlist",
                       "command-denylist": "prefix-allowlist",
                       "read-only-tools": "enforced",
+                      "shell-withheld": "enforced",
                       "model-selection": "enforced"},
      "unsupported": {"filesystem-sandbox": "why not, in one sentence"}}
+
+`intents` is which launch intents your `run` can launch. Omitted, you are
+taken to run `work`, `act-pr` and `review` — exactly what every adapter
+ran before the list existed — and nothing newer. To be handed `refine`
+you must list it **and** declare `read-only-tools` and `shell-withheld`
+as `enforced`: withholding the edit tools and the shell in your vendor's
+own tool roster is what makes a refinement read-only, and a deny-rule a
+command line could be shaped around is not the same guarantee.
 
 This is not a grant and it changes no rule. It is what lets a profile's
 `requires` list **refuse** a launch rather than report a guarantee the
@@ -183,6 +210,8 @@ learning anything about your vendor's rule syntax**. Two declarations:
       allow     rules that permit, as rule text — your own syntax
       deny      rules that forbid, as rule text
       readOnly  whether your vendor's edit tools are withheld
+      noShell   whether your vendor's shell is withheld — no command of
+                any kind can be launched (required true for `refine`)
       context   the pinned inputs as delivered: paths and hashes
 
   Anything else is yours and is shown rather than interpreted. There is
@@ -194,10 +223,11 @@ learning anything about your vendor's rule syntax**. Two declarations:
   rule, with its fixed arguments intact? Is the working directory the one
   bench named? Do the pinned inputs reach the run? Can this intent ask
   bench for a named check — `review` included? Was the read-only intent
-  granted a way to write? And does any rule reach `git worktree`,
-  `reset`, `checkout`, `switch`, `branch`, `update-ref` or `remote`,
-  which would let a run choose a different lifecycle than the one bench
-  planned?
+  granted a way to write? Was a refinement given any allow-rule at all,
+  and are its edit tools and its shell withheld? And does any rule reach
+  `git worktree`, `reset`, `checkout`, `switch`, `branch`, `update-ref`
+  or `remote`, which would let a run choose a different lifecycle than
+  the one bench planned?
 
 - **`stubEnv`** names the environment variable that replaces your vendor
   binary. With it the doctor can execute your `run` end to end against a
@@ -246,7 +276,7 @@ Classification happens in YOUR emitter — core never sees vendor payloads.
 ## Writing one
 
 Read the two shipped adapters side by side — they are small and map the
-same three intents onto very different vendor mechanisms. The essentials:
+same four intents onto very different vendor mechanisms. The essentials:
 
 - `run`: launch your agent headlessly with permissions generated from
   `AGENT_MODE` + `AGENT_COMMANDS`; make sure the final output lands on
