@@ -197,7 +197,7 @@ class EmptyAndConfiguredAndErrorStates(unittest.TestCase):
         # card 76: values first, in the task's words, with the limitations
         # that change what a merge means kept in view
         for words in ("None registered", "No merge requirements",
-                      "Not inspected", "Unavailable", "3 profiles"):
+                      "Not inspected", "Unavailable", "4 profiles"):
             self.assertIn(words, text)
         # the recommendations are one click away rather than the headline
         b.eval("document.querySelector('#sbody details.srecs').open = true")
