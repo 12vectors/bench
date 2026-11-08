@@ -628,9 +628,15 @@ class TheCardFace(unittest.TestCase):
         self.assertIn("S.state.branches", guard)
 
     def test_the_completion_sheet_tells_the_truth_in_team_mode(self):
-        self.assertIn("(S.state.sync || {}).enabled", self.html)
-        self.assertIn("the PR on GitHub", self.html)
-        self.assertIn("local main fast-forwards on the next sync beat", self.html)
+        """Task 63: the sheet reads the application merge mode the server
+        resolves, not ticket sync — the two are different settings."""
+        words = self.html[self.html.index("function completionWords"):
+                          self.html.index("async function completeSheet")]
+        self.assertNotIn("S.state.sync", words)
+        self.assertIn("facts.mode === 'origin'", words)
+        self.assertIn("erge the PR on GitHub into ${target}", words)
+        self.assertIn("fast-forwards on the next sync beat", words)
+        self.assertIn("facts.ticketSync && !facts.ticketsSeparate", words)
 
 
 if __name__ == "__main__":
