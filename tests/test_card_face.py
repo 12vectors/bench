@@ -45,10 +45,11 @@ class OneIdAndNoRoutineStatus(Source):
         self.assertIn("let promoted = !!agent || working;", self.card)
         # every exception that used to set the pill still promotes it
         for word in ("approved", "changes asked", "run failed", "halted",
-                     "completing", "idle"):
+                     "not published", "completing", "idle"):
             self.assertIn(f"text: '{word}'", self.card, word)
-        self.assertEqual(self.card.count("promoted = true;"), 7,
-                         "verdict ×2, phase idle, failure, halt, completing, idle")
+        self.assertEqual(self.card.count("promoted = true;"), 8,
+                         "verdict ×2, phase idle, failure, halt, not published, "
+                         "completing, idle")
         self.assertRegex(self.card, r"promoted\s*\?\s*`<span class=\"pill status")
 
     def test_no_edited_time_chatter_on_the_face(self):

@@ -706,7 +706,9 @@ the rest. The face has one ID (`#76` in the top row; a title that repeats
 the card's own number is drawn without it), the title, the owner, `HIGH`
 when it is, and a status pill **only when something has changed the next
 action**: an agent working or reviewing, `approved` or `changes asked`, a
-`run failed`, a halted or unstarted phase, `completing`, or `idle` (in
+`run failed`, a halted or unstarted phase, `not published` (merged, but
+the application remote does not hold it — see "Done means delivered"),
+`completing`, or `idle` (in
 progress, nobody on it, nothing changed for a day). A card sitting in its
 column as expected wears no pill: `queued` in to-do/ was the column's
 word repeated.
@@ -2467,10 +2469,13 @@ kinds.
 
 Dragging a card with work attached (branch or PR) to `done/` opens a
 three-way choice instead of just moving: **keep it where it is** (nothing
-changes), **just move the card** (branch, PR and worktree stay), or
-**merge & clean up** — park the drive if it is this task's, merge the
-branch into main, push (which marks the PR merged) and delete the remote
-branch, remove the worktree and local branch, then move the card. Every
+changes), **just move the card** (only the ticket moves — branch, PR and
+worktree stay, and nothing is merged or pushed), or **merge & clean up** —
+park the drive if it is this task's, merge the branch into the
+application base, publish it and confirm the remote holds it, delete the
+remote branch, remove the worktree and local branch, then move the card
+(see "Done means delivered" below for what happens when publishing
+fails). Every
 step narrates in the ticker; a merge conflict aborts cleanly and the card
 stays put. On a phase card the same action also finishes the cards the
 phase merged — see "Finishing a phase finishes its cards". Cards without
@@ -2498,15 +2503,96 @@ merged, conflicted or crashed — so a failure gives the card straight back
 and a board restarted mid-completion leaves nothing stuck. Other replicas
 see the card unchanged until the move itself arrives.
 
-With `BOARD_SYNC` on the merge is made **on origin** instead: the board
-runs `gh pr merge` on the card's PR, cleans up and moves the card, and
-local `main` fast-forwards to the result on the next beat. Replicas
-converge only while main advances by fast-forward, so no board makes a
-merge commit of its own. Two consequences the local path hid: whoever
-clicks needs merge rights on the repo, not just push rights, and a branch
-without a PR is refused with a pointer to **↑ open PR** — there is nothing
-for origin to merge otherwise. Single-player merges locally, exactly as
-above.
+Where the merge is made is `BOARD_APP_MERGE`, read through
+`config.app_merge_on_origin()` and nothing else. Unset, it keeps the old
+answer: with the tickets inside the application's repository, `BOARD_SYNC`
+on means the merge is made **on origin** — the board runs `gh pr merge` on
+the card's PR, and local `main` fast-forwards to the result on the next
+beat. Replicas converge only while main advances by fast-forward, so no
+board makes a merge commit of its own. Two consequences the local path
+hid: whoever clicks needs merge rights on the repo, not just push rights,
+and a branch without a PR is refused with a pointer to **↑ open PR** —
+there is nothing for origin to merge otherwise. With the tickets in a
+repository of their own, ticket sync says nothing about the application,
+so the unset default is the local merge; `BOARD_APP_MERGE=origin` or
+`=local` decides it explicitly in either layout.
+
+### Done means delivered
+
+`done/` is a claim that the card's code is in the application base *on
+the application remote*. So **merge & clean up** is four outcomes, each
+waiting on the one before: the merge, its publication, the cleanup, and
+the ticket's move — and the result says which of them happened.
+
+**The sheet describes the completion that would run.** It asks the
+server (`GET /api/task/completion`), which answers from the authorities
+the completion itself reads — the merge mode from `BOARD_APP_MERGE` as
+above, the target from the card's recorded plan, the remote from
+`BOARD_GIT_REMOTE` — never from ticket sync on its own. It names the
+target, so a board whose base is `trunk` says `trunk`, and says which of
+three things will happen: a local merge pushed to the remote, a PR merged
+on GitHub, or — for an application with no remote — a local-only
+completion, with nothing published and nothing claimed to be. Where the
+tickets live in a separate repository it adds that ticket sync publishes
+the card's move and does not merge or push application code. A card
+stacked on another branch, a target that has gone, or an origin merge
+with no PR shows the refusal in place of the merge button.
+**Just move the card** stays: it moves the ticket and invokes no merge,
+push or cleanup — and a card in `done/` that way is not a record that
+the code was published.
+
+**Publication is read off the remote, not off an exit status.** After the
+local merge the board pushes the base, then reads the application remote
+itself (`git ls-remote`, fetching that one branch when needed) and asks
+whether it contains the merged commit. After a GitHub merge it asks the
+same question. A push that reported failure but landed — a reply lost to
+the network — counts as published; a push or a `gh pr merge` that
+reported success while the remote does not hold the commit does not, and
+neither does a successful push of the *ticket* repository. On origin the
+remote is also read before `gh pr merge` is asked, so a merge that landed
+on an earlier attempt is not asked for twice.
+
+**A merge that did not publish stays in `review/`.** The branch, the
+worktree, the remote branch and a phase's members are left exactly as
+they are, nothing is rolled back (local base has already advanced, and
+the board says so rather than pretending otherwise), nothing is forced,
+and the card wears `not published` in `--alarm` with what the remote
+said — a protection rule, a rejected hook, an unreachable host — on
+hover. The sheet, reopened, says what already happened and what to do: a
+remote that has commits local base lacks is reported as diverged, to be
+brought in by pulling and merging, never by forcing. Branch-protection
+refusals are shown as given and are not bypassed.
+
+**A retry reconciles, and a restart does not forget.** The moment a merge
+lands, a record of what it merged, into which target and how is written
+under `manager/local/state/completions/` — machine-local, beside the
+recorded plans, and never in the ticket. Dragging the card to `done/`
+again (**Retry publication & clean up**) reads that record: it does not
+merge again, re-reads the remote, pushes if it still has to, and only on
+a confirmed publication cleans up and moves the card. A branch that
+gained commits since the merge keeps them, and the card stays in
+`review/` as a partial completion. A record whose target or merge mode no
+longer matches the board is refused rather than finished, and **Discard
+this record** in the sheet — armed, and changing nothing in git — is the
+explicit decision for a merge somebody settled by hand.
+
+**Cleanup is reported as it went.** A dirty worktree is kept with its
+branch, a branch git will not delete is reported as kept, a remote branch
+that gained commits is left alone — and none of them is narrated as
+removed. These do not hold the card back: the code is delivered.
+
+The same contract holds for a phase card's own completion (its members
+are swept only after its publication is confirmed) and in vendored and
+external layouts alike — the application remote is always the one
+`BOARD_GIT_REMOTE` resolves, the ticket's move is committed and synced in
+the work state's own repository, and the two never stand in for each
+other.
+
+**Delivering source is not promoting the operator.** Completing a card
+whose work changes bench itself puts that code in the candidate
+application's base. It does not update the bench installation serving the
+board — that is the separate, deliberate promotion described in "An
+operator install, and the bench under test".
 
 ## Phases
 
