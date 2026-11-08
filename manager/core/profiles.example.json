@@ -430,6 +430,30 @@
          "required": false}
       ],
       "publication": {"commit": false, "push": false, "publish": true}
+    },
+    "refine": {
+      "_doc": [
+        "Update card with agent (task 65): read the card, its discussion and",
+        "the code, and propose a new brief. The narrowest intent there is —",
+        "no worktree, no command grant, no check to ask for, no edit tool",
+        "and no shell, the last two withheld in the vendor's own tool",
+        "roster. The run's only output is a proposal on stdout; bench",
+        "validates it and a person applies or discards it.",
+        "",
+        "So `commands`, `verify` and `prepare` are REFUSED here by name",
+        "(intent-restricted), and the document's shared lists never apply",
+        "to it. What it may have is approved context — a style guide for",
+        "briefs, say — pinned read-only like any other intent's.",
+        "",
+        "An adapter that does not list `refine` under `intents` in its",
+        "capabilities.json, or does not declare `read-only-tools` and",
+        "`shell-withheld` enforced, cannot launch it at all",
+        "(intent-unsupported) — bench never falls back to another stance."
+      ],
+      "context": [
+        {"name": "brief-style", "path": "work:reference/brief-style.md",
+         "required": false}
+      ]
     }
   }
 }

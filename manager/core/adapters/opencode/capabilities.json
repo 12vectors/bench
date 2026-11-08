@@ -9,10 +9,12 @@
     "than run under a restriction that exists only in the prompt — see",
     "`requires` in core/profiles.example.json."
   ],
+  "intents": ["work", "act-pr", "review", "refine"],
   "capabilities": {
     "command-allowlist": "prefix-allowlist",
     "command-denylist": "prefix-allowlist",
     "read-only-tools": "enforced",
+    "shell-withheld": "enforced",
     "model-selection": "enforced"
   },
   "conformance": {

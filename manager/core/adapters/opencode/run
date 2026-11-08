@@ -3,8 +3,10 @@
 #
 # Contract (same for every adapter):
 #   env in:  AGENT_PROMPT    the full prompt
-#            AGENT_MODE      work | act-pr | review — the launch intent
-#                            (see core/adapters/README.md)
+#            AGENT_MODE      work | act-pr | review | refine — the launch
+#                            intent (see core/adapters/README.md). Any
+#                            other value is refused, never guessed into
+#                            one of these stances.
 #            AGENT_COMMANDS  comma-separated neutral command prefixes the
 #                            project lets agents run (tests/checks)
 #            AGENT_MODEL     optional; opencode's "provider/model-id" form,
@@ -38,6 +40,11 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN="${BOARD_OPENCODE_BIN:-opencode}"
 MODE="${AGENT_MODE:-work}"
+case "$MODE" in
+  work|act-pr|review|refine) ;;
+  *) echo "opencode adapter: unknown AGENT_MODE '$MODE' — refusing rather than guessing a stance for it" >&2
+     exit 64 ;;
+esac
 
 CONFIG_FILE="$(mktemp "${TMPDIR:-/tmp}/bench-opencode-XXXXXX.json")"
 trap 'rm -f "$CONFIG_FILE"' EXIT

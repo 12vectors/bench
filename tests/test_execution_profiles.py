@@ -290,7 +290,7 @@ class ProfilesPerIntent(ProfileCase):
 
     def test_the_three_policies_are_not_the_same_policy(self):
         ids = {i: self.resolve(i)["policyId"] for i in profiles.INTENTS}
-        self.assertEqual(len(set(ids.values())), 3, ids)
+        self.assertEqual(len(set(ids.values())), len(profiles.INTENTS), ids)
 
     def test_work_commits_in_its_worktree_and_publishes_nothing(self):
         found = self.resolve("work")

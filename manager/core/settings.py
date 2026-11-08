@@ -448,6 +448,9 @@ CATALOGUE = (
      "which coding agent headless jobs run through"),
     ("BOARD_AGENT_MODEL", "access", "restart",
      "the model every launch rides unless an intent overrides it"),
+    ("BOARD_AGENT_MODEL_REFINE", "access", "restart",
+     "the model a card refinement rides, when it should differ from the "
+     "general one"),
     ("BOARD_AGENT_COMMANDS", "access", "restart",
      "the legacy command prefixes a work or act-pr run may launch, used "
      "only where the execution policy configures nothing for that intent"),

@@ -56,6 +56,8 @@ def described() -> dict:
         "deny": [pattern for pattern, verdict in bash.items()
                  if verdict == "deny"],
         "readOnly": (config.get("permission") or {}).get("edit") == "deny",
+        # no allow anywhere in the bash map: no command can be launched
+        "noShell": bool(bash) and all(v == "deny" for v in bash.values()),
         "context": context if isinstance(context, list) else [],
         # this adapter's own half, shown rather than interpreted
         "config": config,

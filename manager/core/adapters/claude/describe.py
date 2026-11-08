@@ -37,6 +37,8 @@ is shown rather than interpreted):
     allow     permission rules that permit, as rule text
     deny      permission rules that forbid, as rule text
     readOnly  whether the vendor's edit tools are withheld
+    noShell   whether the vendor's shell tool is withheld, so no command
+              of any kind can be launched
     context   the pinned inputs as delivered — paths and hashes, never
               content. `contextContents` is deliberately never a key
 """
@@ -61,12 +63,9 @@ def described() -> dict:
     argv = ["-p", prompt, "--settings", json.dumps(settings)]
     if model:
         argv += ["--model", model]
-    read_only = mode == "review"
-    if read_only:
-        argv += ["--permission-mode", "default",
-                 "--disallowedTools", "Edit", "Write", "NotebookEdit"]
-    else:
-        argv += ["--permission-mode", "acceptEdits"]
+    argv += hook_settings.launch_flags(mode)
+    withheld = hook_settings.DISALLOWED_TOOLS.get(mode) or []
+    read_only = all(t in withheld for t in hook_settings.READ_ONLY_TOOLS)
 
     try:
         context = json.loads(os.environ.get("AGENT_CONTEXT") or "[]")
@@ -82,6 +81,8 @@ def described() -> dict:
         "allow": permissions.get("allow") or [],
         "deny": permissions.get("deny") or [],
         "readOnly": read_only,
+        # whether the run is launched with no shell at all
+        "noShell": "Bash" in withheld,
         "context": context if isinstance(context, list) else [],
         # this adapter's own half, shown rather than interpreted
         "settings": settings,

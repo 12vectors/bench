@@ -21,6 +21,10 @@ and never a blanket allow: the worktree is isolated, the shell is not.
           rules, placed last so they win over the `git push *` allow.
   review  "edit": "deny" + reading the PR it judges + posting the
           verdict with gh pr review/comment. Everything else denied.
+  refine  "edit": "deny" and bash {"*": "deny"} with no allow at all —
+          a card refinement reads and proposes a brief on stdout, and
+          bench validates and writes it. A profile's grants are not
+          rendered for it either.
 
 The project's test/check commands arrive in AGENT_COMMANDS as comma-
 separated neutral command prefixes (set BOARD_AGENT_COMMANDS in
@@ -49,7 +53,12 @@ MODE_PREFIXES = {
                "git push", "gh pr view", "gh pr diff", "gh api"],
     "review": ["git status", "git diff", "git log", "git show",
                "gh pr view", "gh pr diff", "gh pr review", "gh pr comment"],
+    "refine": [],
 }
+# The intents with no edit permission, and the one with no shell at all.
+READ_ONLY_MODES = {"review", "refine"}
+NO_SHELL_MODES = {"refine"}
+INTENTS = ("work", "act-pr", "review", "refine")
 # History must never rewrite under a public PR: deny the force and rebase
 # spellings even though nothing allows them — "git push *" would otherwise
 # cover them. Globs run over the whole command line, so the flag is caught
@@ -76,8 +85,11 @@ DENY_CAPABILITY_PATTERNS = {
     "reshape-lifecycle": ["git worktree*", "git reset*", "git checkout*",
                           "git switch*", "git branch*", "git update-ref*",
                           "git remote*"],
-    # "edit" is the "edit" permission key, not a bash pattern.
+    # "edit" is the "edit" permission key, not a bash pattern; "shell" is
+    # the whole bash map denied, which `bash_rules` does for the modes in
+    # NO_SHELL_MODES (core refuses it as a profile word anywhere else).
     "edit": [],
+    "shell": [],
 }
 
 
@@ -125,7 +137,12 @@ def bash_rules(mode: str, commands: list[str],
     That is what lets a read-only run be granted bench's own shim and ask
     for a named check without gaining a commit or a push rule anywhere in
     this document.
+
+    A mode with no shell gets the deny and nothing after it — no grant,
+    from the mode or a profile, is rendered at all.
     """
+    if mode in NO_SHELL_MODES:
+        return {"*": "deny"}
     prefixes = list(MODE_PREFIXES.get(mode, []))
     if profile:
         prefixes += [c for c in profile_prefixes(profile) if c not in prefixes]
@@ -150,7 +167,7 @@ def build_config(mode: str, commands: list[str], model: str = "",
     config = {
         "$schema": "https://opencode.ai/config.json",
         "permission": {
-            "edit": "deny" if (mode == "review" or "edit" in
+            "edit": "deny" if (mode in READ_ONLY_MODES or "edit" in
                                ((profile or {}).get("deny") or []))
                     else "allow",
             "bash": bash_rules(mode, commands, profile),

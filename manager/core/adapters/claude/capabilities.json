@@ -11,10 +11,12 @@
     "Nothing here is a grant. It is a declaration of what the generated",
     "--settings document and the launch flags are worth."
   ],
+  "intents": ["work", "act-pr", "review", "refine"],
   "capabilities": {
     "command-allowlist": "prefix-allowlist",
     "command-denylist": "prefix-allowlist",
     "read-only-tools": "enforced",
+    "shell-withheld": "enforced",
     "model-selection": "enforced"
   },
   "conformance": {

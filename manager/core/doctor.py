@@ -295,7 +295,8 @@ def _intent_reading(intent: str, worktree: Path | str | None,
     document other than this board's: the fixture readings below, and the
     Settings editor validating a draft.
     """
-    return profiles.resolve(intent, worktree=None if intent == "review"
+    return profiles.resolve(intent,
+                            worktree=None if intent in profiles.READ_ONLY_INTENTS
                             else (worktree or example_worktree()),
                             policy=policy)
 
@@ -1004,6 +1005,43 @@ def _conformance_rows(adapter: dict, seam: dict, intent: str,
             remedy=("A review reads. The adapter must spell 'cannot edit' in "
                     "its vendor's own tool names."
                     if not described.get("readOnly") else None)))
+
+    # — a refinement: reads and proposes, and nothing else at all —
+    if intent == "refine":
+        allowed = [str(r) for r in (described.get("allow") or [])]
+        rows.append(_finding(
+            "conformance", "no-commands",
+            "failed" if allowed else "passed",
+            "whether a card refinement was given any rule that lets it run "
+            "a command",
+            (f"'refine' may run {', '.join(allowed[:4])}"
+             + (" …" if len(allowed) > 4 else "") if allowed else
+             "the generated document allows nothing — no git, no gh, no "
+             "project command and no bench-verify"),
+            intent=intent,
+            remedy=("A refinement reads the card and the code and proposes a "
+                    "brief; bench validates and writes it. An allow-rule here "
+                    "is a permission the intent was never meant to have."
+                    if allowed else None)))
+        for key, what, missing in (
+                ("readOnly", "whether the vendor's edit tools are withheld from "
+                             "a refinement",
+                 "the adapter does not report withholding its edit tools"),
+                ("noShell", "whether the vendor's shell is withheld from a "
+                            "refinement",
+                 "the adapter does not report withholding its shell")):
+            ok = bool(described.get(key))
+            rows.append(_finding(
+                "conformance", "read-only" if key == "readOnly" else "no-shell",
+                "passed" if ok else "failed", what,
+                ("withheld for this intent, in the vendor's own tool roster"
+                 if ok else missing),
+                intent=intent,
+                remedy=(None if ok else
+                        "Withholding has to be the vendor's own tool roster — a "
+                        "deny rule a command line can be shaped around is not "
+                        "the same guarantee. Report it as readOnly / noShell "
+                        "from the adapter's describe command.")))
 
     # — the lifecycle bench owns —
     reshaping = [c for c in LIFECYCLE_COMMANDS

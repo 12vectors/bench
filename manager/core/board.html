@@ -2002,7 +2002,7 @@ function profileIntentFor(task) {
 }
 
 const INTENT_LABEL = { work: '▸ work', 'act-pr': '↻ act on PR',
-                       review: '◔ review' };
+                       review: '◔ review', 'refine': '✎ refine card' };
 
 /* An input's readable status, as the row's own state. `pinned` is the
    strong one: bench holds a read-only copy, so the run's bytes cannot
@@ -5535,7 +5535,13 @@ function settingsPolicy(page) {
                 `may ask bench to run ${name}`, want.includes(name))).join('')
             : `<p>No check is declared yet, so there is nothing for this ` +
               `intent to ask for.</p>`) + `</div>`;
-      }).join('')
+      }).join('') +
+      // the fourth intent asks for nothing, and says so rather than
+      // offering boxes the policy would refuse (intent-restricted)
+      `<div class="item"><div class="ihead"><span class="label">` +
+      `<code>${esc('refine')}</code></span></div><p>A card refinement runs ` +
+      `no command and asks for no check: it reads and proposes a brief, and ` +
+      `bench writes it.</p></div>`
     : '';
 
   const gateItems = Object.keys(page.acceptance.scopes).map(scope => {

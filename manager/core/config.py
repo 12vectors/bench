@@ -55,6 +55,7 @@ VERIFY_DIR = STATE / "verify"                      # isolated roots a check ran 
 REVIEWS_DIR = STATE / "reviews"                    # run-owned pinned PR-review checkouts
 DOCTOR_DIR = STATE / "doctor"                      # fixtures a diagnosis makes and removes
 GATES_DIR = STATE / "gates"                        # Bench review verdicts and gate overrides
+REFINE_DIR = STATE / "refine"                      # card-refinement jobs and their proposals
 # Merges whose publication is unfinished. None means "beside the recorded
 # plans" (`STATE / "completions"`): a record that finishes a plan's work
 # lives wherever that plan does — see `github._recovery_dir`.
@@ -301,6 +302,8 @@ AGENT_MODELS = {
     "work": setting("BOARD_AGENT_MODEL_WORK", ""),
     "act-pr": setting("BOARD_AGENT_MODEL_ACT_PR", ""),
     "review": setting("BOARD_AGENT_MODEL_REVIEW", ""),
+    # a card refinement (task 65): reads and proposes a brief, nothing else
+    "refine": setting("BOARD_AGENT_MODEL_REFINE", ""),
 }
 
 

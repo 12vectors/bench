@@ -206,6 +206,10 @@ class OpencodeRunModel(unittest.TestCase):
                                   f"#!/usr/bin/env bash\nexec python3 {stub} \"$@\"\n")
             env = dict(os.environ)
             env.pop("AGENT_MODEL", None)
+            # a test run inside a bench launch inherits that launch's
+            # profile; the baseline here is a launch that has none
+            env.pop("AGENT_PROFILE", None)
+            env.pop("AGENT_CONTEXT", None)
             env.update({"BOARD_OPENCODE_BIN": str(wrapper),
                         "AGENT_PROMPT": "do the task", "AGENT_MODE": "review",
                         "AGENT_COMMANDS": "python3 -m unittest"})

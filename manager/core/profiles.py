@@ -129,7 +129,24 @@ RUNNER_VERSION = 1
 
 # The launch intents core signals. Every one of them resolves to a profile
 # of its own — `review` included, which is the gap this module closes.
-INTENTS = ("work", "act-pr", "review")
+#
+# `refine` (task 65) is the narrowest: it reads the card and the code and
+# proposes a new brief on stdout, and bench validates and writes it. It
+# has no worktree, no command grant, no shell and no edit tool, and it
+# runs only through an adapter that says it can launch it that way — see
+# REFINE_REQUIRES. An adapter that has never heard of it is refused rather
+# than handed AGENT_MODE=refine and left to guess a stance.
+INTENTS = ("work", "act-pr", "review", "refine")
+
+# The intents with no worktree of their own: they read, and a card's
+# checkout is not made for them.
+READ_ONLY_INTENTS = ("review", "refine")
+
+# What an adapter must declare, as `enforced`, before a refinement may be
+# launched through it. Both are the vendor's own tool roster, which is the
+# only place "cannot write" and "cannot run a command" are real rather
+# than a sentence in a prompt.
+REFINE_REQUIRES = ("read-only-tools", "shell-withheld")
 
 # ── identity types ─────────────────────────────────────────────────────
 #
@@ -304,6 +321,8 @@ ADAPTER_CAPABILITIES = {
     "command-allowlist": "named command grants become the vendor's allow-rules",
     "command-denylist": "denied capabilities become deny-rules that beat allows",
     "read-only-tools": "the vendor's edit tools are withheld from the run",
+    "shell-withheld": "the vendor's shell tool is withheld from the run, so it "
+                      "can launch no command at all",
     "model-selection": "the configured model reaches the vendor untranslated",
 }
 
@@ -472,6 +491,17 @@ DIAGNOSTICS = {
         "a gate requires a scope its check does not declare",
         "Declare the scope under the check's \"scopes\", or require the "
         "check as a bare name — which means its unscoped full run."),
+    "intent-unsupported": (
+        "the installed adapter cannot launch this intent as bench requires",
+        "Install an adapter whose capabilities.json lists the intent under "
+        "\"intents\" and declares what it needs as enforced — both shipped "
+        "adapters do. Bench refuses rather than handing an adapter an intent "
+        "it might run with a wider stance, such as implementation's."),
+    "intent-restricted": (
+        "a profile gives an intent something that intent never has",
+        "Remove it. A refinement reads and proposes; it runs no command, asks "
+        "for no check and writes nothing — bench validates its proposal and "
+        "owns the write."),
     "gate-review-unknown": (
         "a gate asks for a review policy bench has no word for",
         "Use one of the review policy words. `none` gates nothing, `bench` "
@@ -542,6 +572,11 @@ def adapter_identity() -> dict:
         "capabilities": {},
         "unsupported": {},
         "declared": False,
+        # which launch intents the adapter says it can run. None = it does
+        # not say, which is every adapter written before the list existed;
+        # such an adapter keeps the three intents it always ran and is
+        # refused the ones added since (see `intent_supported`).
+        "intents": None,
     }
     if directory is None:
         found["note"] = (f"agent adapter '{config.ADAPTER}' was not found, so "
@@ -569,7 +604,20 @@ def adapter_identity() -> dict:
         if str(v) in ENFORCEMENT}
     found["unsupported"] = {str(k): str(v)
                             for k, v in (data.get("unsupported") or {}).items()}
+    if isinstance(data.get("intents"), list):
+        found["intents"] = [str(i) for i in data["intents"]]
     return found
+
+
+# The intents every adapter ran before adapters declared any. An adapter
+# that lists nothing is taken to run exactly these, so nothing that worked
+# yesterday stops working; anything newer must be declared to be launched.
+LEGACY_INTENTS = ("work", "act-pr", "review")
+
+
+def intent_supported(adapter: dict, intent: str) -> bool:
+    declared = adapter.get("intents")
+    return intent in (LEGACY_INTENTS if declared is None else declared)
 
 
 def capability_table(adapter: dict) -> dict:
@@ -854,7 +902,7 @@ def _legacy_grants(intent: str, available: dict) -> tuple[list[dict], list[str]]
     never ran the project's checks, and giving it them here would be the
     silent broadening this module exists to avoid.
     """
-    if intent == "review":
+    if intent in READ_ONLY_INTENTS:
         return [], []
     grants, problems = [], []
     for index, prefix in enumerate(config.agent_commands()):
@@ -1576,6 +1624,15 @@ BASELINE = {
                  "reshape-lifecycle"],
         "why": "read and judge; the only thing it publishes is its verdict",
     },
+    "refine": {
+        "cwd": "app",
+        "writable": [],
+        "publication": {"commit": False, "push": False, "publish": False},
+        "deny": ["edit", "shell", "commit", "push", "publish", "force-push",
+                 "rebase", "reshape-lifecycle"],
+        "why": ("read the card and the code, and propose a new brief; bench "
+                "validates the proposal and a person applies or discards it"),
+    },
 }
 
 # What each denied word means, so a refusal and a UI row read alike and an
@@ -1583,6 +1640,7 @@ BASELINE = {
 # grant.
 DENIALS = {
     "edit": "the vendor's file-editing tools are withheld",
+    "shell": "the vendor's shell tool is withheld — no command may be run",
     "commit": "no commit may be made",
     "push": "nothing may be pushed",
     "publish": "nothing may be published — no PR opened, merged or released",
@@ -1688,9 +1746,47 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
     if adapter.get("note"):
         notes.append(adapter["note"])
 
+    # — whether the installed adapter can launch this intent at all —
+    #
+    # An adapter that has never heard of an intent would read AGENT_MODE
+    # it does not recognise and fall into whatever its default stance is —
+    # for a shell script written around `work`, that is implementation's.
+    # So an intent added after an adapter was written is refused unless the
+    # adapter lists it, and a refinement additionally needs the two
+    # restrictions that make it read-only to be the vendor's, not a
+    # sentence: no edit tool, no shell.
+    restricted = intent == "refine"
+    if not intent_supported(adapter, intent):
+        blockers.add("intent-unsupported",
+                     f"the {adapter['name']} adapter does not list '{intent}' "
+                     f"among the intents it can launch, so the launch is "
+                     f"refused rather than handed to it to run under whatever "
+                     f"stance it defaults to")
+    elif restricted:
+        for need in REFINE_REQUIRES:
+            if (table.get(need) or {}).get("enforcement") != "enforced":
+                blockers.add("intent-unsupported",
+                             f"a refinement needs '{need}' enforced by the "
+                             f"adapter, and the {adapter['name']} adapter does "
+                             f"not declare it — refused rather than run with a "
+                             f"restriction that exists only in the prompt")
+    if restricted and isinstance(declared, dict):
+        for key in ("commands", "verify", "prepare"):
+            if declared.get(key):
+                blockers.add("intent-restricted",
+                             f"'refine' declares \"{key}\", and a refinement "
+                             f"runs no command and asks for no check — it reads, "
+                             f"proposes, and bench writes")
+    if restricted and doc["kind"] == "file" and (doc.get("commands")
+                                                 or doc.get("verify")):
+        notes.append("the document's shared commands and checks do not apply "
+                     "to 'refine': it is never granted a command")
+
     # — command grants —
     grants: list[dict] = []
-    if doc["kind"] == "file" and isinstance(declared, dict):
+    if restricted:
+        pass
+    elif doc["kind"] == "file" and isinstance(declared, dict):
         raw_grants = declared.get("commands")
         if raw_grants is None:
             raw_grants = doc.get("commands") or []
@@ -1870,8 +1966,8 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
             out.append(known[name])
         return out
 
-    verify = _named("verify", available_checks, "check")
-    prepare = _named("prepare", steps, "preparation step")
+    verify = [] if restricted else _named("verify", available_checks, "check")
+    prepare = [] if restricted else _named("prepare", steps, "preparation step")
     if verify:
         configured.append("named-verification")
         configured.append("verification-evidence")
@@ -1928,11 +2024,23 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
                          f"'{intent}' denies the unknown capability "
                          f"{word!r} — one of {', '.join(sorted(DENIALS))}")
             continue
+        if word == "shell" and word not in deny_words:
+            # Withholding the shell is a launch stance the adapters spell
+            # per intent, not a rule they can add to any intent — so asking
+            # for it where the stance does not exist is refused rather
+            # than shown as a denial nothing carries out.
+            blockers.add("deny-unknown",
+                         f"'{intent}' denies 'shell', which the adapters "
+                         f"only withhold for a refinement — a work, act-pr "
+                         f"or review run cannot be launched without one here")
+            continue
         if word not in deny_words:
             deny_words.append(word)
     denied = [{"capability": word, "why": DENIALS[word]} for word in deny_words]
     if adapter["capabilities"].get("command-denylist"):
         configured.append("command-denylist")
+    if restricted:
+        configured += list(REFINE_REQUIRES)
 
     # — publication, kept apart from the checks —
     publication = dict(baseline["publication"])
@@ -2073,7 +2181,7 @@ def manifest(intent: str, filename: str, stage: str, *,
     and resolving a profile is not: the UI's reading of a review profile
     asks with the path the launch *would* pin and nothing on disk.
     """
-    if worktree is None and intent != "review":
+    if worktree is None and intent not in READ_ONLY_INTENTS:
         worktree = config.WORKTREES / filename[:-3]
     found = resolve(intent, worktree=worktree, review=review)
     found.update({

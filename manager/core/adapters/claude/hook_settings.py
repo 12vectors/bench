@@ -21,6 +21,11 @@ is isolated, the shell is not.
           `git push` prefix would otherwise cover).
   review  read-only (edit tools disallowed in `run`) + reading the PR
           it judges + posting the verdict with gh pr review/comment.
+  refine  read the card and the code, propose a brief on stdout — and
+          nothing else: no allow-rule at all, and `run` withholds the
+          edit tools *and* the shell (DISALLOWED_TOOLS), so no command
+          can be launched however a rule is spelled. Bench validates the
+          proposal and owns every write.
 
 The project's test/check commands arrive in AGENT_COMMANDS as comma-
 separated neutral command prefixes (set BOARD_AGENT_COMMANDS in
@@ -53,7 +58,20 @@ MODE_PREFIXES = {
                "git push", "gh pr view", "gh pr diff", "gh api"],
     "review": ["git status", "git diff", "git log", "git show",
                "gh pr view", "gh pr diff", "gh pr review", "gh pr comment"],
+    "refine": [],
 }
+# The vendor's own tool names an intent is launched without. Spelled here
+# once so `run` and `describe.py` cannot disagree. A name the installed CLI
+# does not have is refused outright and kills the launch (task 10), so
+# re-check these against the installed CLI whenever the list is touched.
+READ_ONLY_TOOLS = ["Edit", "Write", "NotebookEdit"]
+DISALLOWED_TOOLS = {
+    "review": READ_ONLY_TOOLS,
+    "refine": READ_ONLY_TOOLS + ["Bash"],
+}
+# The intents this adapter launches. Anything else is refused by `run`
+# rather than guessed into one of these stances.
+INTENTS = ("work", "act-pr", "review", "refine")
 # History must never rewrite under a public PR: deny the canonical force
 # and rebase spellings even though nothing allows them — `git push` alone
 # would otherwise cover `git push --force` by prefix. (Prefix rules can't
@@ -81,10 +99,11 @@ DENY_CAPABILITY_PREFIXES = {
     "reshape-lifecycle": ["git worktree", "git reset", "git checkout",
                           "git switch", "git branch", "git update-ref",
                           "git remote"],
-    # "edit" is a tool-roster question, not a command one: `run` spells it
-    # with --disallowedTools, which is the only place the vendor's own tool
-    # names belong.
+    # "edit" and "shell" are tool-roster questions, not command ones: `run`
+    # spells them with --disallowedTools, which is the only place the
+    # vendor's own tool names belong.
     "edit": [],
+    "shell": [],
 }
 
 
@@ -136,7 +155,13 @@ def allow_rules(mode: str, commands: list[str],
     bench adds itself — the shim that asks for a named check — and
     verifying is not committing: a review that can ask bench to run the
     tests still has no commit and no push rule anywhere in this document.
+
+    `refine` gets nothing, profile or not: it has no shell to run a rule
+    against, and a rule nothing can use is still a rule a reader has to
+    reason about.
     """
+    if mode == "refine":
+        return []
     prefixes = list(MODE_PREFIXES.get(mode, []))
     if profile:
         prefixes += [c for c in profile_prefixes(profile) if c not in prefixes]
@@ -190,7 +215,20 @@ def settings(mode: str, commands: list[str],
     return out
 
 
+def launch_flags(mode: str) -> list[str]:
+    """The permission flags `run` passes beside --settings for one intent —
+    the stance, and the vendor tools the run is launched without."""
+    withheld = DISALLOWED_TOOLS.get(mode)
+    if withheld:
+        return ["--permission-mode", "default", "--disallowedTools", *withheld]
+    return ["--permission-mode", "acceptEdits"]
+
+
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--flags"]:
+        # one flag per line, for `run` to read into an array
+        print("\n".join(launch_flags(sys.argv[2] if len(sys.argv) > 2 else "")))
+        sys.exit(0)
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     commands = split_commands(os.environ.get("AGENT_COMMANDS", ""))
     print(json.dumps(settings(mode, commands,
