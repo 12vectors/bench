@@ -1612,6 +1612,10 @@ class TheApiIsOneDoor(VerifyCase):
             with self.subTest(intent=intent):
                 found = profiles.manifest(intent, CARD, "in-progress")
                 self.assertEqual(found["blockers"], [])
+                if intent == "refine":
+                    # a refinement asks for no check, by construction
+                    self.assertEqual(found["verify"], [])
+                    continue
                 self.assertTrue(found["verify"],
                                 "the example declares a check for every intent")
 
