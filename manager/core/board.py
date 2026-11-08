@@ -19,6 +19,7 @@ task files, but the tasks work as a plain folder kanban without it. See
     doctor.py     what this board would grant, run and refuse — no model
     agents.py     headless work/review agents: launch, reap, stop, diff
     phases.py     a phase run: its own branch, its members merged into it
+    refine.py     card comments, refinement jobs, Apply and Discard
     watch.py      2s disk poller narrating moves made outside the API
     httpd.py      HTTP routes, SSE stream, the page itself
     .prompts/     agent prompt templates (read fresh on every launch)
@@ -42,6 +43,7 @@ import events
 import github
 import httpd
 import phases
+import refine
 import reviews
 import state
 import sync
@@ -121,6 +123,10 @@ def main() -> None:
     # under every guard `reviews.release` applies, and never one with
     # uncommitted work in it. Nothing is reviewed again.
     reviews.recover()
+    # A card refinement a dead board left running lost its result with the
+    # process. It is closed as failed, naming the restart, and never re-run
+    # — a proposal waiting for Apply or Discard survives as it was.
+    refine.recover()
     threading.Thread(target=watch.watcher, daemon=True).start()
     threading.Thread(target=github.poller, daemon=True).start()
     threading.Thread(target=github.reconcile, daemon=True).start()

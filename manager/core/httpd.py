@@ -22,6 +22,7 @@ import github
 import phases
 import plans
 import profiles
+import refine
 import reviews
 import settings
 import state
@@ -265,6 +266,10 @@ def state_payload() -> dict:
         # carries the reason rather than a colour.
         "gates": gates.board(collected),
         "gatePolicy": profiles.gate_policy_public(profiles.gate_policy()),
+        # card refinements this board holds that are running, waiting for a
+        # decision, or failed: the newest per card. Runtime state, local to
+        # this board — the decisions themselves are in the cards
+        "refinements": refine.board(),
         "branches": github.task_branches(),
         "commands": config.commands(),
         "commandRuns": commands.public(),
@@ -531,6 +536,17 @@ class Handler(BaseHTTPRequestHandler):
             # which is why opening Settings is not an action.
             try:
                 self._json(200, {"settings": settings.page()})
+            except (ValueError, OSError) as exc:
+                self._json(409, {"error": str(exc)})
+        elif path == "/api/card/discussion":
+            # A card's discussion, the jobs this board holds for it and
+            # whether refining is available — read, never started: a GET
+            # here launches nothing and writes nothing.
+            query = parse_qs(url.query)
+            name = (query.get("file") or [""])[0]
+            stage = (query.get("stage") or [""])[0] or taskfiles.find_stage_of(name) or ""
+            try:
+                self._json(200, refine.for_card(name, stage))
             except (ValueError, OSError) as exc:
                 self._json(409, {"error": str(exc)})
         elif path == "/api/settings/history":
@@ -827,6 +843,42 @@ class Handler(BaseHTTPRequestHandler):
                                     f" — applies at the next launch")})
                     state.broadcast({"type": "board"})
                     self._json(200, {"applied": result})
+            elif path == "/api/card/comment":
+                # Add comment: written to the card, and nothing else — no
+                # agent is asked anything because a comment exists.
+                payload = self._read_body()
+                self._json(200, {"comment": refine.comment(
+                    str(payload["file"]), str(payload["stage"]), payload.get("body"))})
+            elif path == "/api/card/refine":
+                # Update card with agent: one refinement of one comment —
+                # a new one (`text`) or one already on the card
+                # (`comment`). `request` is the page's identity for the
+                # click, so a repeat answers with the job it already made.
+                payload = self._read_body()
+                comment_id = payload.get("comment")
+                text = payload.get("text")
+                self._json(200, refine.request(
+                    str(payload["file"]), str(payload["stage"]),
+                    comment_id=str(comment_id) if comment_id else None,
+                    text=text if text is not None else None,
+                    request_key=str(payload.get("request") or "") or None,
+                    retry=bool(payload.get("retry"))))
+            elif path in ("/api/card/refine/apply", "/api/card/refine/discard",
+                          "/api/card/refine/cancel"):
+                payload = self._read_body()
+                job = str(payload["id"])
+                try:
+                    if path.endswith("/apply"):
+                        self._json(200, refine.apply(job))
+                    elif path.endswith("/discard"):
+                        self._json(200, refine.discard(job))
+                    else:
+                        self._json(200, {"job": refine.cancel(job)})
+                except taskfiles.StaleCard as exc:
+                    # its own flag, because the remedy is different: the
+                    # proposal is fine, the card moved on, and the answer
+                    # is to regenerate rather than to fix anything
+                    self._json(409, {"error": str(exc), "stale": True})
             elif path == "/api/verify/cancel":
                 payload = self._read_body()
                 self._json(200, verify.cancel(payload["id"]))
