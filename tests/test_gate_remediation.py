@@ -586,6 +586,10 @@ if args[:2] == ["pr", "merge"]:
                   "merge again.", file=sys.stderr)
             sys.exit(1)
     (state / "merged").write_text(tip)
+    # and the base on the remote now holds it, as GitHub's merge leaves it
+    sys.path.insert(0, {tests!r})
+    import fake_origin
+    fake_origin.merge_pr({bare!r}, {branch!r})
     after = state / "advance-after-merge"
     if after.exists():
         subprocess.run(["git", "--git-dir", {bare!r}, "update-ref", ref,
@@ -681,8 +685,14 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         result = self.github.complete_task(CARD, "review")
         self.assertEqual(self.tip("main"), self.head)
         self.assertFalse(self.wt.exists())
-        self.assertEqual(result, {"merged": True, "swept": []},
-                         "a whole merge reports exactly what it always did")
+        self.assertEqual({k: result[k] for k in ("merged", "swept", "moved")},
+                         {"merged": True, "swept": [], "moved": True},
+                         "a whole merge reports what it always did")
+        self.assertNotIn("partial", result)
+        # no remote here: a local-only completion, said in those words
+        # rather than as a publication
+        self.assertEqual(result["publication"]["state"], "local-only")
+        self.assertFalse(result["published"])
         self.assertEqual(self.stage_of(CARD), "done")
 
     def test_a_head_that_moved_past_the_gate_is_a_partial_completion(self):
@@ -741,7 +751,9 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         gh.write_text(FAKE_GH.format(python=sys.executable,
                                      state=str(self.gh_state),
                                      branch=f"task/{CARD[:-3]}",
-                                     bare=str(bare)), encoding="utf-8")
+                                     bare=str(bare),
+                                     tests=str(Path(__file__).resolve().parent)),
+                     encoding="utf-8")
         gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
         self.patch(GIT_REMOTE="origin", APP_MERGE="origin", GH_BIN=str(gh))
         self.review_card(pr="https://github.com/o/r/pull/7")

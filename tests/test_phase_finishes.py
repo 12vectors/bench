@@ -12,6 +12,7 @@ mocking the subject.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -27,7 +28,7 @@ import state  # noqa: E402
 import taskfiles  # noqa: E402
 import watch  # noqa: E402
 
-from tests.test_phase_runs import (DIES, ONE, PHASE, PHASE_BRANCH, TWO,  # noqa: E402
+from tests.test_phase_runs import (DIES, ONE, PHASE, PHASE_BRANCH, TWO,  # noqa: E402,F401
                                    PhaseCase, card, git)
 
 THREE = "33-the-landing-page.md"
@@ -384,7 +385,10 @@ class AFinishedPhase(PhaseEnding):
 
         result = github.complete_task(ONE, "review")
 
-        self.assertEqual(result, {"merged": True, "swept": []})
+        self.assertEqual((result["merged"], result["swept"], result["moved"]),
+                         (True, [], True))
+        self.assertEqual(result["publication"]["state"], "local-only",
+                         "no remote: nothing published, and said so")
         self.assertEqual(self.stage_of(ONE), "done")
 
 
@@ -490,6 +494,10 @@ class TeamModeEndsItOnOrigin(PhaseEnding):
         # environment the suite happens to run in would decide it before
         # the code under test got the chance.
         self.patch(SYNC=True, COMMIT_MOVES=True, APP_MERGE="")
+        # the stubbed gh's merge lands on the bare remote as GitHub's
+        # would: completion now finishes only once the base there holds it
+        os.environ["GH_MERGE_HEAD"] = PHASE_BRANCH
+        self.addCleanup(os.environ.pop, "GH_MERGE_HEAD", None)
 
         result = self.complete()
 

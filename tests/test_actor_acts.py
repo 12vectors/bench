@@ -70,6 +70,10 @@ elif args[:2] == ["pr", "merge"]:
         sys.stderr.write("Pull request is not mergeable: the base branch "
                          "policy prohibits the merge.\\n")
         sys.exit(1)
+    # what GitHub's merge leaves on the remote: the base holds the head
+    sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})
+    import fake_origin
+    fake_origin.merge_pr(fake_origin.origin_url(), "{BRANCH}")
     print("Merged pull request #7")
 else:
     sys.exit(0)
@@ -124,7 +128,11 @@ class Boards(unittest.TestCase):
         self.addCleanup(os.environ.pop, "GH_LOG", None)
         self.addCleanup(os.environ.pop, "GH_MODE", None)
 
+        # APP_MERGE pinned to unset: these cases are about sync's own
+        # answer, which an operator's BOARD_APP_MERGE inherited from the
+        # environment the suite runs in must not decide for them
         self.patch(SYNC=self.SYNC, COMMIT_MOVES=True, FETCH_TIMEOUT=10.0,
+                   APP_MERGE="",
                    SESSIONS_DIR=self.tmp / "sessions", GH_BIN=str(gh),
                    WORKTREES=self.tmp / "worktrees",
                    PLANS_DIR=self.tmp / "plans",
@@ -496,17 +504,25 @@ class MergesGoThroughOrigin(Boards):
         return int(out) if out.isdigit() else 0
 
     def test_the_merge_is_made_on_origin(self):
-        head = git(self.ada, "rev-parse", "main").stdout.strip()
-
         result = github.complete_task(FILENAME, "review")
 
         self.assertTrue(result["merged"])
+        self.assertTrue(result["published"], result)
         self.assertIn("pr merge", self.gh_verbs())
-        self.assertEqual(self.merges_on_main(self.ada), 0,
+        # GitHub's merge commit is origin's; the sync push (a thread) may or
+        # may not have replayed the move onto it by now. Either way nothing
+        # on local main that origin lacks is a merge, and the only such
+        # commit is the card's own move.
+        upstream = git(self.origin, "rev-parse", "main").stdout.strip()
+        ours = git(self.ada, "log", "--format=%s", f"{upstream}..main").stdout.split("\n")
+        ours = [subject for subject in ours if subject]
+        self.assertEqual(git(self.ada, "rev-list", "--count", "--merges", "main",
+                             f"^{upstream}").stdout.strip(), "0",
                          "the board never makes a merge commit of its own")
-        self.assertEqual(
-            git(self.ada, "rev-list", "--count", f"{head}..main").stdout.strip(),
-            "1", "only the card's own move commit — main is otherwise untouched")
+        self.assertLessEqual(len(ours), 1, ours)
+        for subject in ours:
+            self.assertTrue(subject.startswith("board: "),
+                            "only the card's own move commit — main is otherwise untouched")
         self.assertEqual(self.stage_of(self.ada), "done")
         self.assertTrue(any("merged" in s and "on origin" in s
                             for s in self.summaries()))
