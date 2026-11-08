@@ -628,11 +628,18 @@ def complete_task(filename: str, stage: str) -> dict:
     branches, then move the card. Every step narrates; a conflict aborts
     cleanly and the card stays.
 
-    Where the merge happens depends on team mode. Single-player merges into
-    the local main and pushes it, exactly as it always did; with
-    `BOARD_SYNC` on the merge is made on origin through `gh pr merge`, so
-    local main only ever fast-forwards to it — the discipline the whole
-    sync design rests on.
+    Where the merge happens is `config.app_merge_on_origin()` and nothing
+    else — never ticket sync read on its own. The local merge merges into
+    the application's base in this checkout and pushes it; the merge on
+    origin is `gh pr merge`, so local base only ever fast-forwards to it.
+
+    Merging, publishing, cleaning up and moving the ticket are four
+    outcomes, not one. Nothing is cleaned up and the card does not move
+    until the application remote is *seen* to hold the merged commit (or
+    there is no remote, which is a local-only completion and says so). A
+    merge whose publication failed or could not be confirmed is recorded
+    (`recovery`), so the retry — after a restart too — finishes it from
+    what the remote actually holds rather than merging again.
 
     None of it is quick, and all of it is destructive, so the card is
     claimed before the first step and given back in a `finally` after the
@@ -655,19 +662,39 @@ def complete_task(filename: str, stage: str) -> dict:
 
 
 def _complete(filename: str, stage: str) -> dict:
-    """The steps themselves, run under the claim complete_task holds."""
+    """The steps themselves, run under the claim complete_task holds.
+
+    Four outcomes, told apart: the merge into the base, its publication on
+    the application remote, the cleanup of the card's workspace, and the
+    ticket's move. Each later one waits for the one before it, and the
+    result says which of them happened.
+    """
     stem = filename[:-3]
     branch = branch_of(filename)   # a phase's own branch, or task/<stem>
     task = _woven(filename, stage)
+    # A completion that merged and then could not publish left a record. A
+    # retry finishes *that* — the commit it merged, into the target it
+    # merged into, the way it merged — or refuses when the situation has
+    # changed under it, rather than quietly finishing something else.
+    pending = recovery(filename)
+    on_origin = False
+    resuming = False
+    if pending:
+        on_origin = config.app_merge_on_origin()
+        _assert_same_situation(filename, task, pending, on_origin)
+        resuming = _merge_landed(pending, on_origin)
     # Before the drive is parked, and well before anything irreversible:
     # what this board's acceptance gate requires, and whether the
     # evidence on record satisfies it against the commit this would
     # merge. A refusal here leaves the card, its branch, its worktree and
     # every record exactly as they are, and says the same sentence the
-    # page says — one reading, one authority.
+    # page says — one reading, one authority. A retry whose merge already
+    # landed is past the gate: the gate was about the merge, which was of
+    # the commit it read, and the merge cannot be taken back.
     scope = gates.scope_for(task)
-    gates.require(gates.evaluate(filename, scope, task=task),
-                  "merge & clean up")
+    if not resuming:
+        gates.require(gates.evaluate(filename, scope, task=task),
+                      "merge & clean up")
     # Read before anything is destroyed and acted on only after the merge
     # lands: the phase branch is deleted in the middle of this, and it is
     # the only thing that can say which members it carried.
@@ -686,7 +713,9 @@ def _complete(filename: str, stage: str) -> dict:
     swept: list[dict] = []
     held: list[dict] = []
     unmerged: dict | None = None
-    if _branch_exists(branch):
+    publication: dict | None = None
+    cleanup: dict | None = None
+    if _branch_exists(branch) or pending:
         # The same target the whole card has used, validated once more
         # before the one irreversible step: a target that has disappeared
         # is a changed situation rather than a licence to pick a new one,
@@ -697,28 +726,70 @@ def _complete(filename: str, stage: str) -> dict:
         if gone:
             raise ValueError(gone)
         _assert_lands_in_the_base(filename, target)
-        # And again, immediately before the one irreversible step. The
-        # first reading was before the drive was parked, which takes as
-        # long as it takes; a push landing in between is a different
-        # commit, and this is the read that is actually about the commit
-        # the merge will take.
-        decision = gates.evaluate(filename, scope, task=task)
-        gates.require(decision, "the merge")
-        # Reading twice narrows the window; it does not close it. So the
-        # commit this reading validated is the one the merge takes — the
-        # local merge by SHA, origin's with `--match-head-commit` — and a
-        # branch that moves after this line is a refusal or a kept branch,
-        # never an unverified commit in the base.
-        pinned = _pinned_head(decision, branch)
-        on_origin = config.app_merge_on_origin()
-        merged_tip = pinned or _tip(branch)
-        # (an ungated board pins nothing, and calls them exactly as before)
-        pin = (pinned,) if pinned else ()
-        if on_origin:
-            _merge_on_origin(filename, stage, branch, *pin)
+        if resuming:
+            pinned = pending["commit"]
+            merged_tip = pinned
+            state.record_board_event({
+                "kind": "agent", "actor": "board", "file": filename,
+                "summary": (f"retrying the publication of {target} — "
+                            f"{pinned[:12]} is already merged "
+                            + ("on origin" if on_origin else "in this checkout")
+                            + "; nothing is merged again")})
         else:
-            _merge_locally(filename, branch, *pin)
+            # And again, immediately before the one irreversible step. The
+            # first reading was before the drive was parked, which takes as
+            # long as it takes; a push landing in between is a different
+            # commit, and this is the read that is actually about the
+            # commit the merge will take.
+            decision = gates.evaluate(filename, scope, task=task)
+            gates.require(decision, "the merge")
+            # Reading twice narrows the window; it does not close it. So
+            # the commit this reading validated is the one the merge takes
+            # — the local merge by SHA, origin's with `--match-head-commit`
+            # — and a branch that moves after this line is a refusal or a
+            # kept branch, never an unverified commit in the base.
+            pinned = _pinned_head(decision, branch)
+            on_origin = config.app_merge_on_origin()
+            merged_tip = pinned or _tip(branch)
+            # (an ungated board pins nothing, and calls them exactly as before)
+            pin = (pinned,) if pinned else ()
+            if on_origin:
+                _merge_on_origin(filename, stage, branch, *pin)
+            else:
+                _merge_locally(filename, branch, *pin)
+            # Written the moment the merge has landed and before anything
+            # is published: a board that dies from here on comes back
+            # knowing what it merged, and a retry reconciles from that.
+            _remember(filename, {
+                "branch": branch, "target": target,
+                "mode": "origin" if on_origin else "local",
+                "remote": remote() or "", "commit": merged_tip,
+                "publication": "pending", "detail": ""})
         merged = True
+
+        publication = _publish(filename, target, merged_tip, on_origin)
+        if publication["state"] not in ("published", "local-only"):
+            # Merged, and not delivered. Nothing below runs: the branch,
+            # the worktree, the remote branch and the phase's members are
+            # exactly what a retry, or a person, needs to finish it.
+            _remember(filename, {
+                "branch": branch, "target": target,
+                "mode": "origin" if on_origin else "local",
+                "remote": publication["remote"], "commit": merged_tip,
+                "publication": publication["state"],
+                "detail": publication["detail"],
+                "diverged": publication.get("diverged", False)})
+            state.record_board_event({
+                "kind": "agent", "actor": "board", "file": filename,
+                "summary": _held_sentence(filename, stage, publication,
+                                          on_origin)})
+            state.broadcast({"type": "board"})
+            return {"merged": True, "published": False,
+                    "publication": publication, "moved": False,
+                    "stage": stage, "swept": [],
+                    "recovery": recovery_public(filename)}
+        if on_origin:
+            _catch_up_base(filename)
 
         # Nothing uncommitted is thrown away — the same rule a merged
         # phase member's workspace is cleared under. The work is in the
@@ -726,51 +797,21 @@ def _complete(filename: str, stage: str) -> dict:
         # judgement about committed files, and an uncommitted change is
         # exactly what it does not cover. Nor is a commit made after the
         # gate read the head: the branch holding it is kept.
-        worktree = config.WORKTREES / stem
-        kept = ""
-        now = _tip(branch)
-        if pinned and now and now != pinned:
-            kept = (f"{branch} has moved on to {now[:12]} since the gate read "
-                    f"{pinned[:12]}, and those commits were not merged")
-            # What merged is a historical head; the card's newest work is
-            # not in the base, so the card is not Done (see below).
-            unmerged = {"branch": branch, "merged": pinned, "tip": now}
-        elif worktree.exists():
-            dirty = config.dirty_files(worktree)
-            if dirty:
-                kept = (f"{len(dirty)} uncommitted change"
-                        f"{'' if len(dirty) == 1 else 's'} in it")
-            else:
-                removed = _run(["git", "worktree", "remove", str(worktree)])
-                if removed.returncode != 0:
-                    kept = ((removed.stderr.strip() or removed.stdout.strip()
-                             or "git would not remove it").splitlines()[-1][:120])
-        if kept:
-            state.record_board_event({
-                "kind": "agent", "actor": "board", "file": filename,
-                "summary": f"worktree for {stem} kept — {kept}; the branch "
-                           f"is kept with it"})
-        else:
-            # -D when origin made the merge: the base here has not caught
-            # up yet, so the safe delete would refuse something landed.
-            _run(["git", "branch", "-D" if on_origin else "-d", branch])
-            # The plan described work that is now in the base, on a branch
-            # that has just gone. Keeping it would make a reopened card
-            # resume against a branch no longer there — but a workspace
-            # *kept* keeps its plan, because the branch it names is still
-            # the one holding the work.
-            plans.forget(filename)
-            state.record_board_event({
-                "kind": "agent", "actor": "board", "file": filename,
-                "summary": f"cleaned up: worktree and local branch for {stem} removed"})
+        cleanup, unmerged = _clean_up(filename, branch, pinned, merged_tip,
+                                      on_origin)
         if not unmerged:
             # a branch with unmerged commits still has a PR worth watching
             PR_STATE.pop(filename, None)
 
-        # the merge succeeded, so the members' work is in main too
+        # the merge is published, so the members' work is in the base too
         swept, held = _sweep(filename, task, brought, merged_tip)
 
     result = {"merged": merged, "swept": [card["file"] for card in swept]}
+    if publication:
+        result["published"] = publication["state"] == "published"
+        result["publication"] = publication
+    if cleanup:
+        result["cleanup"] = cleanup
     if held:
         result["kept"] = [card["file"] for card in held]
     if unmerged:
@@ -778,6 +819,7 @@ def _complete(filename: str, stage: str) -> dict:
         # commits are not: the gated commit merged, the card stays where
         # it was, and the completion says it was partial rather than
         # leaving `merged` to be read as accepted.
+        forget_recovery(filename)
         state.record_board_event({
             "kind": "agent", "actor": "board", "file": filename,
             "summary": (f"{filename} partly completed — merged "
@@ -786,11 +828,363 @@ def _complete(filename: str, stage: str) -> dict:
                         f"{unmerged['tip'][:12]}, which is not merged, so the "
                         f"card stays in {stage}/")})
         state.broadcast({"type": "board"})
-        result.update({"partial": True, "stage": stage, "unmerged": unmerged})
+        result.update({"partial": True, "stage": stage, "unmerged": unmerged,
+                       "moved": False})
         return result
     move_task(filename, stage, "done", actor="you")
+    # Only once the ticket has moved: until then a retry needs to know
+    # what was merged, and a cleanup that stopped half way is finished by
+    # the same retry rather than by guessing.
+    forget_recovery(filename)
+    result["moved"] = True
     state.broadcast({"type": "board"})
     return result
+
+
+# ── a completion that merged and has not published yet ──────────────────
+
+
+def _recovery_dir() -> Path:
+    """Beside the recorded plans unless configured: the record finishes
+    the work a plan started, and is machine-local for the same reason."""
+    return config.COMPLETIONS_DIR or config.PLANS_DIR.parent / "completions"
+
+
+def _recovery_path(filename: str) -> Path:
+    return _recovery_dir() / f"{filename[:-3]}.json"
+
+
+def recovery(filename: str) -> dict | None:
+    """What an unfinished completion of this card merged, and where its
+    publication stands — or None. Machine-local (`local/state/`), like the
+    plan it sits beside: it is this board's reading of its own checkout and
+    its remote, and nothing in it belongs in a ticket somebody pulls."""
+    try:
+        data = json.loads(_recovery_path(filename).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or not data.get("commit"):
+        return None
+    return data
+
+
+def _remember(filename: str, record: dict) -> None:
+    """Write the record whole or not at all: a temporary file, then
+    `os.replace`, so a board killed mid-write leaves the previous one."""
+    _recovery_dir().mkdir(parents=True, exist_ok=True)
+    stored = dict(record, task=filename, at=time.time())
+    path = _recovery_path(filename)
+    scratch = path.with_suffix(".json.tmp")
+    scratch.write_text(json.dumps(stored, indent=2, sort_keys=True),
+                       encoding="utf-8")
+    scratch.replace(path)
+
+
+def forget_recovery(filename: str) -> bool:
+    """Drop the record — the completion finished, or a person decided what
+    the unfinished one means. It touches no git: nothing is merged, pushed,
+    reset or removed by forgetting."""
+    try:
+        _recovery_path(filename).unlink()
+        return True
+    except OSError:
+        return False
+
+
+_RECOVERY_KEYS = ("branch", "target", "mode", "remote", "commit",
+                  "publication", "detail", "diverged", "at")
+
+
+def recovery_public(filename: str) -> dict | None:
+    found = recovery(filename)
+    return {key: found.get(key) for key in _RECOVERY_KEYS} if found else None
+
+
+def recoveries() -> dict:
+    """Every card with an unfinished completion, for the board's state —
+    a directory listing, and empty on a board where nothing failed."""
+    directory = _recovery_dir()
+    if not directory.is_dir():
+        return {}
+    found = {}
+    for path in sorted(directory.glob("*.json")):
+        name = f"{path.stem}.md"
+        public = recovery_public(name)
+        if public:
+            found[name] = public
+    return found
+
+
+def _assert_same_situation(filename: str, task: dict, pending: dict,
+                           on_origin: bool) -> None:
+    """A retry finishes the completion that was started, or nothing.
+
+    The record names the target the merge went into and the way it went.
+    If either has changed since — a replan, an edited `BOARD_APP_MERGE` —
+    finishing it now would publish one thing and clean up after another,
+    so it is refused and a person decides which reading is right."""
+    target = plans.pr_base(filename, task)
+    mode = "origin" if on_origin else "local"
+    was = pending.get("target") or target
+    how = pending.get("mode") or mode
+    if was == target and how == mode:
+        return
+    changed = (f"it now targets {target}" if was != target
+               else f"this board now merges {'on origin' if on_origin else 'locally'}")
+    raise ValueError(
+        f"{filename} was merged into {was} ({how}) at "
+        f"{str(pending.get('commit'))[:12]} and its publication is unfinished, "
+        f"but {changed}. Nothing was done: publish {was} yourself, or discard "
+        f"the unfinished-completion record from the merge sheet once you have "
+        f"decided which is right")
+
+
+def _merge_landed(pending: dict, on_origin: bool) -> bool:
+    """Is the merge a record describes already in place? Locally that is
+    the checkout's own base; on origin it is what the remote holds."""
+    commit, target = pending.get("commit") or "", pending.get("target") or ""
+    if not commit or not target:
+        return False
+    if not on_origin:
+        return bool(_tip(commit)) and _contains(commit, target)
+    rname = remote()
+    return bool(rname) and _remote_holds(rname, target, commit)[0] is True
+
+
+def _remote_holds(rname: str, target: str, commit: str) -> tuple:
+    """Does `target` on the application remote contain `commit`?
+
+    Read from the remote itself — `ls-remote`, then a fetch of that exact
+    branch when its tip is not here yet — never from a remote-tracking
+    ref, which says what the remote held when somebody last looked.
+    Returns (answer, the remote's tip, why not): the answer is None when
+    the remote could not be read at all, which is *not* a no.
+    """
+    listed = _run(["git", "ls-remote", rname, f"refs/heads/{target}"],
+                  timeout=60)
+    if listed.returncode != 0:
+        why = ((listed.stderr.strip() or "git gave no detail")
+               .splitlines() or [""])[-1]
+        return None, "", f"{rname} could not be read ({why[:120]})"
+    words = listed.stdout.split()
+    if not words:
+        return False, "", f"{rname} has no {target} branch"
+    tip = words[0]
+    if tip == commit:
+        return True, tip, ""
+    if not _tip(tip):
+        _run(["git", "fetch", "--no-tags", rname, f"refs/heads/{target}"],
+             timeout=120)
+    if not _tip(tip):
+        return None, tip, (f"{rname}/{target} is at {tip[:12]}, which could not "
+                           f"be fetched to compare")
+    if _contains(commit, tip):
+        return True, tip, ""
+    return False, tip, f"{rname}/{target} is at {tip[:12]}, which does not contain it"
+
+
+def _publish(filename: str, target: str, commit: str, on_origin: bool) -> dict:
+    """Deliver the merge, and believe only the remote about whether it was.
+
+    The local merge pushes the base; the merge on origin already happened
+    there. Either way the answer is what the application remote — the one
+    `config.git_remote()` names, never the work state's — holds afterwards:
+    a push that reported failure but landed (a lost reply) is published,
+    and one that reported success while the remote does not hold the
+    commit is not. No remote at all is a local-only completion, said in
+    those words rather than dressed as a publication.
+    """
+    rname = remote()
+    out = {"mode": "origin" if on_origin else "local", "remote": rname or "",
+           "target": target, "commit": commit, "state": "", "detail": "",
+           "remoteTip": "", "diverged": False}
+    if not rname:
+        if on_origin:
+            out.update(state="unconfirmed",
+                       detail="this application has no remote to confirm "
+                              "the merge against")
+        else:
+            out.update(state="local-only",
+                       detail="this application has no remote, so nothing "
+                              "was published")
+            state.record_board_event({
+                "kind": "agent", "actor": "board", "file": filename,
+                "summary": (f"{target} is local-only — no application remote "
+                            f"is configured, so nothing was pushed or merged "
+                            f"on GitHub")})
+        return out
+    pushed = None
+    if not on_origin:
+        pushed = _run(["git", "push", rname,
+                       f"refs/heads/{target}:refs/heads/{target}"], timeout=180)
+    holds, tip, why = _remote_holds(rname, target, commit)
+    out["remoteTip"] = tip
+    refused = ""
+    if pushed is not None and pushed.returncode != 0:
+        lines = (pushed.stderr.strip() or pushed.stdout.strip()
+                 or "git gave no detail").splitlines()
+        refused = " ".join(line.strip() for line in lines[-3:])[:240]
+    if holds is True:
+        out["state"] = "published"
+        if refused:
+            said = (f"the push of {target} reported a failure, but {rname}/"
+                    f"{target} holds {commit[:12]} — it landed and the reply "
+                    f"was lost ({refused[:100]})")
+        elif on_origin:
+            said = f"confirmed: {rname}/{target} holds {commit[:12]}"
+        else:
+            said = (f"pushed {target} to {rname} — {rname}/{target} holds "
+                    f"{commit[:12]} (PR marked merged)")
+        state.record_board_event({"kind": "agent", "actor": "board",
+                                  "file": filename, "summary": said})
+        return out
+    out.update(state="failed" if refused else "unconfirmed",
+               detail=" · ".join(part for part in (refused, why) if part))
+    if holds is False and tip and _tip(tip) and not _contains(tip, target):
+        # the remote has commits this checkout's base does not: a push
+        # cannot fast-forward it, and nothing here will force it
+        out["diverged"] = True
+    return out
+
+
+def _held_sentence(filename: str, stage: str, publication: dict,
+                   on_origin: bool) -> str:
+    """What the ticker says about a merge that did not publish: what
+    already happened, what did not, and what a person does next."""
+    target, rname = publication["target"], publication["remote"] or "the remote"
+    commit = publication["commit"][:12]
+    where = ("GitHub reported the merge" if on_origin
+             else f"merged into {target} in this checkout")
+    what = ("but the push failed" if publication["state"] == "failed"
+            else "but its publication could not be confirmed")
+    sentence = (f"{filename}: {where} at {commit}, {what} — {rname}/{target} "
+                f"does not hold it ({publication['detail'][:160]}). Nothing "
+                f"was cleaned up and the card stays in {stage}/")
+    if publication.get("diverged"):
+        sentence += (f"; {rname}/{target} has commits this checkout does not — "
+                     f"bring them into {target} (pull, then merge) and retry")
+    else:
+        sentence += "; resolve it, then merge & clean up again"
+    return sentence
+
+
+def _clean_up(filename: str, branch: str, pinned: str | None, merged: str,
+              on_origin: bool) -> tuple[dict, dict | None]:
+    """The card's own workspace, after its merge is published. Returns what
+    became of each part — never "removed" for something git kept — and the
+    unmerged tip when the branch moved past the commit the gate read."""
+    stem = filename[:-3]
+    worktree = config.WORKTREES / stem
+    out = {"worktree": "absent", "branch": "absent", "remoteBranch": "none",
+           "notes": []}
+    unmerged = None
+    kept = ""
+    now = _tip(branch)
+    if pinned and now and now != pinned:
+        kept = (f"{branch} has moved on to {now[:12]} since the gate read "
+                f"{pinned[:12]}, and those commits were not merged")
+        # What merged is a historical head; the card's newest work is
+        # not in the base, so the card is not Done.
+        unmerged = {"branch": branch, "merged": pinned, "tip": now}
+        if worktree.exists():
+            out["worktree"] = "kept"
+    elif worktree.exists():
+        out["worktree"] = "kept"
+        dirty = config.dirty_files(worktree)
+        if dirty:
+            kept = (f"{len(dirty)} uncommitted change"
+                    f"{'' if len(dirty) == 1 else 's'} in it")
+        else:
+            removed = _run(["git", "worktree", "remove", str(worktree)])
+            if removed.returncode != 0:
+                kept = ((removed.stderr.strip() or removed.stdout.strip()
+                         or "git would not remove it").splitlines()[-1][:120])
+            else:
+                out["worktree"] = "removed"
+    if kept:
+        out["notes"].append(kept)
+        if now:
+            out["branch"] = "kept"
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": f"worktree for {stem} kept — {kept}; the branch "
+                       f"is kept with it"})
+    elif now:
+        # -D when origin made the merge: the base here has not caught up
+        # yet, so the safe delete would refuse something landed.
+        deleted = _run(["git", "branch", "-D" if on_origin else "-d", branch])
+        if deleted.returncode == 0:
+            out["branch"] = "deleted"
+            # The plan described work that is now in the base, on a branch
+            # that has just gone. A workspace *kept* keeps its plan,
+            # because the branch it names is still the one holding the work.
+            plans.forget(filename)
+            state.record_board_event({
+                "kind": "agent", "actor": "board", "file": filename,
+                "summary": (f"cleaned up: worktree and local branch for {stem} "
+                            f"removed" if out["worktree"] == "removed" else
+                            f"cleaned up: local branch {branch} removed")})
+        else:
+            out["branch"] = "kept"
+            why = ((deleted.stderr.strip() or "git would not delete it")
+                   .splitlines() or [""])[-1][:120]
+            out["notes"].append(f"local branch kept — {why}")
+            state.record_board_event({
+                "kind": "agent", "actor": "board", "file": filename,
+                "summary": f"{branch} kept — git would not delete it ({why})"})
+    else:
+        plans.forget(filename)        # a retry after the branch already went
+    rname = remote()
+    if rname:
+        if _delete_remote_branch(rname, branch, merged, filename):
+            out["remoteBranch"] = "gone"
+        else:
+            out["remoteBranch"] = "kept"
+    return out, unmerged
+
+
+def completion_facts(filename: str, stage: str) -> dict:
+    """What **merge & clean up** would do for this card, read from the same
+    authorities the completion itself reads — the merge mode from
+    `config.app_merge_on_origin()`, the target from the recorded plan, the
+    stacked-card refusal from `_assert_lands_in_the_base`, the remote from
+    `config.git_remote()` — so the sheet describes the completion that
+    would run, not one inferred from ticket sync. Read-only: no fetch, no
+    `gh` call, no write."""
+    task = _woven(filename, stage)
+    target = plans.pr_base(filename, task)
+    saved = plans.recorded(filename)
+    on_origin = config.app_merge_on_origin()
+    rname = remote()
+    facts = {
+        "file": filename, "branch": branch_of(filename),
+        "mode": "origin" if on_origin else "local",
+        "target": target,
+        "appBase": (saved or {}).get("appBase") or config.APP_BASE,
+        "remote": rname or "",
+        "publication": ("pr-merge" if on_origin
+                        else "push" if rname else "none"),
+        "ticketSync": bool(config.SYNC),
+        "ticketsSeparate": not config._one_repository(),
+        "pr": task.get("pr") or "",
+        "stacked": False, "refusal": "",
+        "recovery": recovery_public(filename),
+    }
+    refusal = plans.target_problem(filename, target)
+    if not refusal:
+        try:
+            _assert_lands_in_the_base(filename, target)
+        except ValueError as exc:
+            facts["stacked"] = True
+            refusal = str(exc)
+    if not refusal and on_origin and not facts["pr"] and not facts["recovery"]:
+        refusal = (f"{filename} has no PR, and this board merges the "
+                   f"application on origin — open one first (↑ open PR)")
+    if not refusal and on_origin and not gh_available():
+        refusal = ("gh is not installed, and this board merges the "
+                   "application on origin (BOARD_APP_MERGE)")
+    facts["refusal"] = refusal or ""
+    return facts
 
 
 def _brought(task: dict, phase_branch: str) -> list[dict]:
@@ -1033,7 +1427,10 @@ def _assert_lands_in_the_base(filename: str, target: str) -> None:
 
 
 def _merge_locally(filename: str, branch: str, commit: str | None = None) -> None:
-    """Single-player: merge into the application's own base branch and push.
+    """The local merge: merge into the application's own base branch in
+    this checkout. Publishing it is a separate step (`_publish`), because a
+    merge that landed here and a base that reached the remote are two
+    different facts.
 
     The target is the card's recorded PR target, asked here rather than
     passed in so this function and the PR that was opened can never read
@@ -1049,6 +1446,14 @@ def _merge_locally(filename: str, branch: str, commit: str | None = None) -> Non
     current = _run(["git", "branch", "--show-current"]).stdout.strip()
     if current != target:
         raise ValueError(f"the repo is on '{current}', not {target} — switch first")
+    # Already in? Then there is nothing to merge, and saying "merged" would
+    # describe work this attempt did not do — a retry after a crash
+    # between the merge and its publication lands here.
+    if _contains(commit or branch, target):
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": f"{branch} is already in {target} — nothing merged again"})
+        return
     result = _run(["git", "merge", "--no-edit", "-m", f"Merge branch '{branch}'",
                    commit] if commit else
                   ["git", "merge", "--no-edit", branch], timeout=120)
@@ -1059,27 +1464,6 @@ def _merge_locally(filename: str, branch: str, commit: str | None = None) -> Non
     state.record_board_event({
         "kind": "agent", "actor": "board", "file": filename,
         "summary": f"merged {branch} into {target}"})
-
-    rname = remote()
-    if rname:
-        push = _run(["git", "push", rname, target], timeout=180)
-        if push.returncode != 0:
-            state.record_board_event({
-                "kind": "agent", "actor": "board", "file": filename,
-                "summary": f"merged locally but the push failed — push {target} "
-                           f"yourself ({push.stderr.strip()[:100]})"})
-        elif commit and not _delete_remote_branch(rname, branch, commit,
-                                                  filename):
-            state.record_board_event({
-                "kind": "agent", "actor": "board", "file": filename,
-                "summary": f"pushed {target} (PR marked merged)"})
-        else:
-            if not commit:
-                _run(["git", "push", rname, "--delete", branch], timeout=60)
-            state.record_board_event({
-                "kind": "agent", "actor": "board", "file": filename,
-                "summary": f"pushed {target} (PR marked merged) and deleted "
-                           f"{branch} on {rname}"})
 
 
 def _merge_on_origin(filename: str, stage: str, branch: str,
@@ -1096,7 +1480,27 @@ def _merge_on_origin(filename: str, stage: str, branch: str,
     request's head is anything else by the time it merges. A gh that
     cannot say that is refused rather than worked around — an
     unconditional merge over a gate is the race the gate exists to close.
+
+    A reply can be lost — `gh` timing out on a merge GitHub made — so the
+    remote's base is read before asking and again after a refusal: a merge
+    already there is not asked for twice, and one that landed is not
+    reported as refused. Whether it was *delivered* is `_publish`'s to
+    say afterwards, from the remote, not from gh's exit status.
     """
+    rname = remote()
+    intended = commit or _tip(branch)
+    target = plans.pr_base(filename)
+
+    def landed() -> bool:
+        return bool(rname and intended) and \
+            _remote_holds(rname, target, intended)[0] is True
+
+    if landed():
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": (f"{rname}/{target} already holds {intended[:12]} — the "
+                        f"PR was merged already, so it is not merged again")})
+        return
     if commit and gh_available() and not _gh_merge_is_conditional():
         raise ValueError(
             f"this board's gate validated {commit[:12]}, and the installed gh "
@@ -1124,20 +1528,24 @@ def _merge_on_origin(filename: str, stage: str, branch: str,
             f"targets {target} — nothing was merged. Settle which base is right "
             f"(⌖ replan, or change the PR on GitHub) first")
     condition = ["--match-head-commit", commit] if commit else []
-    result = _gh_pr("merge", number, "--merge", *condition, timeout=180)
+    try:
+        result = _gh_pr("merge", number, "--merge", *condition, timeout=180)
+    except subprocess.TimeoutExpired:
+        result = subprocess.CompletedProcess([], 1, "", "gh timed out")
     if result.returncode != 0:
         detail = (result.stderr.strip() or result.stdout.strip())[-160:]
+        if landed():
+            state.record_board_event({
+                "kind": "agent", "actor": "board", "file": filename,
+                "summary": (f"gh reported a failure ({detail[:100]}), but "
+                            f"{rname}/{target} holds {intended[:12]} — the merge "
+                            f"landed and the reply was lost")})
+            return
         raise ValueError(f"origin would not merge the PR — resolve it on GitHub ({detail})")
     state.record_board_event({
         "kind": "agent", "actor": "board", "file": filename,
         "summary": (f"merged {filename}'s PR on origin"
                     + (f" at {commit[:12]}" if commit else ""))})
-    rname = remote()
-    if rname and commit:
-        _delete_remote_branch(rname, branch, commit, filename)
-    elif rname:
-        _run(["git", "push", rname, "--delete", branch], timeout=60)
-    _catch_up_base(filename)
 
 
 def _catch_up_base(filename: str) -> None:

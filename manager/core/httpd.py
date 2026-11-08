@@ -271,6 +271,11 @@ def state_payload() -> dict:
         # cards this board is midway through merging and cleaning up: the
         # busy state renders from here, not from what a tab happened to click
         "completing": state.completing_public(),
+        # completions that merged and did not publish: what was merged,
+        # into what, and why the remote does not hold it. A directory
+        # listing, empty on a board where nothing failed, and it survives
+        # a restart — the card wears it until a retry finishes the work
+        "unpublished": github.recoveries(),
         "checks": config.checks(),
         # who this board is, so a card can tell "yours" from "someone
         # else's". Empty outside team mode: nothing claims anything there.
@@ -341,6 +346,21 @@ class Handler(BaseHTTPRequestHandler):
                 or (taskfiles.find_stage_of(name) or "")
             try:
                 self._json(200, {"plan": plans.preflight(name, stage)})
+            except (ValueError, OSError) as exc:
+                self._json(409, {"error": str(exc)})
+        elif path == "/api/task/completion":
+            # What merge & clean up would do for this card — merge mode,
+            # target, publication and any refusal — from the authorities
+            # the completion itself reads, so the sheet describes the
+            # completion that would run. Read-only: no fetch, no gh.
+            query = parse_qs(url.query)
+            name = (query.get("file") or [""])[0]
+            stage = (query.get("stage") or [""])[0] \
+                or (taskfiles.find_stage_of(name) or "")
+            try:
+                if not name.endswith(".md") or "/" in name or not stage:
+                    raise ValueError(f"no card {name!r} on this board")
+                self._json(200, github.completion_facts(name, stage))
             except (ValueError, OSError) as exc:
                 self._json(409, {"error": str(exc)})
         elif path == "/api/profile":
@@ -663,6 +683,21 @@ class Handler(BaseHTTPRequestHandler):
                 # its branch to main without that member's work in it
                 phases.assert_not_working(payload["file"], "merge it")
                 self._json(200, github.complete_task(payload["file"], payload["from"]))
+            elif path == "/api/task/complete/forget":
+                # The explicit decision about an unfinished completion: a
+                # person settled it by hand (or decided against it), so the
+                # record goes. It touches no git and moves no card.
+                payload = self._read_body()
+                name = str(payload["file"])
+                if (not name.endswith(".md") or "/" in name or "\\" in name
+                        or not github.forget_recovery(name)):
+                    raise ValueError(f"{name} has no unfinished completion")
+                state.record_board_event({
+                    "kind": "agent", "actor": "you", "file": name,
+                    "summary": f"{name}: the unfinished-completion record was "
+                               f"discarded — nothing in git was changed"})
+                state.broadcast({"type": "board"})
+                self._json(200, {"forgotten": name})
             elif path == "/api/archive":
                 payload = self._read_body()
                 # archiving is a move, so it takes the same guard — and it

@@ -55,6 +55,10 @@ VERIFY_DIR = STATE / "verify"                      # isolated roots a check ran 
 REVIEWS_DIR = STATE / "reviews"                    # run-owned pinned PR-review checkouts
 DOCTOR_DIR = STATE / "doctor"                      # fixtures a diagnosis makes and removes
 GATES_DIR = STATE / "gates"                        # Bench review verdicts and gate overrides
+# Merges whose publication is unfinished. None means "beside the recorded
+# plans" (`STATE / "completions"`): a record that finishes a plan's work
+# lives wherever that plan does — see `github._recovery_dir`.
+COMPLETIONS_DIR: Path | None = None
 
 # Ordered — this is the column order on the board.
 STAGES = [
