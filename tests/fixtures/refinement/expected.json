@@ -1,0 +1,12 @@
+{
+  "card-with-acceptance-records.md": {
+    "entries": ["c-0a1b2c3d4e", "d-1a2b3c4d5e"],
+    "criteria": ["saved", "no-run", null],
+    "records": ["saved", "no-run"]
+  },
+  "legacy-card.md": {
+    "entries": [],
+    "criteria": [null, null],
+    "records": []
+  }
+}

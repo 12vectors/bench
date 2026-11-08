@@ -25,13 +25,29 @@ layout at startup and a ticket arrives whenever someone writes one.
 
 from __future__ import annotations
 
+import difflib
+import hashlib
+import json
+import os
 import re
+import secrets
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import config
 import state
+
+# Every read-modify-write of a card's text in this module takes this lock,
+# so two of the board's own writers — a comment being saved and a report
+# being appended, say — cannot read the same text and each write back a
+# version without the other's line in it. It cannot hold out a `git pull`
+# or a person's editor, which is why the writers that matter most (a brief
+# being replaced) also compare the file to what they read immediately
+# before replacing it.
+WRITE_LOCK = threading.RLock()
 
 TITLE_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 STATUS_RE = re.compile(r"^\*\*Status:\*\*\s*(.+?)\s*$", re.MULTILINE)
@@ -486,12 +502,13 @@ def set_assignee(filename: str, stage: str, name: str) -> None:
     """
     path = config.TASKS / stage / filename
     _refuse_escape(path)
-    text = path.read_text(encoding="utf-8")
-    updated = (ASSIGNEE_RE.sub(f"**Assignee:** {name}", text, count=1)
-               if ASSIGNEE_RE.search(text) else _set_assignee(text, name))
-    if updated == text:
-        return
-    path.write_text(updated, encoding="utf-8")
+    with WRITE_LOCK:
+        text = path.read_text(encoding="utf-8")
+        updated = (ASSIGNEE_RE.sub(f"**Assignee:** {name}", text, count=1)
+                   if ASSIGNEE_RE.search(text) else _set_assignee(text, name))
+        if updated == text:
+            return
+        path.write_text(updated, encoding="utf-8")
     commit_edit(filename, stage, f"claimed by {name}")
 
 
@@ -628,7 +645,7 @@ def append_to_task(filename: str, stage: str, text: str, what: str) -> bool:
     if path is None:
         return False
     try:
-        with path.open("a", encoding="utf-8") as fh:
+        with WRITE_LOCK, path.open("a", encoding="utf-8") as fh:
             fh.write(text)
     except OSError:
         return False
@@ -651,23 +668,24 @@ def append_to_section(filename: str, stage: str, heading: str, line: str,
     path = _writable(filename, stage)
     if path is None:
         return False
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    section = re.compile(rf"^##\s+{re.escape(heading)}\s*$(.*?)(?=^##\s|\Z)",
-                         re.MULTILINE | re.DOTALL).search(text)
-    if section:
-        body = section.group(1).strip("\n")
-        updated = f"## {heading}\n\n{body}\n{line}\n\n" if body else \
-                  f"## {heading}\n\n{line}\n\n"
-        text = text[:section.start()] + updated + text[section.end():]
-    else:
-        text = text.rstrip("\n") + f"\n\n## {heading}\n\n{line}\n"
-    try:
-        path.write_text(text, encoding="utf-8")
-    except OSError:
-        return False
+    with WRITE_LOCK:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        section = re.compile(rf"^##\s+{re.escape(heading)}\s*$(.*?)(?=^##\s|\Z)",
+                             re.MULTILINE | re.DOTALL).search(text)
+        if section:
+            body = section.group(1).strip("\n")
+            updated = f"## {heading}\n\n{body}\n{line}\n\n" if body else \
+                      f"## {heading}\n\n{line}\n\n"
+            text = text[:section.start()] + updated + text[section.end():]
+        else:
+            text = text.rstrip("\n") + f"\n\n## {heading}\n\n{line}\n"
+        try:
+            path.write_text(text, encoding="utf-8")
+        except OSError:
+            return False
     commit_edit(filename, stage, what)
     return True
 
@@ -843,3 +861,505 @@ def move_together(moves: list[tuple[str, str]], target: str, note: str,
                 + f" ({actor_name() or 'board'})",
                 spec, f"{len(moved)} cards moved, but committing them failed")
     return moved
+
+
+# ── the brief, its history, and the discussion beside it (task 65) ─────
+#
+# A card is three things in one file, and refining one only works if the
+# three can be told apart by reading it:
+#
+#   head     the title and the `**Field:**` lines under it — the card's
+#            identity and its lifecycle/publication metadata. Bench and
+#            people write these; a refinement never does.
+#   brief    everything after the head up to the first history boundary:
+#            the description, scope, acceptance and notes. The active
+#            requirement, and the only part a refinement may propose to
+#            change.
+#   history  the first history boundary onwards: every report the board
+#            appended (`## <kind> — <date> (<name>)`, with the `---` rule
+#            above it), a phase log, the discussion, and the acceptance
+#            records card 81 writes. Kept verbatim by every write below.
+#
+# The discussion is one section, `## Discussion`, created at the end of the
+# card the first time anything is said and appended to in place thereafter.
+# Each entry is an `### ` heading, one machine-readable marker line, and
+# the text itself as a blockquote. Quoting is the safety: a comment that
+# says `**Status:** Done`, `PR REVIEW: APPROVE` or `## Cards` is a line
+# starting with `>`, so no header, marker or section reader in this module
+# — or the board's own regexes, which read the first match in the file —
+# can mistake it for the real thing. The persistence contract is versioned
+# (`v` in every marker) and documented in docs/card-refinement.md.
+
+DISCUSSION_HEADING = "Discussion"
+DISCUSSION_VERSION = 1
+DISCUSSION_NOTE = ("<!-- bench:discussion v1 — written by the board. Entries are "
+                   "history: the brief above is the requirement. -->")
+HEADER_LINE_RE = re.compile(r"^\*\*[A-Za-z][A-Za-z ]{0,40}:\*\*")
+PROTECTED_FIELD_RE = re.compile(
+    r"^\s*\*\*(?:Status|Priority|Type|Assignee|Depends on|Base branch|PR base|PR):\*\*",
+    re.MULTILINE | re.IGNORECASE)
+TITLE_LINE_RE = re.compile(r"^#\s")
+# A report the board appended: `## Work report — 2026-11-08 15:20 (Juno)`.
+STAMPED_HEADING_RE = re.compile(r"^##\s+.+\s[—–-]\s\d{4}-\d{2}-\d{2}\b")
+HISTORY_HEADING_RE = re.compile(
+    r"^##\s+(?:Discussion|Phase log|Acceptance record)\s*$")
+DISCUSSION_SECTION_RE = re.compile(r"^##\s+Discussion[ \t]*$.*?(?=^##\s|\Z)",
+                                   re.MULTILINE | re.DOTALL)
+ENTRY_MARK_RE = re.compile(r"^<!-- bench:entry (\{.*\}) -->[ \t]*$", re.MULTILINE)
+ACCEPTANCE_RECORD_RE = re.compile(r"^<!-- bench:acceptance (\{.*\}) -->[ \t]*$",
+                                  re.MULTILINE)
+BENCH_MARK_RE = re.compile(r"<!--\s*bench:", re.IGNORECASE)
+MACHINE_MARKER_RE = re.compile(
+    r"^\s*(?:PR REVIEW|NOT READY|RELEVANCE REVIEW|REFINEMENT (?:PROPOSAL|DECLINED))\b",
+    re.MULTILINE)
+# A stable acceptance-criterion identity, written on the criterion's own
+# line: `- [ ] Saving a comment invokes no agent <!-- ac:no-agent -->`.
+CRITERION_ID_RE = re.compile(r"<!--\s*ac:([a-z0-9][a-z0-9-]{0,40})\s*-->")
+CRITERION_RE = re.compile(r"^\s*[-*+]\s+\[[ xX]\]\s+(.*)$")
+
+MAX_COMMENT_CHARS = 8000
+MAX_BRIEF_BYTES = 64 * 1024
+
+
+class StaleCard(ValueError):
+    """The card is not the one a proposal was made against any more."""
+
+
+def _starts_history(line: str) -> bool:
+    return bool(HISTORY_HEADING_RE.match(line) or STAMPED_HEADING_RE.match(line))
+
+
+def card_parts(text: str) -> dict:
+    """Split a card into head, brief and history (see above). The three
+    concatenate back to `text` exactly, so a writer that changes one of
+    them changes nothing else by construction."""
+    lines = text.splitlines(keepends=True)
+    n, i = len(lines), 0
+    while i < n and not lines[i].strip():
+        i += 1
+    if i < n and TITLE_LINE_RE.match(lines[i]):
+        i += 1
+    while i < n and (not lines[i].strip() or HEADER_LINE_RE.match(lines[i])):
+        i += 1
+    start = i
+    end, fenced = n, False
+    for k in range(start, n):
+        line = lines[k]
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced or not _starts_history(line):
+            continue
+        end = k
+        above = k - 1
+        while above >= start and not lines[above].strip():
+            above -= 1
+        if above >= start and lines[above].strip() == "---":
+            end = above
+        break
+    return {"head": "".join(lines[:start]), "brief": "".join(lines[start:end]),
+            "history": "".join(lines[end:])}
+
+
+def brief_sha(brief: str) -> str:
+    """The brief's revision: what a proposal is bound to. Surrounding blank
+    lines are not content, so they do not make a proposal stale."""
+    return hashlib.sha256(brief.strip().encode("utf-8")).hexdigest()
+
+
+def _one_line(value, cap: int = 80) -> str:
+    text = re.sub(r"[\x00-\x1f<>]", " ", str(value or ""))
+    return " ".join(text.split())[:cap]
+
+
+def _marker(meta: dict) -> str:
+    """One entry's machine-readable line. JSON keeps it to one line; the
+    two replacements keep a value from closing the HTML comment early."""
+    raw = json.dumps(meta, ensure_ascii=False, sort_keys=True)
+    return raw.replace("-->", "--\\u003e").replace("<!--", "\\u003c!--")
+
+
+def quote(text: str) -> str:
+    return "\n".join(f"> {line}" if line.strip() else ">"
+                     for line in text.replace("\r\n", "\n").split("\n"))
+
+
+def unquote(text: str) -> str:
+    out = []
+    for line in text.split("\n"):
+        if line.startswith("> "):
+            out.append(line[2:])
+        elif line.startswith(">"):
+            out.append(line[1:])
+        else:
+            out.append(line)
+    return "\n".join(out).strip("\n")
+
+
+def comment_problem(body) -> str | None:
+    if not isinstance(body, str) or not body.strip():
+        return "a comment needs some text"
+    if "\x00" in body:
+        return "a comment may not contain NUL characters"
+    if len(body) > MAX_COMMENT_CHARS:
+        return (f"a comment is at most {MAX_COMMENT_CHARS} characters "
+                f"(this one is {len(body)})")
+    return None
+
+
+def discussion(text: str) -> list[dict]:
+    """Every entry in a card's discussion, oldest first. An entry whose
+    marker does not parse is skipped rather than guessed at — the text is
+    still in the file for a person to read."""
+    section = DISCUSSION_SECTION_RE.search(card_parts(text)["history"])
+    if not section:
+        return []
+    body = section.group(0)
+    marks = list(ENTRY_MARK_RE.finditer(body))
+    entries = []
+    for index, mark in enumerate(marks):
+        try:
+            meta = json.loads(mark.group(1))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(meta, dict) or not meta.get("id"):
+            continue
+        stop = marks[index + 1].start() if index + 1 < len(marks) else len(body)
+        chunk = body[mark.end():stop]
+        heading = re.search(r"^###\s", chunk, re.MULTILINE)
+        if heading:
+            chunk = chunk[:heading.start()]
+        chunk = chunk.rstrip()
+        while chunk.endswith("\n---") or chunk == "---":
+            chunk = chunk[:-3].rstrip()
+        entry = dict(meta)
+        entry["body"] = unquote(chunk.strip("\n"))
+        entries.append(entry)
+    return entries
+
+
+def _entry_block(meta: dict, title: str, body: str) -> str:
+    return (f"### {_one_line(title, 160)}\n<!-- bench:entry {_marker(meta)} -->\n\n"
+            f"{quote(body.strip())}\n")
+
+
+def _insert_entry(text: str, block: str) -> str:
+    """Append one entry to the end of the discussion, creating the section
+    at the end of the card the first time. Whatever follows the section —
+    a report appended later, with its `---` rule — is left exactly as it
+    was, and so is everything before it."""
+    parts = card_parts(text)
+    found = DISCUSSION_SECTION_RE.search(parts["history"])
+    if found is None:
+        return (text.rstrip("\n") + f"\n\n## {DISCUSSION_HEADING}\n\n"
+                f"{DISCUSSION_NOTE}\n\n{block.rstrip()}\n")
+    offset = len(parts["head"]) + len(parts["brief"])
+    start, end = offset + found.start(), offset + found.end()
+    body = text[start:end]
+    core = body.rstrip()
+    while core.endswith("\n---"):
+        core = core[:-4].rstrip()
+    tail = body[len(core):]
+    if tail.strip():
+        tail = "\n\n" + tail.lstrip()
+    else:
+        tail = "\n\n" if end < len(text) else "\n"
+    return text[:start] + core + "\n\n" + block.rstrip() + tail + text[end:]
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Replace a card in one step: a reader sees the old file or the new
+    one, never half of either. The temporary name does not end in `.md`,
+    so the stage watcher never mistakes it for a card."""
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.bench-tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+def now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def stamp(iso: str) -> str:
+    return iso.replace("T", " ")[:16] + " UTC"
+
+
+def add_discussion_entry(filename: str, stage: str, meta: dict, title: str,
+                         body: str, what: str) -> dict:
+    """Write one entry where the card stands, and commit it like every other
+    board-made write. Returns what happened, truthfully: the text reached
+    the file, and whether it was committed — which is only ever true under
+    BOARD_COMMIT_MOVES, and with BOARD_SYNC is what publishes it."""
+    if Path(filename).name != filename or not filename.endswith(".md"):
+        raise ValueError("bad filename")
+    if stage not in config.STAGE_DIRS:
+        raise ValueError("unknown stage")
+    path = config.TASKS / stage / filename
+    if not path.is_file():
+        raise ValueError(f"{filename} is no longer in {stage}/ — refresh the board")
+    _refuse_escape(path)
+    block = _entry_block(meta, title, body)
+    with WRITE_LOCK:
+        text = path.read_text(encoding="utf-8")
+        _atomic_write(path, _insert_entry(text, block))
+    committed = commit_edit(filename, stage, what)
+    return {"written": True, "committed": committed}
+
+
+def add_comment(filename: str, stage: str, body, author: str) -> dict:
+    """A person's comment, saved and nothing else: no agent is asked
+    anything because a comment exists. Returns the entry as written."""
+    problem = comment_problem(body)
+    if problem:
+        raise ValueError(problem)
+    at = now_iso()
+    meta = {"v": DISCUSSION_VERSION, "id": f"c-{secrets.token_hex(5)}",
+            "kind": "comment", "author": _one_line(author) or "unattributed",
+            "at": at}
+    text = body.replace("\r\n", "\n").strip()
+    title = f"Comment {meta['id']} — {meta['author']} · {stamp(at)}"
+    result = add_discussion_entry(filename, stage, meta, title, text,
+                                  f"comment {meta['id']}")
+    return {**meta, "body": text, **result}
+
+
+def find_entry(text: str, entry_id: str) -> dict | None:
+    return next((e for e in discussion(text) if e.get("id") == entry_id), None)
+
+
+def decision_for(text: str, proposal: str) -> dict | None:
+    """The recorded decision about one proposal, if any board made one —
+    read off the card, so a restart or a sync carries it."""
+    return next((e for e in discussion(text) if e.get("kind") == "decision"
+                 and e.get("proposal") == proposal), None)
+
+
+# — acceptance criteria, and the records card 81 keeps about them —
+
+def criteria(brief: str) -> list[dict]:
+    """The brief's checklist items, each with its stable id when it has
+    one. Identity is the id, never the position: reordering an unchanged
+    criterion changes nothing about it."""
+    out: list[dict] = []
+    current = None
+    for line in brief.splitlines():
+        match = CRITERION_RE.match(line)
+        if match:
+            current = {"raw": match.group(1)}
+            out.append(current)
+        elif current is not None and line.strip() and line[:1].isspace():
+            current["raw"] += " " + line.strip()
+        else:
+            current = None
+    for item in out:
+        found = CRITERION_ID_RE.search(item["raw"])
+        item["id"] = found.group(1) if found else None
+        item["text"] = " ".join(CRITERION_ID_RE.sub("", item.pop("raw")).split())
+    return out
+
+
+def affected_criteria(before: str, after: str) -> list[str]:
+    """Which identified criteria a brief edit touches: reworded or removed.
+    A criterion without an id has no record to mark, so it is not listed —
+    legacy cards keep their Markdown and gain no invented decisions."""
+    now = {c["id"]: c["text"] for c in criteria(after) if c["id"]}
+    return sorted(c["id"] for c in criteria(before)
+                  if c["id"] and now.get(c["id"]) != c["text"])
+
+
+def acceptance_records(text: str) -> list[dict]:
+    out = []
+    for match in ACCEPTANCE_RECORD_RE.finditer(card_parts(text)["history"]):
+        try:
+            meta = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(meta, dict):
+            out.append(meta)
+    return out
+
+
+def mark_for_recheck(text: str, ids: list[str], reason: str, at: str) -> str:
+    """Every acceptance record about an affected criterion is marked for
+    recheck — in the same text the brief is replaced in, so the two land
+    in one write. Nothing else about a record changes, and a card with no
+    records is returned untouched."""
+    wanted = set(ids)
+    if not wanted:
+        return text
+
+    def _mark(match: re.Match) -> str:
+        try:
+            meta = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            return match.group(0)
+        if not isinstance(meta, dict) or meta.get("criterion") not in wanted:
+            return match.group(0)
+        meta.update({"recheck": True, "recheckReason": reason, "recheckAt": at})
+        return f"<!-- bench:acceptance {_marker(meta)} -->"
+
+    return ACCEPTANCE_RECORD_RE.sub(_mark, text)
+
+
+# — what a proposed brief may and may not contain —
+
+def _cards_section(brief: str) -> str | None:
+    found = CARDS_SECTION_RE.search(brief)
+    return " ".join(found.group(1).split()) if found else None
+
+
+def brief_problems(before: str, after) -> list[str]:
+    """Why a proposed brief may not replace the active one — each a
+    sentence naming the protected thing it reached for. Empty means it may.
+
+    The proposal only ever replaces the brief region, so the head and the
+    history are protected by the write itself; this refuses the ways a
+    brief's *text* could still reach them — a line every header reader
+    would take for metadata, a heading that would start history early, a
+    marker a reaper parses, a phase's membership list — and the ways it
+    could forge identity, like inventing an acceptance criterion id.
+    """
+    if not isinstance(after, str) or not after.strip():
+        return ["the proposed brief is empty — a refinement edits the brief, "
+                "it does not delete it"]
+    problems = []
+    if "\x00" in after:
+        problems.append("the proposed brief contains NUL characters")
+    if len(after.encode("utf-8")) > MAX_BRIEF_BYTES:
+        problems.append(f"the proposed brief is larger than "
+                        f"{MAX_BRIEF_BYTES // 1024} KiB")
+    lines = after.splitlines()
+    first = next((line for line in lines if line.strip()), "")
+    if any(TITLE_LINE_RE.match(line) for line in lines):
+        problems.append("the proposed brief contains a `# ` title line — the "
+                        "card's title is its identity and is not refined")
+    if PROTECTED_FIELD_RE.search(after) or HEADER_LINE_RE.match(first):
+        problems.append("the proposed brief contains a `**Field:**` header line "
+                        "— status, assignee, base branch, PR and the other "
+                        "header fields are lifecycle metadata and are not "
+                        "refined")
+    if any(_starts_history(line) for line in lines):
+        problems.append("the proposed brief contains a history heading (a "
+                        "dated report, Discussion, Phase log or Acceptance "
+                        "record) — history is preserved, never rewritten")
+    if BENCH_MARK_RE.search(after):
+        problems.append("the proposed brief contains a `<!-- bench:` marker — "
+                        "discussion entries and acceptance records are "
+                        "written by the board only")
+    if MACHINE_MARKER_RE.search(after):
+        problems.append("the proposed brief contains a line the board parses "
+                        "as a marker (PR REVIEW, NOT READY, RELEVANCE REVIEW, "
+                        "REFINEMENT …)")
+    if _cards_section(before) != _cards_section(after):
+        problems.append("the proposed brief changes the `## Cards` section — a "
+                        "phase's membership is changed by editing the phase "
+                        "card, not by refining it")
+    known = {c["id"] for c in criteria(before) if c["id"]}
+    seen: set[str] = set()
+    for item in criteria(after):
+        if not item["id"]:
+            continue
+        if item["id"] in seen:
+            problems.append(f"the acceptance criterion id `{item['id']}` appears "
+                            f"twice — an id is one criterion's identity")
+        elif item["id"] not in known:
+            problems.append(f"the acceptance criterion id `{item['id']}` is new "
+                            f"— ids are assigned when criteria are tracked, "
+                            f"never invented by a refinement")
+        seen.add(item["id"])
+    return problems
+
+
+def brief_diff(before: str, after: str, context: int = 2) -> list[dict]:
+    """A focused line diff, as data: `op` is ` `, `-`, `+`, or `…` for a
+    run of unchanged lines folded away. The page renders the text it is
+    given; it never interprets either side as markup."""
+    a = before.strip("\n").splitlines()
+    b = after.strip("\n").splitlines()
+    out: list[dict] = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(
+            None, a, b, autojunk=False).get_opcodes():
+        if tag != "equal":
+            out += [{"op": "-", "text": line} for line in a[i1:i2]]
+            out += [{"op": "+", "text": line} for line in b[j1:j2]]
+            continue
+        run = a[i1:i2]
+        head = run[:context] if i1 > 0 else []
+        tail = run[-context:] if i2 < len(a) else []
+        if len(run) <= len(head) + len(tail) + 1:
+            out += [{"op": " ", "text": line} for line in run]
+            continue
+        out += [{"op": " ", "text": line} for line in head]
+        out.append({"op": "…", "text":
+                    f"{len(run) - len(head) - len(tail)} unchanged lines"})
+        out += [{"op": " ", "text": line} for line in tail]
+    return out
+
+
+def changed_sections(before: str, after: str) -> list[str]:
+    """The `##`/`###` headings whose content changed, or `(intro)` for the
+    text above the first heading — the short answer to "what did it touch"."""
+    def split(text: str) -> dict:
+        out: dict = {}
+        name = "(intro)"
+        for line in text.splitlines():
+            if re.match(r"^#{2,3}\s", line):
+                name = line.lstrip("#").strip()
+                out.setdefault(name, [])
+                continue
+            out.setdefault(name, []).append(line.rstrip())
+        return {k: "\n".join(v).strip() for k, v in out.items()}
+    a, b = split(before), split(after)
+    return [name for name in dict.fromkeys([*a, *b]) if a.get(name) != b.get(name)]
+
+
+def replace_brief(filename: str, stage: str, *, expected_sha: str,
+                  new_brief: str, decision: dict, title: str, body: str,
+                  affected: list[str]) -> dict:
+    """Apply a refinement: the brief replaced, affected acceptance records
+    marked for recheck and the decision recorded — one file write and one
+    commit, or nothing at all.
+
+    Refused, with nothing written, when the card has moved stage or its
+    brief is no longer the one the proposal was made against. Everything
+    that is not the brief — the head, every report, every comment that
+    arrived meanwhile — is carried over byte for byte, so an intervening
+    write is kept rather than overwritten. The file is compared once more
+    immediately before it is replaced, so a pull landing mid-write is a
+    refusal rather than a lost change.
+    """
+    path = config.TASKS / stage / filename
+    with WRITE_LOCK:
+        if not path.is_file():
+            raise StaleCard(f"{filename} is no longer in {stage}/ — the proposal "
+                            f"was made there; regenerate it where the card is now")
+        _refuse_escape(path)
+        text = path.read_text(encoding="utf-8")
+        parts = card_parts(text)
+        if brief_sha(parts["brief"]) != expected_sha:
+            raise StaleCard(f"the brief of {filename} has changed since the "
+                            f"proposal was generated — nothing was applied; "
+                            f"regenerate it against the current brief")
+        problems = brief_problems(parts["brief"], new_brief)
+        if problems:
+            raise ValueError(problems[0])
+        head = parts["head"]
+        if head.strip() and not head.endswith("\n\n"):
+            head = head.rstrip("\n") + "\n\n"
+        tail = "\n\n" if parts["history"].strip() else "\n"
+        updated = head + new_brief.strip("\n") + tail + parts["history"]
+        updated = mark_for_recheck(updated, affected,
+                                   f"brief revised by {decision.get('proposal')}",
+                                   decision.get("at") or now_iso())
+        updated = _insert_entry(updated, _entry_block(decision, title, body))
+        if path.read_text(encoding="utf-8") != text:
+            raise StaleCard(f"{filename} changed while the proposal was being "
+                            f"applied — nothing was applied; try again")
+        _atomic_write(path, updated)
+    committed = commit_edit(filename, stage,
+                            f"brief refined ({decision.get('proposal')})")
+    return {"written": True, "committed": committed}
