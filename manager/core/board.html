@@ -901,6 +901,44 @@
   #drawer .dbody td code{white-space:nowrap}
   #drawer .dmeta{font-family:var(--mono);font-size:11px;color:var(--dim)}
 
+  /* the discussion: history beside the brief, never part of it. Words a
+     person or an agent wrote are text (pre-wrap), mono marks what a
+     machine wrote — ids, times — and colour only ever means state */
+  #drawer .discussion{display:flex;flex-direction:column;gap:8px;
+    border-top:1px solid var(--border-soft);padding-top:12px}
+  #drawer .discussion .dentry{background:var(--sunken);border-radius:8px;
+    padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+  #drawer .discussion .dentry.decision{background:none;border:1px dashed var(--line)}
+  #drawer .discussion .dhead2{font-size:11.5px;color:var(--muted)}
+  #drawer .discussion .dhead2 .mono,#drawer .discussion .rhead .mono{
+    font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+  #drawer .discussion .cbody{font-size:12.5px;color:var(--text);white-space:pre-wrap;
+    overflow-wrap:anywhere}
+  #drawer .discussion .dnote{font-size:11.5px;color:var(--dim);margin:0}
+  #drawer .discussion .dnote.bad{color:var(--alarm)}
+  #drawer .discussion .rjob{border-left:3px solid var(--accent);padding-left:8px;
+    display:flex;flex-direction:column;gap:6px}
+  #drawer .discussion .rjob.bad{border-left-color:var(--alarm)}
+  #drawer .discussion .rjob.good{border-left-color:var(--calm)}
+  #drawer .discussion .rhead{display:flex;gap:8px;align-items:baseline;font-size:12px}
+  #drawer .discussion .rstate{font-weight:500}
+  #drawer .discussion .rexpl{font-size:12.5px;margin:0;white-space:pre-wrap}
+  #drawer .discussion p{margin:0;font-size:12px}
+  #drawer .discussion .racts{display:flex;gap:6px;flex-wrap:wrap}
+  #drawer .discussion button.dact{font-size:12px;padding:4px 10px}
+  #drawer .discussion .rdiff{font-family:var(--mono);font-size:11px;line-height:1.5;
+    background:var(--bg);border:1px solid var(--line);border-radius:6px;
+    padding:6px 8px;margin:0;overflow-x:auto;white-space:pre-wrap}
+  #drawer .discussion .rdiff .d{display:block}
+  #drawer .discussion .rdiff .dadd{color:var(--calm)}
+  #drawer .discussion .rdiff .ddel{color:var(--alarm);text-decoration:line-through}
+  #drawer .discussion .rdiff .deq{color:var(--muted)}
+  #drawer .discussion .rdiff .dgap{color:var(--dim);font-style:italic}
+  #drawer .discussion .composer{display:flex;flex-direction:column;gap:6px}
+  #drawer .discussion textarea{width:100%;box-sizing:border-box;resize:vertical;
+    font:inherit;font-size:12.5px;padding:7px 9px;border-radius:7px;
+    border:1px solid var(--border);background:var(--bg);color:var(--text)}
+
   /* ── completion sheet ── */
   #sheetwrap{
     position:fixed;inset:0;z-index:30;display:none;align-items:flex-start;
@@ -1095,6 +1133,9 @@ const S = {
   running: {},           // sid -> in-flight Bash event (PreToolUse)
   view: 'board',
   selected: null,        // task open in the drawer
+  disc: {},              // file -> {data, stamp, error}: the card's discussion
+  commentDraft: {},      // file -> unsent comment text, kept across redraws
+  refineKey: {},         // file -> the request key for that text's refinement
   flightSid: null,
   focusSid: null,
   filter: 'all',
@@ -3184,8 +3225,9 @@ function cardFor(task) {
   // when something promotes it: live work, a verdict, a failure, a halt,
   // an idle card. "queued" in to-do/ is the column's word, not news.
   let promoted = !!agent || working;
-  let pill = agent && agent.mode === 'review'
-    ? { text: 'reviewing', tint: 'var(--accent)', bg: mix('var(--accent)', 16) }
+  let pill = agent && (agent.mode === 'review' || agent.mode === 'refine')
+    ? { text: agent.mode === 'refine' ? 'refining' : 'reviewing',
+        tint: 'var(--accent)', bg: mix('var(--accent)', 16) }
     : pillFor(task.stage, working);
   if (!agent && verdict === 'green') {
     pill = { text: 'approved', tint: 'var(--calm)', bg: mix('var(--calm)', 18) };
@@ -5905,8 +5947,9 @@ function renderDrawer() {
     ? { text: 'completing', tint: 'var(--accent)', bg: mix('var(--accent)', 16) }
     : failure
     ? { text: 'run failed', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16) }
-    : agent && agent.mode === 'review'
-    ? { text: 'reviewing', tint: 'var(--accent)', bg: mix('var(--accent)', 16) }
+    : agent && (agent.mode === 'review' || agent.mode === 'refine')
+    ? { text: agent.mode === 'refine' ? 'refining' : 'reviewing',
+        tint: 'var(--accent)', bg: mix('var(--accent)', 16) }
     : pillFor(t.stage, agent && agent.mode !== 'review');
   const when = new Date(t.mtime * 1000).toLocaleString();
   // the whole excerpt, not just the line the card shows — the sheet is
@@ -5917,6 +5960,11 @@ function renderDrawer() {
       `<pre>${esc(failure.excerpt)}</pre>` +
       `<span style="color:var(--dim)">${esc(failure.log || '')}</span></div></div>`
     : '';
+  // the comment box survives the redraw every state load makes: its text,
+  // and — when someone is typing in it — its focus and caret
+  const box = $('#commentbox');
+  const typing = box && document.activeElement === box
+    ? [box.selectionStart, box.selectionEnd] : null;
   body.innerHTML =
     `<div class="dhead">` +
     `<span class="mono" style="font-size:12px;color:var(--dim)">${t.number ? '#' + esc(t.number) : ''}</span>` +
@@ -5928,8 +5976,17 @@ function renderDrawer() {
     signalsBlock(t) +
     planBlock(t) +
     phaseMembers(t) +
-    `<div class="dbody">${md(t.body)}</div>` +
+    // the discussion is drawn by its own panel below, as text — never
+    // through the Markdown renderer, and never as part of the brief
+    `<div class="dbody">${md(withoutDiscussion(t.body))}</div>` +
+    discussionPanel(t) +
     `<div class="dmeta">${esc(t.stage)}/${esc(t.file)} · ${t.words} words · edited ${esc(when)}</div>`;
+  wireDiscussion(t);
+  if (typing) {
+    const again = $('#commentbox');
+    again.focus();
+    again.setSelectionRange(typing[0], typing[1]);
+  }
   // every tool and action the card has, built by the card's own builder
   // and wired by it — so the detail view cannot offer a tool the card
   // would not, or wire one differently
@@ -5951,6 +6008,280 @@ function renderDrawer() {
     // back to the card the detail view was opened from
     focusCard(t.file);
   });
+}
+
+/* ── a card's discussion, and refining its brief (task 65) ─────────────
+
+   Three actions, deliberately three. **Add comment** saves text to the
+   card and starts nothing. **✎ Update card with agent** saves the text (or
+   picks a comment already there) and asks for one refinement — armed,
+   because it costs tokens. A proposal is a diff and an explanation, and
+   the brief changes only on **Apply**; **Discard** records the decision
+   and changes nothing. Every word a person or an agent wrote is drawn as
+   text through esc(), never as markup. The panel reads
+   /api/card/discussion — a GET that starts nothing — and re-reads it
+   whenever the card file or its refinement state changes. */
+const DISCUSSION_SECTION = /^## Discussion[ \t]*$[\s\S]*?(?=^## |(?![\s\S]))/m;
+function withoutDiscussion(body) {
+  return String(body || '').replace(DISCUSSION_SECTION, '');
+}
+
+const JOB_WORD = {
+  queued: ['queued', ''], running: ['refining…', ''],
+  proposed: ['proposal — not applied', ''], failed: ['failed', 'bad'],
+  cancelled: ['cancelled', ''], applied: ['applied', 'good'],
+  discarded: ['discarded', ''], superseded: ['superseded by a newer attempt', ''],
+};
+
+function newRequestKey() {
+  return (crypto.randomUUID ? crypto.randomUUID()
+                            : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+}
+
+function discStamp(t) {
+  const r = (S.state.refinements || {})[t.file];
+  return `${t.stage}:${t.mtime}:${r ? r.id + r.status : '-'}:` +
+    `${agentOnTask(t.file) ? agentOnTask(t.file).id : '-'}`;
+}
+
+function loadDiscussion(t, force) {
+  const cur = S.disc[t.file] || {};
+  if (cur.loading || (!force && cur.stamp === discStamp(t))) return;
+  S.disc[t.file] = { ...cur, loading: true };
+  const stamp = discStamp(t);
+  fetch(`/api/card/discussion?file=${encodeURIComponent(t.file)}` +
+        `&stage=${encodeURIComponent(t.stage)}`)
+    .then(res => res.json().then(data => ({ ok: res.ok, data })))
+    .then(({ ok, data }) => {
+      S.disc[t.file] = ok ? { data, stamp } : { data: cur.data, error: data.error, stamp };
+    })
+    .catch(() => { S.disc[t.file] = { data: cur.data, stamp,
+                                      error: 'the board could not be asked' }; })
+    .finally(() => {
+      if (S.selected && S.selected.file === t.file) renderDiscussion(S.selected);
+    });
+}
+
+function diffHtml(diff) {
+  const mark = { '+': '+', '-': '−', ' ': ' ', '…': '⋯' };
+  return `<pre class="rdiff" aria-label="proposed change to the brief">` +
+    (diff || []).map(d => `<span class="d d${{ '+': 'add', '-': 'del', ' ': 'eq', '…': 'gap' }[d.op] || 'eq'}">` +
+      `${mark[d.op] || ' '} ${esc(d.text)}</span>`).join('\n') + `</pre>`;
+}
+
+function jobHtml(job, t) {
+  const [word, cls] = JOB_WORD[job.status] || [job.status, ''];
+  const who = job.name ? `${esc(job.name)} · ` : '';
+  let out = `<div class="rjob ${cls}" data-job="${esc(job.id)}">` +
+    `<div class="rhead"><span class="rstate">${esc(word)}</span>` +
+    `<span class="mono">${who}${esc(job.id)}${job.attempt > 1 ? ` · attempt ${job.attempt}` : ''}</span></div>`;
+  if (job.status === 'queued' || job.status === 'running') {
+    out += `<p>Reading the card and the code. It proposes; nothing changes until you apply it.</p>` +
+      `<div class="racts"><button class="dact" data-act="cancel">Cancel</button></div>`;
+  } else if (job.status === 'proposed') {
+    const fresh = job.fresh || { fresh: true };
+    out += `<p class="rexpl">${esc(job.explanation)}</p>` +
+      (job.noChange ? `<p class="dnote">It proposes no change to the brief.</p>` : '') +
+      (job.sections && job.sections.length
+        ? `<p class="dnote">Touches: ${esc(job.sections.join(', '))}` +
+          (job.affected && job.affected.length
+            ? ` · acceptance records to recheck: ${esc(job.affected.join(', '))}` : '') + `</p>`
+        : '') +
+      diffHtml(job.diff) +
+      (fresh.fresh
+        ? `<div class="racts"><button class="dact" data-act="apply">` +
+          `${actLabel('Apply to the brief', 'click again — rewrites the brief', 'applying…')}</button>` +
+          `<button class="dact" data-act="discard">Discard</button></div>` +
+          `<p class="dnote">Kept on this board until you decide; the brief is unchanged.</p>`
+        : `<div class="well bad"><span class="lead">·</span><div class="wbody">` +
+          `<b>stale</b> — ${esc(fresh.why)}. It cannot be applied.</div></div>` +
+          `<div class="racts"><button class="dact" data-act="retry">` +
+          `${actLabel('↻ Regenerate', 'click again — asks an agent', 'asking…')}</button>` +
+          `<button class="dact" data-act="discard">Discard</button></div>`);
+  } else if (job.status === 'failed' || job.status === 'cancelled') {
+    out += `<p>${esc(job.error || '')}</p>` +
+      (job.refused && job.refused.length > 1
+        ? `<ul class="dnote">${job.refused.slice(1).map(r => `<li>${esc(r)}</li>`).join('')}</ul>` : '') +
+      `<p class="dnote">Nothing was applied.</p>` +
+      `<div class="racts"><button class="dact" data-act="retry">` +
+      `${actLabel('↻ Retry', 'click again — asks an agent', 'asking…')}</button></div>`;
+  } else if (job.decidedBy) {
+    out += `<p class="dnote">by ${esc(job.decidedBy)} · ${esc(job.decidedAt || '')}` +
+      `${job.committed === false ? ' · written, not committed' : ''}</p>`;
+  }
+  return out + `</div>`;
+}
+
+function discussionLive(t) {
+  const c = S.disc[t.file];
+  if (!c || !c.data) {
+    return c && c.error ? `<p class="dnote bad">${esc(c.error)}</p>`
+                        : `<p class="dnote">reading the discussion…</p>`;
+  }
+  const d = c.data;
+  const notes = [];
+  if (d.blocked) notes.push(d.blocked);
+  if (!d.refine.ready) {
+    notes.push('Update card with agent is not available on this board: ' +
+               (d.refine.blockers[0] || 'the refine intent does not resolve'));
+  }
+  const persistence = !d.persistence.commits
+    ? `<p class="dnote">Comments and decisions are written to the card file; ` +
+      `they are not committed, because BOARD_COMMIT_MOVES is off.</p>`
+    : !d.persistence.syncs
+    ? `<p class="dnote">Comments and decisions are committed to the work state; ` +
+      `BOARD_SYNC is off, so they reach other boards when you push.</p>` : '';
+  const jobs = {};
+  for (const job of d.jobs) (jobs[job.comment] = jobs[job.comment] || []).push(job);
+  const rows = d.entries.map(e => {
+    if (e.kind === 'decision') {
+      return `<div class="dentry decision"><div class="dhead2">` +
+        `<b>${esc(e.outcome)}</b> <span class="mono">${esc(e.proposal || '')}</span>` +
+        ` · ${esc(e.author || '')} · ${esc(e.at || '')}</div>` +
+        `<div class="cbody">${esc(e.body || '')}</div></div>`;
+    }
+    const mine = jobs[e.id] || [];
+    const latest = mine[0];
+    return `<div class="dentry comment" data-comment="${esc(e.id)}">` +
+      `<div class="dhead2"><b>${esc(e.author || 'unattributed')}</b> · ` +
+      `${esc(e.at || '')} <span class="mono">${esc(e.id)}</span></div>` +
+      `<div class="cbody">${esc(e.body || '')}</div>` +
+      (latest ? jobHtml(latest, t) +
+                (mine.length > 1 ? `<p class="dnote">${mine.length - 1} earlier attempt` +
+                 `${mine.length === 2 ? '' : 's'}: ${mine.slice(1).map(j => esc(j.status)).join(', ')}</p>` : '')
+              : `<div class="racts"><button class="dact" data-act="refine"` +
+                `${d.blocked || !d.refine.ready ? ' disabled' : ''}>` +
+                `${actLabel('✎ Update card with agent', 'click again — asks an agent', 'asking…')}` +
+                `</button></div>`) +
+      `</div>`;
+  }).join('');
+  return (notes.length ? `<div class="well bad"><span class="lead">·</span><div class="wbody">` +
+           notes.map(esc).join('<br>') + `</div></div>` : '') +
+    persistence +
+    (rows || `<p class="dnote">No comments yet.</p>`);
+}
+
+function discussionPanel(t) {
+  const c = (S.disc[t.file] || {}).data;
+  const cannot = !c || !!c.blocked || !c.refine.ready;
+  return `<section class="discussion" aria-label="Discussion">` +
+    `<div class="phead">Discussion<span class="mono">history — the brief above is the requirement</span></div>` +
+    `<div id="disc-live">${discussionLive(t)}</div>` +
+    `<div class="composer">` +
+    `<textarea id="commentbox" rows="3" aria-label="Comment or instruction for this card" ` +
+    `placeholder="A comment, or an instruction for the brief">${esc(S.commentDraft[t.file] || '')}</textarea>` +
+    `<div class="racts"><button class="dact" id="addComment">Add comment</button>` +
+    `<button class="dact" id="refineNew"${cannot ? ' disabled' : ''}>` +
+    `${actLabel('✎ Update card with agent', 'click again — asks an agent', 'asking…')}</button></div>` +
+    `<p class="dnote">Add comment only saves it. Update card with agent also asks an ` +
+    `agent to propose a revised brief — it reads, it implements nothing, and the ` +
+    `brief changes only when you apply the proposal.</p></div></section>`;
+}
+
+async function postCard(url, payload) {
+  const res = await fetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    toast(data.error || 'the board refused that', true);
+    if (data.stale && S.selected) loadDiscussion(S.selected, true);
+    return null;
+  }
+  return data;
+}
+
+function afterCardWrite(t) {
+  loadDiscussion(t, true);
+  loadState();
+}
+
+function wireDiscussion(t) {
+  loadDiscussion(t);
+  const box = $('#commentbox');
+  if (!box) return;
+  box.addEventListener('input', () => {
+    S.commentDraft[t.file] = box.value;
+    // a different text is a different request; the same text resent is not
+    delete S.refineKey[t.file];
+  });
+  $('#addComment').addEventListener('click', async () => {
+    const data = await postCard('/api/card/comment',
+      { file: t.file, stage: t.stage, body: box.value });
+    if (!data) return;
+    S.commentDraft[t.file] = '';
+    toast(`comment ${data.comment.id} saved` +
+          (data.comment.committed ? '' : ' — written to the card, not committed'));
+    afterCardWrite(t);
+  });
+  wireAction($('#refineNew'), `${t.file}::refine-new`, {
+    label: 'Update card with agent', confirm: true,
+    run: async () => {
+      const key = S.refineKey[t.file] = S.refineKey[t.file] || newRequestKey();
+      const data = await postCard('/api/card/refine',
+        { file: t.file, stage: t.stage, text: box.value, request: key });
+      if (!data) return false;
+      S.commentDraft[t.file] = '';
+      delete S.refineKey[t.file];
+      toast(data.duplicate ? 'that refinement was already asked for'
+                           : `${data.job.name || 'an agent'} is refining ${t.file} — it proposes; nothing changes until you apply`);
+      afterCardWrite(t);
+      return true;
+    },
+  });
+  wireLive(t);
+}
+
+function wireLive(t) {
+  const live = $('#disc-live');
+  if (!live) return;
+  live.querySelectorAll('.dentry.comment').forEach(row => {
+    const comment = row.dataset.comment;
+    row.querySelectorAll('button[data-act]').forEach(btn => {
+      const jobEl = btn.closest('[data-job]');
+      const job = jobEl ? jobEl.dataset.job : null;
+      const act = btn.dataset.act;
+      const key = `${t.file}::refine-${act}-${job || comment}`;
+      const call = (url, payload, said) => async () => {
+        const data = await postCard(url, payload);
+        if (!data) return false;
+        toast(said(data));
+        afterCardWrite(t);
+        return true;
+      };
+      const acts = {
+        refine: { label: 'Update card with agent', confirm: true,
+          run: call('/api/card/refine', { file: t.file, stage: t.stage, comment,
+                                          request: newRequestKey() },
+                    d => d.duplicate ? 'that refinement was already asked for'
+                                     : `${d.job.name || 'an agent'} is refining ${t.file}`) },
+        retry: { label: 'Retry', confirm: true,
+          run: call('/api/card/refine', { file: t.file, stage: t.stage, comment,
+                                          retry: true, request: newRequestKey() },
+                    d => `${d.job.name || 'an agent'} is refining ${t.file} again`) },
+        apply: { label: 'Apply', confirm: true,
+          run: call('/api/card/refine/apply', { id: job },
+                    d => d.already ? 'already applied' : `the brief of ${t.file} was updated`) },
+        discard: { label: 'Discard',
+          run: call('/api/card/refine/discard', { id: job },
+                    d => d.already ? 'already discarded' : 'proposal discarded — the brief is unchanged') },
+        cancel: { label: 'Cancel',
+          run: call('/api/card/refine/cancel', { id: job }, () => 'refinement cancelled') },
+      };
+      if (acts[act]) wireAction(btn, key, acts[act]);
+    });
+  });
+}
+
+function renderDiscussion(t) {
+  const live = $('#disc-live');
+  if (!live) return;
+  live.innerHTML = discussionLive(t);
+  const c = (S.disc[t.file] || {}).data;
+  const btn = $('#refineNew');
+  if (btn && !btn.classList.contains('busy')) btn.disabled = !c || !!c.blocked || !c.refine.ready;
+  wireLive(t);
 }
 
 /* Four signals a single green tick would collapse, each in its own words
@@ -7066,7 +7397,11 @@ function md(src) {
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+    // a link is a link only to somewhere a card may point: the web, mail,
+    // an anchor or a relative path. A brief an agent proposed is rendered
+    // here once applied, so `javascript:` and its kin stay plain text
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, href) =>
+      /^(?:https?:|mailto:|#|[^:]*$)/i.test(href) ? `<a href="${href}">${label}</a>` : label);
 
   /* Lists: group physical lines into logical items before rendering. A new
      item begins only at a marker; a line without one is continuation text
