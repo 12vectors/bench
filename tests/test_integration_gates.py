@@ -1502,8 +1502,8 @@ class ThePageReadsTheDecision(unittest.TestCase):
         """"Merge" is the click a person should not have to make to find
         out that it is refused — so the sheet reads the same decision the
         server will, and says what happens if they click anyway."""
-        sheet = self.html[self.html.index("function completeSheet"):
-                          self.html.index("function completeSheet") + 4000]
+        start = self.html.index("function completeSheet")
+        sheet = self.html[start:self.html.index("\nfunction phaseSheet", start)]
         self.assertIn("S.state.gates", sheet)
         self.assertIn("gate is unmet", sheet)
         self.assertIn("is refused for this reason", sheet)

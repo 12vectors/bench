@@ -561,8 +561,11 @@ class TheSheetSaysSo(unittest.TestCase):
         body = self.html[at:self.html.index("await loadState();", at)]
         self.assertIn("data.partial", body)
         self.assertLess(body.index("data.partial"),
-                        body.index("merged and cleaned up"))
+                        body.index("' and published'"))
         self.assertIn("partly completed", body)
+        # and a merge that did not publish is told before either (task 63)
+        self.assertLess(body.index("data.published === false"),
+                        body.index("data.partial"))
 
 
 if __name__ == "__main__":

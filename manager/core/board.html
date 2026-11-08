@@ -923,6 +923,9 @@
   .sheet p{margin:0;font-size:12.5px;line-height:1.55;color:var(--muted)}
   /* the preflight's own rows: what the board resolved, what said so */
   .sheet p.bad{color:var(--alarm)}
+  /* a quiet, deliberate action inside a panel: underlined text, not a slab */
+  .sheet .linkish{background:none;border:0;padding:0;font:inherit;color:var(--ink);
+    text-decoration:underline;cursor:pointer}
   .sheet .prows{display:flex;flex-direction:column;gap:1px}
   .sheet .prows .prow{
     display:flex;align-items:baseline;gap:9px;padding:6px 8px;
@@ -3219,6 +3222,18 @@ function cardFor(task) {
     tint = 'var(--alarm)';
     promoted = true;
   }
+  // A merge that landed and did not reach the application remote: the card
+  // stays in review/ with its branch and worktree, and wears it until a
+  // retry publishes it. Read from the server's record, so a restart keeps it.
+  const unpublished = (S.state.unpublished || {})[task.file];
+  if (unpublished) {
+    pill = { text: 'not published', tint: 'var(--alarm)', bg: mix('var(--alarm)', 16),
+             title: `merged into ${unpublished.target} at ${String(unpublished.commit).slice(0, 12)}, ` +
+                    `but ${unpublished.remote || 'the remote'}/${unpublished.target} does not hold it` +
+                    ` (${unpublished.detail || unpublished.publication}) — drag to done/ to retry` };
+    tint = 'var(--alarm)';
+    promoted = true;
+  }
   if (completing) {
     // live work outranks every settled reading: the branch behind an
     // 'approved' pill is being merged away as you look at it
@@ -3953,7 +3968,50 @@ function closeSheet() {
   delete scrollMarks['v:sheet:doctor'];
 }
 
-function completeSheet(task, from) {
+/* What merge & clean up would do for this card, in words, from the facts
+   the server resolves with the same authorities the completion reads: the
+   application merge mode (never ticket sync on its own), the recorded
+   target, the remote, a refusal, an unfinished earlier attempt. */
+function completionWords(facts, task, driving, swept) {
+  const branch = esc(facts.branch), target = esc(facts.target);
+  const remote = esc(facts.remote || 'the remote');
+  const park = driving ? 'Park the drive, then m' : 'M';
+  const after = ` Only then are the worktree and branches removed and the card moved to done/` +
+    (swept ? ` — the ${swept} card${swept === 1 ? '' : 's'} this phase merged go to done/ with it, ` +
+             `and their worktrees and branches go too` : '') +
+    `. If ${remote}/${target} does not hold the work afterwards, nothing is cleaned up and ` +
+    `the card stays in review/ to be retried.`;
+  let ship;
+  if (facts.mode === 'origin') {
+    ship = `${park}erge the PR on GitHub into ${target}, then check ${remote}/${target} holds ` +
+      `the work.${after} Local ${target} ` +
+      (facts.ticketSync && !facts.ticketsSeparate
+        ? 'fast-forwards on the next sync beat.' : 'fast-forwards to the merge afterwards.');
+  } else if (facts.publication === 'push') {
+    ship = `${park}erge ${branch} into ${target} in this checkout and push ${target} to ` +
+      `${remote}${task.pr ? ' (marks the PR merged)' : ''}.${after}`;
+  } else {
+    ship = `${park}erge ${branch} into ${target} in this checkout. This application has no ` +
+      `remote, so nothing is pushed or merged on GitHub — the work is complete locally only. ` +
+      `Then the worktree and branch are removed and the card moves to done/.`;
+  }
+  // a separate ticket repository syncs the card, never the code
+  const tickets = facts.ticketsSeparate && facts.ticketSync
+    ? `Ticket sync publishes this card's move to the separate ticket repository only; it does ` +
+      `not merge or push application code.` : '';
+  return { ship, tickets };
+}
+
+async function completeSheet(task, from) {
+  // read before anything is drawn: the sheet describes the completion that
+  // would run, and a sheet that guessed would be the bug this replaced
+  let facts = null, factsError = '';
+  try {
+    const res = await fetch(`/api/task/completion?file=${encodeURIComponent(task.file)}` +
+                            `&stage=${encodeURIComponent(from)}`);
+    const data = await res.json();
+    if (res.ok) facts = data; else factsError = data.error || 'it could not be read';
+  } catch (e) { factsError = 'the board did not answer'; }
   const d = S.state.drive;
   const driving = d && d.task === task.file && ['starting', 'up'].includes(d.status);
   // A phase card stands for cards the Board does not draw, so the sheet
@@ -3968,6 +4026,33 @@ function completeSheet(task, from) {
   // make to find out.
   const gate = (S.state.gates || {})[task.file];
   const blocked = gate && gate.decision === 'blocked' ? gate : null;
+  const words = facts ? completionWords(facts, task, driving, swept) : null;
+  const pending = facts && facts.recovery;
+  // a refusal the server will make anyway is said instead of a merge button:
+  // a stacked card, a target that has gone, no PR to merge on origin
+  const refusal = facts && facts.refusal
+    ? `<div class="panel bad"><div class="phead"><span class="label">Merge &amp; clean up ` +
+      `is refused here</span></div><div class="check-row fail"><span class="glyph">✕</span>` +
+      `<span class="state">${esc(facts.refusal)}</span></div></div>` : '';
+  const unfinished = pending
+    ? `<div class="panel bad"><div class="phead"><span class="label">Merged, ` +
+      `publication ${pending.publication === 'failed' ? 'failed' : 'unconfirmed'}</span></div>` +
+      `<div class="check-row fail"><span class="glyph">✕</span><span class="name">what happened</span>` +
+      `<span class="state">${esc(pending.branch)} was merged into ${esc(pending.target)} ` +
+      `${pending.mode === 'origin' ? 'on GitHub' : 'in this checkout'} at ` +
+      `${esc(String(pending.commit).slice(0, 12))}, and ${esc(pending.remote || 'the remote')}/` +
+      `${esc(pending.target)} does not hold it: ${esc(pending.detail || pending.publication)}. ` +
+      `Nothing was rolled back, nothing was cleaned up, and the card stayed in review/.</span></div>` +
+      `<div class="check-row"><span class="glyph">·</span><span class="name">what to do</span>` +
+      `<span class="state">${pending.diverged
+        ? `${esc(pending.remote)}/${esc(pending.target)} has commits this checkout does not — ` +
+          `bring them into ${esc(pending.target)} (pull, then merge; never force), then retry. `
+        : 'Resolve what the remote refused (a protection rule, access, the network), then retry. '}` +
+      `The retry checks the remote first and does not merge twice.</span></div>` +
+      `<div class="check-row"><span class="glyph">·</span><span class="name">settled by hand?</span>` +
+      `<span class="state"><button id="sh-forget" class="linkish">Discard this record</button> ` +
+      `— changes nothing in git; use it once you have decided what the unfinished merge means.` +
+      `</span></div></div>` : '';
   const wrap = $('#sheetwrap');
   wrap.innerHTML =
     `<div class="sheet">` +
@@ -3985,25 +4070,41 @@ function completeSheet(task, from) {
         `worktree are left exactly as they are. The ⚖ chip has the remedy.` +
         `</span></div></div>`
       : '') +
+    unfinished + refusal +
+    (factsError
+      ? `<p>Bench could not say beforehand how this card would be completed (${esc(factsError)}). ` +
+        `The server still decides, and refuses rather than guesses.</p>` : '') +
     `<p>This task has ${task.pr ? 'a PR and ' : ''}a branch with work on it. What should happen?</p>` +
     `<div class="sbtns">` +
     `<button id="sh-keep">Keep it where it is<small>Nothing moves, nothing changes.</small></button>` +
-    `<button id="sh-move">Just move the card<small>The branch${task.pr ? ', PR' : ''} and worktree stay as they are` +
-    `${task.isPhase ? ", and so does every card in the phase" : ''}.</small></button>` +
-    // team mode merges on origin: the board never makes a merge commit of
-    // its own, so every replica's main keeps fast-forwarding
-    `<button id="sh-ship" class="shipit">Merge &amp; clean up<small>${driving ? 'Park the drive, then m' : 'M'}erge ` +
-    ((S.state.sync || {}).enabled
-      ? `the PR on GitHub, remove the worktree and branches, move the card — local main fast-forwards on the next sync beat.`
-      : `the branch into main, push${task.pr ? ' (marks the PR merged)' : ''}, remove the worktree and branches, move the card.`) +
-    (swept ? ` The ${swept} card${swept === 1 ? '' : 's'} this phase merged go to done/ with it, and their worktrees and branches go too.` : '') +
-    `</small></button>` +
+    `<button id="sh-move">Just move the card<small>Only the ticket moves: no merge, no push, no ` +
+    `cleanup. The branch${task.pr ? ', PR' : ''} and worktree stay as they are` +
+    `${task.isPhase ? ", and so does every card in the phase" : ''} — ` +
+    `and done/ here is not a record that the code was published.</small></button>` +
+    (facts && facts.refusal ? '' :
+      `<button id="sh-ship" class="shipit">${pending ? 'Retry publication &amp; clean up' : 'Merge &amp; clean up'}` +
+      `<small>${words ? words.ship : 'Merge, publish, clean up and move the card, as this board is configured to.'}` +
+      `${words && words.tickets ? ' ' + words.tickets : ''}</small></button>`) +
     `</div></div>`;
   wrap.classList.add('open');
   wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
   $('#sh-keep').addEventListener('click', closeSheet);
   $('#sh-move').addEventListener('click', () => { closeSheet(); rawMove(task.file, from, 'done'); });
-  $('#sh-ship').addEventListener('click', async () => {
+  const forget = $('#sh-forget');
+  if (forget) forget.addEventListener('click', async () => {
+    // armed: the first click says what it does, the second does it
+    if (!forget.dataset.armed) { forget.dataset.armed = '1'; forget.textContent = 'Discard it — click again'; return; }
+    closeSheet();
+    const res = await fetch('/api/task/complete/forget', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: task.file }),
+    });
+    const data = await res.json();
+    toast(res.ok ? `${task.file}: record discarded — nothing in git changed` : (data.error || 'could not discard it'), !res.ok);
+    await loadState();
+  });
+  const ship = $('#sh-ship');
+  if (ship) ship.addEventListener('click', async () => {
     closeSheet();
     toast(`Completing ${task.file} — the card shows each step`);
     const res = await fetch('/api/task/complete', {
@@ -4012,7 +4113,16 @@ function completeSheet(task, from) {
     });
     const data = await res.json();
     if (!res.ok) { toast(data.error || 'completion failed — the card stays', true); }
-    else {
+    else if (data.published === false && data.publication &&
+             data.publication.state !== 'local-only') {
+      /* merged, not delivered: say what already happened and what did not,
+         and never call it done — the card is still in review/ */
+      const p = data.publication;
+      toast(`${task.file} merged into ${p.target} at ${String(p.commit).slice(0, 12)}, but ` +
+            `publication failed or is unconfirmed — ${p.remote || 'the remote'}/${p.target} does not ` +
+            `hold it (${p.detail}). Nothing was cleaned up; the card stays in review/. ` +
+            `Resolve it, then drag to done/ to retry.`, true);
+    } else {
       const went = (data.swept || []).length;
       const kept = (data.kept || []).length;
       /* `merged` says a commit landed, not that the card is accepted: a
@@ -4023,12 +4133,15 @@ function completeSheet(task, from) {
               `merged, but ${data.unmerged.branch} has moved on and is not merged; ` +
               `the card stays in ${data.stage}/`, true);
       } else {
-        toast((data.merged ? `${task.file} merged and cleaned up` +
+        const local = data.publication && data.publication.state === 'local-only';
+        const notes = (data.cleanup && data.cleanup.notes) || [];
+        toast((data.merged ? `${task.file} merged${local ? ' locally (no remote — nothing published)' : ' and published'}` +
+                (notes.length ? `; kept — ${notes.join('; ')}` : ', cleaned up') +
                 (went ? ` — ${went} card${went === 1 ? '' : 's'} went to done/ with it` : '')
               : `${task.file} moved to done`) +
               (kept ? ` · ${kept} card${kept === 1 ? '' : 's'} moved on since the phase ` +
                       `merged ${kept === 1 ? 'it' : 'them'} and stay${kept === 1 ? 's' : ''} put` : ''),
-              kept > 0);
+              kept > 0 || notes.length > 0);
       }
     }
     await loadState();

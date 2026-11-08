@@ -1021,9 +1021,12 @@ def _publish(filename: str, target: str, commit: str, on_origin: bool) -> dict:
     out["remoteTip"] = tip
     refused = ""
     if pushed is not None and pushed.returncode != 0:
-        lines = (pushed.stderr.strip() or pushed.stdout.strip()
-                 or "git gave no detail").splitlines()
-        refused = " ".join(line.strip() for line in lines[-3:])[:240]
+        lines = [line.strip() for line in (pushed.stderr.strip()
+                 or pushed.stdout.strip() or "git gave no detail").splitlines()]
+        # what the remote itself said (a protection rule, a hook) and the
+        # rejection line, ahead of git's own boilerplate
+        said = [line for line in lines if line.startswith(("remote:", "!"))]
+        refused = " ".join(said or lines[-3:])[:240]
     if holds is True:
         out["state"] = "published"
         if refused:
