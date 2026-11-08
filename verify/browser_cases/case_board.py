@@ -301,6 +301,59 @@ class Readiness(unittest.TestCase):
                                    5), f"Escape did not close the readiness dialog at {size}")
 
 
+class Discussion(unittest.TestCase):
+    """Card 65: the detail view's discussion. A comment saved from the
+    composer is on the card after a reload, is drawn as text, and starts
+    nothing. Update card with agent is offered beside it and is never
+    clicked here — it would launch a real model."""
+
+    STEM = "02-tidy-the-settings-reference"
+
+    def open_detail(self):
+        b = S["browser"]
+        b.eval(f"document.querySelector('{card_sel(self.STEM)}').focus()")
+        b.key("Enter")
+        self.assertTrue(b.wait("document.querySelector('#drawer').classList.contains('open')"
+                               " && !!document.querySelector('#commentbox')", 5),
+                        "the detail view did not open with a comment box")
+        self.assertTrue(b.wait("!!document.querySelector('#disc-live .dnote, "
+                               "#disc-live .dentry')", 10),
+                        "the discussion never loaded")
+
+    def test_a_comment_is_saved_shown_after_reload_and_starts_nothing(self):
+        load(1280, 800)
+        b = S["browser"]
+        self.open_detail()
+        words = "<b>not bold</b> Also cover switching external root A to B"
+        b.eval("(() => { const t = document.querySelector('#commentbox');"
+               f" t.value = {json.dumps(words)};"
+               " t.dispatchEvent(new Event('input')); })()")
+        b.click("#addComment")
+        self.assertTrue(b.wait("document.querySelector('#disc-live').innerText"
+                               ".includes('Also cover switching external root A to B')", 10),
+                        "the saved comment did not appear in the discussion")
+        self.assertEqual(0, b.eval("document.querySelectorAll('#disc-live .cbody b').length"),
+                         "a comment's text was rendered as markup")
+        self.assertEqual("", b.eval("document.querySelector('#commentbox').value"),
+                         "the composer was not cleared after saving")
+        self.assertTrue(b.wait("S.state && S.state.agents.length === 0", 5),
+                        "saving a comment started an agent")
+        refine = b.eval("(() => { const e = document.querySelector('#refineNew');"
+                        " return e && e.innerText.trim(); })()")
+        self.assertIn("Update card with agent", refine or "")
+        shot("card-discussion-1280x800")
+
+        load(1280, 800)
+        self.open_detail()
+        self.assertTrue(b.wait("document.querySelector('#disc-live').innerText"
+                               ".includes('Also cover switching external root A to B')", 10),
+                        "the comment did not survive a reload")
+        self.assertNotIn("bench:entry", b.eval("document.querySelector('#drawer .dbody')"
+                                               ".innerText"),
+                         "the discussion leaked into the rendered brief")
+        b.click("#closeDrawer")
+
+
 class Accessibility(unittest.TestCase):
     def test_every_interactive_control_has_an_accessible_name(self):
         load(1280, 800)
