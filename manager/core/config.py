@@ -262,8 +262,14 @@ def state_repo() -> Path | None:
     own, found from where the tasks actually live. `None` means the work
     root is in no repository — bench commits nothing rather than
     committing to the application.
+
+    "Externally" is `EXTERNAL`, not "a work root was named": with only
+    `BOARD_APP_ROOT` set the work root is still the tool installation, and
+    its repository — whatever the tool sits in, or none — is the one the
+    tickets live in. Reading an unset `BOARD_WORK_ROOT` as "vendored" there
+    handed the board's bookkeeping to the application (task 59).
     """
-    if not WORK_SETTING:
+    if not EXTERNAL:
         return REPO
     return git_root(work_root())
 
@@ -901,6 +907,20 @@ def _joined(paths: list[Path]) -> str:
     return names[0] if names else ""
 
 
+_WORK_REMEDY = ("set BOARD_WORK_ROOT to a directory of its own, outside the "
+                "application (`install.py --work <dir>`)")
+
+
+def _work_root_named() -> str:
+    """The work root as a refusal should name it: as configured, or — with
+    `BOARD_WORK_ROOT` unset — as the default it actually is, so nobody is
+    sent looking for a setting they never made."""
+    if WORK_SETTING or not EXTERNAL:
+        return f"the work root {work_root()}"
+    return (f"the work root {work_root()} (the tool installation, the "
+            f"default while BOARD_WORK_ROOT is unset)")
+
+
 def problems(require_tasks: bool = True,
              require_work: bool = True) -> list[str]:
     """Every reason the configured layout cannot be served, in plain
@@ -953,28 +973,43 @@ def problems(require_tasks: bool = True,
 
     if EXTERNAL:
         app, work = REPO.resolve(), work_root().resolve()
+        # With BOARD_WORK_ROOT unset the work root is the tool installation
+        # — the documented default — so a refusal names *that*, and says
+        # which setting moves it, rather than blaming a setting nobody made.
+        where = _work_root_named()
         if app == work:
-            found.append("BOARD_APP_ROOT and BOARD_WORK_ROOT name the same "
-                         "directory — the work state is kept outside the "
-                         "application it describes")
+            if WORK_SETTING:
+                found.append("BOARD_APP_ROOT and BOARD_WORK_ROOT name the same "
+                             "directory — the work state is kept outside the "
+                             "application it describes")
+            else:
+                found.append(f"BOARD_APP_ROOT={REPO} is the tool installation "
+                             f"itself, which is also {where} — the work state "
+                             f"is kept outside the application it describes; "
+                             f"{_WORK_REMEDY}")
         elif _inside(work, app):
-            found.append(f"the work root {work_root()} is inside the "
-                         f"application {REPO} — task state kept there lands "
-                         f"in the application's own files, which is the one "
-                         f"thing an external layout exists to prevent")
+            found.append(f"{where} is inside the application {REPO} — task "
+                         f"state kept there lands in the application's own "
+                         f"files, which is the one thing an external layout "
+                         f"exists to prevent"
+                         + ("" if WORK_SETTING else f"; {_WORK_REMEDY}, or "
+                            f"unset BOARD_APP_ROOT for a vendored install"))
         elif _inside(app, work):
-            found.append(f"the application {REPO} is inside the work root "
-                         f"{work_root()} — the two are separate repositories")
+            found.append(f"the application {REPO} is inside {where} — the two "
+                         f"are separate repositories"
+                         + ("" if WORK_SETTING else f"; {_WORK_REMEDY}"))
         tool = git_root(TM_ROOT)
         if tool is not None and tool.resolve() == app:
-            found.append(f"BOARD_APP_ROOT={REPO} is bench's own repository — "
-                         f"bench does not manage itself; name the application "
-                         f"you want managed")
+            found.append(f"BOARD_APP_ROOT={REPO} is the repository bench "
+                         f"itself sits in ({TM_ROOT}) — bench does not manage "
+                         f"the repository serving the board; name the "
+                         f"application you want managed")
         state = state_repo()
         if not found and state is not None and state.resolve() == app:
-            found.append(f"the work root resolves into the application's own "
+            found.append(f"{where} resolves into the application's own "
                          f"repository ({REPO}) — the board's state needs a "
-                         f"repository of its own")
+                         f"repository of its own"
+                         + ("" if WORK_SETTING else f"; {_WORK_REMEDY}"))
         if found:
             return found
 
@@ -1010,10 +1045,16 @@ def problems(require_tasks: bool = True,
     if COMMIT_MOVES or SYNC:
         if state_repo() is None:
             which = "BOARD_SYNC" if SYNC else "BOARD_COMMIT_MOVES"
+            # Externally with no BOARD_WORK_ROOT, `git init` in the tool
+            # would make the installation the ticket repository; naming a
+            # work state of its own is the likelier intent, so it comes first.
+            remedy = ("run `git init` there" if WORK_SETTING or not EXTERNAL
+                      else f"{_WORK_REMEDY} and run `git init` in it, or run "
+                           f"`git init` in the tool installation")
             found.append(
-                f"{which} is on but the work root {work_root()} is in no git "
+                f"{which} is on but {_work_root_named()} is in no git "
                 f"repository, so there is nowhere for the board's own commits "
-                f"to go — run `git init` there, or turn {which} off in "
+                f"to go — {remedy}, or turn {which} off in "
                 f"manager/local/.env. Bench will not commit the board's "
                 f"bookkeeping to the application instead")
 
