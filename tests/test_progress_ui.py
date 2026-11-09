@@ -86,6 +86,12 @@ class ProgressUI(unittest.TestCase):
             raise unittest.SkipTest("node not available — progress rendering unrun")
         cls.src = _harness()
 
+    def setUp(self):
+        # the fixtures' clock is the test's own: in a long suite, minutes can
+        # pass between import and the case, and "25m ago" must stay 25m
+        global NOW
+        NOW = time.time()
+
     def call(self, expr: str, *, p=None, tool=None, board_events=None) -> str:
         state = {"progress": {CARD: p} if p else {},
                  "boardEvents": board_events or []}
