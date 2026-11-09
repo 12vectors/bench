@@ -81,6 +81,9 @@ class Base(unittest.TestCase):
             self.addCleanup(registry.clear)
         events._BRIDGED.clear()
         self.addCleanup(events._BRIDGED.clear)
+        # a trailing refusal notice still pending must not fire into the next case
+        self.addCleanup(lambda: [slot["timer"].cancel() for slot in progress._NOTIFY.values()
+                                 if slot.get("timer")])
         self.broadcasts: list[dict] = []
         self.addCleanup(setattr, state, "broadcast", state.broadcast)
         state.broadcast = self.broadcasts.append
