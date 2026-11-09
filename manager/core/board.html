@@ -976,6 +976,93 @@
     font:inherit;font-size:12.5px;padding:7px 9px;border-radius:7px;
     border:1px solid var(--border);background:var(--bg);color:var(--text)}
 
+  /* ── the detail view's structure (task 81): identity and the next
+     decision first and held in view while reading, then five sections.
+     State is a word everywhere; colour only repeats it. ── */
+  #drawer.wide{width:min(920px,96vw)!important}
+  #drawer .dsticky{position:sticky;top:-20px;z-index:2;background:var(--canvas);
+    margin-top:-20px;padding:14px 0 8px;flex-wrap:wrap;border-bottom:1px solid var(--border-soft)}
+  #drawer .dtitle{flex:1 1 220px;min-width:0;margin:0;font-size:16px;line-height:1.3;
+    font-weight:600;overflow-wrap:anywhere}
+  #drawer .dtabs{display:flex;gap:2px;flex-wrap:wrap;width:100%;margin-top:4px}
+  #drawer .dtabs button{font-size:12px;padding:4px 10px;border-radius:6px;
+    border:1px solid transparent;background:none;color:var(--muted)}
+  #drawer .dtabs button[aria-selected="true"]{color:var(--text);border-color:var(--border);
+    background:var(--sunken);font-weight:600}
+  #drawer .dtabs .n{font-family:var(--mono);font-size:10.5px;margin-left:4px;color:var(--dim)}
+  #drawer .dsec{display:flex;flex-direction:column;gap:12px}
+  #drawer .dsec[hidden]{display:none}
+  #drawer .dsec h3{font-size:12px;font-weight:600;margin:4px 0 0;color:var(--text)}
+  #drawer .dnext{border-left:3px solid var(--accent);background:var(--sunken);
+    border-radius:0 8px 8px 0;padding:8px 10px;font-size:13px}
+  #drawer .dnext.bad{border-left-color:var(--alarm)}
+  #drawer .dnext.calm{border-left-color:var(--calm)}
+  #drawer .dnext .who{font-family:var(--mono);font-size:10.5px;color:var(--dim);display:block}
+  #drawer dl.dfacts{display:grid;grid-template-columns:minmax(90px,max-content) 1fr;
+    gap:4px 12px;margin:0;font-size:12.5px}
+  #drawer dl.dfacts dt{color:var(--dim)}
+  #drawer dl.dfacts dd{margin:0;color:var(--text);overflow-wrap:anywhere}
+  #drawer dl.dfacts dd.unknown{color:var(--dim);font-style:italic}
+  #drawer .dlink{background:none;border:0;padding:0;color:var(--accent);
+    text-decoration:underline;cursor:pointer;font:inherit}
+  #drawer .acount{font-size:13px}
+  #drawer .acount b{font-variant-numeric:tabular-nums}
+  #drawer .arow{border:1px solid var(--line);border-radius:8px;padding:0}
+  #drawer .arow>summary{display:flex;gap:8px;align-items:baseline;padding:7px 10px;
+    cursor:pointer;list-style:none;font-size:12.5px}
+  #drawer .arow>summary::-webkit-details-marker{display:none}
+  #drawer .arow .abox{flex:none;width:16px;height:16px;border:1.5px solid var(--border);
+    border-radius:4px;display:inline-flex;align-items:center;justify-content:center;
+    font-size:11px;line-height:1;align-self:center}
+  #drawer .arow.accepted .abox{border-color:var(--calm);color:var(--calm)}
+  #drawer .arow .alabel{flex:1;min-width:0;overflow-wrap:anywhere}
+  #drawer .arow .aword{flex:none;font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+  #drawer .arow.needs-work .aword,#drawer .arow.recheck .aword,
+  #drawer .arow.open .aword{color:var(--alarm)}
+  #drawer .arow.accepted .aword,#drawer .arow.resolved .aword{color:var(--calm)}
+  #drawer .arow.reported .aword,#drawer .arow.fix-reported .aword{color:var(--accent)}
+  #drawer .arow .abody{padding:4px 10px 10px 34px;display:flex;flex-direction:column;
+    gap:8px;font-size:12.5px}
+  #drawer .arow .afull{margin:0;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere}
+  #drawer .arow .ameta,#drawer .dsec .ameta{font-family:var(--mono);font-size:10.5px;color:var(--dim);
+    overflow-wrap:anywhere}
+  #drawer .arec{border-left:2px solid var(--line);padding-left:8px;font-size:12px;
+    color:var(--muted);overflow-wrap:anywhere}
+  #drawer .arec b{color:var(--text);font-weight:500}
+  #drawer .aform{display:flex;flex-direction:column;gap:6px;border-top:1px dashed var(--line);
+    padding-top:8px}
+  #drawer .aform label{font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:3px}
+  #drawer .aform textarea,#drawer .aform input,#drawer .aform select{width:100%;box-sizing:border-box;
+    font:inherit;font-size:12.5px;padding:6px 8px;border-radius:7px;
+    border:1px solid var(--border);background:var(--bg);color:var(--text)}
+  #drawer .aform .racts,#drawer .dsec .racts{display:flex;gap:6px;flex-wrap:wrap}
+  #drawer .dsec button.dact{font-size:12px;padding:4px 10px}
+  #drawer .dsec .dnote{font-size:11.5px;color:var(--dim);margin:0}
+  #drawer .dsec .dnote.bad{color:var(--alarm)}
+  #drawer .rpt{border:1px solid var(--line);border-radius:8px}
+  #drawer .rpt>summary{padding:7px 10px;cursor:pointer;font-size:12.5px;display:flex;
+    gap:8px;flex-wrap:wrap;align-items:baseline}
+  #drawer .rpt>summary .ameta{margin-left:auto}
+  #drawer .rpt .rtext{margin:0;padding:6px 12px 10px;font-family:var(--mono);font-size:11.5px;
+    line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;max-height:none;color:var(--muted)}
+  #drawer .chain{display:flex;flex-direction:column;gap:4px;margin:0;padding:0;list-style:none}
+  #drawer .chain li{font-size:12px;border-left:2px solid var(--line);padding-left:8px;
+    overflow-wrap:anywhere}
+  #drawer .chain li.resolved{border-left-color:var(--calm)}
+  #drawer .chain li.fix-reported{border-left-color:var(--accent)}
+  #drawer .chain li.opened,#drawer .chain li.reopened{border-left-color:var(--alarm)}
+  #drawer .tline{display:flex;flex-direction:column;gap:6px}
+  #drawer .tline .tl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12px}
+  #drawer .tline .tl time{font-family:var(--mono);font-size:10.5px;color:var(--dim);white-space:nowrap}
+  #drawer .tline .tl .src{font-family:var(--mono);font-size:10px;color:var(--dim)}
+  #drawer .tline .tl .tx{overflow-wrap:anywhere;white-space:pre-wrap}
+  @media (max-width:520px){
+    #drawer{width:100vw!important}
+    #drawerbody{padding:20px 12px}
+    #drawer dl.dfacts{grid-template-columns:1fr}
+    #drawer .arow .abody{padding-left:10px}
+  }
+
   /* ── completion sheet ── */
   #sheetwrap{
     position:fixed;inset:0;z-index:30;display:none;align-items:flex-start;
@@ -1173,6 +1260,11 @@ const S = {
   disc: {},              // file -> {data, stamp, error}: the card's discussion
   commentDraft: {},      // file -> unsent comment text, kept across redraws
   refineKey: {},         // file -> the request key for that text's refinement
+  dtab: {},              // file -> the detail view's open section (task 81)
+  acc: {},               // file -> {data, stamp, error}: acceptance, findings, reports
+  accOpen: {},           // `${file}:${criterion|finding}` -> expanded in the detail view
+  accDraft: {},          // form key -> unsent note text, kept across redraws
+  dwide: false,          // the detail view's expanded reading width
   flightSid: null,
   focusSid: null,
   filter: 'all',
@@ -3597,6 +3689,10 @@ function cardFor(task) {
   // only on cards bench has pinned a checkout for.
   const reviewed = reviewChip(task);
   if (reviewed) chips.push(reviewed);
+  // how many tracked criteria a named person has accepted, and how many
+  // review findings are still open (task 81) — each a link to its section
+  // of the detail view. Never a completion ratio: the word is "accepted".
+  for (const c of acceptanceChips(task)) chips.push(c);
   if (prState && prState.ci) {
     chips.push({ label: 'CI', glyph: { pass: '✓', fail: '✕', running: '◌' }[prState.ci],
       cls: { pass: 'ok', fail: 'bad', running: 'accent' }[prState.ci], title: detail });
@@ -3687,6 +3783,7 @@ function cardFor(task) {
         if (c.verify) return `<button class="chip2 ${c.cls}" data-verify="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.gate) return `<button class="chip2 ${c.cls}" data-gate="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.review) return `<button class="chip2 ${c.cls}" data-review="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
+        if (c.section) return `<button class="chip2 ${c.cls}" data-section="${esc(c.section)}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.cmd) return `<button class="chip2 ${c.cls}" data-cmd="${esc(c.cmd)}" title="${esc(c.title)}">${actLabel(c.label, 'run it?', 'running…')}${g}</button>`;
         return `<span class="chip2 ${c.cls}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</span>`;
   };
@@ -3749,6 +3846,13 @@ function cardFor(task) {
     btn.addEventListener('click', (e) => { e.stopPropagation(); gateSheet(task); }));
   el.querySelectorAll('[data-review]').forEach(btn =>
     btn.addEventListener('click', (e) => { e.stopPropagation(); reviewSheet(task); }));
+  el.querySelectorAll('[data-section]').forEach(btn =>
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      S.dtab[task.file] = btn.dataset.section;
+      if (S.selected && S.selected.file === task.file) renderDrawer();
+      else showDetail(task);
+    }));
   el.querySelectorAll('[data-drive]').forEach(btn =>
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -5974,7 +6078,8 @@ async function settingsApply() {
    the behaviour showDetail() asks for outright and this must not fight. */
 function drawerKey() {
   if (S.fileView) return 'v:drawer:file:' + S.fileView.dir + '/' + S.fileView.name;
-  return S.selected ? 'v:drawer:task:' + S.selected.file : null;
+  // per section too: each of a card's sections keeps its own reading place
+  return S.selected ? 'v:drawer:task:' + S.selected.file + ':' + drawerTab(S.selected) : null;
 }
 
 function renderDrawer() {
@@ -6014,32 +6119,49 @@ function renderDrawer() {
       `<pre>${esc(failure.excerpt)}</pre>` +
       `<span style="color:var(--dim)">${esc(failure.log || '')}</span></div></div>`
     : '';
-  // the comment box survives the redraw every state load makes: its text,
-  // and — when someone is typing in it — its focus and caret
-  const box = $('#commentbox');
-  const typing = box && document.activeElement === box
-    ? [box.selectionStart, box.selectionEnd] : null;
+  // every text field survives the redraw every state load makes: its text
+  // (kept in S as it is typed), and — when someone is typing in it — its
+  // focus and caret. The same for a focused tab or button, so a live
+  // update never drops a keyboard user to the top of the page.
+  const active = document.activeElement;
+  const typing = active && active.id && body.contains(active)
+    ? { id: active.id,
+        sel: typeof active.selectionStart === 'number'
+          ? [active.selectionStart, active.selectionEnd] : null }
+    : null;
+  const tab = drawerTab(t);
+  loadAcc(t);
+  const acc = (S.acc[t.file] || {}).data;
+  panel.classList.toggle('wide', !!S.dwide);
+  // Identity, lifecycle and the way out stay in view while reading (the
+  // head is sticky); then five destinations, of which one is drawn. Every
+  // section is in the document, so a keyboard, a find-in-page and the
+  // existing tools all reach it — the others are `hidden`, not absent.
   body.innerHTML =
-    `<div class="dhead">` +
+    `<div class="dhead dsticky">` +
     `<span class="mono" style="font-size:12px;color:var(--dim)">${t.number ? '#' + esc(t.number) : ''}</span>` +
+    `<h2 class="dtitle" id="dtitle">${esc(cardTitle(t))}</h2>` +
     `<span class="pill" style="background:${pill.bg};color:${pill.tint}">${pill.text}</span>` +
-    `<span class="spacer"></span>` +
-    `<button id="closeDrawer">Close</button></div>` +
-    `<div id="drawertools"></div>` +
-    failBlock +
-    signalsBlock(t) +
-    planBlock(t) +
-    phaseMembers(t) +
-    // the discussion is drawn by its own panel below, as text — never
-    // through the Markdown renderer, and never as part of the brief
-    `<div class="dbody">${md(withoutDiscussion(t.body))}</div>` +
-    discussionPanel(t) +
+    `<button id="dwide" aria-pressed="${S.dwide ? 'true' : 'false'}" ` +
+    `title="A wider reading view for long briefs and reports">${S.dwide ? 'Narrow' : 'Expand'}</button>` +
+    `<button id="closeDrawer">Close</button>` +
+    dtabsHtml(t, tab, acc) + `</div>` +
+    dsec('overview', tab, overviewHtml(t, acc, failBlock, signalsBlock(t), planBlock(t), phaseMembers(t))) +
+    // the discussion is drawn by its own panel, as text — never through
+    // the Markdown renderer, and never as part of the brief
+    dsec('brief', tab, briefHtml(t) + discussionPanel(t)) +
+    dsec('acceptance', tab, acceptanceHtml(t, acc)) +
+    dsec('reviews', tab, reviewsHtml(t, acc)) +
+    dsec('activity', tab, activityHtml(t, acc)) +
     `<div class="dmeta">${esc(t.stage)}/${esc(t.file)} · ${t.words} words · edited ${esc(when)}</div>`;
   wireDiscussion(t);
+  wireDetail(t);
   if (typing) {
-    const again = $('#commentbox');
-    again.focus();
-    again.setSelectionRange(typing[0], typing[1]);
+    const again = document.getElementById(typing.id);
+    if (again && !again.closest('[hidden]')) {
+      again.focus();
+      if (typing.sel && again.setSelectionRange) again.setSelectionRange(typing.sel[0], typing.sel[1]);
+    }
   }
   // every tool and action the card has, built by the card's own builder
   // and wired by it — so the detail view cannot offer a tool the card
@@ -6062,6 +6184,552 @@ function renderDrawer() {
     // back to the card the detail view was opened from
     focusCard(t.file);
   });
+}
+
+/* ── the detail view's sections (task 81) ──────────────────────────────
+
+   Overview leads with what the card is, where it stands and the next
+   decision; Brief is the requirement; Acceptance, Reviews and Activity
+   are the records. What a card's acceptance and findings *are* is
+   computed by the server (`acceptance.py`) from the card's own records,
+   bench's evidence and the runs' claims — this draws it and never infers
+   a result from a lane, a clean exit or a green suite. Every word a
+   person or an agent wrote is drawn through esc(). */
+const DTABS = [['overview', 'Overview'], ['brief', 'Brief'], ['acceptance', 'Acceptance'],
+               ['reviews', 'Reviews'], ['activity', 'Activity']];
+const ACC_GLYPH = { accepted: '✓', 'needs-work': '✕', recheck: '↻', reported: '·', pending: '' };
+const STAGE_WORDS = { backlog: 'Backlog', 'to-do': 'To do', 'in-progress': 'In progress',
+                      review: 'Review', done: 'Done' };
+
+function drawerTab(t) {
+  const want = S.dtab[t.file];
+  return DTABS.some(([k]) => k === want) ? want : 'overview';
+}
+
+function dsec(key, tab, html) {
+  return `<section class="dsec" id="dsec-${key}" role="tabpanel" aria-labelledby="dtab-${key}"` +
+    ` tabindex="-1"${key === tab ? '' : ' hidden'}>${html}</section>`;
+}
+
+function dtabsHtml(t, tab, acc) {
+  const count = {
+    acceptance: acc && acc.tracked ? `${acc.counts.accepted}/${acc.counts.total}` : '',
+    reviews: acc && (acc.findingCounts.open + acc.findingCounts['fix-reported'])
+      ? String(acc.findingCounts.open + acc.findingCounts['fix-reported']) : '',
+  };
+  return `<nav class="dtabs" role="tablist" aria-label="Sections of this card">` +
+    DTABS.map(([k, word]) => `<button role="tab" id="dtab-${k}" data-tab="${k}" ` +
+      `aria-controls="dsec-${k}" aria-selected="${k === tab}" tabindex="${k === tab ? 0 : -1}">` +
+      `${word}${count[k] ? `<span class="n">${esc(count[k])}</span>` : ''}</button>`).join('') +
+    `</nav>`;
+}
+
+/* The card split as the server splits it (`taskfiles.card_parts`): the
+   head (title and `**Field:**` lines), the brief, and the history from
+   the first dated report or history heading — a ``` fence hides both. */
+function cardSplit(body) {
+  const lines = String(body || '').split(/(?<=\n)/);
+  let i = 0;
+  while (i < lines.length && !lines[i].trim()) i++;
+  if (i < lines.length && /^#\s/.test(lines[i])) i++;
+  while (i < lines.length && (!lines[i].trim() || /^\*\*[A-Za-z][A-Za-z ]{0,40}:\*\*/.test(lines[i]))) i++;
+  const start = i;
+  let end = lines.length, fenced = false;
+  for (let k = start; k < lines.length; k++) {
+    const line = lines[k];
+    if (line.trimStart().startsWith('```')) { fenced = !fenced; continue; }
+    if (fenced) continue;
+    if (/^##\s+(?:Discussion|Phase log|Acceptance record|Review findings)\s*$/.test(line)
+        || /^##\s+.+\s[—–-]\s\d{4}-\d{2}-\d{2}\b/.test(line)) {
+      end = k;
+      let above = k - 1;
+      while (above >= start && !lines[above].trim()) above--;
+      if (above >= start && lines[above].trim() === '---') end = above;
+      break;
+    }
+  }
+  return { head: lines.slice(0, start).join(''), brief: lines.slice(start, end).join(''),
+           history: lines.slice(end).join('') };
+}
+
+function whenOf(value) {
+  if (value == null || value === '') return 0;
+  if (typeof value === 'number') return value * 1000;
+  const iso = String(value);
+  const parsed = Date.parse(/Z$|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso.replace(' ', 'T'));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function stampOf(value) {
+  const ms = whenOf(value);
+  return ms ? new Date(ms).toLocaleString() : 'time not recorded';
+}
+
+function accStamp(t) {
+  const p = (S.state.progress || {})[t.file];
+  const a = (S.state.acceptance || {})[t.file];
+  return `${t.stage}:${t.mtime}:${p ? p.agent + ':' + (p.lastReport || '') + ':' + p.active : '-'}:` +
+    `${a ? JSON.stringify(a) : '-'}`;
+}
+
+function loadAcc(t, force) {
+  const cur = S.acc[t.file] || {};
+  const stamp = accStamp(t);
+  if (cur.loading || (!force && cur.stamp === stamp)) return;
+  S.acc[t.file] = { ...cur, loading: true };
+  fetch(`/api/card/acceptance?file=${encodeURIComponent(t.file)}&stage=${encodeURIComponent(t.stage)}`)
+    .then(res => res.json().then(data => ({ ok: res.ok, data })))
+    .then(({ ok, data }) => ok ? { data, stamp } : { data: cur.data, error: data.error, stamp })
+    .catch(() => ({ data: cur.data, stamp, error: 'the board could not be asked' }))
+    .then(next => {
+      S.acc[t.file] = next;
+      if (S.selected && S.selected.file === t.file && !S.fileView) renderDrawer();
+    });
+}
+
+/* What the person looking at this card should do next, and who holds the
+   move — read from facts the board has, in order of what changes the
+   decision most. Never "done" from a lane: Done says delivered, nothing
+   about acceptance. */
+function nextStep(t, acc) {
+  const agent = agentOnTask(t.file);
+  const failure = failedRun(t);
+  const gate = (S.state.gates || {})[t.file];
+  const pr = (S.state.prs || {})[t.file];
+  const counts = acc ? acc.counts : null;
+  const fc = acc ? acc.findingCounts : null;
+  if ((S.state.completing || {})[t.file]) {
+    return { who: 'board', cls: '', what: 'Being merged and cleaned up — wait for it to finish.' };
+  }
+  if (failure) {
+    return { who: 'you', cls: 'bad', what: `The last run failed (rc=${failure.rc}). Read the excerpt below, then start it again or walk the card back.` };
+  }
+  if (agent && agent.status === 'running') {
+    const doing = { review: 'reviewing it', refine: 'refining the brief', 'act-pr': 'acting on the PR' }[agent.mode] || 'working on it';
+    return { who: agent.name || 'agent', cls: '', what: `${agent.name || 'An agent'} is ${doing}. ‖ hold in the tools stops it.` };
+  }
+  if (fc && fc.open) {
+    return { who: 'you or an agent', cls: 'bad', link: 'reviews',
+      what: `${fc.open} open review finding${fc.open === 1 ? '' : 's'} — fix ${fc.open === 1 ? 'it' : 'them'} (↻ act on PR, or by hand) and record the fix.` };
+  }
+  if (fc && fc['fix-reported']) {
+    return { who: 'you', cls: '', link: 'reviews',
+      what: `${fc['fix-reported']} fix${fc['fix-reported'] === 1 ? '' : 'es'} reported — recheck and resolve, or reopen.` };
+  }
+  if (counts && (counts['needs-work'] || counts.recheck)) {
+    return { who: 'you', cls: 'bad', link: 'acceptance',
+      what: `${counts['needs-work'] + counts.recheck} criteri${counts['needs-work'] + counts.recheck === 1 ? 'on needs' : 'a need'} work or a recheck.` };
+  }
+  if (gate && gate.decision === 'blocked') {
+    return { who: 'you', cls: 'bad', what: `The merge gate is not met: ${gate.summary}` };
+  }
+  switch (t.stage) {
+    case 'backlog': return { who: 'you', cls: '', what: 'Not started. Move it to to-do when it is next.' };
+    case 'to-do': return { who: 'you', cls: '', what: 'Queued. Move it to in-progress to commit to it, then ▸ start work.' };
+    case 'in-progress': return { who: 'you', cls: '', what: t.isPhase ? 'Run the phase (▸ run phase in the tools).' : 'Nobody is on it: ▸ start work, or work it by hand.' };
+    case 'review':
+      if (pr && prVerdict(t) === 'red') return { who: 'you or an agent', cls: 'bad', what: 'Changes were requested on the PR — ↻ act on PR, then review again.' };
+      if (counts && counts.reported) return { who: 'you', cls: '', link: 'acceptance', what: `${counts.reported} criteri${counts.reported === 1 ? 'on is' : 'a are'} reported done — confirm or send back.` };
+      if (!t.pr) return { who: 'you', cls: '', what: 'No pull request yet — ↑ open PR in the tools.' };
+      return { who: 'you', cls: '', what: 'Review it: ◔ review PR, confirm acceptance, then drag to done to merge & clean up.' };
+    case 'done': return { who: 'nobody', cls: 'calm', what: acc && acc.tracked && counts.accepted < counts.total
+      ? `Delivered. ${counts.total - counts.accepted} criteri${counts.total - counts.accepted === 1 ? 'on was' : 'a were'} never accepted on record — Done is not acceptance.`
+      : 'Delivered — nothing is waiting on anyone.' };
+    default: return { who: 'you', cls: '', what: '' };
+  }
+}
+
+function progressFact(t) {
+  const p = (S.state.progress || {})[t.file];
+  const agent = agentOnTask(t.file);
+  if (!p) return agent ? 'No progress was recorded for this run.' : 'No run on this card has reported progress.';
+  if ((p.channel || {}).state !== 'available') {
+    return `Reporting unavailable for the latest run: ${(p.channel || {}).why || 'it was given no progress channel'}.`;
+  }
+  const c = p.current;
+  const said = c ? (c.doing || c.narrative || (c.done || [])[0] || '') : '';
+  if (p.active) {
+    if (!c) return 'The run is working and has sent no progress update yet.';
+    return `agent-reported, ${ago(p.lastReport)} ago — ${said}${c.blocked ? ` · Blocked: ${c.blocked}` : ''}`;
+  }
+  // a finished run is history: its last words are never "doing now"
+  return `The latest run ${ENDED_WORDS[p.outcome] || 'ended'}${p.closed ? ' ' + ago(p.closed) + ' ago' : ''}.` +
+    (said ? ` It last said (history, not current): ${said}` : ' It sent no progress update.');
+}
+
+function roundLine(r) {
+  const word = { APPROVE: 'approved', 'REQUEST CHANGES': 'asked for changes' }[r.verdict] || 'gave no verdict';
+  return `${r.reviewer || 'A reviewer'} ${word}${r.commit ? ' at ' + r.commit.slice(0, 12) : ''}, ${r.at}` +
+    (r.label !== 'current-at-the-time' ? ` (${r.label})` : '');
+}
+
+/* What has happened since a review round: the PR updates filed after it
+   and the findings opened against it, by state. An earlier request for
+   changes is explained, never silently turned into approval. */
+function sinceRound(r, acc) {
+  const later = (acc.reports || []).filter(x => /^PR update/.test(x.kind) && whenOf(x.at) > whenOf(r.at));
+  const mine = (acc.findings || []).filter(f => f.round === r.id);
+  const bits = [];
+  if (later.length) bits.push(`${later.length} PR update${later.length === 1 ? '' : 's'} since`);
+  for (const [state, word] of [['open', 'open'], ['fix-reported', 'fix reported'], ['resolved', 'resolved']]) {
+    const n = mine.filter(f => f.state === state).length;
+    if (n) bits.push(`${n} finding${n === 1 ? '' : 's'} ${word}`);
+  }
+  return bits.join(' · ');
+}
+
+function overviewHtml(t, acc, failBlock, signals, plan, members) {
+  const step = nextStep(t, acc);
+  const counts = acc ? acc.counts : null;
+  const last = acc && acc.rounds.length ? acc.rounds[acc.rounds.length - 1] : null;
+  const link = (tab, text) => `<button class="dlink" data-goto="${tab}">${esc(text)}</button>`;
+  const accFact = !acc ? 'reading…'
+    : !acc.tracked ? `${link('acceptance', 'Acceptance results not recorded')}`
+    : `${link('acceptance', `${counts.accepted} of ${counts.total} accepted`)}` +
+      ['reported', 'pending', 'needs-work', 'recheck'].filter(k => counts[k])
+        .map(k => ` · ${counts[k]} ${esc(acc.states[k])}`).join('');
+  const fc = acc ? acc.findingCounts : null;
+  const findFact = !acc ? 'reading…'
+    : !acc.findings.length ? (acc.rounds.length ? 'No findings recorded against the reviews.' : '')
+    : `${link('reviews', `${fc.open} open`)} · ${fc['fix-reported']} fix reported · ${fc.resolved} resolved`;
+  const fact = (dt, dd) => dd ? `<dt>${dt}</dt><dd>${dd}</dd>` : '';
+  return failBlock +
+    `<div class="dnext ${step.cls}" aria-label="Next step"><span class="who">next · ${esc(step.who)}</span>` +
+    `${esc(step.what)}${step.link ? ' ' + link(step.link, 'Go there') : ''}</div>` +
+    `<dl class="dfacts">` +
+    fact('Stage', esc(STAGE_WORDS[t.stage] || t.stage) + (t.assignee ? ` · held by ${esc(t.assignee)}` : '')) +
+    fact('Progress', esc(progressFact(t))) +
+    fact('Acceptance', accFact) +
+    fact('Findings', findFact) +
+    fact('Last review', last ? esc(roundLine(last)) +
+      (sinceRound(last, acc) ? ` — ${esc(sinceRound(last, acc))}` : '') +
+      ` · ${link('reviews', 'rounds')}` : '') +
+    `</dl>` +
+    (last ? `<p class="dnote">A reviewer's verdict is about the revision it names. GitHub's formal approval and Bench's own verdict are separate facts, in Signals below.</p>` : '') +
+    signals + members +
+    `<h3>Tools</h3><div id="drawertools"><p class="dnote">This card has no tools in its current stage.</p></div>` +
+    (plan ? `<details class="rpt"${S.accOpen[t.file + ':plan'] ? ' open' : ''} data-keep="plan">` +
+            `<summary>Branch and plan</summary><div style="padding:6px 10px">${plan}</div></details>` : '');
+}
+
+function briefHtml(t) {
+  const parts = cardSplit(t.body);
+  const head = parts.head.replace(/^\s*#\s[^\n]*\n?/, '');
+  return `<div class="dbody">${md(head + '\n' + withoutDiscussion(parts.brief))}</div>` +
+    `<p class="dnote">The brief is the requirement. Earlier wordings are in the card's history: ` +
+    `each applied refinement is a decision in the discussion below, and the card's git history ` +
+    `holds every previous text.</p>`;
+}
+
+function evidenceOptions(t, draft) {
+  const e = S.evidence[t.file];
+  if (!e) { fetchEvidence(t.file, t.stage).then(() => { if (S.selected && S.selected.file === t.file) renderDrawer(); }); }
+  const passed = ((e && e.evidence) || []).filter(r => r.outcome === 'passed');
+  const chosen = S.accDraft[draft] || '';
+  return `<option value="">none — a person's confirmation, with a note</option>` +
+    passed.map(r => `<option value="${esc(r.id)}"${chosen === r.id ? ' selected' : ''}>` +
+      `${esc(r.check)}${r.scope ? ' · ' + esc(r.scope) : ' · full run'} · passed` +
+      `${(r.source || {}).commit ? ' at ' + esc(r.source.commit.slice(0, 12)) : ''} · ${esc(r.id)}</option>`).join('');
+}
+
+function recordHtml(r) {
+  const word = { accepted: 'accepted', 'needs-work': 'needs work', recheck: 'recheck requested',
+                 pending: 'reset to pending', reported: 'reported' }[r.state] || r.state;
+  const src = { manual: 'confirmed by a person', evidence: 'mapped to bench evidence',
+                tracked: 'tracking started', 'legacy-tick': 'ticked by hand before tracking' }[r.source] || r.source;
+  return `<div class="arec"><b>${esc(word)}</b> · ${esc(src)} · ${esc(r.actor || 'unattributed')}` +
+    `${r.actorSource === 'os-user' ? ' (OS user)' : ''} · ${esc(stampOf(r.at))}` +
+    (r.evidence ? `<br>evidence ${esc(r.evidence)} — ${esc(r.check || '')}${r.scope ? ' · ' + esc(r.scope) : ''}` : '') +
+    (r.commit ? `<br><span class="ameta">at ${esc(r.commit)} · criterion revision ${esc(r.rev || '')}</span>` : `<br><span class="ameta">criterion revision ${esc(r.rev || '')}</span>`) +
+    (r.note ? `<br>${esc(r.note)}` : '') +
+    (r.ref ? `<br>reference: ${/^(https?:\/\/|\/files\/)/.test(r.ref)
+      ? `<a href="${esc(r.ref)}" target="_blank" rel="noopener">${esc(r.ref)}</a>` : esc(r.ref)}` : '') +
+    (r.recheck ? `<br><span class="bad">marked for recheck: ${esc(r.recheckReason || '')}</span>` : '') +
+    `</div>`;
+}
+
+function criterionHtml(t, c) {
+  const key = `${t.file}:${c.id}`;
+  const open = S.accOpen[key] ?? false;
+  const v = (id) => esc(S.accDraft[id] || '');
+  const ev = c.evidence;
+  const claim = c.claim;
+  return `<details class="arow ${esc(c.state)}" data-keep="${esc(c.id)}"${open ? ' open' : ''}>` +
+    `<summary><span class="abox" aria-hidden="true">${ACC_GLYPH[c.state] || ''}</span>` +
+    `<span class="alabel" title="${esc(c.text)}">${esc(c.label)}</span>` +
+    `<span class="aword">${esc(c.word)}</span></summary>` +
+    `<div class="abody"><p class="afull">${esc(c.text)}</p>` +
+    `<span class="ameta">id ${esc(c.id)} · revision ${esc(c.rev)}${c.legacyTick ? ' · ticked by hand in the brief' : ''}</span>` +
+    (c.reason ? `<p class="dnote${['recheck', 'needs-work'].includes(c.state) ? ' bad' : ''}">${esc(c.reason)}</p>` : '') +
+    (ev ? `<div class="arec">supporting evidence ${esc(ev.id)}: ${esc(ev.check || '')} · <b>${esc(ev.outcome)}</b>` +
+          `${ev.commit ? ' at ' + esc(ev.commit) : ''} · read from bench's record now</div>` : '') +
+    (claim ? `<div class="arec">${esc(claim.agent)} reported it implemented, ${esc(ago(claim.at))} ago` +
+             ` — agent-reported, not a result${(claim.evidence || []).length ? ` · proposed evidence ${esc(claim.evidence.join(', '))}` : ''}</div>` : '') +
+    (c.history.length ? `<h3>Record</h3>` + c.history.map(recordHtml).join('') : '<p class="dnote">Nothing recorded about it yet.</p>') +
+    `<div class="aform" data-crit="${esc(c.id)}" data-rev="${esc(c.rev)}" data-basis="${esc(c.basis || '')}">` +
+    `<label>Decision<select id="acc-state-${esc(c.id)}">` +
+    [['accepted', 'Accept'], ['needs-work', 'Needs work'], ['recheck', 'Needs recheck'], ['pending', 'Back to pending']]
+      .map(([k, w]) => `<option value="${k}"${(S.accDraft[`acc-state-${c.id}`] || 'accepted') === k ? ' selected' : ''}>${w}</option>`).join('') +
+    `</select></label>` +
+    `<label>Note — what you checked and how<textarea id="acc-note-${esc(c.id)}" rows="2">${v(`acc-note-${c.id}`)}</textarea></label>` +
+    `<label>Reference (optional) — a screenshot, URL or file<input id="acc-ref-${esc(c.id)}" value="${v(`acc-ref-${c.id}`)}"></label>` +
+    `<label>Supporting evidence (optional, for Accept)<select id="acc-ev-${esc(c.id)}">${evidenceOptions(t, `acc-ev-${c.id}`)}</select></label>` +
+    `<div class="racts"><button class="dact" data-decide="${esc(c.id)}">Record decision</button></div>` +
+    `<p class="dnote">Recorded as ${esc(accActor(t) || 'this board')}, against revision ${esc(c.rev)} of this criterion.</p>` +
+    `</div></div></details>`;
+}
+
+function accActor(t) {
+  const a = (S.acc[t.file] || {}).data;
+  return a && a.actor ? a.actor.name : '';
+}
+
+function acceptanceHtml(t, acc) {
+  if (!acc) {
+    const c = S.acc[t.file];
+    return c && c.error ? `<p class="dnote bad">${esc(c.error)}</p>` : `<p class="dnote">reading acceptance…</p>`;
+  }
+  const counts = acc.counts;
+  const legacy = acc.untracked.map(c => `<li>${c.legacyTick ? '<b>[x]</b> ' : '[ ] '}${esc(c.text)}` +
+    `${c.legacyTick ? ' <span class="ameta">ticked by hand — a legacy claim, not an acceptance</span>' : ''}</li>`).join('');
+  const trackBtn = (word) => `<div class="racts"><button class="dact" id="accTrack">` +
+    `${actLabel(word, 'click again — adds ids to the brief', 'tracking…')}</button></div>`;
+  if (!acc.tracked) {
+    return `<h3>Acceptance results not recorded</h3>` +
+      (acc.untracked.length
+        ? `<p class="dnote">Nothing on record says whether these criteria were met. The card's stage says nothing about it either, and nothing here is inferred from it.</p>` +
+          `<ul class="chain" style="list-style:none">${legacy}</ul>` +
+          trackBtn('Track acceptance') +
+          `<p class="dnote">Tracking gives each criterion a stable id on its own line in the brief and records it as pending — hand-written ticks are kept, and recorded as legacy claims awaiting confirmation. It changes no wording, and it is the only thing that assigns ids; opening this view never does.</p>`
+        : `<p class="dnote">This brief has no checklist criteria (lines like <code>- [ ] …</code>) to track.</p>`);
+  }
+  const breakdown = ['reported', 'pending', 'needs-work', 'recheck']
+    .filter(k => counts[k]).map(k => `${counts[k]} ${esc(acc.states[k])}`).join(' · ');
+  return `<p class="acount"><b>${counts.accepted} of ${counts.total}</b> criteria accepted` +
+    `${breakdown ? ` · ${breakdown}` : ''}</p>` +
+    `<p class="dnote">Accepted means a named person confirmed it, or mapped one of bench's own current passing records to it. It is not a measure of how complete the work is, and an agent's report never ticks one.</p>` +
+    acc.criteria.map(c => criterionHtml(t, c)).join('') +
+    (acc.untracked.length ? `<h3>New criteria, not yet tracked</h3><ul class="chain">${legacy}</ul>` +
+      `<p class="dnote">They count as pending.</p>` + trackBtn('Track new criteria') : '') +
+    (acc.removed.length ? `<details class="rpt"><summary>Removed from the brief (${acc.removed.length}) — history, not counted</summary>` +
+      `<div style="padding:6px 10px">` + acc.removed.map(r => `<p class="afull">${esc(r.text || r.id)}</p>` +
+        r.history.map(recordHtml).join('')).join('') + `</div></details>` : '');
+}
+
+function findingHtml(t, f, acc) {
+  const key = `${t.file}:${f.id}`;
+  const open = S.accOpen[key] ?? (f.state !== 'resolved');
+  const round = acc.rounds.find(r => r.id === f.round);
+  const crit = acc.criteria.find(c => c.id === f.criterion);
+  const eventWord = { opened: 'found', 'fix-reported': 'fix reported', resolved: 'resolved', reopened: 'reopened' };
+  const acts = { open: [['fix-reported', 'Report fix'], ['resolved', 'Resolve']],
+                 'fix-reported': [['resolved', 'Resolve after recheck'], ['reopened', 'Reopen']],
+                 resolved: [['reopened', 'Reopen']] }[f.state];
+  return `<details class="arow ${esc(f.state)}" data-keep="${esc(f.id)}"${open ? ' open' : ''}>` +
+    `<summary><span class="abox" aria-hidden="true">${f.state === 'resolved' ? '✓' : f.state === 'open' ? '!' : '·'}</span>` +
+    `<span class="alabel">${esc(f.text)}</span><span class="aword">${esc(f.word)}</span></summary>` +
+    `<div class="abody">` +
+    `<span class="ameta">${esc(f.id)}${round ? ' · from ' + esc(roundLine(round)) : ''}</span>` +
+    (crit ? `<span>About: <button class="dlink" data-goto="acceptance">${esc(crit.label)}</button> (${esc(crit.word)})</span>` : '') +
+    (f.criterionRemoved ? `<span class="dnote">The criterion it was about has since been removed from the brief.</span>` : '') +
+    `<ol class="chain">` + f.events.map(e => `<li class="${esc(e.event)}"><b>${esc(eventWord[e.event] || e.event)}</b>` +
+      ` · ${esc(e.actor || 'unattributed')} · ${esc(stampOf(e.at))}` +
+      (e.commit ? ` · at ${esc(e.commit)}` : '') +
+      (e.event === 'opened' ? '' : e.note ? `<br>${esc(e.note)}` : '') +
+      (e.evidenceNow ? `<br>evidence ${esc(e.evidenceNow.id)}: ${esc(e.evidenceNow.check || '')} · <b>${esc(e.evidenceNow.outcome)}</b> (read now)` : '') +
+      `</li>`).join('') + `</ol>` +
+    `<div class="aform" data-finding="${esc(f.id)}" data-basis="${esc(f.basis || '')}">` +
+    `<label>Note — the fix, or on what authority it is resolved<textarea id="fnd-note-${esc(f.id)}" rows="2">${esc(S.accDraft[`fnd-note-${f.id}`] || '')}</textarea></label>` +
+    (f.state !== 'resolved' ? `<label>Supporting evidence (optional)<select id="fnd-ev-${esc(f.id)}">${evidenceOptions(t, `fnd-ev-${f.id}`)}</select></label>` : '') +
+    `<div class="racts">` + acts.map(([ev, w]) => `<button class="dact" data-event="${ev}">${esc(w)}</button>`).join('') + `</div>` +
+    `<p class="dnote">A reported fix keeps the finding open until somebody rechecks it. An agent's later update never resolves it, and resolving it here is not formal PR approval.</p>` +
+    `</div></div></details>`;
+}
+
+function reviewsHtml(t, acc) {
+  if (!acc) return `<p class="dnote">reading reviews…</p>`;
+  const live = acc.findings.filter(f => f.state !== 'resolved');
+  const done = acc.findings.filter(f => f.state === 'resolved');
+  const rounds = [...acc.rounds].reverse();
+  const roundHtml = (r, open) => `<details class="rpt" data-keep="${esc(r.id)}"${(S.accOpen[`${t.file}:${r.id}`] ?? open) ? ' open' : ''}>` +
+    `<summary><b>${esc(roundLine(r))}</b>${sinceRound(r, acc) ? `<span class="dnote">${esc(sinceRound(r, acc))}</span>` : ''}` +
+    `<span class="ameta">${esc(r.id)}</span></summary><pre class="rtext">${esc(r.report)}</pre></details>`;
+  const fc = acc.findingCounts;
+  return `<p class="acount"><b>${fc.open}</b> open · <b>${fc['fix-reported']}</b> fix reported · <b>${fc.resolved}</b> resolved</p>` +
+    (live.length ? live.map(f => findingHtml(t, f, acc)).join('')
+                 : `<p class="dnote">No open findings on record.</p>`) +
+    `<details class="rpt" data-keep="newfinding"${S.accOpen[`${t.file}:newfinding`] ? ' open' : ''}><summary>Record a finding</summary>` +
+    `<div class="aform" style="padding:0 10px 10px" data-newfinding="1">` +
+    `<label>What was found<textarea id="fnd-text" rows="2">${esc(S.accDraft['fnd-text'] || '')}</textarea></label>` +
+    `<label>From review round<select id="fnd-round"><option value="">none</option>` +
+    rounds.map(r => `<option value="${esc(r.id)}"${S.accDraft['fnd-round'] === r.id ? ' selected' : ''}>${esc(roundLine(r))}</option>`).join('') + `</select></label>` +
+    `<label>About criterion (optional)<select id="fnd-crit"><option value="">none — not every concern is a criterion</option>` +
+    acc.criteria.map(c => `<option value="${esc(c.id)}"${S.accDraft['fnd-crit'] === c.id ? ' selected' : ''}>${esc(c.label)}</option>`).join('') + `</select></label>` +
+    `<div class="racts"><button class="dact" id="fndOpen">Record finding</button></div></div></details>` +
+    (done.length ? `<details class="rpt" data-keep="resolved"${S.accOpen[`${t.file}:resolved`] ? ' open' : ''}><summary>Resolved findings (${done.length})</summary>` +
+      `<div style="padding:6px 10px;display:flex;flex-direction:column;gap:6px">${done.map(f => findingHtml(t, f, acc)).join('')}</div></details>` : '') +
+    `<h3>Review rounds</h3>` +
+    (rounds.length ? roundHtml(rounds[0], true) +
+      (rounds.length > 1 ? `<details class="rpt" data-keep="oldrounds"${S.accOpen[`${t.file}:oldrounds`] ? ' open' : ''}><summary>Earlier rounds (${rounds.length - 1})</summary>` +
+        `<div style="padding:6px 10px;display:flex;flex-direction:column;gap:6px">${rounds.slice(1).map(r => roundHtml(r, false)).join('')}</div></details>` : '')
+      : `<p class="dnote">No PR review has been filed on this card.</p>`) +
+    `<p class="dnote">A round's verdict is about the revision it names. A request for changes stays what it was; what happened after it is the fixes and resolutions above, and formal GitHub approval is a separate fact in Overview's Signals.</p>`;
+}
+
+function activityHtml(t, acc) {
+  const items = [];
+  const p = (S.state.progress || {})[t.file];
+  if (p) {
+    fetchProgress(p.agent);
+    const full = progressOf(p.agent, t.file);
+    for (const e of ((full && full.history) || (p.current ? [p.current] : []))) {
+      const said = [e.stage, e.doing, ...(e.done || []).map(d => 'done: ' + d), e.blocked ? 'blocked: ' + e.blocked : '',
+                    (e.criteria || []).length ? 'reports criteria ' + e.criteria.join(', ') : ''].filter(Boolean).join(' · ');
+      items.push({ at: whenOf(e.at), src: 'agent-reported', text: said || e.narrative || '' });
+    }
+  }
+  if (acc) {
+    for (const r of acc.reports) items.push({ at: whenOf(r.at), src: `${r.kind}${r.by ? ' · ' + r.by : ''}`, report: r.text });
+    for (const c of [...acc.criteria, ...acc.removed]) {
+      for (const r of c.history) items.push({ at: whenOf(r.at), src: `acceptance · ${r.actor || ''}`,
+        text: `${r.state} — ${(c.label || r.text || c.id)}${r.note ? ': ' + r.note : ''}` });
+    }
+    for (const f of acc.findings) {
+      for (const e of f.events) items.push({ at: whenOf(e.at), src: `finding · ${e.actor || ''}`,
+        text: `${e.event} — ${f.text}${e.event !== 'opened' && e.note ? ': ' + e.note : ''}` });
+    }
+  }
+  const disc = ((S.disc[t.file] || {}).data || {}).entries || [];
+  for (const e of disc) items.push({ at: whenOf(e.at), src: `${e.kind === 'decision' ? 'decision ' + (e.outcome || '') : 'comment'} · ${e.author || ''}`, text: e.body || '' });
+  items.sort((a, b) => b.at - a.at);
+  const row = (it, i) => it.report
+    ? `<details class="rpt" data-keep="rep-${i}"${S.accOpen[`${t.file}:rep-${i}`] ? ' open' : ''}><summary><b>${esc(it.src)}</b>` +
+      `<span class="ameta">${esc(it.at ? new Date(it.at).toLocaleString() : '')}</span></summary>` +
+      `<pre class="rtext">${esc(it.report)}</pre></details>`
+    : `<div class="tl"><time>${esc(it.at ? new Date(it.at).toLocaleString() : '—')}</time>` +
+      `<span><span class="src">${esc(it.src)}</span><div class="tx">${esc(it.text)}</div></span></div>`;
+  return `<p class="dnote">Newest first: progress the runs reported (labelled as theirs), work reports and reviews, comments and decisions, and acceptance and finding records. Raw reads, edits and commands are technical detail, in the Sessions view.</p>` +
+    (items.length ? `<div class="tline">${items.map(row).join('')}</div>` : `<p class="dnote">Nothing has happened on this card yet.</p>`);
+}
+
+async function postAcc(t, url, payload) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                 body: JSON.stringify(payload) });
+  let data = {};
+  try { data = await res.json(); } catch { /* an empty reply is a refusal too */ }
+  if (!res.ok) {
+    toast(data.error || 'the board refused that', true);
+    if (data.stale) loadAcc(t, true);
+    return null;
+  }
+  loadAcc(t, true);
+  loadState();
+  return data;
+}
+
+function wireDetail(t) {
+  const body = $('#drawerbody');
+  const tabs = [...body.querySelectorAll('.dtabs [role="tab"]')];
+  const go = (key, focus) => {
+    S.dtab[t.file] = key;
+    renderDrawer();
+    if (focus) requestAnimationFrame(() => { const b = document.getElementById('dtab-' + key); if (b) b.focus(); });
+  };
+  tabs.forEach((btn, i) => {
+    btn.addEventListener('click', () => go(btn.dataset.tab, true));
+    btn.addEventListener('keydown', (e) => {
+      const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
+      if (to === undefined) return;
+      e.preventDefault();
+      go(tabs[(to + tabs.length) % tabs.length].dataset.tab, true);
+    });
+  });
+  body.querySelectorAll('[data-goto]').forEach(btn => btn.addEventListener('click', () => go(btn.dataset.goto, true)));
+  $('#dwide').addEventListener('click', () => { S.dwide = !S.dwide; renderDrawer(); $('#dwide').focus(); });
+  // open/closed folds and unsent text survive a live redraw
+  body.querySelectorAll('details[data-keep]').forEach(d => d.addEventListener('toggle', () => {
+    S.accOpen[`${t.file}:${d.dataset.keep}`] = d.open;
+  }));
+  body.querySelectorAll('.dsec textarea[id], .dsec input[id], .dsec select[id]').forEach(el => {
+    if (el.id === 'commentbox') return;
+    el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => { S.accDraft[el.id] = el.value; });
+  });
+  const acc = (S.acc[t.file] || {}).data;
+  body.querySelectorAll('#accTrack').forEach(btn => wireAction(btn, `${t.file}::acc-track`, {
+    label: 'Track acceptance', confirm: true,
+    run: async () => {
+      if (!acc) return false;
+      const data = await postAcc(t, '/api/card/acceptance/track',
+        { file: t.file, stage: t.stage, briefSha: acc.briefSha, request: newRequestKey() });
+      if (!data) return false;
+      toast(`tracking ${data.tracked.length} criteria` + (data.committed ? '' : ' — written to the card, not committed'));
+      return true;
+    },
+  }));
+  body.querySelectorAll('[data-decide]').forEach(btn => btn.addEventListener('click', async () => {
+    const form = btn.closest('.aform');
+    const cid = form.dataset.crit;
+    const payload = { file: t.file, stage: t.stage, criterion: cid, rev: form.dataset.rev,
+      basis: form.dataset.basis || null, state: $(`#acc-state-${cid}`).value,
+      note: $(`#acc-note-${cid}`).value, ref: $(`#acc-ref-${cid}`).value,
+      evidence: $(`#acc-ev-${cid}`).value || null, request: newRequestKey() };
+    btn.disabled = true;
+    const data = await postAcc(t, '/api/card/acceptance/decide', payload);
+    btn.disabled = false;
+    if (!data) return;
+    for (const k of ['state', 'note', 'ref', 'ev']) delete S.accDraft[`acc-${k}-${cid}`];
+    toast(data.duplicate ? 'that decision was already recorded' : `recorded: ${payload.state}`);
+  }));
+  body.querySelectorAll('[data-finding] [data-event]').forEach(btn => btn.addEventListener('click', async () => {
+    const form = btn.closest('.aform');
+    const fid = form.dataset.finding;
+    const ev = form.querySelector('select');
+    const payload = { file: t.file, stage: t.stage, event: btn.dataset.event, finding: fid,
+      basis: form.dataset.basis || null, note: $(`#fnd-note-${fid}`).value,
+      evidence: (ev && ev.value) || null, request: newRequestKey() };
+    btn.disabled = true;
+    const data = await postAcc(t, '/api/card/finding', payload);
+    btn.disabled = false;
+    if (!data) return;
+    delete S.accDraft[`fnd-note-${fid}`];
+    toast(`finding ${fid}: ${payload.event}`);
+  }));
+  const open = $('#fndOpen');
+  if (open) open.addEventListener('click', async () => {
+    const payload = { file: t.file, stage: t.stage, event: 'opened', text: $('#fnd-text').value,
+      round: $('#fnd-round').value || null, criterion: $('#fnd-crit').value || null,
+      request: newRequestKey() };
+    open.disabled = true;
+    const data = await postAcc(t, '/api/card/finding', payload);
+    open.disabled = false;
+    if (!data) return;
+    for (const k of ['fnd-text', 'fnd-round', 'fnd-crit']) delete S.accDraft[k];
+    toast('finding recorded');
+  });
+}
+
+/* The card face's acceptance and findings chips: a count of criteria a
+   named person accepted (never a completion ratio) and the findings still
+   open. Each opens its section of the detail view. */
+function acceptanceChips(task) {
+  const a = ((S.state || {}).acceptance || {})[task.file];
+  if (!a) return [];
+  const out = [];
+  if (a.tracked) {
+    const behind = a.needsWork + a.recheck;
+    const parts = [['reported', a.reported], ['pending', a.pending], ['needing work', a.needsWork],
+                   ['needing recheck', a.recheck]].filter(([, n]) => n).map(([w, n]) => `${n} ${w}`);
+    out.push({ label: `${a.accepted}/${a.total} accepted`, pre: '☑', cls: behind ? 'bad' : '',
+      section: 'acceptance', face: true,
+      title: `${a.accepted} of ${a.total} criteria accepted on record${parts.length ? ' — ' + parts.join(', ') : ''}. Not a measure of completion.` });
+  }
+  if (a.openFindings || a.fixReported) {
+    out.push({ label: a.openFindings ? `${a.openFindings} open finding${a.openFindings === 1 ? '' : 's'}`
+                                     : `${a.fixReported} fix${a.fixReported === 1 ? '' : 'es'} to recheck`,
+      pre: '◇', cls: a.openFindings ? 'bad' : 'accent', section: 'reviews', face: true,
+      title: 'Review findings on record — open the Reviews section' });
+  }
+  return out;
 }
 
 /* ── a card's discussion, and refining its brief (task 65) ─────────────
