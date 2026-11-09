@@ -4,8 +4,13 @@ An adapter makes the task manager work with a particular coding agent.
 Core never speaks any vendor's language — it launches jobs and ingests
 normalized events; adapters translate at the edge. Two ship as reference
 implementations: `claude/` (the default) and `opencode/`. Select with
-`BOARD_AGENT_ADAPTER` in `local/.env`; a directory of the same name under
-`local/adapters/` overrides the core one.
+`BOARD_AGENT_ADAPTER` in `local/.env` — or per purpose with
+`BOARD_AGENT_ADAPTER_WORK`, `_ACT_PR` and `_REVIEW`, both editable in
+Settings → Agents and read on every launch; a directory of the same name
+under `local/adapters/` overrides the core one. Whichever adapter a launch
+resolves to is the one whose `capabilities.json` its profile is checked
+against. The agent settings themselves are not passed to `run`: the model
+arrives as `AGENT_MODEL` and nothing else.
 
 ## The contract
 
@@ -183,6 +188,12 @@ command line — narrowing, **not** a sandbox), `prompt-only`, `pending`.
                       "shell-withheld": "enforced",
                       "model-selection": "enforced"},
      "unsupported": {"filesystem-sandbox": "why not, in one sentence"}}
+
+`setup` (optional, one or two sentences) is what your harness needs before
+it can run anything — the CLI to install, an account to sign in, a plugin
+to wire. Settings → Agents shows it beside the harness when an operator
+chooses it; choosing a harness installs and wires nothing, so this is
+where you tell them what to do themselves.
 
 `intents` is which launch intents your `run` can launch. Omitted, you are
 taken to run `work`, `act-pr` and `review` — exactly what every adapter

@@ -44,13 +44,16 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → doctor → events / github / drive / sync → settings → agents → phases → refine → watch / httpd → board.py
+config → state / reports / templates → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → doctor → events / github / drive / sync → agentsettings → settings → agents → phases → refine → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
 - `state.py` — shared registries, event log persistence, SSE fan-out
 - `reports.py` — what the record keeps of an agent's closing report: one
   cap, one clip, for the task file and the PR body alike
+- `templates.py` — the four launch prompt templates: what each may and
+  must contain, which text a launch actually used (name, source, hash),
+  and the contract check asked before a save and before every launch
 - `taskfiles.py` — reading and moving task files; the only code touching tasks/
 - `plans.py` — one card's execution plan: which application branch its work
   starts from, which branch its PR targets, what selected each, and the
@@ -91,6 +94,11 @@ config → state / reports → taskfiles → plans / profiles → reviews → ve
 - `github.py` — PR opening, Copilot requests, review/CI polling
 - `drive.py` — runs the project driver, tracks the one live drive
 - `sync.py` — origin/main as the shared board: push on move, pull on a beat
+- `agentsettings.py` — Settings → Agents: the harness and model each
+  purpose rides and the local prompt overrides, read from the one
+  launch-time resolver and written only as the agent keys of
+  `local/.env` and four named templates, with conflict detection,
+  backup, rollback and a sanitized history
 - `settings.py` — how this board is configured, assembled from the
   modules above and nowhere else: it names the states so nothing reads as
   a pass, compares two resolutions so a change can be previewed, and
@@ -808,7 +816,10 @@ project by placing a file of the same name in `manager/local/prompts/`
 markdown with `{branch}` / `{stage}` / `{filename}` / `{body}` placeholders,
 filled via `str.format` — so literal braces elsewhere in a prompt would break
 it. They are read fresh on every agent launch; edits apply without restarting
-the board.
+the board. The four launch templates are edited, previewed and checked
+against their contract in **Settings → Agents**, and an override that
+breaks it refuses the launch rather than reaching the agent (see "Agents:
+harness, model and prompt per purpose").
 
 ## Agents working the board
 
@@ -2204,10 +2215,10 @@ So "no gate configured" can never render as a passed gate, a registered
 check is drawn as *registered, not required*, and a guarantee nothing
 enforces wears `unsupported` rather than a switch that pretends.
 
-### Seven sections, values first
+### Eight sections, values first
 
 The sections sit in a **sidebar** on the left, in three groups —
-**Configure** (Overview, Checks, Merge rules, Agent access), **Inspect**
+**Configure** (Overview, Checks, Merge rules, Agents, Agent access), **Inspect**
 (Diagnostics, Installation) and **Advanced** (Advanced policy) — with the
 current one marked by a bar, a heavier weight and `aria-current`, so none
 of the three is carried by colour alone. Each section opens with its own
@@ -2270,6 +2281,9 @@ an intended scope, with OS isolation `Unavailable`.
   same-account limitation and the ones this board cannot read), how
   evidence is bound to the merging commit, and what an override records
   are folded underneath.
+- **Agents** — which coding-agent harness and model each kind of run
+  rides, and the prompt each is given. See "Agents: harness, model and
+  prompt per purpose" below; it has a draft and a step bar of its own.
 - **Agent access** — one row per launch intent: where it works, its
   grants, the checks it may ask for and its approved inputs, with
   `intended writes: … · OS isolation: none enforced` on its own line. Runs
@@ -2329,6 +2343,108 @@ key the real environment also sets would not be in force at all. A
 control that loses to a higher-precedence source is worse than no
 control, so each row names the source that won and how to change it
 there.
+
+The one exception is the agent keys — `BOARD_AGENT_ADAPTER` and its
+per-purpose overrides, `BOARD_AGENT_MODEL` and its — which every launch
+reads fresh, and which **Settings → Agents** edits (next section). In
+**Installation** they carry a `next launch` chip and an **Edit in
+Agents** link instead of a restart chip; one the environment sets is
+still `locked`.
+
+### Agents: harness, model and prompt per purpose
+
+**Settings → Agents** answers which coding-agent harness each kind of
+run goes through, which model it asks for, and what it is told — and the
+answer it shows is the one the next launch rides, because it is read off
+the same resolver.
+
+**One resolver.** `config.agent_choice(intent)` reads the agent keys on
+every call — the process environment first (locked: change it where it
+is exported and restart), then `manager/local/.env` as it is on disk
+now, then the documented default. The preflight, `profiles.resolve()`
+and therefore every manifest, the doctor and this page all ask it, and
+`_launch` takes the harness and model out of the manifest the preflight
+validated rather than asking again. That is the only change to `.env`
+semantics: every other key is still read once at start-up.
+
+**The rows.** A compact **Default** row (harness and model) and three
+purpose rows — **Implementation** (`work`), **PR fixes** (`act-pr`) and
+**Reviews** (`review`, which covers both PR reviews and task relevance
+checks). Each purpose offers **Inherit default (…)** explicitly, naming
+what it would inherit, or an override; the default model's empty value
+means **harness default** — no `AGENT_MODEL` is passed and the CLI
+resolves its own, and a run's record says so rather than naming a model
+nobody chose. Card refinement rides the default harness and is shown,
+read-only, beside them. A board that sets none of the new
+`BOARD_AGENT_ADAPTER_WORK` / `_ACT_PR` / `_REVIEW` keys resolves exactly
+as the global settings always did.
+
+- **Harnesses** are the installed adapter directories, local before core
+  (`local/adapters/<name>` shadows `core/adapters/<name>`); each is shown
+  with the setup note its `capabilities.json` declares. An uninstalled
+  one is drawn as `not installed` with the remedy, refused by Validate,
+  and — if one is configured anyway — refuses the launch in preflight
+  with `harness-unavailable`, before a claim, a branch, a worktree or a
+  review checkout exists. Choosing a harness installs nothing, changes
+  no account, rewires no hook and starts nothing. Live-session hooks for
+  the operator's own sessions still follow the default harness (`wire`);
+  a purpose on opencode needs opencode's plugin wired as its setup note
+  says.
+- **Models** are opaque vendor identifiers, passed through untranslated.
+  There is no catalogue and no availability claim; a value is refused
+  only if it could not be one token on one `.env` line, or looks like a
+  credential. When a purpose changes harness but still inherits a model
+  chosen for another, the row and the preview say so.
+- **Permissions are separate.** Capabilities and the execution profile
+  are resolved for the harness the intent actually rides: a harness that
+  does not declare what a profile requires refuses the launch exactly as
+  before, and nothing here widens a grant.
+
+**Prompt templates.** The four templates — Implementation (`work.md`),
+PR fixes (`act-pr.md`), Task relevance review (`review.md`) and PR
+review (`review-pr.md`) — are listed with their source (**Built-in** or
+**Local override**), their placeholders and which are required. **Edit**
+opens the text in place; **Render preview** fills it with explicit sample
+values or a card you pick (its body inserted as data — a `{branch}` in a
+card stays those characters); **Diff from built-in**, **Reset to
+built-in** (staged, previewed, then applied) and **Cancel changes** sit
+beside it. Only `manager/local/prompts/<name>` is ever written, from a
+fixed list of four names; nothing under `core/` is touched.
+
+Each template is held to a contract (`templates.py`) before it is saved
+**and** before any launch uses it: the text must parse as a format
+string, every placeholder must be one that launch fills (named plainly —
+no `{body.x}`, `{0}`, conversion or format spec), the inputs the runner
+depends on must be present (the task, the workflow brief, the plan, the
+pinned context, the verification and progress blocks), and the marker
+the board parses (`NOT READY:`, `ADDRESSED:`, `RELEVANCE REVIEW:`,
+`PR REVIEW:`) must still be asked for. An existing local override that
+fails is shown with its problems and its text, never rewritten, and
+refuses the launch that would use it until it is fixed or reset. Prompt
+text is instruction, not permission: the profile, context and
+verification blocks bench inserts are required in it.
+
+**What a run keeps.** Each launch records, in its manifest, the harness
+and model selection with where each came from (`selection`) and the
+template's name, source and hash (`template`) — never its text — beside
+the profile it rode. A later edit changes the next launch only; the
+Focus view's freshness note says when the settings have moved on.
+
+**Saving.** The same four steps as the policy editor, through
+`/api/settings/agents/{validate,preview,render,apply}` behind the same
+origin door. Preview compares two resolutions per purpose — harness,
+model, inheritance, the capabilities the new harness lacks — and shows
+each template change as a diff. Apply is armed, refused on a stale
+revision (a **conflict**, not a last-writer-win; an unrelated `.env`
+edit is not a conflict and is preserved), writes only the agent keys
+that change — every other line and comment byte for byte — and only the
+named templates. Every file it is about to touch is backed up first under
+`manager/local/state/settings/agents-recovery/`; a write that fails part
+way puts back what it had replaced, and the kept backup is the
+**Recover replaced text** list under each template. One sanitized line
+per apply goes to `state/settings/agents-history.jsonl`: key and template
+names and hashes, never a value. Nothing is launched, tested, restarted
+or moved by any of it.
 
 ### Four steps, and only the last one writes
 
