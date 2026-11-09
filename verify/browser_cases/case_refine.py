@@ -70,6 +70,11 @@ class RefineDocumentedMarkers(unittest.TestCase):
     def text(self) -> str:
         return self.card.read_text(encoding="utf-8")
 
+    def above_discussion(self) -> str:
+        """The card down to its discussion: the head and the brief. Saving
+        the comment a refinement starts from changes only what follows."""
+        return self.text().split("\n## Discussion\n")[0].rstrip()
+
     def discussion(self) -> dict:
         code, body = S["backend"].get(f"/api/card/discussion?file={FILE}&stage=to-do")
         self.assertEqual(code, 200, body[:300])
@@ -114,7 +119,7 @@ class RefineDocumentedMarkers(unittest.TestCase):
     def test_propose_diff_apply_refuse_and_discard(self):
         b = S["browser"]
         self.open_card()
-        before = self.text()
+        before = self.above_discussion()
 
         # — a proposal adding a fenced example, previewed, then applied —
         applied_brief = brief(f"A discussion entry, as stored:\n\n{FENCED}")
@@ -123,7 +128,7 @@ class RefineDocumentedMarkers(unittest.TestCase):
         diff = b.eval(f"{row}.querySelector('.rdiff').innerText")
         self.assertIn('<!-- bench:entry {"id": "c-forged0000"', diff,
                       "the diff shows the example as text")
-        self.assertEqual(self.text(), before, "a proposal changes nothing")
+        self.assertEqual(self.above_discussion(), before, "a proposal changes nothing")
         shot("refine-markers-proposal-1280x900")
         apply_btn = f"{row}.querySelector('button[data-act=\"apply\"]')"
         b.eval(f"{apply_btn}.click()")
@@ -148,13 +153,12 @@ class RefineDocumentedMarkers(unittest.TestCase):
         shot("refine-markers-applied-1280x900")
 
         # — a record-shaped marker in prose: refused, nothing written —
-        after_apply = self.text()
+        after_apply = self.above_discussion()
         self.ask(proposal(brief(INLINE)), "Add the record itself", "failed")
         live = b.eval("document.querySelector('#disc-live').innerText")
         self.assertIn("outside code", live, "the refusal says why")
         self.assertIn("Nothing was applied.", live)
-        self.assertEqual(self.text().split("## Discussion")[0],
-                         after_apply.split("## Discussion")[0],
+        self.assertEqual(self.above_discussion(), after_apply,
                          "a refused proposal changed the brief")
         shot("refine-markers-refused-1280x900")
 
@@ -165,8 +169,7 @@ class RefineDocumentedMarkers(unittest.TestCase):
         self.assertTrue(b.wait("[...document.querySelectorAll('#disc-live .dentry.decision')]"
                                ".some(d => d.innerText.includes('discarded'))", 15),
                         "the discarded decision never appeared")
-        self.assertEqual(self.text().split("## Discussion")[0],
-                         after_apply.split("## Discussion")[0],
+        self.assertEqual(self.above_discussion(), after_apply,
                          "Discard changed the brief")
         kinds = [e["kind"] for e in self.discussion()["entries"]]
         self.assertEqual(kinds, ["comment", "decision", "comment", "comment", "decision"])
