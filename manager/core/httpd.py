@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import acceptance
 import agents
+import agentsettings
 import commands
 import config
 import doctor
@@ -901,6 +902,42 @@ class Handler(BaseHTTPRequestHandler):
                                     f"({', '.join(result['history']['changedKeys']) or 'no key changed'})"
                                     f" — applies at the next launch")})
                     state.broadcast({"type": "board"})
+                    self._json(200, {"applied": result})
+            elif path in ("/api/settings/agents/validate",
+                          "/api/settings/agents/preview",
+                          "/api/settings/agents/render",
+                          "/api/settings/agents/apply"):
+                # Settings → Agents (task 77): the same door as the policy
+                # editor, the read-only steps included. The payload names
+                # agent keys and template names from fixed lists — never a
+                # path — and `agentsettings` refuses anything else.
+                problem = origin_problem(self.headers, config.PORT)
+                if problem:
+                    self._json(403, {"error": problem})
+                    return
+                payload = self._read_body()
+                if path.endswith("/validate"):
+                    self._json(200, {"validation": agentsettings.validate(payload)})
+                elif path.endswith("/preview"):
+                    self._json(200, {"preview": agentsettings.preview(payload)})
+                elif path.endswith("/render"):
+                    self._json(200, {"render": agentsettings.render(payload)})
+                else:
+                    try:
+                        result = agentsettings.apply(
+                            payload, actor=taskfiles.actor_name() or None)
+                    except agentsettings.Conflict as exc:
+                        self._json(409, {"error": str(exc), "conflict": True,
+                                         "current": exc.current})
+                        return
+                    if not result.get("unchanged"):
+                        what = result["changedKeys"] + [
+                            t["template"] for t in result["templates"]]
+                        state.record_board_event({
+                            "kind": "other", "actor": "you",
+                            "summary": (f"settings: agents — {', '.join(what)} "
+                                        f"changed; applies at the next launch")})
+                        state.broadcast({"type": "board"})
                     self._json(200, {"applied": result})
             elif path == "/api/card/comment":
                 # Add comment: written to the card, and nothing else — no

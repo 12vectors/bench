@@ -63,6 +63,7 @@ import subprocess
 import time
 from pathlib import Path
 
+import agentsettings
 import config
 import doctor
 import gates
@@ -444,11 +445,24 @@ CATALOGUE = (
      "how often the pull beat runs"),
     ("BOARD_GH_BIN", "installation", "restart",
      "the gh binary PR operations use"),
-    ("BOARD_AGENT_ADAPTER", "access", "restart",
-     "which coding agent headless jobs run through"),
-    ("BOARD_AGENT_MODEL", "access", "restart",
+    ("BOARD_AGENT_ADAPTER", "agents", "next-launch",
+     "which coding-agent harness headless jobs run through by default"),
+    ("BOARD_AGENT_ADAPTER_WORK", "agents", "next-launch",
+     "the harness implementation runs through, when it differs from the "
+     "default"),
+    ("BOARD_AGENT_ADAPTER_ACT_PR", "agents", "next-launch",
+     "the harness PR fixes run through, when it differs from the default"),
+    ("BOARD_AGENT_ADAPTER_REVIEW", "agents", "next-launch",
+     "the harness reviews run through, when it differs from the default"),
+    ("BOARD_AGENT_MODEL", "agents", "next-launch",
      "the model every launch rides unless an intent overrides it"),
-    ("BOARD_AGENT_MODEL_REFINE", "access", "restart",
+    ("BOARD_AGENT_MODEL_WORK", "agents", "next-launch",
+     "the model implementation rides, when it differs from the default"),
+    ("BOARD_AGENT_MODEL_ACT_PR", "agents", "next-launch",
+     "the model PR fixes ride, when it differs from the default"),
+    ("BOARD_AGENT_MODEL_REVIEW", "agents", "next-launch",
+     "the model reviews ride, when it differs from the default"),
+    ("BOARD_AGENT_MODEL_REFINE", "agents", "next-launch",
      "the model a card refinement rides, when it should differ from the "
      "general one"),
     ("BOARD_AGENT_COMMANDS", "access", "restart",
@@ -480,6 +494,11 @@ APPLIES_AT = {
                     "launch, so a change applies to the next launch and "
                     "never to a run already in flight"),
 }
+# The agent keys are the exception to "a .env change needs a restart":
+# `config.agent_choice` reads them on every launch (task 77).
+AGENT_APPLIES = ("read from manager/local/.env on every launch, so a change "
+                 "applies to the next launch without a restart and never to a "
+                 "run already in flight — edit it in Settings → Agents")
 
 
 def catalog() -> list[dict]:
@@ -515,16 +534,27 @@ def catalog() -> list[dict]:
             how = (f"{key} is not set anywhere, so the documented default "
                    f"applies. manager/core/.env.example is where the whole "
                    f"list is documented.")
+        agent_key = key in config.AGENT_KEYS
+        if agent_key and source != "environment":
+            how = (f"{key} is edited in Settings → Agents, which writes "
+                   f"manager/local/.env; the next launch reads it.")
         shown, redacted = masked(key, raw)
-        running = config.setting(key, default)
+        # An agent key is read live, so what is running is what the file
+        # says now — never a stale startup value (task 77).
+        running = (config.agent_setting(key, on_disk)["value"] if agent_key
+                   else config.setting(key, default))
         running_shown, _ = masked(key, running)
+        if agent_key and source == "default":
+            running_shown = shown
         out.append({
             "key": key, "section": section, "why": why,
             "value": shown, "redacted": redacted,
             "default": masked(key, default)[0],
-            "source": source, "locked": locked, "editableHere": False,
+            "source": source, "locked": locked,
+            "editableHere": agent_key and not locked,
             "how": how,
-            "appliesAt": applies, "appliesWhy": APPLIES_AT[applies],
+            "appliesAt": applies,
+            "appliesWhy": AGENT_APPLIES if agent_key else APPLIES_AT[applies],
             # What the *running* board has, which is a different fact from
             # what the file says now. Only sent when they disagree, so an
             # ordinary row carries no confusing second value.
@@ -2003,6 +2033,9 @@ def page() -> dict:
         "installation": installation(),
         "ci": ci(doc),
         "settings": catalog(),
+        # Settings → Agents: harness, model and prompt templates per
+        # purpose, with their own draft, preview and apply (task 77)
+        "agents": agentsettings.page(),
         "editing": {
             "draft": draft(),
             "steps": [
@@ -2023,12 +2056,13 @@ def page() -> dict:
                 "apply": "POST /api/settings/apply",
             },
             "envIsReadOnly": (
-                "manager/local/.env is shown here and not edited here. "
-                "config reads it once when the board starts, and the real "
-                "environment beats it — so a control on this page could lose "
-                "to a higher-precedence source or appear to take effect when "
-                "it had not. Each row says which source won and how to change "
-                "it there."),
+                "manager/local/.env is shown here and not edited here — "
+                "except its agent keys, which Settings → Agents edits because "
+                "every launch reads them fresh. config reads the rest once "
+                "when the board starts, and the real environment beats it — "
+                "so a control on this page could lose to a higher-precedence "
+                "source or appear to take effect when it had not. Each row "
+                "says which source won and how to change it there."),
             "secrets": (
                 "Secrets are not managed here. Credential-shaped names and "
                 "values are masked in every response and in the page, and a "

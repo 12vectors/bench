@@ -622,6 +622,10 @@ def adapter_identity(name: str | None = None) -> dict:
                             for k, v in (data.get("unsupported") or {}).items()}
     if isinstance(data.get("intents"), list):
         found["intents"] = [str(i) for i in data["intents"]]
+    # what this harness needs before it can run anything — the adapter's
+    # own words, shown beside its selection in Settings → Agents
+    if isinstance(data.get("setup"), str):
+        found["setup"] = data["setup"][:600]
     return found
 
 
@@ -1740,8 +1744,13 @@ def _requirement_problem(name: str, table: dict) -> str | None:
 
 def resolve(intent: str, *, worktree: Path | str | None = None,
             review: Path | str | None = None,
-            policy: dict | None = None) -> dict:
+            policy: dict | None = None,
+            agent_values: dict[str, str] | None = None) -> dict:
     """One intent's effective policy, with nothing written.
+
+    `agent_values` is a draft of `manager/local/.env`'s agent keys, for
+    Settings → Agents previewing a change through this same resolver
+    (task 77). None reads the file as it is now, which every launch does.
 
     Everything in the returned document is either a fact about this board
     or a validated value from the profile document; `blockers` is the
@@ -1764,7 +1773,7 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
     # Which harness and model this intent rides, resolved once and carried
     # in the result — so the page, the preflight, the doctor and `_launch`
     # read one answer rather than each asking `config` again (task 77).
-    choice = config.agent_choice(intent)
+    choice = config.agent_choice(intent, agent_values)
     adapter = adapter_identity(choice["harness"]["value"])
     table = capability_table(adapter)
     available = roots(worktree, review)

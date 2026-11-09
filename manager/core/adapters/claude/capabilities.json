@@ -12,6 +12,7 @@
     "--settings document and the launch flags are worth."
   ],
   "intents": ["work", "act-pr", "review", "refine"],
+  "setup": "Needs the Claude Code CLI on this machine's PATH (or BOARD_CLAUDE_BIN naming it), signed in to the account runs should spend. Model names are Claude Code's own (--model): a full name or an alias.",
   "capabilities": {
     "command-allowlist": "prefix-allowlist",
     "command-denylist": "prefix-allowlist",

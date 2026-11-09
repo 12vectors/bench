@@ -569,8 +569,14 @@ class ProvenanceIsObservedNotGuessed(unittest.TestCase):
                    "settings.page()['editing']['envIsReadOnly']]", doc=FULL)
         catalog, why = rows
         for row in catalog:
-            self.assertFalse(row["editableHere"], row["key"])
             self.assertTrue(row["how"], row["key"])
+            if row["section"] == "agents":
+                # the one exception (task 77): read on every launch, and
+                # edited in Settings → Agents unless the environment locks it
+                self.assertEqual(row["editableHere"], not row["locked"], row["key"])
+                self.assertEqual(row["appliesAt"], "next-launch", row["key"])
+                continue
+            self.assertFalse(row["editableHere"], row["key"])
             self.assertIn(row["appliesAt"], ("restart", "fresh"), row["key"])
         self.assertIn("beats it", why)
 

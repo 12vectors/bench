@@ -592,9 +592,11 @@ class SavingCannotMoveWork(unittest.TestCase):
         """A grep, because the guarantee is about the whole server: one
         writer, one path."""
         text = (CORE / "httpd.py").read_text(encoding="utf-8")
-        self.assertEqual(1, text.count("settings.apply("),
+        self.assertEqual(1, len(re.findall(r"(?<![a-z])settings\.apply\(", text)),
                          "more than one route writes the policy")
-        self.assertIn("origin_problem(self.headers", text)
+        # and Settings → Agents has exactly one writer too (task 77)
+        self.assertEqual(1, text.count("agentsettings.apply("))
+        self.assertGreaterEqual(text.count("origin_problem(self.headers"), 2)
 
 
 if __name__ == "__main__":

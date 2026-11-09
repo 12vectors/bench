@@ -10,6 +10,7 @@
     "`requires` in core/profiles.example.json."
   ],
   "intents": ["work", "act-pr", "review", "refine"],
+  "setup": "Needs the opencode CLI on this machine's PATH (or BOARD_OPENCODE_BIN naming it), with a provider configured. Model names are opencode's own \"provider/model-id\". Its event bridge is a plugin wired into the application by install.py; an external layout cannot wire it.",
   "capabilities": {
     "command-allowlist": "prefix-allowlist",
     "command-denylist": "prefix-allowlist",
