@@ -7402,7 +7402,9 @@ function progressSection(agent, meta, task) {
   const row = (dt, value, cls) =>
     `<dt>${dt}</dt><dd class="${value ? (cls || '') : 'unknown'}">${value || 'not reported'}</dd>`;
   const miles = p && (p.milestones || []).length
-    ? `<ul class="miles">${p.milestones.map(m => `<li>${esc(m.text)}</li>`).join('')}</ul>` : '';
+    ? `<ul class="miles">${p.milestones.map(m => `<li>${esc(m.text)}</li>`).join('')}</ul>` +
+      (p.milestonesOmitted ? `<span class="unknown">and ${Number(p.milestonesOmitted)} later milestone${p.milestonesOmitted === 1 ? '' : 's'} not listed</span>` : '')
+    : '';
   const honest = progressSentence(p, agent, tool);
   const clock =
     `<div class="pclock" role="group" aria-label="Three separate clocks">` +

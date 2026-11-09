@@ -74,7 +74,7 @@ class Base(unittest.TestCase):
         config.EVIDENCE_DIR = self.tmp / "evidence"
         config.PROGRESS_MIN_GAP = 0.0
         config.PROGRESS_REMIND = 600.0
-        for registry in (progress.RUNS, state.SESSIONS, state.EVENTS,
+        for registry in (progress.RUNS, progress._NOTIFY, state.SESSIONS, state.EVENTS,
                          state.AGENTS, events._WRITTEN, events._SEEN,
                          events.DROPPED):
             registry.clear()
@@ -362,6 +362,116 @@ class Ordering(Base):
         history = progress.public("run-1", full=True)["history"]
         self.assertEqual(len(history), progress.HISTORY_CAP)
         self.assertEqual(history[-1]["doing"], f"step {progress.HISTORY_CAP + 4}")
+
+
+class Milestones(Base):
+    """The checklist is kept on the record, apart from the history, so
+    nothing that trims the history can take a reported milestone off it."""
+
+    def setUp(self):
+        super().setUp()
+        self.token = self.open()
+
+    def texts(self, agent="run-1"):
+        return [m["text"] for m in progress.public(agent)["milestones"]]
+
+    def test_done_then_doing_inside_the_gap_keeps_the_milestone(self):
+        config.PROGRESS_MIN_GAP = 20.0
+        now = time.time()
+        self.send(self.token, at=now, done=["profiles wired"])
+        result = self.send(self.token, at=now + 3, doing="starting UI")
+        self.assertEqual(result["result"], "coalesced")
+        history = progress.public("run-1", full=True)["history"]
+        self.assertEqual(len(history), 1)
+        self.assertNotIn("done", history[0])
+        self.assertEqual(self.texts(), ["profiles wired"])
+        self.assertAlmostEqual(progress.public("run-1")["milestones"][0]["at"], now, places=3)
+
+    def test_a_milestone_outlives_the_history_cap(self):
+        self.send(self.token, done=["the very first milestone"])
+        for n in range(progress.HISTORY_CAP + 5):
+            self.send(self.token, doing=f"step {n}")
+        found = progress.public("run-1", full=True)
+        self.assertEqual(len(found["history"]), progress.HISTORY_CAP)
+        self.assertFalse(any(h.get("done") for h in found["history"]))
+        self.assertEqual(self.texts(), ["the very first milestone"])
+
+    def test_a_late_arrival_dates_a_milestone_by_its_earliest_report(self):
+        progress.RUNS["run-1"]["opened"] -= 100      # a report's time is held after opening
+        now = time.time()
+        self.send(self.token, id="p-newer-001", at=now, done=["b", "a"])
+        self.send(self.token, id="p-older-001", at=now - 30, done=["a"])
+        found = progress.public("run-1")["milestones"]
+        self.assertEqual([m["text"] for m in found], ["a", "b"])
+        self.assertAlmostEqual(found[0]["at"], now - 30, places=3)
+        # a later repeat does not move a milestone's first-seen time
+        self.send(self.token, at=now + 10, done=["a"])
+        self.assertAlmostEqual(progress.public("run-1")["milestones"][0]["at"],
+                               now - 30, places=3)
+
+    def test_a_replayed_report_adds_nothing(self):
+        self.send(self.token, id="p-same-0001", done=["one"])
+        self.send(self.token, id="p-same-0001", done=["one", "smuggled"])
+        self.assertEqual(self.texts(), ["one"])
+
+    def test_the_checklist_is_bounded_and_says_how_much_it_left_out(self):
+        self.addCleanup(setattr, progress, "MILESTONE_CAP", progress.MILESTONE_CAP)
+        progress.MILESTONE_CAP = 3
+        now = time.time()
+        self.send(self.token, at=now, done=["m1", "m2", "m3", "m4"])
+        self.send(self.token, at=now + 1, done=["m4", "m5"])
+        found = progress.public("run-1")
+        self.assertEqual(self.texts(), ["m1", "m2", "m3"])
+        self.assertEqual(found["milestonesOmitted"], 2)
+
+    def test_milestones_persist_across_a_restart(self):
+        config.PROGRESS_MIN_GAP = 20.0
+        now = time.time()
+        self.send(self.token, at=now, done=["kept"])
+        self.send(self.token, at=now + 1, doing="coalesced over it")
+        progress.RUNS.clear()
+        progress.load()
+        self.assertEqual(self.texts(), ["kept"])
+
+    def test_a_legacy_record_rebuilds_its_checklist_from_its_history(self):
+        self.send(self.token, done=["old one"])
+        path = config.PROGRESS_DIR / "run-1.json"
+        record = json.loads(path.read_text())
+        del record["milestones"], record["milestonesOmitted"]
+        path.write_text(json.dumps(record))
+        # read straight off a legacy record, before any load
+        self.assertEqual([m["text"] for m in progress.milestones(record)], ["old one"])
+        progress.RUNS.clear()
+        progress.load()
+        self.assertEqual(self.texts(), ["old one"])
+        self.assertIn("milestones", json.loads(path.read_text()))
+
+
+class RefusalNotices(Base):
+
+    def test_a_burst_of_refusals_is_counted_whole_but_broadcast_bounded(self):
+        self.addCleanup(setattr, progress, "REJECT_NOTIFY_GAP", progress.REJECT_NOTIFY_GAP)
+        progress.REJECT_NOTIFY_GAP = 0.2
+        token = self.open()
+        for _ in range(25):
+            self.refused(token, "empty")
+        self.assertEqual(progress.public("run-1")["counts"]["rejected"], 25)
+        notices = lambda: [b for b in self.broadcasts if b.get("type") == "progress"]
+        self.assertEqual(len(notices()), 1)
+        deadline = time.time() + 3
+        while len(notices()) < 2 and time.time() < deadline:
+            time.sleep(0.02)
+        # one trailing notice, so the last refusal of the burst is shown
+        self.assertEqual(len(notices()), 2)
+        time.sleep(0.3)
+        self.refused(token, "empty")
+        self.assertEqual(len(notices()), 3)
+
+    def test_evidence_ids_are_validated_through_verifys_public_boundary(self):
+        self.assertTrue(verify.is_evidence_id("ev:verification@4cfab7d84ca9"))
+        self.assertFalse(verify.is_evidence_id("../etc/passwd"))
+        self.assertFalse(verify.is_evidence_id(None))
+        self.assertNotIn("verify._ID_OK", (CORE / "progress.py").read_text())
 
 
 class Lifecycle(Base):

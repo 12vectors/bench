@@ -133,6 +133,13 @@ class ProgressUI(unittest.TestCase):
         self.assertIn("none reported", html)          # no blocker was reported
         self.assertHonest(html)
 
+    def test_milestones_left_off_a_bounded_checklist_are_counted(self):
+        p = progress(current={"id": "p1", "at": NOW - 60, "doing": "x"}, last=NOW - 60,
+                     milestones=[{"text": "m1", "at": NOW - 300}])
+        p["milestonesOmitted"] = 4
+        html = self.section(run(), p, tool=NOW - 5)
+        self.assertIn("and 4 later milestones not listed", html)
+
     # ── silence, said as silence ─────────────────────────────────────────
 
     def test_quiet_but_active_says_so_and_invents_nothing(self):

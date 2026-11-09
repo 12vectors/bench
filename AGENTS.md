@@ -906,7 +906,10 @@ as a closing-report marker refused, credential-shaped text masked, and no
 URL or path accepted as a reference. A report naming another run, carrying
 the wrong token, or arriving after its run ended is refused; a refusal
 against a real run is counted on that run's channel health, so a spoof or
-a broken shim is visible rather than silent. Each update is a whole
+a broken shim is visible rather than silent. Every refusal is counted,
+but the page is told about refusals at most once every few seconds per
+run, with one trailing notice — so a burst of bad reports cannot make
+every open page reload on each request. Each update is a whole
 statement: a field it leaves out is *not reported*, never carried over
 and never inferred. The token is a run-scoped capability, not an
 operating-system boundary — processes of the same user can read each
@@ -918,7 +921,12 @@ report has the time the run made it, so a late arrival is filed into the
 history and never displaces a newer current update. Updates closer
 together than `BOARD_PROGRESS_MIN_GAP` are coalesced into the previous
 history entry — a blocker never is — and a run is capped at 200 accepted
-updates. A run quiet for `BOARD_PROGRESS_REMIND` seconds (600 by default,
+updates; the history itself keeps the newest 50. The **milestone
+checklist** is kept on the record apart from that history, so neither
+coalescing nor the history cap takes a reported milestone off it: each
+milestone is listed once, dated by the earliest report that named it, the
+earliest 100 are kept and any beyond are counted rather than dropped
+silently, and it survives a restart. A run quiet for `BOARD_PROGRESS_REMIND` seconds (600 by default,
 0 turns it off) is reminded once, at its next tool boundary, by the event
 bridge's reply: context on a tool result it was going to read anyway,
 never an interruption.
@@ -969,6 +977,12 @@ session delivers ids, an id-less copy from an older bridge is dropped.
 Distinct repeated edits and test runs have distinct ids and are never
 collapsed for having matching text, and a tool's start and finish stay
 two events.
+
+One limit remains, and it is a person's own session rather than a
+headless run: with no `BOARD_EMIT` to name the canonical bridge, both
+copies report, and the events that carry no vendor tool-use id —
+session start and stop — get a fresh id per copy, so those two can still
+appear twice. Tool events are de-duplicated there as everywhere else.
 
 ## Execution plans
 

@@ -36,7 +36,9 @@ The contract, end to end:
   filed into the history where it belongs and never displaces a newer
   current update. Reports closer together than PROGRESS_MIN_GAP are
   coalesced into the previous history entry, and a run is capped at
-  MAX_REPORTS accepted reports.
+  MAX_REPORTS accepted reports. The milestone checklist is accumulated on
+  the record itself, so coalescing and the history cap never take a
+  reported milestone off it.
 - **Terminal states supersede.** When the run ends the record is closed
   with the outcome the board observed — finished, failed, declined, held
   — and the last update becomes history, dated, rather than a "doing now"
@@ -86,8 +88,17 @@ MAX_REFS = 8
 MAX_BODY = 16 * 1024
 MAX_REPORTS = 200
 HISTORY_CAP = 50
+# The milestone checklist is kept apart from the history, so neither
+# coalescing nor the history cap can take a reported milestone off it. It
+# is bounded too: the earliest MILESTONE_CAP by first-seen time are kept,
+# and the rest are counted rather than shown.
+MILESTONE_CAP = 100
 SEEN_CAP = 400
 CLOCK_SKEW = 5.0
+# A refused report is counted at once, but the page is told about refusals
+# at most once per this many seconds per run (with one trailing notice), so
+# a burst of bad reports cannot make every open page reload per request.
+REJECT_NOTIFY_GAP = 5.0
 
 FIELDS = ("stage", "doing", "done", "remaining", "blocked", "narrative")
 ALLOWED_KEYS = {"v", "agent", "token", "id", "at", "refs", *FIELDS}
@@ -108,6 +119,7 @@ OUTCOMES = ("finished", "failed", "declined", "held", "unobserved")
 
 _LOCK = threading.Lock()
 RUNS: dict[str, dict] = {}            # agent id -> record (token hash, never the token)
+_NOTIFY: dict[str, dict] = {}         # agent id -> {"last": monotonic, "timer": Timer}
 
 
 class Refused(ValueError):
@@ -235,6 +247,7 @@ def open_run(agent_id: str, task: str, intent: str, chan: dict) -> str | None:
         "channel": {"state": chan.get("state"), "why": chan.get("why")},
         "opened": now, "closed": None, "outcome": None,
         "current": None, "history": [], "seen": [],
+        "milestones": [], "milestonesOmitted": [],
         "accepted": 0, "coalesced": 0, "duplicates": 0, "rejected": 0,
         "lastRejection": None, "lastReport": None, "lastReceived": None,
         "lastReminded": None, "seq": 0,
@@ -277,6 +290,13 @@ def load() -> int:
         if not isinstance(record, dict) or not _AGENT_RE.match(str(record.get("agent") or "")):
             continue
         changed = False
+        if not isinstance(record.get("milestones"), list):
+            # a record written before milestones were kept apart: rebuild
+            # them from the history it has, which is all it can offer
+            record["milestones"], record["milestonesOmitted"] = [], []
+            for entry in sorted(record.get("history") or [], key=lambda e: e["at"]):
+                _remember(record, entry)
+            changed = True
         if not record.get("closed"):
             record["closed"] = time.time()
             record["outcome"] = "unobserved"
@@ -329,7 +349,7 @@ def _refs(raw, task: str) -> tuple[list[dict], list[str]]:
         value = str(value or "").strip()
         if kind == "commit" and _SHA_RE.match(value.lower()):
             out.append({"kind": "commit", "id": value.lower()})
-        elif kind == "evidence" and verify._ID_OK.match(value):
+        elif kind == "evidence" and verify.is_evidence_id(value):
             record = verify.read(value)
             if record is None or record.get("task") != task:
                 dropped.append(f"evidence {value} is not a record for this card")
@@ -346,8 +366,70 @@ def _reject(record: dict | None, code: str, status: int, why: str) -> Refused:
             record["rejected"] = record.get("rejected", 0) + 1
             record["lastRejection"] = {"at": time.time(), "code": code, "why": why}
             _store(record)
-        state.broadcast({"type": "progress", "agent": record["agent"]})
+        _notify_health(record["agent"])
     return Refused(status, code, why)
+
+
+def _notify_health(agent_id: str) -> None:
+    """Tell the page a run's channel health changed — at most once per
+    REJECT_NOTIFY_GAP, with one trailing notice so the last refusal of a
+    burst is shown too. The counts themselves are recorded on every
+    refusal; only the broadcast is bounded."""
+    gap = REJECT_NOTIFY_GAP
+    now = time.monotonic()
+    with _LOCK:
+        slot = _NOTIFY.setdefault(agent_id, {"last": None, "timer": None})
+        if slot["last"] is None or now - slot["last"] >= gap:
+            slot["last"] = now
+            send = True
+        else:
+            send = False
+            if slot["timer"] is None:
+                timer = threading.Timer(gap - (now - slot["last"]), _trailing, (agent_id,))
+                timer.daemon = True
+                slot["timer"] = timer
+                timer.start()
+    if send:
+        state.broadcast({"type": "progress", "agent": agent_id})
+
+
+def _trailing(agent_id: str) -> None:
+    with _LOCK:
+        slot = _NOTIFY.get(agent_id)
+        if slot is not None:
+            slot["timer"] = None
+            slot["last"] = time.monotonic()
+    state.broadcast({"type": "progress", "agent": agent_id})
+
+
+def _remember(record: dict, entry: dict) -> None:
+    """Fold one entry's milestones into the run's checklist. Called under
+    the lock for every accepted report — recorded, coalesced or filed — so
+    the checklist is independent of what the history later drops. A text
+    already listed keeps one row, dated by the earliest report that named
+    it; the earliest MILESTONE_CAP are kept and the rest counted."""
+    done = entry.get("done") or []
+    if not done:
+        return
+    kept = record.setdefault("milestones", [])
+    omitted = record.setdefault("milestonesOmitted", [])
+    index = {m["text"]: m for m in kept}
+    for text in done:
+        known = index.get(text)
+        if known is not None:
+            if entry["at"] < known["at"]:
+                known["at"] = entry["at"]
+            continue
+        digest = _hash(text)[:16]
+        if digest in omitted:
+            continue
+        item = {"text": text, "at": entry["at"]}
+        kept.append(item)
+        index[text] = item
+    kept.sort(key=lambda m: m["at"])          # stable: report order within one entry
+    while len(kept) > MILESTONE_CAP:
+        omitted.append(_hash(kept.pop()["text"])[:16])
+    del omitted[:-SEEN_CAP]
 
 
 def report(raw: dict) -> dict:
@@ -474,6 +556,7 @@ def report(raw: dict) -> dict:
             history.append(entry)
             history.sort(key=lambda e: (e["at"], e.get("seq", 0)))
             result = "filed"
+        _remember(record, entry)
         del history[:-HISTORY_CAP]
         _store(record)
     state.broadcast({"type": "progress", "agent": agent_id})
@@ -553,12 +636,18 @@ def _public_entry(entry: dict, resolve: bool) -> dict:
 def milestones(record: dict) -> list[dict]:
     """Every milestone the run has reported done, in the order first
     reported — the checklist that survives a later update not repeating
-    it. Exact repeats are one milestone; nothing is inferred."""
-    seen: dict[str, dict] = {}
+    it, a coalesced burst and the history cap alike, because it is kept on
+    the record rather than read back out of the history. Exact repeats are
+    one milestone; nothing is inferred."""
+    kept = record.get("milestones")
+    if isinstance(kept, list):
+        return [{"text": m["text"], "at": m["at"]} for m in kept]
+    # a legacy record not yet loaded through load(): the history is all
+    # there is, so read it as the history always was
+    legacy = {"milestones": [], "milestonesOmitted": []}
     for entry in sorted(record.get("history") or [], key=lambda e: e["at"]):
-        for item in entry.get("done") or []:
-            seen.setdefault(item, {"text": item, "at": entry["at"]})
-    return list(seen.values())
+        _remember(legacy, entry)
+    return legacy["milestones"]
 
 
 def public(agent_id: str, full: bool = False) -> dict | None:
@@ -585,6 +674,7 @@ def public(agent_id: str, full: bool = False) -> dict | None:
         "lastRejection": record.get("lastRejection"),
         "updates": len(record.get("history") or []),
         "milestones": milestones(record),
+        "milestonesOmitted": len(record.get("milestonesOmitted") or []),
     }
     if full:
         out["history"] = [_public_entry(e, resolve=True)
