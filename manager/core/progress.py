@@ -160,7 +160,9 @@ def channel(intent: str, adapter: dict | None = None) -> dict:
         return {"state": "unavailable",
                 "why": f"the '{intent}' intent has no shell to report with"}
     if adapter is None:
-        adapter = profiles.adapter_identity()
+        # the harness this intent rides, which need not be the default
+        adapter = profiles.adapter_identity(
+            config.agent_choice(intent)["harness"]["value"])
     strength = (adapter.get("capabilities") or {}).get(CAPABILITY)
     if not strength:
         return {"state": "unavailable",

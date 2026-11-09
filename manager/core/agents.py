@@ -53,6 +53,7 @@ import progress
 import reports
 import reviews
 import state
+import templates
 import verify
 from taskfiles import (actor_name, append_to_task, collect, commit_edit,
                        find_stage_of, move_task, read_task, set_assignee)
@@ -276,12 +277,25 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str,
     reads it as a narrowing — named grants and denied capabilities — which
     is why passing it cannot broaden what a legacy board grants.
     """
-    adapter = config.adapter_dir()
+    # Which harness and which model: the manifest's, when there is one,
+    # because that is the answer the preflight validated and the record
+    # keeps — re-asking `config` here could launch something the record
+    # does not say (task 77). With no manifest, the live resolver.
+    selection = (manifest or {}).get("selection") or \
+        profiles.agent_selection(config.agent_choice(mode))
+    harness = selection["harness"]["name"]
+    adapter = config.adapter_dir(harness)
     if adapter is None:
         raise ValueError(
-            f"agent adapter '{config.ADAPTER}' not found — expected "
-            f"local/adapters/{config.ADAPTER}/run or core/adapters/{config.ADAPTER}/run")
+            f"agent adapter '{harness}' not found — expected "
+            f"local/adapters/{harness}/run or core/adapters/{harness}/run")
     env = config.child_env()
+    # The agent settings themselves never travel: the adapter is told the
+    # model as AGENT_MODEL and nothing else, so a startup value of
+    # BOARD_AGENT_MODEL_* folded into the child environment cannot
+    # contradict what this launch resolved.
+    for key in config.AGENT_KEYS:
+        env.pop(key, None)
     env.update({
         "AGENT_PROMPT": prompt,
         "AGENT_MODE": mode,
@@ -302,12 +316,13 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str,
     # Absent, the adapter is given exactly the environment it always was.
     env.pop("AGENT_PROGRESS", None)
     env.pop("BOARD_PROGRESS_TOKEN", None)
-    token = (progress.open_run(agent_id, filename, mode, progress.channel(mode))
+    token = (progress.open_run(agent_id, filename, mode,
+                               progress.channel(mode, (manifest or {}).get("adapter")))
              if mode in progress.INTENTS else None)
     if token:
         env["AGENT_PROGRESS"] = str(progress.shim())
         env["BOARD_PROGRESS_TOKEN"] = token
-    model = config.agent_model(mode)
+    model = selection["model"]["value"]
     if model:
         env["AGENT_MODEL"] = model
     else:
@@ -385,6 +400,15 @@ def _profiled(intent: str, filename: str, stage: str, *,
         profiles.manifest(intent, filename, stage, worktree=worktree,
                           review=review, review_record=review_record,
                           pin_inputs=True))
+
+
+def _with_template(manifest: dict, template: dict) -> dict:
+    """The manifest with the identity of the prompt template this run is
+    filled from — name, source and hash, never the text — so the record
+    says which prompt rode the launch beside which harness and model."""
+    found = dict(manifest)
+    found["template"] = templates.identity(template)
+    return found
 
 
 def _preflight_profile(intent: str, filename: str, stage: str, *,
@@ -538,6 +562,9 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     # the card untouched because neither reading writes anything.
     plans.require(plans.preflight(filename, stage))
     _preflight_profile("work", filename, stage)
+    # The template too: a local override that breaks its contract refuses
+    # here, before the claim, the branch and the worktree (task 77).
+    templates.require("work.md")
     card_path = config.TASKS / stage / filename
     unclaimed = card_path.read_text(encoding="utf-8")
     claim_for_launch(filename, stage, takeover)
@@ -552,6 +579,7 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
         # reused by the next rather than left to be cleaned up.
         manifest = _profiled("work", filename, stage,
                              worktree=config.WORKTREES / stem)
+        template = templates.require("work.md")
     except ValueError:
         # The second reading refused — a fetch that failed between the two,
         # a branch deleted in the gap, a required input that vanished. A
@@ -603,13 +631,13 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     # under: from here what this run rode is a fact on disk, and a later
     # edit to the document or to an approved file changes the next launch
     # and never this one.
-    manifest = profiles.record(agent_id, manifest)
+    manifest = profiles.record(agent_id, _with_template(manifest, template))
 
-    prompt = config.prompt("work.md").format(
+    prompt = templates.render("work.md", template["text"], dict(
         branch=branch, filename=filename, body=task["body"],
         plan=plans.brief(plan), context=profiles.prompt_block(manifest),
         verification=profiles.verification_block(manifest),
-        **config.prompt_fields(filename, "in-progress"), **_progress_fields("work"))
+        **config.prompt_fields(filename, "in-progress"), **_progress_fields("work")))
     proc, log_file, model = _launch("work", prompt, worktree, agent_id,
                                     filename, log_path, manifest)
 
@@ -653,18 +681,19 @@ def start_review(filename: str, stage: str) -> dict:
     # launch does, before the model. Nothing exists to clean up at this
     # point, which is where every launch refusal belongs.
     manifest = _profiled("review", filename, stage)
+    template = templates.require("review.md")
 
     task = read_task(config.TASKS / stage / filename, stage)
     agent_id = f"review-{filename[:-3]}-{time.strftime('%H%M%S')}"
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = profiles.record(agent_id, manifest)
+    manifest = profiles.record(agent_id, _with_template(manifest, template))
 
-    prompt = config.prompt("review.md").format(
+    prompt = templates.render("review.md", template["text"], dict(
         stage=stage, filename=filename, body=task["body"],
         context=profiles.prompt_block(manifest),
         verification=profiles.verification_block(manifest),
-        **config.prompt_fields(filename, stage), **_progress_fields("review"))
+        **config.prompt_fields(filename, stage), **_progress_fields("review")))
     proc, log_file, model = _launch("review", prompt, config.REPO, agent_id,
                                     filename, log_path, manifest)
 
@@ -972,7 +1001,8 @@ def start_pr_review(filename: str, stage: str) -> dict:
     # The path is derivable from the head, so this needs nothing to exist
     # yet — and a bundle is content-addressed and read-only, so one
     # written for a launch that then failed is reused by the next.
-    _profiled("review", filename, stage, review=checkout)
+    planned = _profiled("review", filename, stage, review=checkout)
+    template = templates.require("review-pr.md")
 
     # …and it must be told the branch its PR is actually from: the prompt
     # asks GitHub for the diff by branch, and a phase's is its own.
@@ -984,18 +1014,23 @@ def start_pr_review(filename: str, stage: str) -> dict:
 
     pinned = reviews.provision(filename, stage, agent_id, found)
     try:
-        manifest = profiles.record(
-            agent_id,
-            profiles.require(profiles.manifest(
-                "review", filename, stage, review=checkout,
-                review_record=pinned, pin_inputs=True)))
+        resolved = profiles.require(profiles.manifest(
+            "review", filename, stage, review=checkout,
+            review_record=pinned, pin_inputs=True))
+        # The harness and model the preflight validated are the ones this
+        # launch rides; a settings change landing in between refuses
+        # rather than launching something nobody preflighted.
+        if resolved.get("selection") != planned.get("selection"):
+            raise ValueError("the agent settings changed while this review was "
+                             "being prepared — nothing was launched; ask again")
+        manifest = profiles.record(agent_id, _with_template(resolved, template))
 
-        prompt = config.prompt("review-pr.md").format(
+        prompt = templates.render("review-pr.md", template["text"], dict(
             filename=filename, pr=task["pr"], branch=branch, body=task["body"],
             review=reviews.prompt_block(pinned),
             context=profiles.prompt_block(manifest),
             verification=profiles.verification_block(manifest),
-            **config.prompt_fields(filename, stage), **_progress_fields("review"))
+            **config.prompt_fields(filename, stage), **_progress_fields("review")))
         proc, log_file, model = _launch("review", prompt, Path(pinned["path"]),
                                         agent_id, filename, log_path, manifest)
     except BaseException:
@@ -1058,6 +1093,7 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     # explain, and the pin is the moment this run's inputs stop being able
     # to change under it.
     manifest = _profiled("act-pr", filename, stage, worktree=worktree)
+    template = templates.require("act-pr.md")
     # The same plan the work was launched on, revalidated before the run
     # that will push to the PR: a card whose requirements changed under it,
     # or whose base or target has disappeared, needs a person rather than a
@@ -1085,14 +1121,14 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     agent_id = f"fix-pr-{stem}-{time.strftime('%H%M%S')}"
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = profiles.record(agent_id, manifest)
+    manifest = profiles.record(agent_id, _with_template(manifest, template))
 
-    prompt = config.prompt("act-pr.md").format(
+    prompt = templates.render("act-pr.md", template["text"], dict(
         filename=filename, branch=branch, pr=task["pr"], body=task["body"],
         base=plan["prBase"], remote=plan.get("appRemote") or "origin",
         plan=plans.brief(plan), context=profiles.prompt_block(manifest),
         verification=profiles.verification_block(manifest),
-        **config.prompt_fields(filename, stage), **_progress_fields("act-pr"))
+        **config.prompt_fields(filename, stage), **_progress_fields("act-pr")))
     # act-pr is the one intent allowed to push: the PR must update.
     proc, log_file, model = _launch("act-pr", prompt, worktree, agent_id,
                                     filename, log_path, manifest)

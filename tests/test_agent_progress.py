@@ -784,7 +784,7 @@ class Headless(Base):
         self.addCleanup(setattr, config, "child_env", config.child_env)
         config.child_env = lambda: dict(base)
         self.addCleanup(setattr, config, "adapter_dir", config.adapter_dir)
-        config.adapter_dir = lambda: CORE / "adapters" / "claude"
+        config.adapter_dir = lambda name=None: CORE / "adapters" / "claude"
         import agents
         self.agents = agents
 
@@ -821,7 +821,7 @@ class Headless(Base):
         shutil.copy(CORE / "adapters" / "claude" / "hook_settings.py", custom)
         shutil.copy(CORE / "adapters" / "claude" / "emit.py", custom)
         os.chmod(custom / "run", 0o755)
-        config.adapter_dir = lambda: custom
+        config.adapter_dir = lambda name=None: custom
         rc, _, results = self.launch("work", "fixture-legacy")
         self.assertEqual(rc, 0)
         self.assertTrue(all(r.get("denied") or r.get("rc") == 5 for r in results[:3]))

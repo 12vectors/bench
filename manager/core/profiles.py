@@ -494,6 +494,12 @@ DIAGNOSTICS = {
         "a gate requires a scope its check does not declare",
         "Declare the scope under the check's \"scopes\", or require the "
         "check as a bare name — which means its unscoped full run."),
+    "harness-unavailable": (
+        "the coding-agent harness chosen for this intent is not installed",
+        "Choose an installed harness in Settings → Agents (or in "
+        "manager/local/.env), or install the adapter directory under "
+        "manager/local/adapters/<name>/ with an executable run. Choosing a "
+        "harness installs nothing, and bench will not fall back to another."),
     "intent-unsupported": (
         "the installed adapter cannot launch this intent as bench requires",
         "Install an adapter whose capabilities.json lists the intent under "
@@ -556,9 +562,14 @@ class _Trouble(list):
                 self.add(code, why)
 
 
-def adapter_identity() -> dict:
-    """Which adapter this board launches through, and what it says it can
+def adapter_identity(name: str | None = None) -> dict:
+    """Which adapter a launch goes through, and what it says it can
     enforce — read from `capabilities.json` beside its `run`.
+
+    `name` is the harness `config.agent_choice()` resolved for the intent
+    being asked about; None is the default harness. Each launch intent may
+    ride a different one (task 77), so capabilities are always read for
+    the harness that would actually run.
 
     An adapter without the file is not an error and not a liar: it
     declares nothing, so nothing may *require* anything of it, and a
@@ -566,9 +577,11 @@ def adapter_identity() -> dict:
     always did. That is what keeps a project's own
     `local/adapters/<name>/` working across this change.
     """
-    directory = config.adapter_dir()
+    if name is None:
+        name = config.agent_choice("default")["harness"]["value"]
+    directory = config.adapter_dir(name)
     found: dict = {
-        "name": config.ADAPTER,
+        "name": name,
         "path": str(directory) if directory else None,
         "identity": _tool_relative(directory) if directory else None,
         "version": None,
@@ -582,7 +595,7 @@ def adapter_identity() -> dict:
         "intents": None,
     }
     if directory is None:
-        found["note"] = (f"agent adapter '{config.ADAPTER}' was not found, so "
+        found["note"] = (f"agent adapter '{name}' was not found, so "
                          f"nothing could be read about what it enforces")
         return found
     path = directory / "capabilities.json"
@@ -610,6 +623,34 @@ def adapter_identity() -> dict:
     if isinstance(data.get("intents"), list):
         found["intents"] = [str(i) for i in data["intents"]]
     return found
+
+
+_SOURCE_WORDS = {"environment": "the process environment (locked)",
+                 "process": "an in-process setting (locked)",
+                 "local-file": "manager/local/.env",
+                 "default": "the documented default"}
+
+
+def agent_selection(choice: dict) -> dict:
+    """What a manifest keeps of `config.agent_choice()`: the harness and
+    model names and where each came from. Never a value from anywhere
+    else in the environment.
+
+    `model.value` empty is "harness default": bench passed no model and
+    does not know which one the vendor resolved, and says so rather than
+    guessing."""
+    harness, model = choice["harness"], choice["model"]
+    return {
+        "harness": {"name": harness["value"], "setting": harness["setting"],
+                    "source": harness["source"],
+                    "inherited": harness["inherited"]},
+        "model": {"value": model["value"], "setting": model["setting"],
+                  "source": model["source"], "inherited": model["inherited"],
+                  "harnessDefault": model["harnessDefault"],
+                  "words": (model["value"] if model["value"] else
+                            "harness default — no model passed; the vendor "
+                            "resolved it and bench does not know which")},
+    }
 
 
 # The intents every adapter ran before adapters declared any. An adapter
@@ -1720,7 +1761,11 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
                          f"{', '.join(INTENTS)}")
     baseline = BASELINE[intent]
     doc = policy if policy is not None else document()
-    adapter = adapter_identity()
+    # Which harness and model this intent rides, resolved once and carried
+    # in the result — so the page, the preflight, the doctor and `_launch`
+    # read one answer rather than each asking `config` again (task 77).
+    choice = config.agent_choice(intent)
+    adapter = adapter_identity(choice["harness"]["value"])
     table = capability_table(adapter)
     available = roots(worktree, review)
 
@@ -1759,7 +1804,19 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
     # restrictions that make it read-only to be the vendor's, not a
     # sentence: no edit tool, no shell.
     restricted = intent == "refine"
-    if not intent_supported(adapter, intent):
+    if not adapter.get("path"):
+        # Before anything else about the adapter: a harness that is not
+        # installed refuses here, in the reading every launch takes before
+        # its first side effect, rather than after a worktree or a review
+        # checkout already exists (task 77).
+        blockers.add("harness-unavailable",
+                     f"the '{adapter['name']}' harness chosen for '{intent}' "
+                     f"({choice['harness']['setting']}, from "
+                     f"{_SOURCE_WORDS.get(choice['harness']['source'], choice['harness']['source'])}) "
+                     f"is not installed — there is no "
+                     f"manager/local/adapters/{adapter['name']}/run or "
+                     f"manager/core/adapters/{adapter['name']}/run")
+    elif not intent_supported(adapter, intent):
         blockers.add("intent-unsupported",
                      f"the {adapter['name']} adapter does not list '{intent}' "
                      f"among the intents it can launch, so the launch is "
@@ -2075,7 +2132,7 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
             blockers.add("requirement-unsupported", problem)
 
     configured.append("working-directory")
-    if config.agent_model(intent):
+    if choice["model"]["value"]:
         configured.append("model-selection")
 
     enforced = sorted({name for name in configured
@@ -2114,6 +2171,10 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
                                   "BOARD_AGENT_COMMANDS and the adapter's "
                                   "built-in grants"]},
         "adapter": adapter,
+        # the harness and model selection, with where each came from. Not
+        # part of `revision`: which model rides a launch is not a
+        # permission, and changing it must not make evidence read stale
+        "selection": agent_selection(choice),
         "capabilities": table,
         "cwd": {"policy": cwd_word, "path": cwd_path},
         "roots": available,
@@ -2296,6 +2357,11 @@ def freshness(frozen: dict) -> dict:
             or frozen_adapter.get("name") != current["adapter"].get("name"):
         changed.append("the agent adapter, or the version of it that declares "
                        "its capabilities, has changed")
+    frozen_agent = frozen.get("selection") or {}
+    if frozen_agent and frozen_agent != current.get("selection"):
+        changed.append("the harness or model this intent rides has been "
+                       "changed since the run was recorded; the run keeps "
+                       "the one it started with")
     for item in frozen.get("context") or []:
         name, sha = item.get("name"), item.get("sha256")
         if not sha or not item.get("path"):
@@ -2321,7 +2387,7 @@ def freshness(frozen: dict) -> dict:
 # credential. Nothing here holds any of the three, and the only way to
 # add one is to add it here on purpose.
 PUBLIC = ("v", "intent", "why", "revision", "policyId", "runner", "source",
-          "adapter", "capabilities", "cwd", "roots", "commands", "uiCommands",
+          "adapter", "selection", "template", "capabilities", "cwd", "roots", "commands", "uiCommands",
           "context", "bundle", "prepare", "verify", "denied", "publication",
           "writable", "isolation", "requires", "guarantees", "notes",
           "blockers",
@@ -2375,6 +2441,10 @@ def summary(found: dict | None) -> dict | None:
         # own pinned checkout rather than the application
         "cwd": (found.get("cwd") or {}).get("policy"),
         "reviewId": (found.get("review") or {}).get("reviewId"),
+        # which harness and model, so a run row says what rode it
+        "harness": ((found.get("selection") or {}).get("harness") or {}).get("name"),
+        "model": ((found.get("selection") or {}).get("model") or {}).get("value"),
+        "template": found.get("template"),
     }
 
 

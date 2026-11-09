@@ -278,6 +278,8 @@ PROJECT = setting("BOARD_TITLE", "").strip() or REPO.name
 PORT = int(setting("BOARD_PORT", "26071"))
 
 # Which agent adapter runs headless jobs. Resolution ladder: local wins.
+# The *startup* reading; a launch asks `agent_choice()`, which reads the
+# agent settings fresh (task 77).
 ADAPTER = setting("BOARD_AGENT_ADAPTER", "claude")
 
 # Command prefixes headless agents may run in a worktree (the project's
@@ -313,7 +315,161 @@ AGENT_MODELS = {
 
 def agent_model(mode: str) -> str:
     """The model one launch intent rides — '' means inherit."""
-    return AGENT_MODELS.get(mode, "") or AGENT_MODEL
+    return agent_choice(mode)["model"]["value"]
+
+
+# ── which harness and model a launch rides (task 77) ───────────────────
+#
+# The agent settings are the one group of `.env` keys that is *not* frozen
+# at import. Settings → Agents writes them, and a change has to reach the
+# next launch without a restart — so the launch, the preflight, the
+# doctor and the page all ask `agent_choice()`, which reads them fresh.
+# Everything else in this module is still the startup snapshot, on
+# purpose: this behaviour change is limited to agent configuration.
+#
+# Precedence is the one `setting()` has always applied, per key:
+#
+#   1. an in-process assignment to `ADAPTER`, `AGENT_MODEL` or
+#      `AGENT_MODELS` (an embedding or a test patching this module) —
+#      the module attributes are what callers have always set, and code
+#      that sets one means it;
+#   2. the process environment the board was started with — **locked**:
+#      it beats the file, and changing it means changing where it is
+#      exported and restarting;
+#   3. `manager/local/.env` as it is on disk now;
+#   4. the documented default.
+#
+# A per-purpose value that is empty inherits the default for its kind,
+# and an empty default model means the harness's own default — the
+# variable is then simply absent from the launch.
+
+# The three purposes Settings → Agents names, and the setting suffix each
+# reads. `refine` keeps the default harness (it has no harness override
+# of its own) but does have a model setting, as it did before.
+AGENT_PURPOSES = ("work", "act-pr", "review")
+_SUFFIX = {"work": "_WORK", "act-pr": "_ACT_PR", "review": "_REVIEW",
+           "refine": "_REFINE"}
+HARNESS_KEY = "BOARD_AGENT_ADAPTER"
+MODEL_KEY = "BOARD_AGENT_MODEL"
+HARNESS_KEYS = (HARNESS_KEY,) + tuple(HARNESS_KEY + _SUFFIX[p]
+                                      for p in AGENT_PURPOSES)
+MODEL_KEYS = (MODEL_KEY,) + tuple(MODEL_KEY + _SUFFIX[p]
+                                  for p in (*AGENT_PURPOSES, "refine"))
+AGENT_KEYS = HARNESS_KEYS + MODEL_KEYS
+DEFAULT_HARNESS = "claude"
+
+# Which agent keys the process environment set when this board started.
+# Snapshotted, not re-read: an export made after the start is not in this
+# process's environment anyway, and "locked" must mean the same thing for
+# the whole life of the board.
+_ENV_LOCKED = {key: os.environ[key] for key in AGENT_KEYS if key in os.environ}
+_BOOT = {"ADAPTER": ADAPTER, "AGENT_MODEL": AGENT_MODEL,
+         "AGENT_MODELS": dict(AGENT_MODELS)}
+
+
+def env_file_now() -> dict[str, str]:
+    """`manager/local/.env` as it is on disk now, parsed exactly the way
+    `_load_env` parses it at import."""
+    values: dict[str, str] = {}
+    try:
+        raw = (LOCAL / ".env").read_text(encoding="utf-8")
+    except OSError:
+        return values
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip().strip("'\"")
+    return values
+
+
+def _patched(key: str) -> str | None:
+    """An in-process assignment to the module attribute behind `key`, or
+    None when the attribute still holds what the module started with."""
+    if key == HARNESS_KEY and ADAPTER != _BOOT["ADAPTER"]:
+        return ADAPTER
+    if key == MODEL_KEY and AGENT_MODEL != _BOOT["AGENT_MODEL"]:
+        return AGENT_MODEL
+    for purpose, suffix in _SUFFIX.items():
+        if key == MODEL_KEY + suffix:
+            now = (AGENT_MODELS or {}).get(purpose, "")
+            if now != _BOOT["AGENT_MODELS"].get(purpose, ""):
+                return now
+    return None
+
+
+def agent_setting(key: str, file_values: dict[str, str] | None = None) -> dict:
+    """One agent key's effective value and where it came from.
+
+    `source` is one of `environment` (locked), `process`, `local-file` or
+    `default`; `value` is stripped, and '' is "nothing set here"."""
+    if key not in AGENT_KEYS:
+        raise KeyError(key)
+    patched = _patched(key)
+    if patched is not None:
+        return {"key": key, "value": str(patched).strip(),
+                "source": "process", "locked": True}
+    if key in _ENV_LOCKED:
+        return {"key": key, "value": _ENV_LOCKED[key].strip(),
+                "source": "environment", "locked": True}
+    values = env_file_now() if file_values is None else file_values
+    if key in values:
+        return {"key": key, "value": values[key].strip(),
+                "source": "local-file", "locked": False}
+    default = DEFAULT_HARNESS if key == HARNESS_KEY else ""
+    return {"key": key, "value": default, "source": "default",
+            "locked": False}
+
+
+def agent_choice(intent: str, file_values: dict[str, str] | None = None) -> dict:
+    """The harness and model one launch intent rides, with provenance.
+
+    The one resolver: `profiles.resolve` reads it for the manifest, so the
+    preflight, the doctor, the Settings page and `_launch` agree by
+    construction. `file_values` lets a caller resolve a *draft* `.env`
+    (Settings' preview) through exactly the same rules.
+    """
+    values = env_file_now() if file_values is None else file_values
+    suffix = _SUFFIX.get(intent)
+    default_h = agent_setting(HARNESS_KEY, values)
+    harness = dict(default_h, inherited=True, setting=HARNESS_KEY)
+    if intent in AGENT_PURPOSES:
+        own = agent_setting(HARNESS_KEY + suffix, values)
+        if own["value"]:
+            harness = dict(own, inherited=False, setting=own["key"])
+    if not harness["value"]:
+        harness = dict(harness, value=DEFAULT_HARNESS)
+    default_m = agent_setting(MODEL_KEY, values)
+    model = dict(default_m, inherited=True, setting=MODEL_KEY)
+    if suffix:
+        own = agent_setting(MODEL_KEY + suffix, values)
+        if own["value"]:
+            model = dict(own, inherited=False, setting=own["key"])
+    model["harnessDefault"] = not model["value"]
+    return {"intent": intent, "harness": harness, "model": model}
+
+
+def adapters_installed() -> list[dict]:
+    """Every adapter directory with a `run`, local before core, one entry
+    per name — the local one when both exist, which is the ladder
+    `adapter_dir` climbs."""
+    found: dict[str, dict] = {}
+    for base, where in ((LOCAL / "adapters", "local"), (CORE / "adapters", "core")):
+        try:
+            entries = sorted(base.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.name.startswith(".") or entry.name in found:
+                continue
+            if (entry / "run").is_file():
+                found[entry.name] = {"name": entry.name, "where": where,
+                                     "path": str(entry),
+                                     "shadows": (where == "local" and
+                                                 (CORE / "adapters" / entry.name
+                                                  / "run").is_file())}
+    return list(found.values())
 
 
 # GitHub plumbing: the gh CLI (stub-able for tests) and the git remote PRs
@@ -993,10 +1149,19 @@ def checks() -> list[dict]:
     return []
 
 
-def adapter_dir() -> Path | None:
-    """The configured agent adapter's directory — local overrides core."""
+ADAPTER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def adapter_dir(name: str | None = None) -> Path | None:
+    """An agent adapter's directory — local overrides core. No name means
+    the default harness as it resolves now. A name that is not a plain
+    directory name resolves to nothing rather than to a path."""
+    if name is None:
+        name = agent_choice("default")["harness"]["value"]
+    if not ADAPTER_NAME.match(name or ""):
+        return None
     for base in (LOCAL / "adapters", CORE / "adapters"):
-        candidate = base / ADAPTER
+        candidate = base / name
         if (candidate / "run").is_file():
             return candidate
     return None

@@ -1073,9 +1073,23 @@ class OwnershipSurvivesEveryEnding(ReviewCase):
         self.assertIn("does not remove through a link", given["kept"])
         self.assertTrue((outside / "keep.txt").is_file())
 
+    def test_an_uninstalled_harness_refuses_before_any_checkout(self):
+        # Task 77: the harness is part of the preflight, so a review whose
+        # harness is not installed refuses before a checkout exists at all
+        self.proposes()
+        self.patch(ADAPTER="not-installed")
+
+        with self.assertRaisesRegex(ValueError, "not installed"):
+            agents.start_pr_review(CARD, "review")
+        self.assertEqual(reviews.all_records(), [])
+        self.assertEqual(state.AGENTS, {})
+
     def test_a_launch_that_dies_after_provisioning_leaves_no_orphan(self):
         self.proposes()
-        self.patch(ADAPTER="not-installed")   # nothing to launch through
+        # installed, but its run cannot be executed: the launch dies after
+        # the checkout was provisioned
+        self.adapter_is(DIES)
+        self.adapter.chmod(0o644)
 
         with self.assertRaises(ValueError):
             agents.start_pr_review(CARD, "review")
