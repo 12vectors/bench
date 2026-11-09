@@ -57,6 +57,7 @@ import httpd  # noqa: E402
 import profiles  # noqa: E402
 import reviews  # noqa: E402
 import state  # noqa: E402
+import templates  # noqa: E402
 import verify  # noqa: E402
 
 BOARD = REPO / "manager" / "core" / "board.html"
@@ -1072,6 +1073,30 @@ class OwnershipSurvivesEveryEnding(ReviewCase):
         given = reviews.release("run-9", "the review ended")
         self.assertIn("does not remove through a link", given["kept"])
         self.assertTrue((outside / "keep.txt").is_file())
+
+    def test_a_pr_review_rides_the_review_purpose_and_its_template(self):
+        # Task 77: the review purpose's model and a local review-pr.md
+        # override reach the launch, and the record names both
+        self.proposes()
+        self.addCleanup(setattr, config, "_ENV_LOCKED", config._ENV_LOCKED)
+        config._ENV_LOCKED = {}
+        (self.local / ".env").write_text(
+            f"BOARD_AGENT_ADAPTER_REVIEW={config.ADAPTER}\n"
+            "BOARD_AGENT_MODEL_REVIEW=rv-model\n", encoding="utf-8")
+        (self.local / "prompts").mkdir(exist_ok=True)
+        custom = templates.builtin("review-pr.md") + "\nLOCAL REVIEW NOTE\n"
+        (self.local / "prompts" / "review-pr.md").write_text(custom, encoding="utf-8")
+        found = self.review()
+        run = self.runs()[-1]
+        self.assertIn("LOCAL REVIEW NOTE", run["prompt"])
+        self.assertIn("PR REVIEW:", run["prompt"])
+        frozen = profiles.recorded(found["id"])
+        self.assertEqual(frozen["selection"]["model"]["value"], "rv-model")
+        self.assertEqual(frozen["selection"]["harness"]["setting"],
+                         "BOARD_AGENT_ADAPTER_REVIEW")
+        self.assertEqual(frozen["template"], {
+            "name": "review-pr.md", "source": "local",
+            "sha256": templates.digest(custom)})
 
     def test_an_uninstalled_harness_refuses_before_any_checkout(self):
         # Task 77: the harness is part of the preflight, so a review whose

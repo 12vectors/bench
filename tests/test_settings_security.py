@@ -253,6 +253,69 @@ class ThePolicyDoorRefusesAForgedWrite(unittest.TestCase):
         self.assertIn("overview", data["settings"])
 
 
+class TheAgentsDoorIsTheSameDoor(unittest.TestCase):
+    """Settings → Agents (task 77): its four routes refuse a forged write
+    exactly as the policy routes do, and name nothing but agent keys and
+    the four templates."""
+
+    PATHS = ("/api/settings/agents/validate", "/api/settings/agents/preview",
+             "/api/settings/agents/render", "/api/settings/agents/apply")
+
+    def env_text(self, board) -> str:
+        return (board.tool / "manager" / "local" / ".env").read_text("utf-8")
+
+    def test_a_forged_write_is_refused_and_changes_nothing(self):
+        board = Board(self)
+        before = self.env_text(board)
+        payload = {"agents": {"BOARD_AGENT_MODEL": "x"}, "revision": "",
+                   "template": "work.md"}
+        for path in self.PATHS:
+            for headers in ({"Content-Type": "application/json"},
+                            {**HEADERS, "Origin": "https://evil.example"},
+                            {**HEADERS, "Sec-Fetch-Site": "cross-site"}):
+                code, data = board.post(path, payload, headers=headers)
+                self.assertEqual(403, code, (path, headers))
+                self.assertIn("Nothing was changed", data["error"])
+        self.assertEqual(before, self.env_text(board))
+        self.assertFalse((board.tool / "manager" / "local" / "prompts").exists())
+
+    def test_it_is_not_a_general_env_or_file_editor(self):
+        board = Board(self)
+        code, data = board.get("/api/settings")
+        revision = data["settings"]["agents"]["revision"]
+        for payload in ({"agents": {"BOARD_SYNC": "1"}},
+                        {"agents": {"BOARD_AGENT_MODEL": "a\nBOARD_SYNC=1"}},
+                        {"prompts": {"../../core/prompts/work.md":
+                                     {"action": "set", "text": "x"}}},
+                        {"prompts": {"/etc/passwd": {"action": "reset"}}}):
+            code, data = board.post("/api/settings/agents/apply",
+                                    {"revision": revision, **payload})
+            self.assertEqual(409, code, payload)
+        self.assertEqual("", self.env_text(board))
+
+    def test_the_boards_own_page_saves_and_the_next_reading_has_it(self):
+        board = Board(self)
+        _, data = board.get("/api/settings")
+        revision = data["settings"]["agents"]["revision"]
+        code, data = board.post("/api/settings/agents/apply", {
+            "revision": revision,
+            "agents": {"BOARD_AGENT_MODEL_REVIEW": "cheap-model"}},
+            headers={**HEADERS, "Origin": f"http://127.0.0.1:{board.port}",
+                     "Sec-Fetch-Site": "same-origin"})
+        self.assertEqual(200, code, data)
+        self.assertIn("BOARD_AGENT_MODEL_REVIEW=cheap-model", self.env_text(board))
+        _, data = board.get("/api/settings")
+        row = data["settings"]["agents"]["rows"]["review"]
+        self.assertEqual(row["model"]["value"], "cheap-model")
+        self.assertEqual(row["effective"]["selection"]["model"]["value"],
+                         "cheap-model")
+        # stale revision now
+        code, data = board.post("/api/settings/agents/apply", {
+            "revision": revision, "agents": {"BOARD_AGENT_MODEL": "x"}})
+        self.assertEqual(409, code)
+        self.assertTrue(data.get("conflict"))
+
+
 class ThisIsNotAFileWriteOrShellEndpoint(unittest.TestCase):
     def test_a_check_cannot_name_a_shell_pipeline_or_a_redirection(self):
         board = Board(self)

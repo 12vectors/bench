@@ -35,6 +35,7 @@ import agents  # noqa: E402
 import config  # noqa: E402
 import github  # noqa: E402
 import plans  # noqa: E402
+import profiles  # noqa: E402
 import state  # noqa: E402
 import taskfiles  # noqa: E402
 
@@ -775,6 +776,30 @@ class ACardOnTheDefaultWhenTheDefaultMoves(PlanCase):
         result = github.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
         self.assertEqual(taskfiles.find_stage_of(CARD), "done")
+
+    def test_acting_on_the_pr_rides_its_purpose_model_and_template(self):
+        """Task 77: the PR-fixes purpose's model and a local act-pr.md
+        override reach the launch, and the record names both."""
+        import templates
+        self.addCleanup(setattr, config, "_ENV_LOCKED", config._ENV_LOCKED)
+        config._ENV_LOCKED = {}
+        self.addCleanup((config.LOCAL / ".env").unlink, missing_ok=True)
+        (config.LOCAL / ".env").write_text("BOARD_AGENT_MODEL_ACT_PR=fix-model\n",
+                                           encoding="utf-8")
+        (config.LOCAL / "prompts").mkdir(exist_ok=True)
+        custom = templates.builtin("act-pr.md") + "\nLOCAL FIX NOTE\n"
+        (config.LOCAL / "prompts" / "act-pr.md").write_text(custom, encoding="utf-8")
+        self.addCleanup((config.LOCAL / "prompts" / "act-pr.md").unlink)
+        self.adapter_is(ECHOES_PROMPT)
+        record = agents.start_pr_fix(CARD, "review")
+        self.assertTrue(wait_for(
+            lambda: state.AGENTS[record["id"]]["status"] != "running"))
+        brief = (config.WORKTREES / STEM / "prompt.txt").read_text(encoding="utf-8")
+        self.assertIn("LOCAL FIX NOTE", brief)
+        self.assertEqual(state.AGENTS[record["id"]]["model"], "fix-model")
+        frozen = profiles.recorded(record["id"])
+        self.assertEqual(frozen["template"]["source"], "local")
+        self.assertEqual(frozen["template"]["name"], "act-pr.md")
 
 
 class ActingOnTheReviewValidatesTheSameTarget(PlanCase):
