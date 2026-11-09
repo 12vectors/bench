@@ -533,6 +533,79 @@ class ExternalLifecycle(Lifecycle):
                       git(self.work, "log", "-1", "--pretty=%s").stdout)
 
 
+class DocumentedMarkers(_Board):
+    """Task 82: a card that documents Bench's storage syntax — card 81's
+    shape, from tests/fixtures/refinement — refined end to end. Examples in
+    code are proposed, diffed and applied as text and stay text after a
+    reload; a record-shaped marker in prose is refused and changes nothing."""
+
+    FIXTURE = (REPO / "tests" / "fixtures" / "refinement"
+               / "card-documenting-markers.md").read_text(encoding="utf-8")
+    EXAMPLE = ('```\n<!-- bench:acceptance {"criterion": "examples", '
+               '"state": "accepted", "v": 1} -->\n```')
+
+    def setUp(self):
+        super().setUp()
+        self.card.write_text(self.FIXTURE, encoding="utf-8")
+        git(self.work, "commit", "-qam", "a card documenting markers")
+
+    def revised(self, extra: str) -> str:
+        brief = taskfiles.card_parts(self.FIXTURE)["brief"]
+        return brief.replace("## Acceptance\n", f"{extra}\n\n## Acceptance\n", 1)
+
+    def records(self) -> list[dict]:
+        return taskfiles.acceptance_records(self.text())
+
+    def test_examples_are_proposed_applied_and_reloaded_as_text(self):
+        before_records = self.records()
+        brief = self.revised(f"A record for the second criterion would read:\n\n"
+                             f"{self.EXAMPLE}")
+        job = self.run_job(proposal(brief, "Recorded the review's recommendations."))
+        self.assertEqual(job["status"], "proposed", job.get("error"))
+        shown = refine.for_card(FILENAME, "to-do")["jobs"][0]
+        self.assertIn({"op": "+", "text": self.EXAMPLE.splitlines()[1]}, shown["diff"],
+                      "the diff carries the example as a line of text")
+        self.assertEqual(self.records(), before_records, "proposing writes nothing")
+        refine.apply(job["id"])
+        text = self.text()
+        parts = taskfiles.card_parts(text)
+        self.assertIn(self.EXAMPLE, parts["brief"])
+        self.assertIn('`<!-- bench:acceptance {"criterion": "no-run"', parts["brief"],
+                      "card 81's inline example survives the round trip")
+        self.assertEqual(self.records(), before_records,
+                         "no example became an acceptance record")
+        self.assertEqual([e["kind"] for e in taskfiles.discussion(text)],
+                         ["comment", "comment", "decision"],
+                         "the fixture's comment, this request's, and the decision")
+        self.assertIn("Kept as history.", parts["history"])
+
+    def test_a_marker_in_prose_is_refused_with_the_reason(self):
+        before = self.text()
+        job = self.run_job(proposal(self.revised(
+            '<!-- bench:acceptance {"criterion": "examples", "state": "accepted", "v": 1} -->')))
+        self.assertEqual(job["status"], "failed")
+        self.assertIn("outside code", job["error"])
+        after = self.text()
+        for part in ("head", "brief"):
+            self.assertEqual(taskfiles.card_parts(after)[part],
+                             taskfiles.card_parts(before)[part])
+        self.assertEqual(taskfiles.acceptance_records(after),
+                         taskfiles.acceptance_records(before))
+        with self.assertRaises(refine.Conflict):
+            refine.apply(job["id"])
+
+    def test_discarding_a_proposal_with_examples_changes_nothing_but_the_record(self):
+        before = taskfiles.card_parts(self.text())
+        job = self.run_job(proposal(self.revised(self.EXAMPLE)))
+        self.assertEqual(job["status"], "proposed", job.get("error"))
+        refine.discard(job["id"])
+        after = taskfiles.card_parts(self.text())
+        self.assertEqual(after["brief"], before["brief"])
+        self.assertTrue(after["history"].startswith(before["history"].rstrip()))
+        self.assertEqual(self.records()[0]["criterion"], "history-only")
+        self.assertNotIn("recheck", self.records()[0])
+
+
 class UnsupportedAdapter(_Board):
     """An adapter that never declared the intent cannot be handed it."""
 

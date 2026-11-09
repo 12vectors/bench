@@ -2798,11 +2798,35 @@ written — a proposal that:
 
 - is empty, or larger than 64 KiB;
 - contains the `# ` title or any `**Field:**` header line;
-- contains a history heading, a `<!-- bench:` marker, or a line the board
-  parses as a marker (`PR REVIEW`, `NOT READY`, `RELEVANCE REVIEW`,
-  `REFINEMENT …`);
+- contains a history heading, or a line the board parses as a marker
+  (`PR REVIEW`, `NOT READY`, `RELEVANCE REVIEW`, `REFINEMENT …`);
+- contains a `<!-- bench:` marker outside code;
+- opens a ``` fenced block and never closes it;
 - changes a phase card's `## Cards` list;
 - invents an acceptance-criterion id, or uses one twice.
+
+**Documenting the storage syntax is not writing a record.** A card may
+need to show what a discussion entry or an acceptance record looks like —
+card 81 does. Inside inline code, or inside a ``` fenced block that
+closes, a `<!-- bench:` example is literal text: every Markdown renderer
+draws it as text, the board draws it as text, and the board reads
+records from a card's history only, never from its brief — the recheck
+an applied refinement makes included. So such an example is allowed in a
+proposal and survives Apply and a reload as documentation. The same
+characters anywhere else are an HTML comment shaped like a record, and are
+refused with the line they sit on, whether or not the old brief already had
+one. "Code" means exactly what the history split means by it: a line whose
+first non-blank characters are ``` opens or closes a fence, and an inline
+span closes on its own line with the same number of backticks it opened
+with. `~~~` fences, four-space indented blocks and a span that does not
+close are not code here, so an example in them is refused rather than
+guessed at — and an unclosed fence is refused outright, because the
+history split would read the card's history as part of the brief.
+
+Code is no shelter for the rest of the list. The `# ` title, `**Field:**`
+header lines, history headings and the verdict markers are read by line
+wherever they appear in the file, code blocks included, so a proposal
+containing one is refused even inside a fence, and the refusal says so.
 
 A refused proposal reads `failed`, names the reason, and changes nothing.
 So does a run that ended without a proposal, one that declined (`the
