@@ -1093,6 +1093,17 @@ class Backend:
         gh = bindir / "gh"
         gh.write_text("#!/bin/sh\necho 'bench-verify gh stub: no network' >&2\nexit 1\n")
         gh.chmod(0o755)
+        # The vendor CLI is a stub too, so no case can launch a model. It
+        # answers only a refinement, and only with what a case wrote to
+        # `refine_reply` first; everything else is refused.
+        self.refine_reply = base / "refine-reply.txt"
+        claude = bindir / "claude"
+        claude.write_text(
+            "#!/bin/sh\n"
+            f"if [ \"$AGENT_MODE\" = refine ] && [ -f '{self.refine_reply}' ]; then\n"
+            f"  cat '{self.refine_reply}'; exit 0\nfi\n"
+            "echo 'bench-verify claude stub: no model here' >&2\nexit 1\n")
+        claude.chmod(0o755)
         self.env = dict(env)
         for repo in (self.app, self.work):
             repo.mkdir()
@@ -1115,7 +1126,8 @@ class Backend:
         self.env.update({
             "BOARD_APP_ROOT": str(self.app), "BOARD_WORK_ROOT": str(self.work),
             "BOARD_WORKTREES": str(self.trees), "BOARD_PORT": str(self.port),
-            "BOARD_GH_BIN": str(gh), "BOARD_PR_POLL_INTERVAL": "3600",
+            "BOARD_GH_BIN": str(gh), "BOARD_CLAUDE_BIN": str(claude),
+            "BOARD_PR_POLL_INTERVAL": "3600",
             "BOARD_PHASE_INTERVAL": "3600", "BOARD_SYNC": "0",
             "BOARD_COMMIT_MOVES": "0", "BOARD_TITLE": "bench-verify fixture"})
         self.python = python

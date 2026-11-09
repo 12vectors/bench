@@ -60,6 +60,13 @@ Rules for the proposed brief:
   section.
 - Do not start any line with PR REVIEW, NOT READY, RELEVANCE REVIEW or
   REFINEMENT.
+- Discussion entries and acceptance records (`<!-- bench:… -->` lines) are
+  written by the board only. A brief may *document* that syntax, and keep
+  an existing example of it, only inside inline code or a closed ```
+  fenced block, where it stays literal text; anywhere else it is refused.
+  Header lines, the markers above, titles and history headings are refused
+  even inside code, because the board reads those wherever they appear.
+  Close every ``` fence you open.
 
 If the instruction cannot be incorporated as a change to the brief (it asks
 for implementation, or it is unclear), do not guess: end with a line that
