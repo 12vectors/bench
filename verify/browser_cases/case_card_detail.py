@@ -231,7 +231,9 @@ class StructuredDetail(unittest.TestCase):
             b.eval(f"(() => {{ const n = document.querySelector('#fnd-note-{fid}');"
                    f" n.value = {json.dumps(note)}; n.dispatchEvent(new Event('input')); }})()")
             b.click(f"{frow} button[data-event=\"{button}\"]")
-            self.assertTrue(b.wait(f"(document.querySelector('{frow} .aword') || {{}}).innerText"
+            # textContent: a resolved finding folds away under "Resolved
+            # findings", where innerText of an unrendered row reads empty
+            self.assertTrue(b.wait(f"(document.querySelector('{frow} .aword') || {{}}).textContent"
                                    f" === {json.dumps(word)}", 10), f"the finding never read '{word}'")
 
         event("fix-reported", "Moved the title above the tools in the PR update.",
@@ -239,7 +241,10 @@ class StructuredDetail(unittest.TestCase):
         self.assertIn("fix reported", b.eval("document.querySelector('#dsec-overview .dnext').innerText"))
         shot("detail-reviews-fix-reported-1280x900")
         event("resolved", "Rechecked at 1280px: the title leads.", "resolved")
-        chain = b.eval(f"document.querySelector('{frow} .chain').innerText")
+        self.assertIn("Resolved findings (1)",
+                      b.eval("document.querySelector('#dsec-reviews').innerText"),
+                      "the resolved finding is not collapsed under its own heading")
+        chain = b.eval(f"document.querySelector('{frow} .chain').textContent")
         for word in ("found", "fix reported", "resolved"):
             self.assertIn(word, chain)
         self.assertIn("Olive asked for changes at 0123456789ab",
