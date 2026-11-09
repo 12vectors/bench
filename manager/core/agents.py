@@ -49,6 +49,7 @@ import events
 import gates
 import plans
 import profiles
+import progress
 import reports
 import reviews
 import state
@@ -101,6 +102,9 @@ def _session_report(record: dict, report: str) -> None:
         "v": 1, "session": record["session"], "kind": "report",
         "summary": f"{record.get('name') or 'the agent'}'s report on {record['task']}",
         "detail": report, "agent": record["id"], "task": record["task"],
+        # the board's own event, so it carries the board's own identity: one
+        # closing report per run, however often this is reached
+        "id": f"board:report:{record['id']}",
     })
 
 
@@ -293,6 +297,16 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str,
     else:
         env.pop("AGENT_PROFILE", None)
         env.pop("AGENT_CONTEXT", None)
+    # The progress channel: one executable and a token scoped to this run,
+    # handed over only when the adapter declares it can render the grant.
+    # Absent, the adapter is given exactly the environment it always was.
+    env.pop("AGENT_PROGRESS", None)
+    env.pop("BOARD_PROGRESS_TOKEN", None)
+    token = (progress.open_run(agent_id, filename, mode, progress.channel(mode))
+             if mode in progress.INTENTS else None)
+    if token:
+        env["AGENT_PROGRESS"] = str(progress.shim())
+        env["BOARD_PROGRESS_TOKEN"] = token
     model = config.agent_model(mode)
     if model:
         env["AGENT_MODEL"] = model
@@ -307,8 +321,17 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str,
             stdout=log_file, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
     except OSError as exc:
         log_file.close()
+        progress.close_run(agent_id, "failed")
         raise ValueError(f"could not launch adapter {adapter}: {exc}")
     return proc, log_file, model
+
+
+def _progress_fields(mode: str) -> dict[str, str]:
+    """The `{progress}` placeholder: what the run is told about reporting,
+    or nothing at all when its adapter gives it no channel — the same
+    reading `_launch` takes when it decides whether to hand one over."""
+    available = progress.channel(mode).get("state") == "available"
+    return {"progress": progress.prompt_block(mode, available)}
 
 
 def _no_commands_note() -> str | None:
@@ -586,7 +609,7 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
         branch=branch, filename=filename, body=task["body"],
         plan=plans.brief(plan), context=profiles.prompt_block(manifest),
         verification=profiles.verification_block(manifest),
-        **config.prompt_fields(filename, "in-progress"))
+        **config.prompt_fields(filename, "in-progress"), **_progress_fields("work"))
     proc, log_file, model = _launch("work", prompt, worktree, agent_id,
                                     filename, log_path, manifest)
 
@@ -641,7 +664,7 @@ def start_review(filename: str, stage: str) -> dict:
         stage=stage, filename=filename, body=task["body"],
         context=profiles.prompt_block(manifest),
         verification=profiles.verification_block(manifest),
-        **config.prompt_fields(filename, stage))
+        **config.prompt_fields(filename, stage), **_progress_fields("review"))
     proc, log_file, model = _launch("review", prompt, config.REPO, agent_id,
                                     filename, log_path, manifest)
 
@@ -840,6 +863,10 @@ def _finish(agent_id: str, proc: subprocess.Popen, log_file) -> tuple[dict, bool
         record["rc"] = rc
         record["ended"] = time.time()
         failed = record["status"] == "failed"
+    # The run's own account of its progress stops being "doing now" the
+    # moment the board sees it end; what it said stays, as dated history.
+    progress.close_run(agent_id, "held" if stopped else
+                       ("finished" if rc == 0 else "failed"))
     if failed:
         _record_failure(record, rc)
     return record, stopped, rc
@@ -854,6 +881,7 @@ def _reap_agent(agent_id: str, proc: subprocess.Popen, log_file) -> None:
     if declined is not None:
         with state.LOCK:
             record["status"] = "declined"
+        progress.close_run(agent_id, "declined")
         # Send the card back for refinement and clear the way for a relaunch.
         back_to = record["origin"] if record["origin"] in ("backlog", "to-do") else "to-do"
         if find_stage_of(filename) == "in-progress":
@@ -967,7 +995,7 @@ def start_pr_review(filename: str, stage: str) -> dict:
             review=reviews.prompt_block(pinned),
             context=profiles.prompt_block(manifest),
             verification=profiles.verification_block(manifest),
-            **config.prompt_fields(filename, stage))
+            **config.prompt_fields(filename, stage), **_progress_fields("review"))
         proc, log_file, model = _launch("review", prompt, Path(pinned["path"]),
                                         agent_id, filename, log_path, manifest)
     except BaseException:
@@ -1064,7 +1092,7 @@ def start_pr_fix(filename: str, stage: str) -> dict:
         base=plan["prBase"], remote=plan.get("appRemote") or "origin",
         plan=plans.brief(plan), context=profiles.prompt_block(manifest),
         verification=profiles.verification_block(manifest),
-        **config.prompt_fields(filename, stage))
+        **config.prompt_fields(filename, stage), **_progress_fields("act-pr"))
     # act-pr is the one intent allowed to push: the PR must update.
     proc, log_file, model = _launch("act-pr", prompt, worktree, agent_id,
                                     filename, log_path, manifest)

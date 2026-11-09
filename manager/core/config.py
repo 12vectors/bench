@@ -56,6 +56,7 @@ REVIEWS_DIR = STATE / "reviews"                    # run-owned pinned PR-review 
 DOCTOR_DIR = STATE / "doctor"                      # fixtures a diagnosis makes and removes
 GATES_DIR = STATE / "gates"                        # Bench review verdicts and gate overrides
 REFINE_DIR = STATE / "refine"                      # card-refinement jobs and their proposals
+PROGRESS_DIR = STATE / "progress"                  # agent-reported progress, per run
 # Merges whose publication is unfinished. None means "beside the recorded
 # plans" (`STATE / "completions"`): a record that finishes a plan's work
 # lives wherever that plan does — see `github._recovery_dir`.
@@ -686,6 +687,15 @@ PHASE_INTERVAL = float(setting("BOARD_PHASE_INTERVAL", "30"))
 WATCH_INTERVAL = float(setting("BOARD_WATCH_INTERVAL", "2"))
 EVENTS_CAP = int(setting("BOARD_EVENTS_CAP", "800"))
 BOARD_EVENTS_CAP = int(setting("BOARD_HISTORY_CAP", "300"))
+
+# Agent-reported progress (progress.py). A run that has said nothing about
+# its work for PROGRESS_REMIND seconds is reminded once, at its next tool
+# boundary, by the event bridge's reply — never by an interruption and
+# never by a model call of the board's own. 0 turns the reminder off.
+# Reports closer together than PROGRESS_MIN_GAP seconds are coalesced into
+# the previous history entry rather than each becoming a line of their own.
+PROGRESS_REMIND = max(0.0, float(setting("BOARD_PROGRESS_REMIND", "600")))
+PROGRESS_MIN_GAP = max(0.0, float(setting("BOARD_PROGRESS_MIN_GAP", "20")))
 
 
 def child_env() -> dict[str, str]:

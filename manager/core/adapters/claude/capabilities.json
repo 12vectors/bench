@@ -17,7 +17,8 @@
     "command-denylist": "prefix-allowlist",
     "read-only-tools": "enforced",
     "shell-withheld": "enforced",
-    "model-selection": "enforced"
+    "model-selection": "enforced",
+    "progress-report": "prefix-allowlist"
   },
   "conformance": {
     "_doc": [

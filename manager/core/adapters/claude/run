@@ -41,6 +41,10 @@ case "$MODE" in
      exit 64 ;;
 esac
 SETTINGS="$(python3 "$HERE/hook_settings.py" "$MODE")"
+# The one event bridge this launch registered. A copy of the bridge wired
+# by the project's own .claude/settings.json stands down when it sees this,
+# so a run in a worktree of a wired repository reports each event once.
+export BOARD_EMIT="$HERE/emit.py"
 
 # The ${arr[@]+...} expansion keeps set -u happy on bash 3.2 when unset.
 MODEL_ARGS=()

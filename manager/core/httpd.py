@@ -22,6 +22,7 @@ import github
 import phases
 import plans
 import profiles
+import progress
 import refine
 import reviews
 import settings
@@ -270,6 +271,10 @@ def state_payload() -> dict:
         # decision, or failed: the newest per card. Runtime state, local to
         # this board — the decisions themselves are in the cards
         "refinements": refine.board(),
+        # what each card's most recent run has *said* about its work —
+        # agent-reported, never a result — with its channel's health and
+        # whether the run has ended. The whole timeline is `/api/progress`.
+        "progress": progress.board_public(),
         "branches": github.task_branches(),
         "commands": config.commands(),
         "commandRuns": commands.public(),
@@ -340,6 +345,20 @@ class Handler(BaseHTTPRequestHandler):
             with state.LOCK:
                 meta = dict(state.SESSIONS.get(sid) or {})
             self._json(200, {"meta": meta, "events": events.session_events(sid)})
+        elif path == "/api/progress":
+            # One run's progress whole — the current update, the milestone
+            # checklist and the timeline — by agent id, or the most recent
+            # run on a card by file. Read-only; agent-reported throughout.
+            query = parse_qs(url.query)
+            agent_id = (query.get("agent") or [""])[0]
+            if not agent_id:
+                latest = progress.board_public(
+                    {(query.get("file") or [""])[0]}).values()
+                agent_id = next((p["agent"] for p in latest), "")
+            found = progress.public(agent_id, full=True) if agent_id else None
+            self._json(200 if found else 404,
+                       {"progress": found} if found else
+                       {"error": "no progress recorded for that run"})
         elif path == "/api/plan":
             # The preflight itself, on demand: the whole resolved plan or
             # the reason it does not resolve, before anything is started.
@@ -628,8 +647,31 @@ class Handler(BaseHTTPRequestHandler):
                 task = taskfiles.move_task(payload["file"], payload["from"], payload["to"])
                 self._json(200, {"task": task})
             elif path == "/api/events":
-                events.ingest_event(self._read_body())
-                self._json(200, {"ok": True})
+                # The reply may carry a progress reminder for the run that
+                # sent the event; a bridge that knows the field hands it
+                # back at the tool boundary, and one that does not ignores
+                # it — which is the whole of the fallback.
+                self._json(200, {"ok": True, **events.ingest_event(self._read_body())})
+            elif path == "/api/progress":
+                # A run's own report of its work. Capped before it is
+                # parsed, then validated whole by `progress.report`, which
+                # is the only thing that decides what is kept.
+                length = int(self.headers.get("Content-Length") or 0)
+                if length > progress.MAX_BODY:
+                    self.rfile.read(length)
+                    self._json(413, {"error": f"a progress report is at most "
+                                              f"{progress.MAX_BODY} bytes",
+                                     "code": "too-long"})
+                    return
+                try:
+                    try:
+                        body = self._read_body()
+                    except (ValueError, UnicodeDecodeError):
+                        raise progress.Refused(400, "schema", "the body is not JSON")
+                    self._json(200, progress.report(body))
+                except progress.Refused as refused:
+                    self._json(refused.status, {"error": refused.why,
+                                                "code": refused.code})
             elif path == "/api/agent/start":
                 payload = self._read_body()
                 # takeover: the second, deliberate click on a card someone

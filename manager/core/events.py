@@ -20,9 +20,11 @@ cannot recover from the stream.
 from __future__ import annotations
 
 import json
+import re
 import time
 
 import config
+import progress
 import state
 from taskfiles import NUMBER_RE
 
@@ -65,14 +67,87 @@ def _txt(value, cap: int) -> str | None:
     return value[:cap] if isinstance(value, str) and value else None
 
 
-def ingest_event(raw: dict) -> None:
+# ── replayed copies of one raw event ───────────────────────────────────
+#
+# Why this exists (task 73). A headless claude run in a worktree of a
+# repository whose *own* `.claude/settings.json` wires this bridge — bench
+# developed with bench is exactly that — gets the hooks twice: once from
+# that project file (`$CLAUDE_PROJECT_DIR/…/emit.py`) and once from the
+# `--settings` document the adapter generates (`/abs/…/emit.py`). The
+# vendor de-duplicates identical hook *commands* only, and those two
+# strings differ, so every tool call was posted twice with identical
+# content and the timeline showed each edit and command two times.
+#
+# Two layers deal with it. The bridge stops it at the source: a launch
+# names its canonical bridge (BOARD_EMIT) and any other copy stands down.
+# And here, an event carrying a stable `id` — the vendor's own tool-use id
+# and the hook phase, so a start and its finish stay two events — is
+# recorded once however many times it arrives. A bridge too old to send
+# an id is recognised by contrast: once a session has delivered ids, an
+# id-less event in it can only be a second, older bridge's copy, and is
+# dropped. Distinct repeated edits and repeated test runs carry distinct
+# ids and are never collapsed for having matching text.
+_EVENT_ID = re.compile(r"^[A-Za-z0-9._:@-]{1,160}$")
+SEEN_CAP = 2000
+_SEEN: dict[str, dict[str, None]] = {}     # sid -> ordered ids already recorded
+_BRIDGED: set[str] = set()                 # sids whose bridge sends ids
+DROPPED: dict[str, int] = {}               # sid -> replayed copies dropped
+
+
+def _seen_for(sid: str) -> dict[str, None]:
+    """The ids this session has recorded, rebuilt from its log on first
+    sight after a restart, so a replay across a restart is still one."""
+    seen = _SEEN.get(sid)
+    if seen is not None:
+        return seen
+    seen = {}
+    path = config.SESSIONS_DIR / f"{sid}.jsonl"
+    if "/" not in sid and ".." not in sid and path.is_file():
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines()[-SEEN_CAP:]:
+                event_id = json.loads(line).get("id")
+                if isinstance(event_id, str):
+                    seen[event_id] = None
+        except (OSError, ValueError):
+            pass
+    if any(not i.startswith("board:") for i in seen):
+        _BRIDGED.add(sid)
+    _SEEN[sid] = seen
+    return seen
+
+
+def ingest_event(raw: dict) -> dict:
+    """Record one normalized event. Returns what the bridge may be told
+    back — `{"duplicate": true}` for a replayed copy, and `{"remind": …}`
+    when the run behind it is due a progress update."""
     if not isinstance(raw, dict) or "kind" not in raw:
-        return  # not a normalized event — adapters own translation
+        return {}  # not a normalized event — adapters own translation
     sid = str(raw.get("session") or "unknown")
     kind = raw["kind"] if raw.get("kind") in KINDS else "other"
+    event_id = raw.get("id") if isinstance(raw.get("id"), str) \
+        and _EVENT_ID.match(raw["id"]) else None
+
+    with state.LOCK:
+        seen = _seen_for(sid)
+        if event_id is not None:
+            if event_id in seen:
+                DROPPED[sid] = DROPPED.get(sid, 0) + 1
+                return {"duplicate": True}
+            seen[event_id] = None
+            while len(seen) > SEEN_CAP:
+                seen.pop(next(iter(seen)))
+            # the board's own events (`board:…`) say nothing about which
+            # bridge a session has, so they never make id-less events suspect
+            if not event_id.startswith("board:"):
+                _BRIDGED.add(sid)
+        elif sid in _BRIDGED:
+            DROPPED[sid] = DROPPED.get(sid, 0) + 1
+            return {"duplicate": True}
 
     event = {"ts": time.time(), "session": sid, "kind": kind,
              "summary": _txt(raw.get("summary"), 300) or kind}
+    if event_id is not None:
+        event["id"] = event_id
     for key, cap in (("file", 300), ("cmd", 300), ("detail", 900)):
         value = _txt(raw.get(key), cap)
         if value:
@@ -137,6 +212,15 @@ def ingest_event(raw: dict) -> None:
         # the agent's card can now show its live line instead of "warming up"
         state.broadcast({"type": "agents"})
     state.broadcast({"type": "event", "event": event, "session": meta_snapshot})
+    # A tool boundary of a run that has a progress channel: the one moment a
+    # reminder can be handed back without interrupting anything. Never on
+    # the session's own lifecycle events, and never more than once per
+    # interval (progress.reminder keeps the clock).
+    if kind not in ("session", "end", "idle", "report") and not event.get("running"):
+        remind = progress.reminder(meta_snapshot.get("agentId"))
+        if remind:
+            return {"remind": remind}
+    return {}
 
 
 def load_disk_sessions() -> None:

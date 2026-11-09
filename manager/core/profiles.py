@@ -324,6 +324,9 @@ ADAPTER_CAPABILITIES = {
     "shell-withheld": "the vendor's shell tool is withheld from the run, so it "
                       "can launch no command at all",
     "model-selection": "the configured model reaches the vendor untranslated",
+    "progress-report": "the run may run bench's progress shim (AGENT_PROGRESS) "
+                       "and nothing else comes with that rule — what it "
+                       "reports is shown as agent-reported, never as a result",
 }
 
 # Capabilities this card names so later members have one word for them,

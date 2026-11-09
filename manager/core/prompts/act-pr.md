@@ -71,6 +71,8 @@ Do this properly:
 
 {verification}
 
+{progress}
+
 End your reply with a report whose FIRST line is exactly
 ADDRESSED: <one line on what changed>
 followed by a bullet per review point: what was asked, and what you did

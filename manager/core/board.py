@@ -43,6 +43,7 @@ import events
 import github
 import httpd
 import phases
+import progress
 import refine
 import reviews
 import state
@@ -127,6 +128,10 @@ def main() -> None:
     # process. It is closed as failed, naming the restart, and never re-run
     # — a proposal waiting for Apply or Discard survives as it was.
     refine.recover()
+    # Agent-reported progress survives the restart as history. A run this
+    # board was tracking is closed `unobserved` — its ending will not be
+    # seen, so its last update must stop reading as "doing now".
+    progress.load()
     threading.Thread(target=watch.watcher, daemon=True).start()
     threading.Thread(target=github.poller, daemon=True).start()
     threading.Thread(target=github.reconcile, daemon=True).start()

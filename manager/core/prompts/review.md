@@ -40,6 +40,8 @@ git log) as needed.
 
 {verification}
 
+{progress}
+
 End with a report whose FIRST line is exactly
 RELEVANCE REVIEW: <Still relevant | Partly done | Already done | Needs rewrite>
 followed by the evidence (what you checked, what changed) and a

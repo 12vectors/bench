@@ -138,6 +138,22 @@ def profile_prefixes(profile: dict | None) -> list[str]:
     return out
 
 
+# The intents that may report progress, when the board hands one a
+# channel (AGENT_PROGRESS: the absolute path of core/bench-progress).
+PROGRESS_MODES = {"work", "act-pr", "review"}
+
+
+def progress_rules(mode: str, shim: str | None) -> list[str]:
+    """The progress channel as an allow-rule: that one executable, by
+    absolute path, and nothing composed from it. Absent unless the board
+    set AGENT_PROGRESS, so a launch without a channel renders exactly the
+    document it always did."""
+    shim = (shim or "").strip()
+    if mode not in PROGRESS_MODES or not shim.startswith("/"):
+        return []
+    return [f"Bash({shim})", f"Bash({shim}:*)"]
+
+
 def allow_rules(mode: str, commands: list[str],
                 profile: dict | None = None) -> list[str]:
     """Bash() allow-rules for one intent: the exact prefix and any longer
@@ -192,7 +208,7 @@ def deny_rules(mode: str, profile: dict | None = None) -> list[str]:
 
 
 def settings(mode: str, commands: list[str],
-             profile: dict | None = None) -> dict:
+             profile: dict | None = None, progress: str | None = None) -> dict:
     emit = Path(__file__).resolve().parent / "emit.py"
     hook = {"type": "command", "command": f'python3 "{emit}"', "timeout": 5}
     plain = [{"hooks": [hook]}]
@@ -204,7 +220,7 @@ def settings(mode: str, commands: list[str],
         "PostToolUse": [{"matcher": "*", "hooks": [hook]}],
     }}
     perms = {}
-    rules = allow_rules(mode, commands, profile)
+    rules = allow_rules(mode, commands, profile) + progress_rules(mode, progress)
     if rules:
         perms["allow"] = rules
     denies = deny_rules(mode, profile)
@@ -232,4 +248,5 @@ if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     commands = split_commands(os.environ.get("AGENT_COMMANDS", ""))
     print(json.dumps(settings(mode, commands,
-                              load_profile(os.environ.get("AGENT_PROFILE")))))
+                              load_profile(os.environ.get("AGENT_PROFILE")),
+                              os.environ.get("AGENT_PROGRESS"))))
