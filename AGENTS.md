@@ -44,7 +44,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports → taskfiles → plans / profiles → reviews → verify → progress → gates → doctor → events / github / drive / sync → settings → agents → phases → refine → watch / httpd → board.py
+config → state / reports → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → doctor → events / github / drive / sync → settings → agents → phases → refine → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -72,6 +72,12 @@ config → state / reports → taskfiles → plans / profiles → reviews → ve
   run-scoped channel it reports through, each report validated whole at
   ingestion, ordered, de-duplicated and coalesced, closed by the run's
   observed ending, and kept apart from anything bench verified
+- `acceptance.py` — what a card's requirements have been *judged*
+  against: each criterion's state computed from the card's own records,
+  bench's evidence and the runs' claims; review rounds and the findings
+  carried through fix and recheck; and the three explicit, attributed
+  writes (track, decide, a finding event) — never a tick inferred from a
+  lane, an exit or a green suite
 - `gates.py` — may this merge happen? The operator's requirement per
   guarded mutation, read against evidence bound to the exact commit about
   to move; bench's own review verdict kept apart from GitHub's formal
@@ -738,15 +744,49 @@ built and wired by the same code as the face. A required check that has
 not run cannot be hidden this way, because it reads through the gate chip,
 and an unmet gate is always on the face.
 
-The card's detail view carries all of it in one place: every tool and
-action the card has, and a **Signals** block with Bench checks, external
-CI, review and the merge gate as four separate rows, each in its own
-words. Green CI is labelled as not a Bench check, and a board with no gate
-says that nothing is required, which is not a pass. Cards are reachable by
-keyboard. Tab lands on a card, Enter or Space opens its detail view,
-focusing a card shows the same actions as hovering it, and closing the
-detail view returns focus to the card. Board and Phases draw the same
-card.
+Two counts may join the face, and only where there is something to
+count: `☑ 6/9 accepted` once a card's acceptance is tracked, and
+`◇ 2 open findings` (or `1 fix to recheck`) while review findings are
+outstanding. Each opens its section of the detail view. The word is
+*accepted*, never *done*: the ratio is how many criteria a person has
+accepted on record, not how complete the work is.
+
+The card's detail view leads with what the card is and what happens next:
+its number, title and lifecycle pill stay in view while you read (the
+head is sticky, and **Expand** widens the view for long briefs and
+reports), and five sections follow as tabs — Tab reaches the row, the
+arrow keys, Home and End move along it.
+
+- **Overview** — the next step and who holds it (a failed run, an agent
+  at work, open findings, a fix to recheck, criteria needing work, an
+  unmet gate, then what the stage asks for), then the stage, the latest
+  run's progress as #73 reports it (agent-reported with its age while the
+  run lives; *history, not current* once it has ended; *reporting
+  unavailable* where it was never given a channel), the acceptance count,
+  the findings, and the last review round explained against its revision
+  and what has happened since. Then the **Signals** block — Bench checks,
+  external CI, review and the merge gate as four separate rows, each in
+  its own words — and every tool and action the card has, with the branch
+  plan folded underneath. Green CI is labelled as not a Bench check, and a
+  board with no gate says that nothing is required, which is not a pass.
+- **Brief** — the requirement alone (the head's fields and the brief, no
+  history), then #65's discussion and its refinement controls.
+- **Acceptance** — the criteria and their results; see "Acceptance and
+  review findings".
+- **Reviews** — open findings first, each with its fix and resolution
+  chain, then resolved findings and earlier rounds folded away.
+- **Activity** — the dated record, newest first: progress updates
+  (labelled as the run's), work reports and reviews (each folded, whole),
+  comments and decisions, and acceptance and finding records. Raw reads,
+  edits and commands stay in the Sessions view.
+
+A live update keeps your place: each section keeps its own scroll
+position, open folds and unsent text survive a redraw, and a record
+arriving above what you are reading moves the page rather than you.
+Cards are reachable by keyboard. Tab lands on a card, Enter or Space
+opens its detail view, focusing a card shows the same actions as hovering
+it, and closing the detail view returns focus to the card. Board and
+Phases draw the same card.
 
 The header carries one more chip, and unlike the sync and phase chips it
 is always there: **⚕ readiness** opens the execution inspector. Those two
@@ -2934,6 +2974,130 @@ and for anyone editing a card by hand. Every marker carries `"v": 1`.
 
 Fixtures that hold this contract to the code are in
 `tests/fixtures/refinement/`.
+
+## Acceptance and review findings
+
+A card's checklist says what must be true. Until now nothing recorded
+whether it was: a Done card with every box unticked and a Done card with
+every box ticked by hand said equally little. Acceptance is the record —
+per criterion, attributed, bound to the requirement's wording and the
+code it was judged against — and review findings are the same idea for
+what a review turned up.
+
+### Tracking is explicit, and viewing changes nothing
+
+A card nobody has tracked reads **Acceptance results not recorded**, in
+those words, whatever lane it is in. Its criteria are listed, and a
+hand-written `[x]` is shown as what it is: a legacy claim, not an
+acceptance. Opening the card writes nothing.
+
+**Track acceptance** (armed: it edits the brief) is the one operation that
+gives criteria identities. Each `- [ ]` line without one gains
+`<!-- ac:<id> -->` at its end — a fresh id, never one a removed criterion
+held — and an acceptance record: `pending`, or `reported` with source
+`legacy-tick` where the line was ticked by hand. The tick and the wording
+stay exactly as they were. It is bound to the brief you were shown, so a
+brief that changed meanwhile is refused with nothing written, and because
+it edits the brief, a refinement proposal made before it reads stale.
+Criteria added later begin pending and are tracked the same way.
+
+### What a criterion's state means
+
+| state | what it licenses you to believe |
+| --- | --- |
+| `pending` | nothing is on record about it |
+| `reported — awaiting confirmation` | a run said it implemented it, or it was ticked by hand before tracking. A claim |
+| `accepted` | a named person confirmed it with a note, or mapped one of bench's own records that reads `passed` *now* to it |
+| `needs work` | a person recorded that it is not met, and why |
+| `needs recheck` | it was accepted, and what that rested on has moved: the wording changed, an applied refinement marked it, or the evidence no longer reads `passed` |
+
+Only `accepted` wears the tick and only `accepted` is counted. An agent's
+report, a clean exit, an unrelated passing suite, a merge and a move to
+`done/` change none of them. A recheck keeps the earlier decision in view
+and says why it no longer stands; reordering criteria changes nothing,
+and a removed criterion leaves the count and stays in history.
+
+### Recording a decision
+
+Each criterion expands to its full wording, its id and revision, what
+supports it, and its whole record. A decision names its actor — this
+board's git identity in the work state, else the operating-system user,
+said which — and is refused rather than written when the page is stale:
+it carries the criterion's revision and the newest decision the person
+saw, so a slower second page or a replayed request cannot overwrite a
+newer decision, and a request key makes a double click one record.
+
+- **Accept** needs a note saying what was checked (a manual or visual
+  confirmation, optionally with a reference such as a screenshot), *or*
+  one of bench's evidence records for this card that reads `passed` now.
+  Mapping evidence is the person's act; nothing maps a check to a
+  criterion by its name or a test count.
+- **Needs work**, **Needs recheck** and **Back to pending** need a note.
+
+A run reports a criterion through its progress channel —
+`bench-progress --criterion <id>` — and that is all it can do: the card
+shows *reported* beside the run that said so, and a person decides.
+
+### Review findings, their fixes and their rechecks
+
+Each `## PR review …` section an agent filed is a **round**, identified
+by its heading, with its reviewer, the revision it was pinned to and its
+verdict. A round's verdict is about that revision: a request for changes
+stays what it was, and the Overview and Reviews sections say what has
+happened since (PR updates, fixes reported, findings resolved). Neither
+section ever reads a historic request as approval, and resolving findings
+here is not GitHub's formal approval — Signals keeps those apart.
+
+A **finding** is recorded by a person (**Record a finding**), optionally
+against a round and a criterion — not every concern is a criterion. Its
+life is a chain of events: `opened`, `fix-reported`, `resolved`,
+`reopened`. A reported fix keeps it open until somebody rechecks it;
+resolving it needs a note on what authority (and optionally a passing
+evidence record) and records the branch revision; a later agent update
+never resolves anything. Open findings and fixes to recheck drive the
+Overview's next step.
+
+### Storage (extends the v1 contract above)
+
+All of it lives in the card, in the history half `card_parts` already
+keeps apart from the brief, so a refinement never touches it and sync
+carries it like any other board edit (`board: <n> acceptance …`, one
+commit per write under `BOARD_COMMIT_MOVES`).
+
+```markdown
+## Acceptance record
+
+<!-- bench:acceptance-record v1 — written by the board. One decision per line; the newest about a criterion stands. -->
+
+<!-- bench:acceptance {"v": 1, "id": "r-…", "criterion": "a1b2c3", "rev": "<12 hex>", "state": "accepted", "source": "manual", "actor": "ron", "actorSource": "git", "at": "2026-11-09T10:00:00Z", "text": "…", "note": "…", "ref": "…", "commit": "…", "supersedes": "r-…"} -->
+
+## Review findings
+
+<!-- bench:review-findings v1 — written by the board. One event per line; a finding's newest event is its state. -->
+
+<!-- bench:finding {"v": 1, "id": "e-…", "finding": "f-…", "event": "opened", "text": "…", "round": "rv-…", "criterion": "a1b2c3", "actor": "ron", "at": "…"} -->
+```
+
+- `rev` is a hash of the criterion's wording at decision time; a record
+  whose `rev` differs from the criterion now reads `needs recheck`. #65's
+  Apply still marks affected records `"recheck": true` in the same write
+  as the brief, and Discard changes neither.
+- `source` is `tracked`, `legacy-tick`, `manual` or `evidence`; an
+  evidence-backed record also names `evidence`, `check`, `scope` and the
+  commit the evidence ran against, and is re-read against bench's own
+  record every time it is shown.
+- A finding's `opened` event carries its text; later events carry a
+  `note`, the `commit` they were made at, optional `evidence`, and
+  `supersedes` naming the event they answered.
+- Records are appended, never edited. The newest record (by `at`, then
+  file order) is the state; every earlier one is history.
+- A run's criterion claims are machine-local, in its progress record
+  (`criteriaReported`), like the rest of what it said.
+
+The HTTP surface is `GET /api/card/acceptance` (reads, writes nothing),
+and `POST /api/card/acceptance/track`, `/api/card/acceptance/decide` and
+`/api/card/finding`, each answering a stale request with `409` and
+`"stale": true`.
 
 ## Phases
 

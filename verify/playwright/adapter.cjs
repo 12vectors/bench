@@ -84,7 +84,17 @@ async function main() {
   const ops = {
     goto: (r) => page.goto(r.url, { waitUntil: 'load', timeout: 15000 }).then(() => null),
     eval: (r) => page.evaluate(r.expression),
-    viewport: (r) => page.setViewportSize({ width: r.width, height: r.height }),
+    viewport: async (r) => {
+      // undo a zoom first: the override would otherwise outlive it
+      await cdp.send('Emulation.clearDeviceMetricsOverride');
+      return page.setViewportSize({ width: r.width, height: r.height });
+    },
+    // Chromium's own page zoom on a width×height window: the CSS viewport
+    // shrinks by the factor, so media queries see it, and the device
+    // pixel ratio grows by it
+    zoom: (r) => cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: Math.round(r.width / r.factor), height: Math.round(r.height / r.factor),
+      deviceScaleFactor: r.factor, mobile: false }),
     key: (r) => page.keyboard.press(r.shift ? `Shift+${r.key}` : r.key),
     click: (r) => page.mouse.click(r.x, r.y),
     screenshot: async () => (await page.screenshot({ type: 'png' })).toString('base64'),

@@ -101,7 +101,13 @@ CLOCK_SKEW = 5.0
 REJECT_NOTIFY_GAP = 5.0
 
 FIELDS = ("stage", "doing", "done", "remaining", "blocked", "narrative")
-ALLOWED_KEYS = {"v", "agent", "token", "id", "at", "refs", *FIELDS}
+ALLOWED_KEYS = {"v", "agent", "token", "id", "at", "refs", "criteria", *FIELDS}
+# Acceptance criteria a run says it has implemented (card 81): ids only,
+# the shape `taskfiles.CRITERION_ID_RE` writes. A claim, never a result —
+# `acceptance` shows it as *reported* and nothing it says ticks a
+# criterion. At most MAX_CRITERIA per report.
+MAX_CRITERIA = 20
+_CRITERION_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 
 _ID_RE = re.compile(r"^[A-Za-z0-9._:-]{8,80}$")
 _AGENT_RE = re.compile(r"^[A-Za-z0-9._-]{1,160}$")
@@ -203,6 +209,12 @@ def prompt_block(intent: str, available: bool) -> str:
         "your closing report — that is still your final reply. If the "
         "command fails, carry on with the work; a reporting failure must "
         "never stop it.",
+        "",
+        "When the card's acceptance criteria carry ids (`<!-- ac:<id> -->` "
+        "on the criterion's line), `--criterion <id>` (repeatable) says you "
+        "implemented that criterion. The card shows it as reported and "
+        "awaiting confirmation; only a person accepts a criterion, so never "
+        "claim one you did not implement, and never edit the ids.",
     ])
 
 
@@ -360,6 +372,48 @@ def _refs(raw, task: str) -> tuple[list[dict], list[str]]:
     return out, dropped
 
 
+def _criteria(raw) -> list[str]:
+    """Criterion ids a run reports implemented: validated as identifiers,
+    de-duplicated, order kept. Whether the card holds them is the card's
+    business (`acceptance` reads them against the brief and ignores an id
+    the card does not have), so this refuses only what is not an id."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        raise Refused(400, "schema", "'criteria' must be a list of criterion ids")
+    if len(raw) > MAX_CRITERIA:
+        raise Refused(400, "too-long", f"at most {MAX_CRITERIA} criteria per report")
+    out: list[str] = []
+    for item in raw:
+        value = str(item or "").strip()
+        if not _CRITERION_RE.match(value):
+            raise Refused(400, "schema", f"{value[:40]!r} is not a criterion id "
+                                         f"(lowercase letters, digits and -)")
+        if value not in out:
+            out.append(value)
+    return out
+
+
+def _claim(record: dict, entry: dict) -> None:
+    """Fold the criteria one entry reports into the run's own list, kept on
+    the record (like the milestones) so the history cap cannot drop one.
+    Each id keeps the newest report that named it and the evidence that
+    report referred to — a *proposal* of support, resolved by `acceptance`
+    against bench's own record, never taken as a result."""
+    ids = entry.get("criteria") or []
+    if not ids:
+        return
+    kept = record.setdefault("criteriaReported", {})
+    evidence = [r["id"] for r in entry.get("refs") or [] if r["kind"] == "evidence"]
+    for cid in ids:
+        known = kept.get(cid)
+        if known and known["at"] > entry["at"]:
+            continue
+        kept[cid] = {"at": entry["at"], "report": entry["id"], "evidence": evidence}
+
+
 def _reject(record: dict | None, code: str, status: int, why: str) -> Refused:
     if record is not None:
         with _LOCK:
@@ -496,7 +550,10 @@ def report(raw: dict) -> dict:
             cleaned = [v for v in (_text(name, i, cap) for i in items) if v]
             if cleaned:
                 body[name] = cleaned
-        if not any(body.get(f) for f in FIELDS):
+        criteria = _criteria(raw.get("criteria"))
+        if criteria:
+            body["criteria"] = criteria
+        if not any(body.get(f) for f in (*FIELDS, "criteria")):
             raise Refused(400, "empty", "a report must say something — a stage, "
                                         "what you are doing, done, remaining, a "
                                         "blocker or a narrative")
@@ -557,6 +614,7 @@ def report(raw: dict) -> dict:
             history.sort(key=lambda e: (e["at"], e.get("seq", 0)))
             result = "filed"
         _remember(record, entry)
+        _claim(record, entry)
         del history[:-HISTORY_CAP]
         _store(record)
     state.broadcast({"type": "progress", "agent": agent_id})
@@ -624,7 +682,7 @@ def _evidence(ref: dict) -> dict:
 
 def _public_entry(entry: dict, resolve: bool) -> dict:
     out = {k: entry[k] for k in ("id", "at", "received", "seq", "coalesced",
-                                 *FIELDS) if k in entry}
+                                 "criteria", *FIELDS) if k in entry}
     out["source"] = "agent-reported"
     refs = entry.get("refs") or []
     if refs:
@@ -675,10 +733,28 @@ def public(agent_id: str, full: bool = False) -> dict | None:
         "updates": len(record.get("history") or []),
         "milestones": milestones(record),
         "milestonesOmitted": len(record.get("milestonesOmitted") or []),
+        "criteriaReported": record.get("criteriaReported") or {},
     }
     if full:
         out["history"] = [_public_entry(e, resolve=True)
                           for e in record.get("history") or []]
+    return out
+
+
+def claims_for(task: str) -> dict:
+    """Every criterion any run on this card has reported implemented, the
+    newest report per criterion winning — with the run that said it. Read
+    by `acceptance`, which shows these as claims and never as results."""
+    out: dict = {}
+    with _LOCK:
+        for agent_id, record in RUNS.items():
+            if record.get("task") != task:
+                continue
+            for cid, claim in (record.get("criteriaReported") or {}).items():
+                if cid not in out or claim["at"] > out[cid]["at"]:
+                    out[cid] = {**claim, "agent": agent_id,
+                                "intent": record.get("intent"),
+                                "active": not record.get("closed")}
     return out
 
 

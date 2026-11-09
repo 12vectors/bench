@@ -795,8 +795,17 @@ class Browser(PageOps):
                   {"width": width, "height": height, "deviceScaleFactor": 1,
                    "mobile": False})
 
+    def zoom(self, width: int, height: int, factor: float) -> None:
+        """Browser zoom on a `width`×`height` window: what Chromium's own
+        zoom does to a page — the CSS viewport shrinks by the factor (so
+        media queries see it) and the device pixel ratio grows by it."""
+        self.call("Emulation.setDeviceMetricsOverride",
+                  {"width": round(width / factor), "height": round(height / factor),
+                   "deviceScaleFactor": factor, "mobile": False})
+
     def key(self, key: str, shift: bool = False) -> None:
-        vk = {"Tab": 9, "Enter": 13, "Escape": 27}.get(key, 0)
+        vk = {"Tab": 9, "Enter": 13, "Escape": 27, "ArrowLeft": 37,
+              "ArrowRight": 39, "Home": 36, "End": 35}.get(key, 0)
         for kind in ("rawKeyDown", "keyUp"):
             self.call("Input.dispatchKeyEvent",
                       {"type": kind, "key": key, "code": key,
@@ -1008,6 +1017,9 @@ class RemoteBrowser(PageOps):
     def viewport(self, width: int, height: int) -> None:
         self.request("viewport", width=width, height=height)
 
+    def zoom(self, width: int, height: int, factor: float) -> None:
+        self.request("zoom", width=width, height=height, factor=factor)
+
     def key(self, key: str, shift: bool = False) -> None:
         self.request("key", key=key, shift=shift)
 
@@ -1165,6 +1177,19 @@ class Backend:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         try:
             with opener.open(self.url + path, timeout=timeout) as resp:
+                return resp.status, resp.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read()
+
+    def post(self, path: str, payload: dict, timeout: float = 10) -> tuple[int, bytes]:
+        """A JSON POST to the disposable backend — what another board, or
+        a second person on this one, would send."""
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        request = urllib.request.Request(
+            self.url + path, data=json.dumps(payload).encode("utf-8"), method="POST",
+            headers={"Content-Type": "application/json"})
+        try:
+            with opener.open(request, timeout=timeout) as resp:
                 return resp.status, resp.read()
         except urllib.error.HTTPError as exc:
             return exc.code, exc.read()

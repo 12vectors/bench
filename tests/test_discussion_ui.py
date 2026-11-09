@@ -207,7 +207,12 @@ class SourceInvariants(unittest.TestCase):
         self.assertIn("newRequestKey()", function("wireLive"))
 
     def test_the_drawer_draws_the_brief_without_the_discussion(self):
-        self.assertIn("md(withoutDiscussion(t.body))", HTML)
+        # task 81: the Brief section draws the brief alone — the card's
+        # history (reports, discussion, records) has destinations of its own
+        body = function("briefHtml")
+        self.assertIn("cardSplit(t.body)", body)
+        self.assertIn("withoutDiscussion(parts.brief)", body)
+        self.assertIn("briefHtml(t) + discussionPanel(t)", HTML)
 
 
 LOADER = "\n".join([

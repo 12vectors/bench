@@ -167,15 +167,16 @@ class OneSlotBuilderTests(unittest.TestCase):
         cls.html = BOARD.read_text(encoding="utf-8")
 
     def test_hover_actions_and_command_chips_share_the_machine(self):
-        self.assertEqual(len(re.findall(r"(?<!function )wireAction\(btn,", self.html)), 9,
-                         "exactly nine call sites: the slot builder, the "
+        self.assertEqual(len(re.findall(r"(?<!function )wireAction\(btn,", self.html)), 10,
+                         "exactly ten call sites: the slot builder, the "
                          "$-command chips, the ⌸ archive chip, a phase "
                          "lane's head, the ↻ rerun of a named check, the "
                          "readiness inspector's active stages, the ⚖ "
                          "sheet's gate override, the Settings view's own "
-                         "executing diagnostic stages and a card "
+                         "executing diagnostic stages, a card "
                          "discussion's refine / retry / apply / discard / "
-                         "cancel — all on the one machine")
+                         "cancel and the Acceptance section's Track "
+                         "acceptance — all on the one machine")
 
     def test_applying_a_settings_change_is_on_the_same_machine(self):
         """The one other armed action this card's machine owes a mention:

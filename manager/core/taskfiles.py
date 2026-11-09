@@ -902,12 +902,22 @@ TITLE_LINE_RE = re.compile(r"^#\s")
 # A report the board appended: `## Work report — 2026-11-08 15:20 (Juno)`.
 STAMPED_HEADING_RE = re.compile(r"^##\s+.+\s[—–-]\s\d{4}-\d{2}-\d{2}\b")
 HISTORY_HEADING_RE = re.compile(
-    r"^##\s+(?:Discussion|Phase log|Acceptance record)\s*$")
+    r"^##\s+(?:Discussion|Phase log|Acceptance record|Review findings)\s*$")
 DISCUSSION_SECTION_RE = re.compile(r"^##\s+Discussion[ \t]*$.*?(?=^##\s|\Z)",
                                    re.MULTILINE | re.DOTALL)
 ENTRY_MARK_RE = re.compile(r"^<!-- bench:entry (\{.*\}) -->[ \t]*$", re.MULTILINE)
 ACCEPTANCE_RECORD_RE = re.compile(r"^<!-- bench:acceptance (\{.*\}) -->[ \t]*$",
                                   re.MULTILINE)
+# One event in a review finding's life (card 81): opened, fix reported,
+# resolved, reopened — under `## Review findings`, one per line.
+FINDING_RECORD_RE = re.compile(r"^<!-- bench:finding (\{.*\}) -->[ \t]*$",
+                               re.MULTILINE)
+ACCEPTANCE_HEADING = "Acceptance record"
+ACCEPTANCE_NOTE = ("<!-- bench:acceptance-record v1 — written by the board. One "
+                   "decision per line; the newest about a criterion stands. -->")
+FINDINGS_HEADING = "Review findings"
+FINDINGS_NOTE = ("<!-- bench:review-findings v1 — written by the board. One event "
+                 "per line; a finding's newest event is its state. -->")
 BENCH_MARK_RE = re.compile(r"<!--\s*bench:", re.IGNORECASE)
 MACHINE_MARKER_RE = re.compile(
     r"^\s*(?:PR REVIEW|NOT READY|RELEVANCE REVIEW|REFINEMENT (?:PROPOSAL|DECLINED))\b",
@@ -1212,7 +1222,15 @@ def criteria(brief: str) -> list[dict]:
     criterion changes nothing about it."""
     out: list[dict] = []
     current = None
+    fenced = False
     for line in brief.splitlines():
+        # a checklist shown as an example in a ``` block is documentation,
+        # not a criterion — the same reading `prose_of` gives it
+        if _is_fence(line):
+            fenced, current = not fenced, None
+            continue
+        if fenced:
+            continue
         match = CRITERION_RE.match(line)
         if match:
             current = {"raw": match.group(1)}
@@ -1273,6 +1291,81 @@ def mark_for_recheck(text: str, ids: list[str], reason: str, at: str) -> str:
     parts = card_parts(text)
     return (parts["head"] + parts["brief"]
             + ACCEPTANCE_RECORD_RE.sub(_mark, parts["history"]))
+
+
+def finding_records(text: str) -> list[dict]:
+    """Every review-finding event the board wrote into the card's history,
+    in file order. A line that does not parse is skipped, never guessed."""
+    out = []
+    for match in FINDING_RECORD_RE.finditer(card_parts(text)["history"]):
+        try:
+            meta = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(meta, dict):
+            out.append(meta)
+    return out
+
+
+def record_line(kind: str, meta: dict) -> str:
+    """One history record, as the board writes it: `kind` is `acceptance`
+    or `finding`, and the JSON cannot close the comment early."""
+    return f"<!-- bench:{kind} {_marker(meta)} -->"
+
+
+def append_record(text: str, heading: str, note: str, line: str) -> str:
+    """Append one record line to the end of a history section, creating
+    the section at the end of the card the first time. Only the history is
+    touched: the head and the brief are carried over byte for byte, and so
+    is everything after the section — a report appended later, a
+    discussion entry — exactly as `_insert_entry` does for comments."""
+    parts = card_parts(text)
+    section = re.compile(rf"^##\s+{re.escape(heading)}[ \t]*$.*?(?=^##\s|\Z)",
+                         re.MULTILINE | re.DOTALL)
+    found = section.search(parts["history"])
+    if found is None:
+        return text.rstrip("\n") + f"\n\n## {heading}\n\n{note}\n\n{line}\n"
+    offset = len(parts["head"]) + len(parts["brief"])
+    start, end = offset + found.start(), offset + found.end()
+    body = text[start:end]
+    core = body.rstrip()
+    while core.endswith("\n---"):
+        core = core[:-4].rstrip()
+    tail = body[len(core):]
+    if tail.strip():
+        tail = "\n\n" + tail.lstrip()
+    else:
+        tail = "\n\n" if end < len(text) else "\n"
+    return text[:start] + core + "\n" + line + tail + text[end:]
+
+
+def edit_card(filename: str, stage: str, change, what: str) -> dict:
+    """One board-owned write to a card: `change(text)` returns the new text
+    (or raises to refuse, writing nothing). Under the write lock, compared
+    once more immediately before the replace so a pull landing mid-write is
+    a refusal rather than a lost change, then committed like every other
+    board edit. Returns what `change` returned beside the text, and whether
+    it was committed."""
+    if Path(filename).name != filename or not filename.endswith(".md"):
+        raise ValueError("bad filename")
+    if stage not in config.STAGE_DIRS:
+        raise ValueError("unknown stage")
+    path = config.TASKS / stage / filename
+    with WRITE_LOCK:
+        if not path.is_file():
+            raise StaleCard(f"{filename} is no longer in {stage}/ — refresh "
+                            f"the card and decide again where it is now")
+        _refuse_escape(path)
+        text = path.read_text(encoding="utf-8")
+        updated, result = change(text)
+        if updated == text:
+            return {**result, "written": False, "committed": False}
+        if path.read_text(encoding="utf-8") != text:
+            raise StaleCard(f"{filename} changed while this was being written "
+                            f"— nothing was written; try again")
+        _atomic_write(path, updated)
+    committed = commit_edit(filename, stage, what)
+    return {**result, "written": True, "committed": committed}
 
 
 # — what a proposed brief may and may not contain —

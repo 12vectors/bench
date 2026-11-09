@@ -250,8 +250,9 @@ class NoStaleArmedChip(unittest.TestCase):
         self.assertTrue(keys, "no wired actions found")
         self.assertIn("const BOARD_ACT = 'board::';", self.html)
         for key in keys:
+            # `t` is the detail view's name for the same card (task 81)
             self.assertTrue(
-                key.startswith("${task.file}::") or key.startswith("${BOARD_ACT}"),
+                key.startswith(("${task.file}::", "${t.file}::", "${BOARD_ACT}")),
                 f"stray act key {key!r}")
 
     def test_the_sweep_knows_the_boards_own_keys_are_not_cards(self):

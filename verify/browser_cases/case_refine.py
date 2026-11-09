@@ -89,6 +89,10 @@ class RefineDocumentedMarkers(unittest.TestCase):
                         "the disposable card never reached the board")
         b.eval(f"document.querySelector('{sel}').focus()")
         b.key("Enter")
+        # the discussion and its composer live in the Brief section (task 81)
+        self.assertTrue(b.wait("!!document.querySelector('#dtab-brief')", 5),
+                        "the detail view did not open")
+        b.click("#dtab-brief")
         self.assertTrue(b.wait("(() => { const l = document.querySelector('#disc-live');"
                                " return !!l && !!l.querySelector('.dnote, .dentry')"
                                " && !l.innerText.includes('reading the discussion'); })()",
