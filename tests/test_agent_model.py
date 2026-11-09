@@ -99,15 +99,17 @@ class LaunchEnv(unittest.TestCase):
                        f"open({str(self.capture)!r}, 'w').write(json.dumps(dict(os.environ)))\n")
         run.chmod(run.stat().st_mode | stat.S_IXUSR)
         self._saved = (config.AGENT_MODEL, config.AGENT_MODELS,
-                       config.adapter_dir, config.child_env)
+                       config.adapter_dir, config.child_env, config.PROGRESS_DIR)
         config.adapter_dir = lambda: adapter
+        # a launch opens a progress record; this one's belongs to the tmp dir
+        config.PROGRESS_DIR = Path(self._tmp.name) / "progress"
         # A stray AGENT_MODEL inherited by the board process must not leak.
         config.child_env = lambda: {"PATH": os.environ.get("PATH", ""),
                                     "AGENT_MODEL": "stray-from-the-shell"}
 
     def tearDown(self):
         (config.AGENT_MODEL, config.AGENT_MODELS,
-         config.adapter_dir, config.child_env) = self._saved
+         config.adapter_dir, config.child_env, config.PROGRESS_DIR) = self._saved
         self._tmp.cleanup()
 
     def _launch_env(self, mode: str) -> tuple[dict, str]:

@@ -48,7 +48,8 @@ The contract, end to end:
   and freshness — so "tests passed" in prose sits beside what the runner
   actually recorded, and cannot be promoted by it.
 
-Records are machine-local (`local/state/progress/<agent id>.json`), for
+Records are machine-local (`local/state/agent/progress/<agent id>.json`,
+beside the run logs), for
 the reason manifests and evidence are: they belong to runs on this board.
 """
 
@@ -200,7 +201,13 @@ def _hash(token: str) -> str:
 def _path(agent_id: str) -> Path | None:
     if not _AGENT_RE.match(agent_id or "") or ".." in agent_id:
         return None
-    return config.PROGRESS_DIR / f"{agent_id}.json"
+    return _dir() / f"{agent_id}.json"
+
+
+def _dir() -> Path:
+    """Where the records live: beside the agent logs unless configured,
+    so a relocated run log takes what the run reported along with it."""
+    return config.PROGRESS_DIR or (config.AGENT_DIR / "progress")
 
 
 def _store(record: dict) -> None:
@@ -260,9 +267,9 @@ def load() -> int:
     board, but the board that launched it is gone and nothing will observe
     its ending, so "doing now" would be a claim nobody can keep true."""
     found = 0
-    if not config.PROGRESS_DIR.is_dir():
+    if not _dir().is_dir():
         return 0
-    for path in config.PROGRESS_DIR.glob("*.json"):
+    for path in _dir().glob("*.json"):
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):

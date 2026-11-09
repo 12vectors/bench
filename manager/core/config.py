@@ -56,7 +56,10 @@ REVIEWS_DIR = STATE / "reviews"                    # run-owned pinned PR-review 
 DOCTOR_DIR = STATE / "doctor"                      # fixtures a diagnosis makes and removes
 GATES_DIR = STATE / "gates"                        # Bench review verdicts and gate overrides
 REFINE_DIR = STATE / "refine"                      # card-refinement jobs and their proposals
-PROGRESS_DIR = STATE / "progress"                  # agent-reported progress, per run
+# Agent-reported progress, one record per run. None = beside the agent
+# logs (`AGENT_DIR / "progress"`), so whatever relocates a run's log
+# relocates what it reported with it — see `progress._dir`.
+PROGRESS_DIR: Path | None = None
 # Merges whose publication is unfinished. None means "beside the recorded
 # plans" (`STATE / "completions"`): a record that finishes a plan's work
 # lives wherever that plan does — see `github._recovery_dir`.

@@ -929,7 +929,7 @@ last update becomes dated history, drawn as *last said* rather than
 *doing now*. A board that restarts closes every run it was tracking as
 *unobserved*, because it will not see their endings. A new run on a card
 never wears its predecessor's update. Records are machine-local, under
-`manager/local/state/progress/`.
+`manager/local/state/agent/progress/`, beside the run logs.
 
 **On the board, three clocks and a trust label.** A card with a live run
 carries the run's last update above its last tool line, marked
