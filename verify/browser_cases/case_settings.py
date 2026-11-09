@@ -776,7 +776,14 @@ class AgentsSection(unittest.TestCase):
         go_section("agents")
         shot("settings-agents-rows-1440x900")
 
-    def probe_b_a_per_purpose_override_applies_and_the_backend_resolves_it(self):
+    def test_b_a_per_purpose_override_applies_and_the_backend_resolves_it(self):
+        try:
+            self._b_before_apply()
+        except (AssertionError, bv.CheckFailed) as exc:  # PROBE
+            raise RuntimeError(f"PROBE before apply: {exc}") from exc
+        self._b_apply()
+
+    def _b_before_apply(self):
         b = open_settings(1440, 900, "agents")
         b.wait("!!document.querySelector('#ag-h-review')", 10)
         set_control('#ag-h-review', 'opencode')
@@ -797,6 +804,9 @@ class AgentsSection(unittest.TestCase):
         preview_text = b.eval("document.querySelector('[data-agpreview]').innerText")
         self.assertIn("next launch", preview_text)
         shot("settings-agents-preview")
+
+    def _b_apply(self):
+        b = S["browser"]
         b.click('#sbody [data-agstep="apply"]')
         if not b.wait("document.querySelector('#sbody [data-agstep=\"apply\"]')"
                       ".classList.contains('armed')", 5):
