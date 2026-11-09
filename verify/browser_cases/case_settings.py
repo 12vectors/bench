@@ -24,7 +24,7 @@ import unittest
 
 import benchverify as bv
 
-SECTIONS = ["overview", "verification", "acceptance", "access",
+SECTIONS = ["overview", "verification", "acceptance", "agents", "access",
             "diagnostics", "installation", "policy"]
 # 390px is the narrow layout the card names; 640x400 is 1280x800 at 200%
 # zoom in CSS pixels (not actual browser zoom — see verify/README.md)
@@ -718,6 +718,217 @@ class SurfaceThemesAndHitAreas(unittest.TestCase):
         self.assertEqual(b.eval("getComputedStyle(document.documentElement)"
                                 ".getPropertyValue('--bg').trim()"), "#dde9ec")
         shot("settings-board-after-settings-light-1440x900")
+
+
+def agents_api(path: str, body: dict) -> dict:
+    """Post to Settings → Agents from the page itself, as another tab of
+    the same board would — the server's own door, the server's answer."""
+    return S["browser"].eval(
+        "(async () => { const r = await fetch('/api/settings/agents/" + path + "',"
+        " {method: 'POST', headers: SETTINGS_HEADERS,"
+        f" body: JSON.stringify({json.dumps(body)})}});"
+        " return {status: r.status, data: await r.json()}; })()")
+
+
+def agents_step(step: str, until: str, why: str):
+    b = S["browser"]
+    b.click(f'#sbody [data-agstep="{step}"]')
+    if not b.wait(until, 20):
+        raise bv.CheckFailed(why + ": " + str(b.eval(
+            "S.agentsDraft && {checked: S.agentsDraft.checked,"
+            " stale: S.agentsDraft.stale}")))
+
+
+def set_control(selector: str, value: str, event: str = "change"):
+    S["browser"].eval(f"(() => {{ const e = document.querySelector('{selector}');"
+                      f" e.value = {json.dumps(value)};"
+                      f" e.dispatchEvent(new Event('{event}', {{bubbles: true}})); }})()")
+
+
+class AgentsSection(unittest.TestCase):
+    """Settings → Agents (task 77), against the backend's real agent
+    settings: compact rows, inheritance, a per-purpose edit applied and
+    read back, a prompt previewed, saved and reset, a refused template, a
+    conflict, and the keyboard and narrow layouts. Cases run in name
+    order and leave the board's agent settings as they found them."""
+
+    def test_a_compact_rows_say_what_each_purpose_inherits(self):
+        b = open_settings(1440, 900, "agents")
+        if not b.wait("document.querySelectorAll('[data-agrow]').length === 4", 10):
+            raise bv.CheckFailed("the four agent rows were never drawn")
+        rows = b.eval("[...document.querySelectorAll('[data-agrow]')]"
+                      ".map(e => e.dataset.agrow)")
+        self.assertEqual(["default", "work", "act-pr", "review"], rows)
+        option = b.eval("document.querySelector('#ag-h-review option').textContent")
+        self.assertTrue(option.startswith("Inherit default ("), option)
+        model = b.eval("document.querySelector('#ag-mi-work option').textContent")
+        self.assertTrue(model.startswith("Inherit default"), model)
+        text = b.eval("document.querySelector('#sbody').innerText")
+        for words in ("Implementation", "PR fixes", "Reviews", "Card refinement",
+                      "Task relevance review", "PR review", "Built-in",
+                      "In force now"):
+            self.assertIn(words, text)
+        # the overview names it too
+        go_section("overview")
+        self.assertIn("Agents", b.eval("document.querySelector('#sbody').innerText"))
+        S["metrics"]["agentsRows"] = rows
+        go_section("agents")
+        shot("settings-agents-rows-1440x900")
+
+    def test_b_a_per_purpose_override_applies_and_the_backend_resolves_it(self):
+        b = open_settings(1440, 900, "agents")
+        b.wait("!!document.querySelector('#ag-h-review')", 10)
+        set_control('#ag-h-review', 'opencode')
+        set_control('#ag-mi-review', 'set')
+        if not b.wait("!document.querySelector('#ag-m-review').disabled", 5):
+            raise bv.CheckFailed("choosing 'Use a model' did not enable the field")
+        set_control('#ag-m-review', 'provider/review-model', 'input')
+        agents_step("validate", "!!(S.agentsDraft.checked && S.agentsDraft.checked.ok)",
+                    "a valid agent draft did not validate")
+        agents_step("preview", "!!S.agentsDraft.preview", "preview never came back")
+        review = b.eval("S.agentsDraft.preview.purposes.find(p => p.purpose === 'review')")
+        self.assertTrue(review["changed"])
+        self.assertEqual("opencode", review["after"]["harness"]["name"])
+        self.assertEqual("provider/review-model", review["after"]["model"]["value"])
+        self.assertTrue(review["inheritanceChanged"])
+        work = b.eval("S.agentsDraft.preview.purposes.find(p => p.purpose === 'work')")
+        self.assertFalse(work["changed"], "a review override changed implementation")
+        preview_text = b.eval("document.querySelector('[data-agpreview]').innerText")
+        self.assertIn("next launch", preview_text)
+        shot("settings-agents-preview")
+        b.click('#sbody [data-agstep="apply"]')
+        if not b.wait("document.querySelector('#sbody [data-agstep=\"apply\"]')"
+                      ".classList.contains('armed')", 5):
+            raise bv.CheckFailed("Apply did not arm on the first click")
+        b.click('#sbody [data-agstep="apply"]')
+        if not b.wait("!!(S.settings && S.settings.page.agents.rows.review"
+                      ".effective.selection.harness.name === 'opencode')", 20):
+            raise bv.CheckFailed("the applied change never reached the backend")
+        row = b.eval("S.settings.page.agents.rows.review")
+        self.assertEqual("BOARD_AGENT_ADAPTER_REVIEW",
+                         row["effective"]["selection"]["harness"]["setting"])
+        self.assertEqual("provider/review-model",
+                         row["effective"]["selection"]["model"]["value"])
+        # implementation still inherits the default
+        self.assertTrue(b.eval("S.settings.page.agents.rows.work.effective"
+                               ".selection.harness.inherited"))
+        history = b.eval("S.settings.page.agents.history")
+        self.assertIn("BOARD_AGENT_ADAPTER_REVIEW", history[0]["changedKeys"])
+        self.assertNotIn("review-model", json.dumps(history))
+        S["metrics"]["agentsApplied"] = row["effective"]["selection"]
+        shot("settings-agents-applied")
+        # back as it was, through the same door
+        back = agents_api("apply", {"revision": b.eval("S.settings.page.agents.revision"),
+                                    "agents": {"BOARD_AGENT_ADAPTER_REVIEW": "",
+                                               "BOARD_AGENT_MODEL_REVIEW": ""}})
+        self.assertEqual(200, back["status"], back)
+
+    def test_c_a_prompt_is_previewed_saved_reset_and_recoverable(self):
+        b = open_settings(1440, 900, "agents")
+        b.click('#sbody [data-agtpl="review.md"]')
+        if not b.wait("document.activeElement && document.activeElement.id === 'ag-t-review.md'", 5):
+            raise bv.CheckFailed("Edit did not put focus in the template")
+        b.eval("(() => { const t = document.querySelector('#ag-t-review\\\\.md');"
+               " t.value = t.value + '\\nA LOCAL NOTE FOR REVIEWERS\\n';"
+               " t.dispatchEvent(new Event('input', {bubbles: true})); })()")
+        b.click('#sbody [data-agrender="review.md"]')
+        if not b.wait("!!document.querySelector('[data-agrendered=\"review.md\"]')", 10):
+            raise bv.CheckFailed("the rendered preview never arrived")
+        rendered = b.eval("document.querySelector('[data-agrendered=\"review.md\"]').innerText")
+        self.assertIn("A LOCAL NOTE FOR REVIEWERS", rendered)
+        self.assertIn("00-sample-card.md", rendered)
+        self.assertNotIn("{body}", rendered)
+        b.click('#sbody [data-agdiff="review.md"]')
+        if not b.wait("!!document.querySelector('[data-agdiffout=\"review.md\"]')", 5):
+            raise bv.CheckFailed("the diff from the built-in was not drawn")
+        self.assertIn("+ A LOCAL NOTE FOR REVIEWERS",
+                      b.eval("document.querySelector('[data-agdiffout=\"review.md\"]').innerText"))
+        shot("settings-agents-prompt-preview")
+        b.click('#sbody [data-agstep="apply"]')
+        b.click('#sbody [data-agstep="apply"]')
+        if not b.wait("!!(S.settings && S.settings.page.agents.templates"
+                      ".find(t => t.name === 'review.md').source === 'local')", 20):
+            raise bv.CheckFailed("the local override was never saved")
+        # reset: staged, previewed, applied, and the replaced text recoverable
+        if not b.eval("!!document.querySelector('[data-agreset=\"review.md\"]')"):
+            b.click('#sbody [data-agtpl="review.md"]')
+        b.wait("!!document.querySelector('[data-agreset=\"review.md\"]')", 5)
+        b.click('#sbody [data-agreset="review.md"]')
+        agents_step("preview", "!!S.agentsDraft.preview", "the reset preview never came back")
+        change = b.eval("S.agentsDraft.preview.templates[0]")
+        self.assertEqual("reset", change["action"])
+        self.assertTrue(change["recoverable"])
+        self.assertIn("-A LOCAL NOTE FOR REVIEWERS", change["diff"])
+        b.click('#sbody [data-agstep="apply"]')
+        b.click('#sbody [data-agstep="apply"]')
+        if not b.wait("!!(S.settings && S.settings.page.agents.templates"
+                      ".find(t => t.name === 'review.md').source === 'built-in')", 20):
+            raise bv.CheckFailed("the reset never reached the backend")
+        recovered = b.eval("S.settings.page.agents.recovery"
+                           ".filter(r => r.template === 'review.md').length")
+        self.assertGreater(recovered, 0, "the replaced text was not kept for recovery")
+        shot("settings-agents-prompt-reset")
+
+    def test_d_a_broken_template_is_refused_and_nothing_is_written(self):
+        b = open_settings(1440, 900, "agents")
+        before = b.eval("S.settings.page.agents.revision")
+        b.click('#sbody [data-agtpl="work.md"]')
+        b.wait("!!document.querySelector('#ag-t-work\\\\.md')", 5)
+        b.eval("(() => { const t = document.querySelector('#ag-t-work\\\\.md');"
+               " t.value = t.value.replace('NOT READY:', 'NOT-READY').replace('{plan}', '{nope}');"
+               " t.dispatchEvent(new Event('input', {bubbles: true})); })()")
+        agents_step("validate", "!!(S.agentsDraft.checked && !S.agentsDraft.checked.ok)",
+                    "a broken template validated")
+        codes = b.eval("S.agentsDraft.checked.errors.map(e => e.code)")
+        self.assertIn("template-missing-marker", codes)
+        self.assertIn("template-unknown-field", codes)
+        self.assertTrue(b.eval("!!document.querySelector('[data-agerr=\"template-missing-marker\"]')"))
+        b.click('#sbody [data-agstep="apply"]')
+        b.click('#sbody [data-agstep="apply"]')
+        b.wait("!S.agentsDraft.armed", 10)
+        self.assertEqual(before, b.eval("S.settings.page.agents.revision"))
+        shot("settings-agents-refused")
+        b.click('#sbody [data-agstep="discard"]')
+        self.assertTrue(b.wait("S.agentsDraft === null || !S.agentsDraft.dirty", 10))
+
+    def test_e_a_stale_draft_is_a_conflict_not_an_overwrite(self):
+        b = open_settings(1440, 900, "agents")
+        set_control('#ag-m-default', 'mine', 'input')
+        # another tab saves first
+        other = agents_api("apply", {"revision": b.eval("S.settings.page.agents.revision"),
+                                     "agents": {"BOARD_AGENT_MODEL": "theirs"}})
+        self.assertEqual(200, other["status"], other)
+        b.click('#sbody [data-agstep="apply"]')
+        b.click('#sbody [data-agstep="apply"]')
+        if not b.wait("!!(S.agentsDraft && S.agentsDraft.stale)", 15):
+            raise bv.CheckFailed("an apply over a stale revision was not refused")
+        self.assertIn("changed on disk",
+                      b.eval("document.querySelector('#sbody').innerText"))
+        shot("settings-agents-conflict")
+        b.click('#sbody [data-agstep="discard"]')
+        b.wait("!!(S.settings && S.settings.page.agents.rows.default.model.value === 'theirs')", 15)
+        back = agents_api("apply", {"revision": b.eval("S.settings.page.agents.revision"),
+                                    "agents": {"BOARD_AGENT_MODEL": ""}})
+        self.assertEqual(200, back["status"], back)
+
+    def test_f_the_rows_are_reachable_by_keyboard_and_fit_a_narrow_screen(self):
+        for w, h in [(1440, 900), (390, 780)]:
+            b = open_settings(w, h, "agents")
+            b.eval("document.querySelector('#s-title').focus()")
+            reached = []
+            for _ in range(60):
+                b.key("Tab")
+                here = b.eval("document.activeElement && document.activeElement.id")
+                reached.append(here)
+                if here == "ag-m-default":
+                    break
+            self.assertIn("ag-h-default", reached, f"Tab never reached the harness at {w}")
+            self.assertEqual("ag-m-default", reached[-1], f"Tab never reached the model at {w}")
+            m = measure(["#sbody", "[data-agrow=review]"])
+            self.assertLessEqual(m["scrollWidth"], w + 1, f"horizontal overflow at {w}")
+            row = m["boxes"]["[data-agrow=review]"]
+            self.assertTrue(row and row[0] >= -1 and row[0] + row[2] <= w + 1, row)
+            shot(f"settings-agents-{w}x{h}")
 
 
 class ReadingRunsNothing(unittest.TestCase):

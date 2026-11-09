@@ -93,7 +93,7 @@ class ReachableThroughNormalNavigation(Source):
         body = self.body("renderSettingsNow")
         self.assertIn("of SETTINGS_SECTIONS", body)
         self.assertIn("data-ssection", body)
-        for key in ("overview", "verification", "acceptance", "access",
+        for key in ("overview", "verification", "acceptance", "agents", "access",
                     "diagnostics", "installation", "policy"):
             self.assertIn(f"'{key}'", self.html, key)
 
@@ -464,8 +464,8 @@ class ASurfaceOfItsOwn(Source):
         sections = re.search(r"const SETTINGS_SECTIONS = \[(.*?)\n\];",
                              self.html, re.S).group(1)
         rows = re.findall(r"\['(\w+)', '([^']+)', '(\w+)',\s*'([^']+)'\]", sections)
-        self.assertEqual(["overview", "verification", "acceptance", "access",
-                          "diagnostics", "installation", "policy"],
+        self.assertEqual(["overview", "verification", "acceptance", "agents",
+                          "access", "diagnostics", "installation", "policy"],
                          [r[0] for r in rows])
         self.assertIn("<h1 id=\"s-title\" tabindex=\"-1\">${esc(title)}</h1>",
                       self.body("renderSettingsNow"))
@@ -586,8 +586,9 @@ class TheBrowserCaseIsWellFormed(unittest.TestCase):
     def test_every_section_is_visited(self):
         src = self.CASE.read_text(encoding="utf-8")
         sections = eval(re.search(r"SECTIONS = (\[.*?\])", src, re.S).group(1))
-        self.assertEqual(["overview", "verification", "acceptance", "access",
-                          "diagnostics", "installation", "policy"], sections)
+        self.assertEqual(["overview", "verification", "acceptance", "agents",
+                          "access", "diagnostics", "installation", "policy"],
+                         sections)
 
     def test_no_two_screenshots_share_a_path(self):
         from collections import Counter
