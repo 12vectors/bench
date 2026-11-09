@@ -103,6 +103,10 @@ class StructuredDetail(unittest.TestCase):
                         "the detail view did not open")
         self.assertTrue(b.wait("!!(S.acc[%s] || {}).data" % json.dumps(FILE), 10),
                         "acceptance never loaded")
+        # measured after the drawer's slide-in, not part-way through it
+        self.assertTrue(b.wait("document.querySelector('#drawer').getAnimations()"
+                               ".every(a => a.playState === 'finished')", 5),
+                        "the drawer never finished opening")
 
     def tab(self, key: str):
         b = S["browser"]
