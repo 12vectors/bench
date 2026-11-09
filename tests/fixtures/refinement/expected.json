@@ -4,6 +4,11 @@
     "criteria": ["saved", "no-run", null],
     "records": ["saved", "no-run"]
   },
+  "card-documenting-markers.md": {
+    "entries": ["c-1a1a1a1a1a"],
+    "criteria": ["history-only", "examples"],
+    "records": ["history-only"]
+  },
   "legacy-card.md": {
     "entries": [],
     "criteria": [null, null],

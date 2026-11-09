@@ -929,6 +929,72 @@ def _starts_history(line: str) -> bool:
     return bool(HISTORY_HEADING_RE.match(line) or STAMPED_HEADING_RE.match(line))
 
 
+def _is_fence(line: str) -> bool:
+    """A ``` line opens or closes a fenced block — the one rule both
+    card_parts and the literal-text reading below use, so "inside a code
+    block" means the same thing to the history split and to validation.
+    `~~~` and four-space indentation are not fences here."""
+    return line.lstrip().startswith("```")
+
+
+def _blank_code_spans(line: str) -> str:
+    """One line with the contents of each inline code span blanked. A span
+    opens at a run of backticks and closes at the next run of the same
+    length *on the same line*; a run with no partner, or a backtick after a
+    backslash, opens nothing — so a span that is not plainly closed hides
+    nothing from validation."""
+    chars, i, n = list(line), 0, len(line)
+    while i < n:
+        if line[i] != "`" or (i and line[i - 1] == "\\"):
+            i += 1
+            continue
+        j = i
+        while j < n and line[j] == "`":
+            j += 1
+        k, close = j, None
+        while k < n:
+            if line[k] != "`":
+                k += 1
+                continue
+            m = k
+            while m < n and line[m] == "`":
+                m += 1
+            if m - k == j - i:
+                close = k
+                break
+            k = m
+        if close is None:
+            i = j
+            continue
+        for p in range(j, close):
+            chars[p] = " "
+        i = close + (j - i)
+    return "".join(chars)
+
+
+def prose_of(text: str) -> tuple[str, bool]:
+    """The text with every literal region blanked: the contents of inline
+    code spans and of closed ``` fenced blocks become spaces, line breaks
+    kept, so offsets and line numbers still point into the original.
+    Returns it with whether a fence was left open. The fence lines
+    themselves are kept — an info string is not documentation.
+
+    This is how validation tells documentation of Bench's storage syntax
+    (a `<!-- bench:` example in code, drawn as visible text by every
+    Markdown renderer) from a record (the same characters anywhere else,
+    which a renderer hides as an HTML comment)."""
+    out, fenced = [], False
+    for line in text.splitlines(keepends=True):
+        if _is_fence(line):
+            fenced = not fenced
+            out.append(line)
+        elif fenced:
+            out.append(re.sub(r"[^\r\n]", " ", line))
+        else:
+            out.append(_blank_code_spans(line))
+    return "".join(out), fenced
+
+
 def card_parts(text: str) -> dict:
     """Split a card into head, brief and history (see above). The three
     concatenate back to `text` exactly, so a writer that changes one of
@@ -945,7 +1011,7 @@ def card_parts(text: str) -> dict:
     end, fenced = n, False
     for k in range(start, n):
         line = lines[k]
-        if line.lstrip().startswith("```"):
+        if _is_fence(line):
             fenced = not fenced
             continue
         if fenced or not _starts_history(line):
@@ -1187,7 +1253,9 @@ def mark_for_recheck(text: str, ids: list[str], reason: str, at: str) -> str:
     """Every acceptance record about an affected criterion is marked for
     recheck — in the same text the brief is replaced in, so the two land
     in one write. Nothing else about a record changes, and a card with no
-    records is returned untouched."""
+    records is returned untouched. Only the history is read: a record is
+    something the board wrote there, and the same characters documented in
+    the brief are an example, never a record to update."""
     wanted = set(ids)
     if not wanted:
         return text
@@ -1202,7 +1270,9 @@ def mark_for_recheck(text: str, ids: list[str], reason: str, at: str) -> str:
         meta.update({"recheck": True, "recheckReason": reason, "recheckAt": at})
         return f"<!-- bench:acceptance {_marker(meta)} -->"
 
-    return ACCEPTANCE_RECORD_RE.sub(_mark, text)
+    parts = card_parts(text)
+    return (parts["head"] + parts["brief"]
+            + ACCEPTANCE_RECORD_RE.sub(_mark, parts["history"]))
 
 
 # — what a proposed brief may and may not contain —
@@ -1222,6 +1292,15 @@ def brief_problems(before: str, after) -> list[str]:
     would take for metadata, a heading that would start history early, a
     marker a reaper parses, a phase's membership list — and the ways it
     could forge identity, like inventing an acceptance criterion id.
+
+    Code is literal only where every reader agrees it is. `<!-- bench:`
+    records are read from the history alone, so an example of one inside
+    inline code or a closed ``` block is documentation and is allowed
+    (`prose_of`); anywhere else it is a record-shaped HTML comment and is
+    refused. Header fields, verdict markers, titles and history headings
+    are read by line anywhere in the file, code or not, so those stay
+    refused inside code too — the message says so rather than implying a
+    code block would make them safe.
     """
     if not isinstance(after, str) or not after.strip():
         return ["the proposed brief is empty — a refinement edits the brief, "
@@ -1232,28 +1311,42 @@ def brief_problems(before: str, after) -> list[str]:
     if len(after.encode("utf-8")) > MAX_BRIEF_BYTES:
         problems.append(f"the proposed brief is larger than "
                         f"{MAX_BRIEF_BYTES // 1024} KiB")
+    prose, unclosed = prose_of(after)
     lines = after.splitlines()
     first = next((line for line in lines if line.strip()), "")
+    if unclosed:
+        problems.append("the proposed brief opens a ``` fenced block and never "
+                        "closes it — the board would read everything after it, "
+                        "the card's history included, as part of the brief; "
+                        "close the fence")
     if any(TITLE_LINE_RE.match(line) for line in lines):
         problems.append("the proposed brief contains a `# ` title line — the "
-                        "card's title is its identity and is not refined")
+                        "card's title is its identity and is not refined (the "
+                        "board reads such a line even inside a code block)")
     if PROTECTED_FIELD_RE.search(after) or HEADER_LINE_RE.match(first):
         problems.append("the proposed brief contains a `**Field:**` header line "
                         "— status, assignee, base branch, PR and the other "
                         "header fields are lifecycle metadata and are not "
-                        "refined")
+                        "refined (the board reads such a line anywhere in the "
+                        "card, code blocks included)")
     if any(_starts_history(line) for line in lines):
         problems.append("the proposed brief contains a history heading (a "
                         "dated report, Discussion, Phase log or Acceptance "
                         "record) — history is preserved, never rewritten")
-    if BENCH_MARK_RE.search(after):
-        problems.append("the proposed brief contains a `<!-- bench:` marker — "
-                        "discussion entries and acceptance records are "
-                        "written by the board only")
+    mark = BENCH_MARK_RE.search(prose)
+    if mark:
+        line_no = prose.count("\n", 0, mark.start()) + 1
+        problems.append(f"the proposed brief contains a `<!-- bench:` marker "
+                        f"outside code (line {line_no} of the brief) — "
+                        f"discussion entries and acceptance records are "
+                        f"written by the board only. An example of the "
+                        f"syntax is kept as documentation only inside inline "
+                        f"code or a closed ``` fenced block")
     if MACHINE_MARKER_RE.search(after):
         problems.append("the proposed brief contains a line the board parses "
                         "as a marker (PR REVIEW, NOT READY, RELEVANCE REVIEW, "
-                        "REFINEMENT …)")
+                        "REFINEMENT …), which it reads even inside a code "
+                        "block")
     if _cards_section(before) != _cards_section(after):
         problems.append("the proposed brief changes the `## Cards` section — a "
                         "phase's membership is changed by editing the phase "
