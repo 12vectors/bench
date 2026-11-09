@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""Tell the board what this run has done, is doing and has left.
+
+    bench-progress [--stage S] [--doing D] [--done M]... [--remaining R]...
+                   [--blocked B] [--commit SHA]... [--evidence ID]...
+                   [narrative words...]
+
+A headless run's one way to report progress, and deliberately tiny: it
+POSTs a report to this board over the loopback at BOARD_PORT, naming the
+run (BOARD_AGENT_ID) and proving it with the run's own token
+(BOARD_PROGRESS_TOKEN). The board validates and records it and labels it
+*agent-reported* everywhere it is shown. Nothing else comes with being
+allowed to run this: it writes no file, moves no card and runs nothing.
+
+Each update is a whole statement — a field left out is "not reported" in
+that update, never carried over. `--done`, `--remaining`, `--commit` and
+`--evidence` may be repeated. `--evidence` takes the id bench-verify
+printed, so the board can show the record beside the words.
+
+The report gets an id here and keeps it across the retries below, so a
+request the board already recorded is answered as a duplicate rather than
+counted twice.
+
+Exit status — and a non-zero one is never a reason to stop working:
+
+    0  recorded (or coalesced with the previous update, or a duplicate)
+    2  refused by the board — the reason is printed
+    4  rate-limited — report at milestones, not per step
+    5  the board could not be reached, or this run has no channel
+"""
+import argparse
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+import uuid
+
+
+def parse(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="bench-progress", add_help=True,
+                                     description="report progress to the board")
+    parser.add_argument("--stage")
+    parser.add_argument("--doing")
+    parser.add_argument("--done", action="append", default=[])
+    parser.add_argument("--remaining", action="append", default=[])
+    parser.add_argument("--blocked")
+    parser.add_argument("--commit", action="append", default=[])
+    parser.add_argument("--evidence", action="append", default=[])
+    parser.add_argument("narrative", nargs="*")
+    return parser.parse_args(argv)
+
+
+def main() -> int:
+    args = parse(sys.argv[1:])
+    port = os.environ.get("BOARD_PORT", "26071")
+    agent = os.environ.get("BOARD_AGENT_ID", "")
+    token = os.environ.get("BOARD_PROGRESS_TOKEN", "")
+    if not agent or not token:
+        print("bench-progress: this run was given no progress channel "
+              "(BOARD_AGENT_ID / BOARD_PROGRESS_TOKEN unset). Carry on with "
+              "the work; the board shows its tool activity regardless.",
+              file=sys.stderr)
+        return 5
+    body: dict = {"v": 1, "agent": agent, "token": token,
+                  "id": f"p-{uuid.uuid4().hex}", "at": time.time()}
+    for key in ("stage", "doing", "blocked"):
+        value = getattr(args, key)
+        if value is not None:
+            body[key] = value
+    for key in ("done", "remaining"):
+        if getattr(args, key):
+            body[key] = getattr(args, key)
+    if args.narrative:
+        body["narrative"] = " ".join(args.narrative)
+    refs = ([{"commit": c} for c in args.commit]
+            + [{"evidence": e} for e in args.evidence])
+    if refs:
+        body["refs"] = refs
+
+    data = json.dumps(body).encode("utf-8")
+    last = None
+    for attempt in range(3):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/progress", data=data, method="POST",
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                found = json.loads(response.read() or b"{}")
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = json.loads(exc.read() or b"{}").get("error") or str(exc)
+            except (ValueError, OSError):
+                detail = str(exc)
+            print(f"bench-progress: the board did not record this update — "
+                  f"{detail}", file=sys.stderr)
+            return 4 if exc.code == 429 else 2
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            last = exc
+            time.sleep(0.5 * (attempt + 1))
+            continue
+        result = found.get("result") or "recorded"
+        print(f"progress {result} — shown on the board as agent-reported.")
+        for why in found.get("dropped") or []:
+            print(f"  reference dropped: {why}")
+        return 0
+    print(f"bench-progress: could not reach the board on port {port} ({last}). "
+          f"Carry on with the work; nothing was lost but this update.",
+          file=sys.stderr)
+    return 5
+
+
+if __name__ == "__main__":
+    sys.exit(main())

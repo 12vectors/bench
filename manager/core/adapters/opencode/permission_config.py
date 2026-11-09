@@ -122,8 +122,11 @@ def profile_prefixes(profile: dict | None) -> list[str]:
     return out
 
 
+PROGRESS_MODES = {"work", "act-pr", "review"}
+
+
 def bash_rules(mode: str, commands: list[str],
-               profile: dict | None = None) -> dict:
+               profile: dict | None = None, progress: str | None = None) -> dict:
     """Deny everything, then allow each prefix exactly and any longer
     command starting with it. Insertion order is the rule order.
 
@@ -152,6 +155,12 @@ def bash_rules(mode: str, commands: list[str],
     for prefix in prefixes:
         rules[prefix] = "allow"
         rules[f"{prefix} *"] = "allow"
+    # The progress channel, when the board handed this launch one: that one
+    # executable by absolute path. Absent otherwise, byte for byte.
+    shim = (progress or "").strip()
+    if mode in PROGRESS_MODES and shim.startswith("/"):
+        rules[shim] = "allow"
+        rules[f"{shim} *"] = "allow"
     denies = list(MODE_DENY_PATTERNS.get(mode, []))
     for word in (profile or {}).get("deny") or []:
         for pattern in DENY_CAPABILITY_PATTERNS.get(str(word), []):
@@ -163,14 +172,14 @@ def bash_rules(mode: str, commands: list[str],
 
 
 def build_config(mode: str, commands: list[str], model: str = "",
-                 profile: dict | None = None) -> dict:
+                 profile: dict | None = None, progress: str | None = None) -> dict:
     config = {
         "$schema": "https://opencode.ai/config.json",
         "permission": {
             "edit": "deny" if (mode in READ_ONLY_MODES or "edit" in
                                ((profile or {}).get("deny") or []))
                     else "allow",
-            "bash": bash_rules(mode, commands, profile),
+            "bash": bash_rules(mode, commands, profile, progress),
         },
     }
     if model:
@@ -183,4 +192,5 @@ if __name__ == "__main__":
     commands = split_commands(os.environ.get("AGENT_COMMANDS", ""))
     model = os.environ.get("AGENT_MODEL", "").strip()
     print(json.dumps(build_config(
-        mode, commands, model, load_profile(os.environ.get("AGENT_PROFILE")))))
+        mode, commands, model, load_profile(os.environ.get("AGENT_PROFILE")),
+        os.environ.get("AGENT_PROGRESS"))))

@@ -8,8 +8,12 @@ contract every adapter speaks — and POSTs it to /api/events.
 
 Normalized event (v1):
     {"v": 1, "session": str, "kind": str, "summary": str,
-     "file"?: str, "cmd"?: str, "detail"?: str, "ok"?: bool,
+     "id"?: str, "file"?: str, "cmd"?: str, "detail"?: str, "ok"?: bool,
      "running"?: bool, "agent"?: str, "task"?: str}
+
+`id` is the raw event's stable identity (hook phase + tool-use id), so the
+board records a replayed copy once; the board's reply may carry `remind`,
+a progress reminder handed back to the run as PostToolUse context.
 kinds: session end idle edit read search command test check git plan
        subagent web other
 
@@ -21,6 +25,7 @@ import os
 import re
 import sys
 import urllib.request
+import uuid
 from pathlib import Path
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
@@ -215,33 +220,81 @@ def board_port():
     return _setting("BOARD_PORT") or "26071"
 
 
+def standing_down():
+    """Is another copy of this bridge the one this launch registered?
+
+    A headless launch names its canonical bridge in BOARD_EMIT (the claude
+    adapter's `run` sets it). A worktree of a repository whose own
+    `.claude/settings.json` wires a bridge as well — bench developed with
+    bench — would otherwise post every hook twice, because the vendor
+    de-duplicates identical hook commands only and the two commands name
+    two different paths. So the copy that is not the named one says
+    nothing. Without BOARD_EMIT (a person's own session) every copy
+    reports, as before. Must never raise."""
+    canonical = os.environ.get("BOARD_EMIT")
+    if not canonical:
+        return False
+    try:
+        return Path(canonical).resolve() != Path(__file__).resolve()
+    except Exception:
+        return False
+
+
+def event_id(hook, payload):
+    """A stable identity for this raw event, so the board records it once
+    however many times it arrives. The vendor's tool-use id plus the hook
+    phase: a tool's start and its finish stay two events, and two edits of
+    one file stay two edits. Hooks with no tool-use id get a fresh one —
+    unique, so never collapsed with anything."""
+    tool_use = payload.get("tool_use_id")
+    if isinstance(tool_use, str) and re.match(r"^[A-Za-z0-9._:@-]{1,120}$", tool_use):
+        return f"{hook}:{tool_use}"
+    return f"{hook}:{uuid.uuid4().hex}"
+
+
 def main():
+    if standing_down():
+        sys.exit(0)
     try:
         payload = json.load(sys.stdin)
     except Exception:
         payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
 
+    hook = payload.get("hook_event_name") or "?"
     tool_input = payload.get("tool_input")
     event = {
         "v": 1,
         "session": payload.get("session_id") or "unknown",
+        "id": event_id(hook, payload),
         "agent": os.environ.get("BOARD_AGENT_ID"),
         "task": os.environ.get("BOARD_TASK"),
-        **classify(payload.get("hook_event_name") or "?",
+        **classify(hook,
                    payload.get("tool_name") or "",
                    tool_input if isinstance(tool_input, dict) else {},
                    payload.get("tool_response")),
     }
 
+    reply = {}
     try:
         request = urllib.request.Request(
             f"http://127.0.0.1:{board_port()}/api/events",
             data=json.dumps(event).encode("utf-8"),
             headers={"Content-Type": "application/json"},
         )
-        urllib.request.urlopen(request, timeout=1).read()
+        reply = json.loads(urllib.request.urlopen(request, timeout=1).read() or b"{}")
     except Exception:
         pass
+
+    # A progress reminder rides back on a tool result the run was going to
+    # read anyway: context on PostToolUse, never a block, never an
+    # interruption and never a model call of the board's own.
+    remind = reply.get("remind") if isinstance(reply, dict) else None
+    if hook == "PostToolUse" and isinstance(remind, str) and remind:
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": remind[:600]}}))
 
     sys.exit(0)
 

@@ -141,6 +141,23 @@ get deny-rules, in the same generated document.
 only, never content. The prompt already names them; an adapter that can
 grant reads narrowly may also use the list.
 
+### The progress channel (`AGENT_PROGRESS` / `BOARD_PROGRESS_TOKEN`) — optional
+
+A run reports what it has done, is doing, has left and is blocked on
+through one executable, `core/bench-progress`. Bench hands it over only
+to an adapter that declares `"progress-report"` in `capabilities.json`,
+and only for `work`, `act-pr` and `review`: then `AGENT_PROGRESS` is the
+shim's absolute path and `BOARD_PROGRESS_TOKEN` a token that belongs to
+this run alone (the shim sends it; leave it in the environment). Render
+`AGENT_PROGRESS` as one allow-rule — that executable and any arguments,
+nothing composed from it (`progress_rules` in the claude adapter, the two
+glob entries in opencode's `bash_rules`). With either variable absent,
+render nothing, so the document is byte for byte what it was.
+
+An adapter that declares nothing is handed neither variable, its prompt
+carries no reporting section, and the board says *reporting unavailable*
+for its runs. That is the whole fallback, and it is a correct adapter.
+
 ### What an adapter has nothing to do with: verification
 
 A profile's named **checks** are not in `AGENT_PROFILE` and deliberately
@@ -264,7 +281,7 @@ headless jobs via `run`, you just lose the live play-by-play.
 POST to `http://127.0.0.1:$BOARD_PORT/api/events`:
 
     {"v": 1, "session": str, "kind": str, "summary": str,
-     "file"?: str, "cmd"?: str, "detail"?: str, "ok"?: bool,
+     "id"?: str, "file"?: str, "cmd"?: str, "detail"?: str, "ok"?: bool,
      "running"?: bool, "agent"?: $BOARD_AGENT_ID, "task"?: $BOARD_TASK}
 
 kinds: `session end idle edit read search command test check git plan
@@ -272,6 +289,23 @@ subagent web other`. `running: true` marks an in-flight action (shown as
 the live line, not appended to the timeline); follow it with the completed
 event. `kind: idle` = finished responding; `kind: end` = session over.
 Classification happens in YOUR emitter — core never sees vendor payloads.
+
+`id` is optional and worth sending: the raw event's stable identity
+(`[A-Za-z0-9._:@-]`, up to 160), so a copy delivered twice is recorded
+once, across a restart too. Make it from your vendor's own identity for
+the action *and* the phase — the claude bridge sends
+`PostToolUse:<tool_use_id>` — so an action's start and finish stay two
+events and two edits of one file stay two edits. Once a session has sent
+ids, an id-less event in it is taken for an older bridge's duplicate and
+dropped, so send them on every event or on none. If your platform can
+register the bridge twice for one session, stand the extra copy down at
+the source as the claude bridge does (`BOARD_EMIT`, set by `run`).
+
+The reply is `{"ok": true}`, and may carry `"remind": <sentence>` when the
+run behind the event is due a progress update. A bridge that can hand
+context back to the model at a tool boundary (claude: PostToolUse
+`additionalContext`) may pass it on; one that cannot ignores it. Never
+block, interrupt or end the run for it.
 
 ## Writing one
 

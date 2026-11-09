@@ -316,8 +316,12 @@ class Discussion(unittest.TestCase):
         self.assertTrue(b.wait("document.querySelector('#drawer').classList.contains('open')"
                                " && !!document.querySelector('#commentbox')", 5),
                         "the detail view did not open with a comment box")
-        self.assertTrue(b.wait("!!document.querySelector('#disc-live .dnote, "
-                               "#disc-live .dentry')", 10),
+        # "reading the discussion…" is itself a .dnote, so the placeholder
+        # alone must not count as loaded
+        self.assertTrue(b.wait("(() => { const l = document.querySelector('#disc-live');"
+                               " return !!l && !!l.querySelector('.dnote, .dentry')"
+                               " && !l.innerText.includes('reading the discussion'); })()",
+                               10),
                         "the discussion never loaded")
 
     def test_a_comment_is_saved_shown_after_reload_and_starts_nothing(self):

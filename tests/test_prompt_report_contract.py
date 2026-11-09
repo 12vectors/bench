@@ -40,6 +40,9 @@ FIELDS = {"branch": "task/x", "stage": "backlog", "filename": "x.md",
           # whose profile declares none, which is every board by default
           # (task 68)
           "verification": "",
+          # how to report progress, as `progress.prompt_block` renders it —
+          # "" for an adapter that declares no progress channel (task 73)
+          "progress": "",
           # where a PR review was put and which revision it is of, as
           # `reviews.prompt_block` renders it — never "" for a PR review,
           # which is pinned a checkout before the model is invoked, and

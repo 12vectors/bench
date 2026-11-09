@@ -40,6 +40,8 @@ the same turn.
 
 {verification}
 
+{progress}
+
 The task is `{filename}`. Its content:
 
 --- TASK ---

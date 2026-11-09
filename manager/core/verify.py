@@ -216,6 +216,13 @@ def _key(task: str, check: str, scope: str | None) -> str:
 _ID_OK = re.compile(r"^[A-Za-z0-9._:@-]{1,160}$")
 
 
+def is_evidence_id(value) -> bool:
+    """Whether a value has the shape of an evidence id — the one question
+    another module may ask before handing an id to `read()`. Shape only:
+    it says nothing about whether such a record exists."""
+    return isinstance(value, str) and bool(_ID_OK.match(value))
+
+
 def _slug(evidence_id: str) -> str:
     """One evidence id as one filename. The ids carry `:` and `@`, which
     are legal in a POSIX name and awkward everywhere else."""

@@ -44,7 +44,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports → taskfiles → plans / profiles → reviews → verify → gates → doctor → events / github / drive / sync → settings → agents → phases → refine → watch / httpd → board.py
+config → state / reports → taskfiles → plans / profiles → reviews → verify → progress → gates → doctor → events / github / drive / sync → settings → agents → phases → refine → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -68,6 +68,10 @@ config → state / reports → taskfiles → plans / profiles → reviews → ve
   the argument list built here rather than composed by a model, the
   environment the check is given, and the evidence it leaves — the
   runner's own exit status, bound to the source it ran against
+- `progress.py` — what a run *says* about its own work: the one
+  run-scoped channel it reports through, each report validated whole at
+  ingestion, ordered, de-duplicated and coalesced, closed by the run's
+  observed ending, and kept apart from anything bench verified
 - `gates.py` — may this merge happen? The operator's requirement per
   guarded mutation, read against evidence bound to the exact commit about
   to move; bench's own review verdict kept apart from GitHub's formal
@@ -679,7 +683,10 @@ The board has five views (header switcher):
   known: the agent's name, `You` for a session recorded as carrying no
   agent, and a neutral `Session · <id>` for a log written before any of
   this was recorded. `You` is never a guess.
-- **Focus** — a heads-up display for one session: the task it holds, its live
+- **Focus** — a heads-up display for one session: the task it holds, what
+  the run *says* it has done, is doing, has left and is blocked on —
+  agent-reported, with its own clock beside the last tool activity and the
+  process state (see "What a run says it is doing") — its live
   TodoWrite plan, the project's configured definition-of-done checks (a
   `checks` file in `manager/local/` overriding the shipped default in
   `core/`), what the run was actually permitted to do and given to read —
@@ -868,6 +875,114 @@ outage would make auto-retry a thundering herd — but the way is cleared for
 the human: a failed run that committed nothing has its worktree and empty
 branch removed, exactly as a decline does, so **▸ start work** is one click
 again. A failed run *with* commits keeps its worktree; there is work in it.
+
+### What a run says it is doing
+
+A stream of reads, edits and commands proves a run is *active*. It does
+not say what it has accomplished, what it is attempting now, what is left
+or what it is stuck on — and only the run knows that. So a work, act-on-PR
+or review run is given one narrow way to say it, and the board keeps what
+it says apart from everything the board observed itself.
+
+**The channel.** When the adapter declares `progress-report` in its
+`capabilities.json` (both shipped adapters do), a launch is handed the
+path of `manager/core/bench-progress` (`AGENT_PROGRESS`) and a token that
+belongs to that run alone (`BOARD_PROGRESS_TOKEN`). The adapter renders
+that one executable as an allow-rule. Nothing else comes with it: no
+shell, no write to the task file, no lifecycle action, no network beyond
+this board's loopback port, and no model call of the board's own. The
+prompt asks for a short approach at the start, then an update at each
+milestone, approach change, blocker, and the start and end of significant
+verification — what changed, what is happening now, what remains — rather
+than one per read or edit. An update never ends the run and is not its
+closing report; `NOT READY`, the closing report and the one-turn rules are
+unchanged, and a reporting failure tells the run to carry on working.
+
+**What a report may hold, checked where it arrives.** A stage, what it is
+doing now, milestones done, what remains, a blocker, a short narrative,
+and references to commits or to bench's own evidence records — each
+bounded, control and bidirectional characters refused, a line that reads
+as a closing-report marker refused, credential-shaped text masked, and no
+URL or path accepted as a reference. A report naming another run, carrying
+the wrong token, or arriving after its run ended is refused; a refusal
+against a real run is counted on that run's channel health, so a spoof or
+a broken shim is visible rather than silent. Every refusal is counted,
+but the page is told about refusals at most once every few seconds per
+run, with one trailing notice — so a burst of bad reports cannot make
+every open page reload on each request. Each update is a whole
+statement: a field it leaves out is *not reported*, never carried over
+and never inferred. The token is a run-scoped capability, not an
+operating-system boundary — processes of the same user can read each
+other's environment.
+
+**Ordering, replay and noise.** Every report has an id, kept across the
+shim's retries, so a repeated request is answered as a duplicate. Every
+report has the time the run made it, so a late arrival is filed into the
+history and never displaces a newer current update. Updates closer
+together than `BOARD_PROGRESS_MIN_GAP` are coalesced into the previous
+history entry — a blocker never is — and a run is capped at 200 accepted
+updates; the history itself keeps the newest 50. The **milestone
+checklist** is kept on the record apart from that history, so neither
+coalescing nor the history cap takes a reported milestone off it: each
+milestone is listed once, dated by the earliest report that named it, the
+earliest 100 are kept and any beyond are counted rather than dropped
+silently, and it survives a restart. A run quiet for `BOARD_PROGRESS_REMIND` seconds (600 by default,
+0 turns it off) is reminded once, at its next tool boundary, by the event
+bridge's reply: context on a tool result it was going to read anyway,
+never an interruption.
+
+**Endings supersede.** When the board sees the run end, the record is
+closed with what it observed — finished, failed, declined, held — and the
+last update becomes dated history, drawn as *last said* rather than
+*doing now*. A board that restarts closes every run it was tracking as
+*unobserved*, because it will not see their endings. A new run on a card
+never wears its predecessor's update. Records are machine-local, under
+`manager/local/state/agent/progress/`, beside the run logs.
+
+**On the board, three clocks and a trust label.** A card with a live run
+carries the run's last update above its last tool line, marked
+`agent-reported` with its age, and a blocker in words. **Focus** leads
+with a **Progress** section: stage, done (the milestone checklist), doing
+now, remaining, blocked and the narrative; then **last progress update**,
+**last tool activity** and **process** as three separate facts; the
+channel's health; and the timeline, with bench's own verification events
+interleaved and labelled `bench`. Silence is said as silence — *No recent
+progress update; tool activity continues*, *No progress update yet*,
+*Reporting unavailable* — and never as "stuck" or "thinking". Nothing
+computes a percentage. **Sessions** gains a **Progress updates** filter,
+and the technical activity stays where it was, expandable as before.
+
+**Agent-reported is not verified.** "Tests passed" in an update is a
+sentence. A reference to an evidence record is drawn from bench's own
+record as it reads *now* — check, scope, commit, outcome and freshness —
+so a failed or stale run cannot be promoted by a narrative or a clean
+exit, and a missing record reads as missing.
+
+**Fallback.** An adapter that does not declare `progress-report` — an
+override written before it existed, say — is handed neither variable,
+its prompt carries no reporting section, and the board says *reporting
+unavailable* for its runs while showing their tool activity exactly as
+before. The `refine` intent has no shell and never gets a channel.
+
+**One record per raw event.** The timeline used to show some edits and
+commands twice. The cause was two event bridges for one session: a run in
+a worktree of a repository whose own `.claude/settings.json` wires the
+bridge — bench developed with bench — received the hooks from that file
+and again from the launch's `--settings`, and the vendor de-duplicates
+identical hook commands only, which these were not. Now the launch names
+its canonical bridge (`BOARD_EMIT`) and any other copy stands down; every
+event carries a stable id (the hook phase and the vendor's tool-use id),
+so a replayed copy is recorded once even across a restart; and once a
+session delivers ids, an id-less copy from an older bridge is dropped.
+Distinct repeated edits and test runs have distinct ids and are never
+collapsed for having matching text, and a tool's start and finish stay
+two events.
+
+One limit remains, and it is a person's own session rather than a
+headless run: with no `BOARD_EMIT` to name the canonical bridge, both
+copies report, and the events that carry no vendor tool-use id —
+session start and stop — get a fresh id per copy, so those two can still
+appear twice. Tool events are de-duplicated there as everywhere else.
 
 ## Execution plans
 

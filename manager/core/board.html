@@ -475,6 +475,43 @@
   .step.doing{background:var(--sunken)} .step.doing .glyph{color:var(--accent)} .step.doing .stext{color:var(--text);font-weight:500}
   .step.todo .glyph{color:var(--dim)} .step.todo .stext{color:var(--dim)}
   .c-side{display:flex;flex-direction:column;gap:14px}
+  /* Agent-reported progress (task 73). Prose a person wrote, so Plex Sans;
+     the trust label and the clocks are machine facts, so mono. The label
+     is words, never only a colour: "agent-reported" is a claim, and only
+     bench's own evidence rows wear the colour of a result. */
+  .prog{display:flex;flex-direction:column;gap:10px;border:1px solid var(--border-soft);border-radius:9px;padding:12px 13px}
+  .prog .prog-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .prog .ptrust,.pwell .ptrust{font-family:var(--mono);font-size:10.5px;letter-spacing:.02em;color:var(--muted);
+    border:1px dashed var(--border);border-radius:99px;padding:1px 7px}
+  .prog dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 14px;margin:0}
+  .prog dt{font-family:var(--mono);font-size:11.5px;color:var(--dim);padding-top:1px}
+  .prog dd{margin:0;font-size:13px;overflow-wrap:anywhere;white-space:pre-line}
+  .prog dd.unknown{color:var(--dim);font-style:italic}
+  .prog dd.blocked{color:var(--alarm);font-weight:500}
+  .prog dd.past{color:var(--muted)}
+  .prog ul.miles{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+  .prog ul.miles li::before{content:'✓ ';color:var(--muted);font-family:var(--mono)}
+  .prog .pnarr{margin:0;font-size:13px;color:var(--text);overflow-wrap:anywhere;white-space:pre-line}
+  .prog .pclock{display:flex;flex-wrap:wrap;gap:4px 14px;font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .prog .pclock b{font-weight:500;color:var(--muted)}
+  .prog .phonest{font-size:12.5px;color:var(--muted)}
+  .prog .phonest.warn{color:var(--alarm)}
+  .prog .prefs{display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+  .prog .prefs .ok{color:var(--calm)} .prog .prefs .bad{color:var(--alarm)}
+  .prog .ptl{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+  .prog .ptl .pti{display:grid;grid-template-columns:max-content max-content minmax(0,1fr);gap:2px 10px;font-size:12.5px;overflow-wrap:anywhere}
+  @media (max-width:760px){
+    .prog dl{grid-template-columns:minmax(0,1fr)}
+    .prog dd{margin-bottom:4px}
+    .prog .ptl .pti{grid-template-columns:max-content minmax(0,1fr)}
+    .prog .ptl .pti > span:last-child{grid-column:1 / -1}
+  }
+  .prog .ptl time,.prog .ptl .src{font-family:var(--mono);font-size:11px;color:var(--dim)}
+  .pwell{display:flex;flex-direction:column;gap:3px;padding:7px 9px;border:1px dashed var(--border);border-radius:7px;font-size:12px;color:var(--text);overflow-wrap:anywhere}
+  .pwell .ptop{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .pwell .pstage{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .pwell.quiet{color:var(--dim);font-style:italic}
+  .pwell .pblock{color:var(--alarm);font-weight:500}
   .check-row{display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--line)}
   .check-row:last-child{border-bottom:none}
   .check-row .glyph{font-family:var(--mono);font-size:12px;width:12px;flex:none}
@@ -1144,6 +1181,10 @@ const S = {
   // ONE run was frozen with, read back off the board rather than resolved
   // again, so the panel can never show a run a permission it did not ride
   manifests: {},
+  // agentId -> {at, data, fetching}: one run's whole progress timeline, as
+  // `/api/progress` returns it — agent-reported throughout. The state
+  // payload carries only the latest run per card, without its history
+  progressFull: {},
   // card file -> {at, rollup, evidence, fetching}: what bench's own
   // verification runs found for one card, read back off disk. Fetched
   // rather than carried in the state payload for the manifest's reason,
@@ -1207,7 +1248,12 @@ const FILTERS = [
   ['commands', 'Commands', new Set(['command', 'subagent', 'web', 'other'])],
   ['git', 'Git', new Set(['git'])],
   ['plan', 'Plan', new Set(['plan', 'report'])],
+  // what the run said about its work, as against everything above, which
+  // is what it did — a session's own filter only (the activity bar holds
+  // board events, and no progress update is one)
+  ['progress', 'Progress updates', new Set(['progress']), 'session'],
 ];
+GLYPHS.progress = '◆';
 
 function mix(tint, pct) { return `color-mix(in oklab, ${tint} ${pct}%, transparent)`; }
 function pillFor(stage, working) {
@@ -1396,6 +1442,11 @@ function connectStream() {
       }
       scheduleRender();
     } else if (msg.type === 'board' || msg.type === 'agents') {
+      loadState();
+    } else if (msg.type === 'progress') {
+      // a run reported, ended, or had a report refused: its timeline is
+      // re-read rather than patched, and the card's reading rides the state
+      delete S.progressFull[msg.agent];
       loadState();
     } else if (msg.type === 'verify') {
       // a verification started, ended or was refused: the per-card
@@ -3462,6 +3513,9 @@ function cardFor(task) {
       liveLine = `<div class="well"><span class="lead">·</span>` +
         `<span class="wbody">${esc(last.summary)}${active ? '<span class="caret">▌</span>' : ''}</span></div>`;
     }
+    // what the run last *said* sits above what it last *did*: two facts
+    // with two clocks, and only the first is about progress
+    liveLine = progressWell(task, agent) + liveLine;
   } else if (agent) {
     liveLine = `<div class="well"><span class="lead">·</span><span class="wbody">warming up<span class="caret">▌</span></span></div>`;
   } else if (failure) {
@@ -6046,18 +6100,25 @@ function discStamp(t) {
 
 function loadDiscussion(t, force) {
   const cur = S.disc[t.file] || {};
-  if (cur.loading || (!force && cur.stamp === discStamp(t))) return;
-  S.disc[t.file] = { ...cur, loading: true };
+  // a read already in flight may have read the card before the write that
+  // asked for this one, so the request is kept and made when it ends —
+  // dropping it is how a saved comment never appeared
+  if (cur.loading) {
+    if (force || cur.loadingStamp !== discStamp(t)) S.disc[t.file] = { ...cur, again: t };
+    return;
+  }
+  if (!force && cur.stamp === discStamp(t)) return;
   const stamp = discStamp(t);
+  S.disc[t.file] = { ...cur, loading: true, loadingStamp: stamp, again: null };
   fetch(`/api/card/discussion?file=${encodeURIComponent(t.file)}` +
         `&stage=${encodeURIComponent(t.stage)}`)
     .then(res => res.json().then(data => ({ ok: res.ok, data })))
-    .then(({ ok, data }) => {
-      S.disc[t.file] = ok ? { data, stamp } : { data: cur.data, error: data.error, stamp };
-    })
-    .catch(() => { S.disc[t.file] = { data: cur.data, stamp,
-                                      error: 'the board could not be asked' }; })
-    .finally(() => {
+    .then(({ ok, data }) => ok ? { data, stamp } : { data: cur.data, error: data.error, stamp })
+    .catch(() => ({ data: cur.data, stamp, error: 'the board could not be asked' }))
+    .then(next => {
+      const again = (S.disc[t.file] || {}).again;
+      S.disc[t.file] = next;
+      if (again) loadDiscussion(again, true);
       if (S.selected && S.selected.file === t.file) renderDiscussion(S.selected);
     });
 }
@@ -6398,7 +6459,7 @@ function renderLog() {
     `<span class="label">Everything that happened</span>` +
     `<span class="mono">${merged.length} events</span>` +
     `<span class="spacer"></span>` +
-    FILTERS.map(([key, label]) =>
+    FILTERS.filter(f => f[3] !== 'session').map(([key, label]) =>
       `<button class="${S.logFilter === key ? 'on' : ''}" data-lf="${key}">${label}</button>`).join('') +
     extras;
   document.querySelectorAll('#loghead [data-lf]').forEach(b =>
@@ -6840,6 +6901,26 @@ function renderTimeline(sid, meta, events) {
     .map(be => ({ ...be, _board: true }));
   let items = events.filter(ev => !kinds || kinds.has(ev.kind));
   if (!kinds || kinds.has('move')) items = items.concat(boardEvents);
+  // the run's own progress updates, interleaved by the time it made them
+  // and labelled as its own — fetched with the session's agent
+  const agent = agentFor(sid);
+  if (agent && (!kinds || kinds.has('progress'))) {
+    fetchProgress(agent.id);
+    const p = progressOf(agent.id, meta.task);
+    for (const h of (p && p.history) || []) {
+      const said = [h.stage, h.doing || h.narrative].filter(Boolean).join(' — ') ||
+                   (h.done || []).join('; ');
+      const detail = [
+        h.done && h.done.length ? 'Done:\n' + h.done.map(d => '  ✓ ' + d).join('\n') : '',
+        h.remaining && h.remaining.length ? 'Remaining:\n' + h.remaining.map(d => '  ○ ' + d).join('\n') : '',
+        h.blocked ? 'Blocked: ' + h.blocked : '',
+        h.narrative && h.doing ? h.narrative : '',
+      ].filter(Boolean).join('\n\n');
+      items.push({ kind: 'progress', ts: h.at, _key: 'p' + h.id,
+                   summary: 'agent-reported · ' + said, detail: detail || undefined,
+                   ok: h.blocked ? false : null });
+    }
+  }
   items.sort((a, b) => (a.ts || 0) - (b.ts || 0));
 
   // collapse runs of consecutive reads/searches into one foldable row
@@ -6902,7 +6983,8 @@ function tlRow(ev, forceCls, caret) {
   }
   if (caret) text += '<span class="caret">▌</span>';
   let extra = '';
-  if (ev.detail) extra = fold(key, ev.kind === 'plan' ? 'plan steps' : ev.kind === 'report' ? 'the report' : 'output', ev.detail);
+  if (ev.detail) extra = fold(key, ev.kind === 'plan' ? 'plan steps' : ev.kind === 'report' ? 'the report'
+    : ev.kind === 'progress' ? 'the whole update' : 'output', ev.detail);
   else if (ev.cmd && ev.cmd.length > 90) extra = `<div class="text mono" style="font-size:11.5px;color:var(--dim)">${esc(ev.cmd)}</div>`;
   return `<div class="tl-row ${cls}"><time>${fmtClock(ev.ts)}</time>` +
     `<span class="glyph">${glyph}</span>` +
@@ -7086,6 +7168,7 @@ function renderFocus() {
     `<span class="r" id="celapsed">${sessionElapsed(meta)} on this</span>${stopBtn}</div>` +
     `<div class="refline">${refBits.join('<span>·</span>')}</div>` +
     `<h1 class="focus-title">${esc(task ? task.title : 'Session')}</h1>` +
+    progressSection(agent, meta, task) +
     steps + act + `</div>`;
 
   const rev = [...events].reverse();
@@ -7200,6 +7283,187 @@ function renderFocus() {
 }
 
 function findTask(file) { return allTasks().find(t => t.file === file) || null; }
+
+/* ── agent-reported progress (task 73) ─────────────────────────────────
+
+   What a run *said* about its work, kept apart from three other facts it
+   is easy to confuse with: when its last tool event arrived, whether its
+   process is still running, and what bench itself verified. Each is drawn
+   with its own clock and its own words; silence is never filled in, and
+   no percentage is computed from anything. */
+
+// A progress update older than this, while tool events keep arriving, is
+// "no recent progress update" — said as exactly that, never as "stuck".
+const PROGRESS_QUIET = 600;
+
+/* One run's progress: the compact reading the state payload carries for
+   the card's most recent run, or the whole timeline once fetched. */
+function progressOf(agentId, file) {
+  if (!agentId) return null;
+  const full = S.progressFull[agentId];
+  if (full && full.data) return full.data;
+  const onCard = file && (S.state?.progress || {})[file];
+  return onCard && onCard.agent === agentId ? onCard : null;
+}
+
+async function fetchProgress(agentId) {
+  if (!agentId) return;
+  const cached = S.progressFull[agentId];
+  if (cached && (cached.fetching || Date.now() - cached.at < 8000)) return;
+  S.progressFull[agentId] = { ...(cached || {}), fetching: true };
+  try {
+    const res = await fetch('/api/progress?agent=' + encodeURIComponent(agentId));
+    const data = res.ok ? (await res.json()).progress : null;
+    S.progressFull[agentId] = { at: Date.now(), data };
+    if (S.view === 'focus' || S.view === 'flight') scheduleRender();
+  } catch {
+    S.progressFull[agentId] = { at: Date.now(), data: cached ? cached.data : null };
+  }
+}
+
+// The process state in words, from the board's own launch record — a
+// different fact from anything the run reported.
+const PROCESS_WORDS = { running: 'running', done: 'finished', failed: 'failed',
+                        stopped: 'held', declined: 'declined' };
+const ENDED_WORDS = { finished: 'finished', failed: 'failed', declined: 'declined',
+                      held: 'was held', unobserved: 'ended unobserved — the board restarted' };
+
+function processWord(agent, p) {
+  if (agent && agent.status && !agent.replayed) return PROCESS_WORDS[agent.status] || agent.status;
+  if (p && !p.active) return ENDED_WORDS[p.outcome] || 'ended';
+  return 'not known to this board';
+}
+
+/* The one honest sentence about this run's reporting, from what is known
+   and nothing else. `tool` is the time of the newest tool event. */
+function progressSentence(p, agent, tool) {
+  const now = Date.now() / 1000;
+  if (!p) return { text: 'No progress was recorded for this run — it predates progress reporting, or another board launched it.' };
+  if ((p.channel || {}).state !== 'available') {
+    return { text: `Reporting unavailable: ${p.channel?.why || 'this run was given no progress channel'}. Its tool activity is all the board can show.` };
+  }
+  if (!p.active) {
+    return { text: `The run ${ENDED_WORDS[p.outcome] || 'ended'} ${p.closed ? ago(p.closed) + ' ago' : ''}. ` +
+      (p.current ? 'Its last update is history now, not what it is doing.' : 'It sent no progress update.') };
+  }
+  const toolRecent = tool && now - tool < PROGRESS_QUIET;
+  if (!p.current) {
+    return { text: toolRecent ? 'No progress update yet; tool activity continues.'
+                              : 'No progress update yet.' };
+  }
+  if (p.current.blocked) return { text: 'The run reports that it is blocked.', warn: true };
+  if (now - (p.lastReport || 0) > PROGRESS_QUIET && toolRecent && tool > (p.lastReport || 0)) {
+    return { text: `No recent progress update (last ${ago(p.lastReport)} ago); tool activity continues.` };
+  }
+  return null;
+}
+
+/* The face of a card an agent is on: what the run last *said*, labelled as
+   said, with its own age. Only while the run is alive and only for this
+   run — a new launch never wears its predecessor's "doing now". */
+function progressWell(task, agent) {
+  if (!agent || agent.status !== 'running') return '';
+  const p = (S.state?.progress || {})[task.file];
+  if (!p || p.agent !== agent.id || !p.active || (p.channel || {}).state !== 'available') return '';
+  const c = p.current;
+  if (!c) {
+    return `<div class="pwell quiet" aria-label="Progress">No progress update yet</div>`;
+  }
+  const said = c.doing || c.narrative || (c.remaining || [])[0] || '';
+  const label = `Agent-reported progress, ${ago(p.lastReport)} ago`;
+  return `<div class="pwell" aria-label="${esc(label)}" title="${esc(label)} — what the run said, not a verified result">` +
+    `<div class="ptop"><span class="ptrust">agent-reported · ${esc(ago(p.lastReport))} ago</span>` +
+    (c.stage ? `<span class="pstage">${esc(c.stage)}</span>` : '') + `</div>` +
+    (said ? `<div>${esc(said.length > 160 ? said.slice(0, 160) + '…' : said)}</div>` : '') +
+    (c.blocked ? `<div class="pblock">Blocked: ${esc(c.blocked.length > 160 ? c.blocked.slice(0, 160) + '…' : c.blocked)}</div>` : '') +
+    `</div>`;
+}
+
+/* A reference the run attached, as the board can actually read it: a
+   commit by its sha, or bench's own evidence record as it reads *now* —
+   check, scope, commit and freshness from the runner, never from prose. */
+function progressRef(ref) {
+  if (ref.kind === 'commit') return `<span>commit ${esc(ref.id.slice(0, 12))} <span class="src">(named by the run)</span></span>`;
+  if (!ref.found) return `<span class="bad">evidence ${esc(ref.id)} — not found on this board</span>`;
+  const cls = ref.outcome === 'passed' ? 'ok' : (['failed', 'error', 'stale', 'prepare-failed', 'denied', 'cancelled'].includes(ref.outcome) ? 'bad' : '');
+  const bits = [`${esc(ref.check)}${ref.scope ? ' · scope ' + esc(ref.scope) : ' · full run'}`,
+    `<b class="${cls}">${esc(ref.outcome)}</b>`,
+    ref.outcome !== ref.recorded ? `recorded ${esc(ref.recorded)}, now ${esc(ref.reason || ref.outcome)}` : '',
+    ref.commit ? `at ${esc(ref.commit)}${ref.dirty ? ' + uncommitted' : ''}` : '',
+    'recorded by bench'].filter(Boolean);
+  return `<span>evidence ${esc(ref.id)}: ${bits.join(' · ')}</span>`;
+}
+
+/* The Focus view's progress section: done / doing now / remaining /
+   blocked, the narrative, the milestone checklist, three separate clocks,
+   the channel's health and the timeline — every claim labelled as the
+   run's, every absence said as an absence. */
+function progressSection(agent, meta, task) {
+  if (!agent) return '';
+  fetchProgress(agent.id);
+  const p = progressOf(agent.id, task && task.file);
+  const events = (meta && S.events[meta.id]) || [];
+  const tool = (meta && meta.last) || (events.length ? events[events.length - 1].ts : null);
+  const c = p && p.current;
+  const ended = p && !p.active;
+  const row = (dt, value, cls) =>
+    `<dt>${dt}</dt><dd class="${value ? (cls || '') : 'unknown'}">${value || 'not reported'}</dd>`;
+  const miles = p && (p.milestones || []).length
+    ? `<ul class="miles">${p.milestones.map(m => `<li>${esc(m.text)}</li>`).join('')}</ul>` +
+      (p.milestonesOmitted ? `<span class="unknown">and ${Number(p.milestonesOmitted)} later milestone${p.milestonesOmitted === 1 ? '' : 's'} not listed</span>` : '')
+    : '';
+  const honest = progressSentence(p, agent, tool);
+  const clock =
+    `<div class="pclock" role="group" aria-label="Three separate clocks">` +
+    `<span><b>Last progress update</b> ${p && p.lastReport ? esc(ago(p.lastReport)) + ' ago · ' + fmtShort(p.lastReport) : 'none'}</span>` +
+    `<span><b>Last tool activity</b> ${tool ? esc(ago(tool)) + ' ago · ' + fmtShort(tool) : 'none'}</span>` +
+    `<span><b>Process</b> ${esc(processWord(agent, p))}</span></div>`;
+  let body = '';
+  if (p && (p.channel || {}).state === 'available') {
+    body = `<dl>` +
+      row('Stage', c && esc(c.stage)) +
+      `<dt>Done</dt><dd class="${miles ? '' : 'unknown'}">${miles || 'none reported'}</dd>` +
+      row(ended ? 'Last said' : 'Doing now', c && esc(c.doing), ended ? 'past' : '') +
+      row('Remaining', c && (c.remaining || []).map(esc).join('\n')) +
+      `<dt>Blocked</dt><dd class="${c && c.blocked ? 'blocked' : 'unknown'}">${c && c.blocked ? esc(c.blocked) : 'none reported'}</dd>` +
+      `</dl>` +
+      (c && c.narrative ? `<p class="pnarr">${esc(c.narrative)}</p>` : '');
+    const refs = c && (c.refs || []);
+    if (refs && refs.length) {
+      body += `<div class="prefs" aria-label="References the run attached">${refs.map(progressRef).join('')}</div>`;
+    }
+  }
+  const counts = (p && p.counts) || {};
+  const health = p
+    ? `Reporting channel: ${esc((p.channel || {}).state || 'unknown')}` +
+      ` · ${counts.accepted || 0} update${counts.accepted === 1 ? '' : 's'} received` +
+      (counts.coalesced ? ` · ${counts.coalesced} coalesced` : '') +
+      (counts.duplicates ? ` · ${counts.duplicates} duplicate${counts.duplicates === 1 ? '' : 's'} ignored` : '') +
+      (counts.rejected ? ` · ${counts.rejected} refused (last: ${esc((p.lastRejection || {}).why || '')})` : '')
+    : '';
+  const history = (p && p.history) || [];
+  const verifies = task ? (S.state.boardEvents || []).filter(be =>
+    be.kind === 'verify' && be.file === task.file && (!p || be.ts >= (p.opened || 0))) : [];
+  const timeline = history.map(h => ({ ts: h.at, html:
+      `<span class="src">agent-reported</span><span>${esc([h.stage, h.doing || h.narrative].filter(Boolean).join(' — ') || (h.done || []).join('; '))}` +
+      (h.blocked ? ` <b style="color:var(--alarm)">blocked: ${esc(h.blocked)}</b>` : '') +
+      (h.coalesced ? ` <span class="src">(${h.coalesced + 1} updates coalesced)</span>` : '') + `</span>` }))
+    .concat(verifies.map(be => ({ ts: be.ts, html: `<span class="src">bench</span><span>${esc(be.summary)}</span>` })))
+    .sort((a, b) => b.ts - a.ts)
+    .map(item => `<div class="pti"><time>${fmtClock(item.ts)}</time>${item.html}</div>`).join('');
+  const tkey = `ptl:${agent.id}`;
+  const fold = timeline
+    ? `<details class="fold" data-key="${esc(tkey)}"${S.openFolds.has(tkey) ? ' open' : ''}>` +
+      `<summary>Progress timeline (${history.length} update${history.length === 1 ? '' : 's'}${verifies.length ? `, ${verifies.length} verification event${verifies.length === 1 ? '' : 's'}` : ''})</summary>` +
+      `<div class="ptl">${timeline}</div></details>` : '';
+  return `<section class="prog" aria-label="Progress">` +
+    `<div class="prog-head"><span class="label">Progress</span>` +
+    `<span class="ptrust" title="What the run says about its own work. Not verification evidence.">agent-reported</span>` +
+    (c ? `<span class="pclock">update ${esc(ago(p.lastReport))} ago</span>` : '') + `</div>` +
+    (honest ? `<div class="phonest${honest.warn ? ' warn' : ''}" role="status">${esc(honest.text)}</div>` : '') +
+    body + clock +
+    (health ? `<div class="pclock">${health}</div>` : '') + fold + `</section>`;
+}
 
 async function fetchDiff(agentId) {
   const cached = S.diffCache[agentId];
