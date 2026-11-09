@@ -11,6 +11,7 @@ from html import escape
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, unquote, urlparse
 
+import acceptance
 import agents
 import commands
 import config
@@ -275,6 +276,11 @@ def state_payload() -> dict:
         # agent-reported, never a result — with its channel's health and
         # whether the run has ended. The whole timeline is `/api/progress`.
         "progress": progress.board_public(),
+        # per card, how many tracked criteria a named person has accepted
+        # and how many review findings are still open — computed from the
+        # card's own records, never from its column. Empty on a board that
+        # tracks nothing; the whole reading is `/api/card/acceptance`.
+        "acceptance": acceptance.board(collected),
         "branches": github.task_branches(),
         "commands": config.commands(),
         "commandRuns": commands.public(),
@@ -566,6 +572,17 @@ class Handler(BaseHTTPRequestHandler):
             stage = (query.get("stage") or [""])[0] or taskfiles.find_stage_of(name) or ""
             try:
                 self._json(200, refine.for_card(name, stage))
+            except (ValueError, OSError) as exc:
+                self._json(409, {"error": str(exc)})
+        elif path == "/api/card/acceptance":
+            # A card's acceptance criteria and their states, its review
+            # rounds and findings, and its dated reports. A GET: it assigns
+            # no id and writes nothing — an untracked card reads as one.
+            query = parse_qs(url.query)
+            name = (query.get("file") or [""])[0]
+            stage = (query.get("stage") or [""])[0] or taskfiles.find_stage_of(name) or ""
+            try:
+                self._json(200, acceptance.for_card(name, stage))
             except (ValueError, OSError) as exc:
                 self._json(409, {"error": str(exc)})
         elif path == "/api/settings/history":
@@ -921,6 +938,56 @@ class Handler(BaseHTTPRequestHandler):
                     # proposal is fine, the card moved on, and the answer
                     # is to regenerate rather than to fix anything
                     self._json(409, {"error": str(exc), "stale": True})
+            elif path in ("/api/card/acceptance/track", "/api/card/acceptance/decide",
+                          "/api/card/finding"):
+                # The three writes acceptance has, each a person's explicit
+                # act, each bound to what that person was shown. The actor
+                # is this board's identity, never a field in the body.
+                payload = self._read_body()
+                name, stage = str(payload["file"]), str(payload["stage"])
+                try:
+                    if path.endswith("/track"):
+                        result = acceptance.track(
+                            name, stage, brief_sha=str(payload.get("briefSha") or ""),
+                            request=payload.get("request"))
+                        said = (f"{name}: acceptance tracked — "
+                                f"{len(result['tracked'])} criteria given ids")
+                    elif path.endswith("/decide"):
+                        result = acceptance.decide(
+                            name, stage, criterion=str(payload.get("criterion") or ""),
+                            state=str(payload.get("state") or ""),
+                            rev=str(payload.get("rev") or ""),
+                            basis=payload.get("basis") or None,
+                            note=payload.get("note"), ref=payload.get("ref"),
+                            evidence=payload.get("evidence") or None,
+                            request=payload.get("request"))
+                        said = (f"{name}: criterion {payload.get('criterion')} "
+                                f"recorded {payload.get('state')}")
+                    else:
+                        result = acceptance.finding(
+                            name, stage, event=str(payload.get("event") or ""),
+                            finding_id=payload.get("finding") or None,
+                            text=payload.get("text"),
+                            round_id=payload.get("round") or None,
+                            criterion=payload.get("criterion") or None,
+                            note=payload.get("note"),
+                            evidence=payload.get("evidence") or None,
+                            basis=payload.get("basis") or None,
+                            request=payload.get("request"))
+                        said = (f"{name}: review finding "
+                                f"{payload.get('finding') or 'new'} {payload.get('event')}")
+                except taskfiles.StaleCard as exc:
+                    self._json(409, {"error": str(exc), "stale": True})
+                    return
+                if result.get("written"):
+                    who = acceptance.actor()["name"] or "you"
+                    state.record_board_event({
+                        "kind": "agent", "actor": "you", "file": name,
+                        "summary": f"{said} by {who}" + (
+                            "" if result.get("committed") else
+                            " (written to the card, not committed)")})
+                    state.broadcast({"type": "board"})
+                self._json(200, result)
             elif path == "/api/verify/cancel":
                 payload = self._read_body()
                 self._json(200, verify.cancel(payload["id"]))

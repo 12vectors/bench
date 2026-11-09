@@ -3,7 +3,7 @@
 
     bench-progress [--stage S] [--doing D] [--done M]... [--remaining R]...
                    [--blocked B] [--commit SHA]... [--evidence ID]...
-                   [narrative words...]
+                   [--criterion ID]... [narrative words...]
 
 A headless run's one way to report progress, and deliberately tiny: it
 POSTs a report to this board over the loopback at BOARD_PORT, naming the
@@ -15,7 +15,9 @@ allowed to run this: it writes no file, moves no card and runs nothing.
 Each update is a whole statement — a field left out is "not reported" in
 that update, never carried over. `--done`, `--remaining`, `--commit` and
 `--evidence` may be repeated. `--evidence` takes the id bench-verify
-printed, so the board can show the record beside the words.
+printed, so the board can show the record beside the words. `--criterion`
+names an acceptance criterion (its `ac:` id) this run has implemented: the
+card shows it as *reported — awaiting confirmation*, never as accepted.
 
 The report gets an id here and keeps it across the retries below, so a
 request the board already recorded is answered as a duplicate rather than
@@ -48,6 +50,7 @@ def parse(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--blocked")
     parser.add_argument("--commit", action="append", default=[])
     parser.add_argument("--evidence", action="append", default=[])
+    parser.add_argument("--criterion", action="append", default=[])
     parser.add_argument("narrative", nargs="*")
     return parser.parse_args(argv)
 
@@ -72,6 +75,8 @@ def main() -> int:
     for key in ("done", "remaining"):
         if getattr(args, key):
             body[key] = getattr(args, key)
+    if args.criterion:
+        body["criteria"] = args.criterion
     if args.narrative:
         body["narrative"] = " ".join(args.narrative)
     refs = ([{"commit": c} for c in args.commit]
