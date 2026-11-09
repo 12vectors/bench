@@ -165,8 +165,16 @@ class Progress(unittest.TestCase):
         shot("progress-card-milestone-1440x900")
         view("focus")
         self.assertTrue(b.wait("document.querySelector('#cgrid .prog') !== null", 10))
+        # the heading is drawn uppercase by CSS, so innerText reads
+        # "PROGRESS" while the label itself, and the section's accessible
+        # name, are "Progress": assert the semantic text, not the rendering
+        heading = b.eval("(() => { const s = document.querySelector('#cgrid .prog');"
+                         " const l = s && s.querySelector('.prog-head .label');"
+                         " return [s && s.getAttribute('aria-label'),"
+                         " l && l.textContent.trim()]; })()")
+        self.assertEqual(["Progress", "Progress"], heading)
         text = focus_text()
-        for words in ("Progress", "agent-reported", "Doing now", "focused tests passed",
+        for words in ("agent-reported", "Doing now", "focused tests passed",
                       "full regression testing", "Last progress update",
                       "Last tool activity", "Process running"):
             self.assertIn(words, text)
