@@ -145,6 +145,11 @@ def body(run: bv.Run) -> str:
                                                    run.artifacts / "backend.log"))
     log = run.artifact("log", run.artifacts / "cases.log")
     log.write_text(stream.getvalue(), encoding="utf-8")
+    try:  # TEMPORARY DEBUG — reverted in the next commit
+        Path("/home/dev/12v/bench/worktrees/81-structure-card-details-and-track-acceptance/"
+             ".verify-debug.log").write_text(stream.getvalue(), encoding="utf-8")
+    except OSError:
+        pass
     metrics = run.artifact("metrics", run.artifacts / "metrics.json")
     metrics.write_text(json.dumps(bv.SESSION["metrics"], indent=2, sort_keys=True))
     run.record["cases"]["results"] = result.outcomes
