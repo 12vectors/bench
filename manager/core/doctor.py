@@ -397,6 +397,7 @@ def inspect(worktree: Path | str | None = None) -> dict:
     for intent in profiles.INTENTS:
         found = _intent_reading(intent, worktree)
         readings.append(_public_intent(found))
+        findings.append(_harness_finding(intent, found))
         findings += _intent_findings(intent, found)
 
     # — what a merge refuses without, which is not what a launch grants —
@@ -428,6 +429,25 @@ def inspect(worktree: Path | str | None = None) -> dict:
         "intents": readings,
         "findings": findings,
     }
+
+
+def _harness_finding(intent: str, found: dict) -> dict:
+    """Which harness and model one intent rides, read off the resolution
+    the launch takes (task 77) — so the inspector and a launch cannot
+    disagree about it."""
+    selection = found.get("selection") or {}
+    harness = selection.get("harness") or {}
+    model = selection.get("model") or {}
+    present = bool((found.get("adapter") or {}).get("path"))
+    return _finding(
+        "inspect", f"harness:{intent}", "passed" if present else "failed",
+        f"which harness and model a '{intent}' launch rides",
+        f"{harness.get('name')} ({harness.get('setting')}, "
+        f"{profiles._SOURCE_WORDS.get(harness.get('source'), harness.get('source'))})"
+        f" · model: {model.get('words')}",
+        intent=intent,
+        code=None if present else "harness-unavailable",
+        remedy=None if present else profiles.DIAGNOSTICS["harness-unavailable"][1])
 
 
 def _gate_findings(policy: dict) -> list[dict]:
@@ -1128,6 +1148,14 @@ def _stub_rows(adapter: dict, seam: dict, intent: str,
             "AGENT_CONTEXT": json.dumps(profiles.adapter_context(found)),
             "AGENT_CWD": str(cwd),
         })
+        # The model this intent resolved, exactly as `_launch` would hand
+        # it over — a stub costs nothing, and the row then shows the model
+        # reaching the vendor's argv the way a launch would (task 77).
+        model = ((found.get("selection") or {}).get("model") or {}).get("value")
+        if model:
+            env["AGENT_MODEL"] = model
+        for key in config.AGENT_KEYS:
+            env.pop(key, None)
         try:
             result = subprocess.run(["bash", str(runner)], env=env, cwd=cwd,
                                     capture_output=True, text=True,
@@ -1183,19 +1211,23 @@ def conformance(worktree: Path | str | None = None) -> list[dict]:
     """What the installed adapter generates, and what its own `run` does
     with it. No vendor binary, no model, no network — and nothing it
     creates outlives the call."""
-    adapter = profiles.adapter_identity()
-    if not adapter.get("path"):
-        return [_finding("conformance", "adapter", "failed",
-                         "which adapter to put through its paces",
-                         adapter.get("note") or
-                         f"the adapter '{adapter['name']}' was not found",
-                         remedy=("Set BOARD_AGENT_ADAPTER in "
-                                 "manager/local/.env to an adapter directory "
-                                 "that exists."))]
-    seam = _conformance_seam(adapter)
     out = []
     for intent in profiles.INTENTS:
         found = _intent_reading(intent, worktree)
+        # The harness *this* intent rides (task 77) — read off the same
+        # resolution the launch takes, so conformance is asked of the
+        # adapter that would actually run it.
+        adapter = found["adapter"]
+        if not adapter.get("path"):
+            out.append(_finding(
+                "conformance", "adapter", "failed",
+                f"which adapter to put through its paces for '{intent}'",
+                adapter.get("note") or
+                f"the adapter '{adapter['name']}' was not found",
+                intent=intent, code="harness-unavailable",
+                remedy=profiles.DIAGNOSTICS["harness-unavailable"][1]))
+            continue
+        seam = _conformance_seam(adapter)
         if found["blockers"]:
             out.append(_finding(
                 "conformance", "blocked", "skipped",
@@ -1422,10 +1454,12 @@ def real_agent(approved: bool = False) -> list[dict]:
     resolves whatever this board or the operator's own settings already
     say. The application is never a working directory for it.
     """
-    adapter = profiles.adapter_identity()
     rows: list[dict] = []
     if not approved:
         for probe in REAL_AGENT_PROBES:
+            # the harness and model this probe's intent resolves to now
+            adapter = profiles.adapter_identity(
+                config.agent_choice(probe["intent"])["harness"]["value"])
             model = config.agent_model(probe["intent"]) \
                 or "the CLI's own resolution"
             rows.append(_finding(
@@ -1448,12 +1482,16 @@ def real_agent(approved: bool = False) -> list[dict]:
                         "implied by any other mode.")))
         rows.append(_adjacent_reads_row())
         return rows
-    if not adapter.get("path"):
-        return [_finding("real-agent", "smoke", "failed",
-                         "which adapter to launch",
-                         adapter.get("note") or
-                         f"the adapter '{adapter['name']}' was not found",
-                         remedy="Set BOARD_AGENT_ADAPTER to an adapter that exists.")]
+    for probe in REAL_AGENT_PROBES:
+        adapter = profiles.adapter_identity(
+            config.agent_choice(probe["intent"])["harness"]["value"])
+        if not adapter.get("path"):
+            return [_finding("real-agent", "smoke", "failed",
+                             "which adapter to launch",
+                             adapter.get("note") or
+                             f"the adapter '{adapter['name']}' was not found",
+                             code="harness-unavailable",
+                             remedy=profiles.DIAGNOSTICS["harness-unavailable"][1])]
 
     stamp = uuid.uuid4().hex[:12]
     root = config.DOCTOR_DIR / f"real-{stamp}"
@@ -1462,7 +1500,9 @@ def real_agent(approved: bool = False) -> list[dict]:
         _fixture_repo(root)
         before = _fixture_commits(root)
         for probe in REAL_AGENT_PROBES:
-            rows.append(_real_agent_probe(adapter, root, probe, before))
+            found_probe = profiles.resolve(probe["intent"], worktree=root)
+            rows.append(_real_agent_probe(found_probe["adapter"], root, probe,
+                                          before))
     except OSError as exc:
         rows.append(_finding("real-agent", "smoke", "failed",
                              "whether the doctor could build its fixture",
@@ -1503,8 +1543,9 @@ def _real_agent_probe(adapter: dict, root: Path, probe: dict,
     to its own confinement.
     """
     intent = probe["intent"]
-    model = config.agent_model(intent) or "the CLI's own resolution"
     found = profiles.resolve(intent, worktree=root)
+    chosen = found["selection"]["model"]["value"]
+    model = chosen or "the CLI's own resolution"
     if found["blockers"]:
         return _finding(
             "real-agent", f"smoke:{intent}", "failed", probe["about"],
@@ -1525,10 +1566,12 @@ def _real_agent_probe(adapter: dict, root: Path, probe: dict,
     })
     # The configured model, and nothing invented here: absent means the
     # vendor's own resolution, which is the account's own default.
-    if config.agent_model(intent):
-        env["AGENT_MODEL"] = config.agent_model(intent)
+    if chosen:
+        env["AGENT_MODEL"] = chosen
     else:
         env.pop("AGENT_MODEL", None)
+    for key in config.AGENT_KEYS:
+        env.pop(key, None)
     # A diagnosis is nobody's card, so it is attributed to nobody's card:
     # the launch identity is removed, and the hook bridge has no run and
     # no task to report this against.

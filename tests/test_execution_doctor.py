@@ -806,7 +806,8 @@ class TheRealAgentStaysDeferred(unittest.TestCase):
         resolution, which is the operator's account default."""
         source = (CORE / "doctor.py").read_text(encoding="utf-8")
         self.assertIn('env.pop("AGENT_MODEL", None)', source)
-        self.assertIn("config.agent_model(intent)", source)
+        # the model comes off the same resolution the launch takes (task 77)
+        self.assertIn('found["selection"]["model"]["value"]', source)
 
     def _stub_cli(self, tmp: Path, body: str) -> Path:
         stub = tmp / "stub.py"
