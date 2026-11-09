@@ -5295,7 +5295,9 @@ function agentRow(a, d, id) {
   const harness = a.harnesses.find(h => h.name === effH);
   const lock = (x) => x.locked
     ? `<span class="sbadge warn" title="${esc(x.how)}">Locked: ${esc(x.sourceWords)}</span>` : '';
-  const inheritModel = !isDefault && !mVal;
+  // "Use a model" chosen and nothing typed yet is still a choice: the
+  // field stays open rather than snapping back to inherit on a repaint
+  const inheritModel = !isDefault && !mVal && !(d.modelSet || {})[mKey];
   const effective = row.effective
     ? `<span class="shelp">In force now: <b>${esc(row.effective.selection.harness.name)}</b>` +
       ` · ${esc(row.effective.selection.model.value || 'harness default')}` +
@@ -5476,15 +5478,15 @@ function wireAgents(page) {
   body.querySelectorAll('[data-agmodelmode]').forEach(el =>
     el.addEventListener('change', () => {
       const key = el.dataset.agmodelmode;
+      d.modelSet = d.modelSet || {};
+      d.modelSet[key] = el.value === 'set';
       if (el.value === 'inherit') d.agents[key] = '';
-      else d.agents[key] = d.agents[key] || '';
       agentsMark(d);
+      const id = (body.querySelector(`input[data-agkey="${CSS.escape(key)}"]`) || {}).id;
       renderSettings();
-      if (el.value === 'set') {
-        const input = body.querySelector(`input[data-agkey="${CSS.escape(key)}"]`);
-        const again = document.getElementById(input ? input.id : '');
-        if (again) { again.disabled = false; again.focus(); }
-      }
+      // choosing "Use a model" moves the person to the field it opened
+      const field = el.value === 'set' && id ? document.getElementById(id) : null;
+      if (field) field.focus();
     }));
   body.querySelectorAll('[data-agtpl]').forEach(btn =>
     btn.addEventListener('click', () => {

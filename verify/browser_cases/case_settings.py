@@ -97,7 +97,8 @@ def open_settings(width=1440, height=900, section="overview", theme="dark"):
     if not b.wait("document.querySelector('#view-settings')"
                   ".classList.contains('on')", 5):
         raise bv.CheckFailed("the Settings switcher opened no view")
-    if not b.wait("document.querySelectorAll('#snav [data-ssection]').length >= 7", 15):
+    if not b.wait("document.querySelectorAll('#snav [data-ssection]').length >= "
+                  f"{len(SECTIONS)}", 15):
         raise bv.CheckFailed("the settings sections never arrived from the "
                              "backend")
     if section != "overview":
@@ -676,7 +677,7 @@ class SurfaceThemesAndHitAreas(unittest.TestCase):
                                         ".getAttribute('aria-expanded')"))
         heights = b.eval("[...document.querySelectorAll('#snav [data-ssection]')]"
                          ".map(e => Math.round(e.getBoundingClientRect().height))")
-        self.assertEqual(7, len(heights))
+        self.assertEqual(len(SECTIONS), len(heights))
         self.assertTrue(all(h >= 44 for h in heights), heights)
         self.assertLessEqual(measure(["#snav"])["scrollWidth"], 391)
         shot("settings-narrow-sections-open-390x780")
