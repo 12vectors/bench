@@ -182,7 +182,7 @@ class StructuredDetail(unittest.TestCase):
                " n.value = 'Checked by eye at 1280 and 390px: title, then next step.';"
                " n.dispatchEvent(new Event('input'));"
                f" const r = document.querySelector('#acc-ref-{first}');"
-               " r.value = 'detail-overview-1280x900.png'; r.dispatchEvent(new Event('input')); }})()")
+               " r.value = 'detail-overview-1280x900.png'; r.dispatchEvent(new Event('input')); })()")
         b.click(f"[data-decide=\"{first}\"]")
         self.assertTrue(b.wait("document.querySelector('#dsec-acceptance .acount').innerText"
                                ".includes('1 of 4')", 10), "the count did not reach 1 of 4")
