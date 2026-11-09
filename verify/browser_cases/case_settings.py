@@ -753,6 +753,14 @@ class AgentsSection(unittest.TestCase):
     conflict, and the keyboard and narrow layouts. Cases run in name
     order and leave the board's agent settings as they found them."""
 
+    def _callTestMethod(self, method):  # PROBE (temporary)
+        try:
+            method()
+        except (AssertionError, bv.CheckFailed) as exc:
+            if self._testMethodName[5] in "def":
+                raise RuntimeError(f"PROBE: {exc}") from exc
+            raise
+
     def test_a_compact_rows_say_what_each_purpose_inherits(self):
         b = open_settings(1440, 900, "agents")
         if not b.wait("document.querySelectorAll('[data-agrow]').length === 4", 10):
