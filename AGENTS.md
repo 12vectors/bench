@@ -362,6 +362,17 @@ its own, and a work root in **no** repository is a work root bench will
 not commit to rather than a reason to reach for the application's
 history.
 
+"Externally" means either root is set, not only the work root. With
+`BOARD_APP_ROOT` alone the work state keeps its default — the tool
+installation — and its repository is whichever one holds that install:
+the tool's own checkout, a repository it was dropped into, or none at
+all. None is a working local-only board; with `BOARD_COMMIT_MOVES` or
+`BOARD_SYNC` on it is refused, naming the install as the work root and
+`BOARD_WORK_ROOT` as the way to give the tickets a repository of their
+own. An install sitting inside the application it names is refused as a
+work root inside the application, which is what it is. The application's
+repository is never the answer.
+
 Each identity resolves its remote and its base branch independently:
 `BOARD_GIT_REMOTE` and `BOARD_APP_BASE` for the code,
 `BOARD_STATE_GIT_REMOTE` and `BOARD_STATE_BASE` for the board. So a card

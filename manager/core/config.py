@@ -24,7 +24,9 @@ instead of guessing.
 A fifth root is derived rather than configured: `state_repo()`, the
 repository the board's own bookkeeping is committed to. Vendored, that is
 the application repository, because tasks/ genuinely lives in it.
-Externally it is the repository holding the work root — and `None`, a
+Externally — either root set, `BOARD_APP_ROOT` alone included, where the
+work root is still the tool — it is the repository holding the work root,
+never the application's — and `None`, a
 work root in no repository at all, is a work root bench will not commit
 to rather than a reason to reach for the application's history.
 """
