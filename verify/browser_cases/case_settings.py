@@ -753,16 +753,6 @@ class AgentsSection(unittest.TestCase):
     conflict, and the keyboard and narrow layouts. Cases run in name
     order and leave the board's agent settings as they found them."""
 
-    def _callTestMethod(self, method):  # PROBE (temporary)
-        try:
-            method()
-        except (AssertionError, bv.CheckFailed) as exc:
-            if self._testMethodName[5] == "d":
-                raise RuntimeError(f"PROBE: {exc}") from exc
-            if self._testMethodName[5] in "ef":
-                return
-            raise
-
     def test_a_compact_rows_say_what_each_purpose_inherits(self):
         b = open_settings(1440, 900, "agents")
         if not b.wait("document.querySelectorAll('[data-agrow]').length === 4", 10):
@@ -904,7 +894,11 @@ class AgentsSection(unittest.TestCase):
 
     def test_e_a_stale_draft_is_a_conflict_not_an_overwrite(self):
         b = open_settings(1440, 900, "agents")
+        self.assertTrue(b.eval("document.querySelector('[data-agstep=\"apply\"]').disabled"))
         set_control('#ag-m-default', 'mine', 'input')
+        # typing does not repaint, and Apply is available all the same
+        self.assertFalse(b.eval("document.querySelector('[data-agstep=\"apply\"]').disabled"),
+                         "typing a value left Apply disabled")
         # another tab saves first
         other = agents_api("apply", {"revision": b.eval("S.settings.page.agents.revision"),
                                      "agents": {"BOARD_AGENT_MODEL": "theirs"}})

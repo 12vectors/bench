@@ -5451,6 +5451,25 @@ function settingsAgents(page) {
 
 function agentsMark(d) {
   d.dirty = true; d.armed = false; d.checked = null; d.preview = null;
+  // Typing does not repaint (that would take the caret), so the step bar
+  // is brought up to date in place: Apply and Discard become available,
+  // and a validation or preview of the text before this edit is removed
+  // rather than left describing something else.
+  const steps = document.getElementById('ag-steps');
+  if (!steps) return;
+  for (const step of ['apply', 'discard']) {
+    const btn = steps.querySelector(`[data-agstep="${step}"]`);
+    if (btn) btn.disabled = false;
+  }
+  const apply = steps.querySelector('[data-agstep="apply"]');
+  if (apply && apply.classList.contains('armed')) {
+    apply.classList.remove('armed');
+    apply.textContent = 'Apply';
+    apply.setAttribute('aria-label', 'apply the agent settings draft');
+  }
+  const panel = steps.parentElement;
+  if (panel) panel.querySelectorAll('[data-agpreview], [data-agerr]')
+    .forEach(e => e.remove());
 }
 
 function agentsPayload(d) {
