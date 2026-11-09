@@ -6100,18 +6100,25 @@ function discStamp(t) {
 
 function loadDiscussion(t, force) {
   const cur = S.disc[t.file] || {};
-  if (cur.loading || (!force && cur.stamp === discStamp(t))) return;
-  S.disc[t.file] = { ...cur, loading: true };
+  // a read already in flight may have read the card before the write that
+  // asked for this one, so the request is kept and made when it ends —
+  // dropping it is how a saved comment never appeared
+  if (cur.loading) {
+    if (force || cur.loadingStamp !== discStamp(t)) S.disc[t.file] = { ...cur, again: t };
+    return;
+  }
+  if (!force && cur.stamp === discStamp(t)) return;
   const stamp = discStamp(t);
+  S.disc[t.file] = { ...cur, loading: true, loadingStamp: stamp, again: null };
   fetch(`/api/card/discussion?file=${encodeURIComponent(t.file)}` +
         `&stage=${encodeURIComponent(t.stage)}`)
     .then(res => res.json().then(data => ({ ok: res.ok, data })))
-    .then(({ ok, data }) => {
-      S.disc[t.file] = ok ? { data, stamp } : { data: cur.data, error: data.error, stamp };
-    })
-    .catch(() => { S.disc[t.file] = { data: cur.data, stamp,
-                                      error: 'the board could not be asked' }; })
-    .finally(() => {
+    .then(({ ok, data }) => ok ? { data, stamp } : { data: cur.data, error: data.error, stamp })
+    .catch(() => ({ data: cur.data, stamp, error: 'the board could not be asked' }))
+    .then(next => {
+      const again = (S.disc[t.file] || {}).again;
+      S.disc[t.file] = next;
+      if (again) loadDiscussion(again, true);
       if (S.selected && S.selected.file === t.file) renderDiscussion(S.selected);
     });
 }

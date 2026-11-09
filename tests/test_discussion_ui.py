@@ -210,5 +210,54 @@ class SourceInvariants(unittest.TestCase):
         self.assertIn("md(withoutDiscussion(t.body))", HTML)
 
 
+LOADER = "\n".join([
+    function("discStamp"),
+    function("loadDiscussion"),
+    "const S = { state: { refinements: {} }, disc: {}, selected: null };",
+    "const agentOnTask = () => null;",
+    "function renderDiscussion(t) {}",
+    "const pending = [];",
+    "global.fetch = (url) => new Promise(resolve => pending.push(resolve));",
+    "const reply = (i, body) => { pending[i]({ ok: true, json: async () => body }); };",
+    "const settle = () => new Promise(r => setTimeout(r, 0));",
+    "(async () => {",
+    "  const t = { file: '02-x.md', stage: 'to-do', mtime: 1 };",
+    "  S.selected = t;",
+    # the drawer opens: the first read is in flight
+    "  loadDiscussion(t);",
+    # a comment is saved meanwhile, and the page asks for a fresh read
+    "  loadDiscussion(t, true);",
+    # the first read answers with what the card held before the write
+    "  reply(0, { entries: [] });",
+    "  await settle(); await settle();",
+    "  if (pending.length > 1) { reply(1, { entries: [{ id: 'c-1' }] });",
+    "                            await settle(); await settle(); }",
+    "  process.stdout.write(JSON.stringify({ fetches: pending.length,",
+    "    shown: S.disc[t.file].data, loading: !!S.disc[t.file].loading }));",
+    "})();",
+])
+
+
+@unittest.skipUnless(NODE, "node is needed to run the page's own loader")
+class Loading(unittest.TestCase):
+    def test_a_refresh_asked_for_during_a_read_is_not_dropped(self):
+        """The browser case for card 65 failed intermittently with the saved
+        comment missing from the discussion. One way that happens: the
+        drawer's first read is still in flight when the comment is saved,
+        the forced refresh after the write is dropped because a read is
+        'loading', and the first read then answers with the card as it was
+        before the comment — so nothing ever shows it. A refresh asked for
+        during a read must be made once that read ends."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "loader.js"
+            path.write_text(LOADER, encoding="utf-8")
+            out = subprocess.run([NODE, str(path)], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        got = json.loads(out.stdout)
+        self.assertEqual(2, got["fetches"], "the refresh after the write was dropped")
+        self.assertEqual([{"id": "c-1"}], got["shown"]["entries"])
+        self.assertFalse(got["loading"])
+
+
 if __name__ == "__main__":
     unittest.main()
