@@ -272,14 +272,36 @@ def _draft(payload: dict) -> tuple[dict, dict]:
     return agents, prompts
 
 
+def _changed_keys(agents: dict, now_values: dict) -> list[str]:
+    """The keys an apply would write: those whose draft value differs from
+    the file's (or, absent from it, from the default). A locked key is
+    never written — validate refused any attempt to change it, and an
+    equal value needs no write. One rule, asked by preview and apply, so
+    the preview describes exactly the file the apply would produce."""
+    return sorted(
+        k for k, v in agents.items()
+        if not config.agent_setting(k, now_values)["locked"]
+        and now_values.get(k, config.DEFAULT_HARNESS if k == config.HARNESS_KEY
+                           else "").strip() != v.strip())
+
+
 def _proposed(agents: dict) -> dict:
     """The `.env` agent values after the draft — what `agent_choice` will
-    read — with every key the draft does not mention as it is now."""
+    read — with every key the apply would not write as it is now."""
     values = config.env_file_now()
-    proposed = {k: v for k, v in values.items()}
-    for key, value in agents.items():
-        proposed[key] = value.strip()
+    proposed = dict(values)
+    for key in _changed_keys(agents, values):
+        proposed[key] = agents[key].strip()
     return proposed
+
+
+def _differs(was: dict, now: dict) -> bool:
+    """Whether what a launch rides changes — the harness, the model, or
+    which of them is inherited — never mere provenance."""
+    def words(s: dict) -> tuple:
+        return (s["harness"]["name"], s["harness"]["inherited"],
+                s["model"]["value"], s["model"]["inherited"])
+    return words(was) != words(now)
 
 
 def validate(payload: dict) -> dict:
@@ -355,7 +377,7 @@ def preview(payload: dict) -> dict:
         intent = purpose["id"]
         was = _intent_reading(intent, before_values)
         now = _intent_reading(intent, after_values)
-        changed = was["selection"] != now["selection"]
+        changed = _differs(was["selection"], now["selection"])
         purposes.append({
             "purpose": intent, "label": purpose["label"],
             "changed": changed,
@@ -531,14 +553,7 @@ def apply(payload: dict, *, actor: str | None = None) -> dict:
             current)
 
     now_values = config.env_file_now()
-    # A key changes when the file's value (or, absent, its default) differs
-    # from the draft's; a locked key is never written — validate refused
-    # any attempt to change it, and an equal value needs no write.
-    changed_keys = sorted(
-        k for k, v in agents.items()
-        if not config.agent_setting(k, now_values)["locked"]
-        and now_values.get(k, config.DEFAULT_HARNESS if k == config.HARNESS_KEY
-                           else "").strip() != v.strip())
+    changed_keys = _changed_keys(agents, now_values)
     # what the write plan is: path → new text (None = remove)
     plan: dict[Path, str | None] = {}
     if changed_keys:

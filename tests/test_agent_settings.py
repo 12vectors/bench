@@ -338,6 +338,19 @@ class SavingIsSafe(AgentCase):
         self.assertNotIn("w-model", line)
         self.assertNotIn("beta", line)
 
+    def test_preview_marks_only_the_purposes_whose_launch_changes(self):
+        """The page sends every agent key it shows, unchanged ones too; a
+        preview must describe the file the apply would write, so only the
+        overridden purpose reads as changed."""
+        everything = {key: config.agent_setting(key)["value"]
+                      for key in config.AGENT_KEYS}
+        everything["BOARD_AGENT_ADAPTER_REVIEW"] = "beta"
+        preview = agentsettings.preview(self.draft(agents=everything))
+        changed = {p["purpose"]: p["changed"] for p in preview["purposes"]}
+        self.assertEqual(changed, {"work": False, "act-pr": False, "review": True})
+        result = agentsettings.apply(self.draft(agents=everything))
+        self.assertEqual(result["changedKeys"], ["BOARD_AGENT_ADAPTER_REVIEW"])
+
     def test_a_stale_revision_is_a_conflict_and_writes_nothing(self):
         payload = self.draft(agents={"BOARD_AGENT_MODEL": "x"})
         self.env_file(self.ENV + "BOARD_AGENT_MODEL=someone-else\n")

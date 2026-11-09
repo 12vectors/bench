@@ -777,13 +777,6 @@ class AgentsSection(unittest.TestCase):
         shot("settings-agents-rows-1440x900")
 
     def test_b_a_per_purpose_override_applies_and_the_backend_resolves_it(self):
-        try:
-            self._b_before_apply()
-        except (AssertionError, bv.CheckFailed) as exc:  # PROBE
-            raise RuntimeError(f"PROBE before apply: {exc}") from exc
-        self._b_apply()
-
-    def _b_before_apply(self):
         b = open_settings(1440, 900, "agents")
         b.wait("!!document.querySelector('#ag-h-review')", 10)
         set_control('#ag-h-review', 'opencode')
@@ -804,9 +797,6 @@ class AgentsSection(unittest.TestCase):
         preview_text = b.eval("document.querySelector('[data-agpreview]').innerText")
         self.assertIn("next launch", preview_text)
         shot("settings-agents-preview")
-
-    def _b_apply(self):
-        b = S["browser"]
         b.click('#sbody [data-agstep="apply"]')
         if not b.wait("document.querySelector('#sbody [data-agstep=\"apply\"]')"
                       ".classList.contains('armed')", 5):
@@ -834,7 +824,7 @@ class AgentsSection(unittest.TestCase):
                                                "BOARD_AGENT_MODEL_REVIEW": ""}})
         self.assertEqual(200, back["status"], back)
 
-    def probe_c_a_prompt_is_previewed_saved_reset_and_recoverable(self):
+    def test_c_a_prompt_is_previewed_saved_reset_and_recoverable(self):
         b = open_settings(1440, 900, "agents")
         b.click('#sbody [data-agtpl="review.md"]')
         if not b.wait("document.activeElement && document.activeElement.id === 'ag-t-review.md'", 5):
@@ -880,7 +870,7 @@ class AgentsSection(unittest.TestCase):
         self.assertGreater(recovered, 0, "the replaced text was not kept for recovery")
         shot("settings-agents-prompt-reset")
 
-    def probe_d_a_broken_template_is_refused_and_nothing_is_written(self):
+    def test_d_a_broken_template_is_refused_and_nothing_is_written(self):
         b = open_settings(1440, 900, "agents")
         before = b.eval("S.settings.page.agents.revision")
         b.click('#sbody [data-agtpl="work.md"]')
@@ -902,7 +892,7 @@ class AgentsSection(unittest.TestCase):
         b.click('#sbody [data-agstep="discard"]')
         self.assertTrue(b.wait("S.agentsDraft === null || !S.agentsDraft.dirty", 10))
 
-    def probe_e_a_stale_draft_is_a_conflict_not_an_overwrite(self):
+    def test_e_a_stale_draft_is_a_conflict_not_an_overwrite(self):
         b = open_settings(1440, 900, "agents")
         set_control('#ag-m-default', 'mine', 'input')
         # another tab saves first
@@ -922,7 +912,7 @@ class AgentsSection(unittest.TestCase):
                                     "agents": {"BOARD_AGENT_MODEL": ""}})
         self.assertEqual(200, back["status"], back)
 
-    def probe_f_the_rows_are_reachable_by_keyboard_and_fit_a_narrow_screen(self):
+    def test_f_the_rows_are_reachable_by_keyboard_and_fit_a_narrow_screen(self):
         for w, h in [(1440, 900), (390, 780)]:
             b = open_settings(w, h, "agents")
             b.eval("document.querySelector('#s-title').focus()")
