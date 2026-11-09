@@ -316,6 +316,10 @@ class Discussion(unittest.TestCase):
         self.assertTrue(b.wait("document.querySelector('#drawer').classList.contains('open')"
                                " && !!document.querySelector('#commentbox')", 5),
                         "the detail view did not open with a comment box")
+        # the discussion and its composer live in the Brief section (task 81)
+        b.click("#dtab-brief")
+        self.assertTrue(b.wait("!document.querySelector('#dsec-brief').hidden", 5),
+                        "the Brief section did not open")
         # "reading the discussion…" is itself a .dnote, so the placeholder
         # alone must not count as loaded
         self.assertTrue(b.wait("(() => { const l = document.querySelector('#disc-live');"

@@ -980,7 +980,7 @@
      decision first and held in view while reading, then five sections.
      State is a word everywhere; colour only repeats it. ── */
   #drawer.wide{width:min(920px,96vw)!important}
-  #drawer .dsticky{position:sticky;top:-20px;z-index:2;background:var(--canvas);
+  #drawer .dsticky{position:sticky;top:0;z-index:2;background:var(--canvas);
     margin-top:-20px;padding:14px 0 8px;flex-wrap:wrap;border-bottom:1px solid var(--border-soft)}
   #drawer .dtitle{flex:1 1 220px;min-width:0;margin:0;font-size:16px;line-height:1.3;
     font-weight:600;overflow-wrap:anywhere}
@@ -6130,6 +6130,10 @@ function renderDrawer() {
           ? [active.selectionStart, active.selectionEnd] : null }
     : null;
   const tab = drawerTab(t);
+  // what the reader is looking at, so a live redraw that adds a record
+  // above it (Activity is newest first) moves the page, not the reader
+  const anchor = S.drawerAnchorKey === key ? drawerAnchor(body) : null;
+  S.drawerAnchorKey = key;
   loadAcc(t);
   const acc = (S.acc[t.file] || {}).data;
   panel.classList.toggle('wide', !!S.dwide);
@@ -6159,7 +6163,7 @@ function renderDrawer() {
   if (typing) {
     const again = document.getElementById(typing.id);
     if (again && !again.closest('[hidden]')) {
-      again.focus();
+      again.focus({ preventScroll: true });
       if (typing.sel && again.setSelectionRange) again.setSelectionRange(typing.sel[0], typing.sel[1]);
     }
   }
@@ -6173,6 +6177,11 @@ function renderDrawer() {
   }
   panel.classList.add('open');
   restoreScroll(key, body);
+  if (anchor) {
+    const same = [...body.querySelectorAll('.dsec:not([hidden]) [data-keep]')]
+      .find(el => el.dataset.keep === anchor.keep);
+    if (same) body.scrollTop += same.getBoundingClientRect().top - anchor.top;
+  }
   body.querySelectorAll('[data-member]').forEach(row =>
     row.addEventListener('click', () => {
       const member = findTask(row.dataset.member);
@@ -6204,6 +6213,19 @@ const STAGE_WORDS = { backlog: 'Backlog', 'to-do': 'To do', 'in-progress': 'In p
 function drawerTab(t) {
   const want = S.dtab[t.file];
   return DTABS.some(([k]) => k === want) ? want : 'overview';
+}
+
+/* The first keyed block the reader can see in the open section, with
+   where it sits — read before a redraw, matched after it. */
+function drawerAnchor(body) {
+  if (!body || !body.scrollTop) return null;
+  const head = body.querySelector('.dsticky');
+  const floor = body.getBoundingClientRect().top + (head ? head.offsetHeight : 0);
+  for (const el of body.querySelectorAll('.dsec:not([hidden]) [data-keep]')) {
+    const box = el.getBoundingClientRect();
+    if (box.bottom > floor) return { keep: el.dataset.keep, top: box.top };
+  }
+  return null;
 }
 
 function dsec(key, tab, html) {
@@ -6589,7 +6611,8 @@ function activityHtml(t, acc) {
     }
   }
   if (acc) {
-    for (const r of acc.reports) items.push({ at: whenOf(r.at), src: `${r.kind}${r.by ? ' · ' + r.by : ''}`, report: r.text });
+    for (const r of acc.reports) items.push({ at: whenOf(r.at), src: `${r.kind}${r.by ? ' · ' + r.by : ''}`,
+      report: r.text, key: `rep:${r.kind}|${r.at}|${r.by}` });
     for (const c of [...acc.criteria, ...acc.removed]) {
       for (const r of c.history) items.push({ at: whenOf(r.at), src: `acceptance · ${r.actor || ''}`,
         text: `${r.state} — ${(c.label || r.text || c.id)}${r.note ? ': ' + r.note : ''}` });
@@ -6602,8 +6625,10 @@ function activityHtml(t, acc) {
   const disc = ((S.disc[t.file] || {}).data || {}).entries || [];
   for (const e of disc) items.push({ at: whenOf(e.at), src: `${e.kind === 'decision' ? 'decision ' + (e.outcome || '') : 'comment'} · ${e.author || ''}`, text: e.body || '' });
   items.sort((a, b) => b.at - a.at);
-  const row = (it, i) => it.report
-    ? `<details class="rpt" data-keep="rep-${i}"${S.accOpen[`${t.file}:rep-${i}`] ? ' open' : ''}><summary><b>${esc(it.src)}</b>` +
+  // a report's key is what it is, never where it sits: a record arriving
+  // above it must not open, close or move a different one
+  const row = (it) => it.report
+    ? `<details class="rpt" data-keep="${esc(it.key)}"${S.accOpen[`${t.file}:${it.key}`] ? ' open' : ''}><summary><b>${esc(it.src)}</b>` +
       `<span class="ameta">${esc(it.at ? new Date(it.at).toLocaleString() : '')}</span></summary>` +
       `<pre class="rtext">${esc(it.report)}</pre></details>`
     : `<div class="tl"><time>${esc(it.at ? new Date(it.at).toLocaleString() : '—')}</time>` +
