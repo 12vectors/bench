@@ -209,6 +209,12 @@ def prompt_block(intent: str, available: bool) -> str:
         "your closing report — that is still your final reply. If the "
         "command fails, carry on with the work; a reporting failure must "
         "never stop it.",
+        "",
+        "When the card's acceptance criteria carry ids (`<!-- ac:<id> -->` "
+        "on the criterion's line), `--criterion <id>` (repeatable) says you "
+        "implemented that criterion. The card shows it as reported and "
+        "awaiting confirmation; only a person accepts a criterion, so never "
+        "claim one you did not implement, and never edit the ids.",
     ])
 
 
