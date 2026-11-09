@@ -746,7 +746,7 @@ def set_control(selector: str, value: str, event: str = "change"):
                       f" e.dispatchEvent(new Event('{event}', {{bubbles: true}})); }})()")
 
 
-class AgentsSection(object):  # PROBE: disabled temporarily
+class AgentsSection(unittest.TestCase):
     """Settings → Agents (task 77), against the backend's real agent
     settings: compact rows, inheritance, a per-purpose edit applied and
     read back, a prompt previewed, saved and reset, a refused template, a
@@ -824,7 +824,7 @@ class AgentsSection(object):  # PROBE: disabled temporarily
                                                "BOARD_AGENT_MODEL_REVIEW": ""}})
         self.assertEqual(200, back["status"], back)
 
-    def test_c_a_prompt_is_previewed_saved_reset_and_recoverable(self):
+    def probe_c_a_prompt_is_previewed_saved_reset_and_recoverable(self):
         b = open_settings(1440, 900, "agents")
         b.click('#sbody [data-agtpl="review.md"]')
         if not b.wait("document.activeElement && document.activeElement.id === 'ag-t-review.md'", 5):
@@ -870,7 +870,7 @@ class AgentsSection(object):  # PROBE: disabled temporarily
         self.assertGreater(recovered, 0, "the replaced text was not kept for recovery")
         shot("settings-agents-prompt-reset")
 
-    def test_d_a_broken_template_is_refused_and_nothing_is_written(self):
+    def probe_d_a_broken_template_is_refused_and_nothing_is_written(self):
         b = open_settings(1440, 900, "agents")
         before = b.eval("S.settings.page.agents.revision")
         b.click('#sbody [data-agtpl="work.md"]')
@@ -892,7 +892,7 @@ class AgentsSection(object):  # PROBE: disabled temporarily
         b.click('#sbody [data-agstep="discard"]')
         self.assertTrue(b.wait("S.agentsDraft === null || !S.agentsDraft.dirty", 10))
 
-    def test_e_a_stale_draft_is_a_conflict_not_an_overwrite(self):
+    def probe_e_a_stale_draft_is_a_conflict_not_an_overwrite(self):
         b = open_settings(1440, 900, "agents")
         set_control('#ag-m-default', 'mine', 'input')
         # another tab saves first
@@ -912,7 +912,7 @@ class AgentsSection(object):  # PROBE: disabled temporarily
                                     "agents": {"BOARD_AGENT_MODEL": ""}})
         self.assertEqual(200, back["status"], back)
 
-    def test_f_the_rows_are_reachable_by_keyboard_and_fit_a_narrow_screen(self):
+    def probe_f_the_rows_are_reachable_by_keyboard_and_fit_a_narrow_screen(self):
         for w, h in [(1440, 900), (390, 780)]:
             b = open_settings(w, h, "agents")
             b.eval("document.querySelector('#s-title').focus()")
