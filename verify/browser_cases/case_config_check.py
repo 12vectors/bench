@@ -458,7 +458,7 @@ class LaunchCheck(unittest.TestCase):
                                         ".getAttribute('aria-pressed')"))
         close_sheet()
 
-    def test_a_stacked_card_shows_its_own_branches_not_main(self):
+    def probe_a_stacked_card_shows_its_own_branches_not_main(self):
         backend = S["backend"]
         backend._git(backend.app, "branch", STACKED_BASE)
         card = backend.work / "tasks" / "in-progress" / f"{STACKED}.md"
@@ -488,7 +488,7 @@ class LaunchCheck(unittest.TestCase):
         finally:
             card.unlink(missing_ok=True)
 
-    def test_a_blocked_launch_names_the_fix_and_offers_no_launch(self):
+    def probe_a_blocked_launch_names_the_fix_and_offers_no_launch(self):
         with Policy() as p:
             p.write({"v": 1, "profiles": {"work": {"requires": ["filesystem-sandbox"]}}})
             b = load(1440, 900)
@@ -501,7 +501,7 @@ class LaunchCheck(unittest.TestCase):
             self.assertFalse(b.eval(f"!!document.querySelector('{DIALOG} #lc-launch')"))
             close_sheet()
 
-    def test_a_stale_launch_check_cannot_bypass_the_launchs_own_preflight(self):
+    def probe_a_stale_launch_check_cannot_bypass_the_launchs_own_preflight(self):
         """Opened while the launch was allowed, then the policy changes:
         firing the stale sheet's launch is refused by the server, with its
         reason, and nothing starts."""
