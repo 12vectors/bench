@@ -276,8 +276,12 @@ class ReviewMarkdown(unittest.TestCase):
 
         # — reading changed nothing and reached nowhere —
         self.assertEqual(b.eval("window.__posts"), [], "reading a report posted something")
+        # the board's own stylesheet loads its typefaces from Google Fonts
+        # (a choice that predates this card); anything else off the board's
+        # origin came from a report
         foreign = b.eval("performance.getEntriesByType('resource').map(e => e.name)"
-                         ".filter(u => !u.startsWith(location.origin))")
+                         ".filter(u => !u.startsWith(location.origin))"
+                         ".filter(u => !/^https:\\/\\/fonts\\.(googleapis|gstatic)\\.com\\//.test(u))")
         self.assertEqual(foreign, [], "a report made the page fetch from elsewhere")
         self.assertEqual(self.card.read_bytes(), before_bytes, "reading the card wrote to it")
 
