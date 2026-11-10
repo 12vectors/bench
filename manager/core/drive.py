@@ -209,6 +209,14 @@ def current() -> dict | None:
     return DRIVE
 
 
+def busy() -> dict | None:
+    """The live drive or preview, if there is one."""
+    with state.LOCK:
+        if DRIVE and DRIVE["status"] in ("starting", "up"):
+            return DRIVE
+    return None
+
+
 def worktree_for(filename: str) -> tuple[str, str, Path]:
     """The card's stem, branch and worktree — recreated from the branch
     when it was cleaned up, refused when the directory is something
@@ -378,6 +386,7 @@ def _ready_step(drive: dict) -> None:
                          reason=(f"readiness timed out after {int(limit)}s: "
                                  f"{answer['answer']}"))
             _persist()
+            _remember()
             _record_event(filename, f"preview of {filename} not ready — "
                                     f"{drive['reason']}; stopping the process "
                                     f"group bench started")

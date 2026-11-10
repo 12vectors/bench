@@ -117,6 +117,8 @@ LIFECYCLE = {
                 "stopped the group it started"),
     "failed": "the process exited before it was ready",
     "exited": "the process exited on its own after it was ready",
+    "stopping": ("bench signalled the group it started and is waiting for it "
+                 "to go"),
     "stopped": "stopped through bench; the record says what it left behind",
 }
 
@@ -1176,6 +1178,11 @@ def _prepare_run(record: dict, cfg: dict, env: dict, values: list[str],
         break
     record["status"] = outcome
     record["ended"] = time.time()
+    if outcome == "prepared":
+        # what preparation itself wrote is part of the prepared source; a
+        # change after this is what makes the preparation stale
+        record["sourceBefore"] = record["source"]
+        record["source"] = source_of(Path(record["worktree"]))
     _write_json(_prepare_path(stem), record)
     with LOCK:
         if PREPARING is record:
@@ -1389,14 +1396,15 @@ def lifecycle(read: dict | None = None, selected: str | None = None) -> dict:
     word = ("not-configured" if not read["present"] else
             "invalid" if not read["valid"] else "configured")
     cur = None
-    if live:
+    active = live and live["status"] in ("starting", "up", "parked")
+    prep_at = (prep or {}).get("ended") or (prep or {}).get("started") or 0
+    if live and (active or (live.get("started") or 0) > prep_at or not prep):
         status = live["status"]
-        word = {"starting": "starting", "parked": "stopped"}.get(status, status)
+        word = {"parked": "stopping"}.get(status, status)
         if status == "up":
             word = {"ready": "ready", "rechecking": "reconnecting"}.get(
                 live.get("readiness"), "unready")
-        cur = currency({**live, "worktree": live.get("worktree")},
-                       read["revision"])
+        cur = currency(live, read["revision"])
     elif prep and (not selected or prep.get("task") == selected):
         word = {"running": "preparing"}.get(prep["status"], prep["status"])
     ownership = None
