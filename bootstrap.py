@@ -410,6 +410,17 @@ def credentials_in(url: str) -> bool:
     return has_credentials(url)
 
 
+def initialized_here(work: Path) -> bool:
+    """Whether an earlier apply of this install created the work
+    repository at `work` — read from its own progress record."""
+    try:
+        record = json.loads(PROGRESS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (record.get("work") == str(real(work))
+            and bool(record.get("initialized")))
+
+
 REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)?$")
 
 
@@ -526,7 +537,15 @@ def resolve(found: dict, args) -> dict:
                 f"be committed into that history: choose a work root "
                 f"outside it, or make the work root that repository's top")
         elif repo:
-            if wanted == "new":
+            ours = initialized_here(work)
+            if wanted == "new" and ours:
+                # The same command again: the repository is the one an
+                # earlier run made, so this is a resumption, not a request
+                # to start over.
+                notes.append(f"{work} was initialized by an earlier setup; "
+                             f"it is used as it is")
+                choices["initializedHere"] = True
+            elif wanted == "new":
                 refusals.append(f"{work} is already a git repository; bench "
                                 f"uses it as it is and never reinitializes "
                                 f"it — pass --work-repo existing")
@@ -735,7 +754,8 @@ def plan(found: dict, resolved: dict) -> list[dict]:
            "write the chosen settings into manager/local/.env: "
            + ", ".join(f"{ch['key']}={ch['to'] or '(empty)'}"
                        for ch in changes))
-    if c["mode"] == "external" and c["workRepo"] == "new":
+    if c["mode"] == "external" and (c["workRepo"] == "new"
+                                    or c.get("initializedHere")):
         op("work-first-commit", "git",
            "commit the new board's skeleton (tasks/, plans/, reference/) "
            "as the work repository's first commit",
@@ -780,7 +800,7 @@ def guide_items(found: dict, resolved: dict, results: list[dict]) -> list:
              "the application. Headless jobs still run; install.py names "
              "both ways forward.")
     item("agent-smoke", "Prove the agent CLI runs under bench's policy",
-         f"Optional, and it spends tokens: python3 {TM}/manager/board.py "
+         f"Optional, and it spends tokens: python3 {CORE}/board.py "
          f"--doctor --real-agent --approve-real-agent. Setup checked only "
          f"that the binary is on PATH.")
     commands = setting("BOARD_AGENT_COMMANDS")
@@ -1242,13 +1262,19 @@ def main(argv=None) -> int:
         say(f"resuming a setup interrupted at {previous.get('at')} — every "
             f"step checks what is already there first")
     results: list[dict] = []
-    progress = {"v": 1, "status": "running", "at": now(), "results": results}
+    c = resolved["choices"]
+    progress = {"v": 1, "status": "running", "at": now(), "results": results,
+                "work": c.get("work"),
+                "initialized": bool(c.get("initializedHere"))}
     status = "complete"
     try:
         for o in ops:
             write_json(PROGRESS_FILE, {**progress, "current": o["id"]})
             result = perform(o, resolved, resolved.get("_add_remote"))
             results.append(result)
+            if o["id"] == "work-git-init" and result["outcome"] in (
+                    "done", "already"):
+                progress["initialized"] = True
             if o["required"] and result["outcome"] in ("failed", "refused"):
                 status = "incomplete"
                 break
