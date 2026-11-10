@@ -799,6 +799,18 @@ arrow keys, Home and End move along it.
   comments and decisions, and acceptance and finding records. Raw reads,
   edits and commands stay in the Sessions view.
 
+A filed report — a review round, a work report, a PR update, a
+relevance review — is drawn as the document it is: through the same
+Markdown renderer as the brief, with proportional prose, headings nested
+under the section's own, real lists, tables and code blocks that scroll
+in place, and monospace kept for code. Rendering is presentation only.
+The text stays the card's, byte for byte, and its **Original Markdown**
+is one fold away to read or copy. The round's reviewer, revision, date
+and verdict stay in its summary line. Nothing in the prose is read as a
+verdict, a finding or an acceptance. Report text is untrusted: raw HTML
+arrives as text, a link is followed only to the web, mail, an anchor or
+a relative path, and an image is drawn as a link to it, never fetched.
+
 A live update keeps your place: each section keeps its own scroll
 position, open folds and unsent text survive a redraw, and a record
 arriving above what you are reading moves the page rather than you.

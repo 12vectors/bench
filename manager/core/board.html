@@ -1051,6 +1051,37 @@
   #drawer .rpt>summary .ameta{margin-left:auto}
   #drawer .rpt .rtext{margin:0;padding:6px 12px 10px;font-family:var(--mono);font-size:11.5px;
     line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;max-height:none;color:var(--muted)}
+  /* a filed report, read as a document (task 83): proportional prose at a
+     reading measure, monospace only for code, and every token the board's
+     own — so both themes follow. Wide code and tables scroll in place. */
+  #drawer .rpt .rtext.rmd{font-family:var(--sans);font-size:13px;line-height:1.6;white-space:normal;
+    overflow-wrap:break-word;color:var(--text);padding:2px 14px 8px;max-width:78ch;min-width:0}
+  #drawer .rmd>:first-child{margin-top:4px}
+  #drawer .rmd p,#drawer .rmd li{font-size:13px;color:var(--text)}
+  #drawer .rmd p{margin:0 0 10px}
+  #drawer .rmd ul,#drawer .rmd ol{margin:0 0 10px;padding-left:22px}
+  #drawer .rmd li>ul,#drawer .rmd li>ol{margin:4px 0 2px}
+  #drawer .rmd li::marker{color:var(--dim)}
+  #drawer .rmd h4,#drawer .rmd h5,#drawer .rmd h6{color:var(--text);font-weight:600;line-height:1.35;margin:16px 0 6px}
+  #drawer .rmd h4{font-size:14.5px}
+  #drawer .rmd h5{font-size:13.5px}
+  #drawer .rmd h6{font-size:13px;color:var(--muted)}
+  #drawer .rmd strong{color:var(--text);font-weight:600}
+  #drawer .rmd a{color:var(--accent);text-decoration:underline;text-underline-offset:2px;overflow-wrap:anywhere}
+  #drawer .rmd a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+  #drawer .rmd code{font-size:12px;overflow-wrap:anywhere;border:1px solid var(--line)}
+  #drawer .rmd pre{font-family:var(--mono);font-size:12px;line-height:1.5;margin:0 0 10px;
+    white-space:pre;max-width:100%;border:1px solid var(--line)}
+  #drawer .rmd pre code{border:0;overflow-wrap:normal;font-size:inherit}
+  #drawer .rmd blockquote{margin:0 0 10px;color:var(--muted)}
+  #drawer .rmd .tablewrap{margin:0 0 10px;max-width:100%}
+  #drawer .rmd td{color:var(--text)}
+  #drawer .rmd td code{white-space:nowrap}
+  #drawer .rsrc{margin:0 14px 10px;font-size:12px}
+  #drawer .rsrc>summary{cursor:pointer;color:var(--muted);font-size:11.5px;width:max-content}
+  #drawer .rsrc .racts{margin:6px 0}
+  #drawer .rsrc .rraw{margin:0;padding:8px 10px;background:var(--sunken);border-radius:8px;
+    font-family:var(--mono);font-size:11.5px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted)}
   #drawer .chain{display:flex;flex-direction:column;gap:4px;margin:0;padding:0;list-style:none}
   #drawer .chain li{font-size:12px;border-left:2px solid var(--line);padding-left:8px;
     overflow-wrap:anywhere}
@@ -7015,6 +7046,25 @@ function findingHtml(t, f, acc) {
     `</div></div></details>`;
 }
 
+/* A report an agent filed — a review round, a work report, a PR update,
+   a relevance review — drawn as the document it is (task 83): md(), the
+   one renderer the brief uses, with headings nested under the section's
+   own. It is presentation only. The text is the card's, byte for byte;
+   nothing here reads a verdict, a finding or an acceptance out of its
+   prose, and the round's reviewer, revision, date and verdict stay in the
+   summary that holds it. The original Markdown is one fold away, to read
+   or copy exactly as filed. */
+function reportHtml(t, text, key) {
+  const src = `src:${key}`;
+  return `<div class="rtext rmd dbody">${md(text, { base: 4 })}</div>` +
+    // data-fold, not data-keep: its open state survives a redraw, but it
+    // is never the reading-position anchor — the report holding it is
+    `<details class="rsrc" data-fold="${esc(src)}"${S.accOpen[`${t.file}:${src}`] ? ' open' : ''}>` +
+    `<summary>Original Markdown</summary>` +
+    `<div class="racts"><button type="button" class="dlink rcopy">Copy original Markdown</button></div>` +
+    `<pre class="rraw" tabindex="0" aria-label="Original Markdown of this report">${esc(text)}</pre></details>`;
+}
+
 function reviewsHtml(t, acc) {
   if (!acc) return `<p class="dnote">reading reviews…</p>`;
   const live = acc.findings.filter(f => f.state !== 'resolved');
@@ -7022,7 +7072,7 @@ function reviewsHtml(t, acc) {
   const rounds = [...acc.rounds].reverse();
   const roundHtml = (r, open) => `<details class="rpt" data-keep="${esc(r.id)}"${(S.accOpen[`${t.file}:${r.id}`] ?? open) ? ' open' : ''}>` +
     `<summary><b>${esc(roundLine(r))}</b>${sinceRound(r, acc) ? `<span class="dnote">${esc(sinceRound(r, acc))}</span>` : ''}` +
-    `<span class="ameta">${esc(r.id)}</span></summary><pre class="rtext">${esc(r.report)}</pre></details>`;
+    `<span class="ameta">${esc(r.id)}</span></summary>${reportHtml(t, r.report, r.id)}</details>`;
   const fc = acc.findingCounts;
   return `<p class="acount"><b>${fc.open}</b> open · <b>${fc['fix-reported']}</b> fix reported · <b>${fc.resolved}</b> resolved</p>` +
     (live.length ? live.map(f => findingHtml(t, f, acc)).join('')
@@ -7077,7 +7127,7 @@ function activityHtml(t, acc) {
   const row = (it) => it.report
     ? `<details class="rpt" data-keep="${esc(it.key)}"${S.accOpen[`${t.file}:${it.key}`] ? ' open' : ''}><summary><b>${esc(it.src)}</b>` +
       `<span class="ameta">${esc(it.at ? new Date(it.at).toLocaleString() : '')}</span></summary>` +
-      `<pre class="rtext">${esc(it.report)}</pre></details>`
+      `${reportHtml(t, it.report, it.key)}</details>`
     : `<div class="tl"><time>${esc(it.at ? new Date(it.at).toLocaleString() : '—')}</time>` +
       `<span><span class="src">${esc(it.src)}</span><div class="tx">${esc(it.text)}</div></span></div>`;
   return `<p class="dnote">Newest first: progress the runs reported (labelled as theirs), work reports and reviews, comments and decisions, and acceptance and finding records. Raw reads, edits and commands are technical detail, in the Sessions view.</p>` +
@@ -7119,8 +7169,24 @@ function wireDetail(t) {
   body.querySelectorAll('[data-goto]').forEach(btn => btn.addEventListener('click', () => go(btn.dataset.goto, true)));
   $('#dwide').addEventListener('click', () => { S.dwide = !S.dwide; renderDrawer(); $('#dwide').focus(); });
   // open/closed folds and unsent text survive a live redraw
-  body.querySelectorAll('details[data-keep]').forEach(d => d.addEventListener('toggle', () => {
-    S.accOpen[`${t.file}:${d.dataset.keep}`] = d.open;
+  body.querySelectorAll('details[data-keep], details[data-fold]').forEach(d => d.addEventListener('toggle', () => {
+    S.accOpen[`${t.file}:${d.dataset.keep || d.dataset.fold}`] = d.open;
+  }));
+  // copies the report as filed; where the clipboard is refused, the text
+  // is selected instead so the reader's own copy takes it
+  body.querySelectorAll('.rcopy').forEach(btn => btn.addEventListener('click', async () => {
+    const raw = btn.closest('.rsrc').querySelector('.rraw');
+    try {
+      await navigator.clipboard.writeText(raw.textContent);
+      toast('original Markdown copied');
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(raw);
+      const sel = getSelection();
+      sel.removeAllRanges(); sel.addRange(range);
+      raw.focus();
+      toast('selected — copy it with your keyboard');
+    }
   }));
   body.querySelectorAll('.dsec textarea[id], .dsec input[id], .dsec select[id]').forEach(el => {
     if (el.id === 'commentbox') return;
@@ -8793,19 +8859,56 @@ async function openExtra(dir, name) {
   }
 }
 
-// Small markdown renderer — for these task files, which are hard-wrapped
-// prose: a logical line spans several source lines. No dependencies.
-function md(src) {
-  const blocks = esc(src).split(/\n{2,}/);
-  const inline = (t) => t
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-    // a link is a link only to somewhere a card may point: the web, mail,
-    // an anchor or a relative path. A brief an agent proposed is rendered
-    // here once applied, so `javascript:` and its kin stay plain text
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, href) =>
-      /^(?:https?:|mailto:|#|[^:]*$)/i.test(href) ? `<a href="${href}">${label}</a>` : label);
+// Small markdown renderer — for task files, which are hard-wrapped prose
+// (a logical line spans several source lines), and for the reports agents
+// file into them (task 83). No dependencies. Everything it is given is
+// untrusted: the source is escaped before a single tag is written, so raw
+// HTML, scripts and handler attributes arrive as text, and the only tags in
+// the output are the ones written here. Nothing it emits loads anything:
+// there are no images, and a link is followed only when a person clicks it.
+//
+// `opts.base` is the level a document's own top heading is drawn at, so
+// one drawn under the page's headings nests beneath them: a report whose
+// headings start at `##` has those as h4s under the drawer's h3, and the
+// order below them is kept — six stays the deepest. Without it a `#` is
+// an h1, as a task file's title is.
+function md(src, opts = {}) {
+  let hn = (n) => n;
+  // the private-use characters mark held spans; nothing written may forge one
+  const source = esc(String(src ?? '').replace(/\r\n?/g, '\n').replace(/[-]/g, ''));
+
+  // a link is a link only to somewhere a card may point: the web, mail,
+  // an anchor or a relative path. Briefs and reports alike are untrusted,
+  // so `javascript:`, `data:` and their kin stay plain text, and `//host`
+  // or `\\host` — another site wearing a relative path — does too
+  const SAFE_HREF = /^(?:https?:\/\/|mailto:|#|(?![\/\\]{2})[^:\\]*$)/i;
+  const inline = (t) => {
+    const held = [];
+    const hold = (html) => `${held.push(html) - 1}`;
+    const emph = (s) => s
+      .replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^\w])__([^_\n]+?)__(?=[^\w]|$)/g, '$1<strong>$2</strong>')
+      .replace(/(^|[\s(])\*([^*\s][^*\n]*?)\*/g, '$1<em>$2</em>')
+      .replace(/(^|[\s(])_([^_\s][^_\n]*?)_(?=[\s).,;:!?]|$)/g, '$1<em>$2</em>');
+    // code first, and held: nothing inside backticks is emphasis or a link
+    t = t.replace(/`([^`]+)`/g, (m, c) => hold(`<code>${c}</code>`));
+    // an image is never fetched: `![alt](src)` is drawn as a link to it.
+    // A target holding a held span is no target: restored inside the href,
+    // its markup would be an attribute's text (the autolink below refuses
+    // held spans for the same reason)
+    t = t.replace(/!?\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, href) =>
+      SAFE_HREF.test(href.replace(/&amp;/g, '&')) && !/&amp;#/.test(href)
+        ? hold(`<a href="${href}" rel="noopener noreferrer">${emph(label)}</a>`) : label);
+    // a bare web address is a link too, less its trailing punctuation
+    t = t.replace(/https?:\/\/(?:(?!&(?:quot|lt|gt);)[^\s<])+/g, (url) => {
+      const tail = url.match(/(?:[.,;:!?'\])]|&amp;)+$/);
+      const keep = tail ? url.slice(0, -tail[0].length) : url;
+      return hold(`<a href="${keep}" rel="noopener noreferrer">${keep}</a>`) + (tail ? tail[0] : '');
+    });
+    t = emph(t);
+    while (/\d+/.test(t)) t = t.replace(/(\d+)/g, (m, i) => held[+i]);
+    return t;
+  };
 
   /* Lists: group physical lines into logical items before rendering. A new
      item begins only at a marker; a line without one is continuation text
@@ -8814,12 +8917,19 @@ function md(src) {
      it sits in opens a nested list, and a shallower one closes back to the
      level that fits, so children indent under their parent instead of
      flattening beside it. */
-  const MARKER = /^([ \t]*)(?:[-*]|\d+\.)[ \t]+(.*)$/;
-  const ORDERED = /^[ \t]*\d+\./;
+  const MARKER = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+(.*)$/;
+  const ORDERED = /^[ \t]*(\d+)[.)]/;
   const TICK = /^\[([ xX])\]\s*(.*)$/;   // - [ ] / - [x], read-only here
+  const TABLE_ROW = /^\s*\|.*\|\s*$/;
+  const TABLE_SEP = /^\s*\|[\s:|-]+\|\s*$/;
+  const HEADING = /^#{1,6}\s/;
 
+  const newList = (line) => {
+    const m = line.match(ORDERED);
+    return { ordered: !!m, start: m ? parseInt(m[1], 10) : 1, items: [] };
+  };
   const listTree = (lines) => {
-    const root = { ordered: ORDERED.test(lines[0]), items: [] };
+    const root = newList(lines[0]);
     const stack = [{ indent: null, list: root }];
     let last = null;
     for (const line of lines) {
@@ -8833,7 +8943,7 @@ function md(src) {
       if (top().indent === null) top().indent = indent;
       while (stack.length > 1 && indent < top().indent) stack.pop();
       if (last && indent > top().indent) {
-        last.sub = { ordered: ORDERED.test(line), items: [] };
+        last.sub = newList(line);
         stack.push({ indent, list: last.sub });
       }
       last = { text: m[2], sub: null };
@@ -8844,7 +8954,8 @@ function md(src) {
 
   const listHtml = (list) => {
     const tag = list.ordered ? 'ol' : 'ul';
-    return `<${tag}>` + list.items.map((it) => {
+    const start = list.ordered && list.start !== 1 ? ` start="${list.start}"` : '';
+    return `<${tag}${start}>` + list.items.map((it) => {
       const t = it.text.match(TICK);
       const body = inline(t ? t[2] : it.text) + (it.sub ? listHtml(it.sub) : '');
       if (!t) return `<li>${body}</li>`;
@@ -8857,23 +8968,57 @@ function md(src) {
     }).join('') + `</${tag}>`;
   };
 
-  let inFence = false, fenced = [];
-  const out = [];
-  for (const block of blocks) {
-    if (inFence || block.startsWith('```')) {
-      fenced.push(block);
-      const ticks = (block.match(/```/g) || []).length;
-      inFence = inFence ? ticks % 2 === 0 : ticks % 2 === 1;
-      if (!inFence) {
-        const body = fenced.join('\n\n').replace(/^```[^\n]*\n?/, '').replace(/```\s*$/, '');
-        out.push(`<pre><code>${body}</code></pre>`);
-        fenced = [];
-      }
+  /* Line by line first, so a block need not be set off by a blank line to
+     be what it is: reports write "**Before merging:**" with its list on
+     the very next line, and a fence or a heading straight after prose. A
+     fenced block is lifted out whole, every line of it kept exactly, blank
+     ones included; a heading stands alone; prose meeting a list marker, a
+     table or a quote ends there. The rest splits on blank lines, as it
+     always did. */
+  const fences = [];
+  const flow = [];
+  const rows = source.split('\n');
+  let mode = null;                       // what the line above belongs to; null after a blank
+  for (let i = 0; i < rows.length; i++) {
+    const line = rows[i];
+    const f = line.match(/^([ \t]{0,3})(`{3,})([^`]*)$/);
+    if (f) {
+      const close = new RegExp('^[ \\t]{0,3}' + f[2] + '`*[ \\t]*$');
+      const body = [];
+      let j = i + 1;
+      while (j < rows.length && !close.test(rows[j])) body.push(rows[j++]);
+      fences.push('<pre><code>' +
+        body.map(l => l.startsWith(f[1]) ? l.slice(f[1].length) : l).join('\n') + '</code></pre>');
+      flow.push('', `${fences.length - 1}`, '');
+      i = j; mode = null;
       continue;
     }
-    const text = block.replace(/\s+$/, '');   // the split leaves the last block a trailing newline
+    const prose = mode !== null;
+    if (!line.trim()) mode = null;
+    else if (HEADING.test(line)) { flow.push('', line, ''); mode = null; continue; }
+    else if (MARKER.test(line) && mode !== 'list') { if (prose) flow.push(''); mode = 'list'; }
+    else if (TABLE_ROW.test(line) && TABLE_SEP.test(rows[i + 1] || '') && mode !== 'table') {
+      if (prose) flow.push(''); mode = 'table';
+    } else if (mode === 'table' && !TABLE_ROW.test(line)) { flow.push(''); mode = 'text'; }
+    else if (/^&gt;/.test(line) && mode !== 'quote' && mode !== 'list') {
+      if (prose) flow.push(''); mode = 'quote';
+    } else if (mode === null) mode = 'text';
+    flow.push(line);
+  }
+  if (opts.base) {
+    const top = Math.min(7, ...flow.filter(l => HEADING.test(l)).map(l => l.match(/^#+/)[0].length));
+    hn = (n) => Math.min(6, n - top + opts.base);
+  }
+
+  const out = [];
+  for (const block of flow.join('\n').split(/\n(?:[ \t]*\n)+/)) {
+    const text = block.replace(/^\n+/, '').replace(/\s+$/, '');
+    if (!text) continue;
+    const lift = text.match(/^(\d+)$/);
     const lines = text.split('\n');
-    if (lines.length >= 2 && /^\s*\|.*\|\s*$/.test(lines[0]) && /^\s*\|[\s:|-]+\|\s*$/.test(lines[1])) {
+    if (lift) {
+      out.push(fences[+lift[1]]);
+    } else if (lines.length >= 2 && TABLE_ROW.test(lines[0]) && TABLE_SEP.test(lines[1])) {
       const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map(c => inline(c.trim()));
       const head = cells(lines[0]);
       const rows = lines.slice(2).filter(l => /\|/.test(l)).map(cells);
@@ -8883,21 +9028,20 @@ function md(src) {
         '</tbody></table></div>');
     } else if (/^#{1,6}\s/.test(text)) {
       out.push(lines.map(l => {
-        const m = l.match(/^(#{1,6})\s+(.*)$/);
-        return m ? `<h${m[1].length}>${inline(m[2])}</h${m[1].length}>` : `<p>${inline(l)}</p>`;
+        const m = l.match(/^(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/);
+        return m ? `<h${hn(m[1].length)}>${inline(m[2])}</h${hn(m[1].length)}>` : `<p>${inline(l)}</p>`;
       }).join(''));
     } else if (MARKER.test(lines[0])) {
       out.push(listHtml(listTree(lines)));
     } else if (/^&gt;/.test(text)) {
       // reflow, don't preserve the author's wrap column
       out.push('<blockquote>' + inline(text.replace(/^&gt;\s?/gm, '')).replace(/\n/g, ' ') + '</blockquote>');
-    } else if (/^-{3,}$/.test(text.trim())) {
+    } else if (/^(?:-{3,}|\*{3,}|_{3,})$/.test(text.trim())) {
       out.push('<hr>');
     } else {
       out.push(`<p>${inline(text).replace(/\n/g, ' ')}</p>`);
     }
   }
-  if (fenced.length) out.push(`<pre><code>${fenced.join('\n\n')}</code></pre>`);
   return out.join('');
 }
 
