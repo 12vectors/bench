@@ -460,7 +460,7 @@ class LaunchCheck(unittest.TestCase):
                                         ".getAttribute('aria-pressed')"))
         close_sheet()
 
-    def probe_a_stacked_card_shows_its_own_branches_not_main(self):
+    def test_a_stacked_card_shows_its_own_branches_not_main(self):
         backend = S["backend"]
         backend._git(backend.app, "branch", STACKED_BASE)
         card = backend.work / "tasks" / "in-progress" / f"{STACKED}.md"
