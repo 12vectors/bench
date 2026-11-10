@@ -8892,8 +8892,11 @@ function md(src, opts = {}) {
       .replace(/(^|[\s(])_([^_\s][^_\n]*?)_(?=[\s).,;:!?]|$)/g, '$1<em>$2</em>');
     // code first, and held: nothing inside backticks is emphasis or a link
     t = t.replace(/`([^`]+)`/g, (m, c) => hold(`<code>${c}</code>`));
-    // an image is never fetched: `![alt](src)` is drawn as a link to it
-    t = t.replace(/!?\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, href) =>
+    // an image is never fetched: `![alt](src)` is drawn as a link to it.
+    // A target holding a held span is no target: restored inside the href,
+    // its markup would be an attribute's text (the autolink below refuses
+    // held spans for the same reason)
+    t = t.replace(/!?\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, href) =>
       SAFE_HREF.test(href.replace(/&amp;/g, '&')) && !/&amp;#/.test(href)
         ? hold(`<a href="${href}" rel="noopener noreferrer">${emph(label)}</a>`) : label);
     // a bare web address is a link too, less its trailing punctuation

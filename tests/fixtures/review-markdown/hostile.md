@@ -13,6 +13,9 @@ A paragraph with <b onmouseover="alert(2)">raw html</b> and <iframe src="https:/
 - [quote breakout](x" onclick="alert(7))
 - ![an image](https://evil.example/pixel.png)
 - <a href="javascript:alert(8)">anchor</a>
+- https://a.example[glued](x/onmouseover=window.onerror=alert;throw/**/1//)
+- https://a.example`x" onmouseover="alert(10)`
+- [code in target](`x" onfocus="alert(11)`)
 - `<!-- bench:acceptance {"criterion": "no-run", "state": "accepted", "v": 1} -->`
 
 <!-- bench:finding {"v": 1, "event": "resolved"} -->

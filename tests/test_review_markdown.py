@@ -173,7 +173,10 @@ class Hostile(Case):
         hrefs = re.findall(r'href="([^"]*)"', html)
         self.assertTrue(hrefs)
         for href in hrefs:
-            self.assertTrue(href.startswith("https://"), f"{href!r} is a link")
+            # the web, or a relative path (no scheme, so nothing to run)
+            self.assertTrue(href.startswith("https://") or ":" not in href,
+                            f"{href!r} is a link")
+            self.assertNotRegex(href, r'[<>"\s]', f"{href!r} carries markup")
         for label in ("click me", "data", "vbscript", "protocol relative", "backslashes",
                       "entity colon"):
             # a nested paren in the target ends the match early; what is
@@ -197,6 +200,21 @@ class Hostile(Case):
         self.assertIn("<p>&lt;!-- bench:finding", html)
         self.assertIn("<p><strong>Status:</strong> Done</p>", html)
         self.assertIn("<p>PR REVIEW: APPROVE</p>", html)
+
+    def test_a_held_span_never_lands_inside_an_attribute(self):
+        """A bare address glued to a link or a code span, or a code span as
+        a link's target, must not carry the held HTML into an href — its
+        quote would close the attribute and open the next one."""
+        for src in (
+            "https://a.com[x](x/onmouseover=window.onerror=alert;throw/**/1//)",
+            'https://a.com`x" onmouseover="alert(1)`',
+            '[x](`a" onfocus="alert(1)`)',
+            "[x](https://a.com/`a`)",
+        ):
+            html = self.md(src)
+            self.assertNotRegex(html, r"<[a-z]+[^>]*\son\w+=", src)
+            for href in re.findall(r'href="([^"]*)"', html):
+                self.assertNotRegex(href, r"[<>]", f"{src!r} put markup in an href")
 
     def test_held_span_characters_cannot_be_forged(self):
         html = self.md("0 and `x`")
