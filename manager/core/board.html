@@ -9308,11 +9308,27 @@ document.addEventListener('click', async (e) => {
   const btn = e.target.closest && e.target.closest('[data-copy]');
   if (!btn) return;
   e.stopPropagation();
+  const value = btn.dataset.copy;
+  let copied = false;
   try {
-    await navigator.clipboard.writeText(btn.dataset.copy);
-    btn.textContent = 'Copied';
-    toast('copied ' + clip(btn.dataset.copy, 60));
+    await navigator.clipboard.writeText(value);
+    copied = true;
   } catch (err) {
+    // an unfocused document or a refused permission: the older path
+    const ta = document.createElement('textarea');
+    ta.value = value;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { copied = document.execCommand('copy'); } catch (e2) { copied = false; }
+    ta.remove();
+    btn.focus();
+  }
+  if (copied) {
+    btn.textContent = 'Copied';
+    toast('copied ' + clip(value, 60));
+  } else {
     toast('the browser refused the clipboard — select the path and copy it by hand', true);
   }
 });
