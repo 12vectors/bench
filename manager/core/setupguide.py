@@ -430,8 +430,19 @@ def _verification() -> dict:
                            "tested" if word == "passed" else
                            "failed" if word in ("failed", "prepare-failed")
                            else None))
+    # Readiness (task 90): a check is *ready* only once a person reviewed
+    # its program, a current pass and a controlled failure. Shown beside
+    # the run's outcome and never folded into it.
+    import readiness
+    try:
+        boot = readiness.bootstrap(doc=doc)
+    except Exception as exc:      # a reading that failed is not a pass
+        boot = {"condition": "incomplete", "ready": [],
+                "headline": f"readiness could not be read: {exc}"}
+    facts.append(_fact("Verification readiness", boot["headline"],
+                       None if boot["ready"] else "decision-needed"))
     basis = {"state": verif["state"], "checks": sorted(names),
-             "gated": gated, "outcomes": outcomes}
+             "gated": gated, "outcomes": outcomes, "ready": boot["ready"]}
     refused = [p["why"] for p in verif.get("problems") or []]
     facts += [_fact("Policy refusal", why, "blocked") for why in refused]
     basis["refused"] = len(refused)
@@ -454,10 +465,17 @@ def _verification() -> dict:
         rec = "Fix what the check found, or the check, then run it again."
     elif any(o == "passed" for o in outcomes.values()):
         status = "tested"
-        nxt = _next("bench", "Decide which checks a merge requires",
-                    "settings", section="acceptance")
-        rec = ("Require the checks that matter in a merge rule — a separate "
-               "decision from registering them.")
+        if boot["ready"]:
+            nxt = _next("bench", "Decide which checks a merge requires",
+                        "settings", section="acceptance")
+            rec = ("Require the checks that matter in a merge rule — a "
+                   "separate decision from registering and reviewing them.")
+        else:
+            nxt = _next("you", "Review a check's program and results",
+                        "settings", section="setup")
+            rec = ("A pass is not coverage. Review the program, a current pass "
+                   "and a controlled failure before any merge rule requires "
+                   "it.")
     else:
         status = "configured"
         nxt = _next("you", "Run a check from a card's ◫ evidence sheet",
@@ -717,6 +735,7 @@ def state() -> dict:
         "handoff": handoff(),
         "interrupted": interrupted(),
         "proposals": _proposals(doc),
+        "verificationReadiness": _readiness(),
         "storage": {
             "portable": ("setup/decisions.json in the work state — "
                          "decisions, reasons, who and when, and setup-card "
@@ -734,6 +753,17 @@ def state() -> dict:
                       "gap": "POST /api/setup/cards/decide",
                       "start": "POST /api/setup/cards/start"},
     }
+
+
+def _readiness() -> dict:
+    """Verification readiness (task 90), read in the same pass. Its own
+    module owns it; a reading that fails says so rather than vanishing."""
+    import readiness
+    try:
+        return readiness.state()
+    except Exception as exc:
+        return {"kind": readiness.KIND, "v": readiness.VERSION,
+                "problem": f"verification readiness could not be read: {exc}"}
 
 
 def _proposals(doc: dict) -> dict:
@@ -1013,7 +1043,17 @@ def cli(argv: list[str]) -> int:
     p.add_argument("--expected", help="the revision you read (default: the "
                    "current one — read first when another client may write)")
     p.add_argument("--request", help="request identity; repeat it to resume")
+    p.add_argument("--verification", action="store_true",
+                   help="read verification readiness: candidate checks "
+                        "(inferred, never run), each check's readiness and "
+                        "the bootstrap condition. Writes nothing")
     args = p.parse_args(argv)
+    if args.verification:
+        import readiness
+        found = readiness.state()
+        print(json.dumps(found, indent=2) if args.json
+              else readiness.text(found))
+        return 0
     if args.decide or args.create_task:
         payload = {"expected": args.expected or revision(),
                    "request": args.request or f"cli-{secrets.token_hex(8)}"}

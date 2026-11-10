@@ -25,6 +25,7 @@ import phases
 import plans
 import profiles
 import progress
+import readiness
 import refine
 import reviews
 import settings
@@ -575,6 +576,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"setup": setupguide.state()})
             except (ValueError, OSError) as exc:
                 self._json(409, {"error": str(exc)})
+        elif path == "/api/setup/verification":
+            # Verification readiness (task 90): discovered candidates, each
+            # check's readiness and the bootstrap condition. A GET that
+            # stays one — discovery reads files and runs nothing.
+            try:
+                self._json(200, {"verification": readiness.state()})
+            except (ValueError, OSError) as exc:
+                self._json(409, {"error": str(exc)})
         elif path == "/api/card/discussion":
             # A card's discussion, the jobs this board holds for it and
             # whether refining is available — read, never started: a GET
@@ -927,6 +936,39 @@ class Handler(BaseHTTPRequestHandler):
                     }[action](result)
                     state.record_board_event({"kind": "other", "actor": "you",
                                               "summary": f"setup: {summary}"})
+                    state.broadcast({"type": "board"})
+                self._json(200, {"result": result})
+            elif path in ("/api/setup/verification/register",
+                          "/api/setup/verification/review",
+                          "/api/setup/verification/activate"):
+                # Verification readiness (task 90), behind the same door as
+                # a policy write. Register and activate return a draft
+                # through Settings' own validate and preview and write
+                # nothing — Settings' armed Apply is the only writer of the
+                # policy. Review writes one portable record; it runs
+                # nothing and changes no gate.
+                problem = origin_problem(self.headers, config.PORT)
+                if problem:
+                    self._json(403, {"error": problem})
+                    return
+                payload = self._read_body()
+                action = path.rsplit("/", 1)[1]
+                try:
+                    result = {"register": readiness.register,
+                              "review": readiness.review,
+                              "activate": readiness.activate}[action](payload)
+                except setupguide.Refused as exc:
+                    self._json(exc.status, {"error": str(exc), **exc.extra})
+                    return
+                except ValueError as exc:
+                    self._json(400, {"error": str(exc)})
+                    return
+                if action == "review" and not result.get("duplicate"):
+                    state.record_board_event({
+                        "kind": "other", "actor": "you",
+                        "summary": (f"setup: verification check "
+                                    f"{result['check']} reviewed — ready; no "
+                                    f"merge rule changed")})
                     state.broadcast({"type": "board"})
                 self._json(200, {"result": result})
             elif path in ("/api/settings/validate", "/api/settings/preview",
