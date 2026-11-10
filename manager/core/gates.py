@@ -233,8 +233,8 @@ REMEDIES = {
     "head-unknown": ("The branch this would merge does not resolve in the "
                      "application checkout. There is nothing to gate yet."),
     "policy-refused": ("Fix the gate block in the profile document — every "
-                       "refusal is named with its remedy in the ⚕ readiness "
-                       "report and the ⚖ sheet."),
+                       "refusal is named with its remedy in the ⚕ "
+                       "Configuration check and the ⚖ sheet."),
 }
 
 # What a gate requires of a review, in the words `profiles` validated.

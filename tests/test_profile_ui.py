@@ -42,7 +42,9 @@ class OneResolver(unittest.TestCase):
         cls.html = BOARD.read_text(encoding="utf-8")
 
     def test_the_sheet_asks_the_server_for_the_resolved_profile(self):
-        self.assertIn("'/api/profile?file='", self.html)
+        # the launch check (task 79) asks the same route for the same card
+        self.assertIn("read('/api/profile?' + q", self.html)
+        self.assertIn("'file=' + encodeURIComponent(task.file)", self.html)
         self.assertIn("&intent=", self.html)
 
     def test_the_focus_panel_reads_the_recorded_manifest_by_agent(self):
@@ -114,12 +116,14 @@ class ConfiguredIsNotEnforced(unittest.TestCase):
         self.assertRegex(self.html, r"\(table\[n\] \|\| \{\}\)\.by")
 
     def test_blockers_lead_with_the_remedy_the_server_wrote(self):
-        self.assertIn("This run will not start:", self.html)
-        self.assertIn("p.blockers[0]", self.html)
+        # the launch check leads with the refusal and each diagnostic's fix
+        self.assertIn("Blocked — this launch would be refused", self.html)
+        self.assertIn("fix: d.remedy", self.html)
+        self.assertIn("(p.blockers || []).forEach", self.html)
         self.assertIn("i.remedy", self.html)
 
     def test_the_sheet_says_nothing_was_pinned(self):
-        self.assertIn("Nothing has been pinned", self.html)
+        self.assertIn("nothing was pinned", self.html)
 
 
 class AFrozenPolicyIsNotTheCurrentOne(unittest.TestCase):
@@ -134,7 +138,7 @@ class AFrozenPolicyIsNotTheCurrentOne(unittest.TestCase):
 
     def test_the_runs_own_revisions_fold_separately(self):
         self.assertIn("this run's frozen revisions", self.html)
-        self.assertIn("revisions, hashes and precedence", self.html)
+        self.assertIn("Policy, revisions and provenance", self.html)
 
     def test_a_session_with_no_agent_is_told_it_was_granted_nothing(self):
         self.assertIn("your own session", self.html)

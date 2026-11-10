@@ -1478,7 +1478,7 @@ def real_agent(approved: bool = False) -> list[dict]:
                 intent=probe["intent"],
                 remedy=("Ask for it explicitly: `board.py --doctor "
                         "--real-agent --approve-real-agent`, or the armed "
-                        "button in the readiness inspector. It is never "
+                        "button in the Configuration check. It is never "
                         "implied by any other mode.")))
         rows.append(_adjacent_reads_row())
         return rows
@@ -1668,13 +1668,203 @@ def coverage(findings: list[dict], asked: list[str]) -> list[dict]:
     return out
 
 
-def _verdict(findings: list[dict], readings: list[dict]) -> dict:
+# ── the reading as a person meets it (task 79) ─────────────────────────
+#
+# One presentation model for the terminal, the header's ⚕ sheet and
+# Settings → Diagnostics, so they cannot grow competing summaries. It
+# decides nothing new: every word below is read off a finding's outcome,
+# its mode and the code `profiles` already gave it. What it adds is the
+# vocabulary a reader acts on — which purpose or setting is affected, and
+# a state word that names its evidence level, so a tick on a static row
+# reads "Configuration valid" and never "passed" in the sense of "runs".
+
+PURPOSES = {"work": "Implementation", "act-pr": "PR fixes",
+            "review": "Reviews", "refine": "Card refinement"}
+
+STATE_WORDS = {
+    "valid": "Configuration valid",
+    "invalid": "Invalid",
+    "blocked": "Blocked",
+    "unsupported": "Unsupported",
+    "conformance-passed": "Conformance passed",
+    "conformance-failed": "Conformance failed",
+    "execution-passed": "Execution passed",
+    "execution-failed": "Execution failed",
+    "not-tested": "Not tested",
+    "not-enforced": "Not enforced",
+    "not-configured": "Not configured",
+}
+
+# Codes whose refusal is "nothing installed here can do this", which is a
+# different next step from a mistyped document.
+UNSUPPORTED_CODES = ("requirement-unsupported", "intent-unsupported")
+
+# Board-wide inspect rows, by name or name prefix, to the setting a person
+# would go and change. Rows about one launch intent are named for the
+# purpose instead (see `finding_area`).
+SETTING_AREAS = (
+    ("roots", "Workspace locations"),
+    ("policy", "Execution permissions"),
+    ("adapter", "Harness"),
+    ("scope", "Scope"),
+    ("gate:", "Merge rules"),
+    ("pending:", "Guarantees"),
+)
+
+MODE_AREAS = {"conformance": "Adapter conformance",
+              "runtime": "Controlled execution",
+              "real-agent": "Installed agent CLI"}
+
+
+def finding_area(found: dict) -> str:
+    """The purpose or setting a finding is about, in the words the rest of
+    the board uses for it."""
+    if found.get("example"):
+        return "Bench self-test"
+    if found.get("intent"):
+        return PURPOSES.get(found["intent"], found["intent"])
+    if found["mode"] == "inspect":
+        for prefix, area in SETTING_AREAS:
+            if found["name"] == prefix or (prefix.endswith(":")
+                                           and found["name"].startswith(prefix)):
+                return area
+    return MODE_AREAS.get(found["mode"], found["mode"])
+
+
+def finding_state(found: dict) -> str:
+    """One state per row, named for the evidence it rests on. `deferred`
+    and `skipped` never become a pass word."""
+    outcome = found["outcome"]
+    if outcome == "skipped":
+        return "not-configured"
+    if outcome == "deferred":
+        return ("not-enforced" if found["name"].startswith("pending:")
+                else "not-tested")
+    if found["mode"] == "inspect":
+        if outcome == "passed":
+            return "valid"
+        if found.get("code") in UNSUPPORTED_CODES:
+            return "unsupported"
+        if found["name"] == "launch" or found["name"].startswith("harness:"):
+            return "blocked"
+        return "invalid"
+    family = "conformance" if found["mode"] == "conformance" else "execution"
+    return f"{family}-{'passed' if outcome == 'passed' else 'failed'}"
+
+
+def issue_ids(findings: list[dict]) -> list[str]:
+    """The failed rows a person has to act on, each problem once.
+
+    The resolver reports one refusal from several angles — the launch row
+    carries its intent's first diagnostic, the diagnostic has a row of its
+    own, the verification row repeats a `check-*` code, and a broken gate
+    block fails every scope with the same sentence. A list that showed
+    all of them would bury the next action under its own echoes, so the
+    first row about a (code, purpose) or an (area, sentence) stands for
+    the rest. A board-wide refusal (a document that does not parse) is one
+    issue rather than one per purpose; a guarantee row echoing a purpose's
+    own `requirement-unsupported` gives way to the purpose it blocks.
+    Nothing is hidden: every row is still in `findings`.
+    """
+    failed = [f for f in findings if f["outcome"] == "failed"]
+    with_intent = {f["code"] for f in failed if f.get("code") and f.get("intent")}
+    board_codes: set = set()
+    keys: set = set()
+    seen: set = set()
+    out = []
+    for found in failed:
+        key = (found["code"], found.get("intent")) if found.get("code") else None
+        if key and key in keys:
+            continue
+        if found.get("intent") and found.get("code") in board_codes:
+            continue
+        if (found["name"].startswith("pending:")
+                and found.get("code") in with_intent):
+            continue
+        if not found.get("intent") and found.get("code") and not found.get("example"):
+            board_codes.add(found["code"])
+        sentence = (finding_area(found), found["detail"])
+        if sentence in seen:
+            continue
+        if key:
+            keys.add(key)
+        seen.add(sentence)
+        out.append(found["id"])
+    return out
+
+
+def _stage_states(findings: list[dict], asked: list[str],
+                  approved: bool, partial: bool) -> list[dict]:
+    """Each stage's own result, independent of the others: inspection
+    cannot make execution read as tested, and the other way round."""
+    out = []
+    for mode in MODES:
+        rows = [f for f in findings if f["mode"] == mode]
+        counts = {w: len([f for f in rows if f["outcome"] == w]) for w in OUTCOMES}
+        ran = mode in asked and (mode != "real-agent" or approved)
+        if mode == "inspect":
+            state = ("issues" if counts["failed"] else
+                     "partial" if partial else "valid")
+            word = ("Configuration invalid" if counts["failed"] else
+                    "Partially inspected" if partial else "Configuration valid")
+        elif not ran:
+            state, word = "not-tested", "Not tested"
+        elif counts["failed"]:
+            state, word = "failed", f"Failed ({counts['failed']})"
+        elif counts["passed"] and (counts["skipped"] or counts["deferred"]):
+            state, word = "partial", "Partial"
+        elif counts["passed"]:
+            state, word = "passed", "Passed"
+        else:
+            state, word = "not-tested", "Nothing could be tested"
+        out.append({"mode": mode, "label": MODES[mode]["label"],
+                    "asked": ran, "state": state, "word": word,
+                    "counts": counts})
+    return out
+
+
+def _scope_line(stages: list[dict], partial: bool) -> str:
+    """One sentence on what this reading covered, adapted to what was
+    actually recorded — never claiming execution was untested when it has
+    results, and never implying an uninspected stage passed."""
+    parts = [("Configuration partially inspected: the policy document could "
+              "not be read, so no launch permission was resolved.")
+             if partial else "Configuration inspected."]
+    by_mode = {s["mode"]: s for s in stages}
+    for mode in ("conformance", "runtime", "real-agent"):
+        stage = by_mode[mode]
+        if stage["asked"]:
+            name = MODE_AREAS[mode] if mode == "real-agent" else stage["label"]
+            name = name[0].upper() + name[1:]
+            parts.append(f"{name}: {stage['word'].lower()}.")
+    if not any(by_mode[m]["asked"] for m in ("conformance", "runtime", "real-agent")):
+        parts.append("Agent execution has not been tested.")
+    elif not by_mode["real-agent"]["asked"]:
+        parts.append("The installed agent CLI has not been tested.")
+    return " ".join(parts)
+
+
+def _verdict(findings: list[dict], readings: list[dict],
+             asked: list[str] | None = None, approved: bool = False,
+             partial: bool = False) -> dict:
     """Plain language first, and never a word stronger than the evidence.
 
     The summary of a diagnosis that ran only the cheap modes says the
     cheap thing: inspection found nothing wrong. It does not say the board
     works.
     """
+    asked = asked or ["inspect"]
+    issues = issue_ids(findings)
+    by_id = {f["id"]: f for f in findings}
+    config_issues = len([i for i in issues if by_id[i]["mode"] == "inspect"])
+    exec_issues = len(issues) - config_issues
+    stages = _stage_states(findings, asked, approved, partial)
+    headline = (f"{config_issues} configuration issue"
+                f"{'' if config_issues == 1 else 's'} found"
+                if config_issues else "No configuration issues found")
+    if exec_issues:
+        headline += (f"; {exec_issues} execution diagnostic"
+                     f"{'' if exec_issues == 1 else 's'} failed")
     failed = [f for f in findings if f["outcome"] == "failed"]
     deferred = [f for f in findings if f["outcome"] == "deferred"]
     blocked = sorted({f["intent"] for f in failed if f["intent"]})
@@ -1703,6 +1893,13 @@ def _verdict(findings: list[dict], readings: list[dict]) -> dict:
         "blockedIntents": blocked,
         "strongestEvidence": strongest,
         "line": line,
+        # the reading as a person meets it: a specific result, one scope
+        # sentence, each problem once, and each stage's own result
+        "headline": headline,
+        "scope": _scope_line(stages, partial),
+        "partial": partial,
+        "issues": issues,
+        "stages": stages,
         # the readiness of each intent, so a card can say which action is
         # safe to click without re-resolving anything
         "intents": {r["intent"]: not (r.get("blockers") or [])
@@ -1750,7 +1947,15 @@ def report(modes: list[str] | None = None, *,
                 f"the finding {found['id']} claims {found['evidence']} "
                 f"evidence from the {found['mode']} mode, which only reaches "
                 f"{expected}")
+        found["area"] = finding_area(found)
+        found["state"] = finding_state(found)
+        found["stateWord"] = STATE_WORDS[found["state"]]
+        # the purpose filter's key: a fixture is bench testing itself and
+        # belongs to no purpose, whatever intent its document named
+        found["purpose"] = None if found.get("example") else found.get("intent")
 
+    approved = "real-agent" in asked and approve_real_agent
+    partial = bool(inspected["policy"]["problem"])
     return {
         "v": VERSION,
         "generated": started,
@@ -1775,7 +1980,10 @@ def report(modes: list[str] | None = None, *,
         "intents": inspected["intents"],
         "findings": findings,
         "coverage": coverage(findings, asked),
-        "summary": _verdict(findings, inspected["intents"]),
+        "purposes": PURPOSES,
+        "stateWords": STATE_WORDS,
+        "summary": _verdict(findings, inspected["intents"], asked, approved,
+                            partial),
     }
 
 
@@ -1889,7 +2097,15 @@ def render(report: dict, asked: dict) -> str:
     """The report as a person reads it: the plain-language line first, the
     coverage table second — including the stages nobody asked for — and
     then a row per finding with its cause and its remedy."""
-    out: list[str] = [report["summary"]["line"], ""]
+    summary = report["summary"]
+    out: list[str] = [summary["headline"], summary["scope"], ""]
+    by_id = {f["id"]: f for f in report["findings"]}
+    for found in (by_id[i] for i in summary["issues"]):
+        out.append(f"  ✕ {found['area']} · {found['stateWord']}: {found['detail']}")
+        if found["remedy"]:
+            out.append(f"      fix: {found['remedy']}")
+    if summary["issues"]:
+        out.append("")
     policy = report["policy"]
     out.append(f"  policy      {policy['kind']}"
                + (f" · {policy['identity']}" if policy["identity"] else "")

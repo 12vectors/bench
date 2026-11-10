@@ -941,7 +941,8 @@ class ReadingRunsNothing(unittest.TestCase):
         b = open_settings(1440, 900, "diagnostics")
         text = b.eval("document.querySelector('#sbody').innerText")
         self.assertIn("not asked", text)
-        self.assertIn("No project program runs", text)
+        # task 79: the result leads, and the explanation folds away
+        self.assertIn("Not checked yet", text)
         b.click('#sbody [data-sinspect]')
         if not b.wait("!!(S.doctor && S.doctor.report)", 60):
             raise bv.CheckFailed("Check configuration never came back")
@@ -955,7 +956,9 @@ class ReadingRunsNothing(unittest.TestCase):
         # the deferred row is there and is not drawn as a pass
         self.assertIn("deferred", report["outcomes"])
         after = b.eval("document.querySelector('#sbody').innerText")
-        self.assertIn("deferred", after)
+        # deferred rows are counted apart from the passes and never as one
+        self.assertIn("not tested, not enforced or not configured", after)
+        self.assertNotIn("checks with no issues\nNot tested", after)
         S["metrics"]["settingsInspection"] = report
         shot("settings-inspected")
 

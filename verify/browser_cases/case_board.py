@@ -277,13 +277,15 @@ class Readiness(unittest.TestCase):
             # person most needs to see
             shot(f"readiness-open-{w}x{h}")
             self.assertEqual([], bv.layout_problems(m), f"at {size}")
-            # the content is longer than any of these viewports, so the
-            # dialog must scroll inside itself rather than be cut off
+            # since task 79 the configuration check leads with its result and
+            # folds the rest, so at a large viewport it may fit; whatever its
+            # length, the dialog scrolls inside itself rather than being cut off
             sc = m["scroll"]
-            self.assertGreater(sc["scrollHeight"], sc["clientHeight"],
-                               f"the readiness dialog has nothing to scroll at {size}: {sc}")
             self.assertIn(sc["overflowY"], ("auto", "scroll"),
                           f"the readiness dialog cannot scroll its content at {size}")
+            if sc["scrollHeight"] <= sc["clientHeight"]:
+                self.assertLessEqual(m["boxes"][dialog][1] + m["boxes"][dialog][3],
+                                     h + 1, f"the dialog runs off the viewport at {size}")
             # the actions at the end are reachable: scrolled to its end, the
             # Close button lies inside both the dialog and the viewport
             b.eval(f"(() => {{ const d = document.querySelector('{dialog}');"
