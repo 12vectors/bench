@@ -632,6 +632,21 @@ def commit_edit(filename: str, stage: str, what: str) -> bool:
                    f"{filename}: {what} recorded, but committing it failed")
 
 
+def commit_work_file(path: Path, message: str, failure: str) -> bool:
+    """Commit one board-written file under the work root that is not a
+    card — the setup guide's portable decisions (task 88) — through the
+    same scoped, hook-skipping commit every card edit takes. The caller
+    decides whether `BOARD_COMMIT_MOVES` asks for it."""
+    real = config.escapes_work(path)
+    if real is not None:
+        raise ValueError(f"{path} is a link to {real}, outside the work root")
+    try:
+        name = str(path.relative_to(config.work_root()))
+    except ValueError:
+        name = path.name
+    return _commit(name, message, [str(path)], failure)
+
+
 def append_to_task(filename: str, stage: str, text: str, what: str) -> bool:
     """Append to a card where it stands, and commit the write.
 
