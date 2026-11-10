@@ -126,24 +126,14 @@ def double(b, selector):
     if not b.wait(f"document.querySelector('{selector}').classList.contains('armed')", 5):
         raise bv.CheckFailed(f"{selector} did not arm on the first click")
     b.click(selector)
-
-
-_DEBUG = "/home/dev/12v/bench/worktrees/91-configure-safe-application-previews/.pv-debug.log"
+    # a live re-render between the two clicks draws a fresh, unarmed
+    # button, and the second click then only arms it: fire it once more
+    if b.eval(f"(document.querySelector('{selector}') || {{classList: {{contains: () => false}}}})"
+              f".classList.contains('armed')"):
+        b.click(selector)
 
 
 class P1Lifecycle(unittest.TestCase):
-    def run(self, result=None):  # TEMPORARY DIAGNOSTIC — removed before the final commit
-        out = super().run(result)
-        try:
-            with open(_DEBUG, "a") as fh:
-                for test, text in (result.failures + result.errors):
-                    if test is self:
-                        fh.write(f"== {self.id()}\n{text[-3000:]}\n")
-                fh.write(f"-- ran {self.id()}\n")
-        except OSError:
-            pass
-        return out
-
     @classmethod
     def setUpClass(cls):
         backend = S["backend"]
