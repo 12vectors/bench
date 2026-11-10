@@ -1082,7 +1082,9 @@ def problems(require_tasks: bool = True,
         return found
     if not TASKS.is_dir():
         found.append(f"there is no tasks/ directory under the work root "
-                     f"{work_root()} — expected {TASKS}")
+                     f"{work_root()} — expected {TASKS}; "
+                     f"`python3 {TM_ROOT / 'install.py'}` creates the work "
+                     f"state there")
     else:
         missing = sorted(slug for slug in STAGE_DIRS
                          if not (TASKS / slug).is_dir())

@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 
 TEMPLATE = (Path(__file__).resolve().parents[1]
-            / "tasks" / "task-template.md")
+            / "manager" / "core" / "seed" / "task-template.md")
 
 LOAD_BEARING_HEADINGS = [
     "Context", "What to build", "Acceptance", "Open questions", "Notes",
@@ -76,9 +76,11 @@ class TemplateContract(unittest.TestCase):
                 self.assertNotIn(term, lowered)
 
     def test_template_sits_outside_every_stage_directory(self):
-        # The board lists stage directories only; the template must stay a
-        # sibling of them, not a card.
-        self.assertEqual(TEMPLATE.parent.name, "tasks")
+        # The board lists stage directories only. The shipped template is a
+        # tool-owned seed (task 64), nowhere near a stage; the installer
+        # copies it to tasks/ beside the stages, never into one.
+        self.assertEqual(TEMPLATE.parent.name, "seed")
+        self.assertNotIn("tasks", TEMPLATE.parts)
 
 
 if __name__ == "__main__":

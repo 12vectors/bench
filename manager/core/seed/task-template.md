@@ -10,8 +10,10 @@ happened. Board process (review, PR, CI, merge) and the project-wide
 definition of done stay off the card: the board does the former
 mechanically and the repo AGENTS.md owns the latter.
 
-This template lives in tasks/, which updates never touch — improvements to
-it ship only with fresh installs, so local edits are yours to keep.
+This copy is yours: it lives in tasks/ under the work root, which updates
+never touch. The installer seeds it from manager/core/seed/ only when it is
+missing, so local edits are yours to keep and improvements to the seed
+reach only a board that has no template yet.
 -->
 
 # NN — Imperative title: what changes when this is done

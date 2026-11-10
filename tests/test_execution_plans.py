@@ -302,8 +302,9 @@ class TheTwoHeaders(PlanCase):
         self.assertEqual(task["planDrift"], [])
 
     def test_the_templates_example_parses(self):
-        template = (Path(__file__).resolve().parent.parent / "tasks"
-                    / "task-template.md").read_text(encoding="utf-8")
+        template = (Path(__file__).resolve().parent.parent / "manager"
+                    / "core" / "seed" / "task-template.md"
+                    ).read_text(encoding="utf-8")
         self.write(template)
         task = self.read()
         self.assertEqual(task["planDrift"], [])

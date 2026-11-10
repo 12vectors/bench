@@ -104,9 +104,6 @@ class AppOnlyLayout(unittest.TestCase):
         (self.tool / "manager" / "local" / "adapters").mkdir(parents=True)
         (self.tool / "manager" / "local" / "prompts").mkdir()
         shutil.copy(BENCH / "install.py", self.tool / "install.py")
-        (self.tool / "tasks").mkdir()
-        shutil.copy(BENCH / "tasks" / "task-template.md",
-                    self.tool / "tasks" / "task-template.md")
 
         self.app = git_init(self.tmp / "app", "appdev")
         (self.app / "code.txt").write_text("shipped\n", encoding="utf-8")

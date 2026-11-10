@@ -424,9 +424,6 @@ class TheInstallerRefusesBeforeWriting(unittest.TestCase):
                         ignore=shutil.ignore_patterns("__pycache__"))
         (self.tool / "manager" / "local" / "adapters").mkdir(parents=True)
         shutil.copy(BENCH / "install.py", self.tool / "install.py")
-        (self.tool / "tasks").mkdir()
-        shutil.copy(BENCH / "tasks" / "task-template.md",
-                    self.tool / "tasks" / "task-template.md")
 
         self.app = git_init(self.tmp / "app")
         (self.app / ".claude").mkdir()

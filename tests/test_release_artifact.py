@@ -121,23 +121,23 @@ class ArtifactContents(unittest.TestCase):
         self.assertIn("start.sh", self.files)
 
     def test_none_of_benchs_own_state_ships(self):
-        stages = ["backlog", "to-do", "in-progress", "review", "done",
-                  "archive"]
         for name in self.files:
-            for stage in stages:
-                if name.startswith(f"tasks/{stage}/"):
-                    self.assertEqual(name, f"tasks/{stage}/.gitkeep",
-                                     f"a task card shipped: {name}")
-            for top in ("plans/", "reference/"):
-                if name.startswith(top):
-                    self.assertEqual(name, f"{top}.gitkeep",
-                                     f"content shipped under {top}: {name}")
+            # No work state at all (task 64): the artifact is unpacked
+            # before the layout is known, so anything here would sit under
+            # the tool even when the work root is elsewhere.
+            for top in ("tasks/", "plans/", "reference/"):
+                self.assertFalse(name.startswith(top),
+                                 f"work state shipped: {name}")
             for forbidden in ("tests/", ".claude/", ".git/", ".worktrees/",
                               "manager/local/state", "site/"):
                 self.assertFalse(name.startswith(forbidden),
                                  f"{forbidden} leaked into the artifact: {name}")
         self.assertNotIn("release.sh", self.files)
         self.assertNotIn("manager/local/checks", self.files)
+
+    def test_the_task_template_ships_as_a_tool_owned_seed(self):
+        self.assertIn("manager/core/seed/task-template.md", self.files)
+        self.assertIn("manager/core/seed/README.md", self.files)
         self.assertNotIn("manager/local/.env", self.files)
 
     def test_the_public_minisite_never_ships(self):
@@ -302,6 +302,13 @@ class ArtifactInstalls(unittest.TestCase):
 
     def test_board_serves_from_an_unpacked_artifact(self):
         tm = self.make_install("serving")
+        # start.sh's first step: the work state is the installer's to lay
+        # down, because only it knows which layout this is.
+        subprocess.run([sys.executable, str(tm / "install.py")],
+                       capture_output=True, text=True, cwd=tm.parent,
+                       stdin=subprocess.DEVNULL,
+                       env={k: v for k, v in os.environ.items()
+                            if not k.startswith(("BOARD_", "BENCH_"))})
 
         probe = socket.socket()
         probe.bind(("127.0.0.1", 0))

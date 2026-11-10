@@ -12,6 +12,7 @@ import io
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -84,6 +85,13 @@ class UpdateFromRelease(unittest.TestCase):
         tm.mkdir()
         with tarfile.open(self.tarball) as tar:
             tar.extractall(tm)
+        # The artifact ships no work state: the installer lays it down, as
+        # start.sh does on the documented path.
+        subprocess.run(
+            [sys.executable, str(tm / "install.py")], cwd=host,
+            capture_output=True, text=True, stdin=subprocess.DEVNULL,
+            env={k: v for k, v in os.environ.items()
+                 if not k.startswith(("BOARD_", "BENCH_"))})
         (tm / "tasks" / "backlog" / "20-host-card.md").write_text(
             "# The host's own\n", encoding="utf-8")
         local = tm / "manager" / "local"

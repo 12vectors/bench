@@ -40,6 +40,17 @@ clears the stage directories, tasks/archive/, plans/ and reference/
 (keeping task-template.md and .gitkeep files, printing every removal) and
 then stamps manager/local/state/ so the guard is false on every later run.
 
+Then the work state is initialized where the layout puts it, and only
+there (task 64): tasks/ with its stages and archive/, plans/ and
+reference/ at the resolved work root — the install itself when vendored,
+BOARD_WORK_ROOT when that is set, read from the persisted settings as
+well as from this run's flags — with the task template seeded from the
+tool-owned manager/core/seed/ when the work root has none. Nothing that
+exists is overwritten. Externally, a tool-local tasks/, plans/ or
+reference/ that is exactly the untouched skeleton an older release
+unpacked is removed; anything else there is kept whole and named, and a
+changed work root is reported with the previous one left as it was.
+
 A project with no manager/local/.env then gets one written, because the
 settings that change what bench *is* — claim-on-move and syncing through
 origin/main — are otherwise invisible to anyone who has not read
@@ -475,32 +486,291 @@ def write_layout_env(answers: dict[str, str], dry_run: bool) -> bool:
     return True
 
 
+# ── the work state's skeleton (task 64) ───────────────────────────────
+#
+# A release used to unpack tasks/, plans/ and reference/ beside the tool,
+# before anything knew which layout it was going into — so an external
+# install was left with a second, empty, apparently active board under
+# the tool. The artifact now ships none of it. The installer creates the
+# skeleton at the one work root the layout resolves to, and the task
+# template comes from a tool-owned seed under manager/core/seed/.
+
 WORK_SKELETON = ([Path("tasks") / slug for slug in STAGE_DIRS]
                  + [Path("tasks") / "archive", Path("plans"),
                     Path("reference")])
+TEMPLATE = Path("tasks") / "task-template.md"
+TEMPLATE_SEED = CORE / "seed" / "task-template.md"
+
+# Every task template a release unpacked at tasks/task-template.md before
+# the seed moved into manager/core/seed/, by sha256 — the whole history of
+# that file. A tool-local copy matching one of these (or today's seed) is
+# bench's own and untouched; anything else is somebody's edit, and kept.
+SHIPPED_TEMPLATES = frozenset({
+    "e3cccb3976638e4380bf5c4193c04ad7bedcd7e49b695f15a9885b1f15e8b8a0",
+    "2932be06257889f703147bb90bd1218c5e5c50fb44f8703fa4759056540d16e5",
+    "676ecf3aae8bd4e69514a96671e23bcacd1dfdd6d8f515ca475387bc613a7cca",
+    "b2f5c4a0c2143401b54a978e31364a4370a62e8fa72a102d178de8c4ec443735",
+    "768d5a29447bb42a444087907184e0482a307c2d509a688c490030d270ee7a38",
+})
+
+WORK_ROOT_RECORD = LOCAL / "state" / "work-root"
+
+
+def _present(path: Path) -> bool:
+    """There is something at `path` — a dangling link included, because a
+    write to it would land wherever the link points."""
+    return path.exists() or path.is_symlink()
+
+
+def _escapes(path: Path, root: Path) -> Path | None:
+    """Where `path` really lands, when that is outside `root` — config's
+    `escapes`, repeated here because a vendored install runs without
+    loading core at all. Non-strict: a directory about to be created is
+    judged by the links in the parents it would be created under."""
+    def real(p: Path) -> Path:
+        try:
+            return p.resolve()
+        except OSError:
+            return p
+    target, base = real(path), real(root)
+    try:
+        target.relative_to(base)
+        return None
+    except ValueError:
+        return target
+
+
+def skeleton_refusals(work: Path) -> list[str]:
+    """Every path the skeleton would create that a link would carry out
+    of the work root. Asked before anything is written, so a refusal
+    leaves nothing half made."""
+    found = []
+    for relative in [*WORK_SKELETON, TEMPLATE]:
+        path = work / relative
+        if _present(path):
+            continue
+        real = _escapes(path, work)
+        if real is not None:
+            found.append(f"{relative.as_posix()} under the work root {work} "
+                         f"would be created at {real}, outside it — a link "
+                         f"on the way there leads out")
+    return found
 
 
 def make_work_skeleton(work: Path, dry_run: bool) -> list[str]:
-    """tasks/ with its stage directories, plans/ and reference/ — and the
-    task template, so a new board starts from something. Anything already
-    there is left exactly as it is: an external work root is very often a
-    repository that already holds a board."""
+    """tasks/ with its stage directories and archive/, plans/ and
+    reference/ — each new directory holding a .gitkeep, so the skeleton
+    survives a commit — and the task template, seeded from the tool so a
+    new board starts from something. Anything already there is left
+    exactly as it is: a work root is very often a repository that already
+    holds a board, and a template that exists is somebody's."""
     created: list[str] = []
     for relative in WORK_SKELETON:
         path = work / relative
-        if path.is_dir():
+        if _present(path):
             continue
         created.append(relative.as_posix() + "/")
         if not dry_run:
             path.mkdir(parents=True, exist_ok=True)
-    template, destination = (TM / "tasks" / "task-template.md",
-                             work / "tasks" / "task-template.md")
-    if template.is_file() and not destination.exists():
-        created.append("tasks/task-template.md")
+            (path / ".gitkeep").touch()
+    destination = work / TEMPLATE
+    if TEMPLATE_SEED.is_file() and not _present(destination):
+        created.append(TEMPLATE.as_posix())
         if not dry_run:
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(template, destination)
+            shutil.copyfile(TEMPLATE_SEED, destination)
     return created
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _tracked(tm: Path) -> set[str]:
+    """The tool-local work paths git tracks, relative to the install.
+    Removing one would be a change in somebody's history, so a tracked
+    file is never pristine — whatever it holds."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(tm), "ls-files", "-z", "--",
+             "tasks", "plans", "reference"],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if out.returncode != 0:
+        return set()
+    return {name for name in out.stdout.split("\0") if name}
+
+
+def _pristine(tm: Path, top: str, tracked: set[str]) -> tuple[bool, str,
+                                                              list[str]]:
+    """Whether the tool-local `top` (tasks, plans or reference) is exactly
+    what an old release unpacked and nothing more: skeleton directories,
+    empty .gitkeep files and an unedited shipped template, none of them
+    tracked and none of them links. Returns the verdict, the reason it is
+    not pristine, and the files found (for the diagnostic)."""
+    root = tm / top
+    if root.is_symlink():
+        return False, "it is a link", []
+    if not root.is_dir():
+        return False, "it is not a directory", []
+    skeleton = {(tm / r) for r in WORK_SKELETON if r.parts[0] == top}
+    skeleton.add(root)
+    files: list[str] = []
+    reason = ""
+    for here, dirs, names in os.walk(root):
+        base = Path(here)
+        for name in dirs:
+            path = base / name
+            if path.is_symlink() or path not in skeleton:
+                files.append(path.relative_to(tm).as_posix() + "/")
+                reason = reason or "it holds directories bench never made"
+        for name in names:
+            path = base / name
+            relative = path.relative_to(tm).as_posix()
+            files.append(relative)
+            if reason:
+                continue
+            if relative in tracked:
+                reason = "git tracks it"
+            elif path.is_symlink() or not path.is_file():
+                reason = "it holds links"
+            elif name == ".gitkeep" and base in skeleton:
+                if path.stat().st_size:
+                    reason = "a .gitkeep in it has content"
+            elif path == tm / TEMPLATE:
+                digest = _sha256(path)
+                seeded = (TEMPLATE_SEED.is_file()
+                          and digest == _sha256(TEMPLATE_SEED))
+                if digest not in SHIPPED_TEMPLATES and not seeded:
+                    reason = "its task template has been edited"
+            else:
+                reason = "it holds files bench did not ship"
+        dirs[:] = [d for d in dirs
+                   if not (base / d).is_symlink() and base / d in skeleton]
+    return not reason, reason, files
+
+
+def _remove_pristine(tm: Path, top: str) -> None:
+    """Delete one pristine tool-local tree: its .gitkeep files and its
+    shipped template by name, then each directory with rmdir — which
+    refuses a directory that is not empty, so anything that appeared
+    since it was judged survives."""
+    root = tm / top
+    for here, _, names in os.walk(root, topdown=False):
+        base = Path(here)
+        for name in names:
+            if name == ".gitkeep" or base / name == tm / TEMPLATE:
+                (base / name).unlink()
+        try:
+            base.rmdir()
+        except OSError:
+            pass
+
+
+def converge_tool_local(tm: Path, work: Path, dry_run: bool) -> None:
+    """With the work state somewhere else, what to do about tasks/,
+    plans/ and reference/ still sitting beside the tool — left there by
+    an older release, or by this install's vendored past.
+
+    Only what is demonstrably the untouched skeleton an old release
+    unpacked is removed, one top-level directory at a time. Everything
+    else — a card, a plan, an edited template, a tracked file, a link,
+    anything bench cannot account for — is kept whole and named, beside
+    the root that is authoritative. Nothing is moved, merged or read from
+    it: a board that used to live there is its owner's to carry over."""
+    tops = [top for top in ("tasks", "plans", "reference")
+            if _present(tm / top)
+            # Under the work root after all (a link into it, or a work
+            # root holding the install): part of the live state, not ours.
+            and _escapes(tm / top, work) is not None]
+    if not tops:
+        return
+    tracked = _tracked(tm)
+    removable, kept = [], []
+    for top in tops:
+        pristine, reason, files = _pristine(tm, top, tracked)
+        (removable if pristine else kept).append((top, reason, files))
+    if removable:
+        verb = "would remove" if dry_run else "removed"
+        print(f"the work state is at {work} — {verb} the unused, untouched "
+              f"skeleton an older release left beside the tool:")
+        for top, _, _ in removable:
+            print(f"  {top}/")
+            if not dry_run:
+                _remove_pristine(tm, top)
+        print()
+    if kept:
+        print(f"the work state is at {work}; this board reads and writes "
+              f"nothing else. Kept beside the tool, untouched and not "
+              f"migrated:")
+        for top, reason, files in kept:
+            count = len(files)
+            print(f"  {tm / top}/  — {reason}"
+                  + (f"; {count} file{'s' if count != 1 else ''}"
+                     if count else ""))
+            for name in files[:5]:
+                print(f"      {name}")
+            if count > 5:
+                print(f"      … and {count - 5} more")
+        print("  Bench does not move, merge or delete these. Carry over "
+              "anything you still need by hand, then remove them.\n")
+
+
+def record_work_root(work: Path, dry_run: bool) -> None:
+    """Say so when the work root is not the one this install last
+    initialized — and say that the previous one was left alone, because
+    that is the thing a person changing layout needs to hear."""
+    try:
+        current = str(work.resolve())
+    except OSError:
+        current = str(work)
+    previous = ""
+    if WORK_ROOT_RECORD.is_file():
+        previous = WORK_ROOT_RECORD.read_text(encoding="utf-8").strip()
+    if previous == current:
+        return
+    if previous:
+        print(f"the work root changed: {current} is authoritative now. The "
+              f"previous one, {previous}, was left exactly as it was — "
+              f"nothing in it was moved, merged or deleted.\n")
+    if not dry_run:
+        WORK_ROOT_RECORD.parent.mkdir(parents=True, exist_ok=True)
+        WORK_ROOT_RECORD.write_text(current + "\n", encoding="utf-8")
+
+
+def initialize_work_state(work: Path, external: bool, dry_run: bool) -> int:
+    """The skeleton at the resolved work root, the tool-local leftovers
+    beside it, and the record of which root is authoritative. 1 when a
+    link would carry a write out of the work root — refused before
+    anything is written."""
+    if not work.is_dir() and not dry_run:
+        # An external root that is not there: the layout check that
+        # follows names it. Creating it whole is not this step's call.
+        return 0
+    refusals = skeleton_refusals(work)
+    if refusals:
+        print("The work state's skeleton cannot be created:\n")
+        for refusal in refusals:
+            print(f"  - {refusal}")
+        print("\nNothing was written.")
+        return 1
+    created = make_work_skeleton(work, dry_run)
+    if created:
+        print(f"{'would create' if dry_run else 'created'} the work "
+              f"state under {work}:")
+        for entry in created:
+            print(f"  {entry}")
+        print()
+    if external and work.resolve() != TM.resolve():
+        converge_tool_local(TM, work, dry_run)
+    # Kept only once a layout has been external: a vendored install that
+    # never was one stays without a state stamp it did not ask for, which
+    # first_boot() reads as "this project has been here before".
+    if work.is_dir() and (external or WORK_ROOT_RECORD.is_file()):
+        record_work_root(work, dry_run)
+    return 0
 
 
 def report_problems(problems: list[str]) -> None:
@@ -567,9 +837,12 @@ def main() -> int:
     if not external:
         first_boot_clean(dry_run=dry_run)
 
+    # The work root as the layout resolves it — persisted settings and
+    # this run's flags alike, so a re-run without the flags initializes
+    # the same place the first one did.
+    work = _work_root()
     if answers:
         verb = "would record" if dry_run else "recorded"
-        work = _work_root()
         if not dry_run and answers.get("BOARD_WORK_ROOT") \
                 and not work.exists() and work.parent.is_dir():
             # `--work` names where the work state goes, so creating that
@@ -582,13 +855,13 @@ def main() -> int:
             for key in sorted(answers):
                 print(f"  {key}={answers[key]}")
             print()
-        created = make_work_skeleton(work, dry_run)
-        if created:
-            print(f"{'would create' if dry_run else 'created'} the work "
-                  f"state under {work}:")
-            for entry in created:
-                print(f"  {entry}")
-            print()
+
+    # Self-hosted — bench's own checkout, where the tool IS the project —
+    # tasks/ is that repository's history and is left to it.
+    if external or PROJECT.resolve() != TM.resolve():
+        status = initialize_work_state(work, external, dry_run)
+        if status:
+            return status
 
     setup(dry_run=dry_run, forced="--setup" in args)
 
