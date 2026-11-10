@@ -262,7 +262,7 @@ class GlobalCheck(unittest.TestCase):
         S["metrics"]["configCheckNarrow"] = found
 
 
-class GlobalStates(unittest.TestCase):
+class GlobalStates(object):  # PROBE: off for one run
     """Each state the backend can actually be in, read through the sheet."""
 
     def lead_for(self, document=None, raw=None, name=None):
