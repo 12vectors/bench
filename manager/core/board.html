@@ -2160,8 +2160,11 @@ function phaseFlight(task) {
    case — the arrow is redundant, so only one name is drawn. */
 function planChipLabel(p) {
   if ((p.drift || []).length) return 'plan drift';
-  return p.startBranch === p.prBase ? p.startBranch
-    : `${p.startBranch} → ${p.prBase}`;
+  // a chip never wraps, so a long branch name is clipped here rather than
+  // widening its card past a narrow page; the whole name is in the title,
+  // the ⌖ preflight and the launch check
+  return p.startBranch === p.prBase ? clip(p.startBranch, 34)
+    : `${clip(p.startBranch, 24)} → ${clip(p.prBase, 24)}`;
 }
 
 function planChipTitle(p) {
