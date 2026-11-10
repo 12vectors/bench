@@ -232,14 +232,16 @@ class ReviewMarkdown(unittest.TestCase):
 
         # — keyboard: the link and the original-Markdown fold are reachable —
         self.open_reviews(dark=False)
-        b.eval(f"document.querySelector('{BODY} a').focus()")
-        self.assertTrue(b.eval(f"document.activeElement === document.querySelector('{BODY} a')"),
+        # focus is asked for until it holds: a state load landing between
+        # the two calls redraws the drawer, which is not this check's subject
+        self.assertTrue(b.wait(f"(() => {{ const a = document.querySelector('{BODY} a');"
+                               " a.focus(); return document.activeElement === a; })()", 5),
                         "a link in the report cannot take focus")
         self.assertEqual(b.eval(f"document.querySelector('{BODY} a').getAttribute('rel')"),
                          "noopener noreferrer")
         src = f"{LATEST} > details.rsrc"
-        b.eval(f"document.querySelector('{src} > summary').focus()")
-        self.assertTrue(b.eval(f"document.activeElement === document.querySelector('{src} > summary')"),
+        self.assertTrue(b.wait(f"(() => {{ const s = document.querySelector('{src} > summary');"
+                               " s.focus(); return document.activeElement === s; })()", 5),
                         "the original-Markdown fold cannot take focus")
         b.click(f"{src} > summary")
         self.assertTrue(b.wait(f"document.querySelector('{src}').open", 5),
