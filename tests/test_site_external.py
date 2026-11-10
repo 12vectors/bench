@@ -59,7 +59,10 @@ SETTINGS = "/reference/settings/"
 SECTIONS = {
     "agents": (AGENTS, "## Running outside the application",
                "## Seeing the board"),
-    "readme": (README, "## Install outside the repo", "## Update"),
+    # Up to the bootstrap guide (task 87), which is its own page and
+    # names bootstrap.py's options rather than install.py's.
+    "readme": (README, "## Install outside the repo",
+               "## Set up with your coding agent"),
 }
 
 LONG_FLAG = re.compile(r"--[a-z][a-z0-9-]*")
@@ -293,7 +296,10 @@ class TheSiteOffersBothInstalls(unittest.TestCase):
     def test_the_two_installs_are_the_two_guides(self):
         guides = [page["path"] for page in self.manifest["pages"]
                   if page.get("section") == "Guides"]
-        self.assertEqual([VENDORED, EXTERNAL], guides)
+        # The two installs lead; the guided setup of the second (task 87)
+        # follows them.
+        self.assertEqual([VENDORED, EXTERNAL,
+                          "/guides/set-up-with-your-coding-agent/"], guides)
 
     def test_the_landing_page_offers_both(self):
         home = self.page("/")

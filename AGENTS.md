@@ -345,6 +345,16 @@ tracks it (see "Hooks without a tracked file"). Two apply to any
 install: `--dry-run` reports what the rest would do and writes nothing,
 and `--setup` asks the first-run questions again.
 
+`bootstrap.py`, beside `install.py`, is the guided way to the same
+result, for a person or their coding agent: `inspect` discovers and
+writes nothing, `plan` previews every operation, and `apply` makes them
+only once approved, running `install.py` for the installing and ending
+with a versioned, sanitized handoff that names the board's URL. It
+initializes the work state's repository only with consent, and creating
+a (private) remote, the first push and sync are separate explicit
+choices. The README's "Set up with your coding agent" is its whole
+reference.
+
 Each of the three roots is a plain setting underneath —
 `BOARD_APP_ROOT`, `BOARD_WORK_ROOT` and `BOARD_WORKTREES` in
 `manager/local/.env`, every one of them documented in
