@@ -55,7 +55,7 @@ HARNESS = "\n".join([
     *(function(name) for name in (
         "actLabel", "ago", "whenOf", "stampOf", "cardSplit", "recordHtml",
         "evidenceOptions", "criterionHtml", "accActor", "acceptanceHtml",
-        "roundLine", "sinceRound", "findingHtml", "reviewsHtml",
+        "roundLine", "sinceRound", "findingHtml", "md", "reportHtml", "reviewsHtml",
         "acceptanceChips", "dtabsHtml")),
     "const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));",
     "const S = { state: { acceptance: { [input.file]: input.summary } },",

@@ -39,9 +39,11 @@ def lift(pattern: str, what: str) -> str:
     return m.group(0)
 
 
+MD_FN = r"^function md\(src[^)]*\) \{\n.*?\n\}\n"
+
 HARNESS = (
     lift(r"^const esc = \(s\) =>.*?\n.*?\n", "its esc() helper")
-    + lift(r"^function md\(src\) \{\n.*?\n\}\n", "its md() renderer")
+    + lift(MD_FN, "its md() renderer")
     + "process.stdout.write(md(require('fs').readFileSync(0, 'utf8')));\n"
 )
 
@@ -246,21 +248,22 @@ class ReflowTests(RendererCase):
 
 def source_bullets(src: str) -> int:
     """How many logical list items a document contains, counted from the
-    source the way a reader counts them: markers only, fences skipped, and
-    only in blocks that actually open with one."""
-    marker = re.compile(r"^[ \t]*(?:[-*]|\d+\.)[ \t]+")
-    total, fence = 0, False
-    for block in re.split(r"\n{2,}", src):
-        ticks = block.count("```")
-        if fence or block.startswith("```"):
-            fence = (ticks % 2 == 0) if fence else (ticks % 2 == 1)
+    source the way a reader counts them: one per marker line, fenced code
+    skipped. A list need not be set off by a blank line — "**To know:**"
+    with its bullets on the next line is a label and a list (task 83) —
+    so a marker counts wherever it opens a line outside a fence."""
+    marker = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+")
+    total, fence = 0, None
+    for line in src.split("\n"):
+        if fence:
+            if re.match(r"^[ \t]{0,3}" + fence + r"`*[ \t]*$", line):
+                fence = None
             continue
-        lines = block.rstrip().split("\n")
-        if len(lines) >= 2 and re.match(r"^\s*\|.*\|\s*$", lines[0]) \
-                and re.match(r"^\s*\|[\s:|-]+\|\s*$", lines[1]):
-            continue                                   # a table, not a list
-        if marker.match(lines[0]):
-            total += sum(1 for l in lines if marker.match(l))
+        opened = re.match(r"^[ \t]{0,3}(`{3,})[^`]*$", line)
+        if opened:
+            fence = opened.group(1)
+        elif marker.match(line):
+            total += 1
     return total
 
 
@@ -358,11 +361,11 @@ class SourceInvariantTests(unittest.TestCase):
     def test_md_no_longer_maps_physical_lines_to_items(self):
         """`lines.map(l => '<li>…')` is the bug; if it comes back, every
         wrapped item sprouts a phantom bullet again."""
-        md = lift(r"^function md\(src\) \{\n.*?\n\}\n", "its md() renderer")
+        md = lift(MD_FN, "its md() renderer")
         self.assertNotRegex(md, r"lines\.map\([^)]*<li>")
 
     def test_paragraphs_and_blockquotes_do_not_emit_br(self):
-        md = lift(r"^function md\(src\) \{\n.*?\n\}\n", "its md() renderer")
+        md = lift(MD_FN, "its md() renderer")
         self.assertNotIn("<br>", md,
                          "md() must reflow prose, not preserve the author's "
                          "wrap column")

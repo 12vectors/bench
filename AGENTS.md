@@ -362,6 +362,17 @@ its own, and a work root in **no** repository is a work root bench will
 not commit to rather than a reason to reach for the application's
 history.
 
+"Externally" means either root is set, not only the work root. With
+`BOARD_APP_ROOT` alone the work state keeps its default — the tool
+installation — and its repository is whichever one holds that install:
+the tool's own checkout, a repository it was dropped into, or none at
+all. None is a working local-only board; with `BOARD_COMMIT_MOVES` or
+`BOARD_SYNC` on it is refused, naming the install as the work root and
+`BOARD_WORK_ROOT` as the way to give the tickets a repository of their
+own. An install sitting inside the application it names is refused as a
+work root inside the application, which is what it is. The application's
+repository is never the answer.
+
 Each identity resolves its remote and its base branch independently:
 `BOARD_GIT_REMOTE` and `BOARD_APP_BASE` for the code,
 `BOARD_STATE_GIT_REMOTE` and `BOARD_STATE_BASE` for the board. So a card
@@ -787,6 +798,18 @@ arrow keys, Home and End move along it.
   (labelled as the run's), work reports and reviews (each folded, whole),
   comments and decisions, and acceptance and finding records. Raw reads,
   edits and commands stay in the Sessions view.
+
+A filed report — a review round, a work report, a PR update, a
+relevance review — is drawn as the document it is: through the same
+Markdown renderer as the brief, with proportional prose, headings nested
+under the section's own, real lists, tables and code blocks that scroll
+in place, and monospace kept for code. Rendering is presentation only.
+The text stays the card's, byte for byte, and its **Original Markdown**
+is one fold away to read or copy. The round's reviewer, revision, date
+and verdict stay in its summary line. Nothing in the prose is read as a
+verdict, a finding or an acceptance. Report text is untrusted: raw HTML
+arrives as text, a link is followed only to the web, mail, an anchor or
+a relative path, and an image is drawn as a link to it, never fetched.
 
 A live update keeps your place: each section keeps its own scroll
 position, open folds and unsent text survive a redraw, and a record
