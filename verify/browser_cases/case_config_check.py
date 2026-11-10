@@ -124,10 +124,18 @@ def open_launch(card=CARD):
     sel = f'#board article.card[data-file="{card}"]'
     if not b.wait(f"!!document.querySelector('{sel}')", 10):
         raise bv.CheckFailed(f"{card} is not on the board")
-    b.click(f"{sel} [data-more]")
-    if not b.wait(f"!!document.querySelector('{sel} .cardtools.open [data-profile]')", 5):
+    # A card just written to disk is redrawn when the watcher notices it,
+    # and a click that lands on the card being replaced opens nothing: so
+    # the ⋯ is clicked again while its menu is still closed.
+    chip = f"{sel} .cardtools.open [data-profile]"
+    for _ in range(4):
+        if not b.eval(f"!!document.querySelector('{sel} .cardtools.open')"):
+            b.click(f"{sel} [data-more]")
+        if b.wait(f"!!document.querySelector('{chip}')", 3):
+            break
+    else:
         raise bv.CheckFailed(f"{card}'s tools carry no launch check")
-    b.click(f"{sel} .cardtools.open [data-profile]")
+    b.click(chip)
     if not b.wait(f"!!document.querySelector('{DIALOG} .lrows, {DIALOG} .cissue')", 30):
         raise bv.CheckFailed("the launch check never resolved")
     return b
@@ -262,7 +270,7 @@ class GlobalCheck(unittest.TestCase):
         S["metrics"]["configCheckNarrow"] = found
 
 
-class GlobalStates(object):  # PROBE: off for one run
+class GlobalStates(unittest.TestCase):
     """Each state the backend can actually be in, read through the sheet."""
 
     def lead_for(self, document=None, raw=None, name=None):
@@ -474,17 +482,7 @@ class LaunchCheck(unittest.TestCase):
                                     "390x844": (390, 844, None),
                                     "1280x800@200%": (1280, 800, 2)}.items():
                 b = load(w, h, zoom=z)
-                # PROBE: card missing → pass; tools chip missing → exit 2;
-                # anything later → exit 1
-                sel = f'#board article.card[data-file="{STACKED}.md"]'
-                if not b.wait(f"!!document.querySelector('{sel}')", 10):
-                    return
-                b.click(f"{sel} [data-more]")
-                if not b.wait(f"!!document.querySelector('{sel} .cardtools.open [data-profile]')", 5):
-                    raise RuntimeError("PROBE no tools chip")
-                b.click(f"{sel} .cardtools.open [data-profile]")
-                if not b.wait(f"!!document.querySelector('{DIALOG} .lrows, {DIALOG} .cissue')", 30):
-                    raise bv.CheckFailed("PROBE never resolved")
+                open_launch(f"{STACKED}.md")
                 r = rows()
                 m = measure([DIALOG, f"{DIALOG} .stitle"])
                 narrow = no_narrow_columns(m["viewport"]["width"])
@@ -493,14 +491,14 @@ class LaunchCheck(unittest.TestCase):
                 self.assertTrue(r["Starts from"].startswith(STACKED_BASE), r)
                 self.assertTrue(r["PR target"].startswith(STACKED_BASE), r)
                 self.assertNotIn("main", r["Starts from"])
-                if bv.layout_problems(m) or narrow:  # PROBE: exit 2 marks layout
-                    raise RuntimeError(f"PROBE layout {name}")
+                self.assertEqual([], bv.layout_problems(m), name)
+                self.assertEqual([], narrow, f"narrow value columns at {name}")
                 close_sheet()
             S["metrics"]["launchCheckStacked"] = found
         finally:
             card.unlink(missing_ok=True)
 
-    def probe_a_blocked_launch_names_the_fix_and_offers_no_launch(self):
+    def test_a_blocked_launch_names_the_fix_and_offers_no_launch(self):
         with Policy() as p:
             p.write({"v": 1, "profiles": {"work": {"requires": ["filesystem-sandbox"]}}})
             b = load(1440, 900)
@@ -513,7 +511,7 @@ class LaunchCheck(unittest.TestCase):
             self.assertFalse(b.eval(f"!!document.querySelector('{DIALOG} #lc-launch')"))
             close_sheet()
 
-    def probe_a_stale_launch_check_cannot_bypass_the_launchs_own_preflight(self):
+    def test_a_stale_launch_check_cannot_bypass_the_launchs_own_preflight(self):
         """Opened while the launch was allowed, then the policy changes:
         firing the stale sheet's launch is refused by the server, with its
         reason, and nothing starts."""
