@@ -493,13 +493,65 @@ def _verification() -> dict:
 def _preview() -> dict:
     driver = config.driver_path()
     runnable = bool(driver and os.access(driver, os.X_OK))
+    import previews
+    p = previews.summary()
     facts = [_fact("Driver (manager/local/driver/start)",
                    "present and executable" if runnable else
                    "present but not executable" if driver else "none",
-                   None if runnable else
-                   "blocked" if driver else "decision-needed")]
+                   None if runnable or p["present"] else
+                   "blocked" if driver else "decision-needed"),
+             _fact("Preview configuration (manager/local/preview.json)",
+                   "valid" if p["valid"] else "refused" if p["present"]
+                   else "none",
+                   None if p["valid"] else "blocked" if p["present"] else None),
+             _fact("Discovered start commands",
+                   str(p["starts"]) if p["starts"] else
+                   "none — nothing here starts a server"),
+             _fact("Last preview", p["lastStatus"] or "never started",
+                   "tested" if p["tested"] else
+                   "failed" if p["failed"] else None)]
+    if p["needsData"] and not p["fixture"]:
+        facts.append(_fact("Disposable data", "the project has service or "
+                           "data configuration and the preview names no "
+                           "fixture", "decision-needed"))
     basis = {"driver": "runnable" if runnable else
-             "not-executable" if driver else "none"}
+             "not-executable" if driver else "none",
+             "preview": "valid" if p["valid"] else
+             "invalid" if p["present"] else "none",
+             "kind": p["kind"], "tested": p["tested"], "failed": p["failed"],
+             "fixture": bool(p["fixture"]), "needsData": p["needsData"]}
+    if p["present"] and not p["valid"]:
+        return {"status": "blocked", "facts": facts, "basis": basis,
+                "recommendation": ("Fix the refused preview configuration: "
+                                   + ", ".join(p["problems"][:4]) + "."),
+                "consequence": "Nothing can be prepared or started until then.",
+                "next": _next("you", "Fix the preview configuration",
+                              "settings", section="setup")}
+    if p["present"]:
+        if p["failed"]:
+            return {"status": "failed", "facts": facts, "basis": basis,
+                    "recommendation": ("Read the preview's log and its reason "
+                                       f"({p['lastReason'] or p['lastStatus']}),"
+                                       " fix the app or the configuration, "
+                                       "and start it again."),
+                    "consequence": "The last preview did not stay ready.",
+                    "next": _next("you", "Read the preview below",
+                                  "settings", section="setup")}
+        if p["tested"]:
+            return {"status": "tested", "facts": facts, "basis": basis,
+                    "recommendation": ("A preview reached ready and stopped "
+                                       "leaving no process of its own. A UI "
+                                       "smoke test is a separate check."),
+                    "consequence": ("A card's worktree can be previewed, "
+                                    "bound to its source."),
+                    "next": _next("you", "Preview a card from the guide",
+                                  "settings", section="setup")}
+        return {"status": "configured", "facts": facts, "basis": basis,
+                "recommendation": ("Prepare, start, reach and stop it once for "
+                                   "a card before relying on it."),
+                "consequence": "Configured is not tested.",
+                "next": _next("you", "Start a preview of a card below",
+                              "settings", section="setup")}
     if runnable:
         return {"status": "configured", "facts": facts, "basis": basis,
                 "recommendation": "Use the ⛭ drive chip on a review card.",
@@ -513,13 +565,21 @@ def _preview() -> dict:
                 "consequence": "The drive chip refuses until it is.",
                 "next": _next("you", "chmod +x the driver", "terminal",
                               command=f"chmod +x {driver}")}
+    if p["kind"] == "non-web":
+        return {"status": "decision-needed", "facts": facts, "basis": basis,
+                "recommendation": p["alternative"],
+                "consequence": "There is nothing to preview in a browser.",
+                "next": _next("you", "Mark not applicable and link a smoke "
+                              "check or card", "settings", section="setup")}
     return {"status": "decision-needed", "facts": facts, "basis": basis,
-            "recommendation": ("If this project has something to look at, "
-                               "propose a setup card for a driver; a library "
-                               "or CLI may not need one."),
+            "recommendation": ("Configure a preview from the proposal below "
+                               "— a detected start script is not a working "
+                               "preview until it has been prepared, started, "
+                               "reached and stopped. If startup or data is "
+                               "not reproducible, propose a setup card."),
             "consequence": "Review cards cannot launch the app to try it.",
-            "next": _next("agent", "Create a setup card for a preview "
-                          "driver", "task")}
+            "next": _next("agent", "Create a setup card for a reproducible "
+                          "preview", "task")}
 
 
 def _delivery() -> dict:
@@ -699,7 +759,7 @@ def _area(area: str, decisions: dict, tasks: dict) -> dict:
            "computed": status, "fingerprint": fingerprint,
            "decision": (dict({k: decision.get(k) for k in
                               ("status", "reason", "actor", "actorSource",
-                               "at", "fingerprint")},
+                               "at", "fingerprint", "alternative")},
                              stale=decision.get("fingerprint") != fingerprint)
                         if decision else None),
            "task": task, "allowed": allowed,
@@ -736,6 +796,7 @@ def state() -> dict:
         "interrupted": interrupted(),
         "proposals": _proposals(doc),
         "verificationReadiness": _readiness(),
+        "applicationPreview": _application_preview(),
         "storage": {
             "portable": ("setup/decisions.json in the work state — "
                          "decisions, reasons, who and when, and setup-card "
@@ -764,6 +825,17 @@ def _readiness() -> dict:
     except Exception as exc:
         return {"kind": readiness.KIND, "v": readiness.VERSION,
                 "problem": f"verification readiness could not be read: {exc}"}
+
+
+def _application_preview() -> dict:
+    """The preview lifecycle (task 91), read in the same pass. Its own
+    module owns it; a reading that fails says so rather than vanishing."""
+    import previews
+    try:
+        return previews.state()
+    except Exception as exc:
+        return {"kind": previews.KIND, "v": previews.VERSION,
+                "problem": f"the application preview could not be read: {exc}"}
 
 
 def _proposals(doc: dict) -> dict:
@@ -852,6 +924,44 @@ def _write_decisions(doc: dict, what: str) -> bool:
         f"setup: {what} recorded, but committing it failed")
 
 
+def _alternative(area: str, choice: str, value) -> dict | None:
+    """What verifies a project that has no preview instead (task 91): a
+    registered named check, or a card on this board. Only for marking the
+    preview not applicable; validated, never invented."""
+    if value in (None, "", {}):
+        return None
+    if area != "preview" or choice != "not-applicable":
+        raise Refused("an alternative is linked only when the application "
+                      "preview is marked not applicable")
+    if not isinstance(value, dict) or len(value) != 1:
+        raise Refused('an alternative is {"check": <name>} or '
+                      '{"task": <number>}')
+    if "check" in value:
+        name = value["check"]
+        names = {c["name"] for c in
+                 settings.verification(profiles.document())["checks"]}
+        if name not in names:
+            raise Refused(f"no named check {name!r} is registered; register "
+                          f"the smoke check in Settings → Checks first, or "
+                          f"link a card", 409)
+        return {"check": name}
+    if "task" in value:
+        number = str(value["task"]).lstrip("#").strip()
+        if not number.isdigit():
+            raise Refused("a card is named by its number")
+        for stage in [*config.STAGE_DIRS, "archive"]:
+            try:
+                names = os.listdir(config.TASKS / stage)
+            except OSError:
+                continue
+            for name in names:
+                m = taskfiles.NUMBER_RE.match(name)
+                if m and int(m.group(1)) == int(number):
+                    return {"task": f"{int(number):02d}", "filename": name}
+        raise Refused(f"no card #{number} is on this board", 409)
+    raise Refused('an alternative is {"check": <name>} or {"task": <number>}')
+
+
 def decide(payload: dict) -> dict:
     """Record, or withdraw, a person's decision about one area: `defer` or
     `not-applicable` with a reason, or `reopen` to make it revisitable."""
@@ -879,6 +989,7 @@ def decide(payload: dict) -> dict:
                           f"is nothing to {choice}", 409)
         reason = _clean_reason(payload.get("reason")) \
             if choice != "reopen" else None
+        alternative = _alternative(area, choice, payload.get("alternative"))
         _journal_put(request, {"kind": "decide", "area": area,
                                "status": "started", "at": taskfiles.now_iso()})
         if choice == "reopen":
@@ -894,6 +1005,10 @@ def decide(payload: dict) -> dict:
                            "at": taskfiles.now_iso(),
                            "fingerprint": current["fingerprint"],
                            "request": request})
+            if alternative:
+                record["alternative"] = alternative
+            else:
+                record.pop("alternative", None)
             doc["decisions"][area] = record
         committed = _write_decisions(doc, f"{area} {choice}")
         result = {"ok": True, "area": area, "decision": choice,
@@ -927,14 +1042,18 @@ TASK_BODIES = {
         "- [ ] Each program fails on a deliberately broken fixture\n"
         "- [ ] Each is registered as a named check"),
     "preview": (
-        "Write a driver so a review card can preview the app",
-        "There is no manager/local/driver/start, so the ⛭ drive chip "
-        "cannot launch the application from a task's worktree.",
-        "- An executable driver following core/driver.example: refuse fast "
-        "with a reason, print `DRIVE URL: <url>` when up, run until "
-        "SIGTERM.",
-        "- [ ] Driving a review card prints a URL that serves the app\n"
-        "- [ ] Parking it stops the app"),
+        "Make the application start reproducibly for a preview",
+        "No preview is configured and no driver exists, so a review card "
+        "cannot be previewed from its own worktree.",
+        "- One command that starts the app from a worktree on the port and "
+        "host it is given ({port}, {host} — always 127.0.0.1), and a page "
+        "or endpoint that answers only when it is really up.\n"
+        "- Preparation steps for dependencies and disposable data, never a "
+        "shared or production service.",
+        "- [ ] The guide's preview prepares, starts, reaches ready and "
+        "stops with no process left behind\n"
+        "- [ ] Startup needs no secret value written into a card or the "
+        "configuration"),
 }
 
 

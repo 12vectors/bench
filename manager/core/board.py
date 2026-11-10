@@ -152,6 +152,11 @@ def main() -> None:
         sync.install()
         threading.Thread(target=sync.beat, daemon=True).start()
     drive.adopt()
+    # A preview preparation a dead board left running is closed, its
+    # process group stopped only when it is provably bench's own; nothing
+    # is prepared again by itself.
+    import previews
+    previews.recover()
 
     print(f"Task board for {config.TASKS}")
     if config.EXTERNAL:

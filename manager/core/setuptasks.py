@@ -318,7 +318,13 @@ def gaps(found: dict | None = None) -> dict:
             runs=True)
 
     # preview
-    if runnable:
+    import previews
+    preview_cfg = previews.read_config()
+    if preview_cfg["valid"]:
+        covered.append({"gap": "preview", "found": [_ev(
+            previews.CONFIG_REL, "present", "a valid preview configuration",
+            "setting")]})
+    elif runnable:
         covered.append({"gap": "preview", "found": [_ev(
             "manager/local/driver/start", "present", "a runnable driver",
             "setting")]})
@@ -330,14 +336,19 @@ def gaps(found: dict | None = None) -> dict:
             "review card cannot start it from its own worktree.",
             _from(found["start"]) + [_ev("manager/local/driver/start", "absent",
                                          "no driver", "setting")],
-            ["An executable driver following core/driver.example: refuse fast "
-             "with a printed reason, print `DRIVE URL: <url>` when the app "
-             "answers, run until SIGTERM.",
-             "It starts the app from the task's worktree on a free loopback "
-             "port, using the disposable data, never live services."],
-            ["Driving a review card prints a URL that serves the app",
-             "Parking it stops the app and leaves no process behind",
-             "A missing dependency is refused with a reason, not a hang"],
+            ["One non-interactive command that starts the app from the task's "
+             "worktree on the port and host it is given ({port} and {host}, "
+             "or PORT and HOST — always loopback), for the setup guide's "
+             f"preview configuration ({previews.CONFIG_REL}); a driver "
+             "following core/driver.example is the alternative.",
+             "A page or endpoint that answers only when the app is really up, "
+             "for the readiness check, using the disposable data, never live "
+             "services."],
+            ["The guide's preview prepares, starts, reaches ready and stops "
+             "with no process left behind",
+             "A missing dependency or secret is refused with a reason, not a "
+             "hang",
+             "No secret value is written into a card or the configuration"],
             runs=True)
 
     # ui-smoke

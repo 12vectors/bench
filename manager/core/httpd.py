@@ -26,6 +26,7 @@ import plans
 import profiles
 import progress
 import readiness
+import previews
 import refine
 import reviews
 import settings
@@ -584,6 +585,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"verification": readiness.state()})
             except (ValueError, OSError) as exc:
                 self._json(409, {"error": str(exc)})
+        elif path == "/api/preview":
+            # The application preview (task 91): discovery, the configuration
+            # and its refusals, the lifecycle bound to its source. A GET that
+            # stays one — it reads files and asks git; it starts, prepares
+            # and runs nothing.
+            query = parse_qs(url.query)
+            try:
+                self._json(200, {"preview": previews.state(
+                    (query.get("file") or [""])[0] or None)})
+            except (ValueError, OSError) as exc:
+                self._json(409, {"error": str(exc)})
+        elif path == "/api/preview/log":
+            self._json(200, previews.log())
         elif path == "/api/card/discussion":
             # A card's discussion, the jobs this board holds for it and
             # whether refining is available — read, never started: a GET
@@ -936,6 +950,42 @@ class Handler(BaseHTTPRequestHandler):
                     }[action](result)
                     state.record_board_event({"kind": "other", "actor": "you",
                                               "summary": f"setup: {summary}"})
+                    state.broadcast({"type": "board"})
+                self._json(200, {"result": result})
+            elif path.startswith("/api/preview/") and path.rsplit("/", 1)[1] in (
+                    "validate", "configure", "prepare", "cancel", "start",
+                    "check", "stop"):
+                # The application preview's five acts (task 91), behind the
+                # policy door: two of them run this project's own code, and a
+                # page on another origin must not be able to ask for that.
+                # Validate writes nothing; configure writes one machine-local
+                # file and runs nothing; prepare and start each carry their
+                # own "approve" and refuse without it.
+                problem = origin_problem(self.headers, config.PORT)
+                if problem:
+                    self._json(403, {"error": problem})
+                    return
+                payload = self._read_body()
+                action = path.rsplit("/", 1)[1]
+                try:
+                    result = {"validate": previews.check_draft,
+                              "configure": previews.configure,
+                              "prepare": previews.prepare,
+                              "cancel": previews.cancel,
+                              "start": previews.start,
+                              "check": previews.check,
+                              "stop": previews.stop}[action](payload)
+                except setupguide.Refused as exc:
+                    self._json(exc.status, {"error": str(exc), **exc.extra})
+                    return
+                except ValueError as exc:
+                    self._json(409, {"error": str(exc)})
+                    return
+                if action == "configure":
+                    state.record_board_event({
+                        "kind": "other", "actor": "you",
+                        "summary": "setup: preview configuration saved — "
+                                   "nothing was run"})
                     state.broadcast({"type": "board"})
                 self._json(200, {"result": result})
             elif path in ("/api/setup/verification/register",
