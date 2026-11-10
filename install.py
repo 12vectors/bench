@@ -609,7 +609,9 @@ def _pristine(tm: Path, top: str, tracked: set[str]) -> tuple[bool, str,
     what an old release unpacked and nothing more: skeleton directories,
     empty .gitkeep files and an unedited shipped template, none of them
     tracked and none of them links. Returns the verdict, the reason it is
-    not pristine, and the files found (for the diagnostic)."""
+    not pristine, and what in it bench cannot account for (the generated
+    pieces are left out of that list: they are not what a person needs
+    to go and look at)."""
     root = tm / top
     if root.is_symlink():
         return False, "it is a link", []
@@ -617,39 +619,44 @@ def _pristine(tm: Path, top: str, tracked: set[str]) -> tuple[bool, str,
         return False, "it is not a directory", []
     skeleton = {(tm / r) for r in WORK_SKELETON if r.parts[0] == top}
     skeleton.add(root)
-    files: list[str] = []
-    reason = ""
+    notable: list[str] = []
+    reasons: list[str] = []
+
+    def unaccounted(path: Path, reason: str, suffix: str = "") -> None:
+        notable.append(path.relative_to(tm).as_posix() + suffix)
+        if reason not in reasons:
+            reasons.append(reason)
+
     for here, dirs, names in os.walk(root):
         base = Path(here)
+        dirs.sort()
         for name in dirs:
             path = base / name
-            if path.is_symlink() or path not in skeleton:
-                files.append(path.relative_to(tm).as_posix() + "/")
-                reason = reason or "it holds directories bench never made"
-        for name in names:
+            if path.is_symlink():
+                unaccounted(path, "it holds links")
+            elif path not in skeleton:
+                unaccounted(path, "it holds directories bench never made",
+                            "/")
+        for name in sorted(names):
             path = base / name
-            relative = path.relative_to(tm).as_posix()
-            files.append(relative)
-            if reason:
-                continue
-            if relative in tracked:
-                reason = "git tracks it"
+            if path.relative_to(tm).as_posix() in tracked:
+                unaccounted(path, "git tracks it")
             elif path.is_symlink() or not path.is_file():
-                reason = "it holds links"
+                unaccounted(path, "it holds links")
             elif name == ".gitkeep" and base in skeleton:
                 if path.stat().st_size:
-                    reason = "a .gitkeep in it has content"
+                    unaccounted(path, "a .gitkeep in it has content")
             elif path == tm / TEMPLATE:
                 digest = _sha256(path)
                 seeded = (TEMPLATE_SEED.is_file()
                           and digest == _sha256(TEMPLATE_SEED))
                 if digest not in SHIPPED_TEMPLATES and not seeded:
-                    reason = "its task template has been edited"
+                    unaccounted(path, "its task template has been edited")
             else:
-                reason = "it holds files bench did not ship"
+                unaccounted(path, "it holds files bench did not ship")
         dirs[:] = [d for d in dirs
                    if not (base / d).is_symlink() and base / d in skeleton]
-    return not reason, reason, files
+    return not reasons, "; ".join(reasons), notable
 
 
 def _remove_pristine(tm: Path, top: str) -> None:
@@ -707,9 +714,7 @@ def converge_tool_local(tm: Path, work: Path, dry_run: bool) -> None:
               f"migrated:")
         for top, reason, files in kept:
             count = len(files)
-            print(f"  {tm / top}/  — {reason}"
-                  + (f"; {count} file{'s' if count != 1 else ''}"
-                     if count else ""))
+            print(f"  {tm / top}/  — {reason}")
             for name in files[:5]:
                 print(f"      {name}")
             if count > 5:
