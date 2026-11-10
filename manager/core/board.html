@@ -1121,6 +1121,70 @@
     border:1px solid var(--line);border-radius:6px;padding:8px 10px;
     font:inherit;font-size:12.5px;min-height:52px;resize:vertical}
   .sheet .sbtns textarea:focus{outline:none;border-color:var(--accent)}
+  .sheet.wide{width:min(600px,94vw)}
+  /* a purpose filter's current choice, said by weight and a fill as well
+     as by aria-pressed, never by colour alone */
+  #view-settings .sb[aria-pressed="true"]{background:var(--s-current);font-weight:600}
+
+  /* ── configuration and launch checks (task 79) ──
+     Short labels, values left-aligned in their own column and allowed to
+     wrap anywhere, so a long path or branch makes a taller row rather
+     than a narrow prose column or a page-wide overflow. Shared by the
+     sheets and Settings → Diagnostics. */
+  .ccheck{display:flex;flex-direction:column;gap:10px;min-width:0}
+  .cresult{display:flex;flex-direction:column;gap:3px}
+  .cheadline{font-size:15px;font-weight:600;color:var(--text)}
+  .cheadline.bad{color:var(--alarm)}
+  .cscope{margin:0;font-size:12.5px;line-height:1.5;color:var(--muted)}
+  .cmeta{margin:0;font-family:var(--mono);font-size:11px;color:var(--dim)}
+  .cbadge{display:inline-block;font-family:var(--mono);font-size:10.5px;line-height:1.5;
+    padding:0 7px;border:1px solid var(--border);border-radius:999px;
+    color:var(--muted);white-space:nowrap;vertical-align:middle}
+  .cbadge.bad{color:var(--alarm);border-color:var(--alarm)}
+  .cbadge.dim{border-style:dashed;color:var(--dim)}
+  .cissues{display:flex;flex-direction:column;gap:6px}
+  .cissue{display:flex;flex-direction:column;gap:3px;padding:8px 10px;min-width:0;
+    border:1px solid var(--alarm);border-radius:8px;font-size:12.5px;color:var(--text)}
+  .cissue > *{overflow-wrap:anywhere}
+  .cissue .fix,.cstage .fx{color:var(--muted)}
+  .cissue code{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+  .chead{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+  .clevel{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+  .lrows{display:flex;flex-direction:column}
+  .lrow{display:grid;grid-template-columns:minmax(0,8.5rem) minmax(0,1fr) auto;
+    gap:2px 10px;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--line);
+    font-size:12.5px}
+  .lrow:last-child{border-bottom:none}
+  .lrow .k{color:var(--muted)}
+  .lrow .v{font-family:var(--mono);font-size:11.5px;color:var(--text);text-align:left;
+    overflow-wrap:anywhere;word-break:break-word;min-width:0}
+  .lrow .v.prose{font-family:var(--sans);font-size:12.5px}
+  .lrow .v small{display:block;font-family:var(--sans);font-size:11.5px;color:var(--dim)}
+  .lrow.bad .v{color:var(--alarm)}
+  .lrow .ccopy{align-self:center}
+  .cfold > summary{padding:4px 0}
+  .crows{display:flex;flex-direction:column}
+  .crow{border-bottom:1px solid var(--line)}
+  .crow > summary{display:grid;grid-template-columns:minmax(0,8.5rem) minmax(0,1fr) auto;
+    gap:2px 10px;align-items:baseline;padding:5px 0;cursor:pointer;list-style:none;
+    font-size:12px}
+  .crow > summary::-webkit-details-marker{display:none}
+  .crow .ca{color:var(--muted)}
+  .crow .cn{color:var(--text);overflow-wrap:anywhere}
+  .cbody{display:flex;flex-direction:column;gap:4px;padding:2px 0 8px;font-size:12px;
+    color:var(--muted)}
+  .cbody > *{overflow-wrap:anywhere}
+  .cstages{display:flex;flex-direction:column;gap:8px}
+  .cstage{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)}
+  .cstage ul{margin:0;padding-left:16px}
+  .lnext{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
+  .lnext button.primary{background:var(--accent);border-color:var(--accent);
+    color:var(--on-accent);font-weight:500;padding:8px 14px}
+  .lnext small{font-size:11.5px;color:var(--dim)}
+  @media (max-width:520px){
+    .lrow,.crow > summary{grid-template-columns:minmax(0,1fr) auto}
+    .lrow .v,.crow .cn{grid-column:1 / -1;grid-row:2}
+  }
 
   /* ── toast ──
      A refusal has to say the whole thing — which member is working, and
@@ -1170,11 +1234,11 @@
   </nav>
   <span class="spacer"></span>
   <div class="phasechips" id="phasechips" hidden></div>
-  <!-- the readiness inspector: always here, because it is the way in to a
+  <!-- the configuration check: always here, because it is the way in to a
        diagnosis rather than a state that comes and goes. Opening it reads;
        everything that does something is armed inside it. -->
   <div class="livechip" id="doctorchip" role="button" tabindex="0"
-       aria-label="open the readiness inspector"></div>
+       aria-label="open the configuration check"></div>
   <div class="livechip" id="syncchip" hidden style="cursor:default"></div>
   <div class="livechip" id="cmdchip" hidden style="cursor:default"></div>
   <div class="livechip" id="livechip" title="open Sessions"></div>
@@ -1288,12 +1352,18 @@ const S = {
   // rather than carried in the state payload for the manifest's reason,
   // and never re-run by being looked at
   evidence: {},
-  // {at, report, fetching}: the last readiness reading taken on this tab.
-  // Held rather than refetched on every render because reading it resolves
-  // every intent and hashes every approved input — cheap, but not free —
-  // and because "nothing failing when you last looked" is the only thing
-  // a cached reading may ever be shown as saying
+  // {at, report, fetching}: the last configuration check taken on this
+  // tab. Held rather than refetched on every render because reading it
+  // resolves every intent and hashes every approved input — cheap, but
+  // not free — and because "no issues when you last looked" is the only
+  // thing a cached reading may ever be shown as saying
   doctor: null,
+  // why the last configuration check did not complete, shown in its place
+  doctorError: null,
+  // the purpose Settings → Diagnostics narrows the check to (null: all)
+  settingsPurpose: null,
+  // what had focus when a configuration or launch check opened
+  sheetReturn: null,
   // {at, page, fetching}: the whole Settings reading, fetched on demand
   // rather than carried in the state payload — it resolves all three
   // intents, hashes every approved input and asks git for the tool's own
@@ -1690,42 +1760,45 @@ function renderAgentCommands() {
     `<span class="mono">BOARD_AGENT_COMMANDS</span>`;
 }
 
-/* The readiness inspector's own chip. Unlike the sync and phase chips it
+/* The configuration check's own chip. Unlike the sync and phase chips it
    is always here, and deliberately: those two are *states* that come and
    go, and this is the door to a diagnosis — a door that appeared only
    when something was already wrong would be a door nobody learned about.
 
    What it says, it says honestly. Before anything has been read it offers
-   the inspector and names where the policy comes from. A document that
-   does not parse is the one fact the cheap state payload already knows,
-   so that wears `--alarm` without anything being resolved. After a
-   reading it carries that reading's count — and the title says when it
-   was taken, because "nothing failing when you last looked" is a
-   different claim from "nothing failing". */
+   the check and names where the policy comes from. A document that does
+   not parse is the one fact the cheap state payload already knows, so
+   that wears `--alarm` without anything being resolved. After a reading
+   it carries that reading's issue count, `stale` once the policy has
+   moved under it, and the title says when it was taken — "no issues when
+   you last looked" is a different claim from "no issues". */
 function renderDoctor() {
   const el = $('#doctorchip');
   const policy = S.state?.policy || {};
   const read = S.doctor && S.doctor.report;
   let colour = 'muted', tail = policy.kind === 'legacy'
     ? 'legacy settings' : (policy.identity || 'policy');
-  let title = 'What this board would grant, run and refuse — resolved for ' +
-    'every launch intent, with the remedy for anything that would stop ' +
-    'one. Opening this reads: it starts no process, pins nothing and ' +
-    'spends nothing.';
+  let title = 'Configuration check — what this board would grant, run and ' +
+    'refuse for each purpose, and how to fix anything that would stop a ' +
+    'launch. Opening it starts nothing.';
   if (policy.problem) {
     colour = 'alarm';
     tail = 'policy broken';
-    title = policy.problem + ' — open the inspector for the remedy.';
+    title = policy.problem + ' — open the configuration check for the fix.';
   } else if (read) {
-    const failed = read.summary.failed;
-    colour = failed ? 'alarm' : 'calm';
-    tail = failed ? `${failed} to look at` : 'nothing failing';
-    title = `${read.summary.line} Read ${fmtShort(read.generated)}; open to ` +
-      `read it again. This says nothing about what has changed since.`;
+    // No calm colour for "no issues": a static reading is not a pass, so
+    // only an issue changes the chip's colour.
+    const issues = (read.summary.issues || []).length;
+    const stale = configStale(read);
+    colour = issues ? 'alarm' : 'muted';
+    tail = stale ? 'stale' : issues ? `${issues} issue${issues === 1 ? '' : 's'}` : 'no issues';
+    title = `${read.summary.headline}. ${read.summary.scope} Checked ` +
+      `${fmtShort(read.generated)}${stale ? '; the policy has changed since' : ''}.`;
   }
   el.title = title;
+  el.setAttribute('aria-label', `open the configuration check — ${tail}`);
   el.innerHTML = `<span class="dot" style="background:var(--${colour === 'muted' ? 'idle' : colour})"></span>` +
-    `<span style="color:var(--${colour})">⚕ readiness</span>` +
+    `<span style="color:var(--${colour})">⚕ configuration</span>` +
     `<span class="mono">${esc(clip(String(tail), 28))}</span>`;
 }
 
@@ -2187,12 +2260,26 @@ async function planSheet(task) {
 
 const PROFILE_INTENT_FOR = { 'in-progress': 'work', review: 'act-pr' };
 
+/* Has a review come in on this card's PR? The card's own action slot
+   reads the same answer: until one has, a review card offers ◔ review PR
+   and not ↻ act on PR, so its launch check opens on Review. */
+function reviewIsIn(task) {
+  const pr = (S.state.prs || {})[task.file];
+  return !!task.prVerdict ||
+    !!(pr && (pr.verdict !== 'pending' || (pr.copilot && pr.copilot !== 'asked')));
+}
+
 function profileIntentFor(task) {
+  if (task.stage === 'review' && !(task.pr && reviewIsIn(task))) return 'review';
   return PROFILE_INTENT_FOR[task.stage] || 'review';
 }
 
-const INTENT_LABEL = { work: '▸ work', 'act-pr': '↻ act on PR',
-                       review: '◔ review', 'refine': '✎ refine card' };
+/* The purposes, in the words Settings → Agents uses (task 77). A launch
+   check offers the three a card can launch; `refine` is listed only where
+   every purpose is — the board-wide configuration check. */
+const INTENT_LABEL = { work: 'Implementation', 'act-pr': 'PR fixes',
+                       review: 'Review', 'refine': 'Card refinement' };
+const LAUNCH_INTENTS = ['work', 'act-pr', 'review'];
 
 /* An input's readable status, as the row's own state. `pinned` is the
    strong one: bench holds a read-only copy, so the run's bytes cannot
@@ -2282,77 +2369,254 @@ function isolationLine(p) {
       + 'intended rather than a boundary';
 }
 
-async function profileSheet(task, intent) {
-  intent = intent || profileIntentFor(task);
-  const wrap = $('#sheetwrap');
-  const head = (tail) =>
-    `<div class="stitle"><span>${esc(task.title)}</span>` +
-    `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}` +
-    `⚿ ${esc(tail)}</span></div>`;
-  wrap.innerHTML = `<div class="sheet">${head(intent)}<p>Resolving…</p></div>`;
-  wrap.classList.add('open');
-  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+/* Which existing action launches this purpose on this card, or why none
+   does right now. The specs are the card's own — same label, same
+   confirmation, same endpoint and the same `<file>::<label>` key — so
+   the launch check reuses the card's arm-then-fire rather than adding a
+   confirmation of its own, and an armed window is one window wherever
+   the second click lands. The endpoint is sent the card and nothing the
+   sheet resolved: the launch runs its own preflight again. */
+function launchActionFor(task, intent) {
+  if (agentOnTask(task.file))
+    return { why: 'An agent is already working on this card. ‖ hold it first to launch another.' };
+  if (intent === 'work') {
+    if (task.stage !== 'in-progress')
+      return { why: 'Implementation launches from in-progress/. Move the card there first.' };
+    if (task.isPhase)
+      return { why: 'A phase card is run with ▸ run phase; its work belongs to its members.' };
+    const held = task.assignee && S.state.me && task.assignee !== S.state.me
+      ? task.assignee : null;
+    return { act: held
+      ? { glyph: '▸', label: 'take over', confirm: `take from ${held}?`, busy: 'starting…',
+          run: () => fireAgent(task, '/api/agent/start', { takeover: true }) }
+      : { glyph: '▸', label: 'start work', confirm: 'start it?', busy: 'starting…',
+          run: () => fireAgent(task, '/api/agent/start') } };
+  }
+  if (intent === 'act-pr') {
+    if (task.stage !== 'review' || !task.pr)
+      return { why: 'PR fixes need a card in review/ with an open PR.' };
+    if (!reviewIsIn(task))
+      return { why: 'PR fixes are offered once a review is in. Run ◔ review PR first.' };
+    return { act: { glyph: '↻', label: 'act on PR', confirm: 'act on it?', busy: 'acting…',
+                    run: () => fireAgent(task, '/api/agent/act-pr') } };
+  }
+  if (task.stage === 'review' && task.pr)
+    return { act: { glyph: '◔', label: 'review PR', confirm: 'review it?', busy: 'reviewing…',
+                    run: () => fireAgent(task, '/api/agent/review-pr') } };
+  return { act: { glyph: '◔', label: 'still true?', confirm: 'check it?', busy: 'checking…',
+                  run: () => fireAgent(task, '/api/agent/review') } };
+}
 
-  const res = await fetch('/api/profile?file=' + encodeURIComponent(task.file) +
-                          '&stage=' + encodeURIComponent(task.stage) +
-                          '&intent=' + encodeURIComponent(intent));
-  const data = await res.json();
-  const p = data.profile;
-  if (!res.ok || !p) {
-    wrap.innerHTML = `<div class="sheet">${head(intent)}` +
-      `<p class="bad">${esc(data.error || 'the profile could not be resolved')}</p>` +
+/* The harness and model a launch of this purpose would ride, as the
+   resolver gave them. An empty model is the harness's own default, and
+   the page says so rather than naming a model nobody chose. */
+function selectionRows(p) {
+  const sel = p.selection;
+  if (!sel) return [['Harness', 'not reported by this resolution', '']];
+  const h = sel.harness || {}, m = sel.model || {};
+  return [
+    ['Harness', h.name || '—', h.inherited ? 'inherits the default' : (h.setting || '')],
+    ['Model', m.value || 'harness default', m.value
+      ? (m.inherited ? 'inherits the default' : (m.setting || ''))
+      : 'bench passes no model; the vendor chooses'],
+  ];
+}
+
+/* One left-aligned row: a short label, then its value wrapping in its
+   own column. `copy` adds a labelled copy control for a path. */
+function lrow(k, v, opts) {
+  const o = opts || {};
+  return `<div class="lrow${o.bad ? ' bad' : ''}"><span class="k">${esc(k)}</span>` +
+    `<span class="v${o.mono === false ? ' prose' : ''}">${o.html ? v : esc(v)}` +
+    (o.why ? `<small>${esc(o.why)}</small>` : '') + `</span>` +
+    (o.copy ? copyButton(o.copy, k) : '') + `</div>`;
+}
+
+function copyButton(value, label) {
+  return `<button class="chip2 ccopy" data-copy="${esc(value)}" ` +
+    `aria-label="Copy ${esc(label)}">Copy</button>`;
+}
+
+/* The launch check: one card, one purpose, read from the resolvers the
+   launch itself rides — `/api/plan` for where the work starts and what
+   its PR targets, `/api/profile` for the harness, model, access and
+   anything that stops it. Opening it fetches and resolves; it creates no
+   branch, pins nothing and starts nothing, and it authorises nothing
+   either: the launch below is the card's own action, which resolves and
+   refuses again for itself. Launch readiness is its own question, so
+   merge rules, Bench checks, CI and review stay on their own chips. */
+async function profileSheet(task, intent) {
+  intent = LAUNCH_INTENTS.includes(intent) ? intent : profileIntentFor(task);
+  const wrap = $('#sheetwrap');
+  if (!wrap.classList.contains('open')) S.sheetReturn = document.activeElement;
+  const ref = task.number ? '#' + task.number : task.file;
+  const head = (tail) =>
+    `<div class="stitle"><span id="lc-title" tabindex="-1">Launch check</span>` +
+    `<span class="mono">${esc(ref)} · ${esc(tail)}</span></div>`;
+  const label = `launch check for ${ref}`;
+  wrap.innerHTML = `<div class="sheet wide" role="dialog" aria-label="${esc(label)}">` +
+    `${head(INTENT_LABEL[intent])}<p>Resolving…</p></div>`;
+  wrap.classList.add('open');
+  wrap.onclick = (e) => { if (e.target === wrap) closeSheet(); };
+
+  const q = 'file=' + encodeURIComponent(task.file) +
+            '&stage=' + encodeURIComponent(task.stage);
+  // a relevance check reviews no branch, so it has no plan to show
+  const wantsPlan = intent !== 'review' || !!task.pr;
+  const read = async (url) => {
+    try {
+      const res = await fetch(url);
+      return { ok: res.ok, data: await res.json() };
+    } catch (e) {
+      return { ok: false, data: { error: e.message || 'the board could not be asked' } };
+    }
+  };
+  const [prof, plan] = await Promise.all([
+    read('/api/profile?' + q + '&intent=' + encodeURIComponent(intent)),
+    wantsPlan ? read('/api/plan?' + q) : Promise.resolve(null),
+  ]);
+  const p = prof.data.profile;
+  const switcher = LAUNCH_INTENTS.map(key =>
+    `<button class="chip2 ${key === intent ? 'accent' : ''}" data-intent="${key}" ` +
+    `aria-pressed="${key === intent}">${esc(INTENT_LABEL[key])}</button>`).join('');
+  if (!prof.ok || !p) {
+    wrap.innerHTML = `<div class="sheet wide" role="dialog" aria-label="${esc(label)}">` +
+      `${head(INTENT_LABEL[intent])}<div class="chiprow" role="group" ` +
+      `aria-label="purpose">${switcher}</div>` +
+      `<div class="cissue" role="alert"><b>Could not be checked</b>` +
+      `<span>${esc(prof.data.error || 'the profile could not be resolved')}</span></div>` +
       `<div class="sbtns"><button id="sh-noprof">Close<small>Nothing was ` +
       `started, and nothing was pinned.</small></button></div></div>`;
     $('#sh-noprof').addEventListener('click', closeSheet);
+    wrap.querySelectorAll('[data-intent]').forEach(btn =>
+      btn.addEventListener('click', () => profileSheet(task, btn.dataset.intent)));
     return;
   }
+  const pl = plan && plan.ok ? plan.data.plan : null;
 
-  const blocked = (p.blockers || []).length;
-  const switcher = Object.keys(INTENT_LABEL).map(key =>
-    `<button class="chip2 ${key === intent ? 'accent' : ''}" data-intent="${key}">` +
-    `${esc(INTENT_LABEL[key])}</button>`).join('');
+  // What stops it, from either resolver, each with what to do about it.
+  // The profile's diagnostics carry their remedy; the plan's refusals are
+  // already sentences that name their way out.
+  const stops = [];
+  (p.diagnostics || []).forEach(d =>
+    stops.push({ what: d.why || d.title, fix: d.remedy, code: d.code }));
+  if (!(p.diagnostics || []).length)
+    (p.blockers || []).forEach(b => stops.push({ what: b }));
+  if (plan && !plan.ok)
+    stops.push({ what: plan.data.error || 'the branch plan does not resolve',
+                 fix: 'Open the branch plan (⌖) for the whole preflight.' });
+  (pl && pl.blockers || []).forEach(b =>
+    stops.push({ what: b, fix: 'Settle the card\'s branch headers, or ⌖ replan.' }));
 
+  const pr = (S.state.prs || {})[task.file] || {};
   const rows = [
-    ['Runs in', p.cwd.path || p.cwd.policy, `the ${p.cwd.policy} root`],
-    ['Intended writes', (p.writable || []).map(w => w.path).join(', ') || 'nothing',
-      (p.writable || []).length ? (p.writable[0].why || '') : 'read-only run'],
-    ['OS isolation', isolated(p) ? 'enforced' : 'none enforced', isolationLine(p)],
-    ['Policy', p.source.kind === 'legacy'
-      ? 'the legacy settings'
-      : (p.source.identity || 'a profile document'),
-      p.source.describes || ''],
+    lrow('Task', `${ref} — ${task.title}`, { mono: false }),
+    lrow('Purpose', INTENT_LABEL[intent], { mono: false,
+      why: intent === 'review'
+        ? (task.pr ? 'PR review — the review intent, read-only'
+                   : 'relevance check (◔ still true?) — the review intent, read-only')
+        : `the ${intent} intent` }),
+    ...selectionRows(p).map(([k, v, why]) => lrow(k, v, { why })),
   ];
+  if (intent === 'review' && task.pr) {
+    rows.push(lrow('Reviews', pr.head
+      ? `PR head ${pr.head.slice(0, 12)}`
+      : 'the PR head, read when the review starts',
+      { why: 'pinned in a detached checkout of that commit at launch' }));
+    if (pl) rows.push(lrow('PR target', pl.prBase, { why: pl.prSource }));
+  } else if (intent === 'review') {
+    rows.push(lrow('Reads', 'the application checkout',
+      { mono: false, why: 'a relevance check pins nothing and reviews no branch' }));
+  } else if (pl) {
+    rows.push(
+      lrow('Starts from', (pl.startRef || pl.startBranch) +
+        (pl.startCommit ? ` · ${pl.startCommit.slice(0, 9)}` : ''), { why: pl.source }),
+      lrow('Branch', pl.branch, { why: pl.continuing
+        ? 'already exists — the run continues on it' : 'cut when the run starts' }),
+      lrow('PR target', pl.prBase, { why: pl.prSource }));
+  }
+  rows.push(
+    lrow('Access', !(p.publication || {}).commit
+      ? 'read-only — no edits, commits or pushes'
+      : `edits and commits${(p.publication || {}).push ? ', pushes' : ''} in its worktree`,
+      { mono: false }),
+    lrow('Runs in', p.cwd.path || `the ${p.cwd.policy} root`, { why: `${p.cwd.policy} root` }),
+    // a limitation stays beside the decision it qualifies
+    lrow('Intended writes', (p.writable || []).map(w => w.path).join(', ') || 'nothing',
+      { why: 'intended scope, not a boundary' }),
+    lrow('OS isolation', isolated(p) ? 'enforced' : 'none enforced',
+      { mono: false, why: isolationLine(p) }));
 
+  const action = launchActionFor(task, intent);
+  const next = stops.length
+    ? `<div class="cissue" role="alert"><b>Blocked — this launch would be refused</b>` +
+      stops.map(s => `<span>${esc(s.what)}</span>` +
+        (s.fix ? `<span class="fix"><b>Fix:</b> ${esc(s.fix)}</span>` : '') +
+        (s.code ? `<code>${esc(s.code)}</code>` : '')).join('') + `</div>`
+    : action.act
+      ? `<div class="lnext"><button class="primary" id="lc-launch" ` +
+        `aria-label="${esc(action.act.glyph + ' ' + action.act.label)}">` +
+        `<span class="g">${action.act.glyph}</span>` +
+        `${actLabel(action.act.label, action.act.confirm, action.act.busy)}</button>` +
+        `<small>Configuration allows this launch. It arms on the first click ` +
+        `and starts on the second; the launch checks the branch and policy ` +
+        `again, so this summary authorises nothing.</small></div>`
+      : `<div class="lnext"><small>${esc(action.why)}</small></div>`;
+
+  markScroll('v:sheet:launch', wrap.querySelector('.sheet'));
   wrap.innerHTML =
-    `<div class="sheet">${head(intent + ' profile')}` +
-    `<div class="chiprow">${switcher}</div>` +
-    (blocked
-      ? `<p class="bad">This run will not start: ${esc(p.blockers[0])}</p>`
-      + ((p.blockers.length > 1)
-         ? `<p class="bad">${p.blockers.slice(1).map(b => esc(b)).join('<br>')}</p>`
-         : '')
-      : `<p>Resolved and validated. Nothing has been pinned — the read-only ` +
-        `copy of each input is made at the launch, not here.</p>`) +
-    `<div class="prows">` +
-    rows.map(([k, v, why]) => `<div class="prow"><span class="k">${esc(k)}</span>` +
-      `<span class="v">${esc(v)}</span><span class="why">${esc(why || '')}</span></div>`).join('') +
-    deniedRow(p) +
-    `</div>` +
+    `<div class="sheet wide" role="dialog" aria-label="${esc(label)}">` +
+    head(stops.length ? 'blocked' : INTENT_LABEL[intent]) +
+    `<div class="chiprow" role="group" aria-label="purpose">${switcher}</div>` +
+    `<p class="cscope">${stops.length ? 'Blocked.' : 'Configuration valid for this launch.'} ` +
+    `Checked ${esc(fmtShort(Date.now() / 1000))} against current settings. ` +
+    `This is not proof the run will succeed.</p>` +
+    next +
+    `<div class="lrows">${rows.join('')}</div>` +
+    `<p class="cscope">Launch only. Merge rules, Bench checks, CI and review ` +
+    `are separate signals on the card.</p>` +
+    `<details class="fold"><summary>Access details — commands, files and blocked capabilities</summary>` +
     `<div class="panel"><div class="phead"><span class="label">Commands it may run</span>` +
     `<span class="r">prefix rules</span></div>${grantRows(p)}</div>` +
     `<div class="panel"><div class="phead"><span class="label">Files it is given</span>` +
     `<span class="r">read-only</span></div>${inputRows(p)}</div>` +
-    `<details class="fold"><summary>what is actually enforced, and by whom</summary>` +
+    `<div class="prows">${deniedRow(p)}</div>` +
     `<pre>${esc(guaranteeLines(p).join('\n\n'))}</pre></details>` +
-    `<details class="fold"><summary>revisions, hashes and precedence</summary>` +
-    `<pre>${esc(profileDetail(p))}</pre></details>` +
-    ((p.notes || []).length
-      ? `<p>${p.notes.map(n => esc(n)).join('<br>')}</p>` : '') +
-    `<div class="sbtns"><button id="sh-noprof">Close<small>Nothing is ` +
-    `written.</small></button></div></div>`;
+    (pl ? `<details class="fold"><summary>Branch plan details</summary>` +
+      `<div class="lrows">` +
+      lrow('Delivery', pl.delivery === 'pr' ? 'a PR is opened automatically' : 'local-only',
+        { mono: false }) +
+      (pl.notes || []).map(n => lrow('Note', n, { mono: false })).join('') +
+      `</div><button class="chip2" id="lc-plan">⌖ open the branch plan</button></details>` : '') +
+    `<details class="fold"><summary>Policy, revisions and provenance</summary>` +
+    `<div class="lrows">` +
+    lrow('Policy', p.source.kind === 'legacy' ? 'the legacy settings'
+      : (p.source.identity || 'a profile document'), { why: p.source.describes || '' }) +
+    `</div><pre>${esc(profileDetail(p))}` +
+    `${p.selection && !p.selection.model.value ? '\nmodel       ' + p.selection.model.words : ''}` +
+    `</pre></details>` +
+    `<div class="sbtns"><button id="lc-again">Check again<small>Resolves the ` +
+    `current settings again. Starts nothing.</small></button>` +
+    `<button id="sh-noprof">Close<small>Nothing is written.</small></button></div></div>`;
+  restoreScroll('v:sheet:launch', wrap.querySelector('.sheet'));
   $('#sh-noprof').addEventListener('click', closeSheet);
+  $('#lc-again').addEventListener('click', () => profileSheet(task, intent));
+  const toPlan = $('#lc-plan');
+  if (toPlan) toPlan.addEventListener('click', () => planSheet(task));
   wrap.querySelectorAll('[data-intent]').forEach(btn =>
     btn.addEventListener('click', () => profileSheet(task, btn.dataset.intent)));
+  const launch = $('#lc-launch');
+  if (launch && action.act) {
+    const act = action.act;
+    wireAction(launch, `${task.file}::${act.label}`, { ...act,
+      run: async () => {
+        const ok = await act.run();
+        if (ok !== false) closeSheet();
+        return ok;
+      } });
+  }
+  const t = $('#lc-title');
+  if (t && !wrap.contains(document.activeElement)) t.focus();
 }
 
 /* The technical half: identities, hashes, where the policy came from. Real
@@ -2418,70 +2682,183 @@ function doctorOutcome(word) {
   return DOCTOR_OUTCOME[word] || ['none', '?', String(word || '—')];
 }
 
-/* One row per finding: the outcome in words, the level it was taken at,
-   what it was about, and — when it is not passing — the cause and the
-   remedy the server wrote. Nothing here decides a verdict. */
-function doctorRows(report, rows) {
-  if (!rows.length) {
-    return `<div class="check-row none"><span class="glyph">—</span>` +
-      `<span class="name">nothing to report</span>` +
-      `<span class="state">this stage asked no questions here</span></div>`;
-  }
+/* ── the configuration check (task 79) ────────────────────────────────
+
+   One result model, drawn by the header's ⚕ sheet, Settings →
+   Diagnostics and the Focus view alike, so there are no competing health
+   summaries. The words come from the doctor — `summary.headline`, one
+   `summary.scope` sentence adapted to what was actually recorded, each
+   problem once (`summary.issues`) and a state word per row naming its
+   evidence level — and the page decides no verdict of its own.
+
+   Problems lead, each with the purpose or setting it affects, what is
+   wrong and how to fix it. Everything that is fine folds into a count; so
+   does everything not tested or not enforced, apart from it and never
+   counted as fine. Definitions and limits sit behind "What was checked?",
+   and the consequences of anything that executes stay beside its control. */
+const CC_BAD = new Set(['invalid', 'blocked', 'unsupported',
+                        'conformance-failed', 'execution-failed']);
+
+/* A reading taken against a policy revision the board has since moved
+   off is stale, and says so rather than standing as the current answer. */
+function configStale(report) {
+  const now = S.state && S.state.policy;
+  if (!now || !report || !report.policy) return false;
+  return (now.revision || '') !== (report.policy.revision || '')
+    || (now.kind || '') !== (report.policy.kind || '');
+}
+
+function ccBadge(word, cls) {
+  return `<span class="cbadge ${cls || ''}">${esc(word)}</span>`;
+}
+
+/* Which rows a purpose filter keeps: that purpose's own, plus the
+   board-wide ones every launch shares. Bench's self-test belongs to no
+   purpose. */
+function ccFor(rows, purpose) {
+  if (!purpose) return rows;
+  return rows.filter(f => f.purpose === purpose || (!f.intent && !f.example));
+}
+
+function ccIssue(report, f) {
+  const level = (report.evidence[f.evidence] || {}).label || f.evidence;
+  return `<div class="cissue" role="listitem">` +
+    `<div class="chead"><b>${esc(f.area || f.name)}</b>` +
+    `${ccBadge(f.stateWord || f.outcome, 'bad')}<span class="clevel">${esc(level)}</span></div>` +
+    `<span>${esc(f.detail)}</span>` +
+    (f.remedy ? `<span class="fix"><b>Fix:</b> ${esc(f.remedy)}</span>` : '') +
+    (f.code ? `<code>${esc(f.code)}</code>` : '') + `</div>`;
+}
+
+/* A short label for a row, so a list reads as a list rather than as
+   prose; the sentence it stands for is one click away. */
+function ccShort(f) {
+  const n = f.name;
+  if (n === 'launch') return 'Launch';
+  if (n === 'verification') return 'Named checks';
+  if (n.startsWith('harness:')) return 'Harness and model';
+  if (n === 'roots') return 'Locations';
+  if (n === 'policy') return 'Policy document';
+  if (n === 'adapter') return 'Adapter';
+  if (n === 'scope') return 'Which card';
+  if (n.startsWith('gate:')) return 'Gate · ' + n.slice(5);
+  return n.replace(/^(pending|fixture):/, '').replace(/-/g, ' ');
+}
+
+function ccRows(report, rows) {
   return rows.map(f => {
-    const [cls, glyph, word] = doctorOutcome(f.outcome);
     const level = (report.evidence[f.evidence] || {}).label || f.evidence;
-    const tail = f.intent ? ` · ${f.intent}` : '';
-    const remedy = (f.outcome !== 'passed' && f.remedy)
-      ? `<div class="check-row ${cls}" style="padding-left:18px">` +
-        `<span class="glyph">→</span><span class="name">remedy</span>` +
-        `<span class="state">${esc(f.remedy)}</span></div>`
-      : '';
-    return `<div class="check-row ${cls}" title="${esc(f.detail)}">` +
-      `<span class="glyph">${glyph}</span>` +
-      `<span class="name">${esc(f.name)}${esc(tail)}</span>` +
-      `<span class="state">${esc(word)} · ${esc(level)}` +
-      `${f.code ? ' · ' + esc(f.code) : ''}</span></div>` +
-      `<div class="check-row ${cls}" style="padding-left:18px">` +
-      `<span class="glyph">·</span><span class="name">${esc(f.about)}</span>` +
-      `<span class="state">${esc(f.detail)}</span></div>` + remedy;
+    return `<details class="crow"><summary><span class="ca">${esc(f.area || '')}</span>` +
+      `<span class="cn">${esc(ccShort(f))}</span>` +
+      `${ccBadge(f.stateWord || f.outcome, CC_BAD.has(f.state) ? 'bad' : 'dim')}</summary>` +
+      `<div class="cbody"><span>${esc(f.about)}</span><span>${esc(f.detail)}</span>` +
+      `<span class="clevel">evidence: ${esc(level)}${f.code ? ' · ' + esc(f.code) : ''}</span>` +
+      (f.remedy && f.outcome !== 'passed'
+        ? `<span class="fix"><b>Fix:</b> ${esc(f.remedy)}</span>` : '') +
+      `</div></details>`;
   }).join('');
 }
 
-/* The coverage table, which is the half a reader skips at their peril: it
-   is the only place that says which stages were *not* run. A stage
-   missing from a coverage table is a stage a reader assumes passed. */
-function doctorCoverage(report) {
-  return report.coverage.map(row => {
-    const counts = ['passed', 'failed', 'skipped', 'deferred']
-      .map(w => `${doctorOutcome(w)[1]}${row.counts[w]}`).join(' ');
-    const cls = row.counts.failed ? 'fail' : row.asked ? 'pass' : 'none';
-    return `<div class="check-row ${cls}">` +
-      `<span class="glyph">${row.asked ? '▣' : '▢'}</span>` +
-      `<span class="name">${esc(row.label)}</span>` +
-      `<span class="state">${esc(row.asked ? counts : 'not asked')}</span></div>` +
-      `<div class="check-row none" style="padding-left:18px">` +
-      `<span class="glyph">·</span><span class="name">not proved</span>` +
-      `<span class="state">${esc(row.doesNotProve)}</span></div>`;
-  }).join('');
+/* Workspace locations and execution permissions: short labels, one path
+   per row, left-aligned and wrapping in its own column, each with a
+   labelled copy control. */
+function ccLocations(report) {
+  const l = report.layout || {}, pol = report.policy || {};
+  const path = (k, v) => v ? lrow(k, v, { copy: v }) : '';
+  return `<details class="fold cfold"><summary>Workspace locations</summary>` +
+    `<div class="lrows">` +
+    path('Application', l.app) + path('Task storage', l.work) +
+    path('Worktrees', l.worktrees) + path('Bench install', l.tool) +
+    lrow('Layout', `${l.external ? 'external' : 'vendored'} · app base ${l.appBase} · ` +
+      `state base ${l.stateBase}`) +
+    `</div></details>` +
+    `<details class="fold cfold"><summary>Execution permissions</summary>` +
+    `<div class="lrows">` +
+    (pol.path ? lrow('Policy document', pol.path, { copy: pol.path })
+              : lrow('Policy document', 'none — the legacy settings apply', { mono: false })) +
+    lrow('Revision', (pol.revision || '—').slice(0, 12)) +
+    lrow('Adapter', (report.adapter || {}).name || '—') +
+    lrow('Precedence', (pol.precedence || []).join(' > '), { mono: false }) +
+    `</div></details>`;
 }
 
-/* Shared by the inspector and the Focus view, so a board-level reading
-   and a run-level one cannot drift into two vocabularies. `intent`
-   narrows it to the rows about one launch kind. */
+/* The definitions and limits, kept out of the way of the result: what
+   each stage proves and does not, what each evidence level is worth,
+   every diagnostic and its remedy, and what the report withholds. */
+function ccWhatWasChecked(report, extra) {
+  const scopeRow = report.findings.find(f => f.name === 'scope');
+  return `<details class="fold cfold"><summary>What was checked?</summary>` +
+    `<div class="cbody">` +
+    report.coverage.map(row =>
+      `<span><b>${esc(row.label)}</b> — ${esc(row.asked ? 'asked in this check' : 'not asked')}. ` +
+      `Proves ${esc(row.proves)}. Does not prove ${esc(row.doesNotProve)}.</span>`).join('') +
+    (scopeRow ? `<span><b>Which card</b> — ${esc(scopeRow.detail)}</span>` : '') +
+    Object.entries(report.outcomes || {}).map(([w, why]) =>
+      `<span><b>${esc(doctorOutcome(w)[2])}</b> — ${esc(why)}</span>`).join('') +
+    (extra || '') +
+    `<span><b>Where this lives</b> — ${esc(report.location)}</span>` +
+    `</div>` +
+    `<details class="fold"><summary>Every diagnostic bench can produce, and its remedy</summary>` +
+    `<pre>${esc(Object.entries(report.diagnosticCodes).map(
+      ([code, d]) => `${code}\n  ${d.title}\n  ${d.remedy}`).join('\n\n'))}</pre></details>` +
+    `<details class="fold"><summary>Roots, policy and what this report withholds</summary>` +
+    `<pre>${esc(doctorDetail(report))}</pre></details></details>`;
+}
+
+/* The result itself. `o.purpose` narrows the lists to one purpose;
+   `o.compact` (the Focus view) leaves out the locations and the
+   reference fold. */
+function configCheckBody(report, opts) {
+  const o = opts || {};
+  const sum = report.summary;
+  const byId = Object.fromEntries(report.findings.map(f => [f.id, f]));
+  const issueIds = new Set(sum.issues || []);
+  const issues = ccFor((sum.issues || []).map(id => byId[id]).filter(Boolean), o.purpose);
+  const rest = ccFor(report.findings.filter(f => !issueIds.has(f.id)
+    && f.outcome !== 'failed' && f.name !== 'scope'), o.purpose);
+  const fine = rest.filter(f => f.outcome === 'passed');
+  const open = rest.filter(f => f.outcome !== 'passed');
+  const stale = configStale(report);
+  const ran = (sum.stages || []).filter(s => s.asked).map(s => s.label).join(', ');
+  const stages = (sum.stages || []).map(s =>
+    `<div class="lrow"><span class="k">${esc(s.label)}</span>` +
+    `<span class="v prose">${ccBadge(s.word, s.state === 'failed' || s.state === 'issues'
+      ? 'bad' : s.state === 'passed' || s.state === 'valid' ? '' : 'dim')}</span></div>`).join('');
+  return `<div class="ccheck">` +
+    `<div class="cresult" role="status">` +
+    `<div class="cheadline${(sum.issues || []).length ? ' bad' : ''}">${esc(sum.headline)}` +
+    (stale ? ' ' + ccBadge('Stale', 'bad') : '') + `</div>` +
+    `<p class="cscope">${esc(sum.scope)}</p>` +
+    `<p class="cmeta">Checked ${esc(fmtShort(report.generated))} · ${esc(ran)}</p></div>` +
+    (stale ? `<p class="bad">The execution policy has changed since this check, so ` +
+      `this result is stale. Check again for a current one.</p>` : '') +
+    (issues.length
+      ? `<div class="cissues" role="list" aria-label="configuration issues">` +
+        issues.map(f => ccIssue(report, f)).join('') + `</div>`
+      : o.purpose && (sum.issues || []).length
+        ? `<p class="cscope">No issues for ${esc(INTENT_LABEL[o.purpose] || o.purpose)}.</p>`
+        : '') +
+    (o.compact ? '' : `<div class="lrows cstages" aria-label="results by stage">${stages}</div>`) +
+    (fine.length
+      ? `<details class="fold cfold"><summary>${fine.length} check${fine.length === 1 ? '' : 's'} ` +
+        `with no issues</summary><div class="crows">${ccRows(report, fine)}</div></details>` : '') +
+    (open.length
+      ? `<details class="fold cfold"><summary>${open.length} not tested, not enforced ` +
+        `or not configured</summary><div class="crows">${ccRows(report, open)}</div></details>` : '') +
+    (o.compact ? '' : ccLocations(report) + ccWhatWasChecked(report, o.reference)) +
+    `</div>`;
+}
+
+/* The Focus view's panel: the same result, narrowed to the purpose the
+   run rides, with no overall tick — a static reading says nothing about
+   whether this run will work. */
 function readinessPanel(report, opts) {
   const o = opts || {};
-  let rows = report.findings;
-  if (o.intent) rows = rows.filter(f => !f.intent || f.intent === o.intent);
-  if (o.only) rows = rows.filter(f => o.only.includes(f.outcome));
-  const head = o.title || 'Readiness';
   return `<div class="panel"><div class="phead">` +
-    `<span class="label">${esc(head)}</span>` +
-    `<span class="r">${esc((report.evidence[report.summary.strongestEvidence] || {}).label || '')}</span></div>` +
-    `<div class="check-row ${report.summary.failed ? 'fail' : 'pass'}">` +
-    `<span class="glyph">${report.summary.failed ? '✕' : '✓'}</span>` +
-    `<span class="name">${esc(o.intent || 'this board')}</span>` +
-    `<span class="state">${esc(report.summary.line)}</span></div>` +
-    doctorRows(report, rows) + `</div>`;
+    `<span class="label">${esc(o.title || 'Configuration check')}</span>` +
+    `<span class="r">${esc(o.intent ? (INTENT_LABEL[o.intent] || o.intent) : 'All purposes')}` +
+    `</span></div>` + configCheckBody(report, { purpose: o.intent || null, compact: true }) +
+    `</div>`;
 }
 
 /* The inspector itself. A GET of the report, so opening it resolves,
@@ -2491,31 +2868,38 @@ function readinessPanel(report, opts) {
    side effects written out beside it in the server's own words. */
 async function doctorSheet(mode) {
   const wrap = $('#sheetwrap');
+  if (!wrap.classList.contains('open')) S.sheetReturn = document.activeElement;
   const head = (tail) =>
-    `<div class="stitle"><span>Readiness</span>` +
+    `<div class="stitle"><span id="cc-title" tabindex="-1">Configuration check</span>` +
     `<span class="mono">⚕ ${esc(tail)}</span></div>`;
-  wrap.innerHTML = `<div class="sheet" role="dialog" ` +
-    `aria-label="execution readiness inspector">${head('reading…')}` +
-    `<p>Resolving every launch intent. Nothing is being started.</p></div>`;
+  wrap.innerHTML = `<div class="sheet wide" role="dialog" ` +
+    `aria-label="configuration check">${head('checking…')}` +
+    `<p>Checking the configuration. Nothing is being started.</p></div>`;
   wrap.classList.add('open');
-  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+  wrap.onclick = (e) => { if (e.target === wrap) closeSheet(); };
 
   let report = null, error = null;
   try {
     const res = await fetch('/api/doctor');
     const data = await res.json();
     if (res.ok && data.doctor) report = data.doctor;
-    else error = data.error || 'the readiness report could not be built';
+    else error = data.error || 'the configuration check could not be built';
   } catch (e) {
     error = e.message || 'the board could not be asked';
   }
   if (!report) {
-    wrap.innerHTML = `<div class="sheet" role="dialog" ` +
-      `aria-label="execution readiness inspector">${head('unavailable')}` +
-      `<p class="bad">${esc(error)}</p>` +
-      `<div class="sbtns"><button id="sh-nodoc">Close<small>Nothing was ` +
-      `started.</small></button></div></div>`;
+    // a check that did not complete is its own result, never a blank or
+    // an earlier reading passed off as this one
+    wrap.innerHTML = `<div class="sheet wide" role="dialog" ` +
+      `aria-label="configuration check">${head('not completed')}` +
+      `<div class="cissue" role="alert"><b>The configuration check did not complete</b>` +
+      `<span>${esc(error)}</span>` +
+      `<span class="fix"><b>Fix:</b> make sure the board is running, then check again.</span></div>` +
+      `<div class="sbtns"><button id="sh-again">Check again<small>Starts nothing.</small></button>` +
+      `<button id="sh-nodoc">Close<small>Nothing was started.</small></button></div></div>`;
     $('#sh-nodoc').addEventListener('click', closeSheet);
+    $('#sh-again').addEventListener('click', () => doctorSheet(mode));
+    $('#cc-title').focus();
     return;
   }
   S.doctor = { at: Date.now(), report };
@@ -2528,77 +2912,67 @@ async function doctorSheet(mode) {
 function paintDoctorSheet(report, intent) {
   const wrap = $('#sheetwrap');
   const head = (tail) =>
-    `<div class="stitle"><span>Readiness</span>` +
+    `<div class="stitle"><span id="cc-title" tabindex="-1">Configuration check</span>` +
     `<span class="mono">⚕ ${esc(tail)}</span></div>`;
   const switcher = ['', ...Object.keys(INTENT_LABEL)].map(key =>
     `<button class="chip2 ${key === (intent || '') ? 'accent' : ''}" ` +
-    `data-doctorintent="${esc(key)}" aria-label="${key ? 'show ' + key + ' rows' : 'show every row'}">` +
-    `${key ? esc(INTENT_LABEL[key]) : 'everything'}</button>`).join('');
+    `data-doctorintent="${esc(key)}" aria-pressed="${key === (intent || '')}">` +
+    `${key ? esc(INTENT_LABEL[key]) : 'All purposes'}</button>`).join('');
 
+  // The stages that execute something, each its own result beside its
+  // own armed control, with what it would do written out next to it.
+  const results = Object.fromEntries((report.summary.stages || []).map(s => [s.mode, s]));
   const stages = report.coverage.filter(row => row.mode !== 'inspect')
     .map(row => {
       const m = report.modes[row.mode];
+      const s = results[row.mode] || { word: row.asked ? 'asked' : 'Not tested' };
       const effects = (m.sideEffects || [])
         .map(e => `<li>${esc(e)}</li>`).join('');
       const label = row.mode === 'real-agent'
         ? `⚕ ${m.label} — needs your approval`
         : `⚕ run ${m.label}`;
-      return `<div class="check-row ${row.asked ? 'pass' : 'none'}">` +
-        `<span class="glyph">${row.asked ? '▣' : '▢'}</span>` +
-        `<span class="name">${esc(m.label)}</span>` +
-        `<span class="state">${esc(row.asked ? 'run in this reading' : 'not asked')}` +
-        `</span></div>` +
-        `<div class="check-row none" style="padding-left:18px">` +
-        `<span class="glyph">·</span><span class="name">${esc(m.does)}</span>` +
-        `<span class="state"><button class="chip2" ` +
-        `data-doctormode="${esc(row.mode)}" ` +
+      return `<div class="cstage"><div class="chead"><b>${esc(m.label)}</b>` +
+        ccBadge(s.word, s.state === 'failed' ? 'bad' : s.state === 'passed' ? '' : 'dim') +
+        `<button class="chip2" data-doctormode="${esc(row.mode)}" ` +
         `aria-label="${esc(label)}">${actLabel(label, 'run it?', 'running…')}` +
-        `</button></span></div>` +
-        `<div class="check-row none" style="padding-left:18px">` +
-        `<span class="glyph">!</span><span class="name">side effects</span>` +
-        `<span class="state"><ul style="margin:0;padding-left:14px">${effects}</ul>` +
-        `${m.needsApproval ? '<br>This one needs your explicit approval and ' +
-          'is never implied by another stage.' : ''}</span></div>`;
+        `</button></div><span>${esc(m.does)}</span>` +
+        `<span class="fx"><b>Side effects:</b></span>` +
+        `<ul>${effects}</ul>` +
+        `${m.needsApproval ? '<span class="fx">This one needs your explicit approval and ' +
+          'is never implied by another stage.</span>' : ''}</div>`;
     }).join('');
+  const issues = (report.summary.issues || []).length;
 
   // the sheet scrolls inside itself and this replaces it: a stage run from
-  // near its end, or an intent tab, must not drop the reader at the top
+  // near its end, or a purpose tab, must not drop the reader at the top
   markScroll('v:sheet:doctor', wrap.querySelector('.sheet'));
   wrap.innerHTML =
-    `<div class="sheet" role="dialog" aria-label="execution readiness inspector">` +
-    head(report.summary.failed ? `${report.summary.failed} to look at`
-                               : 'nothing failing') +
-    `<p>${report.summary.failed ? '<b class="bad">' : ''}` +
-    `${esc(report.summary.line)}${report.summary.failed ? '</b>' : ''}</p>` +
-    `<p>This is the resolver a launch rides, asked without launching one. ` +
-    `Reading it starts no process, pins nothing and spends nothing — and ` +
-    `a reading is not a proof: each row says what it was taken from.</p>` +
-    `<div class="chiprow">${switcher}</div>` +
-    readinessPanel(report, { intent: intent || null,
-                             title: 'What would happen' }) +
-    `<div class="panel"><div class="phead">` +
-    `<span class="label">Coverage</span>` +
-    `<span class="r">${esc(report.location)}</span></div>` +
-    doctorCoverage(report) + `</div>` +
-    `<div class="panel"><div class="phead">` +
-    `<span class="label">Ask for more than a reading</span>` +
-    `<span class="r">a person's action</span></div>${stages}</div>` +
-    `<details class="fold"><summary>every diagnostic bench can produce, and its remedy</summary>` +
-    `<pre>${esc(Object.entries(report.diagnosticCodes).map(
-      ([code, d]) => `${code}\n  ${d.title}\n  ${d.remedy}`).join('\n\n'))}</pre></details>` +
-    `<details class="fold"><summary>what each level of evidence is worth</summary>` +
-    `<pre>${esc(Object.entries(report.evidence).map(
-      ([level, e]) => `${level} — ${e.label}\n  proves: ${e.proves}\n` +
-                      `  does not prove: ${e.doesNotProve}`).join('\n\n'))}</pre></details>` +
-    `<details class="fold"><summary>roots, policy and what this report withholds</summary>` +
-    `<pre>${esc(doctorDetail(report))}</pre></details>` +
-    `<div class="sbtns"><button id="sh-nodoc">Close<small>Nothing was ` +
-    `started, and nothing was pinned.</small></button></div></div>`;
+    `<div class="sheet wide" role="dialog" aria-label="configuration check">` +
+    head(issues ? `${issues} issue${issues === 1 ? '' : 's'}` : 'no issues') +
+    `<div class="chiprow" role="group" aria-label="purpose">${switcher}</div>` +
+    configCheckBody(report, { purpose: intent || null,
+      reference: Object.entries(report.evidence).map(([level, e]) =>
+        `<span><b>${esc(e.label)}</b> (${esc(level)}) — proves ${esc(e.proves)}; ` +
+        `does not prove ${esc(e.doesNotProve)}.</span>`).join('') }) +
+    // open once a stage has been run from here, so its control and its
+    // side effects are where the person who ran it left them
+    `<details class="fold cfold"${report.ran.length > 1 ? ' open' : ''}>` +
+    `<summary>Run execution diagnostics</summary>` +
+    `<div class="cstages">${stages}</div></details>` +
+    `<div class="sbtns"><button id="sh-again">Check again<small>Reads the ` +
+    `configuration again. Starts nothing.</small></button>` +
+    `<button id="sh-nodoc">Close<small>Nothing was started.</small></button></div></div>`;
   restoreScroll('v:sheet:doctor', wrap.querySelector('.sheet'));
   $('#sh-nodoc').addEventListener('click', closeSheet);
+  $('#sh-again').addEventListener('click', () => doctorSheet(intent));
+  if (!wrap.querySelector('.sheet').contains(document.activeElement)) $('#cc-title').focus();
   wrap.querySelectorAll('[data-doctorintent]').forEach(btn =>
-    btn.addEventListener('click', () =>
-      paintDoctorSheet(report, btn.dataset.doctorintent || null)));
+    btn.addEventListener('click', () => {
+      paintDoctorSheet(report, btn.dataset.doctorintent || null);
+      const again = wrap.querySelector(
+        `[data-doctorintent="${CSS.escape(btn.dataset.doctorintent)}"]`);
+      if (again) again.focus();
+    }));
   wrap.querySelectorAll('[data-doctormode]').forEach(btn => {
     const mode = btn.dataset.doctormode;
     const m = report.modes[mode];
@@ -3479,10 +3853,7 @@ function cardFor(task) {
       title: 'Stop this agent — nothing is lost',
       run: () => stopAgent(agent.id) });
   } else if (task.stage === 'review' && task.pr) {
-    const prState2 = (S.state.prs || {})[task.file];
-    const reviewIn = !!task.prVerdict ||
-      (prState2 && (prState2.verdict !== 'pending' ||
-        (prState2.copilot && prState2.copilot !== 'asked')));
+    const reviewIn = reviewIsIn(task);
     const reviewPR = { glyph: '◔', label: 'review PR', confirm: 'review it?', busy: 'reviewing…',
       title: 'A read-only agent reviews the PR and posts its verdict to GitHub',
       run: () => fireAgent(task, '/api/agent/review-pr') };
@@ -3672,11 +4043,17 @@ function cardFor(task) {
     chips.push({ label: 'policy', pre: '⚿', cls: 'bad', profile: true,
       title: policy.problem || 'the profile document does not resolve' });
   } else if (policy && policy.kind === 'file') {
-    chips.push({ label: 'profile', pre: '⚿', cls: '', profile: true,
-      title: `The execution profile a launch on this card would ride — what `
-           + `it may run, where it is meant to write (intended scope, no `
-           + `OS isolation), which files it is given and `
+    chips.push({ label: 'launch check', pre: '⚿', cls: '', profile: true,
+      title: `What a launch on this card would ride — branch, PR target, `
+           + `harness and model, what it may run, where it is meant to write `
+           + `(intended scope, no OS isolation), which files it is given and `
            + `what is blocked. From ${policy.identity}.` });
+  } else if (['in-progress', 'review'].includes(task.stage) && !completing) {
+    // no profile chip on this board, but a card about to be launched still
+    // gets its launch check — in the tools, opening the same sheet
+    chips.push({ label: 'launch check', pre: '▸', cls: '', profile: true, face: false,
+      title: 'What a launch on this card would ride — branch, PR target, harness, '
+           + 'model, access and anything that stops it. Opening it starts nothing.' });
   }
   // what bench's own verification runs found on this card — a
   // destination like the rest of the row, opening the evidence. Present
@@ -4172,6 +4549,11 @@ function closeSheet() {
   $('#sheetwrap').innerHTML = '';
   // a place belongs to the sheet that was open: the next one opens at the top
   delete scrollMarks['v:sheet:doctor'];
+  delete scrollMarks['v:sheet:launch'];
+  // the configuration and launch checks give focus back to what opened them
+  const back = S.sheetReturn;
+  S.sheetReturn = null;
+  if (back && back.isConnected && back.focus) back.focus();
 }
 
 /* What merge & clean up would do for this card, in words, from the facts
@@ -4901,12 +5283,10 @@ function settingsOverview(page) {
         ? 'Write locations are intended, not enforced: nothing confines a run to them.'
         : '' },
     { label: 'Diagnostics', inspect: true, act: 'Check configuration',
-      state: report && report.summary.failed ? 'failed' : row.diagnostics.state,
-      value: report
-        ? (report.summary.failed ? report.summary.failed + ' failed' : 'Inspected')
-        : '',
-      tag: report ? null : ['dim', 'Not inspected'],
-      help: report ? report.summary.line
+      state: report && (report.summary.issues || []).length ? 'failed' : row.diagnostics.state,
+      value: report ? report.summary.headline : '',
+      tag: report ? (configStale(report) ? ['bad', 'Stale'] : null) : ['dim', 'Not inspected'],
+      help: report ? report.summary.scope
         : 'Read-only: no project program runs and nothing is spent.' },
     { label: 'Installation', section: 'installation', act: 'View installation',
       value: i.mode + ' · ' + i.version, problems: i.problems },
@@ -5648,28 +6028,29 @@ function lineDiff(before, after) {
 function settingsDiagnostics(page) {
   const d = page.diagnostics;
   const report = S.doctor && S.doctor.report;
+  // the same result the header's ⚕ sheet draws, from the same function
   const findings = report
-    ? (report.findings.length
-        ? report.findings.map(f => {
-            const cls = f.outcome === 'failed' ? 'bad'
-              : f.outcome === 'passed' ? 'ok' : 'dim';
-            return `<div class="srow"><span class="sname">${esc(f.name)}` +
-              `${f.intent ? ` · ${esc(f.intent)}` : ''}</span>` +
-              `<span class="sdetail">${esc(f.about)}<br>${esc(f.detail)}` +
-              (f.remedy ? `<br><b>Remedy:</b> ${esc(f.remedy)}` : '') +
-              `</span><span class="sright">` +
-              `<span class="sbadge ${cls}">${esc(f.outcome)}</span>` +
-              `<code title="${esc((d.evidence[f.evidence] || {}).proves || '')}">` +
-              `${esc(f.evidence)}</code>` +
-              (f.code ? `<code>${esc(f.code)}</code>` : '') + `</span></div>`;
-          }).join('')
-        : `<p>The inspection found nothing to report.</p>`)
+    ? configCheckBody(report, { purpose: S.settingsPurpose || null })
+    : S.doctorError
+      ? `<div class="cissue" role="alert"><b>The configuration check did not complete</b>` +
+        `<span>${esc(S.doctorError)}</span></div>`
+      : `<p class="cscope">Not checked yet.</p>`;
+  const purposes = report
+    ? `<div class="chiprow" role="group" aria-label="purpose">` +
+      ['', ...Object.keys(INTENT_LABEL)].map(key =>
+        `<button class="sb" ` +
+        `data-spurpose="${esc(key)}" aria-pressed="${key === (S.settingsPurpose || '')}">` +
+        `${key ? esc(INTENT_LABEL[key]) : 'All purposes'}</button>`).join('') + `</div>`
     : '';
   // One stage as a row: what it does, its side effects beside its control,
   // what it proves folded underneath, and whether this reading asked it.
   const stage = (row) => {
     const mode = d.modes[row.mode];
     const ran = report ? report.ran.includes(row.mode) : false;
+    const result = report
+      ? (report.summary.stages || []).find(s => s.mode === row.mode) : null;
+    const badge = result && ['failed', 'issues'].includes(result.state) ? 'bad'
+      : ran ? 'ok' : 'dim';
     const path = mode.uiPath || {};
     return `<div class="srow sline"><span class="sname">${esc(mode.label)}</span>` +
       `<span class="sval">${esc(mode.does)}` +
@@ -5686,8 +6067,9 @@ function settingsDiagnostics(page) {
       `<p><b>Proves:</b> ${esc(row.proves)}</p>` +
       `<p><b>Does not prove:</b> ${esc(row.doesNotProve)}</p></details>` +
       `</span><span class="sright">` +
-      `<span class="sbadge ${ran ? 'ok' : 'dim'}">` +
-      `${ran ? 'run in this reading' : 'not asked'}</span>` +
+      // each stage's own result, in the doctor's word for it
+      `<span class="sbadge ${badge}">` +
+      `${esc(result ? result.word : ran ? 'run in this reading' : 'not asked')}</span>` +
       (path.available && row.mode !== 'inspect'
         ? `<button class="sb" data-sdoctor="${esc(row.mode)}" ` +
           `aria-label="run ${esc(mode.label)}">` +
@@ -5705,19 +6087,16 @@ function settingsDiagnostics(page) {
   const execRows = d.coverage.filter(r => !isInspect(r) && offered(r));
   const handRows = d.coverage.filter(r => !isInspect(r) && !offered(r));
   return spanel('Check configuration',
-      report ? 'read ' + esc(fmtShort(report.generated)) : 'Not inspected',
-      `<p class="lead">Read-only: resolves the policy and reads the approved ` +
-      `inputs. No project program runs and nothing is spent.</p>` +
-      (report && report.summary.failed
-        ? `<p class="bad">${esc(report.summary.line)}</p>`
-        : report ? `<p>${esc(report.summary.line)}</p>` : '') +
+      report ? 'checked ' + esc(fmtShort(report.generated)) : 'Not inspected',
       `<div class="acts"><button class="sb primary" data-sinspect="1" ` +
       `aria-label="check configuration now">Check configuration</button></div>` +
-      findings + inspectRows.map(stage).join('')) +
-    spanel('Execution diagnostics', 'inspection is not execution',
-      `<p>${esc(d.unknownIsNotPassed)}</p>` +
-      `<p>Each of these runs real processes. It arms on the first click and ` +
-      `runs on the second, with its side effects written beside it.</p>` +
+      purposes + findings +
+      // what the read-only check is, for whoever wants it — not the lead
+      sref('What Check configuration does',
+        inspectRows.map(stage).join('') + `<p>${esc(d.unknownIsNotPassed)}</p>`)) +
+    spanel('Execution diagnostics', 'separate from the check above',
+      `<p>Each runs real processes. It arms on the first click and runs on ` +
+      `the second.</p>` +
       (execRows.length ? execRows.map(stage).join('')
         : `<p>No execution stage is offered from this page.</p>`)) +
     (handRows.length
@@ -5740,6 +6119,14 @@ function settingsDiagnostics(page) {
 
 function wireDiagnostics() {
   const body = $('#sbody');
+  body.querySelectorAll('[data-spurpose]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      S.settingsPurpose = btn.dataset.spurpose || null;
+      renderSettings();
+      const again = $('#sbody').querySelector(
+        `[data-spurpose="${CSS.escape(btn.dataset.spurpose)}"]`);
+      if (again) again.focus();
+    }));
   body.querySelectorAll('[data-sdoctor]').forEach(btn => {
     const mode = btn.dataset.sdoctor;
     const spec = (S.settings.page.diagnostics.modes || {})[mode] || {};
@@ -5764,12 +6151,17 @@ async function inspectConfiguration() {
     const data = await res.json();
     if (res.ok && data.doctor) {
       S.doctor = { at: Date.now(), report: data.doctor };
+      S.doctorError = null;
       renderDoctor();
     } else {
-      toast(data.error || 'the configuration could not be inspected', true);
+      S.doctor = null;
+      S.doctorError = data.error || 'the configuration could not be inspected';
+      toast(S.doctorError, true);
     }
   } catch (e) {
-    toast(e.message || 'the board could not be asked', true);
+    S.doctor = null;
+    S.doctorError = e.message || 'the board could not be asked';
+    toast(S.doctorError, true);
   } finally {
     S.doctorReading = false;
     renderSettings();
@@ -8391,12 +8783,12 @@ function renderFocus() {
   const readyPanel = S.doctor?.report
     ? readinessPanel(S.doctor.report, {
         intent: agent ? (agent.mode || 'work') : null,
-        title: 'Readiness', only: ['failed', 'deferred'] })
-    : `<div class="panel"><div class="phead"><span class="label">Readiness</span>` +
+        title: 'Configuration check' })
+    : `<div class="panel"><div class="phead"><span class="label">Configuration check</span>` +
       `<span class="r">—</span></div>` +
       `<div class="check-row none"><span class="glyph">·</span>` +
-      `<span class="name">reading the policy</span>` +
-      `<span class="state">what this board would grant, run and refuse` +
+      `<span class="name">checking the configuration</span>` +
+      `<span class="state">not checked yet` +
       `</span></div></div>`;
 
   $('#cgrid').innerHTML = nowPanel +
@@ -8908,6 +9300,23 @@ document.querySelectorAll('#views button').forEach(b =>
 $('#livechip').addEventListener('click', () => setView('flight'));
 /* Keyboard as well as pointer: the inspector is the one header chip that
    opens something, so it is reachable without a mouse. */
+/* Every labelled Copy control — a path in the configuration check, in a
+   sheet or in Settings. The value is the control's own attribute, never
+   read off the page around it. Clipboard access needs a secure context,
+   which a loopback board is; a refusal is said rather than swallowed. */
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest && e.target.closest('[data-copy]');
+  if (!btn) return;
+  e.stopPropagation();
+  try {
+    await navigator.clipboard.writeText(btn.dataset.copy);
+    btn.textContent = 'Copied';
+    toast('copied ' + clip(btn.dataset.copy, 60));
+  } catch (err) {
+    toast('the browser refused the clipboard — select the path and copy it by hand', true);
+  }
+});
+
 $('#doctorchip').addEventListener('click', () => doctorSheet(null));
 $('#doctorchip').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doctorSheet(null); }
