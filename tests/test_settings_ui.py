@@ -224,9 +224,13 @@ class TheWordCarriesTheMeaning(Source):
     def test_the_vocabulary_is_the_servers(self):
         """A word the server does not define would be a ninth state the
         page invented."""
-        words = set(re.findall(r"\.sw\.([a-z-]+)\{", self.html))
+        # two server vocabularies: Settings' eight, and the setup guide's
+        # eight (task 88) — each defined, with its meaning, on the server
+        import setupguide
+        words = set(re.findall(r"\.sw\.([a-z-]+)[{,]", self.html))
         self.assertTrue(words, "no state words are styled at all")
-        self.assertEqual(set(), words - set(settings.STATES),
+        self.assertEqual(set(), words - set(settings.STATES)
+                         - set(setupguide.STATUSES),
                          "the page styles a state the server does not name")
 
     def test_ungated_is_never_drawn_as_a_pass(self):
@@ -464,8 +468,9 @@ class ASurfaceOfItsOwn(Source):
         sections = re.search(r"const SETTINGS_SECTIONS = \[(.*?)\n\];",
                              self.html, re.S).group(1)
         rows = re.findall(r"\['(\w+)', '([^']+)', '(\w+)',\s*'([^']+)'\]", sections)
-        self.assertEqual(["overview", "verification", "acceptance", "agents",
-                          "access", "diagnostics", "installation", "policy"],
+        self.assertEqual(["overview", "setup", "verification", "acceptance",
+                          "agents", "access", "diagnostics", "installation",
+                          "policy"],
                          [r[0] for r in rows])
         self.assertIn("<h1 id=\"s-title\" tabindex=\"-1\">${esc(title)}</h1>",
                       self.body("renderSettingsNow"))
@@ -586,8 +591,9 @@ class TheBrowserCaseIsWellFormed(unittest.TestCase):
     def test_every_section_is_visited(self):
         src = self.CASE.read_text(encoding="utf-8")
         sections = eval(re.search(r"SECTIONS = (\[.*?\])", src, re.S).group(1))
-        self.assertEqual(["overview", "verification", "acceptance", "agents",
-                          "access", "diagnostics", "installation", "policy"],
+        self.assertEqual(["overview", "setup", "verification", "acceptance",
+                          "agents", "access", "diagnostics", "installation",
+                          "policy"],
                          sections)
 
     def test_no_two_screenshots_share_a_path(self):

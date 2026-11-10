@@ -28,6 +28,7 @@ import progress
 import refine
 import reviews
 import settings
+import setupguide
 import state
 import sync
 import taskfiles
@@ -564,6 +565,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"settings": settings.page()})
             except (ValueError, OSError) as exc:
                 self._json(409, {"error": str(exc)})
+        elif path == "/api/setup":
+            # The setup guide (task 88): six areas read from the same
+            # authorities Settings, the doctor and a launch ask. A GET that
+            # stays one — it runs no project program, launches no agent,
+            # repairs nothing and writes nothing.
+            try:
+                self._json(200, {"setup": setupguide.state()})
+            except (ValueError, OSError) as exc:
+                self._json(409, {"error": str(exc)})
         elif path == "/api/card/discussion":
             # A card's discussion, the jobs this board holds for it and
             # whether refining is available — read, never started: a GET
@@ -859,6 +869,32 @@ class Handler(BaseHTTPRequestHandler):
                     "override": result["override"],
                     "duplicate": result["duplicate"],
                     "gate": gates.public(result["decision"])})
+            elif path in ("/api/setup/decide", "/api/setup/task"):
+                # The setup guide's two mutations, behind the same door as
+                # a policy write: they write the work state's shared setup
+                # record (and, for a task, a card). Neither configures,
+                # runs a check or enables a gate — those stay in Settings.
+                problem = origin_problem(self.headers, config.PORT)
+                if problem:
+                    self._json(403, {"error": problem})
+                    return
+                payload = self._read_body()
+                try:
+                    result = (setupguide.decide(payload)
+                              if path == "/api/setup/decide"
+                              else setupguide.create_task(payload))
+                except setupguide.Refused as exc:
+                    self._json(exc.status, {"error": str(exc), **exc.extra})
+                    return
+                if not result.get("duplicate"):
+                    state.record_board_event({
+                        "kind": "other", "actor": "you",
+                        "summary": (f"setup: {result['area']} — "
+                                    + (result.get("decision") or
+                                       f"setup card {result.get('filename')}"
+                                       " proposed in backlog/"))})
+                    state.broadcast({"type": "board"})
+                self._json(200, {"result": result})
             elif path in ("/api/settings/validate", "/api/settings/preview",
                           "/api/settings/apply"):
                 # Three steps, three requests, on purpose. Validate and

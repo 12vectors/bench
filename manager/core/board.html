@@ -626,6 +626,31 @@
   .sw.failed,.sw.invalid,.sw.blocked,.sw.stale{color:var(--alarm);
     border-color:color-mix(in oklab, var(--alarm) 45%, transparent)}
   .sw.unsupported{color:var(--s-muted);border-style:dashed}
+  /* the setup guide's words (task 88): decided-later and not-applicable
+     are a person's choices, so they read dashed and quiet, never green */
+  .sw.tested{color:var(--s-ok);border-color:color-mix(in oklab, var(--s-ok) 45%, transparent)}
+  .sw.configured{color:var(--s-primary);
+    border-color:color-mix(in oklab, var(--s-primary) 40%, transparent)}
+  .sw.decision-needed{color:var(--s-warn);background:var(--s-warn-bg);
+    border-color:var(--s-warn-line)}
+  .sw.deferred,.sw.not-applicable,.sw.not-inspected{color:var(--s-muted);border-style:dashed}
+  #view-settings .setup-ahead{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+  #view-settings .setup-ahead h2{margin:0}
+  #view-settings .setup-facts{display:grid;gap:4px;margin:10px 0}
+  #view-settings .setup-facts div{display:grid;grid-template-columns:minmax(0,14em) minmax(0,1fr);gap:4px 12px}
+  #view-settings .setup-facts dt{color:var(--s-muted)}
+  #view-settings .setup-facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
+  #view-settings .setup-next,#view-settings .setup-decide{display:flex;flex-wrap:wrap;
+    align-items:center;gap:8px;margin-top:8px}
+  #view-settings .setup-cmd{display:block;flex-basis:100%;overflow-wrap:anywhere}
+  #view-settings .setup-decide input{flex:1 1 14em;min-width:0;padding:6px 8px;
+    border:1px solid var(--s-line-strong);border-radius:6px;background:var(--s-panel);
+    color:var(--s-ink);font:inherit}
+  #view-settings .setup-decide input:focus-visible{outline:2px solid var(--s-primary);outline-offset:2px}
+  #view-settings .setup-counts{display:flex;flex-wrap:wrap;gap:8px}
+  @media (max-width:560px){
+    #view-settings .setup-facts div{grid-template-columns:minmax(0,1fr)}
+  }
   .sw.configured-untested{color:var(--s-primary);
     border-color:color-mix(in oklab, var(--s-primary) 40%, transparent)}
   /* badges are facts and buttons are actions: a badge has no hover, is not
@@ -1270,6 +1295,10 @@
        everything that does something is armed inside it. -->
   <div class="livechip" id="doctorchip" role="button" tabindex="0"
        aria-label="open the configuration check"></div>
+  <!-- the setup guide's invitation (task 88): only while an area waits on
+       a decision, and only ever a way in — the board works without it -->
+  <div class="livechip" id="setupchip" role="button" tabindex="0" hidden
+       aria-label="open the setup guide"></div>
   <div class="livechip" id="syncchip" hidden style="cursor:default"></div>
   <div class="livechip" id="cmdchip" hidden style="cursor:default"></div>
   <div class="livechip" id="livechip" title="open Sessions"></div>
@@ -1642,6 +1671,9 @@ function connectStream() {
       scheduleRender();
     } else if (msg.type === 'board' || msg.type === 'agents') {
       loadState();
+      // another client's setup decision arrives as a board event; the
+      // guide re-reads so this page cannot act on a revision it lost
+      if (msg.type === 'board' && S.setup) fetchSetup(true);
     } else if (msg.type === 'progress') {
       // a run reported, ended, or had a report refused: its timeline is
       // re-read rather than patched, and the card's reading rides the state
@@ -4919,6 +4951,8 @@ function phaseMembers(t) {
 const SETTINGS_SECTIONS = [
   ['overview', 'Overview', 'Configure',
    'How this board is configured, and what to configure next.'],
+  ['setup', 'Setup guide', 'Configure',
+   'A proposed setup for this project: what was found, what to decide, and who does each part.'],
   ['verification', 'Checks', 'Configure',
    'The programs your team provides to check the work. Bench runs them and records what they found.'],
   ['acceptance', 'Merge rules', 'Configure',
@@ -5003,7 +5037,7 @@ function settingsFocusKey() {
   if (el.id) return '#' + CSS.escape(el.id);
   for (const a of ['ssection', 'sedit', 'sinspect', 'sdoctor', 'sdraft', 'drop', 'add',
                    'agtpl', 'agstep', 'agrender', 'agdiff', 'agreset', 'agcancel',
-                   'agrestore']) {
+                   'agrestore', 'setupact']) {
     if (el.dataset[a] === undefined) continue;
     const name = el.dataset.sname !== undefined
       ? `[data-sname="${CSS.escape(el.dataset.sname)}"]` : '';
@@ -5161,6 +5195,267 @@ function renderSettingsNow() {
   if (body.querySelector('#s-steps')) wirePolicyEditor(page);
   if (section === 'diagnostics') wireDiagnostics();
   if (section === 'agents') wireAgents(page);
+  if (section === 'setup') wireSetup();
+}
+
+/* ── the setup guide (task 88) ────────────────────────────────────────── */
+
+/* Six areas read from the same authorities Settings, the doctor and a
+   launch ask — `GET /api/setup`, which runs nothing and writes nothing.
+   The guide owns no configuration: every "configure" is a link to the
+   Settings section that already edits it. Its only writes are a person's
+   decision about an area and a proposed setup card, each carrying the
+   revision it was read at and a request identity kept until the answer
+   arrives, so a double click is one request and a stale page is refused.
+
+   No percentage anywhere: a count per status word, because configured is
+   not tested and a deferred area is not done. */
+const SETUP_OWNER = { you: 'You', agent: 'An agent, through a card', bench: 'Settings' };
+
+async function fetchSetup(force) {
+  if (S.setupFetching) return;
+  if (!force && S.setup) return;
+  S.setupFetching = true;
+  try {
+    const res = await fetch('/api/setup');
+    const data = await res.json();
+    if (res.ok && data.setup) { S.setup = data.setup; S.setupError = null; }
+    else S.setupError = data.error || 'the setup guide could not be read';
+  } catch (e) {
+    S.setupError = e.message || 'the board could not be asked';
+  } finally {
+    S.setupFetching = false;
+    renderSetupChip();
+    if (S.view === 'settings' && S.settingsSection === 'setup') renderSettings();
+  }
+}
+
+/* The invitation. Present while an area needs a decision, is blocked or
+   failed; it opens the guide and never stands between a person and the
+   board — dismissing it is simply not clicking it. */
+function renderSetupChip() {
+  const el = $('#setupchip');
+  const g = S.setup;
+  const open = g ? g.summary.open.length : 0;
+  el.hidden = !g || !g.summary.invite;
+  if (el.hidden) return;
+  el.setAttribute('aria-label', `open the setup guide — ${open} area` +
+    `${open === 1 ? '' : 's'} to settle`);
+  el.title = 'Setup guide — what was found, what to decide and who does it. ' +
+    'Opening it reads; nothing runs.';
+  el.innerHTML = `<span class="dot" style="background:var(--idle)"></span>` +
+    `<span>◇ set up</span><span class="mono">${open} to settle</span>`;
+}
+
+function openSetupGuide() {
+  S.settingsSection = 'setup';
+  setView('settings');
+  fetchSetup(true);
+  const h = $('#shead h1');
+  if (h) h.focus({ preventScroll: true });
+}
+
+function setupFacts(area) {
+  if (!area.facts.length) return '';
+  return `<dl class="setup-facts">` + area.facts.map(f =>
+    `<div><dt>${esc(f.label)}</dt><dd>` +
+    (f.local ? `<code>${esc(f.value)}</code>` : esc(f.value)) +
+    (f.status ? ' ' + stateWord(f.status, S.setup.statuses) : '') +
+    `</dd></div>`).join('') + `</dl>`;
+}
+
+function setupNext(area, readOnly) {
+  const n = area.next;
+  const who = `<span class="sbadge dim">${esc(SETUP_OWNER[n.owner] || n.owner)}</span>`;
+  let act = '';
+  if (n.kind === 'settings' && n.section) {
+    act = `<button class="sb link" data-ssection="${esc(n.section)}" ` +
+      `aria-label="${esc(n.label)} (opens ${esc(n.section)} settings)">${esc(n.label)}</button>`;
+  } else if (n.kind === 'task' && area.allowed.includes('create-task')) {
+    act = `<button class="sb primary" data-setupact="task:${esc(area.id)}" ` +
+      `aria-label="${esc(n.label)}"${readOnly ? ' disabled' : ''}>${esc(n.label)}</button>`;
+  } else {
+    act = `<span>${esc(n.label)}</span>`;
+  }
+  return `<div class="setup-next"><span class="sname">Next</span>${who}${act}` +
+    (n.command ? `<code class="setup-cmd">${esc(n.command)}</code>` : '') +
+    (n.detail ? `<p class="shelp">${esc(n.detail)}</p>` : '') + `</div>`;
+}
+
+function setupDecision(area, readOnly) {
+  const d = area.decision;
+  const parts = [];
+  if (d) {
+    parts.push(`<p class="setup-decided">${stateWord(d.status, S.setup.statuses)} ` +
+      `${esc(d.reason || '')} <span class="shelp">— ${esc(d.actor || 'unknown')}, ` +
+      `${esc(d.at || '')}</span></p>`);
+    if (d.stale) parts.push(`<p class="bad">The facts have changed since this ` +
+      `was decided. Revisit it: reopen, or decide again.</p>`);
+  }
+  if (area.task) {
+    parts.push(`<p>Setup card <b>#${esc(area.task.number)}</b> — ` +
+      `${esc(area.task.title || '')} <span class="shelp">(` +
+      `${esc(area.task.stage || 'not found on the board')})</span></p>`);
+  }
+  const can = area.allowed.filter(a => a !== 'create-task');
+  if (can.length && !readOnly) {
+    const choices = can.filter(a => a !== 'reopen');
+    parts.push(`<div class="setup-decide">` +
+      (choices.length || d ? `<label for="setup-reason-${esc(area.id)}">Reason</label>` +
+        `<input id="setup-reason-${esc(area.id)}" type="text" maxlength="500" ` +
+        `value="${esc((S.setupReasons || {})[area.id] || '')}" ` +
+        `placeholder="Why — kept with the decision">` : '') +
+      // a decision already made can be changed to the other one, or reopened
+      (d ? [d.status === 'deferred' ? 'not-applicable' : 'defer'].filter(c =>
+            c === 'defer' || area.canBeNotApplicable)
+         : choices).map(c =>
+        `<button class="sb" data-setupact="${esc(c)}:${esc(area.id)}" ` +
+        `aria-label="${c === 'defer' ? 'defer' : 'mark not applicable'}: ` +
+        `${esc(area.title)}">${c === 'defer' ? 'Defer' : 'Not applicable'}</button>`).join('') +
+      (can.includes('reopen') ? `<button class="sb link" data-setupact="reopen:${esc(area.id)}" ` +
+        `aria-label="reopen: ${esc(area.title)}">Reopen</button>` : '') +
+      `</div>`);
+  }
+  return parts.join('');
+}
+
+function settingsSetup() {
+  const g = S.setup;
+  if (!g) {
+    fetchSetup();
+    return `<div class="panel"><p class="${S.setupError ? 'bad' : ''}">` +
+      `${esc(S.setupError || 'Reading this project. Nothing is being run.')}</p></div>`;
+  }
+  const counts = Object.entries(g.summary.counts).filter(([, n]) => n);
+  const ro = g.readOnly;
+  const head = `<div class="panel setup-summary" role="status">` +
+    `<p class="lead">${g.summary.open.length
+      ? `<b>${g.summary.open.length} of ${g.areas.length} areas</b> need you or an agent.`
+      : 'Nothing here is waiting on a decision.'} ` +
+    `The board works normally meanwhile; nothing here is required to use it.</p>` +
+    `<p class="setup-counts">` + counts.map(([w, n]) =>
+      `<span>${stateWord(w, g.statuses)} <b>${n}</b></span>`).join(' ') + `</p>` +
+    `<p class="shelp">${esc(g.summary.noPercentage)}</p>` +
+    (ro ? `<p class="bad">${esc(ro)}</p>` : '') +
+    (g.summary.stale.length ? `<p class="bad">Stale decisions: ` +
+      `${esc(g.summary.stale.join(', '))} — the facts changed after they were made.</p>` : '') +
+    `<div class="acts"><button class="sb link" data-setupact="reread:all" ` +
+    `aria-label="re-read the setup guide">Re-read</button></div></div>`;
+  const interrupted = g.interrupted.length
+    ? `<div class="panel"><h2>Interrupted</h2>` + g.interrupted.map(op =>
+        `<p>${esc(op.kind)} on ${esc(op.area)}, started ${esc(op.at || '')}. ` +
+        `${esc(op.recovery)}</p>` + (op.kind === 'task'
+          ? `<div class="acts"><button class="sb" data-setupact="resume:${esc(op.request)}" ` +
+            `data-sname="${esc(op.area)}" aria-label="resume the interrupted ` +
+            `${esc(op.kind)} on ${esc(op.area)}">Resume</button></div>` : '')).join('') +
+      `</div>` : '';
+  const h = g.handoff || {};
+  const handoff = h.present
+    ? sref(`From the terminal setup${h.at ? ' · ' + h.at : ''}`,
+        `<p class="shelp">${esc(h.historical || h.problem || '')}</p>` +
+        (h.guide || []).map(i => `<p><b>${esc(i.title)}</b>` +
+          (i.area ? ` <span class="sbadge dim">${esc(i.area)}</span>` : '') +
+          `<br><span class="shelp">${esc(i.how)}</span></p>`).join('') +
+        (h.failed || []).map(o => `<p class="bad">${esc(o.summary || o.id)}: failed</p>`).join(''))
+    : '';
+  const areas = g.areas.map(a =>
+    `<section class="panel setup-area" id="setup-${esc(a.id)}" aria-labelledby="setup-h-${esc(a.id)}">` +
+    `<div class="setup-ahead"><h2 id="setup-h-${esc(a.id)}">${esc(a.title)}</h2>` +
+    stateWord(a.status, g.statuses) +
+    (a.status !== a.computed ? ` <span class="shelp">read now: ${esc(a.computed)}</span>` : '') +
+    `</div>` +
+    (a.problem ? `<p class="bad">${esc(a.problem)}</p>` : '') +
+    setupFacts(a) +
+    (a.recommendation ? `<p><b>Recommended.</b> ${esc(a.recommendation)}</p>` : '') +
+    (a.consequence ? `<p class="shelp">${esc(a.consequence)}</p>` : '') +
+    setupNext(a, ro) + setupDecision(a, ro) + `</section>`).join('');
+  const store = sref('Where this is kept, and what it shares',
+    `<p>${esc(g.storage.portable)}.</p><p>${esc(g.storage.local)}.</p>` +
+    `<p>Contract <code>${esc(g.kind)} v${esc(g.v)}</code>, revision ` +
+    `<code>${esc(g.revision)}</code>. ${esc(g.endpoints.read)}, ` +
+    `${esc(g.endpoints.decide)}, ${esc(g.endpoints.task)}.</p>`);
+  return head + interrupted + handoff + areas + store;
+}
+
+function setupRequestId(key) {
+  S.setupPending = S.setupPending || {};
+  if (!S.setupPending[key])
+    S.setupPending[key] = 'ui-' + Date.now().toString(36) + '-' +
+      Math.random().toString(36).slice(2, 10);
+  return S.setupPending[key];
+}
+
+async function setupPost(path, key, payload) {
+  const btn = document.querySelector(`[data-setupact="${CSS.escape(key)}"]`);
+  if (btn) { btn.classList.add('busy'); btn.disabled = true; }
+  try {
+    const res = await fetch(path, { method: 'POST', headers: SETTINGS_HEADERS,
+      body: JSON.stringify({ ...payload, request: setupRequestId(key),
+                             expected: S.setup.revision }) });
+    const data = await res.json();
+    if (res.ok) {
+      delete S.setupPending[key];
+      toast(data.result.filename
+        ? `setup card ${data.result.filename} proposed in backlog/ — nothing started`
+        : `recorded: ${payload.area} ${payload.decision}` +
+          (data.result.committed ? '' : ' (written, not committed)'));
+      if (payload.area && S.setupReasons) delete S.setupReasons[payload.area];
+    } else {
+      // a refused request is done with; the next attempt is a new request
+      delete S.setupPending[key];
+      toast(data.error || 'refused', true);
+    }
+  } catch (e) {
+    // no answer: keep the request identity, so trying again resumes
+    // rather than acting twice
+    toast((e.message || 'the board could not be asked') +
+      ' — try again; the same request resumes', true);
+  } finally {
+    await fetchSetup(true);
+  }
+}
+
+function wireSetup() {
+  const body = $('#sbody');
+  body.querySelectorAll('.setup-decide input').forEach(el =>
+    el.addEventListener('input', () => {
+      S.setupReasons = S.setupReasons || {};
+      S.setupReasons[el.id.replace('setup-reason-', '')] = el.value;
+    }));
+  body.querySelectorAll('[data-setupact]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.setupact;
+      const [act, target] = key.split(':');
+      if (act === 'reread') { fetchSetup(true); return; }
+      // a card costs nothing but it is a write: arm, then fire
+      if ((act === 'task' || act === 'resume') && !btn.classList.contains('armed')) {
+        btn.classList.add('armed');
+        btn.dataset.label = btn.textContent;
+        btn.textContent = act === 'task' ? 'Create it — click again' : 'Resume — click again';
+        setTimeout(() => {
+          if (btn.isConnected && btn.classList.contains('armed')) {
+            btn.classList.remove('armed'); btn.textContent = btn.dataset.label;
+          }
+        }, 4000);
+        return;
+      }
+      if (act === 'task') {
+        setupPost('/api/setup/task', key, { area: target });
+      } else if (act === 'resume') {
+        S.setupPending = S.setupPending || {};
+        S.setupPending[key] = target;       // the interrupted request's own identity
+        setupPost('/api/setup/task', key, { area: btn.dataset.sname });
+      } else {
+        const reason = ((S.setupReasons || {})[target] || '').trim();
+        if (act !== 'reopen' && reason.length < 3) {
+          toast('say why first — the reason is kept with the decision', true);
+          const input = $('#setup-reason-' + target);
+          if (input) input.focus();
+          return;
+        }
+        setupPost('/api/setup/decide', key, { area: target, decision: act, reason });
+      }
+    }));
 }
 
 async function fetchSettings(force) {
@@ -5189,6 +5484,7 @@ async function fetchSettings(force) {
 }
 
 function settingsSection(key, page) {
+  if (key === 'setup') return settingsSetup();
   if (key === 'verification') return settingsVerification(page);
   if (key === 'acceptance') return settingsAcceptance(page);
   if (key === 'access') return settingsAccess(page);
@@ -9487,6 +9783,10 @@ $('#doctorchip').addEventListener('click', () => doctorSheet(null));
 $('#doctorchip').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doctorSheet(null); }
 });
+$('#setupchip').addEventListener('click', openSetupGuide);
+$('#setupchip').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSetupGuide(); }
+});
 $('#themebtn').addEventListener('click', () => { S.dark = !S.dark; applyTheme(); });
 $('#focussel').addEventListener('change', (e) => { S.focusSid = e.target.value; render(); });
 $('#refresh').addEventListener('click', loadState);
@@ -9598,6 +9898,9 @@ setInterval(() => {
 
 applyTheme();
 loadState().then(connectStream);
+// the setup guide is read once on load for the header's invitation; the
+// terminal handoff names `#setup`, which opens the guide itself
+fetchSetup().then(() => { if (location.hash === '#setup') openSetupGuide(); });
 </script>
 </body>
 </html>

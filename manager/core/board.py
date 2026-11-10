@@ -4,6 +4,7 @@
     python3 .task-manager/manager/board.py            # serve on :26071, open a browser
     python3 .task-manager/manager/board.py --port 9000 --no-open
     python3 .task-manager/manager/board.py --doctor    # readiness, then exit
+    python3 .task-manager/manager/board.py --setup-guide [--json]   # setup state
 
 The manager sits cleanly on top of the tasks/ directory: it reads and moves
 task files, but the tasks work as a plain folder kanban without it. See
@@ -88,7 +89,16 @@ def main() -> None:
     parser.add_argument("--doctor", action="store_true",
                         help="print what this board would grant, run and "
                              "refuse, and exit (see --doctor --help)")
+    parser.add_argument("--setup-guide", action="store_true",
+                        help="print the project setup guide (the same "
+                             "reading as the browser's), or record a "
+                             "decision with it; see --setup-guide --help")
     argv = sys.argv[1:]
+    if "--setup-guide" in argv:
+        refuse_broken_layout()
+        import setupguide
+        raise SystemExit(setupguide.cli([a for a in argv
+                                         if a != "--setup-guide"]))
     if "--doctor" in argv:
         refuse_broken_layout()
         raise SystemExit(doctor.cli([a for a in argv if a != "--doctor"]))

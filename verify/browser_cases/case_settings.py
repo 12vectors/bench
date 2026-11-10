@@ -24,7 +24,7 @@ import unittest
 
 import benchverify as bv
 
-SECTIONS = ["overview", "verification", "acceptance", "agents", "access",
+SECTIONS = ["overview", "setup", "verification", "acceptance", "agents", "access",
             "diagnostics", "installation", "policy"]
 # 390px is the narrow layout the card names; 640x400 is 1280x800 at 200%
 # zoom in CSS pixels (not actual browser zoom — see verify/README.md)
@@ -652,7 +652,8 @@ class SurfaceThemesAndHitAreas(unittest.TestCase):
         self.assertEqual("Merge rules", b.eval("document.querySelector('#shead h1').textContent"))
         S["metrics"]["settingsSidebarMarks"] = marks
         # and the keyboard walks the sidebar in order, with a visible ring
-        b.eval("document.querySelector('#snav [data-ssection=\"overview\"]').focus()")
+        # (the setup guide, task 88, sits between Overview and Checks)
+        b.eval("document.querySelector('#snav [data-ssection=\"setup\"]').focus()")
         b.key("Tab")
         self.assertEqual("verification", b.eval("document.activeElement.dataset.ssection"))
         ring = b.eval("getComputedStyle(document.activeElement).outlineStyle")
