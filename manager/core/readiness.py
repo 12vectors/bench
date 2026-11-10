@@ -600,7 +600,7 @@ def state() -> dict:
     doc = profiles.document()
     states = check_states(doc)
     return {
-        "kind": KIND, "v": VERSION, "generated": time.time(),
+        "kind": KIND, "v": VERSION,
         "revision": setupguide.revision(),
         "policyRevision": settings.revision_of(settings.document_target()),
         "discovery": discover(),
