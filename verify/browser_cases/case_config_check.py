@@ -409,7 +409,7 @@ class SettingsEntry(unittest.TestCase):
         S["metrics"]["settingsConfigCheck"] = found
 
 
-class LaunchCheck(_Off):
+class LaunchCheck(unittest.TestCase):
     def test_an_in_progress_card_opens_on_implementation_with_its_plan(self):
         b = load(1440, 900)
         open_launch(CARD)
