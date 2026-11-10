@@ -1051,6 +1051,37 @@
   #drawer .rpt>summary .ameta{margin-left:auto}
   #drawer .rpt .rtext{margin:0;padding:6px 12px 10px;font-family:var(--mono);font-size:11.5px;
     line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;max-height:none;color:var(--muted)}
+  /* a filed report, read as a document (task 83): proportional prose at a
+     reading measure, monospace only for code, and every token the board's
+     own — so both themes follow. Wide code and tables scroll in place. */
+  #drawer .rpt .rtext.rmd{font-family:var(--sans);font-size:13px;line-height:1.6;white-space:normal;
+    overflow-wrap:break-word;color:var(--text);padding:2px 14px 8px;max-width:78ch;min-width:0}
+  #drawer .rmd>:first-child{margin-top:4px}
+  #drawer .rmd p,#drawer .rmd li{font-size:13px;color:var(--text)}
+  #drawer .rmd p{margin:0 0 10px}
+  #drawer .rmd ul,#drawer .rmd ol{margin:0 0 10px;padding-left:22px}
+  #drawer .rmd li>ul,#drawer .rmd li>ol{margin:4px 0 2px}
+  #drawer .rmd li::marker{color:var(--dim)}
+  #drawer .rmd h4,#drawer .rmd h5,#drawer .rmd h6{color:var(--text);font-weight:600;line-height:1.35;margin:16px 0 6px}
+  #drawer .rmd h4{font-size:14.5px}
+  #drawer .rmd h5{font-size:13.5px}
+  #drawer .rmd h6{font-size:13px;color:var(--muted)}
+  #drawer .rmd strong{color:var(--text);font-weight:600}
+  #drawer .rmd a{color:var(--accent);text-decoration:underline;text-underline-offset:2px;overflow-wrap:anywhere}
+  #drawer .rmd a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+  #drawer .rmd code{font-size:12px;overflow-wrap:anywhere;border:1px solid var(--line)}
+  #drawer .rmd pre{font-family:var(--mono);font-size:12px;line-height:1.5;margin:0 0 10px;
+    white-space:pre;max-width:100%;border:1px solid var(--line)}
+  #drawer .rmd pre code{border:0;overflow-wrap:normal;font-size:inherit}
+  #drawer .rmd blockquote{margin:0 0 10px;color:var(--muted)}
+  #drawer .rmd .tablewrap{margin:0 0 10px;max-width:100%}
+  #drawer .rmd td{color:var(--text)}
+  #drawer .rmd td code{white-space:nowrap}
+  #drawer .rsrc{margin:0 14px 10px;font-size:12px}
+  #drawer .rsrc>summary{cursor:pointer;color:var(--dim);font-size:11.5px;width:max-content}
+  #drawer .rsrc .racts{margin:6px 0}
+  #drawer .rsrc .rraw{margin:0;padding:8px 10px;background:var(--sunken);border-radius:8px;
+    font-family:var(--mono);font-size:11.5px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted)}
   #drawer .chain{display:flex;flex-direction:column;gap:4px;margin:0;padding:0;list-style:none}
   #drawer .chain li{font-size:12px;border-left:2px solid var(--line);padding-left:8px;
     overflow-wrap:anywhere}
@@ -7015,6 +7046,23 @@ function findingHtml(t, f, acc) {
     `</div></div></details>`;
 }
 
+/* A report an agent filed — a review round, a work report, a PR update,
+   a relevance review — drawn as the document it is (task 83): md(), the
+   one renderer the brief uses, with headings nested under the section's
+   own. It is presentation only. The text is the card's, byte for byte;
+   nothing here reads a verdict, a finding or an acceptance out of its
+   prose, and the round's reviewer, revision, date and verdict stay in the
+   summary that holds it. The original Markdown is one fold away, to read
+   or copy exactly as filed. */
+function reportHtml(t, text, key) {
+  const src = `src:${key}`;
+  return `<div class="rtext rmd dbody">${md(text, { base: 4 })}</div>` +
+    `<details class="rsrc" data-keep="${esc(src)}"${S.accOpen[`${t.file}:${src}`] ? ' open' : ''}>` +
+    `<summary>Original Markdown</summary>` +
+    `<div class="racts"><button type="button" class="dlink rcopy">Copy original Markdown</button></div>` +
+    `<pre class="rraw" tabindex="0" aria-label="Original Markdown of this report">${esc(text)}</pre></details>`;
+}
+
 function reviewsHtml(t, acc) {
   if (!acc) return `<p class="dnote">reading reviews…</p>`;
   const live = acc.findings.filter(f => f.state !== 'resolved');
@@ -7022,7 +7070,7 @@ function reviewsHtml(t, acc) {
   const rounds = [...acc.rounds].reverse();
   const roundHtml = (r, open) => `<details class="rpt" data-keep="${esc(r.id)}"${(S.accOpen[`${t.file}:${r.id}`] ?? open) ? ' open' : ''}>` +
     `<summary><b>${esc(roundLine(r))}</b>${sinceRound(r, acc) ? `<span class="dnote">${esc(sinceRound(r, acc))}</span>` : ''}` +
-    `<span class="ameta">${esc(r.id)}</span></summary><pre class="rtext">${esc(r.report)}</pre></details>`;
+    `<span class="ameta">${esc(r.id)}</span></summary>${reportHtml(t, r.report, r.id)}</details>`;
   const fc = acc.findingCounts;
   return `<p class="acount"><b>${fc.open}</b> open · <b>${fc['fix-reported']}</b> fix reported · <b>${fc.resolved}</b> resolved</p>` +
     (live.length ? live.map(f => findingHtml(t, f, acc)).join('')
@@ -7077,7 +7125,7 @@ function activityHtml(t, acc) {
   const row = (it) => it.report
     ? `<details class="rpt" data-keep="${esc(it.key)}"${S.accOpen[`${t.file}:${it.key}`] ? ' open' : ''}><summary><b>${esc(it.src)}</b>` +
       `<span class="ameta">${esc(it.at ? new Date(it.at).toLocaleString() : '')}</span></summary>` +
-      `<pre class="rtext">${esc(it.report)}</pre></details>`
+      `${reportHtml(t, it.report, it.key)}</details>`
     : `<div class="tl"><time>${esc(it.at ? new Date(it.at).toLocaleString() : '—')}</time>` +
       `<span><span class="src">${esc(it.src)}</span><div class="tx">${esc(it.text)}</div></span></div>`;
   return `<p class="dnote">Newest first: progress the runs reported (labelled as theirs), work reports and reviews, comments and decisions, and acceptance and finding records. Raw reads, edits and commands are technical detail, in the Sessions view.</p>` +
@@ -7121,6 +7169,22 @@ function wireDetail(t) {
   // open/closed folds and unsent text survive a live redraw
   body.querySelectorAll('details[data-keep]').forEach(d => d.addEventListener('toggle', () => {
     S.accOpen[`${t.file}:${d.dataset.keep}`] = d.open;
+  }));
+  // copies the report as filed; where the clipboard is refused, the text
+  // is selected instead so the reader's own copy takes it
+  body.querySelectorAll('.rcopy').forEach(btn => btn.addEventListener('click', async () => {
+    const raw = btn.closest('.rsrc').querySelector('.rraw');
+    try {
+      await navigator.clipboard.writeText(raw.textContent);
+      toast('original Markdown copied');
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(raw);
+      const sel = getSelection();
+      sel.removeAllRanges(); sel.addRange(range);
+      raw.focus();
+      toast('selected — copy it with your keyboard');
+    }
   }));
   body.querySelectorAll('.dsec textarea[id], .dsec input[id], .dsec select[id]').forEach(el => {
     if (el.id === 'commentbox') return;
@@ -8801,12 +8865,13 @@ async function openExtra(dir, name) {
 // the output are the ones written here. Nothing it emits loads anything:
 // there are no images, and a link is followed only when a person clicks it.
 //
-// `opts.base` shifts heading levels so a document drawn under the page's
-// own headings nests beneath them (a report's `#` is an h4 under the
-// drawer's h3) — six stays the deepest.
+// `opts.base` is the level a document's own top heading is drawn at, so
+// one drawn under the page's headings nests beneath them: a report whose
+// headings start at `##` has those as h4s under the drawer's h3, and the
+// order below them is kept — six stays the deepest. Without it a `#` is
+// an h1, as a task file's title is.
 function md(src, opts = {}) {
-  const shift = Math.max(0, (opts.base || 1) - 1);
-  const hn = (n) => Math.min(6, n + shift);
+  let hn = (n) => n;
   // the private-use characters mark held spans; nothing written may forge one
   const source = esc(String(src ?? '').replace(/\r\n?/g, '\n').replace(/[-]/g, ''));
 
@@ -8825,8 +8890,9 @@ function md(src, opts = {}) {
       .replace(/(^|[\s(])_([^_\s][^_\n]*?)_(?=[\s).,;:!?]|$)/g, '$1<em>$2</em>');
     // code first, and held: nothing inside backticks is emphasis or a link
     t = t.replace(/`([^`]+)`/g, (m, c) => hold(`<code>${c}</code>`));
-    t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, href) =>
-      SAFE_HREF.test(href.replace(/&amp;/g, '&'))
+    // an image is never fetched: `![alt](src)` is drawn as a link to it
+    t = t.replace(/!?\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, href) =>
+      SAFE_HREF.test(href.replace(/&amp;/g, '&')) && !/&amp;#/.test(href)
         ? hold(`<a href="${href}" rel="noopener noreferrer">${emph(label)}</a>`) : label);
     // a bare web address is a link too, less its trailing punctuation
     t = t.replace(/https?:\/\/(?:(?!&(?:quot|lt|gt);)[^\s<])+/g, (url) => {
@@ -8933,6 +8999,10 @@ function md(src, opts = {}) {
       if (prose) flow.push(''); mode = 'quote';
     } else if (mode === null) mode = 'text';
     flow.push(line);
+  }
+  if (opts.base) {
+    const top = Math.min(7, ...flow.filter(l => HEADING.test(l)).map(l => l.match(/^#+/)[0].length));
+    hn = (n) => Math.min(6, n - top + opts.base);
   }
 
   const out = [];
