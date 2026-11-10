@@ -52,7 +52,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports / templates → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → doctor → events / github / drive / sync → agentsettings → settings → setupguide → agents → setuptasks → readiness → phases → refine → watch / httpd → board.py
+config → state / reports / templates → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → doctor → events / github / drive / sync → agentsettings → settings → setupguide → agents → setuptasks → readiness → previews → phases → refine → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -126,6 +126,12 @@ config → state / reports / templates → taskfiles → plans / profiles → re
   and a person's review — bound to the check's identity — as the only
   thing that makes a check *ready*. The bootstrap condition it reports
   changes no gate
+- `previews.py` — application previews: discovery that proposes and runs
+  nothing, a machine-local configuration refused or called out where it
+  is read, and Prepare, Start, Check readiness and Stop as separate
+  explicit acts. A started preview is a drive (`drive.py` takes its launch
+  spec), bound to its source, ready only when its check answers, and
+  stopped and re-adopted only when it is provably bench's own group
 - `phases.py` — a phase run: its own branch, its cards merged into it one
   at a time. A beat, not an agent; it holds no registry of where a phase is
 - `refine.py` — refining a card on the board: comments, the one
@@ -180,7 +186,10 @@ project's driver — `local/driver/start`, an executable the board runs and
 owns: refuse fast with a printed reason, print `DRIVE URL: <url>` when up,
 run until parked (SIGTERM). No driver → the chip says so and the tooltip
 explains what to create; `core/driver.example/` documents the contract.
-One drive at a time; **park** takes it down.
+One drive at a time; **park** takes it down. A configured preview from the
+setup guide rides the same lifecycle, adding source binding, a readiness
+check and owned-only cleanup (see "Application previews: configure,
+prepare, start, check, stop").
 
 ## The activity bar and the archive
 
@@ -3015,6 +3024,114 @@ the rules you activated.
 behind the same door as a policy write. Register and activate return a
 `document` and its `revision` for `POST /api/settings/apply`, which is the
 only writer of the policy.
+
+### Application previews: configure, prepare, start, check, stop
+
+A start script in `package.json` is not a working preview. The guide's
+**Application preview** panel (`previews.py`) turns one into a preview you
+can trust by keeping five acts apart, each its own control:
+
+| act | what it does | runs project code | writes |
+| --- | --- | --- | --- |
+| **Configure** | validates a draft of `manager/local/preview.json` and saves it on an armed click | no | that one machine-local file |
+| **Prepare** | runs the declared preparation steps (dependencies, a disposable fixture) in the card's worktree, each in its own process group, cancellable | **yes** | what the steps write, and a preparation record |
+| **Start preview** | launches the configured command in the card's worktree on a loopback port bench checked was free | **yes** | what the app writes, a log, the drive record |
+| **Check readiness** | asks the configured path over loopback, now | no | nothing |
+| **Stop** | SIGTERM to the group bench started, SIGKILL after its grace period, then reports what is left | no | the drive record |
+
+Discovery is not an act. It reads the application's files through the
+setup cards' own inspection (`setuptasks.inspect`) and **proposes**: start
+commands with port hints, a dependency step, environment names from an
+`.env.example` (secrets marked as references, values never read), and data
+prerequisites. Nothing is run, installed or started by reading the guide,
+`GET /api/setup` or `GET /api/preview`.
+
+**It rides the drive.** A started preview *is* a drive. `drive.start`
+takes a launch spec bench built instead of the driver. That gives one
+preview or drive at a time, one process group, one log, SIGTERM to park and
+re-adoption after a restart. A board with no preview configuration behaves
+exactly as before. The ⛭ chip, the driver contract and `DRIVE URL:` are
+unchanged. The spec adds only what the guide needs:
+
+- **Source binding.** The commit, branch and a digest of uncommitted work
+  are recorded at start, with the configuration's revision. A later commit,
+  an edit or a changed configuration makes the preview read `stale`, with
+  the reason. The old process is never relabelled as current. A preparation
+  is bound the same way: Start refuses one that is not current (`prepare
+  first: …`). Start does not run the preparation steps itself.
+- **Readiness means an answer.** `ready` means the configured path answered
+  with the configured status, and with the configured text when one is
+  set. A status code alone is called out (`readiness-shallow`), because any
+  server on that port would pass it. A process that prints a line is not
+  ready.
+- **Ownership.** The child carries an owner token. A restarted board
+  re-adopts a preview only when `/proc` shows that token, then asks
+  readiness again (`reconnecting`) before saying `ready`. A group it cannot
+  prove is its own is left alone and never signalled. Stop, a readiness
+  timeout and an exit all signal only that one group.
+- **Honest endings.** `unready` (the timeout passed; bench stopped its
+  group), `failed` (it exited before it was ready, with its exit code and
+  last line), `exited` (it exited by itself after being ready) and
+  `stopped`. Each records `cleanup`: whether the group is gone, and whether
+  the port is released or held by something bench did not start, which is
+  then left alone.
+
+**What a configuration may say**, checked where it is read and refused
+with a code and a remedy: one program per command (no `&&`, pipe,
+redirection, substitution or background `&`), named on PATH or by absolute
+path; `{port}` and `{host}` as the only placeholders; `host` loopback and
+`network` `"loopback"`; no `0.0.0.0`, bare `--host`, `--public`/`--share`,
+tunnel programs (ngrok, cloudflared, ssh, socat, …) or safety-bypass flags
+(`--no-sandbox`, `--disable-web-security`, …); no credential written as a
+value (`literal-secret`), no publication or agent credential referenced
+(`credential-reference`), no `*_ENV=production` (`production-default`), and
+no migration, seed or reset step without `"data": "disposable"`
+(`destructive-undeclared`). Remote browser or service access is not
+offered. It is provisioned separately, outside bench. Four things are
+**called out** rather than refused: an external service URL, a step that
+uses the network, a declared-disposable data step and a shallow readiness
+check. Saving needs each of them acknowledged by code, so the risk is read
+before approval.
+
+**Secrets** are references (`{"secret": "NAME"}`), resolved at Prepare and
+Start from `manager/local/preview.secrets` or the board's environment.
+Bench refuses to read that file while group or others can read it. A
+missing reference refuses with its name and nothing run. Values reach only
+the preview's environment. Publication and agent credentials, `AGENT_*`
+and the board's own address are removed by name. Log lines are scrubbed
+when served, and each log is rewritten scrubbed once its process is gone.
+A scrubber is not a proof, and the panel says so.
+
+**Port conflicts and dependencies.** `"port": "auto"` picks a free
+loopback port. A fixed port held by anything is refused (`port-in-use`),
+and nothing is stopped. A program not on PATH is refused
+(`unavailable-dependency`) before anything runs. A preparation step that
+fails reads `prepare-failed` with its tail, and the preview is not started.
+
+**Disposable data.** `fixture` names the preparation step that loads it.
+When the project has service or data configuration and no fixture, the
+area says so, and the fixtures setup card (#89) is the way to get one.
+
+**Not applicable.** For a library, a CLI or infrastructure, discovery finds
+nothing to serve and suggests a smoke check. Marking the area not
+applicable takes a reason and, optionally, an `alternative`: a registered
+named check (`{"check": "cli-smoke"}`) or a card (`{"task": "42"}`).
+Either is validated, and stored in `setup/decisions.json` with the
+decision.
+
+The area reads `configured` once the configuration is valid. It reads
+`tested` only after a preview of the current configuration reached ready
+and stopped with its group gone, and `failed` when the last one did not.
+Browser automation is not assumed from an HTTP answer. A UI smoke test is
+its own setup card and named check.
+
+`GET /api/preview` (also under `applicationPreview` in `GET /api/setup`)
+and `GET /api/preview/log` read. `POST /api/preview/{validate, configure,
+prepare, cancel, start, check, stop}` sit behind the policy door. Prepare
+and start also need `"approve": true`, and configure, prepare and start
+carry the configuration revision the page read (`expected`), so a stale
+page is refused. Records are machine-local under
+`manager/local/state/preview/`.
 
 ## Pull requests
 
