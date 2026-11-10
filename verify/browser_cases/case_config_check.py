@@ -474,7 +474,10 @@ class LaunchCheck(unittest.TestCase):
                                     "390x844": (390, 844, None),
                                     "1280x800@200%": (1280, 800, 2)}.items():
                 b = load(w, h, zoom=z)
-                open_launch(f"{STACKED}.md")
+                try:
+                    open_launch(f"{STACKED}.md")
+                except bv.CheckFailed as exc:  # PROBE: exit 2 marks opening
+                    raise RuntimeError(f"PROBE open {name}: {exc}")
                 r = rows()
                 m = measure([DIALOG, f"{DIALOG} .stitle"])
                 narrow = no_narrow_columns(m["viewport"]["width"])
