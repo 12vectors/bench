@@ -152,6 +152,7 @@ class _Board(unittest.TestCase):
                                                      encoding="utf-8")
         self.patch(REPO=self.app, TASKS=tasks, LOCAL=local, ADAPTER="fake",
                    WORK_SETTING=str(self.work) if self.external else "",
+                   EXTERNAL=self.external,
                    WORKTREES=self.tmp / "worktrees",
                    AGENT_DIR=self.tmp / "agent", SESSIONS_DIR=self.tmp / "sessions",
                    PLANS_DIR=self.tmp / "plans", MANIFESTS_DIR=self.tmp / "manifests",
