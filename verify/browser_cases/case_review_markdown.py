@@ -96,24 +96,6 @@ CONTRAST = """((fgEl) => {
 })"""
 
 
-DIAG = Path("/home/dev/12v/bench/worktrees/83-render-reviews-with-readable-themed-markdown/.diag-83.txt")
-
-
-def diag(fn):
-    import functools, traceback
-    @functools.wraps(fn)
-    def run(self):
-        try:
-            fn(self)
-            with DIAG.open("a") as f:
-                f.write(f"PASS {fn.__name__}\n")
-        except BaseException:
-            with DIAG.open("a") as f:
-                f.write(f"FAIL {fn.__name__}\n{traceback.format_exc()}\n")
-            raise
-    return run
-
-
 class ReviewMarkdown(unittest.TestCase):
 
     def setUp(self):
@@ -180,7 +162,6 @@ class ReviewMarkdown(unittest.TestCase):
                           " pre.textContent = body.parentElement.querySelector('.rraw').textContent;"
                           " body.dataset.was = '1'; body.replaceWith(pre); })()")
 
-    @diag
     def test_the_screenshot_case_reads_as_a_document(self):
         b = S["browser"]
         before_bytes = self.card.read_bytes()
@@ -287,7 +268,6 @@ class ReviewMarkdown(unittest.TestCase):
         self.assertEqual(foreign, [], "a report made the page fetch from elsewhere")
         self.assertEqual(self.card.read_bytes(), before_bytes, "reading the card wrote to it")
 
-    @diag
     def test_narrow_zoom_and_a_live_update(self):
         b = S["browser"]
         for where, args in (("390x844", dict(width=390, height=844)),

@@ -59,8 +59,6 @@ class Result(unittest.TextTestResult):
 
     def addFailure(self, test, err):
         super().addFailure(test, err)
-        with open("/home/dev/12v/bench/worktrees/83-render-reviews-with-readable-themed-markdown/.diag-83.txt", "a") as f:  # PROBE
-            f.write(f"FAIL {test.id()}\n{self._exc_info_to_string(err, test)}\n")
         self.outcomes.append({"case": test.id(), "outcome": "failed",
                               "detail": str(err[1])[:2000]})
 
