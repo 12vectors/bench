@@ -684,7 +684,8 @@ def _area(area: str, decisions: dict, tasks: dict) -> dict:
                                "at", "fingerprint")},
                              stale=decision.get("fingerprint") != fingerprint)
                         if decision else None),
-           "task": task, "allowed": allowed}
+           "task": task, "allowed": allowed,
+           "canBeNotApplicable": area in NOT_APPLICABLE_OK}
     return out
 
 

@@ -1039,6 +1039,9 @@ def handoff(status: str, found: dict, resolved: dict | None,
             "board": url,
             "then": "Open the board, then the ⚕ configuration chip in its "
                     "header; Settings holds the rest of the guide.",
+            # task 88: the installed guide that continues this handoff —
+            # the same reading `board.py --setup-guide` prints
+            "setup": url + "#setup",
             "docs": DOCS_URL,
         },
         "redaction": "No credential, token or environment value is "
@@ -1117,6 +1120,8 @@ def print_human(doc: dict, found: dict | None, command: str) -> None:
         say(f"board: {doc['board']['url']}  (start it with "
             f"{doc['board']['start']})")
         say(f"handoff: {HANDOFF_FILE}")
+        say(f"setup guide: {doc['continuation']['setup']}  (or "
+            f"{CORE / 'board.py'} --setup-guide)")
     say(f"guide: {doc['continuation']['docs']}")
 
 

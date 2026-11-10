@@ -24,7 +24,7 @@ import unittest
 
 import benchverify as bv
 
-SECTIONS = ["overview", "verification", "acceptance", "agents", "access",
+SECTIONS = ["overview", "setup", "verification", "acceptance", "agents", "access",
             "diagnostics", "installation", "policy"]
 # 390px is the narrow layout the card names; 640x400 is 1280x800 at 200%
 # zoom in CSS pixels (not actual browser zoom — see verify/README.md)
