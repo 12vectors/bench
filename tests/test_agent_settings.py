@@ -200,14 +200,22 @@ class PerPurposeHarnesses(AgentCase):
         self.assertEqual(page["work"]["effective"]["adapter"]["name"], "alpha")
 
     def test_work_and_review_launch_on_their_own_harness_and_model(self):
-        agents.start_agent(CARD, "in-progress")
+        record = agents.start_agent(CARD, "in-progress")
+        # The launch file is written before the worker exits. Wait for the
+        # lifecycle to finish before starting another agent on the same card.
+        self.assertTrue(wait_for(
+            lambda: state.AGENTS[record["id"]]["status"] != "running"),
+            "the work stub never finished")
         work = self.launched("alpha", "work")
         self.assertEqual(work["AGENT_MODEL"], "m-default")
         self.assertEqual(work["harness"], "alpha")
         # the agent settings themselves never travel
         self.assertFalse([k for k in work if k in config.AGENT_KEYS], work.keys())
         self.write(card("67 — Resolve execution profiles"), stage="to-do")
-        agents.start_review(CARD, "to-do")
+        review_record = agents.start_review(CARD, "to-do")
+        self.assertTrue(wait_for(
+            lambda: state.AGENTS[review_record["id"]]["status"] != "running"),
+            "the review stub never finished")
         review = self.launched("beta", "review")
         self.assertEqual(review["AGENT_MODEL"], "m-review")
 
