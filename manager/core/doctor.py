@@ -1478,7 +1478,7 @@ def real_agent(approved: bool = False) -> list[dict]:
                 intent=probe["intent"],
                 remedy=("Ask for it explicitly: `board.py --doctor "
                         "--real-agent --approve-real-agent`, or the armed "
-                        "button in the readiness inspector. It is never "
+                        "button in the Configuration check. It is never "
                         "implied by any other mode.")))
         rows.append(_adjacent_reads_row())
         return rows

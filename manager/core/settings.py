@@ -1132,10 +1132,12 @@ _MODE_PATHS = {
                 "approval": None},
     "conformance": {"available": True,
                     "endpoint": "POST /api/doctor/run",
-                    "how": "an armed action in the readiness inspector",
+                    "how": "an armed action here and in the ⚕ "
+                           "Configuration check",
                     "approval": "a second, deliberate click"},
     "runtime": {"available": True, "endpoint": "POST /api/doctor/run",
-                "how": "an armed action in the readiness inspector",
+                "how": "an armed action here and in the ⚕ "
+                       "Configuration check",
                 "approval": "a second, deliberate click"},
     "real-agent": {"available": False, "endpoint": None,
                    "how": "python3 manager/core/board.py --doctor "

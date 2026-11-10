@@ -797,7 +797,7 @@ it, and closing the detail view returns focus to the card. Board and
 Phases draw the same card.
 
 The header carries one more chip, and unlike the sync and phase chips it
-is always there: **⚕ readiness** opens the execution inspector. Those two
+is always there: **⚕ configuration** opens the Configuration check. Those two
 are states that come and go; this is the door to a diagnosis, and a door
 that appeared only once something was wrong would be a door nobody
 learned about. Opening it reads and starts nothing.
@@ -1921,7 +1921,7 @@ the three states an exit code cannot tell apart — code produced, work
 verified, work accepted. A phase's lane carries its integration gate at
 the top of itself, beside where a halt is drawn, because the lane is
 where "every member merged and green" has to stop reading as "ready to
-accept". And **⚕ readiness** reports, before anything is launched, what
+accept". And the **⚕ Configuration check** reports, before anything is launched, what
 each scope requires and every refusal in the gate block with its remedy.
 
 The two records this adds — the Bench verdicts and the overrides — live
@@ -1952,8 +1952,66 @@ python3 .task-manager/manager/board.py --doctor --all        # + the active stag
 python3 .task-manager/manager/board.py --doctor --json       # for a script
 ```
 
-and the same report behind the **⚕ readiness** chip in the header, and in
-the Focus view beside **Permissions & inputs** and **Verification**.
+and the same report behind the **⚕ configuration** chip in the header, in
+**Settings → Diagnostics**, and in the Focus view beside **Permissions &
+inputs** and **Verification**.
+
+### What a person reads: the Configuration check and the launch check
+
+The report is long because it is honest; the page is short because a
+person has a next action to find. Two surfaces read it, and they answer
+different questions.
+
+**The Configuration check** is the board-wide one — the header's ⚕ chip
+and Settings → Diagnostics draw the same result from the same renderer,
+so there are no competing summaries. It leads with a specific result and
+one sentence of scope, both written by the doctor (`summary.headline`,
+`summary.scope`) and adapted to what was actually recorded:
+
+- *No configuration issues found* and *Configuration inspected. Agent
+  execution has not been tested.* for an inspected-only reading. Once a
+  stage has run, the sentence says what it found instead (*Controlled
+  execution: passed. The installed agent CLI has not been tested.*), and
+  a policy document that does not parse reads *partially inspected*.
+- Then the problems, each once (`summary.issues` folds the echoes of one
+  refusal into one row): the purpose or setting it affects (the purposes
+  are **Implementation**, **PR fixes**, **Review** and **Card
+  refinement**, the names Settings → Agents uses), a state word naming
+  its evidence level, the problem and its **Fix**.
+- Everything that is fine folds into a count, and everything not tested,
+  not enforced or not configured folds into a count of its own — never
+  into the first. A tick is only ever a row's own, at its own level:
+  `Configuration valid`, `Conformance passed`, `Execution passed`; and
+  `Blocked`, `Unsupported`, `Invalid`, `Execution failed`, `Not tested`,
+  `Not enforced`, `Not configured` for the rest. No overall pass is drawn,
+  and the header chip never wears the calm colour for a static reading.
+- A reading taken against a policy revision the board has since moved
+  off reads `Stale`, and a check that could not be asked says it did not
+  complete rather than showing an earlier answer.
+- **Workspace locations** and **Execution permissions** fold away with
+  short labels and one left-aligned path per row, each with a labelled
+  **Copy**; **What was checked?** holds the definitions, what each stage
+  proves and does not, every diagnostic and its remedy.
+- The executing stages keep their own armed controls with their side
+  effects beside them, and their own results. Reading or expanding any of
+  this runs nothing.
+
+**The launch check** is per card and per purpose — the card's ⚿ chip,
+or **▸ launch check** in its tools on a board with no policy document. It
+opens on the purpose the card's own action would launch (Implementation
+in `in-progress/`, Review on a review card until a review is in, then PR
+fixes) and reads `/api/plan` and `/api/profile`, the resolvers the launch
+rides: where the work starts and what its PR targets (a stacked card shows
+its own branches, never `main`), the harness and model (*harness default*
+when none was chosen — never an invented name), the access, intended
+writes beside *OS isolation: none enforced*, and anything that stops it
+with its fix. For a review it says the run is read-only and which PR head
+would be pinned. The next action is the card's own button — same key,
+same arm-then-fire — or, when blocked, no button and the fix. Nothing the
+sheet resolved is sent with the launch: the launch runs its own preflight
+again, so a sheet opened before a branch or policy changed cannot carry a
+launch past the refusal. Launch readiness is its own signal; merge rules,
+Bench checks, CI and review stay on their own chips.
 
 ### One evaluator, read from four distances
 
@@ -2996,7 +3054,7 @@ refused by name (`intent-unsupported`) rather than handed an intent it
 might run with implementation's stance. A profile document that gives
 `refine` commands, checks or preparation steps is refused
 (`intent-restricted`); the document's shared lists never apply to it.
-Both shipped adapters qualify. **⚕ readiness**, the Focus view's profile
+Both shipped adapters qualify. The **⚕ Configuration check**, the Focus view's profile
 panel and **Settings → Agent access** show the `refine` intent beside the
 other three, with what it may do and what is refused — and reading any of
 them launches nothing. `BOARD_AGENT_MODEL_REFINE` picks its model.
