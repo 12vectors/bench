@@ -411,6 +411,9 @@ class ALifecycleEndToEnd(unittest.TestCase):
         steps = prepared["lifecycle"]["prepare"]["steps"]
         self.assertEqual([("fixture", "passed", "disposable")],
                          [(s["name"], s["outcome"], s["data"]) for s in steps])
+        # the guide, which names no card, reads the same preparation
+        guide = b.get("/api/setup")[1]["setup"]["applicationPreview"]
+        self.assertEqual("prepared", guide["lifecycle"]["status"])
 
         # a port held by an unrelated service: refused, the service untouched
         squatter = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

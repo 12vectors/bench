@@ -972,8 +972,24 @@ def _last_path() -> Path:
     return state_dir() / "last.json"
 
 
-def prepare_record(name: str) -> dict | None:
-    return _read_json(_prepare_path(name[:-3] if name.endswith(".md") else name))
+def prepare_record(name: str | None) -> dict | None:
+    """A card's preparation record — or, with no card named, the newest
+    one on this board, which is what the guide shows."""
+    if name:
+        return _read_json(_prepare_path(name[:-3] if name.endswith(".md")
+                                        else name))
+    newest = None
+    try:
+        names = os.listdir(state_dir())
+    except OSError:
+        return None
+    for entry in names:
+        if entry.startswith("prepare-") and entry.endswith(".json"):
+            record = _read_json(state_dir() / entry)
+            if record and (newest is None or (record.get("started") or 0) >
+                           (newest.get("started") or 0)):
+                newest = record
+    return newest
 
 
 def last() -> dict | None:
@@ -1391,7 +1407,7 @@ def lifecycle(read: dict | None = None, selected: str | None = None) -> dict:
     read = read or read_config()
     d = drive.public()
     prep = PREPARING if PREPARING and PREPARING.get("status") == "running" \
-        else (prepare_record(selected) if selected else None)
+        else prepare_record(selected)
     live = d if d and d.get("kind") == "preview" else None
     word = ("not-configured" if not read["present"] else
             "invalid" if not read["valid"] else "configured")

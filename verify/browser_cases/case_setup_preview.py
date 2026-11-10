@@ -176,7 +176,7 @@ class P1Lifecycle(unittest.TestCase):
         live = found["lifecycle"]["preview"]
         head = git(S["backend"].app, "rev-parse", "task/" + CARD[:-3])
         self.assertEqual(head, live["source"]["commit"])
-        url = b.eval("document.querySelector('#pv-url').href").rstrip("/")
+        url = (b.eval("(document.querySelector('#pv-url') || {}).href") or "").rstrip("/")
         self.assertEqual(live["url"], url)
         self.assertTrue(url.startswith("http://127.0.0.1:"))
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -206,7 +206,11 @@ class P1Lifecycle(unittest.TestCase):
 
     def test_3_keyboard_check_and_stop_leave_nothing_behind(self):
         b = open_preview()
-        pid = int((S["backend"].trees / CARD[:-3] / "pid").read_text())
+        pidfile = S["backend"].trees / CARD[:-3] / "pid"
+        if word(b) != "ready" or not pidfile.is_file():
+            raise bv.CheckFailed(f"no running preview to check and stop: the page "
+                                 f"reads {word(b)!r}")
+        pid = int(pidfile.read_text())
         b.eval("document.querySelector('[data-pvact=\"check\"]').focus()")
         self.assertEqual("check", b.eval("document.activeElement.dataset.pvact"))
         b.key("Enter")
