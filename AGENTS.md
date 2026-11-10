@@ -52,7 +52,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports / templates → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → doctor → events / github / drive / sync → agentsettings → settings → setupguide → agents → setuptasks → phases → refine → watch / httpd → board.py
+config → state / reports / templates → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → doctor → events / github / drive / sync → agentsettings → settings → setupguide → agents → setuptasks → readiness → phases → refine → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -120,6 +120,12 @@ config → state / reports / templates → taskfiles → plans / profiles → re
   the application's files found absent, previewed exactly, created
   idempotently by stable gap identity, and started only through the
   normal start-work path (so it sits right of `agents`, which it calls)
+- `readiness.py` — verification readiness: candidate checks discovered
+  from scripts, CI and docs without running them, registration and
+  merge-rule drafts handed to Settings' own validate, preview and apply,
+  and a person's review — bound to the check's identity — as the only
+  thing that makes a check *ready*. The bootstrap condition it reports
+  changes no gate
 - `phases.py` — a phase run: its own branch, its cards merged into it one
   at a time. A beat, not an agent; it holds no registry of where a phase is
 - `refine.py` — refining a card on the board: comments, the one
@@ -2906,6 +2912,109 @@ anything credential-shaped. In `setup/decisions.json`, `tasks` maps each
 gap to its card (`source: created | reused`, and `replaces` when it
 follows an earlier card), and `gaps` holds per-gap deferrals. The
 request journal stays machine-local, as before.
+
+### Verification readiness: from a discovered test to a required check
+
+Between "a test command exists somewhere in this repository" and "a merge
+waits for it" there are five separate acts, and the guide's
+**Verification readiness** panel (`readiness.py`) keeps every one of them
+a separate, explicit action with its own status:
+
+| act | what it does | writes | runs |
+| --- | --- | --- | --- |
+| **Discover** | reads `package.json` scripts, a `Makefile`, `Cargo.toml`, `go.mod`, a Python test setup, maintained entrypoints such as `verify/*`, `.github/workflows/*` `run:` steps and the commands in a README | nothing | nothing |
+| **Register** | turns one candidate, or an explicit command a setup card delivered, into a draft of the policy document, validated and previewed by Settings' own `validate` and `preview` | the policy, only on Settings' armed **Apply** | nothing |
+| **Run** | a card's `◫` evidence sheet asks `verify.request`; preparation runs first, as part of the same request | an evidence record | the approved check |
+| **Review** | a person records that they read the program, a current pass and a controlled failure | `setup/decisions.json` | nothing |
+| **Activate** | a merge-rule draft, offered only for a *ready* check, previewed with its consequences | the policy, only on Settings' armed **Apply** | nothing |
+
+**A candidate is an inference.** Each one names where it was found (file
+and line), a confidence — about *where the command came from*, never
+about what it covers — and its prerequisites, each as the consent
+boundary it is: a preparation step that downloads (`npm ci`, `pip
+install`) is marked as needing the network and is refused from a draft
+without that consent; services or data name the disposable-fixture gap;
+an `.env.example` says bench supplies no secrets and tests must never be
+given production ones. A compound shell line, or a program named by a
+relative path, cannot be a named check, and the candidate says so: the
+remedy is a wrapper program delivered through a verification setup card,
+registered as `<interpreter> <path>`. Nothing is marked `executed`, and
+every candidate's coverage reads `unproven`.
+
+**Registering requires nothing.** A registration draft never touches the
+`gates` block — the preview shows no `gate-changed` — so a registered
+check is optional and runs only when someone asks for it.
+
+**Readiness is a reviewed record, never an exit code.** A check's
+readiness sits beside its last run and is never folded into it:
+
+| readiness | what it licenses you to believe |
+| --- | --- |
+| `candidate` | inferred from a file; not registered, never run, coverage unproven |
+| `registered` | declared; bench has no run of it as now defined |
+| `exercised` | bench ran it and it passed; nobody has reviewed it yet |
+| `attention` | the newest run did not pass |
+| `review-stale` | it was reviewed, and its definition or program has changed since |
+| `ready` | a person reviewed the program, a current pass and a controlled failure (or why one is not appropriate), bound to the check as it is now defined |
+
+A review (`POST /api/setup/verification/review`) is refused, with
+nothing written, unless the cited pass is card-bound evidence of this
+check's *current* definition that `verify.outcome_now` still reads
+`passed`, over a bound and clean source. The cited failure must be a
+`failed` verdict of the same definition — a preparation failure, a
+denial, a cancellation or an error reached no verdict and is refused as
+one. Without a failing run, the reviewer says why a failing case is not
+appropriate, and that reason is recorded. The record holds the check's
+identity, the program identity bench resolved, the two commits, the note
+and who reviewed it. It holds no path and no evidence log, and it is
+portable, under `verification` in `setup/decisions.json`. A reviewer who
+is also the verification setup card's assignee is recorded as not
+independent, in those words. A setup card in `done/`, an agent's "tests
+pass" and an approving line in a report change none of this.
+
+**The bootstrap condition.** Until one check is ready, the panel, the
+Verification area and `board.py --setup-guide --verification` all say:
+*Automated verification is incomplete. Setup delivery needs human
+review.* It is a statement, not an exemption. Merge rules already in
+force are listed as preserved, and none is relaxed, skipped or
+overridden. A setup card's run uses the ordinary work profile with no
+extra grant. A rule that requires a check which is not yet ready is
+named as the circularity it is: the setup card delivering that check is
+held by the same rule. There are two ways through, and both are a
+person's. The rule is satisfied by evidence on the setup card's own
+commit, so you can run the check against the card's own worktree. Or,
+where the policy enables one, you can take the recorded override, which
+is never a pass.
+
+**Activation is separate, and adds.** `POST
+/api/setup/verification/activate` refuses a check that is not ready.
+Registering a check or watching it pass is not a reason to require it.
+The draft adds the chosen checks to the scope's existing requirements and
+never removes one. It keeps an existing review requirement, and refuses
+to replace it with a different one, which belongs in **Settings → Merge
+rules**. The preview names the effect and the limit of the chosen review
+policy: a Bench verdict is the review agent's, not a person's
+independent approval, and GitHub refuses a formal approval from the
+account that opened the pull request. Applying changes the policy, so
+earlier passes read `stale`, and the merge waits for a new run against
+the commit about to move. That is the gate working, not a fault.
+
+Who does what: the **author** (your team, or the agent on a verification
+setup card) writes the program and a controlled failing case and says
+what the program does not cover. The **operator** approves the command,
+its preparation, its network use and its data, registers the check, and
+separately decides whether a merge rule requires it. The **reviewer**, a
+person and not the run that wrote the program, records the review, which
+is neither a card's acceptance nor a formal GitHub approval. **Bench**
+discovers without running, validates drafts, runs approved checks,
+records evidence bound to source, policy and program, and enforces only
+the rules you activated.
+
+`GET /api/setup/verification` (also under `verificationReadiness` in `GET
+/api/setup`) reads everything and writes nothing. The three POSTs sit
+behind the same door as a policy write. Register and activate return a
+`document` and its `revision` for `POST /api/settings/apply`, which is the
+only writer of the policy.
 
 ## Pull requests
 
