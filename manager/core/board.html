@@ -7057,7 +7057,9 @@ function findingHtml(t, f, acc) {
 function reportHtml(t, text, key) {
   const src = `src:${key}`;
   return `<div class="rtext rmd dbody">${md(text, { base: 4 })}</div>` +
-    `<details class="rsrc" data-keep="${esc(src)}"${S.accOpen[`${t.file}:${src}`] ? ' open' : ''}>` +
+    // data-fold, not data-keep: its open state survives a redraw, but it
+    // is never the reading-position anchor — the report holding it is
+    `<details class="rsrc" data-fold="${esc(src)}"${S.accOpen[`${t.file}:${src}`] ? ' open' : ''}>` +
     `<summary>Original Markdown</summary>` +
     `<div class="racts"><button type="button" class="dlink rcopy">Copy original Markdown</button></div>` +
     `<pre class="rraw" tabindex="0" aria-label="Original Markdown of this report">${esc(text)}</pre></details>`;
@@ -7167,8 +7169,8 @@ function wireDetail(t) {
   body.querySelectorAll('[data-goto]').forEach(btn => btn.addEventListener('click', () => go(btn.dataset.goto, true)));
   $('#dwide').addEventListener('click', () => { S.dwide = !S.dwide; renderDrawer(); $('#dwide').focus(); });
   // open/closed folds and unsent text survive a live redraw
-  body.querySelectorAll('details[data-keep]').forEach(d => d.addEventListener('toggle', () => {
-    S.accOpen[`${t.file}:${d.dataset.keep}`] = d.open;
+  body.querySelectorAll('details[data-keep], details[data-fold]').forEach(d => d.addEventListener('toggle', () => {
+    S.accOpen[`${t.file}:${d.dataset.keep || d.dataset.fold}`] = d.open;
   }));
   // copies the report as filed; where the clipboard is refused, the text
   // is selected instead so the reader's own copy takes it

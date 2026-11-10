@@ -215,7 +215,10 @@ class ReportHtml(Case):
         for a, b in (("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"'), ("&amp;", "&")):
             raw = raw.replace(a, b)
         self.assertEqual(raw, src, "the original view is not the report byte for byte")
-        self.assertIn('data-keep="src:rv-abc"', html)
+        # its fold is remembered, but it is never the reading anchor: a
+        # data-keep inside a closed report would win the anchor search
+        self.assertIn('data-fold="src:rv-abc"', html)
+        self.assertNotIn("data-keep", html)
         self.assertIn("Copy original Markdown", html)
 
     def test_the_original_view_is_escaped_too(self):
