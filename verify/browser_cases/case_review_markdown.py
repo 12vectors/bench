@@ -245,7 +245,10 @@ class ReviewMarkdown(unittest.TestCase):
                          "an event attribute reached the page")
         hrefs = b.eval(f"[...document.querySelectorAll('{hostile} a')].map(a => a.getAttribute('href'))")
         for href in hrefs:
-            self.assertTrue(href.startswith("https://"), f"{href!r} became a link")
+            # the web, or a relative path: no scheme, so nothing to run
+            self.assertTrue(href.startswith("https://") or ":" not in href,
+                            f"{href!r} became a link")
+            self.assertNotRegex(href, r'[<>"\s]', f"{href!r} carries markup")
         self.assertIn("<script>", b.eval(f"document.querySelector('{hostile}').innerText"),
                       "the script tag was dropped rather than shown as text")
         shot("review-markdown-hostile-light-1280x900")
