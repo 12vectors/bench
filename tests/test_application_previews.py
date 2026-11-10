@@ -638,6 +638,38 @@ class Reconnect(unittest.TestCase):
         self.assertTrue(alive(pid))
 
 
+PAGE = Path(__file__).resolve().parents[1] / "manager" / "core" / "board.html"
+
+
+class ThePageKeepsTheActsApart(unittest.TestCase):
+    def setUp(self):
+        self.html = PAGE.read_text(encoding="utf-8")
+
+    def test_five_separate_controls_and_the_two_that_run_code_are_armed(self):
+        for act in ("validate", "configure", "prepare", "cancel", "start",
+                    "check", "stop"):
+            self.assertIn(f'data-pvact="{act}"', self.html)
+        armed = self.html[self.html.index("function wirePreview"):]
+        self.assertIn("['configure', 'prepare', 'start'].includes(act) && "
+                      "!btn.classList.contains('armed')", armed)
+        self.assertIn("approve: true", armed)
+        self.assertIn('rel="noopener noreferrer"', self.html)
+        self.assertIn("this process is not the selected source", self.html)
+
+    @unittest.skipUnless(__import__("shutil").which("node"), "node is not installed")
+    def test_the_page_script_parses(self):
+        import re
+        import shutil
+        import tempfile
+        scripts = re.findall(r"<script[^>]*>(.*?)</script>", self.html, re.S)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "page.js"
+            path.write_text("\n;\n".join(scripts), encoding="utf-8")
+            out = subprocess.run([shutil.which("node"), "--check", str(path)],
+                                 capture_output=True, text=True)
+        self.assertEqual(0, out.returncode, out.stderr[-2000:])
+
+
 def _kill(pid: int) -> None:
     try:
         os.killpg(os.getpgid(pid), signal.SIGKILL)

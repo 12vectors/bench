@@ -1435,7 +1435,8 @@ def state(selected: str | None = None) -> dict:
     life = lifecycle(read, selected)
     secrets = secret_status((read.get("config") or {}).get("secretRefs") or [])
     return {
-        "kind": KIND, "v": VERSION, "generated": time.time(),
+        # no clock of its own, so the guide's CLI and function agree
+        "kind": KIND, "v": VERSION,
         "configuration": {
             "path": CONFIG_REL, "secretsPath": SECRETS_REL,
             "present": read["present"], "revision": read["revision"],
