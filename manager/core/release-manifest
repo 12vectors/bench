@@ -39,6 +39,7 @@ copy CLAUDE.md
 copy README.md
 copy LICENSE
 copy install.py
+copy bootstrap.py
 copy start.sh
 copy stop.sh
 copy update.sh

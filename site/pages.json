@@ -42,7 +42,19 @@
       "lede": "The same board, installed beside the application instead of inside it — what to run, which flags there are, and which of the two git identities each thing belongs to.",
       "source": "README.md",
       "from": "## Install outside the repo",
-      "to": "## Update"
+      "to": "## Set up with your coding agent"
+    },
+    {
+      "path": "/guides/set-up-with-your-coding-agent/",
+      "title": "Set up Bench with your coding agent",
+      "layout": "article",
+      "section": "Guides",
+      "description": "bootstrap.py looks first, previews every change, makes them only when you approve, and hands you the board's address — with instructions bounded enough to give to a coding agent.",
+      "lede": "The guided way into an external install: what to paste into your coding agent, the three commands it runs, the choices that stay yours, and where setup continues once the board is up.",
+      "source": "README.md",
+      "from": "## Set up with your coding agent",
+      "to": "## Update",
+      "companions": true
     },
     {
       "path": "/concepts/stages/",

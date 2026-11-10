@@ -136,6 +136,15 @@ VERSION_FILE = "manager/core/VERSION"
 INSTALL_SOURCE = "README.md"
 INSTALL_HEADING = "## Install into a repo"
 
+# A page with `"companions": true` is also written for a reader that is
+# not a browser — a coding agent following the page's instructions. Both
+# files come from the same slice the html does, so the three cannot say
+# different things: `agent.md` is the slice itself as Markdown, with its
+# links made absolute, and `agent.json` is the same slice cut into its
+# sections and code blocks.
+COMPANIONS = ("agent.md", "agent.json")
+COMPANION_KIND = "bench-docs-companion"
+
 
 class BuildError(Exception):
     """A failure a person must read and fix: a missing source, a renamed
@@ -481,12 +490,14 @@ def rewrite_link(href: str, *, page: dict, source: str, manifest: dict,
 
 def internal_targets(manifest: dict, site: Path) -> set:
     """Every url the built site answers: one per route (and the file that
-    route is written to), plus everything copied verbatim out of static/
-    and root/."""
+    route is written to), plus a page's companions, plus everything copied
+    verbatim out of static/ and root/."""
     urls = set()
     for page in manifest["pages"]:
         urls.add(page["path"])
         urls.add("/" + target_for(Path(), page["path"]).as_posix())
+        if page.get("companions"):
+            urls.update(page["path"] + name for name in COMPANIONS)
     for base, prefix in ((site / "static", "/static/"), (site / ROOT, "/")):
         if base.is_dir():
             urls.update(prefix + path.relative_to(base).as_posix()
@@ -571,6 +582,95 @@ def render_markdown(body: str, *, page: dict, source: str, manifest: dict,
                         child.attrGet("src"), page=page, source=source,
                         manifest=manifest, repo=repo))
     return renderer.renderer.render(tokens, renderer.options, {}), contents
+
+
+MD_LINK = re.compile(r"(\]\()([^)\s]+)(\))")
+
+
+def absolute(url: str, manifest: dict) -> str:
+    """A link as a reader outside the site needs it: a site route gains
+    the site's own origin, anything else is left as it is."""
+    base = manifest["site"].get("base_url", "").rstrip("/")
+    return base + url if url.startswith("/") and not url.startswith("//") \
+        else url
+
+
+def companion_markdown(page: dict, manifest: dict, repo: Path,
+                       facts: dict) -> str:
+    """The page as Markdown: its title, where it was cut from, then the
+    slice itself — the same text the html renders — with each link
+    rewritten exactly as the html's are, and made absolute."""
+    source = page["source"]
+    body = slice_section(read_source(page, repo), page, source)
+    in_fence = False
+    lines = []
+    for line in body.splitlines():
+        if FENCE.match(line):
+            in_fence = not in_fence
+        if not in_fence:
+            line = MD_LINK.sub(
+                lambda m: m.group(1) + absolute(rewrite_link(
+                    m.group(2), page=page, source=source, manifest=manifest,
+                    repo=repo), manifest) + m.group(3), line)
+        lines.append(line)
+    url = absolute(page["path"], manifest)
+    head = [f"# {page['title']}", "",
+            f"> {page.get('lede') or page.get('description', '')}", "",
+            f"<!-- bench {facts['version']} · {url} · generated from "
+            f"{source} (\"{page['from']}\"); edit the source, not this "
+            f"file -->", ""]
+    return "\n".join(head + lines).rstrip("\n") + "\n"
+
+
+def companion_json(page: dict, manifest: dict, repo: Path,
+                   facts: dict) -> dict:
+    """The same slice for a program: its sections in order, each with
+    its prose and its code blocks (language and text, verbatim)."""
+    source = page["source"]
+    body = slice_section(read_source(page, repo), page, source)
+    sections = [{"heading": page["title"], "level": 1, "text": [],
+                 "blocks": []}]
+    fence, block = None, None
+    for line in body.splitlines():
+        opened = FENCE.match(line)
+        if fence is None and opened:
+            fence = opened.group(1)
+            block = {"lang": line.strip()[len(fence):].strip() or None,
+                     "code": []}
+            continue
+        if fence is not None:
+            if line.strip().startswith(fence) and \
+                    line.strip().strip(fence[0]) == "":
+                sections[-1]["blocks"].append(
+                    {"lang": block["lang"], "code": "\n".join(
+                        block["code"]) + "\n"})
+                fence, block = None, None
+            else:
+                block["code"].append(line)
+            continue
+        heading = ATX.match(line)
+        if heading:
+            sections.append({"heading": heading.group(2),
+                             "level": len(heading.group(1)), "text": [],
+                             "blocks": []})
+        elif line.strip():
+            sections[-1]["text"].append(line.strip())
+    for section in sections:
+        section["text"] = " ".join(section["text"])
+    return {"kind": COMPANION_KIND, "v": 1, "version": facts["version"],
+            "title": page["title"], "url": absolute(page["path"], manifest),
+            "source": source, "from": page["from"],
+            "markdown": absolute(page["path"] + "agent.md", manifest),
+            "sections": sections}
+
+
+def render_companions(page: dict) -> str:
+    if not page.get("companions"):
+        return ""
+    route = page["path"]
+    return (f'<p class="companions">For a coding agent, the same page as '
+            f'<a href="{route}agent.md">Markdown</a> and as '
+            f'<a href="{route}agent.json">JSON</a>.</p>')
 
 
 def read_source(page: dict, repo: Path) -> str:
@@ -810,6 +910,7 @@ def render_page(page: dict, manifest: dict, *, site: Path, repo: Path,
         "version": escape(facts["version"]),
         "install_block": facts["install_block"],
         "body": body,
+        "companions": render_companions(page),
         "toc": render_contents(contents),
         "console": render_console(labels, contents, page),
         "nav": render_nav(manifest, page),
@@ -903,6 +1004,13 @@ def load_manifest(site: Path) -> dict:
                 raise BuildError(
                     f'{route}: no generator named "{page["generate"]}". '
                     f'Known: {", ".join(sorted(GENERATORS))}.')
+        if page.get("companions") and not (
+                page["source"] and page.get("from")
+                and route.endswith("/")):
+            raise BuildError(
+                f'{route}: "companions" are cut from the page\'s slice, so '
+                f"the page must be a slice (a source and a \"from\") "
+                f"written as a directory index.")
     return manifest
 
 
@@ -1002,6 +1110,11 @@ def build(*, repo: Path = REPO, site: Path = None, out: Path = None,
     pages = [(page, render_page(page, manifest, site=site, repo=repo,
                                 stamps=stamps, facts=facts))
              for page in manifest["pages"]]
+    # Rendered before anything is written, like the pages: a companion
+    # whose slice or links fail stops the build with the rest standing.
+    companions = [(page, companion_markdown(page, manifest, repo, facts),
+                   companion_json(page, manifest, repo, facts))
+                  for page in manifest["pages"] if page.get("companions")]
 
     # After rendering, before writing: a dead internal link leaves the
     # last good build standing, exactly as a renamed heading does.
@@ -1024,6 +1137,14 @@ def build(*, repo: Path = REPO, site: Path = None, out: Path = None,
         target.write_text(html, encoding="utf-8")
         written.append(target)
         log(f"  {page['path']:<34} {target.relative_to(out)}")
+    for page, markdown, document in companions:
+        for name, text in (("agent.md", markdown),
+                           ("agent.json", json.dumps(document, indent=2,
+                                                     ensure_ascii=False)
+                            + "\n")):
+            target = target_for(out, page["path"]).parent / name
+            target.write_text(text, encoding="utf-8")
+            log(f"  {page['path'] + name:<34} {target.relative_to(out)}")
     return written
 
 
