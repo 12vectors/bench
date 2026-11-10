@@ -235,8 +235,14 @@ class ScopeIsPartOfTheRequirement(GateCase):
         self.flag("hang")
         asking = threading.Thread(target=self.ask, daemon=True)
         asking.start()
-        self.assertTrue(wait_for(lambda: bool(verify.RUNNING)))
         try:
+            # The registry reserves a slot before publishing evidence. Wait
+            # for the actual check process and its readable running record,
+            # not that reservation: the gate reads persisted evidence.
+            self.assertTrue(wait_for(lambda: any(
+                record.get("proc") is not None
+                and (verify.read(ident) or {}).get("outcome") == "running"
+                for ident, record in list(verify.RUNNING.items()))))
             found = self.decide()
             self.assertEqual(found["decision"], "pending", found["summary"])
             with self.assertRaises(ValueError):
@@ -245,6 +251,7 @@ class ScopeIsPartOfTheRequirement(GateCase):
             for ident in list(verify.RUNNING):
                 verify.cancel(ident)
             asking.join(timeout=20)
+            self.assertFalse(asking.is_alive(), "verification must end before teardown")
         # and a cancelled rerun decided nothing — but it is the newest
         # answer, so the earlier pass does not come back by itself
         verify.forget_cached()

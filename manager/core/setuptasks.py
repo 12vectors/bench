@@ -280,9 +280,13 @@ def gaps(found: dict | None = None) -> dict:
     else:
         cmds = found["testCommands"] + found["start"]
         gap("instructions",
-            "No agent workflow instructions were found at the application's "
-            "root, so a run launched from this board works from its card alone.",
-            [_ev(n, "absent", "not at the application root")
+            ("Project instructions could not be read; inspect and repair them "
+             "before proposing a card." if any(
+                 n in found["unknown"] for n in setupguide.INSTRUCTION_FILES) else
+             "No agent workflow instructions were found at the application's "
+             "root, so a run launched from this board works from its card alone."),
+            [_ev(n, found["refs"][n]["finding"],
+                  found["refs"][n].get("detail", "not at the application root"))
              for n in setupguide.INSTRUCTION_FILES] + _from(cmds),
             ["An instructions file at the application root (AGENTS.md is read "
              "by every agent bench drives) describing this project's real "
@@ -772,6 +776,7 @@ def create(payload: dict) -> dict:
         if again and again.get("duplicate"):
             return again
         read = setupguide.read_decisions()
+        setupguide._guard_integrity(read)
         doc = read["doc"]
         written = []
         if again:                                   # resume what was planned
@@ -885,6 +890,7 @@ def decide(payload: dict) -> dict:
         if again and again.get("duplicate"):
             return again
         read = setupguide.read_decisions()
+        setupguide._guard_integrity(read)
         if not again:
             setupguide._guard_revision(payload, read)
         doc = read["doc"]

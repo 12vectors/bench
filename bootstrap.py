@@ -623,7 +623,11 @@ def resolve(found: dict, args) -> dict:
         if choices.get("workRepo") not in ("new", "existing"):
             refusals.append("a remote needs the work root to be a git "
                             "repository: pass --work-repo new")
-        if existing:
+        same_remote = (args.add_remote and len(existing) == 1
+                       and existing[0]["name"] == "origin"
+                       and git_read(Path(choices["work"]), "remote", "get-url", "origin")
+                       == args.add_remote)
+        if existing and not same_remote:
             refusals.append(
                 f"the work repository already has the remote "
                 f"'{existing[0]['name']}'; bench uses it and never adds or "
@@ -942,7 +946,7 @@ def perform(op: dict, resolved: dict, add_remote: str | None) -> dict:
             work = Path(c["work"])
             have = git_read(work, "remote", "get-url", "origin")
             if have is not None:
-                same = redact(have) == redact(add_remote or "")
+                same = have == (add_remote or "")
                 result.update(outcome="already" if same else "refused",
                               detail=("already there" if same else
                                       "a different 'origin' is already "

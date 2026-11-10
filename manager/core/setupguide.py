@@ -169,20 +169,30 @@ def revision() -> str:
     """The revision of the portable decisions, which every mutation must
     name. No file is a revision too ("none"), so the first write is held
     to the same rule as every later one."""
-    raw = _raw(decisions_path())
-    return "none" if raw is None else hashlib.sha256(
-        raw.encode("utf-8")).hexdigest()[:16]
+    try:
+        raw = decisions_path().read_bytes()
+    except FileNotFoundError:
+        return "none"
+    except OSError:
+        return "unreadable"
+    return hashlib.sha256(raw).hexdigest()[:16]
 
 
 def read_decisions() -> dict:
     """The portable document, whole — unknown keys included, because a
     later bench (or a teammate's) may have written fields this one does
     not read and a write here must carry them over."""
-    raw = _raw(decisions_path())
     blank = {"kind": DECISIONS_KIND, "v": DECISIONS_VERSION,
              "decisions": {}, "tasks": {}}
-    if raw is None:
+    try:
+        raw = decisions_path().read_text(encoding="utf-8")
+    except FileNotFoundError:
         return {"doc": blank, "problem": None}
+    except (OSError, UnicodeDecodeError) as exc:
+        return {"doc": blank, "problem": (
+            f"setup/decisions.json could not be read ({type(exc).__name__}); "
+            "bench refuses to write over it. Inspect its permissions and "
+            "UTF-8 encoding and repair the file by hand.")}
     try:
         doc = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -365,7 +375,25 @@ def _agent() -> dict:
 
 def _instructions() -> dict:
     app = config.app_repo()
-    found = [name for name in INSTRUCTION_FILES if (app / name).is_file()]
+    found, unreadable = [], []
+    for name in INSTRUCTION_FILES:
+        try:
+            (app / name).read_text(encoding="utf-8")
+            found.append(name)
+        except FileNotFoundError:
+            pass
+        except (OSError, UnicodeDecodeError):
+            unreadable.append(name)
+    if unreadable:
+        names = ", ".join(unreadable)
+        return {"status": "blocked",
+                "facts": [_fact("Unreadable project instructions", names, "blocked")],
+                "basis": {"found": found, "unreadable": unreadable},
+                "recommendation": (f"Inspect and repair {names}: check permissions "
+                                   "and UTF-8 encoding. Bench preserves the files."),
+                "consequence": "Unreadable instructions are unknown, not absent.",
+                "next": _next("you", "Inspect and repair project instructions",
+                              "manual")}
     outside = [str(p) for p in config.guidance_outside_app()]
     facts = [_fact("Instructions in the application",
                    ", ".join(found) if found else "none found",
@@ -877,9 +905,13 @@ def _replayed(request: str, kind: str, area: str) -> dict | None:
     return entry          # started: the caller resumes it
 
 
-def _guard_revision(payload: dict, read: dict) -> None:
+def _guard_integrity(read: dict) -> None:
     if read["problem"]:
         raise Refused(read["problem"], 409, readOnly=True)
+
+
+def _guard_revision(payload: dict, read: dict) -> None:
+    _guard_integrity(read)
     expected = payload.get("expected")
     current = revision()
     if expected != current:
@@ -907,6 +939,7 @@ def _actor() -> dict:
 
 
 def _write_decisions(doc: dict, what: str) -> bool:
+    _guard_integrity(read_decisions())
     path = decisions_path()
     real = config.escapes_work(path)
     if real is not None:
@@ -974,6 +1007,7 @@ def decide(payload: dict) -> dict:
         if again and again.get("duplicate"):
             return again
         read = read_decisions()
+        _guard_integrity(read)
         if not again:          # a resumed request was checked when it began
             _guard_revision(payload, read)
         doc = read["doc"]
@@ -1088,6 +1122,7 @@ def create_task(payload: dict) -> dict:
         if again and again.get("duplicate"):
             return again
         read = read_decisions()
+        _guard_integrity(read)
         doc = read["doc"]
         planned = again.get("filename") if again else None
         if not again:
