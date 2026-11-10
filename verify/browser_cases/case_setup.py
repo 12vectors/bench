@@ -201,6 +201,9 @@ class T3Layouts(unittest.TestCase):
                 shot(f"setup-guide-{theme}-{w}x{h}")
 
     def test_every_control_is_named(self):
+        self._named()
+
+    def _named(self):
         b = open_guide(1280, 800)
         unnamed = []
         for n in b.ax_nodes():
@@ -211,6 +214,104 @@ class T3Layouts(unittest.TestCase):
                     not ((n.get("name") or {}).get("value") or "").strip():
                 unnamed.append(role)
         self.assertEqual([], unnamed)
+
+
+def backlog_files() -> list[str]:
+    return sorted(p.name for p in (S["backend"].work / "tasks" / "backlog").glob("*.md"))
+
+
+class T4SetupCards(unittest.TestCase):
+    """Task 89: the proposed setup cards, after T1–T3 (unittest runs the
+    classes by name). The backend's application holds only a README, so
+    inspection honestly finds instructions and verification absent and
+    nothing to preview or drive in a browser."""
+
+    def test_select_preview_cancel_create_retry_defer_and_arm_start(self):
+        b = open_guide()
+        if not b.wait("!!document.querySelector('#setup-cards .setup-gap')", 10):
+            raise bv.CheckFailed("the proposed setup cards were not drawn")
+        found = api()
+        ids = [g["id"] for g in found["proposals"]["gaps"]]
+        # no instructions, no start command, no UI: never a preview or
+        # browser card. (Verification depends on what case_settings left.)
+        self.assertIn("instructions", ids)
+        self.assertFalse({"preview", "ui-smoke", "fixtures"} & set(ids), ids)
+        self.assertEqual(ids, b.eval("[...document.querySelectorAll('#setup-cards .setup-gap')]"
+                                     ".map(e => e.id.replace('setup-gap-', ''))"))
+        shot("setup-cards-proposed-1440x900")
+        # defer with a reason, through the page, then reopen
+        b.eval("(() => { const i = document.querySelector('#setup-defer-instructions');"
+               " i.value = 'after the first release';"
+               " i.dispatchEvent(new Event('input', {bubbles: true})); })()")
+        b.click('[data-cardact="defer:instructions"]')
+        self.assertTrue(b.wait("/deferred \\(gap\\)/.test(document.querySelector("
+                               "'#setup-gap-instructions').textContent)", 10),
+                        "the deferral did not reach the page")
+        deferred = {g["id"]: g for g in api()["proposals"]["gaps"]}["instructions"]
+        self.assertEqual("after the first release", deferred["deferred"]["reason"])
+        self.assertFalse(deferred["selected"])
+        b.click('[data-cardact="reopen:instructions"]')
+        self.assertTrue(b.wait("!!document.querySelector('#setup-sel-instructions')"
+                               " && !/deferred/.test(document.querySelector("
+                               "'#setup-gap-instructions .setup-ahead').textContent)", 10))
+        b = open_guide()       # a fresh page: the selection is the server's default
+        self.assertTrue(b.wait("!!document.querySelector('#setup-sel-instructions')", 10))
+        found = api()
+        before, revision = backlog_files(), found["revision"]
+        # selective: only instructions
+        for other in ids:
+            if other != "instructions" and b.eval(
+                    f"!!(document.querySelector('#setup-sel-{other}') || {{}}).checked"):
+                b.click(f'#setup-sel-{other}')
+        self.assertTrue(b.eval("document.querySelector('#setup-sel-instructions').checked"))
+        b.click('[data-cardact="preview:all"]')
+        self.assertTrue(b.wait("document.querySelectorAll('.setup-preview pre').length === 1", 10),
+                        "the preview did not draw exactly one card")
+        self.assertIn("**Setup gap:** instructions",
+                      b.eval("document.querySelector('.setup-preview pre').textContent"))
+        self.assertEqual(before, backlog_files(), "the preview wrote a card")
+        self.assertEqual(revision, api()["revision"], "the preview wrote the record")
+        shot("setup-cards-preview-1440x900")
+        b.click('[data-cardact="cancel:all"]')
+        self.assertTrue(b.wait("!document.querySelector('.setup-preview')", 5))
+        self.assertEqual(before, backlog_files(), "cancel wrote a card")
+        # preview again, and confirm it: armed, then fired
+        b.click('[data-cardact="preview:all"]')
+        self.assertTrue(b.wait("!!document.querySelector('[data-cardact=\"create:all\"]')", 10))
+        b.click('[data-cardact="create:all"]')
+        self.assertEqual(before, backlog_files(), "one click created a card")
+        b.click('[data-cardact="create:all"]')
+        self.assertTrue(b.wait("/· open/.test((document.querySelector('#setup-gap-instructions')"
+                               " || {}).textContent || '')", 10), "the new card was not linked")
+        added = sorted(set(backlog_files()) - set(before))
+        self.assertEqual(1, len(added), added)
+        text = (S["backend"].work / "tasks" / "backlog" / added[0]).read_text()
+        self.assertIn("**Setup gap:** instructions", text)
+        self.assertNotIn(str(S["backend"].base), text, "a local path reached the card")
+        # a retry from another client is refused, not doubled
+        code, body = post("/api/setup/cards/preview",
+                          {"selection": [{"gap": "instructions"}]})
+        self.assertEqual(409, code, body)
+        self.assertEqual(added, sorted(set(backlog_files()) - set(before)))
+        # start is its own armed action; one click moves nothing
+        self.assertTrue(b.wait("!!document.querySelector('[data-cardact=\"start:instructions\"]')", 5))
+        self.assertIn("Start first task", b.eval(
+            "document.querySelector('[data-cardact=\"start:instructions\"]').textContent"))
+        b.click('[data-cardact="start:instructions"]')
+        self.assertIn("click again", b.eval(
+            "document.querySelector('[data-cardact=\"start:instructions\"]').textContent"))
+        self.assertEqual(added, sorted(set(backlog_files()) - set(before)),
+                         "arming start moved the card")
+        shot("setup-cards-created-1440x900")
+        self.assertEqual([], [e.get("exceptionDetails", {}).get("text")
+                              for e in b.console], "the page threw")
+        T3Layouts._named(self)
+
+    def test_390px_fits_the_cards_panel(self):
+        b = open_guide(390, 780, "light")
+        self.assertTrue(b.wait("!!document.querySelector('#setup-cards')", 10))
+        self.assertLessEqual(b.eval("document.documentElement.scrollWidth"), 391)
+        shot("setup-cards-light-390x780")
 
 
 if __name__ == "__main__":
