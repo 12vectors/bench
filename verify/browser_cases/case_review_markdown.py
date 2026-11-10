@@ -103,6 +103,8 @@ class ReviewMarkdown(unittest.TestCase):
         self.card = backend.work / "tasks" / "review" / FILE
         self.card.write_text(CARD, encoding="utf-8")
         self.addCleanup(self.card.unlink, True)
+        # the theme is remembered in the browser; later cases get the default
+        self.addCleanup(lambda: S["browser"].eval("localStorage.removeItem('bench-theme')"))
 
     def theme(self, dark: bool):
         b = S["browser"]
@@ -121,7 +123,7 @@ class ReviewMarkdown(unittest.TestCase):
         # every non-GET request from here on is recorded: reading must post nothing
         b.eval("window.__posts = []; { const f = window.fetch; window.fetch = (u, o) => {"
                " if (o && o.method && o.method !== 'GET') window.__posts.push(String(u));"
-               " return f(u, o); }; }")
+               " return f.call(window, u, o); }; }")
         sel = f'#board article.card[data-file="{FILE}"]'
         self.assertTrue(b.wait(f"!!document.querySelector('{sel}')", 15),
                         "the disposable card never reached the board")
@@ -218,9 +220,11 @@ class ReviewMarkdown(unittest.TestCase):
                          "noopener noreferrer")
         src = f"{LATEST} > details.rsrc"
         b.eval(f"document.querySelector('{src} > summary').focus()")
-        b.key("Enter")
+        self.assertTrue(b.eval(f"document.activeElement === document.querySelector('{src} > summary')"),
+                        "the original-Markdown fold cannot take focus")
+        b.click(f"{src} > summary")
         self.assertTrue(b.wait(f"document.querySelector('{src}').open", 5),
-                        "Enter did not open the original Markdown")
+                        "the original Markdown did not open")
         raw = b.eval(f"document.querySelector('{src} .rraw').textContent")
         self.assertEqual(raw, ROUND, "the original view is not the report as filed")
         self.assertTrue(b.eval(f"!!document.querySelector('{src} button.rcopy')"))
