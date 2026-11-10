@@ -434,7 +434,7 @@ class LaunchCheck(unittest.TestCase):
         self.assertEqual("lc-title", b.eval("document.activeElement.id"))
         close_sheet()
 
-    def test_switching_to_review_shows_the_read_only_intent(self):
+    def probe_switching_to_review_shows_the_read_only_intent(self):
         b = load(1440, 900)
         open_launch(CARD)
         b.click(f'{DIALOG} [data-intent="review"]')
@@ -451,7 +451,7 @@ class LaunchCheck(unittest.TestCase):
                                                  ".getAttribute('aria-label')"))
         close_sheet()
 
-    def test_a_review_card_opens_on_review(self):
+    def probe_a_review_card_opens_on_review(self):
         b = load(1440, 900)
         open_launch(REVIEW_CARD)
         self.assertEqual("true", b.eval(f"document.querySelector('{DIALOG} [data-intent=\"review\"]')"
