@@ -299,7 +299,7 @@ class TheLaunchCheck(unittest.TestCase):
 
     def test_it_reads_the_launch_resolvers_and_shows_their_answers(self):
         body = lift("profileSheet")
-        for field in ("pl.startRef", "pl.startBranch", "pl.branch", "pl.prBase",
+        for field in ("pl.startBranch +", "pl.startRef", "pl.branch", "pl.prBase",
                       "selectionRows(p)", "p.diagnostics", "pl.blockers",
                       "'Intended writes'", "'OS isolation'", "isolationLine(p)"):
             self.assertIn(field, body, field)

@@ -2529,7 +2529,10 @@ async function profileSheet(task, intent) {
       { mono: false, why: 'a relevance check pins nothing and reviews no branch' }));
   } else if (pl) {
     rows.push(
-      lrow('Starts from', (pl.startRef || pl.startBranch) +
+      // the branch a person chose (or the default), then the ref and
+      // commit it resolved to — "HEAD" alone says nothing about where
+      lrow('Starts from', pl.startBranch +
+        (pl.startRef && pl.startRef !== pl.startBranch ? ` (${pl.startRef})` : '') +
         (pl.startCommit ? ` · ${pl.startCommit.slice(0, 9)}` : ''), { why: pl.source }),
       lrow('Branch', pl.branch, { why: pl.continuing
         ? 'already exists — the run continues on it' : 'cut when the run starts' }),

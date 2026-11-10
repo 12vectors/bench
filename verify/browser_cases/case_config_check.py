@@ -23,7 +23,6 @@ import unittest
 import benchverify as bv
 
 S = bv.SESSION
-_Off = object  # PROBE: every class here disabled for one run
 DIALOG ="#sheetwrap [role=dialog]"
 CARD = "03-measure-the-board-layout.md"
 REVIEW_CARD = "04-check-keyboard-focus.md"
@@ -263,7 +262,7 @@ class GlobalCheck(unittest.TestCase):
         S["metrics"]["configCheckNarrow"] = found
 
 
-class GlobalStates(_Off):
+class GlobalStates(unittest.TestCase):
     """Each state the backend can actually be in, read through the sheet."""
 
     def lead_for(self, document=None, raw=None, name=None):
