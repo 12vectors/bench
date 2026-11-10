@@ -432,7 +432,10 @@ def _verification() -> dict:
                            else None))
     basis = {"state": verif["state"], "checks": sorted(names),
              "gated": gated, "outcomes": outcomes}
-    if verif["state"] == "invalid" or doc.get("problem"):
+    refused = [p["why"] for p in verif.get("problems") or []]
+    facts += [_fact("Policy refusal", why, "blocked") for why in refused]
+    basis["refused"] = len(refused)
+    if verif["state"] == "invalid" or refused or doc.get("problem"):
         status = "blocked"
         nxt = _next("bench", "Fix the refused policy", "settings",
                     section="verification")
@@ -674,14 +677,14 @@ def _area(area: str, decisions: dict, tasks: dict) -> dict:
         allowed.append("reopen")
     if area in TASKABLE and status == "decision-needed" and not task:
         allowed.append("create-task")
-    out = {"id": area, "title": TITLES[area], "status": shown,
+    out = {**found, "id": area, "title": TITLES[area], "status": shown,
            "computed": status, "fingerprint": fingerprint,
            "decision": (dict({k: decision.get(k) for k in
                               ("status", "reason", "actor", "actorSource",
                                "at", "fingerprint")},
                              stale=decision.get("fingerprint") != fingerprint)
                         if decision else None),
-           "task": task, "allowed": allowed, **found}
+           "task": task, "allowed": allowed}
     return out
 
 
