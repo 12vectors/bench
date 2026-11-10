@@ -29,6 +29,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 BENCH = Path(__file__).resolve().parents[1]
 STAGES = ("backlog", "to-do", "in-progress", "review", "done")
@@ -88,6 +89,13 @@ class AppOnlyLayout(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bench-apponly-")).resolve()
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        # "A tool in no repository" has to mean that wherever the temp
+        # directory is. Under bench's own runner TMPDIR sits inside the
+        # operator's install, itself a git checkout: without a ceiling git
+        # finds that repository, these cases read the wrong layout, and a
+        # committed move lands in the operator's history.
+        self.enterContext(mock.patch.dict(
+            os.environ, {"GIT_CEILING_DIRECTORIES": str(self.tmp)}))
 
         self.tool = self.tmp / "bench"
         shutil.copytree(BENCH / "manager" / "core",
