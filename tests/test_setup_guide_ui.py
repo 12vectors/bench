@@ -67,6 +67,41 @@ class ReadsOnceWritesThroughTheDoor(unittest.TestCase):
         self.assertIn("!btn.classList.contains('armed')", lift("wireSetup"))
 
 
+class SetupCardsPanel(unittest.TestCase):
+    """Task 89: the proposed setup cards. Preview writes nothing and is
+    the only way to the create button; create confirms the preview by its
+    digest with the revision and a request identity; start is separate and
+    armed; and nothing here moves a card or launches by itself."""
+
+    def test_it_is_drawn_from_the_one_get(self):
+        self.assertIn("setupCards(g, ro)", lift("settingsSetup"))
+        self.assertNotIn("fetch(", lift("setupCards"))
+
+    def test_create_confirms_the_preview_by_digest(self):
+        wire = lift("wireSetupCards")
+        self.assertIn("digest: S.setupPreview.digest", wire)
+        # the create button exists only inside a preview
+        body = lift("setupCards")
+        self.assertLess(body.index("const preview = pv"),
+                        body.index('data-cardact="create:all"'))
+        post = lift("setupCardsPost")
+        self.assertIn("'/api/setup/cards/' + act", post)
+        self.assertIn("body.request = setupRequestId(key)", post)
+        self.assertIn("body.expected = S.setup.revision", post)
+        self.assertIn("headers: SETTINGS_HEADERS", post)
+
+    def test_create_and_start_are_armed_and_separate(self):
+        wire = lift("wireSetupCards")
+        self.assertIn("(act === 'create' || act === 'start') && "
+                      "!btn.classList.contains('armed')", wire)
+        self.assertIn("setupCardsPost('start', key, { gap: gid })", wire)
+        self.assertNotIn("start", lift("setupSelection"))
+
+    def test_an_edit_after_preview_drops_the_preview(self):
+        self.assertIn("if (S.setupPreview) { S.setupPreview = null;",
+                      lift("wireSetupCards"))
+
+
 class NoPercentage(unittest.TestCase):
     def test_the_summary_counts_words_and_never_divides(self):
         body = lift("settingsSetup")

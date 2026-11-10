@@ -29,6 +29,7 @@ import refine
 import reviews
 import settings
 import setupguide
+import setuptasks
 import state
 import sync
 import taskfiles
@@ -893,6 +894,39 @@ class Handler(BaseHTTPRequestHandler):
                                     + (result.get("decision") or
                                        f"setup card {result.get('filename')}"
                                        " proposed in backlog/"))})
+                    state.broadcast({"type": "board"})
+                self._json(200, {"result": result})
+            elif path in ("/api/setup/cards/preview", "/api/setup/cards/create",
+                          "/api/setup/cards/decide", "/api/setup/cards/start"):
+                # Gap-specific setup cards (task 89), behind the same door.
+                # Preview writes nothing; create writes cards and links and
+                # starts nothing; start is its own deliberate request that
+                # rides ▸ start work and refuses before anything moves.
+                problem = origin_problem(self.headers, config.PORT)
+                if problem:
+                    self._json(403, {"error": problem})
+                    return
+                payload = self._read_body()
+                action = path.rsplit("/", 1)[1]
+                try:
+                    result = {"preview": setuptasks.preview,
+                              "create": setuptasks.create,
+                              "decide": setuptasks.decide,
+                              "start": setuptasks.start}[action](payload)
+                except setupguide.Refused as exc:
+                    self._json(exc.status, {"error": str(exc), **exc.extra})
+                    return
+                if action != "preview" and not result.get("duplicate"):
+                    summary = {
+                        "create": lambda r: "setup cards "
+                        + ", ".join(c["filename"] for c in
+                                    r["created"] + r["reused"])
+                        + " in backlog/ — nothing started",
+                        "decide": lambda r: f"setup gap {r['gap']} — {r['decision']}",
+                        "start": lambda r: f"setup card {r['filename']} started",
+                    }[action](result)
+                    state.record_board_event({"kind": "other", "actor": "you",
+                                              "summary": f"setup: {summary}"})
                     state.broadcast({"type": "board"})
                 self._json(200, {"result": result})
             elif path in ("/api/settings/validate", "/api/settings/preview",

@@ -52,7 +52,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports / templates → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → doctor → events / github / drive / sync → agentsettings → settings → setupguide → agents → phases → refine → watch / httpd → board.py
+config → state / reports / templates → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → doctor → events / github / drive / sync → agentsettings → settings → setupguide → agents → setuptasks → phases → refine → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -116,6 +116,10 @@ config → state / reports / templates → taskfiles → plans / profiles → re
   two writes it owns — a person's decision about an area and a proposed
   setup card — held to a revision and a request identity
 - `agents.py` — headless work/review jobs, launched through the adapter
+- `setuptasks.py` — setup cards from discovered gaps: what inspecting
+  the application's files found absent, previewed exactly, created
+  idempotently by stable gap identity, and started only through the
+  normal start-work path (so it sits right of `agents`, which it calls)
 - `phases.py` — a phase run: its own branch, its cards merged into it one
   at a time. A beat, not an agent; it holds no registry of where a phase is
 - `refine.py` — refining a card on the board: comments, the one
@@ -2823,6 +2827,86 @@ existing installation opts in simply by reading it — nothing is reset,
 and an area already configured reads `configured`, not `tested`.
 Deferred and not-applicable areas stay revisitable with **Reopen**.
 
+### Setup cards from discovered gaps
+
+The guide's **Proposed setup cards** panel turns what inspection actually
+found into ordinary Bench cards (`setuptasks.py`). Inspection reads the
+application's files — `package.json`, a `Makefile`, `pyproject.toml`,
+compose files, fixture directories, browser test configuration, the
+instruction files — and the policy and driver bench already knows about.
+It runs nothing. Five gaps are known, each with a stable identity:
+
+| gap | proposed when | not proposed when |
+| --- | --- | --- |
+| `instructions` | no `AGENTS.md`, `CLAUDE.md` or Copilot instructions | one exists |
+| `fixtures` | service or data configuration, and no fixture directory or preparation step | either exists, or nothing needs one |
+| `preview` | a way to run the app (a `dev`/`start` script, a run target, `manage.py`), and no driver | a runnable driver exists, or nothing runs |
+| `ui-smoke` | a user interface, and no browser test configuration or dependency | a Playwright or Cypress setup exists, or there is no UI |
+| `verification` | no named check is registered | a check is registered |
+
+Each gap says why, lists every file and setting it read with its finding
+(`present`, `absent` or `unknown`), and names its deliverables,
+acceptance criteria and the authority a run would need. **Unknown is not
+absent.** A file that exists and cannot be read (`package.json` that does
+not parse, say) makes the gap `unknown` and a blocker: it cannot be
+created until someone can read the file, because a card built on an
+unread file asks an agent to guess. A missing grant is stated, and bench
+does not add it. For example, `BOARD_AGENT_COMMANDS` empty means a run can
+edit but not run the project's commands.
+
+**Prerequisites are lifecycle metadata, and only real ones.** Disposable
+data comes before the startup that uses it, and startup comes before the
+browser tests that drive it. So `preview` comes after `fixtures`,
+`ui-smoke` after both, and `verification` after `fixtures`. Each is
+written as a `**Depends on:**` line naming card numbers, and only when the
+prerequisite is itself selected or already on the board. A prerequisite
+that is neither is a warning in the preview, never an invented number.
+Registering the delivered programs as named checks and choosing merge
+requirements are your steps in Settings. They are listed after the cards,
+with their owner, rather than written as cards an agent could not finish.
+
+**Select, edit, preview, create.** Each gap can be selected, retitled,
+re-prioritised, given notes (no headings, header fields or markers the
+board parses), deferred with a reason, or pointed at an existing card to
+reuse instead. A card whose head already carries `**Setup gap:** <id>` is
+recognised as that gap's card, and cards whose titles look related are
+offered. **Preview** (`POST /api/setup/cards/preview`) returns the exact
+files, numbers and text and writes nothing. **Create**
+(`POST /api/setup/cards/create`) is armed. It carries the preview's
+`digest`, the record's `expected` revision and a `request` identity. A
+preview that no longer matches, or a stale revision, is a `409` with
+nothing written. A replayed request answers with its first result. An
+interrupted one resumes and adopts the cards it already wrote. A gap
+already held by a card is refused rather than doubled. Under
+`BOARD_COMMIT_MOVES` the cards and `setup/decisions.json` land in one
+`board: setup cards 08, 09 proposed …` commit, published by sync like any
+move.
+
+**Creating starts nothing**: no agent, worktree, phase, pull request or
+application change. **▸ Start first task** (`POST /api/setup/cards/start`)
+is a separate armed action. It runs the normal **▸ start work** path. A
+dependency not in `done/`, an agent CLI that is not there, or a plan,
+profile or template preflight that refuses each stop it before anything
+moves. The card moves to `in-progress/` only once those pass, and if the
+launch still refuses, the move is walked back.
+
+**Outcomes link back, and are not proof.** Each gap shows its card's
+outcome: `open`, `in progress`, `run failed`, `in review`, `delivered`,
+`archived`, `missing` or `superseded` (re-inspection no longer finds the
+gap). An archived or missing card lets the gap be proposed again, and
+the new link records the card it replaces. `delivered` is delivery
+metadata. If re-inspection still finds the gap, the guide says the merge
+did not make the capability. If it no longer does, the area still reads
+`configured` until bench's own check run passes. A card moving never
+writes a setup status and never enables a gate.
+
+The cards are portable. References are application-relative paths and
+setting names, never a path from this disk, and notes are scrubbed of
+anything credential-shaped. In `setup/decisions.json`, `tasks` maps each
+gap to its card (`source: created | reused`, and `replaces` when it
+follows an earlier card), and `gaps` holds per-gap deferrals. The
+request journal stays machine-local, as before.
+
 ## Pull requests
 
 A card entering `review/` with a `task/<stem>` branch gets a PR opened for
@@ -4074,6 +4158,7 @@ Every header field, and who writes it:
 | **Base branch** | no | the application branch this card's work starts from | you |
 | **PR base** | no | the branch this card's PR targets (defaults to **Base branch**) | you |
 | **PR** | no | the pull request url | the board when it opens one |
+| **Setup gap** | no | the setup gap a card answers (`instructions`, `fixtures`, `preview`, `ui-smoke`, `verification`) | the setup guide when it proposes the card |
 
 **Status** is the field the board holds you to: a header that disagrees
 with the directory the file sits in is flagged `status drift`.
