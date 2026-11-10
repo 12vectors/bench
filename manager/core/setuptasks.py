@@ -941,7 +941,9 @@ def start(payload: dict) -> dict:
                             "starts", 409)
         done = {c["number"].lstrip("0") for c in cards.values()
                 if c["stage"] == "done"}
-        waiting = [n for n in card["dependsOn"] if n.lstrip("0") not in done]
+        shown = {c["number"].lstrip("0"): c["number"] for c in cards.values()}
+        waiting = [shown.get(n.lstrip("0"), n) for n in card["dependsOn"]
+                   if n.lstrip("0") not in done]
         if waiting:
             raise Refused(f"#{card['number']} depends on "
                           f"{', '.join('#' + n for n in waiting)}, not done yet; "
