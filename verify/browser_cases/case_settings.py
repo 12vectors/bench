@@ -652,7 +652,8 @@ class SurfaceThemesAndHitAreas(unittest.TestCase):
         self.assertEqual("Merge rules", b.eval("document.querySelector('#shead h1').textContent"))
         S["metrics"]["settingsSidebarMarks"] = marks
         # and the keyboard walks the sidebar in order, with a visible ring
-        b.eval("document.querySelector('#snav [data-ssection=\"overview\"]').focus()")
+        # (the setup guide, task 88, sits between Overview and Checks)
+        b.eval("document.querySelector('#snav [data-ssection=\"setup\"]').focus()")
         b.key("Tab")
         self.assertEqual("verification", b.eval("document.activeElement.dataset.ssection"))
         ring = b.eval("getComputedStyle(document.activeElement).outlineStyle")

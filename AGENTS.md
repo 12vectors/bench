@@ -52,7 +52,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports / templates → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → doctor → events / github / drive / sync → agentsettings → settings → agents → phases → refine → watch / httpd → board.py
+config → state / reports / templates → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → doctor → events / github / drive / sync → agentsettings → settings → setupguide → agents → phases → refine → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -111,6 +111,10 @@ config → state / reports / templates → taskfiles → plans / profiles → re
   modules above and nowhere else: it names the states so nothing reads as
   a pass, compares two resolutions so a change can be previewed, and
   writes one file. No second parser, by construction
+- `setupguide.py` — the project setup guide: six areas read from the
+  authorities above, eight status words and no percentage, and the only
+  two writes it owns — a person's decision about an area and a proposed
+  setup card — held to a revision and a request identity
 - `agents.py` — headless work/review jobs, launched through the adapter
 - `phases.py` — a phase run: its own branch, its cards merged into it one
   at a time. A beat, not an agent; it holds no registry of where a phase is
@@ -2393,7 +2397,8 @@ enforces wears `unsupported` rather than a switch that pretends.
 ### Eight sections, values first
 
 The sections sit in a **sidebar** on the left, in three groups —
-**Configure** (Overview, Checks, Merge rules, Agents, Agent access), **Inspect**
+**Configure** (Overview, Setup guide, Checks, Merge rules, Agents, Agent
+access — the Setup guide has a section of its own below), **Inspect**
 (Diagnostics, Installation) and **Advanced** (Advanced policy) — with the
 current one marked by a bar, a heavier weight and `aria-current`, so none
 of the three is carried by colour alone. Each section opens with its own
@@ -2706,6 +2711,117 @@ document is read — by `profiles`, the same parser that refuses them for a
 launch. Secrets are not managed here: credential-shaped names and values
 are masked on the way out, and a submitted mask is refused rather than
 written back over the value it hid.
+
+## The setup guide: one proposed configuration, resumable
+
+`bootstrap.py` is the terminal half of first-time setup; it ends by
+naming the board's URL with `#setup` on it. That opens **Settings →
+Setup guide**, the browser half — and `board.py --setup-guide` prints the
+same reading in a terminal, for a person or their coding agent. It is
+not a second configuration store and owns no setting: every fact in it is
+asked of the module that already answers for it (`config` for the layout,
+the remotes, `gh` and the driver; `config.agent_choice` for the harness
+and model; `settings.verification` and `profiles.gate_policy` for checks
+and merge rules; `verify.outcome_now` for what a check last found), so the
+guide cannot disagree with a launch.
+
+### Six areas, each with a next action and its owner
+
+**Workspace and task storage**, **Coding agent**, **Project
+instructions**, **Verification**, **Application preview** and **Review
+and delivery**. Each shows what was discovered, what bench recommends and
+why, what follows from it, and one next action naming who holds it:
+**you** (a login, an install, an approval, a decision), **an agent,
+through a card** (engineering work — instructions, a driver, test
+programs), or **Settings** (a value bench already edits safely, linked
+rather than duplicated). The agent area recommends the harness default
+and the CLI's own model, and lists every installed harness with whether
+its CLI is on PATH; nothing forces the advanced choices.
+
+Project instructions the application already has (`AGENTS.md`,
+`CLAUDE.md`, `.github/copilot-instructions.md`) are authoritative and
+never edited. When there are none, the guide proposes a **setup card**
+in `backlog/` asking for instructions that describe the project's real
+conventions — it never writes boilerplate into the application.
+
+### Eight words, and no percentage
+
+| status | what it licenses you to believe |
+| --- | --- |
+| `not-inspected` | nothing has looked, or the reading could not be taken |
+| `decision-needed` | bench found what is here and cannot choose for you |
+| `configured` | set up, and not exercised. Configured is not tested |
+| `tested` | bench ran it and recorded a pass that still holds |
+| `failed` | it ran and said no |
+| `blocked` | something outside bench must change first: a tool, a login, a layout bench refuses |
+| `deferred` | someone chose to come back later, with a reason |
+| `not-applicable` | someone recorded this project does not need it, with a reason |
+
+The summary is a count per word. A percentage would read "mostly set up"
+about a board whose one missing piece is the one that matters, so there
+is none. The real CLI under bench's policy reads `not-inspected` until
+the doctor's `--real-agent` stage is deliberately run.
+
+### The contract (v1)
+
+`GET /api/setup` returns `{"setup": {...}}` with `kind:
+"bench-setup-state"`, `v: 1`, the `revision` of the shared record
+(`"none"` before the first write), `readOnly` (why writes are refused,
+or null), `statuses`, `owners`, the six `areas` (each `id`, `status` as
+shown, `computed` as read now, `facts`, `recommendation`, `consequence`,
+`next` with `owner`/`kind`/`label` and a `section`, `command` or
+`detail`, `fingerprint`, `decision` with `stale`, the linked `task`, and
+`allowed` mutations), `summary` (`counts`, `open`, `stale`, `invite`),
+the bootstrap `handoff` read as history, and `interrupted` operations.
+Reading runs no project program, launches no agent, repairs nothing and
+writes nothing.
+
+Two mutations, behind the same door as a policy write (JSON content
+type, `X-Bench-Settings: 1`, origin checks):
+
+- `POST /api/setup/decide` — `{area, decision: defer | not-applicable |
+  reopen, reason, expected, request}`. A reason is required (3–500
+  characters, scrubbed of anything credential-shaped); workspace and
+  agent cannot be not-applicable.
+- `POST /api/setup/task` — `{area, expected, request}` for
+  instructions, verification or preview: writes one ordinary card to
+  `backlog/` and links it. Nothing starts.
+
+`expected` is the revision the client read; a different one is `409`
+with `stale: true` and `current`, and nothing is written. `request` is
+the client's identity for this attempt: the same one again answers with
+the first result (`duplicate: true`) rather than acting twice, and one
+whose operation was interrupted *resumes* it — a card already written is
+adopted, not written again. The CLI takes `--decide AREA DECISION
+--reason R`, `--create-task AREA`, `--expected` and `--request`, and
+calls the same functions. Configuring a check, running one and enabling
+a merge rule stay in Settings → Checks, a card's ◫ sheet and Settings →
+Merge rules, with their own protections.
+
+### Who owns what is stored where
+
+| Path | Holds | Shared |
+| --- | --- | --- |
+| `<work root>/setup/decisions.json` | per area: decision, reason, actor, time, the fingerprint of the portable facts it was made against, and the linked setup card | yes — committed like any board edit under `BOARD_COMMIT_MOVES` |
+| `manager/local/state/setup/operations.json` | the operation journal: request identities, interrupted work | no — machine-local |
+| `manager/local/state/bootstrap/handoff.json` | what the terminal setup left (task 87) | no — machine-local |
+
+The fingerprint is a hash of words and names (layout mode, which
+instruction files exist, which checks are registered), never of a path,
+so a teammate's board reads the same decision and the same staleness. A
+decision whose facts changed reads `stale` and asks to be revisited;
+nothing is reset. Unknown top-level keys and unknown fields of a record
+survive every write; a document from a newer bench, or one that does not
+parse, is shown read-only and never written over.
+
+### First visit, and existing boards
+
+A **◇ set up** chip in the header appears while an area needs a decision,
+is blocked or failed, and opens the guide. It is an invitation, never a
+gate: the board works normally whether or not anyone opens it, and an
+existing installation opts in simply by reading it — nothing is reset,
+and an area already configured reads `configured`, not `tested`.
+Deferred and not-applicable areas stay revisitable with **Reopen**.
 
 ## Pull requests
 
