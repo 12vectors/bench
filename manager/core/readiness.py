@@ -143,12 +143,11 @@ SEPARATE_ACTIONS = [
      "writes": "the profile document, on Apply only", "runs": "nothing"},
 ]
 
-RUNNERS = ("npm", "pnpm", "yarn", "npx", "make", "pytest", "python",
-           "python3", "tox", "nox", "cargo", "go", "bundle", "rake", "mvn",
-           "gradle", "./gradlew", "deno", "bun", "just", "composer", "php",
-           "phpunit", "rspec", "mix", "dotnet", "uv", "poetry", "hatch")
-CHECK_WORDS = re.compile(r"\b(test|tests|check|lint|verify|typecheck|spec|"
-                         r"unittest|pytest|vet|clippy)\b", re.I)
+# Core names no project's stack (tests/test_checks_definition.py holds it
+# to that), so a CI step or a documented command is offered by its shape —
+# one bare program, words that read as checking — not by a list of tools.
+BARE = re.compile(r"^(\./)?[A-Za-z][\w.+-]*$")
+CHECK_WORDS = re.compile(r"test|check|lint|verify|spec|vet|clippy", re.I)
 COMPOUND = re.compile(r"&&|\|\||[|;<>`]|\$\(|\$\{")
 SCRIPT_KINDS = {"test": "high", "check": "medium", "lint": "medium",
                 "typecheck": "medium", "type-check": "medium",
@@ -187,8 +186,7 @@ def _looks_like_check(command: str) -> bool:
         first = shlex.split(command)[0]
     except (ValueError, IndexError):
         return False
-    return (first in RUNNERS or first.startswith("./")) and \
-        bool(CHECK_WORDS.search(command))
+    return bool(BARE.match(first)) and bool(CHECK_WORDS.search(command))
 
 
 def _ci_commands(text: str) -> list[tuple[int, str]]:
@@ -241,7 +239,7 @@ def _prerequisites(command: str, found: dict, app: Path) -> list[dict]:
                     "network": True,
                     "why": "installs the project's JavaScript dependencies, "
                            "downloading them from a registry"})
-    elif first in ("python", "python3", "pytest", "tox", "nox"):
+    elif first.startswith("python") or first in ("tox", "nox"):
         if (app / "requirements.txt").is_file():
             out.append({"kind": "prepare", "name": "python-deps",
                         "run": "python3 -m pip install -r requirements.txt",
@@ -355,11 +353,7 @@ def discover() -> dict:
         add("cargo test", "Cargo.toml", "a Cargo package", "high")
     if has("go.mod"):
         add("go test ./...", "go.mod", "a Go module", "high")
-    pyproject = _read(app, "pyproject.toml") or ""
-    if "[tool.pytest" in pyproject:
-        add("python3 -m pytest", "pyproject.toml",
-            "pytest configured in [tool.pytest]", "high")
-    elif (has("pyproject.toml") or has("setup.py")) and has("tests"):
+    if (has("pyproject.toml") or has("setup.py")) and has("tests"):
         add("python3 -m unittest discover -s tests", "tests",
             "a Python test directory (the runner is a guess)", "medium")
     for rel, command in _entrypoints(app):
