@@ -314,5 +314,66 @@ class T4SetupCards(unittest.TestCase):
         shot("setup-cards-light-390x780")
 
 
+def readiness_api() -> dict:
+    code, body = S["backend"].get("/api/setup/verification")
+    if code != 200:
+        raise bv.CheckFailed(f"GET /api/setup/verification answered {code}")
+    return json.loads(body)["verification"]
+
+
+class T5VerificationReadiness(unittest.TestCase):
+    """Task 90: the readiness panel. Discovery is a GET; a registration
+    preview writes nothing; a merge rule is offered only for a ready check;
+    and the bootstrap condition is drawn as the backend states it."""
+
+    def test_bootstrap_registration_preview_and_no_activation_offer(self):
+        b = open_guide()
+        if not b.wait("!!document.querySelector('#setup-ready')", 10):
+            raise bv.CheckFailed("the verification readiness panel was not drawn")
+        found = readiness_api()
+        self.assertIn(found["bootstrap"]["headline"], b.eval(
+            "document.querySelector('#setup-ready .setup-boot').textContent"))
+        self.assertEqual([c["name"] for c in found["checks"]], b.eval(
+            "[...document.querySelectorAll('#setup-ready [id^=\"ready-\"].setup-gap')]"
+            ".map(e => e.id.replace('ready-', ''))"))
+        if not any(c["readiness"] == "ready" for c in found["checks"]):
+            self.assertFalse(b.eval("!!document.querySelector('[data-readyact=\"activate:all\"]')"),
+                             "a merge rule was offered with no ready check")
+        shot("setup-readiness-1440x900")
+        before = readiness_api()
+        b.eval("(() => { const i = document.querySelector('#ready-cmd');"
+               " i.value = 'python3 -m unittest';"
+               " i.dispatchEvent(new Event('input', {bubbles: true}));"
+               " const n = document.querySelector('#ready-name');"
+               " n.value = 'readiness-case';"
+               " n.dispatchEvent(new Event('input', {bubbles: true})); })()")
+        b.click('[data-readyact="register:explicit"]')
+        self.assertTrue(b.wait("!!document.querySelector('[aria-label=\"register preview\"]')", 10),
+                        "the registration preview was not drawn")
+        text = b.eval("document.querySelector('[aria-label=\"register preview\"]').textContent")
+        self.assertIn("nothing written", text)
+        self.assertIn("readiness-case", text)
+        self.assertIn("requires it nowhere", text)
+        self.assertEqual(before["policyRevision"], readiness_api()["policyRevision"],
+                         "the registration preview wrote the policy")
+        b.click('[data-readyact="apply:register"]')
+        self.assertIn("click again", b.eval(
+            "document.querySelector('[data-readyact=\"apply:register\"]').textContent"))
+        self.assertEqual(before["policyRevision"], readiness_api()["policyRevision"],
+                         "one click wrote the policy")
+        shot("setup-readiness-preview-1440x900")
+        b.click('[data-readyact="cancel:register"]')
+        self.assertTrue(b.wait("!document.querySelector('[aria-label=\"register preview\"]')", 5))
+        self.assertEqual([], [e.get("exceptionDetails", {}).get("text")
+                              for e in b.console], "the page threw")
+        T3Layouts._named(self)
+
+    def test_390px_fits_the_readiness_panel(self):
+        b = open_guide(390, 780, "light")
+        self.assertTrue(b.wait("!!document.querySelector('#setup-ready')", 10))
+        self.assertLessEqual(b.eval("document.documentElement.scrollWidth"), 391)
+        shot("setup-readiness-light-390x780")
+
+
 if __name__ == "__main__":
     unittest.main()
