@@ -118,6 +118,153 @@ and **Operating an external install**, for hook wiring without a tracked
 file, what the record says about where things are, start/stop/update, and
 running a candidate bench from a stable operator install.
 
+## Set up with your coding agent
+
+`bootstrap.py` is the guided way into the external layout above, written
+to be run by a person or handed to their coding agent. It looks first,
+shows you every change it would make, and makes them only when you say
+so — then it gives you the board's address and stops. It is not a second
+installer: the installing is `install.py`, which it runs for you with
+the flags above.
+
+### The bounded instructions
+
+Paste this into your coding agent, with the two paths filled in. It is
+bounded on purpose: the agent reads, asks and previews on its own, and
+every change waits for you.
+
+```text
+Set up Bench for my project with Bench's bootstrap.py. The application
+is /ws/app and Bench is unpacked at /ws/bench. Stop at every decision
+that is mine.
+
+1. Run: python3 /ws/bench/bootstrap.py inspect --app /ws/app
+   It writes nothing and runs nothing from the project. Summarise what
+   it found, including anything it says it refused.
+2. Run plan with the same --app. For each choice it lists under
+   "Still to choose", ask me — do not choose for me.
+3. Run plan again with my answers and show me every operation it
+   previews, exactly as printed.
+4. Only after I approve, run the same command with apply instead of
+   plan, and with --yes added.
+5. Never add --create-remote, --add-remote, --push or --sync unless I
+   asked for that one by name. Never ask me for a token or a password:
+   if a provider needs signing in, tell me to run its login myself, in
+   my own terminal.
+6. Report the board URL, the handoff file path and the "Left for the
+   guide" items it printed, then stop. Do not start the board unless I
+   ask.
+```
+
+### The commands, and what each one does
+
+```bash
+mkdir -p /ws/bench && curl -L \
+  https://github.com/12vectors/bench/releases/latest/download/bench.tar.gz \
+  | tar -xz -C /ws/bench
+python3 /ws/bench/bootstrap.py inspect --app /ws/app
+python3 /ws/bench/bootstrap.py plan --app /ws/app --work-repo new --agent claude --behaviour solo
+python3 /ws/bench/bootstrap.py apply --app /ws/app --work-repo new --agent claude --behaviour solo --yes
+/ws/bench/start.sh
+```
+
+- **`inspect`** reads and reports: the application's real root (the top
+  of the git checkout you named), its branch, remotes and uncommitted
+  paths; any bench already installed there or beside it; whether the
+  work root is a repository of its own; which of `git`, `gh` and the
+  agent CLIs are on your PATH; and what the project *declares* —
+  instructions, CI workflows, `package.json` scripts, `Makefile`
+  targets. It writes nothing. It runs no project script, and it asks git
+  with the repository's filesystem monitor and hooks turned off, so not
+  even the repository's own configuration runs. A script called `test`
+  is reported as declared — never as safe, and never as approved.
+- **`plan`** resolves your choices, refuses a layout that does not hold
+  together, and previews every filesystem, git, settings and network
+  operation `apply` would make. It writes nothing either.
+- **`apply`** makes exactly those operations, in order, once approved
+  with `--yes` (or by answering on a terminal). Without a terminal and
+  without `--yes` it asks nothing, prints the preview and exits 2.
+  `--start` starts the board when it is done; otherwise it never does.
+
+Every subcommand takes `--json`, which prints the handoff document
+below instead of prose, and `--help`, which lists the options. There
+are no others.
+
+### The choices it asks for, and nothing else
+
+| Choice | Option | Asked when |
+| --- | --- | --- |
+| the application | `--app PATH` | always — an absolute path to its git checkout |
+| the tickets' repository | `--work-repo new`, `existing` or `none` | the work root is not already a repository. `new` runs `git init` there with your consent; `none` keeps a plain folder |
+| the agent | `--agent claude` (or another installed adapter) | more than one adapter is installed and none is set |
+| solo or team | `--behaviour solo` or `team` | nothing is set yet. Team makes moves claim the card and commit themselves |
+
+The rest have defaults and are only ever your explicit choice: the work
+root (`--work`, default `work` beside this install) and the worktrees
+(`--worktrees`, default `worktrees` beside it); `--access remote`, which
+prints how to reach the board through an SSH tunnel and does not change
+where it listens; `--create-remote OWNER/NAME`, which creates a
+**private** GitHub repository for the tickets through `gh`;
+`--add-remote URL`; `--push`, the first push of the tickets; and
+`--sync`, which shares the board through that remote (`BOARD_SYNC`).
+Each is a separate decision, and none of them touches the application.
+`--mode vendored` keeps the older layout — bench inside the
+application's own `.task-manager/` — for an install unpacked there.
+
+### What it will not do
+
+- Move, edit, commit or push anything in the application. The
+  application is never pushed or merged by setup.
+- Reinitialize a repository, or add or replace a remote on one that has
+  one. An existing work repository is used exactly as it is, and an
+  existing board in it keeps its cards and its template.
+- Accept a URL carrying a credential, ask for a token, or print one: a
+  provider's sign-in (`gh auth login`, your agent CLI's own login) runs
+  in your terminal, outside bench.
+- Create a public repository, start a network listener, or bind the
+  board anywhere but `127.0.0.1`.
+- Choose which commands an agent may run. A fresh board starts with
+  `BOARD_AGENT_COMMANDS` empty and says so on the board.
+- Call a model. Seeing that the agent CLI is on PATH is all `inspect`
+  does; `board.py --doctor --real-agent --approve-real-agent` is the
+  separate, explicit check that spends tokens.
+
+It refuses — writing nothing — an application that is not a git
+repository, two roles that are the same directory or nest inside one
+another, a work root inside a repository it does not own, a bench that
+sits inside the application in the external mode, and an install
+already set up for a different application.
+
+### When something is missing or goes wrong
+
+A missing optional capability is a line under **Left for the guide**,
+not a failure: no `gh`, no agent CLI, no remote, a remote GitHub refused
+to create, a first push that did not land. The local board works in
+every one of those cases. A required step that fails — the install
+itself — stops the run with exit 1 and its output. A run that is
+interrupted, or fails part way, is resumed by running the same command
+again: every step looks at what is already there first, so nothing is
+done twice and nothing is undone.
+
+Exit status: `0` done, `1` refused or a required step failed, `2` a
+choice or the approval is missing, `130` interrupted.
+
+### The handoff, and where to go next
+
+Every run ends with a handoff — printed, and with `apply` also written
+to `manager/local/state/bootstrap/handoff.json`, which is machine-local
+and never committed. It is versioned (`"kind": "bench-bootstrap-handoff"`,
+`"v": 1`) and holds the roles, your choices, each operation's outcome,
+the items left for the guide, and the board's real address
+(`http://127.0.0.1:26071/` unless `BOARD_PORT` says otherwise). No
+credential, token or environment value is ever in it.
+
+Then start the board with `start.sh` and open that address. The **⚕
+configuration** chip in its header is where setup continues: what is
+configured, what is not, and what to do next, with **Settings** holding
+the rest — the commands agents may run, the checks your team provides,
+and the merge rules.
+
 ## Update
 
 ```bash

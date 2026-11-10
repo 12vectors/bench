@@ -165,8 +165,15 @@ class TheRealSiteBuilds(unittest.TestCase):
         in static/ is a public url. The fonts' README is a note to
         whoever refreshes them; their licences are not — the OFL asks
         that its text travel with the files it covers."""
-        self.assertEqual([], sorted(self.out.rglob("*.md")),
+        self.assertEqual([], sorted((self.out / "static").rglob("*.md")),
                          "a maintainer's note became a page of the site")
+        # The only Markdown the site publishes is a page's declared
+        # companion (task 87), written beside that page's index.html.
+        manifest = json.loads((SITE / "pages.json").read_text("utf-8"))
+        declared = sorted(
+            BUILDER.target_for(self.out, page["path"]).parent / "agent.md"
+            for page in manifest["pages"] if page.get("companions"))
+        self.assertEqual(declared, sorted(self.out.rglob("*.md")))
         fonts = self.out / "static" / "fonts"
         self.assertTrue((fonts / "IBMPlex.LICENSE.txt").is_file())
         self.assertTrue((fonts / "ZillaSlab.LICENSE.txt").is_file())
