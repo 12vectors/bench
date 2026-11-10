@@ -155,7 +155,7 @@ def no_narrow_columns(width):
         " && a !== 'start')")
 
 
-class GlobalCheck(_Off):
+class GlobalCheck(unittest.TestCase):
     def test_an_inspected_only_board_reads_a_specific_result_and_one_scope(self):
         b = load(1440, 900)
         open_global()
@@ -382,7 +382,7 @@ def go_settings_diagnostics(width=1440, height=900):
     return b
 
 
-class SettingsEntry(_Off):
+class SettingsEntry(unittest.TestCase):
     def test_settings_draws_the_same_result_as_the_sheet(self):
         found = {}
         for w, h in ((1440, 900), (390, 844)):
