@@ -716,6 +716,7 @@ def state() -> dict:
                                      "and a deferred item is not done.")},
         "handoff": handoff(),
         "interrupted": interrupted(),
+        "proposals": _proposals(doc),
         "storage": {
             "portable": ("setup/decisions.json in the work state — "
                          "decisions, reasons, who and when, and setup-card "
@@ -727,8 +728,23 @@ def state() -> dict:
         },
         "endpoints": {"read": "GET /api/setup",
                       "decide": "POST /api/setup/decide",
-                      "task": "POST /api/setup/task"},
+                      "task": "POST /api/setup/task",
+                      "preview": "POST /api/setup/cards/preview",
+                      "create": "POST /api/setup/cards/create",
+                      "gap": "POST /api/setup/cards/decide",
+                      "start": "POST /api/setup/cards/start"},
     }
+
+
+def _proposals(doc: dict) -> dict:
+    """The gap-specific setup cards (task 89), read in the same pass and
+    under the same rule: nothing is written, nothing is run."""
+    import setuptasks
+    try:
+        return setuptasks.proposals(doc)
+    except Exception as exc:  # a reading that failed is not "no gaps"
+        return {"gaps": [], "covered": [], "steps": [], "order": [],
+                "unreadable": f"the setup cards could not be proposed: {exc}"}
 
 
 # ── the two mutations ──────────────────────────────────────────────────
@@ -947,7 +963,8 @@ def create_task(payload: dict) -> dict:
             number_text = filename.split("-", 1)[0]
             text = (f"# {number_text} — {title}\n\n**Status:** Backlog\n"
                     f"**Priority:** Medium — proposed by the setup guide\n"
-                    f"**Type:** Chore\n\n{context} Proposed from the setup "
+                    f"**Type:** Chore\n**Setup gap:** {area}\n\n"
+                    f"{context} Proposed from the setup "
                     f"guide's {TITLES[area]} area; edit or archive it freely.\n"
                     f"\n## What to build\n\n{build}\n\n## Acceptance\n\n"
                     f"{accept}\n")
