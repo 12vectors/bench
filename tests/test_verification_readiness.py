@@ -547,5 +547,28 @@ class EndToEndInADisposableRepository(ReadinessCase):
         self.assertEqual("blocked", gates.evaluate(CARD, "acceptance")["decision"])
 
 
+class TheSurfaces(unittest.TestCase):
+    """The routes sit behind the policy-write door, and the page offers a
+    merge rule only for a ready check and writes only through Apply."""
+
+    def test_the_writes_are_behind_the_settings_door(self):
+        src = (REPO / "manager" / "core" / "httpd.py").read_text()
+        block = src[src.index('"/api/setup/verification/register"'):]
+        block = block[:block.index("self._json(200")]
+        self.assertIn("origin_problem(self.headers", block)
+        self.assertIn('elif path == "/api/setup/verification":', src)
+
+    def test_the_page_writes_only_through_apply_and_arms_it(self):
+        html = (REPO / "manager" / "core" / "board.html").read_text()
+        panel = html[html.index("function setupReadiness"):
+                     html.index("function wireReadiness")]
+        self.assertIn("c.readiness === 'ready'", panel)
+        wire = html[html.index("function wireReadiness"):]
+        wire = wire[:wire.index("\n}\n")]
+        self.assertIn("'/api/settings/apply'", wire)
+        self.assertIn("classList.contains('armed')", wire)
+        self.assertNotIn("/api/profiles", wire)
+
+
 if __name__ == "__main__":
     unittest.main()
