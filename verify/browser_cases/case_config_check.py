@@ -474,10 +474,17 @@ class LaunchCheck(unittest.TestCase):
                                     "390x844": (390, 844, None),
                                     "1280x800@200%": (1280, 800, 2)}.items():
                 b = load(w, h, zoom=z)
-                try:
-                    open_launch(f"{STACKED}.md")
-                except bv.CheckFailed as exc:  # PROBE: exit 2 marks opening
-                    raise RuntimeError(f"PROBE open {name}: {exc}")
+                # PROBE: card missing → pass; tools chip missing → exit 2;
+                # anything later → exit 1
+                sel = f'#board article.card[data-file="{STACKED}.md"]'
+                if not b.wait(f"!!document.querySelector('{sel}')", 10):
+                    return
+                b.click(f"{sel} [data-more]")
+                if not b.wait(f"!!document.querySelector('{sel} .cardtools.open [data-profile]')", 5):
+                    raise RuntimeError("PROBE no tools chip")
+                b.click(f"{sel} .cardtools.open [data-profile]")
+                if not b.wait(f"!!document.querySelector('{DIALOG} .lrows, {DIALOG} .cissue')", 30):
+                    raise bv.CheckFailed("PROBE never resolved")
                 r = rows()
                 m = measure([DIALOG, f"{DIALOG} .stitle"])
                 narrow = no_narrow_columns(m["viewport"]["width"])
