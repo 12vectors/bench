@@ -483,8 +483,8 @@ class LaunchCheck(unittest.TestCase):
                 self.assertTrue(r["Starts from"].startswith(STACKED_BASE), r)
                 self.assertTrue(r["PR target"].startswith(STACKED_BASE), r)
                 self.assertNotIn("main", r["Starts from"])
-                self.assertEqual([], bv.layout_problems(m), name)
-                self.assertEqual([], narrow, f"narrow value columns at {name}")
+                if bv.layout_problems(m) or narrow:  # PROBE: exit 2 marks layout
+                    raise RuntimeError(f"PROBE layout {name}")
                 close_sheet()
             S["metrics"]["launchCheckStacked"] = found
         finally:
