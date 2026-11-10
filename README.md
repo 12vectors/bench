@@ -34,6 +34,10 @@ mkdir .task-manager && curl -L \
 
 No token, no clone: releases are curated artifacts that never contained
 bench's own cards or settings, so the board starts empty by construction.
+They carry no work state at all: `start.sh` runs `install.py`, which
+creates `tasks/` (five stages and `archive/`), `plans/` and `reference/`
+inside `.task-manager/` and seeds `tasks/task-template.md` from the
+tool-owned `manager/core/seed/`. That template is yours from then on.
 
 The first run asks the two questions it cannot answer for you — solo or
 team, and which agent adapter — and writes `manager/local/.env` from the
@@ -78,12 +82,20 @@ python3 /ws/bench/install.py --app /ws/app --work /ws/work
 
 `--app` and `--work` must be absolute: bench resolves nothing against a
 working directory it cannot see. The install writes both into
-`manager/local/.env`, builds the work state's skeleton and wires the
+`manager/local/.env`, builds the work state's skeleton — at the work
+root only, so `/ws/bench` is left with no `tasks/`, `plans/` or
+`reference/` that could pass for a second board — and wires the
 agent adapter — and refuses the whole layout, with the reason, rather
 than falling back to a repository nobody named. `--worktrees` moves the
 task branches' checkouts; `--app-hooks` additionally writes the
 application's *local* settings file, and refuses if git tracks it.
-`--dry-run` reports and writes nothing.
+`--dry-run` reports and writes nothing. Later runs need no flags: the
+layout is read back from `manager/local/.env`, and nothing that exists
+is overwritten. A work root that already holds a board keeps it, your
+edited task template included; an older install's untouched skeleton
+beside the tool is tidied away, and anything there that is not untouched
+is kept and named rather than moved or deleted. Changing the work root
+later initializes the new one and leaves the old one exactly as it was.
 
 Two git identities, and they never cross. Branches, worktrees, pushes and
 code PRs are the application's; creating, moving and archiving a ticket
@@ -117,9 +129,11 @@ The artifact is stamped with the repo it was built from, so updating
 needs no configuration; `BENCH_SOURCE=<owner/repo>` in
 `manager/local/.env` overrides the stamp. Updates replace
 `manager/core/` and the top-level scripts wholesale and touch nothing
-else — tasks, plans, reference, and everything under `manager/local/`
-(your driver, commands, prompt overrides, settings, state) survive every
-update. Then `python3 .task-manager/install.py` and restart the board.
+else — tasks, plans, reference, your task template, and everything under
+`manager/local/` (your driver, commands, prompt overrides, settings,
+state) survive every update, wherever the work root is. Only the
+tool-owned seed in `manager/core/seed/` changes. Then
+`python3 .task-manager/install.py` and restart the board.
 If the source repo has no published release yet, `update.sh` says so and
 changes nothing.
 
@@ -131,7 +145,9 @@ git clone git@github.com:12vectors/bench.git && cd bench && ./start.sh
 
 A clone carries bench's own cards and local/ content — that is dev mode,
 not an install. (Installing from a clone anyway works: `install.py`
-clears the shipped cards on its first boot in a host repo.) Releases are
+clears the shipped cards on its first boot in a host repo.) In the clone
+the task template lives at `manager/core/seed/task-template.md`, the seed
+every install copies from. Releases are
 built by `./release.sh` from the manifest at
 `manager/core/release-manifest`: tag = `v<VERSION>`, one stable asset
 name (`bench.tar.gz`), contents at the tarball root — the two things the

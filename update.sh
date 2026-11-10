@@ -9,7 +9,12 @@
 # content — then replaces manager/core/ WHOLESALE plus the top-level
 # core-owned files named by the artifact's own manifest. Never touches
 # tasks/, plans/, reference/, or manager/local/ — your project's tasks,
-# driver, adapters, prompt overrides, .env and state survive every update.
+# driver, adapters, prompt overrides, .env and state survive every update,
+# and so does a work root outside the install, which this never reads.
+# The task template's tool-owned seed (manager/core/seed/) is replaced
+# with core; your copy at the work root is not. Work state is not in the
+# artifact at all: the install.py run afterwards creates whatever is
+# missing at the resolved work root, and nothing beside the tool.
 #
 # Source repo: BENCH_SOURCE (environment, then manager/local/.env),
 # falling back to the default below. No published release → this script

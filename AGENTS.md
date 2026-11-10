@@ -13,7 +13,8 @@ its status — there is no other source of truth.
 ├── update.sh             ← Replace core/ from the published release; local/ survives
 ├── tasks/                ← Task state, nothing else. Works as a plain folder
 │   ├── backlog/…done/    ←   kanban even if manager/ is deleted or ignored.
-│   └── archive/          ← Archived cards: out of the flow, never deleted
+│   ├── archive/          ← Archived cards: out of the flow, never deleted
+│   └── task-template.md  ← Yours: seeded once by install.py, never replaced
 ├── plans/                ← Claude Code plan files (via plansDirectory setting)
 ├── reference/            ← Supporting documents referenced by tasks
 └── manager/
@@ -23,6 +24,7 @@ its status — there is no other source of truth.
     │   ├── prompts/      ← Default agent prompt templates
     │   ├── adapters/     ← Agent-vendor integrations (claude/ and
     │   │                    opencode/ ship; contract in README)
+    │   ├── seed/         ← Tool-owned starter material (the task template)
     │   └── driver.example/
     └── local/            ← This project's half. Updates never touch it.
         ├── .env          ← Settings (gitignored; defaults in core/.env.example)
@@ -34,6 +36,12 @@ its status — there is no other source of truth.
         ├── adapters/     ← Adapter overrides/additions
         └── state/        ← Runtime data: sessions, agent logs, drives (gitignored)
 ```
+
+That is the vendored layout, where the work state lives in the install.
+`tasks/`, `plans/` and `reference/` are not shipped: `install.py` creates
+them at the work root the layout resolves to — here, or `BOARD_WORK_ROOT`
+in an external install, and never both (see "Where the work state is
+created").
 
 Three layers, one law: **core knows about tasks, worktrees, PRs and events —
 it knows nothing about any particular app, agent vendor, or project.**
@@ -212,10 +220,16 @@ distribution repo (`BENCH_REF=v3` pins a tag; the source is stamped into
 the script at build time, `BENCH_SOURCE` in `local/.env` overrides it),
 replaces `manager/core/` wholesale plus the top-level files named in the
 artifact's `manager/core/release-manifest`, and touches nothing else —
-tasks, driver, prompt overrides, `.env` and state all survive. No release
+tasks, plans, reference documents, your task template, driver, prompt
+overrides, `.env` and state all survive, in either layout. The tool-owned
+seed under `manager/core/seed/` is replaced with the rest of core; your
+template at the work root is not. No release
 published → it says so and changes nothing; developers working on bench
 itself update their clone with git instead. Then re-run `install.py`
-(idempotent re-wire) and restart the board. Releases are cut from the
+(idempotent re-wire) and restart the board — which, after an update from
+a release that still unpacked a skeleton beside the tool, is also what
+tidies that skeleton away in an external install (see "Where the work
+state is created"). Releases are cut from the
 bench repo with `release.sh` (never shipped in the artifact): it builds
 the tarball from the manifest, tags `v<VERSION>` and publishes via `gh`.
 
@@ -233,6 +247,14 @@ the adapter's `emit.py`. Fully present → reports "ok" and touches nothing;
 partial, stale (old `.tasks/` paths) or duplicated → repaired in place. Other
 hooks and settings are never touched, so it is safe to run any time — e.g.
 after dropping `.task-manager/` into a new repo.
+
+It also lays down the work state, because the release no longer carries
+one: `tasks/` with its five stages and `archive/`, `plans/` and
+`reference/`, each new directory holding a `.gitkeep` so it survives a
+commit, and `tasks/task-template.md` copied from the tool-owned seed. In
+a vendored install that is inside `.task-manager/`, exactly where it
+always was. Whatever already exists is left as it is, so a second run
+creates nothing.
 
 ### The first run writes local/.env
 
@@ -498,6 +520,68 @@ application, a worktrees directory inside the work state, and
 `BOARD_COMMIT_MOVES` or `BOARD_SYNC` turned on with no work-state
 repository to commit to — naming `git init` rather than quietly
 committing somewhere else.
+
+### Where the work state is created
+
+A release is unpacked before anything knows which layout it is going
+into. So it carries no work state at all — no `tasks/`, no `plans/`, no
+`reference/` — because whatever it carried would sit under the tool even
+when the work root is somewhere else, looking like a second active board
+beside the one that counts. `install.py` creates the work state instead,
+at the **one authoritative work root** the layout resolves to:
+
+- **Vendored**, or `BOARD_APP_ROOT` alone: the install itself, as it
+  always was.
+- **`BOARD_WORK_ROOT` set**: that directory, and nowhere else. The tool
+  root is left with no `tasks/`, `plans/` or `reference/` of its own.
+
+The layout is read the way the board reads it — the persisted
+`manager/local/.env` and the environment, not only this run's flags — so
+`install.py` with no arguments initializes the same place the flagged
+run did. It creates only what is missing: the stage directories,
+`archive/`, `plans/` and `reference/`, each with a `.gitkeep`, and the
+task template. Every path is checked before the first write, and one that
+a link would carry out of the work root refuses the whole step with
+nothing written — in a vendored install as much as an external one.
+
+**Who owns what.** Two copies of the task template, with two owners:
+
+| Path | Owner | What updates do |
+| --- | --- | --- |
+| `manager/core/seed/task-template.md` | the tool | replaced with the rest of core |
+| `<work root>/tasks/task-template.md` | you | never touched |
+
+The installer copies the seed into place only when the work root has no
+template. One that exists — edited or not, a link included — is yours
+and is never overwritten, so an improved seed reaches a board that has
+none and nobody else's. Everything else under the work root is yours the
+same way: cards, plans and reference documents are created by people and
+the board, never by an update.
+
+**What an older release left beside the tool.** Releases before this one
+did unpack `tasks/`, `plans/` and `reference/` under the tool, and an
+install that has been vendored may have a real board there. So in an
+external layout the installer looks at each of those three, one whole
+directory at a time, and removes it **only** when it is demonstrably the
+untouched skeleton a release unpacked: the expected directories, empty
+`.gitkeep` files and a task template byte-identical to one a release
+shipped — none of it tracked by git, none of it a link. Anything else —
+a card, a plan, an edited template, a tracked file, a link, a file bench
+cannot account for — keeps the *whole* directory exactly as it is, and
+the installer names the authoritative work root, what it kept, and why.
+Nothing is moved, merged or read from it; carrying old cards over is the
+owner's decision, made by hand.
+
+**Changing layout.** Vendored to external, external back to vendored, or
+one external work root for another: the newly configured root is
+initialized where that is safe — missing pieces only, nothing existing
+overwritten — and the previous root is left exactly as it was, with no
+import and no clean-up beyond the pristine skeleton above. Once a layout
+has been external, the installer remembers the work root it last
+initialized (`manager/local/state/work-root`, machine-local) and says so
+when it changes, naming both. Data in two roots is never reconciled by
+guessing: the one the settings name is the board, and the other is
+reported, not touched.
 
 ### Hooks without a tracked file
 
@@ -3829,8 +3913,10 @@ Each task is a markdown file with a descriptive filename
 (e.g. `01-document-handling-review.md`). Numbers are allocated in creation order
 and stay with the file for life — they do not renumber when a task moves stage.
 
-Start new tasks from `tasks/task-template.md` — copy it into `backlog/` and
-fill it in. Its sections earn their keep: Context and What-to-build are what
+Start new tasks from `tasks/task-template.md` under the work root — copy it
+into `backlog/` and fill it in. The installer seeds that file from the
+tool's `manager/core/seed/` when it is missing, and it is yours from then
+on: edit it freely, updates never replace it. Its sections earn their keep: Context and What-to-build are what
 a work agent gets as its brief, Acceptance is what reviews judge against,
 and a non-empty Open-questions section makes an agent refuse the task
 (`NOT READY`) rather than guess. The template itself is never listed on the
