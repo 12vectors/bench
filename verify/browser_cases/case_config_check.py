@@ -262,7 +262,7 @@ class GlobalCheck(unittest.TestCase):
         S["metrics"]["configCheckNarrow"] = found
 
 
-class GlobalStates(object):  # PROBE: off for one run
+class GlobalStates(unittest.TestCase):
     """Each state the backend can actually be in, read through the sheet."""
 
     def lead_for(self, document=None, raw=None, name=None):
@@ -434,12 +434,14 @@ class LaunchCheck(unittest.TestCase):
         self.assertEqual("lc-title", b.eval("document.activeElement.id"))
         close_sheet()
 
-    def probe_switching_to_review_shows_the_read_only_intent(self):
+    def test_switching_to_review_shows_the_read_only_intent(self):
         b = load(1440, 900)
         open_launch(CARD)
         b.click(f'{DIALOG} [data-intent="review"]')
+        # the sheet repaints through "Resolving…", which has no purpose
+        # buttons, so the wait must not dereference one that is not there
         if not b.wait(f"document.querySelector('{DIALOG} [data-intent=\"review\"]')"
-                      ".getAttribute('aria-pressed') === 'true' && !!document.querySelector"
+                      "?.getAttribute('aria-pressed') === 'true' && !!document.querySelector"
                       f"('{DIALOG} .lrows')", 15):
             raise bv.CheckFailed("the Review purpose never drew")
         r = rows()
@@ -451,14 +453,14 @@ class LaunchCheck(unittest.TestCase):
                                                  ".getAttribute('aria-label')"))
         close_sheet()
 
-    def probe_a_review_card_opens_on_review(self):
+    def test_a_review_card_opens_on_review(self):
         b = load(1440, 900)
         open_launch(REVIEW_CARD)
         self.assertEqual("true", b.eval(f"document.querySelector('{DIALOG} [data-intent=\"review\"]')"
                                         ".getAttribute('aria-pressed')"))
         close_sheet()
 
-    def probe_a_stacked_card_shows_its_own_branches_not_main(self):
+    def test_a_stacked_card_shows_its_own_branches_not_main(self):
         backend = S["backend"]
         backend._git(backend.app, "branch", STACKED_BASE)
         card = backend.work / "tasks" / "in-progress" / f"{STACKED}.md"
@@ -488,7 +490,7 @@ class LaunchCheck(unittest.TestCase):
         finally:
             card.unlink(missing_ok=True)
 
-    def probe_a_blocked_launch_names_the_fix_and_offers_no_launch(self):
+    def test_a_blocked_launch_names_the_fix_and_offers_no_launch(self):
         with Policy() as p:
             p.write({"v": 1, "profiles": {"work": {"requires": ["filesystem-sandbox"]}}})
             b = load(1440, 900)
@@ -501,7 +503,7 @@ class LaunchCheck(unittest.TestCase):
             self.assertFalse(b.eval(f"!!document.querySelector('{DIALOG} #lc-launch')"))
             close_sheet()
 
-    def probe_a_stale_launch_check_cannot_bypass_the_launchs_own_preflight(self):
+    def test_a_stale_launch_check_cannot_bypass_the_launchs_own_preflight(self):
         """Opened while the launch was allowed, then the policy changes:
         firing the stale sheet's launch is refused by the server, with its
         reason, and nothing starts."""
