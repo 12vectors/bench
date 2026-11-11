@@ -2040,6 +2040,31 @@ request and a board that restarted mid-confirmation produce one record,
 not two. A confirmation about a head that has since moved is refused. And
 a document with a refusal in it offers no override at all.
 
+**An override needs a commit to be about.** A card with no implementation
+commit — no branch yet, or a branch application git cannot read — has
+nothing an override could authorise, so it is refused before anything is
+written: *there is no implementation commit to override at, so nothing
+was recorded*. The override route also refuses a request that names no
+head at all, so a direct call cannot authorise whatever the branch holds
+by the time it lands.
+
+**Whether an override is possible is the server's answer.** Every gate
+reading carries `overrides.eligible`, and `overrides.ineligible` with a
+code (`not-allowed`, `actor-not-named`, `no-actor`, `in-force`,
+`nothing-unmet`, `no-target`) and the sentence to show. The gate sheet
+asks it for this board's own identity and draws it: an eligible gate
+offers the armed confirmation; an ineligible one shows **Override**
+disabled with that sentence. The mutation refuses from the same function,
+so the sheet and the refusal cannot disagree.
+
+**It is bound to the rule it overrode, too.** A new override records the
+identity of what its scope required (each required check's definition
+and coverage, the review policy, and who may override), and it stops
+applying when that changes — the person decided about the rule as it
+stood. An unrelated policy edit, such as an approved context file or
+another scope's gate, does not withdraw it. An override recorded before
+this binding existed keeps exactly the meaning it was recorded with.
+
 ### On the board
 
 A `⚖` chip in the card's footer row, beside `⚿`, `⌖`, `◫` and `CI`,
