@@ -1105,6 +1105,13 @@
     .dstatus .dactwrap,.dstatus .dact.dprimary{width:100%}
     .dstatus .dsmore{width:100%}
     .dreqs dl.dfacts{grid-template-columns:1fr}
+    /* a narrow row stacks: the name keeps the row's width and its state
+       reads under it, rather than the two splitting a 390px line and
+       squeezing the name to a few characters */
+    .dreqs .check-row,.sheet .check-row{flex-wrap:wrap;row-gap:2px}
+    .dreqs .check-row .name,.sheet .check-row .name{flex:1 1 calc(100% - 21px);min-width:0}
+    .dreqs .check-row .state,.sheet .check-row .state{flex:1 1 100%;text-align:left;
+      padding-left:21px;min-width:0;overflow-wrap:anywhere}
   }
   #drawer dl.dfacts{display:grid;grid-template-columns:minmax(90px,max-content) 1fr;
     gap:4px 12px;margin:0;font-size:12.5px}
@@ -9451,6 +9458,42 @@ function renderDiscussion(t) {
    CI said, what reviewers said, and what the merge gate decides from
    them. Green CI is not a named check, and no gate is not a pass — so each
    row says only what its own authority said. */
+/* Review, as the separate records it is: Bench's own verdict (durable,
+   bound to the head it was pinned), GitHub's formal review state (the PR
+   poll's reading, not bound to a commit here) and the round a reviewer
+   filed in the card's text. Each says which revision it is about; one
+   about another commit is history and never reads as today's verdict,
+   and none of them is inferred from another. */
+const REVIEW_WORD = { 'APPROVE': 'approved', 'REQUEST CHANGES': 'changes requested' };
+function reviewSignals(d, pr) {
+  const rv = (d && d.reviews) || {};
+  const cur = d && d.candidate && d.candidate.state === 'present' ? d.candidate.commit : null;
+  const where = (rec) => rec.current === true ? ' — the commit that would merge'
+    : rec.current === false ? ` — an earlier commit, history${cur ? `; none yet at ${shortSha(cur)}` : ''}`
+    : '';
+  const at = (rec) => rec.head ? ` at ${shortSha(rec.head)}` : ' at an unrecorded revision';
+  const bad = (rec) => rec.verdict === 'REQUEST CHANGES' && rec.current === true;
+  const rows = [];
+  const b = rv.bench;
+  rows.push(['Bench review', b
+    ? `${REVIEW_WORD[b.verdict] || b.verdict}${at(b)}${where(b)}`
+    : 'no Bench verdict yet', b && bad(b) ? 'bad' : '']);
+  const gh = !pr ? 'not observed — bench has not read this pull request'
+    : pr.review === 'approved' ? 'approved on the pull request — not bound to a commit here'
+    : pr.review === 'changes' ? 'changes requested on the pull request'
+    : 'no formal review state — a comment is not one';
+  rows.push(['GitHub review', gh + (pr && pr.copilot ? ` · copilot ${pr.copilot}` : ''),
+    pr && pr.review === 'changes' ? 'bad' : '']);
+  const r = rv.report;
+  // the report that is the prose of the very verdict above adds nothing
+  if (r && !(b && b.verdict === r.verdict && b.head && r.head &&
+             (b.head.startsWith(r.head) || r.head.startsWith(b.head)))) {
+    rows.push(['Reported review', `${REVIEW_WORD[r.verdict] || r.verdict} in the card's ` +
+      `report${at(r)}${where(r)}`, bad(r) ? 'bad' : '']);
+  }
+  return rows;
+}
+
 function signalsBlock(t) {
   const rows = [];
   const v = (S.state.verify || {})[t.file];
@@ -9478,11 +9521,9 @@ function signalsBlock(t) {
       ? ({ pass: 'passing', fail: 'failing', running: 'running' }[ci] || ci) +
         (pr.detail ? ` · ${pr.detail}` : '') + ' — not a Bench check'
       : 'no CI result', ci === 'fail' ? 'bad' : '']);
-    const verdict = prVerdict(t);
-    rows.push(['Review', ({ green: 'approved', red: 'changes requested',
-      pending: 'no verdict yet' }[verdict] || 'no pull request') +
-      (pr && pr.copilot ? ` · copilot ${pr.copilot}` : ''),
-      verdict === 'red' ? 'bad' : '']);
+  }
+  if (t.pr || pr || (d && d.reviews && (d.reviews.bench || d.reviews.report))) {
+    for (const row of reviewSignals(d, pr)) rows.push(row);
   }
   const r = (S.state.reviews || {})[t.file];
   if (r) {

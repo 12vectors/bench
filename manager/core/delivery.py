@@ -345,6 +345,35 @@ def _requirement(row: dict, at: str | None) -> dict:
             "otherCommits": row.get("otherCommits", 0)}
 
 
+def _reviews(task: dict, candidate: dict, verdict_now: dict | None) -> dict:
+    """Two review records, kept apart and each bound to the revision it is
+    about: Bench's own verdict (`gates.verdict_at`, the durable record) and
+    the newest round a review agent filed in the card's text. `current`
+    says whether that revision is the commit this card would merge; one
+    about another commit is history, never today's verdict. GitHub's
+    formal state is the PR poll's, read beside these and not folded in."""
+    commit = candidate.get("commit") if candidate["state"] == "present" else None
+    bench = verdict_now
+    if bench is None:
+        recorded = gates.verdicts_for(task["file"])
+        bench = recorded[0] if recorded else None
+    rounds = [r for r in acceptance.rounds(task.get("body") or "")
+              if r.get("verdict")]
+    report = rounds[-1] if rounds else None
+
+    def about(head: str | None) -> bool | None:
+        if not commit or not head:
+            return None
+        return commit.startswith(head) or head.startswith(commit)
+
+    return {
+        "bench": ({"verdict": bench.get("verdict"), "head": bench.get("head"),
+                   "current": about(bench.get("head"))} if bench else None),
+        "report": ({"verdict": report["verdict"], "head": report.get("commit"),
+                    "current": about(report.get("commit"))} if report else None),
+    }
+
+
 def _optional(policy_doc: dict, required: set[str], mine: list[dict]) -> int:
     """Checks this card may ask for, or has records of, that no gate
     requires — counted apart, never in a headline (design §7)."""
@@ -474,6 +503,7 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
         "requirements": requirements,
         "counts": counts,
         "history": history,
+        "reviews": _reviews(task, candidate, verdict_now),
         "source": {
             "pr": ({"observed": observed, "from": pr.get("from"),
                     "age": round(ctx["now"] - observed, 1)
@@ -868,7 +898,8 @@ _EPOCH = 0
 _TTL = 15.0
 _BOARD: tuple | None = None
 
-COMPACT = ("status", "primary", "candidate", "counts", "history", "detail")
+COMPACT = ("status", "primary", "candidate", "counts", "history", "detail",
+           "reviews")
 
 # What an action keeps in the compact reading: enough for the page to draw
 # it and route it, never anything the page would re-decide from.
@@ -983,7 +1014,8 @@ def board(collected: dict, phase_state: dict | None = None) -> dict:
                 "candidate": {"state": "unavailable"},
                 "counts": {"required": 0, "met": 0},
                 "history": {"older": 0, "optional": 0, "obsolete": 0},
-                "detail": None, "pr": None}
+                "detail": None, "pr": None,
+                "reviews": {"bench": None, "report": None}}
     with _LOCK:
         _BOARD = (key, found)
     return found

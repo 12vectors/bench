@@ -496,6 +496,10 @@ def _fold(data: dict, prev: dict, base: str | None = None) -> dict:
                                          "changes": "asked for changes",
                                          "commented": "commented"}[copilot])
     return {"verdict": verdict, "ci": ci, "copilot": copilot,
+            # the review objects alone, apart from CI, conflicts and the
+            # base that `verdict` folds in — not bound to a commit here
+            "review": ("changes" if changes else "approved" if approved
+                       else None),
             "conflicts": conflicts, "base": actual, "wantBase": want,
             "baseMismatch": mismatch, "head": head, "prState": status,
             "merged": status == "MERGED" or bool(data.get("mergedAt")),
@@ -707,7 +711,8 @@ def _record_delivered(filename: str, commit: str | None, target: str,
 
 
 def public_state() -> dict:
-    return {f: {k: v.get(k) for k in ("verdict", "ci", "copilot", "conflicts",
+    return {f: {k: v.get(k) for k in ("verdict", "review", "ci", "copilot",
+                                      "conflicts",
                                       "base", "wantBase", "baseMismatch",
                                       "head", "prState", "merged",
                                       "detail", "url")}

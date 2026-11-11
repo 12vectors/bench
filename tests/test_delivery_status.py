@@ -772,6 +772,82 @@ class TheCompactReadingCarriesWhatEverySurfaceDraws(DeliveryCase):
         self.assertFalse(launch["takeover"])
 
 
+class ReviewsAreReadApart(DeliveryCase):
+    """The supervisor's second finding at d6ace0e: F16 is ready to merge on
+    a durable Bench APPROVE with no prose report in the card, and Signals
+    still said "Review: no verdict yet". The reading now carries each
+    review record bound to the revision it is about, so the page draws
+    what the authority says rather than folding the card's text and
+    GitHub's state into one word."""
+
+    def report(self, head: str, verdict: str = "APPROVE") -> None:
+        path = self.tasks / "review" / CARD
+        path.write_text(path.read_text(encoding="utf-8") +
+                        f"\n---\n\n## PR review at {head[:12]} — 2026-11-11 18:53 (Finch)"
+                        f"\n\nPR REVIEW: {verdict}\n\nRead the diff.\n",
+                        encoding="utf-8")
+
+    def compact(self) -> dict:
+        delivery.forget_cached()
+        task = delivery._find(CARD, None)
+        return delivery.board({"stages": [{"tasks": [task]}]})[CARD]
+
+    def test_a_durable_bench_approval_with_no_report_is_current(self):
+        head = self.passed_at_head()
+        gates.record_verdict(CARD, verdict="APPROVE", head=head)
+        self.place("review", pr=PR_URL)
+        for found in (self.read(), self.compact()):
+            self.assertEqual(found["status"]["word"], "ready-to-merge")
+            self.assertEqual(found["reviews"]["bench"],
+                             {"verdict": "APPROVE", "head": head, "current": True})
+            self.assertIsNone(found["reviews"]["report"],
+                              "no prose report is on the card, and none is invented")
+
+    def test_a_report_about_an_older_commit_is_history(self):
+        wt = self.worktree()
+        older = self.commit_in(wt)
+        self.place("review", pr=PR_URL)
+        self.report(older)
+        newer = self.commit_in(wt, "a later push\n")
+        found = self.compact()
+        self.assertEqual(found["reviews"]["report"],
+                         {"verdict": "APPROVE", "head": older[:12], "current": False})
+        self.assertIsNone(found["reviews"]["bench"])
+        self.assertNotEqual(found["status"]["word"], "ready-to-merge")
+        self.assertEqual(found["candidate"]["commit"], newer)
+
+    def test_a_bench_verdict_about_an_older_commit_is_not_current(self):
+        wt = self.worktree()
+        older = self.commit_in(wt)
+        gates.record_verdict(CARD, verdict="APPROVE", head=older)
+        self.commit_in(wt, "a later push\n")
+        self.place("review", pr=PR_URL)
+        self.assertEqual(self.compact()["reviews"]["bench"],
+                         {"verdict": "APPROVE", "head": older, "current": False})
+
+    def test_the_newest_report_is_read_with_its_own_revision(self):
+        head = self.passed_at_head()
+        self.place("review", pr=PR_URL)
+        self.report("0123abcd4567", "REQUEST CHANGES")
+        self.report(head)
+        self.assertEqual(self.read()["reviews"]["report"],
+                         {"verdict": "APPROVE", "head": head[:12], "current": True})
+
+    def test_github_review_state_is_kept_apart_from_ci(self):
+        """`verdict` folds CI, conflicts and the base in; `review` is the
+        review objects alone, so a failing check never reads as a review
+        that asked for changes."""
+        payload = {"reviews": [{"state": "APPROVED", "author": {"login": "elena"}}],
+                   "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "FAILURE"}],
+                   "mergeable": "MERGEABLE", "baseRefName": "main"}
+        folded = github._fold(payload, {})
+        self.assertEqual(folded["verdict"], "red")
+        self.assertEqual(folded["review"], "approved")
+        self.assertIsNone(github._fold({"reviews": []}, {})["review"])
+        changes = github._fold({"reviews": [{"state": "CHANGES_REQUESTED"}]}, {})
+        self.assertEqual(changes["review"], "changes")
+
+
 class CountsAreRequiredOnly(DeliveryCase):
 
     def test_an_optional_check_never_inflates_the_count(self):
