@@ -510,6 +510,82 @@ def phase_branch_point(filename: str) -> tuple[str | None, str | None]:
     return branch, f"branched from {branch}, the phase's own branch"
 
 
+def _claim_refusal(filename: str, holder: str | None, me: str | None,
+                   takeover: bool) -> str | None:
+    """Why the claim would refuse, or None — the one sentence both the
+    claim and the read-only launch check give."""
+    if holder and me and holder != me and not takeover:
+        return (f"{holder} holds {filename} — take it over deliberately "
+                f"(the card's ▸ take over), or clear the Assignee line")
+    return None
+
+
+def _work_preflight(filename: str, stage: str) -> list:
+    """The refusals a work launch asks before its claim, in order, as
+    steps: the stage and phase-card check, the plan, the profile and the
+    prompt template. `start_agent` runs them and stops at the first; the
+    launch check runs the same steps and writes nothing either way."""
+    return [
+        lambda: _validate(filename, stage, {"in-progress"},
+                          "work starts from in-progress/ — move the card "
+                          "there first", phase=PHASE_RUNS_WITH),
+        lambda: plans.require(plans.preflight(filename, stage)),
+        lambda: _preflight_profile("work", filename, stage),
+        # A local override that breaks its contract refuses here, before
+        # the claim, the branch and the worktree (task 77).
+        lambda: templates.require("work.md"),
+    ]
+
+
+def launch_refusals(filename: str, stage: str, intent: str = "work",
+                    takeover: bool = False) -> list[str]:
+    """Would this launch be refused right now, and why — asked of the
+    same steps the launch itself takes before anything exists, with
+    nothing claimed, branched, checked out, pinned or launched.
+
+    `work` is ▸ start work's whole pre-claim path plus the claim's own
+    ownership rule, read rather than written. Other intents get the
+    refusals their launch shares with it: the stage and phase rules, one
+    agent per card, the profile and the template. A refusal in the stage
+    check ends the reading, because every later step is about a card in
+    a stage it is not in."""
+    found: list[str] = []
+    if intent == "work":
+        steps = _work_preflight(filename, stage)
+    else:
+        rules = {
+            "act-pr": ({"review"}, "acting on a PR happens from review/",
+                       "↻ act on PR is a work agent — address the review on "
+                       "the member's own card", "act-pr.md"),
+            "review": (set(config.STAGE_DIRS), None, None, "review.md"),
+        }
+        if intent not in rules:
+            return [f"there is no launch called {intent!r}"]
+        allowed, why, phase, template = rules[intent]
+        steps = [
+            lambda: _validate(filename, stage, allowed, why, phase=phase),
+            lambda: _preflight_profile(intent, filename, stage),
+            lambda: templates.require(template),
+        ]
+    for index, step in enumerate(steps):
+        try:
+            step()
+        except (ValueError, OSError) as exc:
+            found.append(str(exc))
+            if index == 0:
+                return found
+    if config.COMMIT_MOVES:
+        try:
+            holder = read_task(config.TASKS / stage / filename,
+                               stage).get("assignee")
+        except OSError:
+            holder = None
+        refusal = _claim_refusal(filename, holder, actor_name(), takeover)
+        if refusal:
+            found.append(refusal)
+    return found
+
+
 def claim_for_launch(filename: str, stage: str, takeover: bool = False) -> None:
     """One agent per task is a board-memory rule; across machines the card
     file is the only thing every board can see, so the claim is what gates
@@ -529,9 +605,9 @@ def claim_for_launch(filename: str, stage: str, takeover: bool = False) -> None:
     path = config.TASKS / stage / filename
     holder = read_task(path, stage).get("assignee")
     me = actor_name()
-    if holder and me and holder != me and not takeover:
-        raise ValueError(f"{holder} holds {filename} — take it over deliberately "
-                         f"(the card's ▸ take over), or clear the Assignee line")
+    refusal = _claim_refusal(filename, holder, me, takeover)
+    if refusal:
+        raise ValueError(refusal)
     if not me:
         return                       # no identity to write; git has no name here
     if holder == me:
@@ -547,9 +623,6 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     # Moving a card to in-progress is the commitment; only then does work
     # start — and a phase card is refused here, in the same breath and ahead
     # of the claim, so the refusal costs nothing and leaves nothing behind.
-    _validate(filename, stage, {"in-progress"},
-              "work starts from in-progress/ — move the card there first",
-              phase=PHASE_RUNS_WITH)
     # Preflight, before the claim: a plan that does not resolve must leave
     # the card exactly as it was — unclaimed, no branch, no worktree, no
     # run. Then once more after the claim, because the claim is a write and
@@ -559,12 +632,11 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     # a required input that is missing, a path that escapes its root, a
     # capability the installed adapter cannot enforce — each of those must
     # refuse *before* a billable model is invoked, and each of them leaves
-    # the card untouched because neither reading writes anything.
-    plans.require(plans.preflight(filename, stage))
-    _preflight_profile("work", filename, stage)
-    # The template too: a local override that breaks its contract refuses
-    # here, before the claim, the branch and the worktree (task 77).
-    templates.require("work.md")
+    # the card untouched because neither reading writes anything. The same
+    # steps are what `launch_refusals` asks, so the launch check and the
+    # launch cannot disagree about them.
+    for step in _work_preflight(filename, stage):
+        step()
     card_path = config.TASKS / stage / filename
     unclaimed = card_path.read_text(encoding="utf-8")
     claim_for_launch(filename, stage, takeover)
@@ -1368,9 +1440,8 @@ def agent_diff(agent_id: str) -> dict:
         raise ValueError("unknown agent")
     if not record.get("worktree"):
         return {"agent": agent_id, "files": []}
-    result = subprocess.run(
-        ["git", "-C", record["worktree"], "diff", "--numstat", record["base"]],
-        capture_output=True, text=True, timeout=10)
+    result = config.git_run(record["worktree"], "diff", "--numstat", record["base"],
+                            timeout=10)
     files = []
     for line in result.stdout.splitlines():
         parts = line.split("\t")

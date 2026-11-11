@@ -1618,10 +1618,8 @@ def _source_revision(path: Path) -> str:
     else its size and modification time. Not a substitute for the content
     hash — it is the *provenance* half, and a reader needs both."""
     try:
-        result = subprocess.run(
-            ["git", "-C", str(path.parent), "log", "-1",
-             "--format=%H", "--", path.name],
-            capture_output=True, text=True, timeout=10)
+        result = config.git_run(path.parent, "log", "-1", "--format=%H", "--",
+                                path.name, timeout=10)
         if result.returncode == 0 and result.stdout.strip():
             return f"git:{result.stdout.strip()[:12]}"
     except (OSError, subprocess.SubprocessError):

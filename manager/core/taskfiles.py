@@ -461,8 +461,7 @@ def _git(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
     if root is None:
         return subprocess.CompletedProcess(args, 128, "",
                                            "no work-state repository")
-    return subprocess.run(["git", "-C", str(root), *args],
-                          capture_output=True, text=True, timeout=timeout)
+    return config.git_run(root, *args, timeout=timeout)
 
 
 def actor_name() -> str:

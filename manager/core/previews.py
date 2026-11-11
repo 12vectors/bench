@@ -772,8 +772,7 @@ def proposal(found: dict | None = None) -> dict | None:
 
 def _git(cwd: Path, *args: str) -> str | None:
     try:
-        out = subprocess.run(["git", "-C", str(cwd), *args],
-                             capture_output=True, text=True, timeout=10)
+        out = config.git_run(cwd, *args, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return out.stdout if out.returncode == 0 else None

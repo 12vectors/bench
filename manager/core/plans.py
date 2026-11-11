@@ -116,8 +116,7 @@ def app_remote() -> str | None:
 def _git(*args: str, cwd: Path | None = None,
          timeout: float = 30) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(["git", "-C", str(cwd or app_repo()), *args],
-                              capture_output=True, text=True, timeout=timeout)
+        return config.git_run(cwd or app_repo(), *args, timeout=timeout)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(args, 128, "", "timed out")
     except OSError as exc:

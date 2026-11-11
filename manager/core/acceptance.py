@@ -456,9 +456,8 @@ def _branch_head(filename: str) -> str | None:
     stem = filename[:-3]
     for branch in (f"task/{stem}", f"phase/{stem}"):
         try:
-            found = subprocess.run(
-                ["git", "-C", str(config.REPO), "rev-parse", "--verify", "--quiet",
-                 f"refs/heads/{branch}"], capture_output=True, text=True, timeout=10)
+            found = config.git_run(config.REPO, "rev-parse", "--verify", "--quiet",
+                                   f"refs/heads/{branch}", timeout=10)
         except (subprocess.SubprocessError, OSError):
             return None
         if found.returncode == 0 and _SHA_RE.match(found.stdout.strip()):

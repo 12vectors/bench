@@ -43,6 +43,16 @@ _OPENING: set[str] = set()       # filenames with a PR-open in flight
 
 
 def _run(cmd: list[str], cwd: Path | None = None, timeout: int = 60) -> subprocess.CompletedProcess:
+    if cmd and cmd[0] == "git":
+        # A git read runs nothing else (config.git_argv); anything else —
+        # a merge, a push, a worktree removal — is exactly as written.
+        root, rest = None, list(cmd[1:])
+        if rest[:1] == ["-C"] and len(rest) >= 2:
+            root, rest = rest[1], rest[2:]
+        where = str(cwd or config.REPO)
+        return subprocess.run(config.git_argv(root, *rest), cwd=where,
+                              env=config.git_env(root or where, *rest),
+                              capture_output=True, text=True, timeout=timeout)
     return subprocess.run(cmd, cwd=str(cwd or config.REPO),
                           capture_output=True, text=True, timeout=timeout)
 
@@ -535,6 +545,9 @@ def _poll_pr(filename: str, url: str) -> None:
     entry = _fold(data, prev, plans.pr_base(filename))
     entry.update({"url": url, "ts": time.time()})
     PR_STATE[filename] = entry
+    # Persisted at the poll's own update boundary, so a restart still knows
+    # what GitHub said — a merge on GitHub included — and since when.
+    _persist_snapshot(filename, entry)
     # One authority for "what is the head now", fed by this beat: a
     # recorded review asks `reviews` rather than GitHub, so the freshness
     # of every pinned review costs a dictionary lookup.
@@ -610,6 +623,89 @@ def poller() -> None:
             continue
 
 
+# ── what the poll saw, kept across a restart ───────────────────────────
+#
+# `PR_STATE` is memory, so a restarted board used to know nothing about a
+# pull request until the next poll — including that it had been merged on
+# GitHub. The poll now writes a small snapshot beside the gate records at
+# the moment it updates its own state (never on a read), and the delivery
+# status reads it back with the time it was observed, so "as of 14:02" is
+# the honest age of what it says.
+
+SNAPSHOT_KEYS = ("head", "prState", "merged", "base", "wantBase",
+                 "baseMismatch", "ci", "verdict", "conflicts", "url")
+
+
+def _snapshot_path(filename: str, kind: str = "pr") -> Path:
+    return config.GATES_DIR / f"{filename[:-3]}.{kind}.json"
+
+
+def _persist_snapshot(filename: str, entry: dict) -> None:
+    """One bounded record per card, overwritten whole — only the fields a
+    delivery reading needs, and the time they were observed."""
+    stored = {key: entry.get(key) for key in SNAPSHOT_KEYS}
+    stored.update({"v": 1, "task": filename,
+                   "observed": entry.get("ts") or time.time()})
+    path = _snapshot_path(filename)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        scratch = path.with_suffix(".json.tmp")
+        scratch.write_text(json.dumps(stored, indent=2, sort_keys=True),
+                           encoding="utf-8")
+        scratch.replace(path)
+    except OSError:
+        pass
+
+
+def pr_snapshot(filename: str) -> dict | None:
+    """What this board last observed of a card's pull request: from the
+    poll's memory when it has run since the board started, else from the
+    snapshot it persisted. `from` says which, `observed` says when. Reads
+    only — nothing is fetched and GitHub is not asked."""
+    live = PR_STATE.get(filename)
+    if live and live.get("ts"):
+        found = {key: live.get(key) for key in SNAPSHOT_KEYS}
+        found.update({"observed": live.get("ts"), "from": "poll"})
+        return found
+    try:
+        data = json.loads(_snapshot_path(filename).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    found = {key: data.get(key) for key in SNAPSHOT_KEYS}
+    found.update({"observed": data.get("observed"), "from": "disk"})
+    return found
+
+
+def delivered_record(filename: str) -> dict | None:
+    """The completion this board finished for a card: what it merged, into
+    which target, and when. Written once the ticket has moved, so a card
+    reopened afterwards can say its earlier work was delivered."""
+    try:
+        data = json.loads(_snapshot_path(filename, "delivered")
+                          .read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    return data if isinstance(data, dict) and data.get("commit") else None
+
+
+def _record_delivered(filename: str, commit: str | None, target: str,
+                      how: str) -> None:
+    if not commit:
+        return
+    path = _snapshot_path(filename, "delivered")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"v": 1, "task": filename,
+                                    "commit": commit, "target": target,
+                                    "how": how, "at": time.time()},
+                                   indent=2, sort_keys=True),
+                        encoding="utf-8")
+    except OSError:
+        pass
+
+
 def public_state() -> dict:
     return {f: {k: v.get(k) for k in ("verdict", "ci", "copilot", "conflicts",
                                       "base", "wantBase", "baseMismatch",
@@ -683,6 +779,26 @@ def _complete(filename: str, stage: str) -> dict:
         on_origin = config.app_merge_on_origin()
         _assert_same_situation(filename, task, pending, on_origin)
         resuming = _merge_landed(pending, on_origin)
+    if not resuming:
+        # A pull request already merged on GitHub, outside this board: the
+        # gate was about a merge this board would make, and there is none
+        # to make. Finishing it is administrative — publication is read
+        # off the remote, the base catches up and the workspace is
+        # cleared — so obsolete checks, reviews and sign-off are not asked
+        # for. Confirmed against the remote itself, never the snapshot
+        # alone.
+        landed = _merged_elsewhere(filename, task, branch)
+        if landed:
+            pending = {"commit": landed,
+                       "target": plans.pr_base(filename, task),
+                       "mode": "origin"}
+            on_origin = True
+            resuming = True
+            state.record_board_event({
+                "kind": "agent", "actor": "board", "file": filename,
+                "summary": (f"{filename}'s PR was merged on GitHub at "
+                            f"{landed[:12]} — reconciling: nothing is merged "
+                            f"again and no merge rule is asked for")})
     # Before the drive is parked, and well before anything irreversible:
     # what this board's acceptance gate requires, and whether the
     # evidence on record satisfies it against the commit this would
@@ -832,6 +948,10 @@ def _complete(filename: str, stage: str) -> dict:
                        "moved": False})
         return result
     move_task(filename, stage, "done", actor="you")
+    if merged and publication:
+        _record_delivered(filename, publication.get("commit"),
+                          publication.get("target") or "",
+                          "origin" if on_origin else "local")
     # Only once the ticket has moved: until then a retry needs to know
     # what was merged, and a cleanup that stopped half way is finished by
     # the same retry rather than by guessing.
@@ -1188,6 +1308,24 @@ def completion_facts(filename: str, stage: str) -> dict:
                    "application on origin (BOARD_APP_MERGE)")
     facts["refusal"] = refusal or ""
     return facts
+
+
+def _merged_elsewhere(filename: str, task: dict, branch: str) -> str | None:
+    """The commit a pull request merged on GitHub delivered, or None.
+
+    Asked only when the poll's snapshot says the PR was merged, and then
+    of the remote itself (`_remote_holds`, bounded): the snapshot is what
+    makes the question worth one remote read, and the remote is what
+    answers it."""
+    snap = pr_snapshot(filename)
+    if not snap or not snap.get("merged"):
+        return None
+    rname = remote()
+    tip = _tip(branch) or str(snap.get("head") or "")
+    if not rname or not tip:
+        return None
+    target = plans.pr_base(filename, task)
+    return tip if _remote_holds(rname, target, tip)[0] is True else None
 
 
 def _brought(task: dict, phase_branch: str) -> list[dict]:

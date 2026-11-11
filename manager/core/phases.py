@@ -81,8 +81,7 @@ _LOCK = threading.Lock()          # one pass at a time, whoever asks for it
 
 def _git(*args: str, cwd=None, timeout: float = 60) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(["git", "-C", str(cwd or config.REPO), *args],
-                              capture_output=True, text=True, timeout=timeout)
+        return config.git_run(cwd or config.REPO, *args, timeout=timeout)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(args, 128, "", "timed out")
     except OSError as exc:
