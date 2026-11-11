@@ -15,10 +15,12 @@ The measurable half — the drawn card, the menu by keyboard, 390px — is in
 from __future__ import annotations
 
 import re
+import sys
 import unittest
 from pathlib import Path
 
 BOARD = Path(__file__).resolve().parents[1] / "manager" / "core" / "board.html"
+sys.path.insert(0, str(BOARD.parent))
 
 
 class Source(unittest.TestCase):
@@ -41,16 +43,37 @@ class OneIdAndNoRoutineStatus(Source):
         self.assertIn("esc(cardTitle(task))", self.card)
         self.assertNotIn("esc(task.title)", self.card)
 
-    def test_the_status_pill_is_drawn_only_when_something_promoted_it(self):
-        self.assertIn("let promoted = !!agent || working;", self.card)
-        # every exception that used to set the pill still promotes it
-        for word in ("approved", "changes asked", "run failed", "halted",
-                     "not published", "completing", "idle"):
-            self.assertIn(f"text: '{word}'", self.card, word)
-        self.assertEqual(self.card.count("promoted = true;"), 8,
-                         "verdict ×2, phase idle, failure, halt, not published, "
-                         "completing, idle")
+    def test_the_status_pill_is_the_delivery_status_and_nothing_else(self):
+        """Task 99: the pill is the server's delivery status, drawn only
+        for a word on the face list. No cascade of its own: the only two
+        readings the page still adds are the quiet ones the server does
+        not make — a phase not started or held, and a day-idle card — and
+        only when the delivery status has nothing to say on the face."""
+        self.assertIn("let promoted = !!(d && FACE_WORDS.has(d.status.word));", self.card)
+        self.assertIn("let pill = promoted ? deliveryPill(d) : null;", self.card)
+        self.assertEqual(self.card.count("promoted = true;"), 2, "phase idle, idle")
+        self.assertIn("if (!promoted && flight && flight.idle)", self.card)
+        self.assertIn("const idle = !promoted && !agent", self.card)
+        for gone in ("text: 'approved'", "text: 'changes asked'", "text: 'run failed'",
+                     "text: 'not published'", "text: 'completing'", "prVerdict(task)"):
+            self.assertNotIn(gone, self.card, gone)
         self.assertRegex(self.card, r"promoted\s*\?\s*`<span class=\"pill status")
+
+    def test_the_face_words_are_the_designs(self):
+        """§3.6: active work, current problems, an override, publication,
+        and the review step. The column's own words stay off the face."""
+        import delivery  # noqa: E402 — on the path via the package's tests
+        words = re.search(r"const FACE_WORDS = new Set\(\[(.*?)\]\);", self.html, re.S).group(1)
+        on_face = set(re.findall(r"'([a-z-]+)'", words))
+        self.assertLessEqual(on_face, set(delivery.WORDS), "every face word is a server word")
+        for quiet in ("not-started", "queued", "ready-to-start", "in-progress",
+                      "review", "delivered"):
+            self.assertNotIn(quiet, on_face, quiet)
+        for loud in ("run-failed", "check-failed", "cannot-run-check", "changes-requested",
+                     "cannot-assess", "rules-invalid", "ready-overridden", "not-published",
+                     "agent-working", "checks-running", "merging", "checks-needed",
+                     "review-needed", "ready-to-merge", "merged-elsewhere"):
+            self.assertIn(loud, on_face, loud)
 
     def test_no_edited_time_chatter_on_the_face(self):
         self.assertNotIn("'edited ' + ago(", self.card)
@@ -82,24 +105,39 @@ class ExceptionsStayOnTheFace(Source):
         self.assertIn("if (c.face !== undefined) return c.face;",
                       self.body("chipOnFace"))
 
-    def test_a_gate_that_is_not_met_is_never_quiet(self):
-        """Required missing checks read through the gate chip, which is
-        blocked (bad), waiting (accent) or overridden (bad) whenever it is
-        not met — and all three are face chips by the rule above."""
-        gates = self.html[self.html.index("const GATE_STATES = {"):]
-        gates = gates[:gates.index("};")]
-        self.assertIn("blocked: ['bad'", gates)
-        self.assertIn("pending: ['accent'", gates)
-        self.assertIn("overridden: ['bad'", gates)
+    def test_the_merge_requirements_chip_follows_the_face_rule(self):
+        """§3.6, replacing "an unmet gate is always on the face": in
+        review/ the ⚖ chip carries the required-only count (or ✕ for a
+        current problem) on the face; before review an unmet requirement
+        lies ahead and is listed in the tools, neutral; an override in
+        force is on the face, in the alarm, in every stage."""
+        chip = self.body("gateChip")
+        self.assertIn("const c = d.counts", chip)
+        self.assertIn("const review = task.stage === 'review';", chip)
+        self.assertIn("gate: g.scope, face: review, title,", chip)
+        self.assertIn("label: 'overridden', pre: '⚖', glyph: '!', cls: 'bad', gate: g.scope,\n"
+                      "             face: true", chip)
+        self.assertIn("`${c.required - c.met} needed`", chip)
+        self.assertIn("problem ? 'bad'", chip)
+        self.assertNotIn("g.unmet.length", chip, "the count is required obligations only")
 
-    def test_failed_or_stale_evidence_is_never_quiet(self):
-        verify = self.html[self.html.index("const VERIFY_STATE = {"):]
-        verify = verify[:verify.index("};")]
-        for outcome in ("failed:", "stale:", "'prepare-failed':", "error:", "denied:"):
-            line = next(l for l in verify.splitlines() if l.strip().startswith(outcome))
-            self.assertIn("'fail'", line, outcome)
+    def test_evidence_is_on_the_face_only_beside_a_current_problem(self):
+        """A failed, could-not-run or running check on the current commit
+        puts ◫ on the face; a stale or historical row never does, and its
+        label is not a count that could contradict the requirements."""
+        on = re.search(r"const EVIDENCE_ON_FACE = new Set\(\[(.*?)\]\);", self.html, re.S).group(1)
+        self.assertEqual(set(re.findall(r"'([a-z-]+)'", on)),
+                         {"check-failed", "cannot-run-check", "checks-running"})
         chip = self.body("verifyChip")
-        self.assertIn("fail: 'bad'", chip)
+        self.assertIn("face: !!(d && EVIDENCE_ON_FACE.has(d.status.word))", chip)
+        self.assertIn("label: 'evidence'", chip)
+        self.assertNotIn("label: `${v.passed}/${v.checks}`", chip)
+
+    def test_acceptance_is_not_a_face_ceremony(self):
+        """§8.1: the accepted count is a tool; it earns the face only when
+        a person recorded that a criterion needs work or a recheck."""
+        body = self.body("acceptanceChips")
+        self.assertIn("section: 'acceptance', face: !!behind,", body)
 
 
 class EveryToolOneControlAway(Source):
@@ -134,12 +172,94 @@ class EveryToolOneControlAway(Source):
 
 
 class SignalsAreKeptApart(Source):
-    def test_ci_review_bench_and_gate_are_four_rows(self):
+    def test_ci_review_bench_and_merge_requirements_are_four_rows(self):
         body = self.body("signalsBlock")
-        for label in ("'Bench checks'", "'External CI'", "'Review'", "'Merge gate'"):
+        for label in ("'Bench checks'", "'External CI'", "'Review'", "'Merge requirements'"):
             self.assertIn(label, body)
         self.assertIn("not a Bench check", body, "green CI is not a named check")
         self.assertIn("that is not a pass", body, "no gate is not a pass")
+
+    def test_bench_checks_count_required_obligations_only(self):
+        """§7 / R4: "Required: 1 of 1 passed on X. Optional: 2 (see ◫)." —
+        never the count of every check the policy offers."""
+        body = self.body("signalsBlock")
+        self.assertIn("full.requirements.filter(r => r.kind === 'check')", body)
+        self.assertIn("`Required: ${", body)
+        self.assertIn("Optional: ${optional} (see ◫).", body)
+        self.assertNotIn("v.passed} of ${v.checks}", body)
+
+
+class OneStatusAcrossSurfaces(Source):
+    """B1 at source level: the face, the Overview, the detail head and the
+    merge dialog all draw `S.state.delivery`, and nothing on the page
+    re-derives a next step from the stage."""
+
+    def test_no_status_cascade_is_left(self):
+        self.assertNotIn("function nextStep(", self.html)
+        self.assertNotIn("nextStep(", self.html)
+        self.assertNotIn("confirm acceptance, then drag to done", self.html)
+        self.assertNotIn("reported done — confirm or send back", self.html)
+
+    def test_every_surface_reads_the_one_reading(self):
+        self.assertIn("const d = deliveryOf(task);", self.card)
+        self.assertIn("deliveryStatusHtml(t, d, 'ov')", self.body("overviewHtml"))
+        self.assertIn("const pill = dl ? deliveryPill(dl)", self.body("renderDrawer"))
+        sheet = self.html[self.html.index("async function gateSheet("):]
+        sheet = sheet[:sheet.index("\n}\n")]
+        self.assertIn("const d = deliveryOf(task) || full;", sheet)
+        self.assertIn("deliveryStatusHtml(task, d, 'dlg')", sheet)
+        self.assertIn("requirementsHtml(task, d, full, 'dlg')", sheet)
+
+    def test_the_status_block_is_accessible(self):
+        body = self.body("deliveryStatusHtml")
+        self.assertIn('aria-labelledby="${id}"', body)
+        self.assertIn("<h3 id=\"${id}\"", body)
+        self.assertIn("role=\"${d.status.tone === 'alarm' ? 'alert' : 'status'}\"", body)
+        # the primary first, then alternatives in one native disclosure
+        self.assertLess(body.index("deliveryButtonHtml(d.primary"), body.index("<details class=\"dsmore\""))
+        self.assertIn("More actions (${others.length})", body)
+
+    def test_a_disabled_action_says_why_and_does_nothing(self):
+        body = self.body("deliveryButtonHtml")
+        self.assertIn("disabled aria-describedby=\"dwhy-${slot}\"", body)
+        wire = self.body("wireDeliveryButtons")
+        self.assertIn("if (!a || !a.enabled) return;", wire)
+        self.assertIn("wireAction(btn, `${task.file}::delivery::${a.action}`", wire)
+
+    def test_every_action_the_server_names_is_routed_or_a_view(self):
+        """Only supported actions are wired: each enabled key the server
+        can name has a route here, and the two later handlers (Run
+        required checks, sign-off) arrive disabled from the server."""
+        import delivery
+        run = self.body("deliveryRun")
+        for key, spec in delivery.ACTIONS.items():
+            if spec.get("later") or key == "open-pr-url":
+                continue
+            self.assertIn(f"case '{key}':", run, key)
+        self.assertNotIn("case 'run-required-checks':", run)
+        self.assertNotIn("case 'confirm-criteria':", run)
+
+    def test_requirements_are_supporting_detail_with_history_apart(self):
+        body = self.body("requirementsHtml")
+        self.assertIn("Optional checks and earlier runs (${optional})", body)
+        self.assertIn("fold('technical', 'Technical details'", body)
+        self.assertIn("that is not a pass", body)
+        head = self.body("requirementsHeadline")
+        self.assertIn("merge requirement", head)
+        self.assertIn("d.counts", head)
+
+    def test_a_repaint_keeps_folds_and_a_focused_action(self):
+        self.assertIn("data-fold=\"${where}-more\"", self.body("deliveryStatusHtml"))
+        self.assertIn("data-fold=\"${where}-${key}\"", self.body("requirementsHtml"))
+        drawer = self.body("renderDrawer")
+        self.assertIn("active.dataset.dslot", drawer)
+        self.assertIn("body.querySelector(`[data-dslot=\"${dslot}\"]`)", drawer)
+
+    def test_the_full_reading_is_fetched_only_when_the_compact_one_moved(self):
+        body = self.body("loadDeliveryFull")
+        self.assertIn("cur.key === key", body)
+        self.assertIn("/api/card/delivery?file=", body)
+        self.assertNotIn("method: 'POST'", body)
 
 
 if __name__ == "__main__":

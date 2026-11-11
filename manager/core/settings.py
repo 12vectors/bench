@@ -92,9 +92,12 @@ STATES = {
     "not-configured": ("nobody has configured this. That is not a fault and "
                        "it is not a pass: nothing is required here and "
                        "nothing is proved"),
-    "configured-untested": ("configured, and nothing on this board has "
-                            "exercised it yet. What it would do is resolved; "
-                            "that it does it is not established"),
+    # The value is kept (other readers and the setup guide's fingerprint
+    # use it); its definition makes no claim about history, because a
+    # registered check may well have run on many cards (#92 §3).
+    "configured-untested": ("configured. This page does not show whether "
+                            "it has run: results are kept per card, and what "
+                            "it would do is resolved here, not established"),
     "unsupported": ("nothing installed here can deliver this, so bench "
                     "reports it as unsupported rather than as a guarantee it "
                     "cannot make"),

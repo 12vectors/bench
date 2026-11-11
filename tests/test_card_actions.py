@@ -167,8 +167,9 @@ class OneSlotBuilderTests(unittest.TestCase):
         cls.html = BOARD.read_text(encoding="utf-8")
 
     def test_hover_actions_and_command_chips_share_the_machine(self):
-        self.assertEqual(len(re.findall(r"(?<!function )wireAction\(btn,", self.html)), 10,
-                         "exactly ten call sites: the slot builder, the "
+        self.assertEqual(len(re.findall(r"(?<!function )wireAction\(btn,", self.html)), 11,
+                         "exactly eleven call sites: the delivery status's "
+                         "own actions (task 99), the slot builder, the "
                          "$-command chips, the ⌸ archive chip, a phase "
                          "lane's head, the ↻ rerun of a named check, the "
                          "readiness inspector's active stages, the ⚖ "

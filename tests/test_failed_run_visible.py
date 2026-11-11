@@ -348,9 +348,14 @@ class TheCardWearsIt(unittest.TestCase):
                       "failed is terracotta — the design system's one word for it")
 
     def test_the_pill_says_run_failed(self):
-        m = re.search(r"\{ text: 'run failed'[^}]*\}", self.html)
-        self.assertIsNotNone(m, "the status slot lost its `run failed` pill")
-        self.assertIn("--alarm", m.group(0))
+        """The word is the server's now (task 99): `delivery.WORDS` names
+        it `Run failed` in the alarm tone, the face draws every alarm word
+        in --alarm, and `run-failed` is one the face always wears."""
+        import delivery
+        self.assertEqual(delivery.WORDS["run-failed"], ("Run failed", "alarm"))
+        self.assertRegex(self.html, r"case 'alarm': return \{ tint: 'var\(--alarm\)'")
+        self.assertIn("'run-failed'", self.html[self.html.index("const FACE_WORDS"):
+                                                self.html.index("const EVIDENCE_ON_FACE")])
 
     def test_the_failure_is_scoped_to_its_card_and_stage(self):
         """The state belongs to the most recent run on THIS card, in the

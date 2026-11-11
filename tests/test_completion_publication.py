@@ -661,8 +661,13 @@ class TheSheetSource(unittest.TestCase):
         self.assertIn("publication failed", self.sheet)
 
     def test_the_card_wears_an_unpublished_merge(self):
-        self.assertIn("(S.state.unpublished || {})[task.file]", self.html)
-        self.assertIn("text: 'not published'", self.html)
+        # the server's record, read through the delivery status (task 99):
+        # `not-published` is an alarm word the face always wears
+        import delivery
+        self.assertEqual(delivery.WORDS["not-published"], ("Not published", "alarm"))
+        faces = self.html[self.html.index("const FACE_WORDS"):
+                          self.html.index("const EVIDENCE_ON_FACE")]
+        self.assertIn("'not-published'", faces)
 
 
 class TheDocumentedContract(unittest.TestCase):
