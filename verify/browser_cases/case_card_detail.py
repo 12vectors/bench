@@ -245,7 +245,7 @@ class StructuredDetail(unittest.TestCase):
         # the reported fix is a fact on the Overview, beside the findings;
         # the status block above it is the server's delivery status
         self.assertIn("fix reported — recheck and resolve",
-                      b.eval("document.querySelector('#dsec-overview dl.dfacts').innerText"))
+                      b.eval("document.querySelector('#dsec-overview > dl.dfacts').innerText"))
         shot("detail-reviews-fix-reported-1280x900")
         event("resolved", "Rechecked at 1280px: the title leads.", "resolved")
         self.assertIn("Resolved findings (1)",

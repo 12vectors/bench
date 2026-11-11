@@ -362,7 +362,10 @@ class OneStatusEverywhere(unittest.TestCase):
         b = load()
         sel = card_sel(stem)
         open_detail(stem)
-        for _ in range(60):
+        # from the section row, the next stop is the status's own action:
+        # the section is not itself a tab stop, and nothing sits between
+        b.eval("document.querySelector('#dtab-overview').focus()")
+        for _ in range(12):
             if b.eval("!!(document.activeElement && document.activeElement.dataset"
                       " && document.activeElement.dataset.dslot === 'ov-p')"):
                 break
@@ -405,7 +408,8 @@ class OneStatusEverywhere(unittest.TestCase):
           const c = document.querySelector('{card_sel(stem)}');
           const chips = [...c.querySelectorAll('.chiprow .chip2')].map(x => x.innerText);
           const pill = c.querySelector('.pill.status');
-          return {{ pill: pill ? pill.innerText : null, bad: c.classList.contains('verdict-bad'),
+          return {{ pill: pill ? (pill.dataset.word || pill.innerText) : null,
+                   bad: c.classList.contains('verdict-bad'),
                    gateOnFace: !!c.querySelector('.chiprow [data-gate]'),
                    evidenceOnFace: !!c.querySelector('.chiprow [data-verify]'), chips }}; }})()""")
         a, f = face(ahead), face(failed)
@@ -413,7 +417,7 @@ class OneStatusEverywhere(unittest.TestCase):
         self.assertIsNone(a["pill"], f"a check that lies ahead put a pill on the face: {a}")
         self.assertFalse(a["bad"], "a check that lies ahead is drawn as an alarm")
         self.assertFalse(a["gateOnFace"], "an unmet requirement that lies ahead is on the face")
-        self.assertEqual("Check failed", f["pill"], f)
+        self.assertEqual("check-failed", f["pill"], f)
         self.assertTrue(f["bad"], "a current failure is not drawn as an alarm")
         self.assertTrue(f["evidenceOnFace"], "a current failure's evidence left the face")
         S["metrics"]["deliveryB4"] = {"ahead": a, "failed": f}
