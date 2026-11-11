@@ -327,9 +327,9 @@ class RevalidatedBetweenRequests(BatchCase):
         self.assertEqual(self.runs("two"), 0)
 
     def test_a_result_from_another_commit_is_not_this_candidates(self):
-        other = dict(verify.request(check="one", task=CARD, actor="you",
-                                    stage="in-progress"))
-        other["source"] = dict(other["source"], commit="f" * 40)
+        other = {"id": "verification-elsewhere", "outcome": "passed",
+                 "reason": "exit-zero", "why": "the check exited 0",
+                 "source": {"commit": "f" * 40, "bound": True}}
         with mock.patch.object(verify, "request", return_value=other):
             batch = self.run_batch()
         self.assertEqual(self.item(batch, "one")["state"], "other-candidate")
@@ -354,7 +354,9 @@ class RevalidatedBetweenRequests(BatchCase):
         self.assertEqual(second["id"], first["id"])
         required.cancel(CARD)
         self.assertTrue(wait_for(lambda: CARD not in required.ACTIVE, 20))
-        self.assertEqual(self.runs("one"), 1)
+        self.assertEqual(len([r for r in verify.for_task(CARD)
+                              if r.get("check") == "one"]), 1,
+                         "one request, not two")
 
 
 class TheDoor(BatchCase):
@@ -500,11 +502,13 @@ class InterruptionIsExplicit(BatchCase):
         # what a dead board leaves on disk: the batch and the evidence both
         # read running, and this board's memory holds neither
         snapshot = json.loads(required._path(CARD).read_text(encoding="utf-8"))
-        running = [verify.read(e) for e in verify.RUNNING]
-        self.stop_hanging()
+        running = list(verify.RUNNING)
+        required.cancel(CARD)
         self.assertTrue(wait_for(lambda: CARD not in required.ACTIVE, 20))
-        for record in running:
-            verify._store(dict(record, outcome="running", ended=None))
+        for evidence in running:
+            record = verify.read(evidence)
+            verify._store(dict(record, outcome="running", reason=None,
+                               ended=None))
         required._path(CARD).write_text(json.dumps(snapshot), encoding="utf-8")
         verify.recover()
         closed = required.recover()
@@ -521,7 +525,9 @@ class InterruptionIsExplicit(BatchCase):
         self.assertEqual(row["reason"], "restarted")
         self.assertEqual(gates.severity("restarted"), "needed")
         self.assertIn("the board restarted", gates.plain("restarted", self.head))
-        found = delivery.for_card(CARD, "in-progress")
+        (self.tasks / "in-progress" / CARD).rename(
+            self.tasks / "review" / CARD)
+        found = delivery.for_card(CARD, "review")
         self.assertEqual(found["status"]["word"], "checks-needed")
         self.assertEqual(found["primary"]["action"], "run-required-checks")
         self.assertIn("board restarted", found["status"]["sentence"])
@@ -576,10 +582,16 @@ class ReadingRunsNothing(BatchCase):
 
 
 class TheDeliveryAction(BatchCase):
+    """In review, where `checks-needed` is the face's word."""
+
+    def setUp(self):
+        super().setUp()
+        (self.tasks / "in-progress" / CARD).rename(
+            self.tasks / "review" / CARD)
 
     def test_checks_needed_offers_the_real_handler(self):
         self.policy([self.check("unit")], gate=["unit"])
-        found = delivery.for_card(CARD, "in-progress")
+        found = delivery.for_card(CARD, "review")
         self.assertEqual(found["status"]["word"], "checks-needed")
         primary = found["primary"]
         self.assertEqual(primary["action"], "run-required-checks")
@@ -589,7 +601,7 @@ class TheDeliveryAction(BatchCase):
     def test_a_check_only_the_policy_could_grant_is_the_remedy(self):
         self.policy([self.check("unit"), self.check("other")], gate=["unit"],
                     work=["other"])
-        primary = delivery.for_card(CARD, "in-progress")["primary"]
+        primary = delivery.for_card(CARD, "review")["primary"]
         self.assertEqual(primary["action"], "run-required-checks")
         self.assertFalse(primary["enabled"])
         self.assertIn('"verify" list', primary["why"])
@@ -597,11 +609,11 @@ class TheDeliveryAction(BatchCase):
     def test_a_batch_in_flight_shows_its_progress(self):
         self.policy([self.check("one", "hang"), self.check("two")],
                     gate=["one", "two"])
-        required.start(CARD, "in-progress")
+        required.start(CARD, "review")
         self.assertTrue(wait_for(lambda: any(
             r.get("outcome") == "running" for r in verify.RUNNING.values()), 20))
         self.fresh()
-        found = delivery.for_card(CARD, "in-progress")
+        found = delivery.for_card(CARD, "review")
         self.assertEqual(found["status"]["word"], "checks-running")
         progress = [a for a in found["others"]
                     if a["action"] == "run-required-checks"]
