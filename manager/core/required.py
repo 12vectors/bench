@@ -549,12 +549,17 @@ def _run(batch: dict) -> None:
         with _LOCK:
             batch["state"] = "stopped" if batch.get("stop") else "finished"
             batch["ended"] = time.time()
-            ACTIVE.pop(batch["task"], None)
-        _store(batch)
-        state.record_board_event({
-            "kind": "verify", "actor": "board", "file": batch["task"],
-            "summary": line(batch)})
-        state.broadcast({"type": "verify"})
+        try:
+            _store(batch)
+            state.record_board_event({
+                "kind": "verify", "actor": "board", "file": batch["task"],
+                "summary": line(batch)})
+            state.broadcast({"type": "verify"})
+        finally:
+            # Last, so a batch that is no longer in flight has nothing left
+            # to write: its ending is on disk before anyone reads it gone.
+            with _LOCK:
+                ACTIVE.pop(batch["task"], None)
 
 
 def cancel(filename: str) -> dict:

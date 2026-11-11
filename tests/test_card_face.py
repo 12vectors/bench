@@ -258,7 +258,9 @@ class OneStatusAcrossSurfaces(Source):
             if spec.get("later") or key == "open-pr-url":
                 continue
             self.assertIn(f"case '{key}':", run, key)
-        self.assertNotIn("case 'run-required-checks':", run)
+        # Run required checks (card 101) opens its own confirmation sheet
+        self.assertIn("case 'run-required-checks':", run)
+        self.assertIn("requiredSheet(task)", run)
         self.assertNotIn("case 'confirm-criteria':", run)
 
     def test_requirements_are_supporting_detail_with_history_apart(self):

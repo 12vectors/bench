@@ -1098,6 +1098,10 @@
   .dreqs .check-row .state,.msheet .check-row .state{flex:0 1 auto;overflow-wrap:anywhere;min-width:0}
   .dreqs .check-row.accent .glyph,.dreqs .check-row.accent .state{color:var(--accent)}
   .dreqs .dreqfix{display:block;color:var(--muted);font-size:11px}
+  #reqsheet ul.dreqs{list-style:none;margin:0;padding:0}
+  #reqsheet .check-row{flex-wrap:wrap}
+  #reqsheet .check-row>.why{flex-basis:100%;margin:0 0 0 22px}
+  #reqsheet .reqfail{color:var(--alarm)}
   .dreqs .dreqfold>summary{cursor:pointer;font-size:12px;color:var(--muted)}
   .dreqs .dfoldbody{padding:6px 0 0 4px;display:flex;flex-direction:column;gap:6px;font-size:12px}
   .dreqs .dhist{margin:0;padding-left:18px;font-size:12px;color:var(--muted)}
@@ -3742,6 +3746,9 @@ function deliveryRun(task, a) {
       } else verifySheet(task);
       return true;
     };
+    // the sheet is the confirmation: it reads what a click would request
+    // and holds the armed fire, as the completion sheet does for a merge
+    case 'run-required-checks': return () => { requiredSheet(task); return true; };
     case 'evidence': return () => { verifySheet(task); return true; };
     case 'gates': return () => { gateSheet(task); return true; };
     case 'phases': return () => { setView('phases'); return true; };
@@ -4232,6 +4239,162 @@ async function rerunCheck(task, check) {
   await loadState();
   if (S.view === 'board') verifySheet(task);
   return res.ok;
+}
+
+/* Run required checks (design #94 §10.2). Opening the sheet is a GET of
+   what a click would do — the merge rule's checks at the candidate commit,
+   each read as request, join, skip or not-requested-and-why — and starts
+   nothing. The one armed button asks for the missing required checks, in
+   order, as this person's work reading; then the same sheet follows the
+   batch: preparing apart from running, what has an answer, what remains,
+   and an armed Stop. Nothing is retried by itself: after a stop, a failure
+   or a restart, running them again is this button, clicked again. */
+const REQ_ITEM = {
+  request: ['', '○', 'will be requested'],
+  queued: ['', '○', 'waiting its turn'],
+  requesting: ['accent', '◌', 'running now'],
+  met: ['pass', '✓', 'already met — skipped'],
+  joined: ['accent', '◌', 'already running — joined'],
+  reused: ['pass', '✓', 'an equal current pass was on record — nothing ran'],
+  problem: ['fail', '✕', 'not requested — its last result did not pass'],
+  unavailable: ['fail', '!', 'not requested — your work reading may not ask for it'],
+  'not-requested': ['', '·', 'not requested — the batch stopped first'],
+  'other-candidate': ['fail', '!', 'ran against another commit — not this one\'s answer'],
+};
+let requiredTimer = null;
+
+function requiredItemRow(i) {
+  const [cls, glyph, word] = REQ_ITEM[i.state]
+    || (i.state === 'error' && i.reason === 'board-restart'
+      ? ['', '·', 'no result — the board restarted']
+      : verifyState(i.state));
+  const live = i.state === 'requesting' && i.live
+    ? (i.live === 'preparing' ? 'preparing — its preparation steps are running'
+                               : i.live === 'running' ? 'running the check' : 'starting')
+    : word;
+  const def = i.definition;
+  const prep = def && def.prepare && def.prepare.length
+    ? `<div class="why">preparation first: ${def.prepare.map(p =>
+        `<span class="mono">${esc(p.name)}</span>${p.network ? ' (uses the network)' : ''}`).join(', ')}</div>`
+    : '';
+  return `<li class="check-row ${cls}" data-req="${esc(i.check)}" title="${esc(i.why || '')}">` +
+    `<span class="glyph" aria-hidden="true">${glyph}</span>` +
+    `<span class="name">${esc(i.check)}${i.scope ? ' · scope ' + esc(i.scope) : ' — full run'}` +
+    (def && def.command ? `<small class="mono"> ${esc(def.command)} (${esc(def.root || '')})</small>` : '') +
+    `</span><span class="state">${esc(live)}` +
+    (i.remedy ? `<span class="dreqfix">${esc(i.remedy)}</span>`
+      : (['problem', 'failed', 'prepare-failed', 'denied', 'error', 'cancelled'].includes(i.state) && i.why
+        ? `<span class="dreqfix">${esc(i.why)}</span>` : '')) +
+    `</span>${prep}</li>`;
+}
+
+async function requiredSheet(task) {
+  const wrap = $('#sheetwrap');
+  const head = `<div class="stitle"><span>${esc(task.title)}</span>` +
+    `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}run required checks</span></div>`;
+  if (!wrap.classList.contains('open') || !wrap.querySelector('#reqsheet')) {
+    wrap.innerHTML = `<div class="sheet" id="reqsheet">${head}<p>Reading what would be requested…</p></div>`;
+    wrap.classList.add('open');
+    wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSheet(); });
+  }
+  let plan = null, error = null;
+  try {
+    const res = await fetch('/api/verify/required?file=' + encodeURIComponent(task.file) +
+                            '&stage=' + encodeURIComponent(task.stage));
+    const data = await res.json();
+    if (res.ok) plan = data.plan; else error = data.error || 'the board did not answer';
+  } catch { error = 'the board could not be asked'; }
+  if (!wrap.querySelector('#reqsheet')) return;   // closed meanwhile
+  if (!plan) {
+    wrap.querySelector('#reqsheet').innerHTML = `${head}<p class="reqfail">${esc(error)}</p>` +
+      `<div class="sbtns"><button id="sh-noreq">Close<small>Nothing was run.</small></button></div>`;
+    $('#sh-noreq').addEventListener('click', closeSheet);
+    return;
+  }
+  const batch = plan.batch;
+  const live = batch && batch.state === 'running';
+  const sum = (batch && batch.summary) || {};
+  const groups = { request: [], joined: [], met: [], not: [] };
+  for (const i of plan.items) {
+    if (i.state === 'request') groups.request.push(i);
+    else if (i.state === 'joined') groups.joined.push(i);
+    else if (i.state === 'met') groups.met.push(i);
+    else groups.not.push(i);
+  }
+  const panel = (label, right, items) => items.length
+    ? `<div class="panel"><div class="phead"><span class="label">${esc(label)}</span>` +
+      `<span class="r">${esc(right)}</span></div><ul class="dreqs">${items.map(requiredItemRow).join('')}</ul></div>`
+    : '';
+  const at = plan.head ? shortSha(plan.head) : 'no commit';
+  const progress = batch
+    ? `<div class="panel" id="reqprogress"><div class="phead"><span class="label">` +
+      `${live ? 'Running now' : 'The last batch'}</span><span class="r">` +
+      `${esc(sum.done || 0)} of ${esc(sum.total || 0)} answered · at ${esc(shortSha(batch.head))}</span></div>` +
+      `<p class="why" role="status">${esc(live
+        ? (sum.current ? `${sum.current} is in flight` : 'between checks') +
+          (sum.remaining && sum.remaining.length ? `; still to request: ${sum.remaining.join(', ')}.` : '; nothing else remains.')
+        : batch.stop ? `Stopped: ${batch.stopWhy}` : 'Finished. Each check below says what it found.')}</p>` +
+      `<ul class="dreqs">${batch.items.filter(i => !['met', 'unavailable', 'problem'].includes(i.state) || i.started)
+        .map(requiredItemRow).join('')}</ul></div>`
+    : '';
+  const n = groups.request.length;
+  const canFire = !live && !plan.refusal && n > 0;
+  wrap.querySelector('#reqsheet').innerHTML =
+    `${head}` +
+    `<p>Asks bench for every required check that has no current answer on ` +
+    `<span class="mono">${esc(at)}</span>, in the merge rule's order, as your own ` +
+    `request — the same as ↻ in the ◫ evidence sheet, once per check. Checks that are ` +
+    `optional are never run here.</p>` +
+    progress +
+    (live ? '' :
+      panel('Will be requested, in this order', `${n} check${n === 1 ? '' : 's'}`, groups.request) +
+      panel('Already running — joined, not doubled', '', groups.joined) +
+      panel('Already met on this commit — skipped', '', groups.met) +
+      panel('Not requested', 'read why', groups.not)) +
+    (plan.refusal && !live ? `<p class="reqfail" role="alert">${esc(plan.why)}</p>` : '') +
+    `<p class="why">${esc(plan.preparation)}</p>` +
+    `<p class="why">Side effects, in full: ${esc(plan.sideEffects)}</p>` +
+    `<div class="sbtns">` +
+    (canFire ? `<button id="sh-reqgo" class="primary">${actLabel(
+      `${batch ? 'Run required checks again' : 'Run required checks'} (${n})`, 'run them?', 'requesting…')}` +
+      `<small>${esc(groups.request.map(i => i.check).join(', '))}</small></button>` : '') +
+    (live ? `<button id="sh-reqstop">${actLabel('Stop the batch', 'stop it?', 'stopping…')}` +
+      `<small>The check in flight is cancelled; the rest are not requested.</small></button>` : '') +
+    `<button id="sh-noreq">Close<small>${live ? 'The batch keeps running.' : 'Nothing was run by reading this.'}</small></button></div>`;
+  $('#sh-noreq').addEventListener('click', closeSheet);
+  const post = async (url, body) => {
+    const res = await fetch(url, { method: 'POST', headers: SETTINGS_HEADERS, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, data };
+  };
+  const go = $('#sh-reqgo');
+  if (go) wireAction(go, `${task.file}::required`, {
+    label: 'Run required checks', confirm: 'run them?', busy: 'requesting…',
+    run: async () => {
+      // the head the sheet was shown goes back with the request, so a
+      // commit landing meanwhile is a refusal rather than a surprise
+      const { ok, data } = await post('/api/verify/required',
+        { file: task.file, stage: task.stage, head: plan.head });
+      toast(ok ? `requesting ${n} required check${n === 1 ? '' : 's'} on ${at}`
+               : (data.error || 'nothing was requested'), !ok);
+      requiredSheet(task);
+      return ok;
+    } });
+  const stop = $('#sh-reqstop');
+  if (stop) wireAction(stop, `${task.file}::required-stop`, {
+    label: 'Stop the batch', confirm: 'stop it?', busy: 'stopping…',
+    run: async () => {
+      const { ok, data } = await post('/api/verify/required/cancel', { file: task.file });
+      toast(ok ? 'stopping — the check in flight is cancelled, nothing is retried'
+               : (data.error || 'not stopped'), !ok);
+      requiredSheet(task);
+      return ok;
+    } });
+  clearTimeout(requiredTimer);
+  if (live) requiredTimer = setTimeout(() => {
+    if ($('#reqsheet')) requiredSheet(task);
+  }, 1500);
+  else loadState();
 }
 
 async function replan(task) {

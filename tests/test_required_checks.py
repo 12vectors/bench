@@ -41,8 +41,9 @@ import config  # noqa: E402
 import delivery  # noqa: E402
 import gates  # noqa: E402
 import httpd  # noqa: E402
+import profiles  # noqa: E402
 import required  # noqa: E402
-import state  # noqa: E402
+import templates  # noqa: E402
 import verify  # noqa: E402
 
 # A check that counts its own executions in a file named for it, and whose
@@ -70,15 +71,22 @@ class BatchCase(GateCase):
         self.head = self.commit_in(self.wt)
         self.marks = self.tmp / "marks"
         self.marks.mkdir()
+        self.threads: list[threading.Thread] = []
         self.addCleanup(self.stop_hanging)
 
     def stop_hanging(self):
+        """Nothing this case started may outlive it: a thread writing after
+        config is restored would write outside the temporary directory."""
+        for filename in list(required.ACTIVE):
+            required.ACTIVE[filename]["cancel"] = True
         for evidence in list(verify.RUNNING):
             try:
                 verify.cancel(evidence)
             except ValueError:
                 pass
-        wait_for(lambda: not verify.RUNNING, 10)
+        wait_for(lambda: not verify.RUNNING and not required.ACTIVE, 20)
+        for thread in self.threads:
+            thread.join(20)
 
     def check(self, name: str, flag: str = "pass", **extra) -> dict:
         (self.marks / f"{name}.flag").write_text(flag, encoding="utf-8")
@@ -132,6 +140,7 @@ class BatchCase(GateCase):
         thread = threading.Thread(target=self.person, args=(name,),
                                   daemon=True)
         thread.start()
+        self.threads.append(thread)
         self.assertTrue(wait_for(lambda: any(
             r.get("check") == name and r.get("outcome") == "running"
             for r in verify.RUNNING.values()), 20))
@@ -380,7 +389,8 @@ class TheDoor(BatchCase):
             with urllib.request.urlopen(request) as found:
                 return found.status, json.loads(found.read())
         except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
+            with exc:
+                return exc.code, json.loads(exc.read())
 
     def test_a_form_shaped_request_is_refused(self):
         code, _ = self.post("/api/verify/required", {"file": CARD},
@@ -622,6 +632,75 @@ class TheDeliveryAction(BatchCase):
         self.assertIn(CARD, required.running())
         required.cancel(CARD)
         self.assertTrue(wait_for(lambda: CARD not in required.ACTIVE, 20))
+
+
+# ── acceptance 5: the prompts ──────────────────────────────────────────
+
+
+class PromptsAskAfterTheLastCommit(BatchCase):
+    """Rendered as a launch renders them, for both shipped adapters."""
+
+    def setUp(self):
+        super().setUp()
+        self.declares({
+            "v": 1,
+            "checks": [self.check("unit"), self.check("other")],
+            "profiles": {"work": {"verify": ["unit"]},
+                         "act-pr": {"verify": ["unit"]},
+                         "review": {"verify": ["unit", "other"]}},
+            "gates": {"acceptance": {"checks": ["unit", "other"]}}})
+
+    def render(self, intent: str, adapter: str) -> tuple[str, dict]:
+        with mock.patch.dict("os.environ", {"BOARD_AGENT_ADAPTER": adapter}):
+            manifest = profiles.manifest(intent, CARD, "in-progress")
+            fields = dict(branch=f"task/{STEM}", filename=CARD, body="brief",
+                          base="main", remote="origin",
+                          plan="the plan", pr="https://example.invalid/pr/1",
+                          context=profiles.prompt_block(manifest),
+                          verification=profiles.verification_block(manifest),
+                          progress="",
+                          **config.prompt_fields(CARD, "in-progress"))
+            name = f"{intent}.md"
+            return templates.render(name, templates.builtin(name), fields), \
+                manifest
+
+    def test_work_and_act_pr_ask_for_every_authorised_required_check(self):
+        for adapter in ("claude", "opencode"):
+            for intent, marker in (("work", "NOT READY:"),
+                                   ("act-pr", "ADDRESSED:")):
+                with self.subTest(adapter=adapter, intent=intent):
+                    text, manifest = self.render(intent, adapter)
+                    flat = " ".join(text.split())
+                    self.assertIn("Ask for every required check after your "
+                                  "last commit; a pass before a later commit "
+                                  "does not count.", flat)
+                    self.assertIn("require: `unit`", flat)
+                    # frozen permissions: `other` is named as not this
+                    # run's to ask for, and nothing grants it
+                    self.assertIn("`other`, which this run may not ask for",
+                                  flat)
+                    self.assertEqual([c["name"] for c in manifest["verify"]],
+                                     ["unit"])
+                    # never described as an automatic scheduler
+                    self.assertIn("it does not schedule them", flat)
+                    self.assertNotIn("automatically run", flat)
+                    # the one-turn block and the parsed marker survive
+                    self.assertIn("This run is a single non-interactive "
+                                  "turn.", flat)
+                    self.assertIn(marker, text)
+
+    def test_a_review_is_not_told_to_cover_the_rules(self):
+        manifest = profiles.manifest("review", CARD, "review")
+        block = profiles.verification_block(manifest)
+        self.assertIn("`other`", block, "review-first stays possible")
+        self.assertNotIn("Ask for every required check", block)
+
+    def test_an_ungated_board_renders_the_block_it_always_did(self):
+        self.declares({"v": 1, "checks": [self.check("unit")],
+                       "profiles": {"work": {"verify": ["unit"]}}})
+        block = profiles.verification_block(
+            profiles.manifest("work", CARD, "in-progress"))
+        self.assertNotIn("required check", block)
 
 
 if __name__ == "__main__":
