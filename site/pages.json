@@ -137,6 +137,17 @@
       "lede": "A clean exit, new commits and a quiet CI are the three things that used to answer this, and not one of them is evidence. What a gate requires instead, where it is enforced, why a COMMENTED review is never an approval, and what an override records.",
       "source": "AGENTS.md",
       "from": "## Gates: nothing merges on a report",
+      "to": "## Delivery status: one answer per card"
+    },
+    {
+      "path": "/concepts/delivery-status/",
+      "title": "Delivery status",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "One answer per card, computed on the server: what is happening, the one next action and who holds it, and the merge requirements that apply at the current commit — drawn the same on the card, its Overview and the merge dialog.",
+      "lede": "The card face, the Overview and the merge dialog used to work out a card's status each for itself, and could disagree. Now the server answers once and every surface draws that answer: what it says, what reading it costs (nothing), and what it never decides.",
+      "source": "AGENTS.md",
+      "from": "## Delivery status: one answer per card",
       "to": "## Readiness: asking before paying"
     },
     {

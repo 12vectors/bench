@@ -863,54 +863,86 @@ The board has five views (header switcher):
 A card shows what you need to choose the next action, and the column says
 the rest. The face has one ID (`#76` in the top row; a title that repeats
 the card's own number is drawn without it), the title, the owner, `HIGH`
-when it is, and a status pill **only when something has changed the next
-action**: an agent working or reviewing, `approved` or `changes asked`, a
-`run failed`, a halted or unstarted phase, `not published` (merged, but
-the application remote does not hold it — see "Done means delivered"),
-`completing`, or `idle` (in
-progress, nobody on it, nothing changed for a day). A card sitting in its
-column as expected wears no pill: `queued` in to-do/ was the column's
-word repeated.
+when it is, and at most one status pill — the card's **delivery status**,
+the one answer the server computes for it (see "Delivery status: one
+answer per card"). The page works out no status of its own.
 
-The chips follow the same rule. Anything bad or live stays on the face:
-failed or stale Bench evidence, an unmet or overridden merge gate, red CI,
-conflicts, a PR open against the wrong base, changes requested by
-Copilot, a policy that does not parse, a running drive or command. So do
-phase navigation and a non-default branch plan. Everything else — the
-profile, a plan the phase already explains, passing evidence, the pinned
-review record, a met gate, CI that passed, the PR link, the drive, the
-`$` commands and archive — is in the card's **⋯** tools. It is one labelled
-button (`Tools for #76`) that opens in place and closes on Escape, giving
-focus back. Nothing is dropped: the tools list every chip the card has,
-built and wired by the same code as the face. A required check that has
-not run cannot be hidden this way, because it reads through the gate chip,
-and an unmet gate is always on the face.
+**The face shows active work and actionable current problems.** A card
+wears its delivery status only when it changes what you do next: an
+agent or check running, a failed run, a check that failed or could not
+run on the current commit, changes requested, a commit that cannot be
+assessed, merge rules that do not resolve, an override in force, not
+published, a merge in flight, and — in `review/` — the next delivery
+step (`Checks needed`, `Review needed`, `Ready to merge`, `Merged on
+GitHub`, `Waiting for phase`). Requirements that simply lie in the
+future (a check that has not run on an in-progress card, a review not
+yet due) are listed under **Merge requirements** in the card's tools and
+detail view, in the neutral register, never as an alarm. Nothing is
+dropped: every requirement is still listed, every one is still enforced
+at the merge, and a genuine failure is never moved off the face. A card
+sitting in its column as expected — not started, queued, ready to start,
+in progress, an ungated review, delivered — wears no pill: those are the
+column's own words. The page adds two quiet readings the server does not
+make, and only when the delivery status has nothing to say on the face:
+a phase card nobody has started (or one held), and `idle` (in progress,
+nobody on it, nothing changed for a day).
 
-Two counts may join the face, and only where there is something to
+The chips follow the same rule. Active work and current problems stay on
+the face: red CI, conflicts, a PR open against the wrong base, changes
+requested by Copilot, a policy that does not parse, a running drive or
+command. So do phase navigation and a non-default branch plan. On review
+cards the face carries at most one merge-requirements chip, `⚖ 2 needed`
+or `⚖ ✕` (a current-commit problem) — its count is the required
+obligations only — and an override in force wears `⚖ overridden` in the
+alarm in every stage. The `◫` evidence chip joins the face only beside a
+current-commit check that failed, could not run or is running; a stale
+or historical record never puts it there. Everything else — the profile,
+a plan the phase already explains, the evidence, the pinned review
+record, requirements met or still ahead, CI that passed, the PR link,
+the drive, the `$` commands and archive — is in the card's **⋯** tools.
+It is one labelled button (`Tools for #76`) that opens in place and
+closes on Escape, giving focus back. Nothing is dropped: the tools list
+every chip the card has, built and wired by the same code as the face.
+
+Two counts may join the tools, and only where there is something to
 count: `☑ 6/9 accepted` once a card's acceptance is tracked, and
 `◇ 2 open findings` (or `1 fix to recheck`) while review findings are
-outstanding. Each opens its section of the detail view. The word is
-*accepted*, never *done*: the ratio is how many criteria a person has
-accepted on record, not how complete the work is.
+outstanding. Outstanding findings, and criteria a person recorded as
+needing work or a recheck, are current problems and are on the face; an
+acceptance count on its own is not, because confirming criteria is not
+a default ceremony (see "Acceptance and review findings"). Each opens its
+section of the detail view. The word is *accepted*, never *done*: the
+ratio is how many criteria a person has accepted on record, not how
+complete the work is.
 
 The card's detail view leads with what the card is and what happens next:
-its number, title and lifecycle pill stay in view while you read (the
+its number, title and delivery status stay in view while you read (the
 head is sticky, and **Expand** widens the view for long briefs and
 reports), and five sections follow as tabs — Tab reaches the row, the
 arrow keys, Home and End move along it.
 
-- **Overview** — the next step and who holds it (a failed run, an agent
-  at work, open findings, a fix to recheck, criteria needing work, an
-  unmet gate, then what the stage asks for), then the stage, the latest
-  run's progress as #73 reports it (agent-reported with its age while the
-  run lives; *history, not current* once it has ended; *reporting
-  unavailable* where it was never given a channel), the acceptance count,
-  the findings, and the last review round explained against its revision
-  and what has happened since. Then the **Signals** block — Bench checks,
-  external CI, review and the merge gate as four separate rows, each in
-  its own words — and every tool and action the card has, with the branch
-  plan folded underneath. Green CI is labelled as not a Bench check, and a
-  board with no gate says that nothing is required, which is not a pass.
+- **Overview** — the delivery status: its word as a heading, its
+  sentence (announced as an alert only in the alarm tone), the one
+  primary action and who holds it, and every other legitimate action
+  under **More actions** — a guide, not a wizard: nothing in the list is
+  disabled because the primary comes first, and an action whose handler
+  belongs to a later card is drawn disabled with that reason. Then
+  **Merge requirements** — `1 of 2 merge requirements met for <commit>`,
+  one row per required obligation with its state in words and, for a
+  problem, its remedy — with **Optional checks and earlier runs** and
+  **Technical details** (the commit, the merge rule, the completion, the
+  PR as of when it was observed) folded underneath. Then the stage, the
+  latest run's progress as #73 reports it (agent-reported with its age
+  while the run lives; *history, not current* once it has ended;
+  *reporting unavailable* where it was never given a channel), the
+  acceptance count, the findings, and the last review round explained
+  against its revision and what has happened since. Then the **Signals**
+  block — Bench checks (`Required: 1 of 1 passed on <commit>. Optional:
+  2 (see ◫).`), external CI, review and the merge requirements as four
+  separate rows, each in its own words — and every tool and action the
+  card has, with the branch plan folded underneath. Green CI is labelled
+  as not a Bench check, and a board with no gate says that nothing is
+  required, which is not a pass.
 - **Brief** — the requirement alone (the head's fields and the brief, no
   history), then #65's discussion and its refinement controls.
 - **Acceptance** — the criteria and their results; see "Acceptance and
@@ -1848,6 +1880,12 @@ Colour means state as it does everywhere here, but the word is what
 carries the meaning — a test failure, a permission denial and a
 dependency failure must not collapse into "red".
 
+The sheet holds every run, required or optional, so its chip is labelled
+`◫ evidence` rather than with a count: the headline count is the merge
+requirements' (`⚖`), and a count of every check the policy offers beside
+it could only contradict it. The chip is on the face only beside a check
+that failed, could not run or is running on the current commit.
+
 The Focus view gains a **Verification** panel beside **Checks**, and the
 pair is the point: `Checks` is classified from commands the *agent* ran —
 the run's own account of itself — and this one is the runner's, every row
@@ -2164,10 +2202,17 @@ this binding existed keeps exactly the meaning it was recorded with.
 ### On the board
 
 A `⚖` chip in the card's footer row, beside `⚿`, `⌖`, `◫` and `CI`,
-opens the gate: what this board requires, what the records say against
-the commit that would move, and — per unmet requirement, in words — the
-reason and the remedy. Present only where a gate is configured, the law
-every other chip here follows.
+opens the merge requirements: the card's delivery status — the same
+word, sentence and primary action the face and the Overview draw — then
+`m of n merge requirements met for <commit>`, one row per required
+obligation with its state and, for a problem, its remedy, and folded
+under it the optional checks and earlier runs, and every scope's
+reading against the commit that would move. Present only where a gate
+is configured, the law every other chip here follows. Its label is the
+required obligations only (`2 needed`, `✕` for a current problem,
+`2/2` when met), and it is on the face in `review/` and whenever an
+override is in force; before review, requirements that lie ahead are in
+the tools, never the alarm (see "The card face and its tools").
 
 The sheet keeps the two review records apart, because that is the
 distinction the feature rests on: bench's own verdict with the head it
@@ -2197,7 +2242,9 @@ A person on the common path asks **what is happening, what do I do
 next, and what, if anything, prevents delivery?** The face,
 the Overview and the merge dialog each used to work those out for
 themselves, and could disagree. `delivery.py` answers them once, on the
-server, and every surface is meant to draw that one result.
+server, and every surface draws that one result: the card face's pill
+and its ⚖ chip, the detail view's head and Overview, and the merge
+requirements dialog (see "On the page", below).
 
 It owns no policy and no enforcement. Every fact comes from the
 authority that already answers for it: the card itself (`taskfiles`),
@@ -2247,6 +2294,42 @@ nobody into a merge.
 Before a card has a commit, its requirements are listed as *needed
 before merge*, in the neutral register. A ready-to-start card never says
 it *can* start: that is the launch's own preflight to decide.
+
+A request for changes is a current problem only about the current
+commit. Where a merge rule requires a review, its requirement row says
+so; where none does, Bench's own `REQUEST CHANGES` verdict at the
+current commit still reads `changes-requested` — the face used to say
+"changes asked" from a cascade of its own, and drawing this result
+instead must not lose it. A verdict about an earlier commit is history.
+
+### On the page
+
+The compact form carries everything the surfaces draw — the status, the
+primary action and the alternatives, the candidate, the required-only
+counts, the history counts and the requirement rows' classes — so the
+face, the detail head, the Overview and the dialog read the same
+answer, and none of them works out a status, a next step or a count of
+its own. The full reading adds only the rows themselves, their remedies
+and the technical provenance, and the page fetches it again only when
+the compact answer it belongs to has changed.
+
+- **The face** wears the status under the face rule in "The card face
+  and its tools", and one `⚖` chip whose count is `counts`.
+- **The Overview and the dialog** draw the same block: the word as a
+  heading, the sentence (`role="alert"` only in the alarm tone), the
+  primary action first and then **More actions**, a native disclosure.
+  Under it, **Merge requirements**, with optional checks, earlier runs
+  and the technical details folded away.
+- **Every action is the existing route**, wired once: a move, a launch,
+  a hold, **↑ open PR**, the completion sheet (which is itself the
+  confirmation), **Check the remote**, the launch check, a cancel, or a
+  view that opens a sheet and changes nothing. Costly actions arm on the
+  first click or Enter/Space and fire on the second. An action whose
+  handler belongs to a later card arrives disabled from the server and
+  is drawn disabled with its reason.
+- **A live update keeps the reader's place**: the open folds, the scroll
+  position, a focused action and any unsent text survive the redraw that
+  every state change makes, and opening any of it starts nothing.
 
 ### Reading it is free; two actions are explicit
 
@@ -3951,6 +4034,18 @@ every box ticked by hand said equally little. Acceptance is the record —
 per criterion, attributed, bound to the requirement's wording and the
 code it was judged against — and review findings are the same idea for
 what a review turned up.
+
+**It is a record, not a default ceremony.** The PR review already judges
+the work against the card's acceptance criteria, and no merge rule on a
+board requires per-criterion sign-off unless the operator configures
+one. So nothing on the board asks a person to confirm criteria as a
+matter of course: the Overview never says "confirm acceptance", the
+accepted count is one of the card's tools rather than a face chip, and
+on a delivered card the fact that some criteria were never accepted on
+record is stated in the Acceptance section, as a fact, rather than as a
+next step. Every control and every record below is still there and
+works exactly as described; a criterion a person recorded as needing
+work, and an open finding, are current problems and are on the face.
 
 ### Tracking is explicit, and viewing changes nothing
 
