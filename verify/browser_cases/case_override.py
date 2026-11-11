@@ -12,7 +12,6 @@ application repository, and put back afterwards. Run through verify/browser.
 """
 
 import json
-import traceback
 import unittest
 
 import benchverify as bv
@@ -22,12 +21,6 @@ DIALOG = "#sheetwrap .sheet"
 NO_TARGET = "95-override-with-no-commit"
 AT_COMMIT = "96-override-at-a-commit"
 REASON = "the check runner is down for the fixture, proceeding on record"
-DIAG = "/home/dev/12v/bench/worktrees/95-require-an-implementation-target-for-overrides/diag95.txt"
-
-
-def diag(text):
-    with open(DIAG, "a", encoding="utf-8") as fh:
-        fh.write(text + "\n")
 
 
 def setUpModule():
@@ -71,35 +64,22 @@ def open_gate(stem: str):
     b.eval(f"gateSheet(findTask({json.dumps(file)}))")
     if not b.wait(f"!!document.querySelector('{DIALOG} #sh-nogate')", 20):
         raise bv.CheckFailed("the gate sheet never drew")
-    diag(f"--- sheet for {stem}:\n" + str(b.eval(f"document.querySelector('{DIALOG}').innerText")))
     return b
 
 
 def close_sheet():
+    """Escape, as a person closes it: after an override the success toast
+    can sit over the sheet's Close button."""
     b = S["browser"]
-    b.click(f"{DIALOG} #sh-nogate")
-    b.wait("!document.querySelector('#sheetwrap').classList.contains('open')", 5)
+    b.key("Escape")
+    if not b.wait("!document.querySelector('#sheetwrap').classList.contains('open')", 5):
+        raise bv.CheckFailed("Escape did not close the gate sheet")
 
 
 class OverrideNeedsATarget(unittest.TestCase):
 
-    def run(self, result=None):
-        before = len(result.failures) + len(result.errors) if result else 0
-        out = super().run(result)
-        if result and len(result.failures) + len(result.errors) > before:
-            diag(f"=== {self.id()}\n" + (result.failures + result.errors)[-1][1])
-        return out
-
     @classmethod
     def setUpClass(cls):
-        try:
-            cls._setup()
-        except Exception:
-            diag("setUpClass: " + traceback.format_exc())
-            raise
-
-    @classmethod
-    def _setup(cls):
         backend = S["backend"]
         cls.policy = backend.tool / "manager" / "local" / "profiles.json"
         cls.saved = cls.policy.read_bytes() if cls.policy.exists() else None
