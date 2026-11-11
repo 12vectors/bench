@@ -21,6 +21,10 @@ written. Everything is put back afterwards. Run through verify/browser.
 - **B5** — opening every surface writes nothing (state, work state and
   application refs hashed before and after), and a live update keeps the
   open folds, the scroll position and a focused action.
+- **The rows follow the server** — with the Overview open, the merge rule
+  moves from one passed check to another (same word, same counts); after
+  a live update, with no page reload, the Overview's rows name the new
+  check and a merge dialog opened then draws the same rows.
 """
 
 import hashlib
@@ -461,6 +465,81 @@ class OneStatusEverywhere(unittest.TestCase):
                              "a live update moved the reader")
         shot("delivery-b5-after-live-update-1280x900")
         close_detail()
+
+    def test_7_a_rule_replaced_with_the_same_totals_reaches_the_open_overview(self):
+        """The supervisor's finding at 4618dd5. F16's rule moves from `unit`
+        to `lint` — both passed at the head, so the word, the counts and
+        the classes are unchanged — while the Overview is open. After the
+        live update, without reloading the page, the Overview's rows name
+        `lint`, and a merge dialog opened then names the same rows."""
+        backend = S["backend"]
+        stem = "66-delivery-f16"
+        doc = json.loads(json.dumps(self.document))
+        doc["checks"].append(dict(doc["checks"][0], name="lint"))
+        for intent in doc["profiles"].values():
+            intent["verify"] = ["unit", "lint"]
+        self.policy.write_text(json.dumps(doc), encoding="utf-8")
+        self.addCleanup(self.policy.write_text, json.dumps(self.document), encoding="utf-8")
+        status, body = backend.post("/api/verify", {
+            "file": f"{stem}.md", "stage": "review", "check": "lint"}, timeout=120)
+        if status != 200:
+            raise bv.SetupError(f"lint: /api/verify answered {status}: {body[:300]!r}")
+        before = read(stem)
+        self.assertEqual("ready-to-merge", before["status"]["word"], before["status"])
+
+        rows = lambda where: S["browser"].eval(
+            f"[...document.querySelectorAll('{where} .dreqlist .name')].map(n => n.innerText)")
+        b = load()
+        wait_for_word(stem, "ready-to-merge")
+        open_detail(stem)
+        if not b.wait("[...document.querySelectorAll('#dsec-overview .dreqlist .name')]"
+                      ".some(n => n.innerText.startsWith('unit'))", 20):
+            raise bv.CheckFailed(f"the Overview never drew the unit row: {rows('#dsec-overview')}")
+        reloads = b.eval("performance.getEntriesByType('navigation').length")
+        b.eval("window.__sameDocument = true")
+
+        doc["gates"]["acceptance"]["checks"] = ["lint"]
+        self.policy.write_text(json.dumps(doc), encoding="utf-8")
+        after = read(stem)
+        for key in ("status", "counts", "history"):
+            self.assertEqual(before[key], after[key], f"the fixture changed {key}")
+        self.assertNotEqual(before["detail"], after["detail"])
+        # a live update, over the page's own event stream
+        extra = backend.work / "tasks" / "backlog" / "72-delivery-rule-moved.md"
+        extra.write_text("# The rule moved\n\n**Status:** Backlog\n**Priority:** Low\n\n"
+                         "Arrives while the Overview is open.\n", encoding="utf-8")
+        self.addCleanup(extra.unlink, True)
+        if not b.wait("!!findTask('72-delivery-rule-moved.md')", 20):
+            raise bv.CheckFailed("the live update never arrived")
+        js = (f"(S.state.delivery[{json.dumps(stem + '.md')}] || {{}}).detail === "
+              f"{json.dumps(after['detail'])}")
+        deadline = time.time() + 40
+        while not b.wait(js, 4):
+            if time.time() > deadline:
+                raise bv.CheckFailed("the page never read the moved rule's reading")
+            # the compact reading is memoised in a time bucket; the next
+            # live update carries it
+            extra.write_text(extra.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        if not b.wait("(() => { const n = [...document.querySelectorAll("
+                      "'#dsec-overview .dreqlist .name')].map(n => n.innerText);"
+                      " return n.some(x => x.startsWith('lint')) && !n.some(x => x.startsWith('unit')); })()",
+                      20):
+            raise bv.CheckFailed(f"the open Overview kept the old rows: {rows('#dsec-overview')}")
+        self.assertTrue(b.eval("window.__sameDocument === true"), "the page was reloaded")
+        self.assertEqual(reloads, b.eval("performance.getEntriesByType('navigation').length"))
+        overview = rows("#dsec-overview")
+        b.eval(f"gateSheet(findTask({json.dumps(stem + '.md')}))")
+        if not b.wait(f"!!document.querySelector('{DIALOG} .dreqlist')", 20):
+            raise bv.CheckFailed("the dialog drew no requirement rows")
+        dialog = rows(DIALOG)
+        shot("delivery-rule-moved-dialog-1280x900")
+        self.assertEqual(overview, dialog, "the Overview and the dialog disagree")
+        self.assertEqual(["lint"], [r["check"] for r in after["requirements"]
+                                    if r["kind"] == "check"])
+        b.key("Escape")
+        b.wait("!document.querySelector('#sheetwrap').classList.contains('open')", 5)
+        close_detail()
+        S["metrics"]["deliveryRuleMoved"] = {"overview": overview, "dialog": dialog}
 
 
 if __name__ == "__main__":

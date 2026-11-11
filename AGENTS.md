@@ -2310,8 +2310,18 @@ counts, the history counts and the requirement rows' classes — so the
 face, the detail head, the Overview and the dialog read the same
 answer, and none of them works out a status, a next step or a count of
 its own. The full reading adds only the rows themselves, their remedies
-and the technical provenance, and the page fetches it again only when
-the compact answer it belongs to has changed.
+and the technical provenance. The compact form names it by `detail`, a
+digest of every row with its prose and remedy, the merge rule's reading
+and the completion, so a check replaced by another with the same totals,
+or new evidence behind the same summary, is a new `detail` and the page
+fetches the rows again — and only then. The newest request answers: a
+reply to an older one is dropped, never drawn over a newer one. A read
+that fails says so above the rows it last had, keeps them marked as
+possibly out of date, and is asked again after a few seconds rather than
+on every repaint. A merge dialog opened meanwhile reads the rows fresh,
+shares them with the Overview when they are about the same reading, and
+otherwise asks for the board state again, so the two cannot keep
+disagreeing.
 
 - **The face** wears the status under the face rule in "The card face
   and its tools", and one `⚖` chip whose count is `counts`.
