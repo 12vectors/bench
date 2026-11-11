@@ -207,6 +207,8 @@ class TheCopyMatrix(DeliveryCase):
         self.manifest()
         self.hang_a_check()
         self.place("review", pr=PR_URL)
+        # RUNNING fills a moment before the record binds its source.
+        wait_for(lambda: self.word() == "checks-running")
         found = self.expect("checks-running", None)
         self.assertEqual([a["action"] for a in found["others"]],
                          ["cancel-check"])
