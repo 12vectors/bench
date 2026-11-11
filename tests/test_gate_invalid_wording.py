@@ -43,6 +43,12 @@ PARTS = (
     r"function requirementLabel\(r\) \{.*?\n\}",
     r"function gateRow\(r\) \{.*?\n\}",
     r"function gatePanel\(decision\) \{.*?\n\}",
+    # the delivery status the sheet leads with (task 99)
+    r"function deliveryOf\(task\) \{.*?\n\}",
+    r"function deliveryStatusHtml\(task, d, where\) \{.*?\n\}",
+    r"function deliveryActions\(d, where\) \{.*?\n\}",
+    r"function requirementsHtml\(task, d, full, where\) \{.*?\n\}",
+    r"function wireDeliveryButtons\(root, task, actions\) \{.*?\n\}",
     r"async function gateSheet\(task\) \{.*?\n\}",
 )
 
@@ -51,10 +57,12 @@ PARTS = (
 ABSENT = ("no requirement", "declares no gate", "No gate is configured")
 
 STUBS = """
-const S = { state: {} };
+const S = { state: {}, accOpen: {}, dfull: {} };
+const document = { activeElement: null, body: null };
 const els = {};
 const el = (id) => els[id] || (els[id] = {
-  innerHTML: '', value: '', classList: { add() {} }, addEventListener() {} });
+  innerHTML: '', value: '', classList: { add() {}, contains() { return false; } },
+  addEventListener() {}, querySelectorAll() { return []; } });
 const $ = (sel) => (sel === '#sh-override' ? null : el(sel));
 const closeSheet = () => {}, toast = () => {}, loadState = async () => {};
 const wireAction = () => {};
@@ -134,7 +142,9 @@ class InvalidIsNotUngated(GateCase):
     def test_the_sheet_never_says_absent_about_an_invalid_policy(self):
         self.malformed()
         html = self.sheet(self.payload())
-        self.assertIn("Blocked", html)
+        # the scope's own reading says blocked (the status above it is the
+        # server's delivery status — `rules-invalid` on a review card)
+        self.assertIn("blocked", html)
         self.assertIn("does not resolve", html)
         for sentence in ABSENT:
             self.assertNotIn(sentence, html,

@@ -360,7 +360,7 @@ class TheCardSaysWhichStateItIsIn(unittest.TestCase):
         self.assertIsNone(self.flight(self.snapshot(started=True), stage="done"))
 
     def test_idle_wears_the_settled_register_and_never_the_accent(self):
-        block = re.search(r"if \(flight && flight\.idle\) \{.*?\n  \}",
+        block = re.search(r"if \(!promoted && flight && flight\.idle\) \{.*?\n  \}",
                           self.card_fn, re.S).group(0)
         self.assertIn("var(--idle)", block)
         for colour in ("--accent", "--alarm", "--calm"):
@@ -372,9 +372,15 @@ class TheCardSaysWhichStateItIsIn(unittest.TestCase):
                       "…and nothing is still arriving, so there is no caret")
 
     def test_the_halt_and_the_failure_still_outrank_it(self):
-        idle = self.card_fn.index("if (flight && flight.idle)")
-        self.assertLess(idle, self.card_fn.index("if (failure)"))
-        self.assertLess(idle, self.card_fn.index("if (flight && flight.bad)"))
+        """Task 99: a halt and a failure are the server's delivery status
+        (`run-failed`, in the alarm, on the face); the quiet "not started"
+        reading is drawn only when that status has nothing to say there."""
+        import delivery
+        self.assertEqual(delivery.WORDS["run-failed"][1], "alarm")
+        self.assertIn("The phase halted:", Path(delivery.__file__).read_text(encoding="utf-8"))
+        self.assertIn("if (!promoted && flight && flight.idle)", self.card_fn)
+        self.assertLess(self.card_fn.index("let promoted = !!(d && FACE_WORDS.has(d.status.word));"),
+                        self.card_fn.index("if (!promoted && flight && flight.idle)"))
 
 
 class TheDocumentedGuard(unittest.TestCase):
