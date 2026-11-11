@@ -1768,10 +1768,12 @@ reuses a record only when:
   today's answer, and a run still in flight is newer than anything on
   record — so it is joined, never stepped past. "In flight" means
   *reserved*, not *on disk*: a run holds its place in memory before its
-  first record is written, the reservations are read under the lock both
-  before and after the records are, and a run reserved for this check in
-  between — even one that has already finished — means the request runs
-  or joins rather than trusting what it read;
+  first record is written. The reservations are read under the lock
+  before the records are, and read again in the same hold of the lock
+  that writes the reuse record. A run reserved for this check anywhere
+  in between means the request runs or joins rather than trusting what
+  it read, even if that run has already finished. A run reserved after
+  that hold is newer than the reuse;
 - it passed over a **bound, clean** source, with the same coverage
   (scope), and `outcome_now` still reads `passed`;
 - its `resultId` **equals** the new one in every dimension: source,
