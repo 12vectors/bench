@@ -69,6 +69,7 @@ import gates
 import github
 import plans
 import profiles
+import required
 import state
 import taskfiles
 import verify
@@ -170,11 +171,11 @@ ACTIONS = {
                      "kind": "api", "arm": False},
     "launch-check": {"handler": "/api/card/delivery/launch-check",
                      "kind": "api", "arm": False},
-    "run-required-checks": {"handler": None, "kind": "api", "arm": True,
-                            "later": ("Run required checks arrives with a "
-                                      "later #94 card (design §10.2). Until "
-                                      "then, ask for each check with ↻ in "
-                                      "the ◫ evidence sheet")},
+    # Opens its confirmation, which reads what a click would request and
+    # holds the armed fire — so the button itself does not arm (as the
+    # completion sheet is merge & clean up's confirmation).
+    "run-required-checks": {"handler": "/api/verify/required", "kind": "api",
+                            "arm": False},
     "confirm-criteria": {"handler": None, "kind": "view", "arm": False,
                          "later": ("sign-off (design §8.3) is not "
                                    "implemented yet")},
@@ -252,7 +253,21 @@ def _context(phase_state: dict | None = None) -> dict:
         "gh": config.gh_available(),
         "onOrigin": config.app_merge_on_origin(),
         "now": time.time(),
+        # which checks a person's work reading may ask for — the reading
+        # Run required checks rides — and the batches in flight
+        "workChecks": _work_checks(),
+        "batches": required.running(),
     }
+
+
+def _work_checks() -> set[str]:
+    """The checks a person's work reading may ask for, resolved without a
+    card (the list does not depend on one) and without writing anything."""
+    try:
+        found = profiles.resolve(required.INTENT)
+    except (ValueError, OSError):
+        return set()
+    return {c["name"] for c in found.get("verify") or []}
 
 
 def _runs(task: dict, ctx: dict) -> tuple[dict | None, dict | None]:
@@ -732,11 +747,14 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
         return (word, sentence, fix, rest)
 
     checks = [r for r in requirements if r["kind"] == "check"]
+    batch = (ctx.get("batches") or {}).get(task["file"])
     # 13. running
     running = [r for r in checks if r["class"] == "running"]
     if running:
         rest = [action("cancel-check", "Cancel", evidence=r["evidence"])
                 for r in running if r.get("evidence")]
+        if batch:
+            rest.insert(0, _batch_action(batch))
         return ("checks-running",
                 f"{_names(running)} {'is' if len(running) == 1 else 'are'} "
                 f"running on {here}.", None, rest)
@@ -751,8 +769,19 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
         rest = [action("evidence", "◫ evidence")]
         if review_pr:
             rest.append(review_pr)
-        return ("checks-needed", sentence,
-                action("run-required-checks", "Run required checks"), rest)
+        if batch:
+            return ("checks-needed", sentence, _batch_action(batch), rest)
+        offered = ctx.get("workChecks") or set()
+        if not any(r.get("check") in offered for r in needed):
+            # The rule requires what a person's request may not ask for:
+            # the configuration is the remedy, never a wider grant.
+            run = action("run-required-checks", "Run required checks",
+                         enabled=False,
+                         why=required.remedy_unavailable(
+                             needed[0].get("check") or ""))
+        else:
+            run = action("run-required-checks", "Run required checks")
+        return ("checks-needed", sentence, run, rest)
 
     # 15. review
     review_rows = [r for r in requirements if r["kind"] == "review"
@@ -825,10 +854,20 @@ def _names(rows: list[dict]) -> str:
         else (names[0] if names else "nothing")
 
 
+def _batch_action(batch: dict) -> dict:
+    """While a batch of required checks is in flight on the card, the
+    action opens its progress (the same sheet) rather than asking again."""
+    label = (f"Required checks: {batch.get('done', 0)} of "
+             f"{batch.get('total', 0)} answered")
+    return action("run-required-checks", label)
+
+
 def _needed_sentence(row: dict, here: str) -> str:
     reason, name = row["reason"], row["name"]
     if reason == "cancelled":
         return f"{name} was cancelled before a result on {here}."
+    if reason == "restarted":
+        return f"{name} has no result on {here} — the board restarted."
     if reason == "stale":
         return (f"{name} passed on {here}, and "
                 f"{(row.get('why') or 'what it depends on changed').split(': ', 1)[-1]}")
@@ -952,6 +991,9 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
                           bool(a.get("failure")))
                          for a in ctx["agents"]),
         "completing": sorted(ctx["completing"]),
+        "batches": sorted((k, (v or {}).get("done"), (v or {}).get("total"))
+                          for k, v in (ctx.get("batches") or {}).items()),
+        "workChecks": sorted(ctx.get("workChecks") or ()),
         "recoveries": github.recoveries(),
         "phases": sorted((k, v.get("running"), v.get("halted"))
                          for k, v in ctx["phases"].items()),

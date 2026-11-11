@@ -139,6 +139,8 @@ REASONS = {
                        "would not complete"),
     "denied": "the request to run the check was refused",
     "cancelled": "the verification was cancelled before it reached a verdict",
+    "restarted": ("the board stopped while the check was running, so it has "
+                  "no result — nothing about it passed or failed"),
     "error": "the verification did not reach a verdict",
     "stale": ("the evidence passed, and what it was about has changed since "
               "— so it says nothing about the code here now"),
@@ -187,7 +189,12 @@ REMEDIES = {
                        "ended."),
     "denied": ("The request was refused before anything ran — the ⚿ profile "
                "sheet says by what. Fix the policy, then ask again."),
-    "cancelled": "Ask for the check again; a cancellation decided nothing.",
+    "cancelled": ("Ask for the check again — Run required checks on the "
+                  "card, or ↻ in the ◫ evidence sheet. A cancellation "
+                  "decided nothing."),
+    "restarted": ("Ask for the check again — Run required checks on the "
+                  "card, or ↻ in the ◫ evidence sheet. Nothing re-runs by "
+                  "itself after a restart."),
     "error": ("Ask for the check again. A record left running by a board "
               "that restarted is closed as an error and never re-run by "
               "itself."),
@@ -253,6 +260,7 @@ SEVERITY = {
     "passed": "met", "bench-approved": "met", "approved": "met",
     "approved-by-another": "met", "ungated": "met",
     "not-run": "needed", "stale": "needed", "cancelled": "needed",
+    "restarted": "needed",
     "other-commit": "needed", "source-dirty": "needed",
     "source-unbound": "needed", "no-verdict": "needed",
     "verdict-other-head": "needed", "no-approval": "needed",
@@ -279,6 +287,7 @@ PLAIN = {
     "not-run": "Has not run on {at}",
     "stale": "Passed on {at}, and what it depends on has changed since",
     "cancelled": "Cancelled before a result on {at}",
+    "restarted": "No result on {at} — the board restarted",
     "other-commit": "Has not run on {at} (earlier runs are history)",
     "source-dirty": "Passed with uncommitted files — commit, then run checks",
     "source-unbound": "Passed, but could not be bound to {at}",
@@ -997,12 +1006,18 @@ def _check_requirement(filename: str, check: dict, head: dict,
         # at this head exists is said, because "it passed once" is exactly
         # what a reader would otherwise be left to weigh against it.
         reason = blocker["outcome"] if blocker["outcome"] in REASONS else "error"
+        if reason == "error" and blocker.get("reason") == "board-restart":
+            # Design #94 §10.3: a check the board stopped under has no
+            # result, which is a step still ahead — like a cancellation —
+            # rather than a fault the check found.
+            reason = "restarted"
         said = verify.OUTCOMES.get(blocker["outcome"]) or REASONS.get(reason, reason)
         after = deciding[deciding.index(blocker) + 1:]
         older = next((r for r in after if r["outcome"] == "passed"
                       and covers(r["scope"])), None)
         what = ("was cancelled before a result" if reason == "cancelled"
-                else "did not pass")
+                else "has no result — the board restarted while it ran"
+                if reason == "restarted" else "did not pass")
         why = (f"'{label}' {what} on {here} — the newest run there "
                f"({_coverage(blocker['scope'])}): {blocker['why'] or said}")
         if older is not None:
