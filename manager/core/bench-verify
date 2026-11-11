@@ -4,6 +4,17 @@
     bench-verify                  list the checks this run may ask for
     bench-verify <check>          run it
     bench-verify <check> <scope>  run it over a declared scope
+    bench-verify --again <check> [<scope>]
+                                  run it anew, even where a current pass
+                                  of it is already on record
+
+An equal, current pass already on record for this card — the same check,
+coverage and commit, with the same result identity in every dimension —
+is returned rather than run again: the output says REUSED, names the
+original evidence and who it was run for, and nothing runs. A newer
+failure, cancellation or run in flight at that commit is never stepped
+past. `--again` asks for a new run regardless; a run of the same check
+already in flight is still joined rather than doubled.
 
 This is the whole of a headless run's verification interface, and it is
 deliberately tiny. The run names a check; **bench** reads the operator's
@@ -65,6 +76,8 @@ def main() -> int:
     port = os.environ.get("BOARD_PORT", "26071")
     agent = os.environ.get("BOARD_AGENT_ID", "")
     args = [a for a in sys.argv[1:] if a]
+    again = "--again" in args
+    args = [a for a in args if a != "--again"]
     if args and args[0] in ("-h", "--help"):
         print(__doc__.strip())
         return 0
@@ -92,6 +105,8 @@ def main() -> int:
         body = {"agent": agent, "check": args[0]}
         if len(args) > 1:
             body["scope"] = args[1]
+        if again:
+            body["again"] = True
         # No client-side timeout short of the board's own: the board kills
         # a check that overruns and records the timeout, and a client that
         # gave up first would leave the asking run guessing about a
@@ -136,6 +151,15 @@ def main() -> int:
     print(f"evidence: {evidence.get('id')}")
     if evidence.get("log"):
         print(f"log:      {evidence['log']}")
+    if evidence.get("reused"):
+        reuse = evidence.get("reuse") or {}
+        original = reuse.get("original") or {}
+        print(f"REUSED:   {evidence['reused']} — an equal, current result was "
+              f"already on record, so nothing was run")
+        print(f"run for:  {original.get('agent') or original.get('actor') or 'unknown'}"
+              f" ({original.get('intent') or 'unknown intent'})")
+        print(f"reuse:    {reuse.get('id')} (records that this run asked)")
+        print("Run it anew with --again if a fresh execution is what you need.")
     if evidence.get("duplicate"):
         print("this check was already running for this card; the result above "
               "is that run's, not a second one.")

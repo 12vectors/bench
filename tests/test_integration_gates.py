@@ -263,12 +263,14 @@ class GateCase(unittest.TestCase):
 
     def ask(self, check: str = "unit", *, agent: str = "run-1",
             filename: str = CARD, stage: str = "in-progress",
-            scope: str | None = None, intent: str | None = None) -> dict:
+            scope: str | None = None, intent: str | None = None,
+            again: bool = False) -> dict:
         return verify.request(check=check, scope=scope, agent=agent,
                               task=None if agent else filename,
                               intent=intent,
                               stage=None if agent else stage,
-                              actor="agent" if agent else "you")
+                              actor="agent" if agent else "you",
+                              again=again)
 
     def decide(self, scope: str = "acceptance", *, filename: str = CARD):
         return gates.evaluate(filename, scope)

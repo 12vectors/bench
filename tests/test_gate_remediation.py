@@ -209,7 +209,9 @@ class ScopeIsPartOfTheRequirement(GateCase):
         self.assertEqual(self.ask()["outcome"], "passed")
         self.assertEqual(self.decide()["decision"], "allowed")
         self.flag("fail")
-        self.assertEqual(self.ask()["outcome"], "failed")
+        # the flag is outside the result identity, so only an explicit
+        # rerun runs it again — an unforced request reuses the pass (#100)
+        self.assertEqual(self.ask(again=True)["outcome"], "failed")
         verify.forget_cached()
         found = self.decide()
         self.assertEqual(found["decision"], "blocked", found["summary"])
@@ -233,7 +235,8 @@ class ScopeIsPartOfTheRequirement(GateCase):
         self.manifest(worktree=self.wt)
         self.assertEqual(self.ask()["outcome"], "passed")
         self.flag("hang")
-        asking = threading.Thread(target=self.ask, daemon=True)
+        asking = threading.Thread(target=lambda: self.ask(again=True),
+                                  daemon=True)
         asking.start()
         try:
             # The registry reserves a slot before publishing evidence. Wait
@@ -273,7 +276,7 @@ class ScopeIsPartOfTheRequirement(GateCase):
         self.manifest(worktree=self.wt)
         passed = self.ask()
         self.flag("fail")
-        failed = self.ask()
+        failed = self.ask(again=True)
         for record in (passed, failed):
             stored = verify.read(record["id"])
             stored["requested"] = 1_000.0

@@ -1745,6 +1745,70 @@ that can ask bench to run the tests gains no commit and no push rule
 anywhere in the generated document, which is the separation
 `publication` existed for.
 
+### Asking twice runs once
+
+The work run asks for a check after its last commit; the review run asks
+for the same check at the same PR head. That used to be two runs of one
+question. Now the second request is answered with the first record:
+`bench-verify` prints `REUSED`, names the original evidence and who it
+was run for, and nothing runs.
+
+The rule is narrow on purpose, and it is decided *after* the request is
+authorised — the asking run's frozen profile must still offer the check,
+so a reusable pass never authorises an intent the policy has since
+forbidden. Then bench works out, without making any checkout, the
+result identity this request would record now (see "The evidence"), and
+reuses a record only when:
+
+- it is a run of **this check by name**, for this card, at the commit the
+  check would run against now — the card's worktree head, the branch tip
+  for `source`, the pinned PR head for `review`;
+- it is the **newest relevant answer** there, as at the gate: a newer
+  failure, cancellation or error at that commit means the pass is not
+  today's answer, and a run still in flight is newer than anything on
+  record — so it is joined, never stepped past. "In flight" means
+  *reserved*, not *on disk*: a run holds its place in memory before its
+  first record is written. The reservations are read under the lock
+  before the records are, and read again in the same hold of the lock
+  that writes the reuse record. A run reserved for this check anywhere
+  in between means the request runs or joins rather than trusting what
+  it read, even if that run has already finished. A run reserved after
+  that hold is newer than the reuse;
+- it passed over a **bound, clean** source, with the same coverage
+  (scope), and `outcome_now` still reads `passed`;
+- its `resultId` **equals** the new one in every dimension: source,
+  check substance, coverage, programs, preparation, declared inputs, root
+  class, declared environment and runner. Who asked, under which policy
+  revision, and where a `source` checkout happened to sit are provenance
+  and refuse nothing.
+
+A legacy record (no `resultId`) cannot show that equality, so it is
+never reused and costs one new run; it is not rewritten either. A record
+of another name is never this route — declared equivalence is a separate
+rule (card 104). A review verdict, a progress claim or a comment is not a
+record at all.
+
+**The evidence is not copied.** The record keeps its own id, requester,
+checkout, log and provenance, byte for byte, and the gate goes on citing
+it. What the second asker leaves is a **reuse record** under
+`local/state/evidence/reuse/` — machine-local, like the evidence: the
+reused evidence id and its `resultId`, the identity the requester would
+have had (so `result_id(identity)` can be checked against the record),
+the requester's run, intent, request and policy revision, and a copy of
+who the evidence was run for. No environment value and no hash of one;
+the ticker says *reused … nothing was run*. Reuse records are never
+evidence: `all_evidence()` does not list them and no gate reads them.
+The page is sent them through an allowlist (`verify.public_reuse`), as
+evidence is through `verify.public`, so the identity stays on this disk
+and a field added later does not reach a reader by default.
+
+**`--again` runs.** `bench-verify --again <check> [<scope>]`, the
+`"again": true` field on `POST /api/verify`, and the ◫ sheet's `↻` all
+ask for a new execution regardless, and the new record carries
+`again: true`. A run of the same check already in flight is still joined
+rather than doubled. A diagnosis (`--doctor --active`) never reuses: the
+point of it is to run.
+
 ### The compatibility path, in one sentence
 
 A `verify` entry naming one of the intent's own **command grants**
@@ -1903,9 +1967,12 @@ there reads `not run`, in those words, and says so.
 Opening either runs nothing. Rerunning is an armed `↻` per check in the
 sheet, with its side effects written out beside it: the check's command
 in the card's own checkout (or a detached one bench makes and removes),
-preparation first, a new evidence record and a new log — no card moved,
-no branch touched, nothing published, and a run already in flight joined
-rather than doubled.
+preparation first, a new evidence record and a new log — always a new
+run, even where a current pass could have been reused (it is **Run
+again**), no card moved, no branch touched, nothing published, and a run
+already in flight joined rather than doubled. Requests that were
+answered by an existing record are listed in a fold of their own, each
+naming the evidence that answered and who asked.
 
 ## Gates: nothing merges on a report
 

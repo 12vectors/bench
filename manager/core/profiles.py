@@ -2763,6 +2763,12 @@ def verification_block(found: dict | None) -> str:
         f"    {shim} <check>         run one",
         f"    {shim} <check> <scope> run one over a declared scope",
         "",
+        "Where an equal, current pass of the same check is already on record "
+        "for this card at this commit, bench returns that record instead of "
+        "running it again: the output says REUSED and names the original "
+        "evidence. `--again` before the check's name asks for a new run "
+        "regardless.",
+        "",
         "Available to this run:",
     ]
     for check in checks:

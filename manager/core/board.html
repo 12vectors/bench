@@ -4151,7 +4151,9 @@ async function verifySheet(task) {
         `command in this card's own checkout (or, for a <span class="mono">source</span> ` +
         `check, in a detached checkout it makes and removes), with its ` +
         `preparation steps first. It writes a new evidence record and a new ` +
-        `log; it moves no card, touches no branch and publishes nothing. ` +
+        `log — always a new run, even where a current pass of the same ` +
+        `check at this commit could have been reused; it moves no card, ` +
+        `touches no branch and publishes nothing. ` +
         `Build output, caches and temporary files land in the directory bench ` +
         `points HOME and TMPDIR at. A run already in flight for the same ` +
         `check is joined rather than doubled. A check that outlasts this ` +
@@ -4163,6 +4165,11 @@ async function verifySheet(task) {
     `<div id="evlog"></div>` +
     `<details class="fold"><summary>identities each result is bound to</summary>` +
     `<pre>${esc(verifyDetail(data.evidence || []))}</pre></details>` +
+    ((data.reuses || []).length
+      ? `<details class="fold"><summary>requests answered by an existing ` +
+        `result (${data.reuses.length})</summary>` +
+        `<pre>${esc(reuseDetail(data.reuses))}</pre></details>`
+      : '') +
     `<div class="sbtns"><button id="sh-nover">Close<small>Nothing was run.` +
     `</small></button></div></div>`;
   $('#sh-nover').addEventListener('click', closeSheet);
@@ -4198,10 +4205,24 @@ function verifyDetail(records) {
   return lines.join('\n') || 'no evidence recorded for this card yet';
 }
 
+/* A reuse is a request that ran nothing: an equal, current pass was
+   already on record, and the request was answered with it. Each line
+   names the evidence that answered and who asked this time — the
+   evidence itself keeps its own requester. */
+function reuseDetail(reuses) {
+  return reuses.map(r =>
+    `${r.check}${r.scope ? ' · scope ' + r.scope : ''} at ` +
+    `${String(r.commit || '').slice(0, 12)} — asked by ` +
+    `${r.agent || r.actor || '—'} (${r.intent || '—'}), answered by ` +
+    `${r.reused} (run for ${(r.original || {}).agent || (r.original || {}).actor || '—'}); ` +
+    `nothing was run`).join('\n');
+}
+
 async function rerunCheck(task, check) {
+  // ↻ is "Run again": always a new run, never an answer reused from record
   const res = await fetch('/api/verify', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ file: task.file, stage: task.stage, check }),
+    body: JSON.stringify({ file: task.file, stage: task.stage, check, again: true }),
   });
   const data = await res.json();
   const ev = data.evidence || {};
