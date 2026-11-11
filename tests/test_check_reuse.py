@@ -420,6 +420,68 @@ class NewestRelevantAnswerDecides(ReuseCase):
             asking.join(timeout=20)
         self.assertFalse(asking.is_alive())
 
+    def test_a_rerun_reserved_after_the_read_but_before_the_reuse_wins(self):
+        """The last seam: the records are read and judged, and a forced
+        rerun is reserved while the chosen pass is still being checked
+        (`outcome_now`), held before its first record. The decision and the
+        reuse record are one hold of the lock, so the plain request joins
+        the rerun and no reuse record is written."""
+        document = self.counted()
+        first = self.run_check(document)
+        self.flag.write_text("hang", encoding="utf-8")
+        self.declares(document)
+        self.manifest(agent="run-2")
+        self.manifest(agent="run-3")
+        reached, release = threading.Event(), threading.Event()
+        real_store, real_outcome = verify._store, verify.outcome_now
+        asker = threading.current_thread()
+        rerun: dict = {}
+        racer: list = []
+
+        def paused(record):
+            if record.get("again") and record.get("outcome") == "running" \
+                    and not reached.is_set():
+                reached.set()
+                release.wait(30)
+            return real_store(record)
+
+        def judge_then_race(record):
+            answer = real_outcome(record)
+            if threading.current_thread() is asker \
+                    and record.get("id") == first["id"] and not racer:
+                thread = threading.Thread(target=lambda: rerun.update(
+                    self.ask(agent="run-2", again=True)), daemon=True)
+                racer.append(thread)
+                thread.start()
+                self.assertTrue(reached.wait(30))
+            return answer
+
+        for name, fake in (("_store", paused),
+                           ("outcome_now", judge_then_race)):
+            patcher = mock.patch.object(verify, name, fake)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.fresh()
+        try:
+            joined = self.ask(agent="run-3")
+            self.assertEqual(len(racer), 1, "the race reached its seam")
+            reserved = [i for i, r in list(verify.RUNNING.items())
+                        if r.get("again")]
+            self.assertEqual(len(reserved), 1)
+            self.assertNotIn("reused", joined)
+            self.assertTrue(joined.get("duplicate"))
+            self.assertEqual(joined["id"], reserved[0])
+            self.assertNotEqual(joined["id"], first["id"])
+            self.assertEqual(verify.reuses_for_task(CARD), [])
+        finally:
+            release.set()
+            self.assertTrue(wait_for(lambda: self.runs() == 2))
+            for ident in list(verify.RUNNING):
+                verify.cancel(ident)
+            for thread in racer:
+                thread.join(timeout=20)
+        self.assertFalse(any(t.is_alive() for t in racer))
+
     def test_a_rerun_reserved_and_finished_during_the_read_is_not_missed(self):
         """The records are read outside the lock. A forced rerun reserved,
         run and failed while they were being read is in none of them — and

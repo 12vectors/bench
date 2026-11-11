@@ -1510,13 +1510,27 @@ def _reusable(shell: dict, check: dict, task: str, manifest: dict,
             return None
         if outcome_now(record).get("outcome") != "passed":
             return None
-        return _record_reuse(shell, record, planned)
+
+        def unchanged() -> bool:
+            # Asked under the lock, in the same hold that writes the reuse
+            # record: a run reserved at any point since the records were
+            # read — even one reserved while `outcome_now` was reading —
+            # is newer than this answer, so nothing is reused. A run
+            # reserved after that hold is newer than the reuse, which is
+            # the order the reuse record then says.
+            return not live() and _RESERVED.get(reserved, 0) == generation
+
+        return _record_reuse(shell, record, planned, unchanged)
     return None
 
 
-def _record_reuse(shell: dict, original: dict, planned: dict) -> dict:
+def _record_reuse(shell: dict, original: dict, planned: dict,
+                  unchanged) -> dict | None:
     """Write the requester's reuse record, tell the ticker, and hand back
-    the original evidence — unchanged on disk — naming the reuse."""
+    the original evidence — unchanged on disk — naming the reuse. None,
+    with nothing written, when `unchanged()` — asked under the lock the
+    reservations are made under, in the same hold as the write — says a
+    run of this check has been reserved since the decision was read."""
     when = time.time()
     reuse_id = "reuse:" + _digest("reuse/1", shell["requestId"],
                                   shell["check"], shell.get("scope") or "",
@@ -1541,9 +1555,12 @@ def _record_reuse(shell: dict, original: dict, planned: dict) -> dict:
         "location": "local", "why": REUSE_WHY,
     }
     reuse_dir().mkdir(parents=True, exist_ok=True)
-    (reuse_dir() / f"{_slug(reuse_id)}.json").write_text(
-        json.dumps(reuse, indent=2, sort_keys=True, default=str),
-        encoding="utf-8")
+    with state.LOCK:
+        if not unchanged():
+            return None
+        (reuse_dir() / f"{_slug(reuse_id)}.json").write_text(
+            json.dumps(reuse, indent=2, sort_keys=True, default=str),
+            encoding="utf-8")
     who = original.get("agent") or original.get("actor") or "an earlier request"
     state.record_board_event({
         "kind": "verify", "actor": "board", "file": shell.get("task") or "",
