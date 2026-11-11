@@ -389,9 +389,8 @@ class AgainRuns(ReuseCase):
             self.ask(agent="run-1")), daemon=True)
         asking.start()
         try:
-            self.assertTrue(wait_for(lambda: any(
-                r.get("proc") is not None
-                for r in list(verify.RUNNING.values()))))
+            # the check itself has started (it counts before it hangs)
+            self.assertTrue(wait_for(lambda: self.runs() == 1))
             joined = self.ask(agent="run-2", again=True)
             self.assertTrue(joined.get("duplicate"))
             self.assertEqual(len(verify.RUNNING), 1, "never doubled")
