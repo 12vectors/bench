@@ -395,6 +395,13 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
                 if (others_hold or ctx["remote"]) else "")
     findings = (acceptance.summary(task.get("body") or "", filename) or {})
     open_findings = int(findings.get("openFindings") or 0)
+    # Bench's own verdict at the current commit. Where a review is a
+    # requirement, its row already carries this; where none is, a request
+    # for changes at this exact commit is still a current problem — the
+    # card face used to say so from a cascade of its own, and must not
+    # lose it now that it draws this result instead.
+    verdict_now = (gates.verdict_at(filename, candidate.get("commit"))
+                   if candidate["state"] == "present" else None)
 
     decision = None
     if candidate["state"] == "present" or stage in ("review", "in-progress"):
@@ -438,7 +445,8 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
         recovery=recovery, pr=pr, completion=completion,
         open_findings=open_findings, on_board=on_board,
         others_hold=others_hold, holder=holder, member=member,
-        merged_elsewhere=merged_elsewhere, gated=gated)
+        merged_elsewhere=merged_elsewhere, gated=gated,
+        verdict_now=verdict_now)
 
     if pr and pr.get("merged") and not merged_elsewhere \
             and candidate["state"] == "present" and not member:
@@ -491,7 +499,8 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
 
 def _decide(*, task, ctx, candidate, decision, requirements, alive,
             failure, recovery, pr, completion, open_findings, on_board,
-            others_hold, holder, member, merged_elsewhere, gated):
+            others_hold, holder, member, merged_elsewhere, gated,
+            verdict_now=None):
     """The precedence (design §3.3), first row that applies wins. Returns
     (word, sentence, primary, others)."""
     stage = task["stage"]
@@ -594,7 +603,7 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
     if stage == "in-progress":
         launch = action("launch-check", "Check whether it would start")
         problem = _current_problem(requirements, candidate, open_findings,
-                                   decision)
+                                   decision, verdict_now)
         if is_phase and snap.get("halted"):
             return ("run-failed",
                     f"The phase halted: {snap.get('halted')}",
@@ -668,7 +677,7 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
 
     # 12. a current-commit problem
     problem = _current_problem(requirements, candidate, open_findings,
-                               decision)
+                               decision, verdict_now)
     if problem:
         word, sentence = problem
         fix = act_pr or action("move", "Move back to in-progress",
@@ -785,10 +794,15 @@ def _needed_sentence(row: dict, here: str) -> str:
 
 
 def _current_problem(requirements: list[dict], candidate: dict,
-                     open_findings: int, decision: dict | None):
+                     open_findings: int, decision: dict | None,
+                     verdict_now: dict | None = None):
     """A genuine problem on the *current* commit: a check that failed or
     could not run there, a change request at it, or open findings. A
-    failure at another commit is history and never this (design §6)."""
+    failure at another commit is history and never this (design §6).
+
+    `verdict_now` is Bench's own newest verdict about this exact commit.
+    It counts only where no review requirement already speaks — a
+    required review's row is the authority there, and it is read once."""
     if candidate["state"] != "present":
         return None
     failed = [r for r in requirements if r["kind"] == "check"
@@ -797,12 +811,15 @@ def _current_problem(requirements: list[dict], candidate: dict,
               and r["reason"] in ("prepare-failed", "denied", "error")]
     changes = [r for r in requirements if r["kind"] == "review"
                and r["reason"] in ("verdict-changes", "changes-requested")]
+    reviewed = any(r["kind"] == "review" for r in requirements)
     here = _short(candidate.get("commit"))
     review_bit = ""
     if changes:
         review_bit = ("changes were requested by the Bench review of "
                       f"{here}" if changes[0]["reason"] == "verdict-changes"
                       else "a GitHub review asks for changes")
+    elif not reviewed and (verdict_now or {}).get("verdict") == "REQUEST CHANGES":
+        review_bit = f"changes were requested by the Bench review of {here}"
     elif open_findings:
         review_bit = (f"{open_findings} review finding"
                       f"{'' if open_findings == 1 else 's'} "
@@ -837,7 +854,12 @@ _EPOCH = 0
 _TTL = 15.0
 _BOARD: tuple | None = None
 
-COMPACT = ("status", "primary", "candidate", "counts")
+COMPACT = ("status", "primary", "candidate", "counts", "history")
+
+# What an action keeps in the compact reading: enough for the page to draw
+# it and route it, never anything the page would re-decide from.
+_ACTION_KEYS = ("action", "label", "who", "enabled", "why", "arm", "to",
+                "url", "agent", "evidence")
 
 
 def bump() -> None:
@@ -908,9 +930,15 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
 
 def compact(found: dict) -> dict:
     out = {key: found[key] for key in COMPACT}
-    out["primary"] = ({k: found["primary"][k] for k in
-                       ("action", "label", "who", "enabled", "why", "arm")}
-                      if found["primary"] else None)
+
+    def slim(a: dict) -> dict:
+        return {k: a[k] for k in _ACTION_KEYS if k in a}
+
+    out["primary"] = slim(found["primary"]) if found["primary"] else None
+    out["others"] = [slim(a) for a in found.get("others") or []]
+    # the requirement rows' classes, without their prose: the face's one
+    # ⚖ chip needs to know "needed" from "problem", and nothing more
+    out["classes"] = sorted({r["class"] for r in found["requirements"]})
     out["pr"] = found["source"]["pr"]
     return out
 
@@ -937,8 +965,11 @@ def board(collected: dict, phase_state: dict | None = None) -> dict:
                 "status": {"word": "cannot-assess", "label": "Can't assess",
                            "sentence": f"The delivery status could not be "
                                        f"read: {exc}", "tone": "alarm"},
-                "primary": None, "candidate": {"state": "unavailable"},
-                "counts": {"required": 0, "met": 0}, "pr": None}
+                "primary": None, "others": [], "classes": [],
+                "candidate": {"state": "unavailable"},
+                "counts": {"required": 0, "met": 0},
+                "history": {"older": 0, "optional": 0, "obsolete": 0},
+                "pr": None}
     with _LOCK:
         _BOARD = (key, found)
     return found
