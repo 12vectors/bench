@@ -228,6 +228,10 @@ def _from_exit(rc: int) -> tuple[str, str, str]:
 
 RUNNING: dict[str, dict] = {}        # evidence id -> record, with its proc
 _KEYS: dict[str, str] = {}           # (task, check, scope) -> evidence id
+# (task, check) -> how many runs have been reserved for it. A reuse
+# decision reads the records on disk outside the lock; this is how it
+# learns that a run was reserved — and perhaps finished — while it read.
+_RESERVED: dict[tuple, int] = {}
 _SLOTS = threading.BoundedSemaphore(config.VERIFY_PARALLEL)
 _SLOTS_FOR = config.VERIFY_PARALLEL
 
@@ -1248,6 +1252,8 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
             return existing
         _KEYS[key] = shell["id"]
         RUNNING[shell["id"]] = shell
+        reserved = (task, check)
+        _RESERVED[reserved] = _RESERVED.get(reserved, 0) + 1
     shell["outcome"] = "running"
     shell["reason"] = None
     shell["why"] = "bench is running it"
@@ -1448,8 +1454,30 @@ def _reusable(shell: dict, check: dict, task: str, manifest: dict,
     def overlaps(scope) -> bool:
         return want is None or scope is None or scope == want
 
+    # A run reserved for this check is newer than anything on record, and
+    # it is reserved (under the lock, in `RUNNING`) before its first record
+    # reaches the disk. So the reservations are read under the lock, before
+    # and after the records are: one live now, or one made while they were
+    # being read — and possibly finished, its answer missed — means the
+    # records cannot be today's answer, and the request runs or joins.
+    reserved = (task, shell["check"])
+
+    def live() -> bool:
+        return any(r.get("task") == task and r.get("check") == shell["check"]
+                   and not r.get("doctor") and overlaps(r.get("scope") or None)
+                   for r in RUNNING.values())
+
+    with state.LOCK:
+        if live():
+            return None
+        generation = _RESERVED.get(reserved, 0)
+    records = for_task(task)
+    with state.LOCK:
+        if live() or _RESERVED.get(reserved, 0) != generation:
+            return None
+
     relevant = []
-    for record in for_task(task):
+    for record in records:
         if record.get("check") != shell["check"] or record.get("doctor") \
                 or not overlaps(record.get("scope") or None) \
                 or record.get("outcome") == "denied":
@@ -1524,6 +1552,29 @@ def _record_reuse(shell: dict, original: dict, planned: dict) -> dict:
                     f"(run for {who}); nothing was run")})
     state.broadcast({"type": "verify"})
     return {**original, "reused": original["id"], "reuse": reuse}
+
+
+# What of a reuse record the page is sent: an allowlist, for `public`'s
+# reason. The identity the requester would have had stays on this disk —
+# it is what makes the record verifiable here, and no use to a reader.
+PUBLIC_REUSE = ("v", "kind", "id", "reused", "resultId", "commit", "task",
+                "stage", "check", "scope", "intent", "agent", "actor",
+                "requested", "requestId", "policyId", "policyRevision",
+                "reviewId", "location", "why")
+PUBLIC_ORIGINAL = ("agent", "actor", "intent", "requestId", "requested",
+                   "ended")
+
+
+def public_reuse(reuse: dict | None) -> dict | None:
+    """One reuse record as the board may show it."""
+    if not isinstance(reuse, dict):
+        return None
+    out = {key: reuse[key] for key in PUBLIC_REUSE if key in reuse}
+    original = reuse.get("original")
+    if isinstance(original, dict):
+        out["original"] = {key: original[key] for key in PUBLIC_ORIGINAL
+                           if key in original}
+    return out
 
 
 def read_reuse(reuse_id: str) -> dict | None:
@@ -2516,6 +2567,8 @@ def public(record: dict | None) -> dict | None:
     if not record:
         return None
     out = {key: record[key] for key in PUBLIC if key in record}
+    if "reuse" in out:
+        out["reuse"] = public_reuse(out["reuse"])
     if isinstance(out.get("env"), dict) and out["env"].get("declared"):
         # A declared variable's keyed hash proves sameness to this board
         # and is no use to anyone reading the page: names and whether each

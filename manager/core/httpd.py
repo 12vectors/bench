@@ -484,7 +484,8 @@ class Handler(BaseHTTPRequestHandler):
                 "evidence": [verify.public(r) for r in verify.for_task(name)],
                 # requests answered by an existing record, each naming the
                 # evidence it returned and who asked — not evidence itself
-                "reuses": verify.reuses_for_task(name)[:20],
+                "reuses": [verify.public_reuse(r)
+                           for r in verify.reuses_for_task(name)[:20]],
                 "outcomes": verify.OUTCOMES,
             })
         elif path == "/api/review":
