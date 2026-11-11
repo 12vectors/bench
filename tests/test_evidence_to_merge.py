@@ -17,6 +17,18 @@ Card 95 (design §15.1 step 1) — an override needs a real target:
 - E13 — the merge still revalidates against the exact commit under an
   override; `--match-head-commit` stays covered in
   `tests/test_gate_remediation.py`.
+
+Card 96 (design §15.1 step 2) — relevance before precedence:
+
+- E4 / R2 — `TheSafer36Shape`: a stale pass at H and an older cancellation
+  at G cite H and the pass's own stale reason, never G.
+- E5 — `Precedence`: every §6.2 row against `gates._check_requirement`,
+  plus legacy stale handling, deterministic order and unknown-head
+  refusal; `TheEquivalentBranchIsHeldToTheSameFilters` holds the (not yet
+  enabled, #104) declared-equivalent branch to the same filters.
+- §6.2's last row — `FindingsAreNotTheChecksGate`.
+- E13 — `TheMergeRevalidatesTheEvidence`: a push between the reading and
+  the merge is refused at the mutation.
 """
 
 from __future__ import annotations
@@ -28,8 +40,9 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 
-from tests.test_integration_gates import (CARD, FAILS, STEM, GateCase,  # noqa: E402
-                                          card, git)
+from tests.test_integration_gates import (CARD, FAILS, HANGS, PASSES,  # noqa: E402
+                                          STEM, GateCase, card, git,
+                                          wait_for)
 
 import gates  # noqa: E402  (on sys.path once the case module is imported)
 import github  # noqa: E402
@@ -339,6 +352,375 @@ class TheMergeRevalidatesUnderAnOverride(OverrideCase):
             0, git(self.repo, "merge-base", "--is-ancestor", landed[0],
                    "main").returncode,
             "the commit nobody overrode must not reach the base")
+        self.assertEqual(self.stage_of(CARD), "review")
+
+
+# ── card 96 (design §15.1 step 2): relevance before precedence ─────────
+
+
+H = "a" * 40          # the commit a gate would merge
+G = "b" * 40          # an older head of the same card
+
+
+def record(ident: str, outcome: str, *, at: str | None = H, when: float,
+           check: str = "unit", scope: str | None = None, dirty=(),
+           bound: bool = True, stale: str | None = None,
+           ended: float | None = None, **extra) -> dict:
+    """One evidence record in the shape `verify` writes. `stale` names the
+    freshness reason `outcome_now` reads off it, as a legacy record whose
+    binding has gone would."""
+    found = {"id": f"ev:{ident}", "task": CARD, "check": check,
+             "scope": scope, "outcome": outcome, "requested": when,
+             "started": when, "ended": ended if ended is not None else when + 1,
+             "source": ({"commit": at, "bound": bound, "dirty": list(dirty)}
+                        if at else None),
+             "root": {"policy": "worktree"}, "_stale": stale}
+    found.update(extra)
+    return found
+
+
+class Precedence(unittest.TestCase):
+    """Every row of the design's §6.2 table (E5) against `_check_requirement`
+    itself, with `outcome_now` reading the record's own `_stale` marker —
+    so each row is the precedence and nothing but the precedence."""
+
+    def setUp(self):
+        self.read: list[str] = []
+
+        def outcome_now(rec):
+            self.read.append(rec.get("id"))
+            if rec.get("_stale") and rec.get("outcome") == "passed":
+                return {"outcome": "stale", "reason": rec["_stale"],
+                        "why": f"it went stale: {rec['_stale']}",
+                        "freshness": {"reasons": [rec["_stale"]]},
+                        "recorded": "passed"}
+            return {"outcome": rec.get("outcome"), "reason": None,
+                    "why": None, "freshness": {"reasons": []},
+                    "recorded": rec.get("outcome")}
+
+        self.addCleanup(setattr, verify, "outcome_now", verify.outcome_now)
+        verify.outcome_now = outcome_now
+
+    def decide(self, records, *, head: str | None = H, scope=None,
+               check: str = "unit") -> dict:
+        return gates._check_requirement(
+            CARD, {"name": check, "gateScope": scope, "run": "x"},
+            {"commit": head}, records)
+
+    # R2 / E4, in miniature (the real fixture is `TheSafer36Shape` below)
+    def test_r2_a_stale_pass_at_h_is_the_reason_not_gs_cancellation(self):
+        found = self.decide([
+            record("old", "cancelled", at=G, when=1),
+            record("new", "passed", at=H, when=2, stale="policy-changed")])
+        self.assertEqual(found["reason"], "stale")
+        self.assertEqual(found["staleReason"], "policy-changed")
+        self.assertEqual(found["commit"], H)
+        self.assertEqual(found["evidence"], "ev:new")
+        self.assertIn(H[:12], found["why"])
+        self.assertNotIn(G[:12], found["why"])
+        self.assertEqual(found["otherCommits"], 1)
+
+    def test_a_newer_failure_at_h_beats_its_earlier_pass(self):
+        found = self.decide([record("p", "passed", when=1),
+                             record("f", "failed", when=2)])
+        self.assertEqual((found["state"], found["reason"]), ("unmet", "failed"))
+        self.assertEqual(found["evidence"], "ev:f")
+        self.assertIn("newer than the pass on the same commit", found["why"])
+
+    def test_a_running_rerun_at_h_is_never_hidden(self):
+        for live in ("running", "preparing"):
+            with self.subTest(live=live):
+                found = self.decide([record("p", "passed", when=1),
+                                     record("r", live, when=2)])
+                self.assertEqual(found["state"], "pending")
+                self.assertEqual(found["evidence"], "ev:r")
+
+    def test_a_request_not_yet_bound_to_a_source_still_holds_it(self):
+        found = self.decide([record("p", "passed", when=1),
+                             record("q", "preparing", at=None, when=2)])
+        self.assertEqual(found["state"], "pending")
+
+    def test_a_rerun_running_on_another_commit_is_history(self):
+        found = self.decide([record("r", "running", at=G, when=2)])
+        self.assertEqual(found["reason"], "other-commit")
+
+    def test_a_cancellation_after_a_pass_at_h_does_not_resurrect_it(self):
+        found = self.decide([record("p", "passed", when=1),
+                             record("c", "cancelled", when=2)])
+        self.assertEqual(found["reason"], "cancelled")
+        self.assertEqual(found["commit"], H)
+        self.assertIn(f"cancelled before a result on {H[:12]}", found["why"])
+
+    def test_a_failure_on_another_head_is_history(self):
+        found = self.decide([record("f", "failed", at=G, when=1)])
+        self.assertEqual(found["reason"], "other-commit")
+        self.assertIsNone(found["evidence"])
+        self.assertIsNone(found["commit"])
+        self.assertEqual(found["elsewhere"]["commit"], G)
+        self.assertIn(f"has not run on {H[:12]}", found["why"])
+        self.assertEqual(found["history"][0]["evidence"], "ev:f")
+
+    def test_a_pass_on_another_head_is_named_and_not_cherry_picked(self):
+        found = self.decide([record("p", "passed", at=G, when=1),
+                             record("f", "failed", at=G, when=2)])
+        self.assertEqual(found["state"], "unmet")
+        self.assertEqual(found["reason"], "other-commit")
+        self.assertIn(f"It passed on {G[:12]}", found["why"])
+        self.assertIn("reads failed", found["why"])
+        self.assertEqual(found["elsewhere"]["passedOn"], G)
+
+    def test_a_changed_definition_gives_its_own_reason(self):
+        found = self.decide([record("p", "passed", when=1,
+                                    stale="policy-changed")])
+        self.assertEqual(found["reason"], "stale")
+        self.assertEqual(found["staleReason"], "policy-changed")
+
+    def test_a_stale_pass_is_not_skipped_for_an_older_failure(self):
+        """Legacy stale evidence is an answer, not a gap: the failure it
+        superseded at the same head does not become the reason."""
+        found = self.decide([record("f", "failed", when=1),
+                             record("p", "passed", when=2,
+                                    stale="context-changed")])
+        self.assertEqual(found["reason"], "stale")
+        self.assertEqual(found["evidence"], "ev:p")
+
+    def test_a_narrow_pass_never_covers_the_full_run(self):
+        found = self.decide([record("n", "passed", when=1, scope="fast")])
+        self.assertEqual(found["reason"], "not-run")
+        self.assertIn("narrower scopes ran (fast)", found["why"])
+
+    def test_a_narrow_stale_pass_leaves_an_older_covering_pass_standing(self):
+        found = self.decide([record("p", "passed", when=1),
+                             record("n", "passed", when=2, scope="fast",
+                                    stale="source-changed")])
+        self.assertEqual(found["state"], "met")
+        self.assertEqual(found["evidence"], "ev:p")
+
+    def test_a_full_pass_covers_a_scoped_requirement(self):
+        found = self.decide([record("p", "passed", when=1)], scope="fast")
+        self.assertEqual(found["state"], "met")
+
+    def test_a_denial_ran_nothing_and_supersedes_nothing(self):
+        found = self.decide([record("p", "passed", when=1),
+                             record("d", "denied", at=None, when=2)])
+        self.assertEqual(found["state"], "met")
+        alone = self.decide([record("d", "denied", at=None, when=2)])
+        self.assertEqual(alone["reason"], "denied")
+
+    def test_a_dirty_pass_does_not_hide_a_genuine_failure_at_h(self):
+        found = self.decide([record("f", "failed", when=1),
+                             record("p", "passed", when=2, dirty=["x.txt"])])
+        self.assertEqual(found["reason"], "failed")
+        alone = self.decide([record("p", "passed", when=2, dirty=["x.txt"])])
+        self.assertEqual(alone["reason"], "source-dirty")
+        unbound = self.decide([record("u", "passed", when=2, bound=False)])
+        self.assertEqual(unbound["reason"], "source-unbound")
+
+    def test_an_unknown_head_is_refused_before_any_record_is_read(self):
+        found = self.decide([record("p", "passed", when=1),
+                             record("c", "cancelled", at=G, when=2)],
+                            head=None)
+        self.assertEqual(found["reason"], "head-unknown")
+        self.assertIsNone(found["evidence"])
+        self.assertEqual(self.read, [], "no reason was computed and discarded")
+
+    def test_the_order_is_deterministic(self):
+        """Request time, then end time, then a non-pass on a tie — never the
+        order the files were listed in."""
+        tie = [record("p", "passed", when=1, ended=5),
+               record("f", "failed", when=1, ended=5)]
+        for records in (tie, list(reversed(tie))):
+            self.assertEqual(self.decide(records)["evidence"], "ev:f")
+        later_end = [record("f", "failed", when=1, ended=4),
+                     record("p", "passed", when=1, ended=5)]
+        for records in (later_end, list(reversed(later_end))):
+            self.assertEqual(self.decide(records)["state"], "met")
+
+    def test_nothing_on_record_is_not_run(self):
+        found = self.decide([])
+        self.assertEqual(found["reason"], "not-run")
+        self.assertIn("an absent record is not a pass", found["why"])
+
+
+class TheEquivalentBranchIsHeldToTheSameFilters(Precedence):
+    """No equivalence is accepted until #104 lands, but the branch exists
+    and is written with every filter the direct branch has. Patched on
+    here, so the filters are executable now."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(setattr, gates, "_accepted_equivalents",
+                        gates._accepted_equivalents)
+        gates._accepted_equivalents = lambda check: ("unit-review",)
+
+    def decide(self, records, *, head: str | None = H, scope=None,
+               check: str = "unit") -> dict:
+        return gates._check_requirement(
+            CARD, {"name": check, "gateScope": scope, "run": "x",
+                   "checkSubstance": "same"}, {"commit": head}, records)
+
+    def twin(self, ident, outcome, **kw):
+        return record(ident, outcome, check="unit-review",
+                      checkSubstance=kw.pop("substance", "same"), **kw)
+
+    def test_an_equal_twin_at_h_answers(self):
+        self.assertEqual(self.decide([self.twin("t", "passed", when=1)])
+                         ["state"], "met")
+
+    def test_a_declaration_without_equal_substance_does_not(self):
+        found = self.decide([self.twin("t", "passed", when=1,
+                                       substance="other")])
+        self.assertEqual(found["reason"], "not-run")
+
+    def test_a_twin_on_another_head_is_history(self):
+        found = self.decide([self.twin("t", "cancelled", at=G, when=1)])
+        self.assertEqual(found["reason"], "other-commit")
+
+    def test_a_twins_narrow_pass_does_not_cover(self):
+        found = self.decide([self.twin("t", "passed", when=1, scope="fast")])
+        self.assertEqual(found["reason"], "not-run")
+
+    def test_a_twins_denial_supersedes_nothing(self):
+        found = self.decide([self.twin("t", "passed", when=1),
+                             self.twin("d", "denied", at=None, when=2)])
+        self.assertEqual(found["state"], "met")
+
+
+class NoEquivalenceIsAcceptedYet(unittest.TestCase):
+
+    def test_no_check_declares_an_equivalent(self):
+        self.assertEqual(gates._accepted_equivalents({"name": "unit",
+                                                      "accepts": ["x"]}), ())
+
+    def test_every_record_is_legacy_until_result_identities_exist(self):
+        self.assertIsNone(gates._current_result_id({"name": "unit"},
+                                                   {"commit": H}))
+        self.assertEqual(gates._partition({"resultId": "r"}, None), "legacy")
+        self.assertEqual(gates._partition({"resultId": "r"}, "r"), "current")
+        self.assertEqual(gates._partition({"resultId": "r"}, "s"), "outdated")
+        self.assertEqual(gates._partition({}, "s"), "legacy")
+
+
+class TheSafer36Shape(GateCase):
+    """R2 inverted (E4), through the real `verify.request`: commit A's run
+    was cancelled; commit B passed; then the policy gains an approved
+    input meant for the next card, which (until #97) makes B's pass read
+    `stale / policy-changed`. The gate must cite B and that reason."""
+
+    def setUp(self):
+        super().setUp()
+        self.wt = self.worktree()
+        self.document = self.gated(body=HANGS)
+        self.commit_a = self.commit_in(self.wt, "first attempt\n")
+        self.manifest(agent="run-1")
+        asking = threading.Thread(target=lambda: self.ask(agent="run-1"),
+                                  daemon=True)
+        asking.start()
+        self.assertTrue(wait_for(lambda: bool(verify.RUNNING)))
+        for ident in list(verify.RUNNING):
+            verify.cancel(ident, "cancelled-with-run")
+        asking.join(timeout=20)
+        self.document["checks"][0]["run"] = str(self.executable("unit", PASSES))
+        self.declares(self.document)
+        self.commit_b = self.commit_in(self.wt, "second attempt\n")
+        self.manifest(agent="run-2")
+        self.assertEqual(self.ask(agent="run-2")["outcome"], "passed")
+        verify.forget_cached()
+        gates.forget_cached()
+        self.assertEqual(self.decide()["decision"], "allowed")
+
+    def test_the_reason_cites_h_and_its_real_stale_reason(self):
+        mock = self.work / "reference" / "card37-mockup.md"
+        mock.write_text("a mockup for the next card\n", encoding="utf-8")
+        self.document["context"] = [{"name": "card37-mockup",
+                                     "path": "work:reference/card37-mockup.md",
+                                     "required": False}]
+        self.declares(self.document)
+        verify.forget_cached()
+        gates.forget_cached()
+        found = self.decide()
+        self.assertEqual(found["decision"], "blocked")
+        row = found["unmet"][0]
+        self.assertEqual(found["head"]["commit"], self.commit_b)
+        self.assertEqual(row["reason"], "stale")
+        self.assertEqual(row["staleReason"], "policy-changed")
+        self.assertEqual(row["commit"], self.commit_b)
+        self.assertNotIn(self.commit_a[:12], row["why"])
+        self.assertEqual(row["otherCommits"], 1)
+        self.assertIn(self.commit_a,
+                      [h["commit"] for h in row["history"]],
+                      "the older cancellation is kept, as history")
+
+    def test_a_new_commit_leaves_both_as_history(self):
+        head = self.commit_in(self.wt, "third attempt\n")
+        verify.forget_cached()
+        gates.forget_cached()
+        found = self.decide()
+        row = found["unmet"][0]
+        self.assertEqual(row["reason"], "other-commit")
+        self.assertIn(f"has not run on {head[:12]}", row["why"])
+        self.assertEqual(row["otherCommits"], 2)
+        self.assertIsNone(row["evidence"])
+
+
+class FindingsAreNotTheChecksGate(GateCase):
+    """§6.2's last row: a passing check at H with an open review finding.
+    The check is met — findings never become a check result — and the
+    finding stays open where the acceptance record keeps it."""
+
+    def test_an_open_finding_does_not_unmeet_a_passing_check(self):
+        import acceptance  # noqa: E402
+        self.addCleanup(setattr, taskfiles, "actor_name", taskfiles.actor_name)
+        taskfiles.actor_name = lambda: "istos"
+        wt = self.worktree()
+        self.gated()
+        self.commit_in(wt)
+        self.manifest()
+        self.assertEqual(self.ask()["outcome"], "passed")
+        acceptance.finding(CARD, "in-progress", event="opened",
+                           text="the empty state is unreadable")
+        found = self.decide()
+        self.assertEqual(found["decision"], "allowed")
+        self.assertEqual(found["requirements"][0]["state"], "met")
+        read = acceptance.for_card(CARD, "in-progress")
+        self.assertEqual(read["findingCounts"]["open"], 1)
+
+
+class TheMergeRevalidatesTheEvidence(GateCase):
+    """E13 without an override: allowed at H, a push lands before the merge,
+    and the mutation refuses rather than merging the commit nobody checked."""
+
+    def test_a_push_between_the_reading_and_the_merge_is_refused(self):
+        wt = self.worktree()
+        self.gated()
+        head = self.commit_in(wt)
+        self.manifest()
+        self.assertEqual(self.ask()["outcome"], "passed")
+        (self.tasks / "review" / CARD).write_text(
+            card("71 — Gate integration", status="Review"), encoding="utf-8")
+        (self.tasks / "in-progress" / CARD).unlink()
+        self.assertEqual(self.decide()["decision"], "allowed")
+        landed: list[str] = []
+        original = github._assert_lands_in_the_base
+
+        def push_lands(filename, target):
+            original(filename, target)
+            if not landed:
+                landed.append(self.commit_in(wt, "a late push\n"))
+                verify.forget_cached()
+                gates.forget_cached()
+
+        self.addCleanup(setattr, github, "_assert_lands_in_the_base", original)
+        github._assert_lands_in_the_base = push_lands
+        with self.assertRaises(ValueError):
+            github.complete_task(CARD, "review")
+        self.assertNotEqual(
+            0, git(self.repo, "merge-base", "--is-ancestor", landed[0],
+                   "main").returncode)
+        self.assertNotEqual(
+            0, git(self.repo, "merge-base", "--is-ancestor", head,
+                   "main").returncode,
+            "nothing merged: the gate refused at the mutation")
         self.assertEqual(self.stage_of(CARD), "review")
 
 

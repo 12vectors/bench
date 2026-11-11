@@ -142,8 +142,9 @@ REASONS = {
     "error": "the verification did not reach a verdict",
     "stale": ("the evidence passed, and what it was about has changed since "
               "— so it says nothing about the code here now"),
-    "other-commit": ("the only passing evidence ran against a different "
-                     "commit from the one about to be merged"),
+    "other-commit": ("the check has not run on the commit about to be "
+                     "merged. What is on record ran against other commits, "
+                     "and is history rather than this commit's answer"),
     "source-dirty": ("the passing evidence ran with uncommitted work in the "
                      "checkout, so it was not about the commit that would "
                      "merge"),
@@ -550,6 +551,45 @@ def gate_policy() -> dict:
     return profiles.gate_policy()
 
 
+# ── which records a requirement may read ───────────────────────────────
+#
+# Two seams the later #94 cards fill. Both answer "nothing" today, which
+# is exactly today's behaviour: no record carries a result identity yet
+# (#97), and no check declares an accepted equivalent (#104).
+
+
+def _accepted_equivalents(check: dict) -> tuple[str, ...]:
+    """Other check names whose records may answer this requirement, as the
+    operator declared them on the check. None until declared equivalence
+    lands (#104) — and a declaration alone is never enough: the record
+    must also carry this check's substance (`_same_substance`)."""
+    return ()
+
+
+def _same_substance(record: dict, check: dict) -> bool:
+    """Whether a record of another check ran this check's definition.
+    Fails closed: a side that names no substance is not the same."""
+    mine, theirs = check.get("checkSubstance"), record.get("checkSubstance")
+    return bool(mine) and bool(theirs) and mine == theirs
+
+
+def _current_result_id(check: dict, head: dict) -> str | None:
+    """The result identity this check would have at this head now (#97).
+    None until result identities exist, which makes every record legacy."""
+    return None
+
+
+def _partition(record: dict, current_id: str | None) -> str:
+    """`current`, `outdated` or `legacy` (design §6.1 step 4). A record
+    with no result identity — every record today — is legacy, and is read
+    with `verify.outcome_now`'s rules, unchanged: a stale pass says why it
+    is stale and is never a pass."""
+    theirs = record.get("resultId")
+    if not theirs or not current_id:
+        return "legacy"
+    return "current" if theirs == current_id else "outdated"
+
+
 def _check_requirement(filename: str, check: dict, head: dict,
                        records: list[dict]) -> dict:
     """One required check → met, pending or unmet, and why.
@@ -572,19 +612,40 @@ def _check_requirement(filename: str, check: dict, head: dict,
     overlaps the requirement's: for the full run that is every run of the
     check, for a scope it is that scope and the full run.
 
-    **Supersession.** The newest relevant answer is the gate's answer, so
-    a failed, errored or cancelled rerun supersedes an earlier pass and a
-    running one holds the decision pending. Passes that are not about this
-    head (another commit, uncommitted work, a stale binding) and narrow
-    passes are not failures, so they supersede nothing. A denied request
-    ran nothing and says nothing about the code, so it supersedes nothing
-    either. Ordering is the request time, then the end time, and on a tie
-    a non-pass reads as the newer — the order never depends on how the
+    **Relevance before precedence** (card 94's design, §6). The commit
+    this would merge is fixed *first*, and only the records about that
+    commit and this requirement are weighed at all. A record for another
+    commit — a pass, a failure or a cancellation — is history: it is kept
+    in `history` and counted, and it is never today's reason. So an older
+    head's cancellation cannot become the blocker of a newer head whose
+    own pass went stale (R2), and an old failure cannot block a head it
+    never ran on. An unknown head is refused before any record is read
+    for a reason, so nothing is computed from evidence and then discarded.
+
+    **Supersession**, among the relevant records only. The newest answer
+    is the gate's answer, so a failed, errored or cancelled rerun at this
+    head supersedes an earlier pass, and a running one holds the decision
+    pending. A *stale* pass at this head is an answer too: it says why it
+    no longer holds (its own changed-input reason), it is never a pass,
+    and nothing older is resurrected past it. Passes with uncommitted work
+    under them, or no bound source, did not run against this commit, and
+    narrow passes do not cover the requirement, so those supersede
+    nothing. A denied request ran nothing and supersedes nothing either.
+    Ordering is the request time, then the end time, and on a tie a
+    non-pass reads as the newer — the order never depends on how the
     evidence files happened to be listed.
+
+    The two seams the later #94 cards fill — result identities (#97) and
+    declared equivalents (#104) — are `_current_result_id` and
+    `_accepted_equivalents`. Both answer "nothing" today, which makes
+    every record *legacy* (read with `verify.outcome_now`, unchanged) and
+    accepts no record of another name.
     """
     name = check["name"]
     want = check.get("gateScope")
     label = check.get("requirement") or name
+    at = head.get("commit")
+    accepts = _accepted_equivalents(check)
 
     def covers(scope) -> bool:
         return scope is None or scope == want
@@ -592,21 +653,44 @@ def _check_requirement(filename: str, check: dict, head: dict,
     def overlaps(scope) -> bool:
         return want is None or scope is None or scope == want
 
+    def answers(record: dict) -> bool:
+        # The same filters for a direct record and a declared equivalent:
+        # the name (or the declaration *and* the substance), then coverage.
+        return ((record.get("check") == name
+                 or (record.get("check") in accepts
+                     and _same_substance(record, check)))
+                and overlaps(record.get("scope") or None))
+
     mine = sorted(
-        (r for r in records
-         if r.get("check") == name and overlaps(r.get("scope") or None)),
+        (r for r in records if answers(r)),
         key=lambda r: (r.get("requested") or 0,
                        r.get("ended") or r.get("started") or 0,
                        0 if r.get("outcome") == "passed" else 1,
                        str(r.get("id") or "")),
         reverse=True)
-    best: dict | None = None
-    live = False
+    row = {
+        "kind": "check", "name": label, "check": name, "scope": want,
+        "coverage": _coverage(want), "command": check.get("run"),
+        "rootPolicy": check.get("root"), "checkId": check.get("checkId"),
+        "help": check.get("help"), "history": [], "otherCommits": 0,
+    }
+    # 1. The head first. Nothing below runs without one.
+    if not at:
+        return {**row, "state": "unmet", "reason": "head-unknown",
+                "why": REASONS["head-unknown"],
+                "remedy": REMEDIES["head-unknown"], "evidence": None,
+                "commit": None}
+    current_id = _current_result_id(check, head)
+
+    # 2. Relevance: this commit, this requirement, not a refusal.
     seen: list[dict] = []
+    relevant: list[dict] = []
+    elsewhere: list[dict] = []
+    denied: list[dict] = []
     for record in mine:
         reading = verify.outcome_now(record)
         source = record.get("source") or {}
-        row = {
+        found = {
             "evidence": record.get("id"),
             "outcome": reading["outcome"],
             "recorded": reading["recorded"],
@@ -617,63 +701,66 @@ def _check_requirement(filename: str, check: dict, head: dict,
             "bound": bool(source.get("bound")),
             "rootPolicy": (record.get("root") or {}).get("policy"),
             "scope": record.get("scope"),
+            "check": record.get("check"),
             "ended": record.get("ended"),
             "started": record.get("started"),
             "agent": record.get("agent"),
             "actor": record.get("actor"),
             "freshness": reading["freshness"],
+            "partition": _partition(record, current_id),
         }
-        seen.append(row)
-        if record.get("outcome") in verify.LIVE:
-            live = True
-        if best is None:
-            best = row
-    row = {
-        "kind": "check", "name": label, "check": name, "scope": want,
-        "coverage": _coverage(want), "command": check.get("run"),
-        "rootPolicy": check.get("root"), "checkId": check.get("checkId"),
-        "help": check.get("help"), "history": seen[:8],
-    }
-
-    # The newest relevant answer decides: walk newest first, skipping what
-    # is not a verdict on this requirement, and stop at the first that is.
-    met: dict | None = None
-    blocker: dict | None = None
-    candidate: dict | None = None
-    narrow: list[str] = []
-    for found in seen:
+        seen.append(found)
         if found["outcome"] == "denied":
-            continue
-        if found["outcome"] in ("passed", "stale"):
-            if not covers(found["scope"]):
-                narrow.append(found["scope"])
-                continue
-            if (found["outcome"] == "passed" and found["bound"]
-                    and not found["dirty"] and found["commit"]
-                    and found["commit"] == head.get("commit")):
-                met = found
-                break
-            candidate = candidate or found
-            continue
-        if found["outcome"] in verify.LIVE:
-            continue
-        blocker = found
-        break
-    if not head.get("commit"):
-        return {**row, "state": "unmet", "reason": "head-unknown",
-                "why": REASONS["head-unknown"],
-                "remedy": REMEDIES["head-unknown"], "evidence": None,
-                "commit": None}
-    if live:
-        # A rerun in flight is newer than anything on record, so even an
-        # earlier pass at this head decides nothing until it answers.
-        running = next(r for r in seen if r["outcome"] in verify.LIVE)
+            denied.append(found)
+        elif found["commit"] == at or (found["outcome"] in verify.LIVE
+                                       and not found["commit"]):
+            # A request still preparing has not bound its source yet. It
+            # may well be about this head, so it is not hidden as history.
+            found["relevant"] = True
+            relevant.append(found)
+        else:
+            elsewhere.append(found)
+    row.update(history=seen[:8], otherCommits=len(elsewhere))
+    deciding = [f for f in relevant if f["partition"] != "outdated"]
+    outdated = [f for f in relevant if f["partition"] == "outdated"]
+
+    # 3. Precedence, among the relevant records only. A rerun in flight is
+    # newer than anything on record, so even an earlier pass at this head
+    # decides nothing until it answers.
+    running = next((f for f in deciding if f["outcome"] in verify.LIVE), None)
+    if running is not None:
         return {**row, "state": "pending", "reason": running["outcome"],
                 "why": (f"'{label}' is {running['outcome']} "
                         f"({_coverage(running['scope'])}) — the answer is "
                         f"not in yet"),
                 "remedy": None, "evidence": running["evidence"],
                 "commit": running["commit"]}
+
+    # Walk newest first and stop at the first record that is an answer
+    # about this commit and this coverage.
+    met: dict | None = None
+    stale: dict | None = None
+    blocker: dict | None = None
+    aside: dict | None = None
+    narrow: list[str] = []
+    for found in deciding:
+        if found["outcome"] in ("passed", "stale"):
+            if not covers(found["scope"]):
+                narrow.append(found["scope"])
+                continue
+            if not found["bound"] or found["dirty"]:
+                # It did not run against this commit, so it answers nothing
+                # about it — and it is not allowed to hide an older verdict
+                # that did.
+                aside = aside or found
+                continue
+            if found["outcome"] == "passed":
+                met = found
+            else:
+                stale = found
+            break
+        blocker = found
+        break
     if met is not None:
         ran = (f"the full '{name}' run, which covers scope {want},"
                if want and met["scope"] is None
@@ -683,66 +770,106 @@ def _check_requirement(filename: str, check: dict, head: dict,
                         f"{_short(met['commit'])} and it passed"),
                 "evidence": met["evidence"], "commit": met["commit"],
                 "remedy": None}
+    here = _short(at)
+    if stale is not None:
+        # The newest answer at this head is a pass whose binding has gone.
+        # Its own reason is the gate's reason — never an older record's,
+        # and never a pass.
+        return {**row, "state": "unmet", "reason": "stale",
+                "staleReason": stale["reason"],
+                "why": (f"'{label}' passed on {here}, and it no longer holds: "
+                        f"{stale['why'] or REASONS['stale']}"),
+                "remedy": REMEDIES["stale"], "evidence": stale["evidence"],
+                "commit": stale["commit"]}
     if blocker is not None:
         # The newest relevant answer is not a pass. Whether an earlier pass
-        # exists is said, because "it passed once" is exactly what a reader
-        # would otherwise be left to weigh against it.
+        # at this head exists is said, because "it passed once" is exactly
+        # what a reader would otherwise be left to weigh against it.
         reason = blocker["outcome"] if blocker["outcome"] in REASONS else "error"
         said = verify.OUTCOMES.get(blocker["outcome"]) or REASONS.get(reason, reason)
-        older = next((r for r in seen if r["outcome"] == "passed"
-                      and covers(r["scope"]) and r is not blocker
-                      and seen.index(r) > seen.index(blocker)), None)
-        why = (f"'{label}': the newest relevant run "
-               f"({_coverage(blocker['scope'])}) — {blocker['why'] or said}")
+        after = deciding[deciding.index(blocker) + 1:]
+        older = next((r for r in after if r["outcome"] == "passed"
+                      and covers(r["scope"])), None)
+        what = ("was cancelled before a result" if reason == "cancelled"
+                else "did not pass")
+        why = (f"'{label}' {what} on {here} — the newest run there "
+               f"({_coverage(blocker['scope'])}): {blocker['why'] or said}")
         if older is not None:
-            why += (f". It is newer than the pass at "
-                    f"{_short(older['commit'])}, and the newest relevant "
-                    f"answer is the one a gate reads")
+            why += (". It is newer than the pass on the same commit, and the "
+                    "newest relevant answer is the one a gate reads")
         return {**row, "state": "unmet", "reason": reason, "why": why,
                 "remedy": REMEDIES.get(reason, REMEDIES["failed"]),
                 "evidence": blocker["evidence"], "commit": blocker["commit"]}
-    # There is evidence, and none of it satisfies. Which of the several
-    # ways that can be true matters, because they are different things to
-    # go and do — so the reason is the most specific one that applies to
-    # the newest record rather than a shared "unmet".
-    if candidate is not None:
-        dirty = len(candidate["dirty"])
-        if candidate["outcome"] == "stale":
-            reason = "stale"
-            why = f"'{label}': {candidate['why'] or REASONS['stale']}"
-        elif not candidate["bound"]:
+    # Nothing at this head decided. Which of the several ways that can be
+    # true matters, because they are different things to go and do — so
+    # the reason is the most specific one, and it is about this head.
+    if aside is not None:
+        dirty = len(aside["dirty"])
+        if not aside["bound"]:
             reason = "source-unbound"
             why = (f"'{label}' passed, and the source it ran against could "
                    f"not be bound: "
-                   f"{candidate['why'] or REASONS['source-unbound']}")
-        elif dirty:
+                   f"{aside['why'] or REASONS['source-unbound']}")
+        else:
             reason = "source-dirty"
             why = (f"'{label}' passed with {dirty} uncommitted "
                    f"file{'' if dirty == 1 else 's'} in the checkout, so it "
                    f"was not about the commit that would merge")
-        else:
-            reason = "other-commit"
-            why = (f"'{label}' passed against {_short(candidate['commit'])}, "
-                   f"and this would merge {_short(head['commit'])}")
         return {**row, "state": "unmet", "reason": reason, "why": why,
-                "remedy": REMEDIES[reason], "evidence": candidate["evidence"],
-                "commit": candidate["commit"]}
-    if narrow or best is None or all(r["outcome"] != "denied" for r in seen):
-        ran = sorted(set(narrow))
-        why = (f"nothing has asked bench for '{name}' "
-               f"({_coverage(want)}), so there is no evidence either way — "
-               f"an absent record is not a pass")
-        if ran:
-            why += (f". Only narrower scopes ran ({', '.join(ran)}), and a "
-                    f"narrow pass does not cover the {_coverage(want)}")
+                "remedy": REMEDIES[reason], "evidence": aside["evidence"],
+                "commit": aside["commit"]}
+    if outdated:
+        # A result identity (#97) that is not the one the check would have
+        # here now: the specific dimension that moved is the reason.
+        newest = outdated[0]
+        return {**row, "state": "unmet", "reason": "stale",
+                "staleReason": newest["reason"],
+                "why": (f"'{label}' ran on {here} under a definition that has "
+                        f"changed since: {newest['why'] or REASONS['stale']}"),
+                "remedy": REMEDIES["stale"], "evidence": newest["evidence"],
+                "commit": newest["commit"]}
+    ran = sorted(set(narrow))
+    if ran:
+        why = (f"'{label}' has not run on {here} ({_coverage(want)}). Only "
+               f"narrower scopes ran ({', '.join(ran)}), and a narrow pass "
+               f"does not cover the {_coverage(want)}")
         return {**row, "state": "unmet", "reason": "not-run", "why": why,
                 "remedy": REMEDIES["not-run"], "evidence": None,
                 "commit": None}
-    # Only refusals on record: nothing ran, and the refusal is the reason.
-    return {**row, "state": "unmet", "reason": "denied",
-            "why": f"'{label}': {best['why'] or verify.OUTCOMES['denied']}",
-            "remedy": REMEDIES["denied"],
-            "evidence": best["evidence"], "commit": best["commit"]}
+    if elsewhere:
+        # History, counted and named, never cited as this commit's answer.
+        newest = elsewhere[0]
+        passed = next((r for r in elsewhere
+                       if r["recorded"] == "passed" and covers(r["scope"])), None)
+        why = f"'{label}' has not run on {here}"
+        if passed is not None:
+            why += f". It passed on {_short(passed['commit'])}"
+        if newest is not passed:
+            why += (f". The newest record, on {_short(newest['commit'])}, "
+                    f"reads {newest['outcome']}")
+        why += (f" — {len(elsewhere)} record"
+                f"{'' if len(elsewhere) == 1 else 's'} for other commits "
+                f"{'is' if len(elsewhere) == 1 else 'are'} history, not this "
+                f"commit's answer")
+        return {**row, "state": "unmet", "reason": "other-commit", "why": why,
+                "remedy": REMEDIES["other-commit"], "evidence": None,
+                "commit": None,
+                "elsewhere": {"evidence": newest["evidence"],
+                              "commit": newest["commit"],
+                              "outcome": newest["outcome"],
+                              "passedOn": passed["commit"] if passed else None}}
+    if denied:
+        # Only refusals on record: nothing ran, and the refusal is the reason.
+        best = denied[0]
+        return {**row, "state": "unmet", "reason": "denied",
+                "why": f"'{label}': {best['why'] or verify.OUTCOMES['denied']}",
+                "remedy": REMEDIES["denied"],
+                "evidence": best["evidence"], "commit": best["commit"]}
+    return {**row, "state": "unmet", "reason": "not-run",
+            "why": (f"nothing has asked bench for '{name}' "
+                    f"({_coverage(want)}) on {here}, so there is no evidence "
+                    f"either way — an absent record is not a pass"),
+            "remedy": REMEDIES["not-run"], "evidence": None, "commit": None}
 
 
 def _coverage(scope: str | None) -> str:

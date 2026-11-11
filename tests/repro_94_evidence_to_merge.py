@@ -17,9 +17,10 @@ What each case shows TODAY (and what the design says instead):
 - R1 `test_unrelated_context_marks_unchanged_source_stale` — adding an
   approved input that the check never reads makes a same-commit pass read
   `stale / policy-changed`. (Design §4: provenance, not invalidation.)
-- R2 `test_older_head_cancellation_becomes_the_headline` — with that stale
-  pass at the current commit, the gate's reason is a cancellation recorded
-  against an *older* commit. (Design §6: current-context selection.)
+- R2 — fixed by card 96 (relevance before precedence: the stale pass at
+  the current commit is the reason, never the older head's cancellation).
+  Its inverted case lives in `tests/test_evidence_to_merge.py`
+  (`TheSafer36Shape`, and `Precedence` for every §6.2 row).
 - R3 `test_a_differently_named_check_does_not_count` — the same program,
   passing at the same commit under another check name, does not satisfy the
   requirement. This one is CORRECT today and stays: equivalence must be
@@ -91,17 +92,6 @@ class Safer36Shape(GateCase):
         self.assertEqual(reading["outcome"], "stale")
         self.assertEqual(reading["reason"], "policy-changed")
         self.assertNotIn("source-changed", reading["freshness"]["reasons"])
-
-    def test_older_head_cancellation_becomes_the_headline(self):
-        self.add_unrelated_context()
-        found = self.decide()
-        row = found["unmet"][0]
-        # TODAY: the reason is the cancellation at commit A, although the
-        # newest relevant record is the (stale) pass at commit B, which is
-        # the commit this would merge.
-        self.assertEqual(found["head"]["commit"], self.commit_b)
-        self.assertEqual(row["reason"], "cancelled")
-        self.assertEqual(row["commit"], self.commit_a)
 
 
 class NamesAreNotEquivalence(GateCase):
