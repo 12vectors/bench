@@ -749,7 +749,8 @@ class TheCompactReadingCarriesWhatEverySurfaceDraws(DeliveryCase):
         self.place("review", pr=PR_URL)
         before, row_before = self.compact(), self.read()["requirements"][0]
         self.place("in-progress")
-        self.assertEqual(self.ask("unit")["outcome"], "passed")
+        # an explicit rerun: an unforced request would reuse the pass (#100)
+        self.assertEqual(self.ask("unit", again=True)["outcome"], "passed")
         verify.forget_cached()
         self.place("review", pr=PR_URL)
         after, row_after = self.compact(), self.read()["requirements"][0]
