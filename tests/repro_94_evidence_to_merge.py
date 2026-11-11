@@ -14,9 +14,11 @@ reads or writes SAFER, a live board, a remote or any operator configuration.
 
 What each case shows TODAY (and what the design says instead):
 
-- R1 `test_unrelated_context_marks_unchanged_source_stale` — adding an
-  approved input that the check never reads makes a same-commit pass read
-  `stale / policy-changed`. (Design §4: provenance, not invalidation.)
+- R1 — fixed by card 97 (result identities: an approved input the check
+  does not declare is provenance, never an invalidator). Its inverted case
+  lives in `tests/test_result_identity.py`, and the SAFER36 shape with a
+  new and a legacy record in `tests/test_evidence_to_merge.py`
+  (`TheSafer36Shape`).
 - R2 — fixed by card 96 (relevance before precedence: the stale pass at
   the current commit is the reason, never the older head's cancellation).
   Its inverted case lives in `tests/test_evidence_to_merge.py`
@@ -35,63 +37,12 @@ What each case shows TODAY (and what the design says instead):
 
 from __future__ import annotations
 
-import threading
 import unittest
 
-from tests.test_integration_gates import (CARD, HANGS, PASSES,  # noqa: E402
-                                          GateCase, wait_for)
+from tests.test_integration_gates import (CARD, PASSES,  # noqa: E402
+                                          GateCase)
 
-import gates  # noqa: E402  (on sys.path once the case module is imported)
-import verify  # noqa: E402
-
-
-class Safer36Shape(GateCase):
-    """Commit A: `unit` asked for, then cancelled (the run that asked was
-    stopped). Commit B: `unit` passes. Then project policy gains an approved
-    input meant for the *next* card. The application source never moves."""
-
-    def setUp(self):
-        super().setUp()
-        self.wt = self.worktree()
-        self.document = self.gated(body=HANGS)
-        self.commit_a = self.commit_in(self.wt, "first attempt\n")
-        self.manifest(agent="run-1")
-        asking = threading.Thread(target=lambda: self.ask(agent="run-1"),
-                                  daemon=True)
-        asking.start()
-        self.assertTrue(wait_for(lambda: bool(verify.RUNNING)))
-        for ident in list(verify.RUNNING):
-            verify.cancel(ident, "cancelled-with-run")
-        asking.join(timeout=20)
-        # commit B, with a check that now passes
-        self.document["checks"][0]["run"] = str(self.executable("unit", PASSES))
-        self.declares(self.document)
-        self.commit_b = self.commit_in(self.wt, "second attempt\n")
-        self.manifest(agent="run-2")
-        self.assertEqual(self.ask(agent="run-2")["outcome"], "passed")
-        verify.forget_cached()
-        gates.forget_cached()
-        self.assertEqual(self.decide()["decision"], "allowed")
-
-    def add_unrelated_context(self) -> None:
-        mock = self.work / "reference" / "card37-mockup.md"
-        mock.write_text("a mockup for the next card\n", encoding="utf-8")
-        self.document["context"] = [{"name": "card37-mockup",
-                                     "path": "work:reference/card37-mockup.md",
-                                     "required": False}]
-        self.declares(self.document)
-        verify.forget_cached()
-        gates.forget_cached()
-
-    def test_unrelated_context_marks_unchanged_source_stale(self):
-        self.add_unrelated_context()
-        latest = verify.for_task(CARD)[0]
-        self.assertEqual(latest["source"]["commit"], self.commit_b)
-        reading = verify.outcome_now(latest)
-        # TODAY: stale, because the whole profile revision is compared.
-        self.assertEqual(reading["outcome"], "stale")
-        self.assertEqual(reading["reason"], "policy-changed")
-        self.assertNotIn("source-changed", reading["freshness"]["reasons"])
+import verify  # noqa: E402  (on sys.path once the case module is imported)
 
 
 class NamesAreNotEquivalence(GateCase):

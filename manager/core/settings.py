@@ -290,6 +290,8 @@ FIELD_OF = {
     "check-duplicate": "checks",
     "check-undeclared": "profiles",
     "check-unrunnable": "checks",
+    "check-input-undeclared": "checks",
+    "check-env-invalid": "checks",
     "prepare-invalid": "prepare",
     "prepare-reshapes-repository": "prepare",
     "prepare-names-credential": "prepare",
@@ -843,8 +845,14 @@ def verification(doc: dict | None = None) -> dict:
             # `prepare` holds the resolved steps; a reader wants the names
             # here and reads the steps' own rows below for the detail.
             "prepare": [step["name"] for step in check["prepare"]],
+            # what the result is bound to beyond its source and programs:
+            # the approved inputs it is handed and the environment
+            # variables whose values are bound — names only, never values
+            "inputs": [entry["name"] for entry in check.get("inputs") or []],
+            "env": list(check.get("env") or []),
             "timeout": check["timeout"],
             "checkId": check["checkId"],
+            "checkSubstance": check.get("checkSubstance"),
             "help": check.get("help"),
             "required": check["required"],
             "intents": sorted(intent for intent in profiles.INTENTS

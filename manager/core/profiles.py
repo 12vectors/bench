@@ -436,6 +436,19 @@ DIAGNOSTICS = {
         "of that intent's own command grants. A requirement that resolves to "
         "nothing is how a board reports a check that never ran as one that "
         "passed, so it is refused instead."),
+    "check-input-undeclared": (
+        "a check declares an input the document's context does not select",
+        "Add the input to the document's top-level \"context\" list, under "
+        "the same name, or drop it from the check's \"inputs\". A check's "
+        "result is bound to the inputs it declares, so an input bench cannot "
+        "read is refused rather than bound to nothing."),
+    "check-env-invalid": (
+        "a check declares an environment variable bench cannot bind",
+        "Name variables the check actually receives: one environment "
+        "variable name each ([A-Za-z_][A-Za-z0-9_]*), listed once. Bench "
+        "removes credentials, the launch environment and its own address "
+        "before a check runs and sets HOME, TMPDIR and the cache variables "
+        "itself, so none of those can be declared."),
     "check-unrunnable": (
         "an intent asks for a check bench cannot build a command line from",
         "Fix the grant or check named above, or stop naming it in this "
@@ -1110,7 +1123,164 @@ def _tokens_problem(name: str, what: str, tokens: list) -> str | None:
     return None
 
 
-def _check_problem(raw: dict, known_prepare: set[str]) -> tuple[str, str] | None:
+# ── what a check's result depends on, declared ─────────────────────────
+#
+# A check's result is bound to its source, its definition and its programs
+# whether or not anyone declares anything. Two further things only the
+# operator can name, because bench cannot discover them: the approved
+# **inputs** a check reads (a context selection, by name, pinned and
+# handed to it), and the **environment variables** whose values its
+# verdict depends on. Declared, they become part of the result identity
+# `verify` records; undeclared, they are not bound — the documented limit.
+
+# Names bench takes out of a check's environment, or sets itself, so a
+# declaration naming one would bind something the check never receives.
+# `verify.child_env` builds the environment from these same lists.
+VERIFY_ENV_STRIPPED = ("BOARD_PORT", "BOARD_AGENT_ID", "BOARD_TASK",
+                       "BOARD_APP_ROOT", "BOARD_WORK_ROOT", "BOARD_TASKS_DIR",
+                       "BOARD_WORKTREES_DIR", "GIT_DIR", "GIT_WORK_TREE",
+                       "GIT_INDEX_FILE")
+VERIFY_ENV_STRIPPED_PREFIXES = ("AGENT_",)
+VERIFY_ENV_SET = ("HOME", "TMPDIR", "TEMP", "TMP", "XDG_CACHE_HOME",
+                  "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME",
+                  "PIP_CACHE_DIR", "NPM_CONFIG_CACHE", "YARN_CACHE_FOLDER",
+                  "CARGO_HOME", "GOCACHE", "GOMODCACHE", "BENCH_VERIFY",
+                  "BENCH_VERIFY_CHECK", "BENCH_VERIFY_ROOT",
+                  "BENCH_VERIFY_INPUTS", "PWD")
+ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+# A bound, not a policy: a check is handed its inputs as copies, and an
+# identity over hundreds of variables is no longer something a reader can
+# check by eye.
+MAX_CHECK_INPUTS = 16
+MAX_CHECK_ENV = 32
+# The roots a check's input may be selected from. The worktree and the
+# review checkout are the check's *source*, already bound by the source
+# identity, so naming a file in them as an input would bind it twice and
+# pin a copy of code that is about to be run in place anyway.
+CHECK_INPUT_ROOTS = ("tool", "work", "app")
+
+
+def _env_problem(name: str, declared) -> tuple[str, str] | None:
+    """Why a check's `env` declaration cannot be bound, or None."""
+    if declared is None:
+        return None
+    if not isinstance(declared, list):
+        return ("check-env-invalid",
+                f"the check '{name}' declares \"env\" that is not a list of "
+                f"variable names")
+    if len(declared) > MAX_CHECK_ENV:
+        return ("check-env-invalid",
+                f"the check '{name}' declares {len(declared)} environment "
+                f"variables, over the {MAX_CHECK_ENV} bench binds per check")
+    denied = set(config.verify_env_deny())
+    seen: set[str] = set()
+    for entry in declared:
+        if not isinstance(entry, str) or not ENV_NAME_RE.match(entry):
+            return ("check-env-invalid",
+                    f"the check '{name}' declares the environment variable "
+                    f"{entry!r}, which is not a variable name")
+        if entry in seen:
+            return ("check-env-invalid",
+                    f"the check '{name}' declares the environment variable "
+                    f"'{entry}' twice")
+        seen.add(entry)
+        if entry.startswith("BOARD_") and entry not in VERIFY_ENV_STRIPPED:
+            return ("check-env-invalid",
+                    f"the check '{name}' declares '{entry}', which is this "
+                    f"board's own setting rather than configuration of the "
+                    f"code under test")
+        if entry in denied or entry in VERIFY_ENV_STRIPPED \
+                or entry.startswith(VERIFY_ENV_STRIPPED_PREFIXES):
+            return ("check-env-invalid",
+                    f"the check '{name}' declares '{entry}', which bench "
+                    f"removes before a check runs — binding its value would "
+                    f"bind something the check never receives")
+        if entry in VERIFY_ENV_SET:
+            return ("check-env-invalid",
+                    f"the check '{name}' declares '{entry}', which bench sets "
+                    f"itself for every check — its value is a path made for "
+                    f"one verification, not configuration the result depends "
+                    f"on")
+    return None
+
+
+def _inputs_problem(name: str, declared,
+                    known_inputs: dict) -> tuple[str, str] | None:
+    """Why a check's `inputs` declaration cannot be honoured, or None."""
+    if declared is None:
+        return None
+    if not isinstance(declared, list):
+        return ("check-invalid",
+                f"the check '{name}' declares \"inputs\" that is not a list "
+                f"of context-selection names")
+    if len(declared) > MAX_CHECK_INPUTS:
+        return ("check-invalid",
+                f"the check '{name}' declares {len(declared)} inputs, over the "
+                f"{MAX_CHECK_INPUTS} bench pins per check")
+    seen: set[str] = set()
+    for entry in declared:
+        word = str(entry or "").strip() if isinstance(entry, str) else entry
+        if not isinstance(word, str) or not NAME_RE.match(word):
+            return ("name-invalid",
+                    f"the check '{name}' declares the input {entry!r} — an "
+                    f"input is named as its context selection is, matching "
+                    f"[a-z0-9][a-z0-9._-]*")
+        if word in seen:
+            return ("check-invalid",
+                    f"the check '{name}' declares the input '{word}' twice")
+        seen.add(word)
+        selection = known_inputs.get(word)
+        if selection is None:
+            return ("check-input-undeclared",
+                    f"the check '{name}' declares the input '{word}', which "
+                    f"the document's top-level \"context\" list does not "
+                    f"select — bench pins and hands a check only what an "
+                    f"operator selected, and binds nothing it cannot read")
+        spec = str(selection.get("path") or "").strip()
+        word_root = spec.partition(":")[0]
+        if word_root not in CHECK_INPUT_ROOTS:
+            return ("check-invalid",
+                    f"the check '{name}' declares the input '{word}', which "
+                    f"is selected from the {word_root or 'unnamed'} root — a "
+                    f"check's inputs come from "
+                    f"{', '.join(CHECK_INPUT_ROOTS)}; the checkout it runs in "
+                    f"is its source, and is bound as that")
+        problem, _ = _selection_problem(selection, roots(None))
+        if problem:
+            return ("check-invalid",
+                    f"the check '{name}' declares the input '{word}', and its "
+                    f"selection is refused: {problem}")
+    return None
+
+
+def context_selections(doc: dict) -> dict:
+    """The document's top-level context selections, by name — the only
+    list a check's `inputs` may name. One list for the whole document
+    because a check is declared once, for every intent that may ask for
+    it, and its inputs must not depend on which intent asked."""
+    raw = doc.get("context") if doc.get("kind") == "file" else None
+    out: dict[str, dict] = {}
+    for entry in raw if isinstance(raw, list) else []:
+        if isinstance(entry, dict):
+            key = str(entry.get("name") or "").strip()
+            if key and key not in out:
+                out[key] = entry
+    return out
+
+
+def check_input(entry: dict) -> dict:
+    """One declared input of a check, resolved now: read and hashed in the
+    root its selection names, nothing written. The same reading a launch's
+    context takes (`_resolve_selection`), so a check is handed exactly what
+    an approved input is and is refused exactly where one is."""
+    return _resolve_selection({"name": entry.get("name"),
+                               "path": entry.get("source"),
+                               "required": entry.get("required", True)},
+                              roots(None))
+
+
+def _check_problem(raw: dict, known_prepare: set[str],
+                   known_inputs: dict | None = None) -> tuple[str, str] | None:
     """Why this check cannot be offered, or None — as `(code, sentence)`.
     One sentence, naming the check, because it is shown beside it."""
     name = str(raw.get("name") or "").strip()
@@ -1177,7 +1347,10 @@ def _check_problem(raw: dict, known_prepare: set[str]) -> tuple[str, str] | None
             return ("check-invalid",
                     f"the check '{name}' declares a timeout of {timeout} — give "
                     f"a number of seconds between 1 and {MAX_CHECK_TIMEOUT}")
-    return None
+    problem = _inputs_problem(name, raw.get("inputs"), known_inputs or {})
+    if problem:
+        return problem
+    return _env_problem(name, raw.get("env"))
 
 
 def _step_problem(raw: dict) -> tuple[str, str] | None:
@@ -1192,10 +1365,31 @@ def _step_problem(raw: dict) -> tuple[str, str] | None:
 
 
 def _check_revision(name: str, run: str, root: str, scopes: dict,
-                    prepare: list[str], timeout: float) -> str:
+                    prepare: list[str], timeout: float,
+                    inputs: list | None = None,
+                    env: list | None = None) -> str:
+    # Inputs and env only when declared, so a check that declares neither
+    # keeps the revision — and the checkId — it has always had.
+    extra = [json.dumps(inputs, sort_keys=True)] if inputs else []
+    extra += [json.dumps(env)] if env else []
     return _digest(name, run, root,
                    json.dumps(scopes, sort_keys=True),
-                   json.dumps(prepare), f"{timeout:.0f}")
+                   json.dumps(prepare), f"{timeout:.0f}", *extra)
+
+
+def check_substance(run: str, root: str, timeout: float, inputs: list,
+                    env: list) -> str:
+    """What a check *is*, without what it is called: its argument list, the
+    root it runs in, its time limit, and the inputs and environment
+    variables it declares. Unlike its revision this excludes the name, so
+    two checks with the same substance are the same definition — which is
+    the only thing a declared equivalence may ever rely on (design §5).
+    Coverage and preparation are separate dimensions of a result, and are
+    not part of it."""
+    return "subst:" + _digest(
+        "check-substance/1", run, root, f"{timeout:.0f}",
+        json.dumps([[i["name"], i["source"], i["required"]] for i in inputs]),
+        json.dumps(list(env)))[:16]
 
 
 def _step(raw: dict, *, source: str) -> dict:
@@ -1217,11 +1411,17 @@ def _step(raw: dict, *, source: str) -> dict:
     }
 
 
-def _check(raw: dict, steps: dict, *, source: str, scale: float) -> dict:
+def _check(raw: dict, steps: dict, *, source: str, scale: float,
+           selections: dict | None = None) -> dict:
     """One validated check, as the manifest carries it and as `verify`
     executes it. `argv` and every scope's arguments are already split: the
     runner never parses a string, which is what keeps a command line from
-    being something a model could compose."""
+    being something a model could compose.
+
+    `inputs` carries each declared input's *selection* — its name, where it
+    is selected from and whether it is required — and never its content:
+    the runner reads, hashes and hands the file over at the moment it
+    runs, and the evidence records what was handed over."""
     parts = shlex.split(str(raw.get("run")))
     scopes = {str(k): [str(t) for t in v]
               for k, v in (raw.get("scopes") or {}).items()}
@@ -1229,9 +1429,22 @@ def _check(raw: dict, steps: dict, *, source: str, scale: float) -> dict:
     root = str(raw.get("root") or "worktree")
     timeout = min(float(raw["timeout"]) if raw.get("timeout") is not None
                   else scale, scale)
+    inputs = []
+    for word in raw.get("inputs") or []:
+        selection = (selections or {}).get(str(word).strip()) or {}
+        inputs.append({"name": str(word).strip(),
+                       "source": str(selection.get("path") or "").strip(),
+                       "required": selection.get("required", True) is not False})
+    env = [str(n) for n in (raw.get("env") or [])]
     revision = _check_revision(str(raw.get("name")).strip(), shlex.join(parts),
-                               root, scopes, prepare, timeout)
+                               root, scopes, prepare, timeout,
+                               [[i["name"], i["source"], i["required"]]
+                                for i in inputs], env)
     return {
+        "inputs": inputs,
+        "env": env,
+        "checkSubstance": check_substance(shlex.join(parts), root, timeout,
+                                          inputs, env),
         "name": str(raw.get("name")).strip(),
         "run": shlex.join(parts),
         "executable": parts[0],
@@ -1353,12 +1566,13 @@ def document_checks(doc: dict, steps: dict) -> tuple[dict, list[tuple[str, str]]
     if doc["kind"] != "file":
         return checks, trouble
     raw = doc.get("checks")
+    selections = context_selections(doc)
     for entry in raw if isinstance(raw, list) else []:
         if not isinstance(entry, dict):
             trouble.append(("check-invalid",
                             f"a check is not an object: {entry!r}"))
             continue
-        problem = _check_problem(entry, set(steps))
+        problem = _check_problem(entry, set(steps), selections)
         if problem:
             trouble.append(problem)
             continue
@@ -1371,7 +1585,8 @@ def document_checks(doc: dict, steps: dict) -> tuple[dict, list[tuple[str, str]]
             continue
         checks[name] = _check(entry, steps,
                               source=doc["identity"] or "the document",
-                              scale=config.VERIFY_TIMEOUT)
+                              scale=config.VERIFY_TIMEOUT,
+                              selections=selections)
     return checks, trouble
 
 

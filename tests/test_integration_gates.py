@@ -556,16 +556,19 @@ class EvidenceIsBoundToTheCommit(GateCase):
         self.assertEqual(found["unmet"][0]["reason"], "stale")
         self.assertIn("Run the check again", found["unmet"][0]["remedy"])
 
-    def test_changing_the_approved_context_invalidates_it_too(self):
-        """A run's approved inputs are part of the policy it rode, so a
-        pass recorded under one set of pinned inputs is not a pass under
-        another."""
+    def test_changing_a_declared_input_invalidates_it_too(self):
+        """An approved input the *check declares* is part of what its
+        result is about, so a pass recorded with one content is not a pass
+        with another (#97: `input-changed`, naming it). Approved context
+        the check does not declare is provenance and stales nothing — the
+        R1 regression in `tests/test_result_identity.py`."""
         (self.work / "reference").mkdir(parents=True, exist_ok=True)
         brief = self.work / "reference" / "brief.md"
         brief.write_text("the brief\n", encoding="utf-8")
         document = self.gated()
         document["context"] = [{"name": "brief",
                                 "path": "work:reference/brief.md"}]
+        document["checks"][0]["inputs"] = ["brief"]
         self.declares(document)
         self.commit_in(self.wt)
         self.manifest()
@@ -577,6 +580,8 @@ class EvidenceIsBoundToTheCommit(GateCase):
         found = self.decide()
         self.assertEqual(found["decision"], "blocked")
         self.assertEqual(found["unmet"][0]["reason"], "stale")
+        self.assertEqual(found["unmet"][0]["staleReason"], "input-changed")
+        self.assertIn("'brief'", found["unmet"][0]["why"])
 
     def test_a_scope_is_part_of_what_the_evidence_is_about(self):
         """A gate requires the check, and a scoped run of it is a run of

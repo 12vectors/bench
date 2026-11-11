@@ -58,18 +58,27 @@ drifting towards "passed" on its own.
 
 ## Staleness is a property of the evidence, not of its age
 
-Every record is bound to what it was about: the policy revision, the
-check's own definition, the pinned context identities, and the exact
-source — the commit plus a digest of everything uncommitted in the
-checkout. `freshness()` re-reads that and says what moved. A `passed`
-whose binding no longer holds reads as `stale`, which is the whole reason
-the binding exists: modified tracked source, an edited check or a changed
-profile must not be able to reuse a pass.
+Every new record carries a **result identity** (`resultId`, design #94
+§4.1): the exact source — the commit plus a digest of everything
+uncommitted — the check's substance, its coverage, its programs, its
+preparation, the inputs it declares, its root class, the environment it
+declares and this runner. `freshness()` re-reads each dimension and says
+which moved, by its own reason. A `passed` whose identity no longer holds
+reads as `stale`: modified source, an edited check, a replaced program, a
+changed declared input or environment value must not be able to reuse a
+pass. What is *not* in it is **provenance** — the policy revision, the
+context pinned for the launch, who asked, the adapter, the paths — kept
+on the record and reported, never a reason to run again.
+
+A record written before identities existed is **legacy**: it has no
+`resultId` and is read with the rules it was written under, including
+the whole-policy `policy-changed`, and it is never rewritten.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -145,7 +154,54 @@ REASONS = {
                     "result is about an earlier revision",
     "pr-ended": "the pull request has been merged or closed since, so the "
                 "result is historical rather than current",
+    # The dimensions of a result identity (design §4.1), each its own slug
+    # because each is a different thing to go and look at. Legacy records
+    # — written before result identities — never produce these; they keep
+    # `policy-changed` and `context-changed`.
+    "check-changed": "the check's own definition has changed since it ran",
+    "scope-changed": "the scope it ran under now runs different arguments",
+    "prepare-changed": "a preparation step it needed has changed since",
+    "input-changed": "an input the check declares has changed since",
+    "env-changed": "the environment the check was given has changed since",
+    "identity-unknown": "the record's result identity cannot be read, so it "
+                        "cannot be shown to hold",
+    "input-unavailable": "a required input the check declares could not be "
+                         "read, so nothing was run",
+    "env-key-unusable": "the machine-local key that binds declared "
+                        "environment values cannot be used",
 }
+
+# What to do about each way a result stops holding, said once so the gate,
+# the evidence sheet and an agent's diagnostics name the same remedy. The
+# legacy reasons keep the sentence they always had at the gate.
+STALE_REMEDIES = {
+    "check-changed": ("Run the check again: its command, root, time limit or "
+                      "declared inputs or environment changed since it "
+                      "passed."),
+    "scope-changed": ("Run the check again over the scope as it is now "
+                      "declared."),
+    "prepare-changed": ("Run the check again: a preparation step it needs "
+                        "runs something different now."),
+    "program-changed": ("Run the check again: a program it invoked was "
+                        "replaced at the same path."),
+    "input-changed": ("Run the check again with the input as it is now — "
+                      "or, if the change is unintended, put the input back."),
+    "env-changed": ("Run the check again in the environment as it is now. "
+                    "Declared values are bound by a keyed hash on this "
+                    "machine, so a replaced or lost key also needs one "
+                    "fresh run."),
+    "runner-changed": "Bench was updated since this ran — run checks again.",
+    "identity-unknown": ("Run the check again: this record's identity cannot "
+                         "be read, and an unknown identity never counts as a "
+                         "pass."),
+    "source-changed": "Commit, then run checks against the code as it is.",
+}
+
+# The source half of a freshness reading. Everything else a new record can
+# report is a change to what the check *is* — its definition, programs,
+# inputs or environment — which is what makes a record outdated rather
+# than merely about other code.
+SOURCE_REASONS = ("source-changed", "head-changed", "pr-ended")
 
 # Which outcome a check's own exit status means. Separate from everything
 # above on purpose: this is the *only* place an exit code becomes a
@@ -491,11 +547,9 @@ def child_env(root: Path, home: Path, tmp: Path, evidence_id: str,
     env: dict[str, str] = {}
     denied = set(config.verify_env_deny())
     for name, value in config.child_env().items():
-        if name in denied or name.startswith("AGENT_") \
-                or name in ("BOARD_PORT", "BOARD_AGENT_ID", "BOARD_TASK",
-                            "BOARD_APP_ROOT", "BOARD_WORK_ROOT",
-                            "BOARD_TASKS_DIR", "BOARD_WORKTREES_DIR",
-                            "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        if name in denied \
+                or name.startswith(profiles.VERIFY_ENV_STRIPPED_PREFIXES) \
+                or name in profiles.VERIFY_ENV_STRIPPED:
             removed.append(name)
             continue
         env[name] = value
@@ -519,6 +573,223 @@ def child_env(root: Path, home: Path, tmp: Path, evidence_id: str,
         "PWD": str(root),
     })
     return env, sorted(set(removed))
+
+
+# ── declared environment values, bound by a keyed hash ─────────────────
+#
+# A check that declares `"env": ["DATABASE_URL"]` has its verdict bound to
+# that variable's value. The value is never stored: what is recorded is an
+# HMAC-SHA256 of it under a key that exists only on this machine
+# (`state/verify/env.key`, 0600). So the record proves "the same value as
+# when it passed" to this board and to nobody else, and a stolen record
+# cannot be dictionary-attacked without the key.
+#
+# The key is made by the runner, at the moment a check that declares
+# `env` is about to run — never by reading. A freshness question that
+# finds no key does not make one: it answers that the binding cannot be
+# shown to hold, which is the conservative direction. A lost or replaced
+# key therefore costs exactly one fresh run of each check that declared
+# environment variables, and nothing else.
+
+ENV_KEY_BYTES = 32
+_UNSET = "\x00unset"
+
+
+def env_key_path() -> Path:
+    return config.VERIFY_DIR / "env.key"
+
+
+def _read_env_key() -> bytes | None:
+    """The key, if one is here and fit to use. Unreadable, the wrong size,
+    or readable by anyone but this user, and it is not used."""
+    path = env_key_path()
+    try:
+        info = path.stat()
+        if info.st_mode & 0o077:
+            return None
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return data if len(data) == ENV_KEY_BYTES else None
+
+
+def _env_key(create: bool) -> bytes | None:
+    """The key, made here only when `create` — which only the runner
+    passes. Raises when one exists that bench will not use, so the runner
+    refuses rather than quietly replacing a key an operator may care
+    about."""
+    found = _read_env_key()
+    if found is not None or not create:
+        return found
+    path = env_key_path()
+    if path.exists():
+        raise ValueError(
+            f"{path} exists and bench will not use it — it must be exactly "
+            f"{ENV_KEY_BYTES} bytes and readable by this user only. Remove "
+            f"it to have bench make a new one; every check that declares "
+            f"environment variables then needs one fresh run")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return _read_env_key()
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(os.urandom(ENV_KEY_BYTES))
+    return _read_env_key()
+
+
+def _key_id(key: bytes) -> str:
+    """Which key bound a record, without saying anything about it."""
+    return "key:" + hmac.new(key, b"bench:verify:env-key-id",
+                             hashlib.sha256).hexdigest()[:12]
+
+
+def _env_value_hash(key: bytes, name: str, value: str | None) -> str:
+    message = f"{name}\x00{_UNSET if value is None else value}".encode(
+        "utf-8", "surrogateescape")
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
+
+
+def env_identity(env: dict, declared: list[str], key: bytes | None) -> dict:
+    """What the environment a check was given *was*, as far as bench binds
+    it: the names of every variable passed (never their values), and a
+    keyed hash of each declared variable's value — or of its absence.
+
+    That is all. Bench does not claim the whole runtime environment is
+    equal: an undeclared value, a library on disk and a service on the
+    network are outside it, and the documentation says so."""
+    names = sorted(env)
+    bound = []
+    for name in declared:
+        value = env.get(name)
+        bound.append({"name": name, "set": value is not None,
+                      "hmac": _env_value_hash(key, name, value) if key else None})
+    found = {"passed": names, "declared": bound,
+             "keyId": _key_id(key) if (key and declared) else None}
+    found["envId"] = "env:" + _digest(
+        "env/1", json.dumps(names),
+        json.dumps([[b["name"], b["hmac"]] for b in bound]))[:16]
+    return found
+
+
+# ── the result identity (design §4.1) ──────────────────────────────────
+#
+# Everything a verdict *depends on*, kept apart from everything that only
+# says how the run came about. A pass holds while every dimension below
+# holds; it is never invalidated by provenance — which policy revision was
+# in force, which unrelated context was approved for some other card, who
+# asked, under which model, from which temporary path.
+
+IDENTITY_VERSION = 1
+IDENTITY_DIMENSIONS = ("source", "check", "coverage", "program", "prepare",
+                       "inputs", "rootClass", "env", "runner")
+
+
+def coverage_id(scope: str | None, scope_args: list[str]) -> str:
+    return "cov:" + _digest("coverage/1", scope or "", json.dumps(scope_args))[:16]
+
+
+def prepare_definition(steps: list[dict]) -> str:
+    """The preparation a check needs, as substance: each step's argument
+    list, whether it needs the network and whether it is required. Not its
+    name — renaming a step changes nothing it does."""
+    return "prep:" + _digest("prepare/1", json.dumps(
+        [[s.get("executable"), list(s.get("argv") or []), bool(s.get("network")),
+          bool(s.get("required", True))] for s in steps]))[:16]
+
+
+def inputs_id(inputs: list[dict]) -> str:
+    return "inputs:" + _digest("inputs/1", json.dumps(
+        [[i.get("name"), i.get("contextId")] for i in inputs]))[:16]
+
+
+def result_id(identity: dict) -> str:
+    """One digest over every dimension — equal only when all of them are."""
+    return "result:" + _digest("result/1", *(
+        json.dumps(identity.get(d), sort_keys=True)
+        for d in IDENTITY_DIMENSIONS))[:16]
+
+
+def root_class(policy: str, root: Path) -> str:
+    """`worktree`, `fresh` or `reused` — what the checkout could have held
+    that the source identity does not see.
+
+    A card's worktree can hold ignored state (caches, `node_modules`, a
+    virtualenv) the source identity deliberately does not hash. A `source`
+    or `review` checkout is only called `fresh` when the runner genuinely
+    found it so as the check began — no ignored, untracked or modified
+    file in it — because bench reuses a `source` checkout of the same
+    commit, and a review's pinned checkout outlives one check. One that
+    already held such state is `reused`, which is said rather than
+    papered over."""
+    if policy not in ("source", "review"):
+        return "worktree"
+    status = _git(root, "status", "--porcelain", "--ignored",
+                  "--untracked-files=all")
+    if status.returncode != 0:
+        return "reused"
+    return "fresh" if not status.stdout.strip() else "reused"
+
+
+def _resolve_inputs(check: dict) -> tuple[list[dict], str | None]:
+    """Every input the check declares, read and hashed now — before any
+    process exists. Returns the inputs (each with its bytes, under a
+    private key that is never stored) and why the request must be refused,
+    if it must: a **required** input bench cannot read is an unknown
+    identity, and an unknown identity is never run and then called a
+    result. An optional one that is not there is recorded as absent, and
+    the check runs without it."""
+    found: list[dict] = []
+    for entry in check.get("inputs") or []:
+        item = profiles.check_input(entry)
+        row = {"name": entry["name"], "source": entry["source"],
+               "required": entry["required"], "status": "absent",
+               "sha256": None, "contextId": None, "bytes": None}
+        if item["status"] == "resolved":
+            try:
+                data = Path(item["path"]).read_bytes()
+            except OSError as exc:
+                item = {**item, "status": "unreadable",
+                        "why": f"the input '{entry['name']}' could not be "
+                               f"read: {exc.strerror or exc}"}
+            else:
+                sha = hashlib.sha256(data).hexdigest()
+                row.update({"status": "resolved", "sha256": sha,
+                            "contextId": profiles.context_id(entry["name"], sha),
+                            "bytes": len(data), "_data": data,
+                            "_suffix": Path(item["path"]).suffix})
+        if row["status"] != "resolved":
+            if entry["required"]:
+                return found, (f"{item.get('why') or 'the input could not be read'}"
+                               f" — the check '{check['name']}' declares it as "
+                               f"a required input, so nothing was run. "
+                               f"{item.get('remedy') or ''}").strip()
+            row["why"] = item.get("why")
+        found.append(row)
+    return found, None
+
+
+def _deliver_inputs(inputs: list[dict], tmp: Path) -> Path | None:
+    """The declared inputs, as read-only copies in a directory made for
+    this verification — the bytes that were hashed, and only those. The
+    directory is named to the check as `BENCH_VERIFY_INPUTS`; each input
+    is `<name><suffix>` inside it. An input recorded `delivered` is one
+    that is there; nothing is claimed readable that was not handed over."""
+    if not inputs:
+        return None
+    where = tmp / "inputs"
+    where.mkdir(parents=True, exist_ok=True)
+    for item in inputs:
+        data = item.pop("_data", None)
+        suffix = item.pop("_suffix", "")
+        if data is None:
+            continue
+        target = where / f"{item['name']}{suffix}"
+        target.write_bytes(data)
+        os.chmod(target, 0o444)
+        item["status"] = "delivered"
+        item["delivered"] = target.name
+    return where
 
 
 # ── running one process ────────────────────────────────────────────────
@@ -882,7 +1153,26 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
         # the intent's own preparation, which runs before every check it
         # declares — as against the check's, which runs only before it
         "profilePrepare": list(manifest.get("prepare") or []),
+        # what the check is, without its name — the definition half of
+        # its result identity, and what a declared equivalence compares
+        "checkSubstance": found.get("checkSubstance"),
     })
+
+    # — what the check declares it depends on, before anything runs —
+    inputs, refusal = _resolve_inputs(found)
+    if refusal:
+        return _refuse(shell, "input-unavailable", refusal)
+    env_key = None
+    if found.get("env"):
+        try:
+            env_key = _env_key(create=True)
+        except (ValueError, OSError) as exc:
+            return _refuse(shell, "env-key-unusable", str(exc))
+        if env_key is None:
+            return _refuse(shell, "env-key-unusable",
+                           f"{env_key_path()} could not be made or read, so the "
+                           f"declared environment cannot be bound and nothing "
+                           f"was run")
 
     # — the root, and nothing else's —
     if fixture is not None:
@@ -924,7 +1214,8 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
     state.broadcast({"type": "verify"})
 
     try:
-        return _execute(shell, found, root, prepared)
+        return _execute(shell, found, root, prepared, inputs=inputs,
+                        env_key=env_key)
     except Exception as exc:                 # noqa: BLE001 — see below
         # Anything unexpected still has to close the record. An exception
         # out of here would otherwise leave `running` on disk until the
@@ -1094,7 +1385,9 @@ def _review_root(check: dict, task: str,
                          f"for this review")
 
 
-def _execute(record: dict, check: dict, root: Path, owned: bool) -> dict:
+def _execute(record: dict, check: dict, root: Path, owned: bool, *,
+             inputs: list[dict] | None = None,
+             env_key: bytes | None = None) -> dict:
     """Preparation, then the check, then the evidence. One slot at a time
     so two verifications do not fight over the machine."""
     home = _isolated_home(root)
@@ -1102,19 +1395,75 @@ def _execute(record: dict, check: dict, root: Path, owned: bool) -> dict:
     for directory in (home, tmp, log_path_of(record["id"]).parent):
         directory.mkdir(parents=True, exist_ok=True)
     env, removed = child_env(root, home, tmp, record["id"], check["name"])
+    inputs = list(inputs or [])
+    delivered = _deliver_inputs(inputs, tmp)
+    if check.get("inputs"):
+        env["BENCH_VERIFY_INPUTS"] = str(delivered)
+    bound_env = env_identity(env, list(check.get("env") or []), env_key)
     record["env"] = {
         "removed": removed, "home": str(home), "tmp": str(tmp),
+        "passed": bound_env["passed"], "declared": bound_env["declared"],
+        "keyId": bound_env["keyId"], "envId": bound_env["envId"],
         "why": ("publication credentials, the launch environment and this "
                 "board's own address are removed by name; HOME, TMPDIR and "
                 "the cache variables are pointed into a directory made for "
                 "this verification. Where writes are directed, not a boundary "
-                "they are held inside"),
+                "they are held inside. The names of every variable passed are "
+                "bound, and the values of declared ones by a keyed hash on "
+                "this machine; nothing else about the environment is"),
     }
+    record["inputs"] = inputs
     record["source"] = source_identity(root)
     # The bytes behind the argument list, read before the process starts:
     # a file replaced at the same path afterwards is a different program,
     # and `freshness` compares this to say so.
     record["program"] = program_identity(record["argv"], root, env.get("PATH"))
+    steps = [*(record.get("profilePrepare") or []), *check["prepare"]]
+    programs = [program_identity([s["executable"], *s["argv"]], root,
+                                 env.get("PATH")) for s in steps]
+    # the preparation as it was defined when this ran, so a later reading
+    # can name the step that moved and re-identify its program
+    record["prepareSteps"] = [
+        {"name": s.get("name"), "executable": s.get("executable"),
+         "argv": list(s.get("argv") or []), "network": bool(s.get("network")),
+         "required": bool(s.get("required", True))} for s in steps]
+    identity = {
+        "v": IDENTITY_VERSION,
+        "source": record["source"].get("sourceId")
+        if record["source"].get("bound") else None,
+        "check": record.get("checkSubstance"),
+        "coverage": coverage_id(record.get("scope"), record.get("scopeArgs") or []),
+        "program": record["program"].get("programId")
+        if record["program"].get("bound") else None,
+        "prepare": {"definition": prepare_definition(steps),
+                    "programs": [p.get("programId") if p.get("bound") else None
+                                 for p in programs]},
+        "inputs": inputs_id(inputs),
+        "rootClass": root_class(check["root"], root),
+        "env": bound_env["envId"],
+        "runner": RUNNER_REVISION,
+    }
+    record["identity"] = identity
+    record["resultId"] = result_id(identity)
+    # How the run came about, kept for ever and never an invalidator: the
+    # policy in force, the context the launch was pinned (whether or not
+    # this check declared it), who asked and where it ran.
+    record["provenance"] = {
+        "policyId": record.get("policyId"),
+        "policyRevision": record.get("policyRevision"),
+        "policySource": record.get("policySource"),
+        "contextIds": list(record.get("contextIds") or []),
+        "requestId": record.get("requestId"),
+        "reviewId": record.get("reviewId"),
+        "adapter": record.get("adapter"),
+        "intent": record.get("intent"),
+        "agent": record.get("agent"),
+        "actor": record.get("actor"),
+        "check": record.get("check"),
+        "rootPath": str(root),
+        "why": ("how this run came about. None of it decides whether the "
+                "result still holds — the result identity does"),
+    }
     _store(record)
 
     waited = time.time()
@@ -1132,7 +1481,8 @@ def _execute(record: dict, check: dict, root: Path, owned: bool) -> dict:
     try:
         with log_path_of(record["id"]).open("wb") as log:
             log.write(_log_header(record, check, root).encode("utf-8"))
-            outcome = _prepare(record, check, root, env, log)
+            outcome = _prepare(record, check, root, env, log,
+                               programs=programs)
             if outcome is None:
                 with state.LOCK:
                     record["outcome"] = "running"
@@ -1157,11 +1507,17 @@ def _log_header(record: dict, check: dict, root: Path) -> str:
         f"policy    {record.get('policyId')}\n"
         f"asked by  {record.get('agent') or record.get('actor')}\n"
         f"environment: {len(record['env']['removed'])} names removed; "
-        f"HOME={record['env']['home']}\n")
+        f"HOME={record['env']['home']}\n"
+        + (f"bound env: {', '.join(d['name'] for d in record['env'].get('declared') or [])}"
+           f" (values bound by a keyed hash, never written)\n"
+           if record["env"].get("declared") else "")
+        + (f"inputs    {', '.join(i['name'] + ' (' + i['status'] + ')' for i in record.get('inputs') or [])}"
+           f" in $BENCH_VERIFY_INPUTS\n" if record.get("inputs") else "")
+        + (f"result    {record.get('resultId')}\n" if record.get("resultId") else ""))
 
 
 def _prepare(record: dict, check: dict, root: Path, env: dict,
-             log) -> dict | None:
+             log, *, programs: list[dict] | None = None) -> dict | None:
     """Every declared preparation step, in order, before the check.
 
     Returns None when the check may go ahead. A **required** step that
@@ -1173,12 +1529,15 @@ def _prepare(record: dict, check: dict, root: Path, env: dict,
     steps = [*(record.get("profilePrepare") or []), *check["prepare"]]
     if not steps:
         return None
+    # identified before anything ran, when the result identity was taken
+    known = list(programs or [])
     with state.LOCK:
         record["outcome"] = "preparing"
     _store(record)
-    for step in steps:
+    for index, step in enumerate(steps):
         argv = [step["executable"], *step["argv"]]
-        program = program_identity(argv, root, env.get("PATH"))
+        program = known[index] if index < len(known) \
+            else program_identity(argv, root, env.get("PATH"))
         log.write(f"\nbench: preparing — {step['name']}".encode("utf-8"))
         if step["network"]:
             log.write(b" (declared as needing the network; bench enforces no "
@@ -1484,6 +1843,18 @@ def freshness(record: dict) -> dict:
                       "tracked or untracked files in the checkout have "
                       "changed since it ran, so it did not run against this "
                       "code")
+    if record.get("resultId"):
+        # A record with a result identity is judged by what it depends on
+        # and nothing else (design §4.1). The policy revision it was run
+        # under is provenance: reported, never a reason.
+        provenance = _identity_moved(record, moved, root)
+        return {"fresh": not changed, "changed": changed, "reasons": reasons,
+                "stale": bool(changed) and record.get("outcome") == "passed",
+                "rules": "identity", "provenance": provenance}
+    # — legacy: a record written before result identities existed. Read
+    # with the rules it was written under, unchanged and never upgraded,
+    # including `policy-changed` (design §14.3). —
+    #
     # The program and the runner: what was invoked, and the code that read
     # its exit status. Both fail closed — a record that names no identity
     # cannot say the program is unchanged, so it is not reused as a pass.
@@ -1563,7 +1934,213 @@ def freshness(record: dict) -> dict:
                       f"{'has' if len(gone) == 1 else 'have'} changed or gone "
                       f"since — it did not run with the inputs in force now")
     return {"fresh": not changed, "changed": changed, "reasons": reasons,
-            "stale": bool(changed) and record.get("outcome") == "passed"}
+            "stale": bool(changed) and record.get("outcome") == "passed",
+            "rules": "legacy"}
+
+
+def _current_definition(record: dict) -> tuple[dict | None, list[dict],
+                                                dict | None, str | None]:
+    """The check as the policy declares it *now*, the asking intent's own
+    preparation now, the resolution they came from, and why there is no
+    answer when there is none.
+
+    Read for identity, not for permission: a check a policy no longer
+    offers to this intent is still the same definition if the document
+    still declares it, and whether it may be *run* is `request`'s question,
+    asked afresh every time (design §4.3)."""
+    intent = record.get("intent") or "work"
+    task = record.get("task") or ""
+    where = record.get("root") or {}
+    try:
+        current = profiles.resolve(
+            intent,
+            worktree=(config.WORKTREES / task[:-3])
+            if task.endswith(".md") and intent != "review" else None,
+            review=(where.get("path") if where.get("policy") == "review"
+                    else None))
+    except ValueError as exc:
+        return None, [], None, (f"the policy cannot be resolved now ({exc}), "
+                                f"so the check's definition cannot be shown "
+                                f"unchanged")
+    name = record.get("check")
+    check = next((c for c in current.get("verify") or []
+                  if c.get("name") == name), None)
+    if check is None:
+        doc = profiles.document()
+        steps, _ = profiles.document_steps(doc)
+        declared, _ = profiles.document_checks(doc, steps)
+        check = declared.get(name)
+    if check is None:
+        return None, [], current, (
+            f"the check '{name}' is no longer declared by the policy as it "
+            f"reads now, so what it would run cannot be shown to be what ran")
+    return check, list(current.get("prepare") or []), current, None
+
+
+def _env_now(record: dict) -> dict:
+    """The environment a check like this one would be given now — built by
+    the same function that built it, with placeholder paths, and nothing
+    made on disk. Only names, and the values of declared variables, are
+    ever compared."""
+    where = Path((record.get("root") or {}).get("path") or ".")
+    env, _ = child_env(where, Path("/nonexistent"), Path("/nonexistent"),
+                       str(record.get("id") or ""), str(record.get("check") or ""))
+    if record.get("inputs"):
+        env["BENCH_VERIFY_INPUTS"] = "/nonexistent"
+    return env
+
+
+def _identity_moved(record: dict, moved, root: Path) -> dict:
+    """Every dimension of a record's result identity, compared with what
+    it would be now — each that moved said by its own slug, naming the
+    input, the variable, the step or the scope. Returns the provenance
+    reading, which is reported and never a reason.
+
+    Fails closed throughout: a dimension that cannot be re-read is a
+    dimension that cannot be shown to hold."""
+    identity = record.get("identity")
+    if (not isinstance(identity, dict)
+            or any(d not in identity for d in IDENTITY_DIMENSIONS)
+            or result_id(identity) != record.get("resultId")):
+        moved("identity-unknown",
+              "this record's result identity is incomplete or does not match "
+              "its own digest, so it cannot be shown to hold — "
+              + STALE_REMEDIES["identity-unknown"])
+        return {"policyRevision": record.get("policyRevision"),
+                "policyChanged": None}
+    name = record.get("check")
+    if identity.get("runner") != RUNNER_REVISION or \
+            (record.get("runner") or {}).get("revision") != identity.get("runner"):
+        moved("runner-changed", "bench's own runner has changed since this "
+                                "ran — " + STALE_REMEDIES["runner-changed"])
+
+    check, intent_prepare, current, why = _current_definition(record)
+    frozen_policy = record.get("policyRevision")
+    provenance = {
+        "policyRevision": frozen_policy,
+        "policyNow": (current or {}).get("revision"),
+        "policyChanged": bool(current and frozen_policy
+                              and current.get("revision") != frozen_policy),
+        "contextIds": list(record.get("contextIds") or []),
+    }
+    if provenance["policyChanged"]:
+        provenance["note"] = (
+            "the execution policy has changed since this ran. That is "
+            "provenance, not a reason: nothing this check declares it depends "
+            "on moved with it, so the result still holds")
+
+    if check is None:
+        moved("check-changed", f"{why} — {STALE_REMEDIES['check-changed']}")
+    else:
+        if check.get("checkSubstance") != identity.get("check"):
+            moved("check-changed",
+                  f"'{name}''s command, root, time limit, declared inputs or "
+                  f"declared environment changed since it ran — "
+                  f"{STALE_REMEDIES['check-changed']}")
+        scope = record.get("scope")
+        if scope:
+            args = (check.get("scopes") or {}).get(scope)
+            if args is None:
+                moved("scope-changed",
+                      f"the scope '{scope}' is no longer declared on "
+                      f"'{name}' — {STALE_REMEDIES['scope-changed']}")
+            elif coverage_id(scope, list(args)) != identity.get("coverage"):
+                moved("scope-changed",
+                      f"the scope '{scope}' now runs different arguments — "
+                      f"{STALE_REMEDIES['scope-changed']}")
+        steps_now = [*intent_prepare, *(check.get("prepare") or [])]
+        if prepare_definition(steps_now) != \
+                (identity.get("prepare") or {}).get("definition"):
+            was = [s.get("name") for s in record.get("prepareSteps") or []]
+            now = [s.get("name") for s in steps_now]
+            named = sorted(set(was) ^ set(now)) or now or was
+            moved("prepare-changed",
+                  f"the preparation {', '.join(repr(n) for n in named)} "
+                  f"changed since it passed — what it runs, its network use "
+                  f"or whether it is required — "
+                  f"{STALE_REMEDIES['prepare-changed']}")
+
+    search = _search_path()
+    frozen_program = identity.get("program")
+    now_program = program_identity(list(record.get("argv") or []), root,
+                                   search)
+    if not frozen_program or \
+            (record.get("program") or {}).get("programId") != frozen_program:
+        moved("program-changed",
+              "the record names no program identity, so the executable this "
+              "check ran cannot be shown to be unchanged — "
+              + STALE_REMEDIES["program-changed"])
+    elif now_program.get("programId") != frozen_program:
+        moved("program-changed",
+              f"the check's executable {(record.get('argv') or ['?'])[0]}, "
+              f"its interpreter or a file it was handed changed since it ran "
+              f"— {STALE_REMEDIES['program-changed']}")
+    frozen_steps = record.get("prepareSteps") or []
+    frozen_programs = (identity.get("prepare") or {}).get("programs") or []
+    for index, step in enumerate(frozen_steps):
+        was = frozen_programs[index] if index < len(frozen_programs) else None
+        argv = [step.get("executable"), *(step.get("argv") or [])]
+        now = program_identity([a for a in argv if a], root, search)
+        if not was or now.get("programId") != was:
+            moved("program-changed",
+                  f"the preparation step '{step.get('name')}' runs a program "
+                  f"that has changed, or was never identified, since it ran — "
+                  f"{STALE_REMEDIES['program-changed']}")
+            break
+
+    for item in record.get("inputs") or []:
+        now = profiles.check_input(item)
+        then = item.get("contextId")
+        here = now.get("contextId") if now.get("status") == "resolved" else None
+        if here == then:
+            continue
+        if then and not here:
+            what = "is no longer there to be read"
+        elif here and not then:
+            what = "is there now, and was absent when it ran"
+        else:
+            what = "changed since it passed"
+        moved("input-changed", f"the input '{item.get('name')}' {what} — "
+                               f"{STALE_REMEDIES['input-changed']}")
+
+    env_then = record.get("env") or {}
+    declared = [d.get("name") for d in env_then.get("declared") or []]
+    key = _env_key(create=False) if declared else None
+    env_now = _env_now(record)
+    if declared and key is None:
+        moved("env-changed",
+              "the machine-local key that bound its declared environment "
+              f"({', '.join(declared)}) is gone or unusable, so the values "
+              "cannot be shown to be the same — "
+              + STALE_REMEDIES["env-changed"])
+    elif declared and _key_id(key) != env_then.get("keyId"):
+        moved("env-changed",
+              "the machine-local key that bound its declared environment has "
+              "been replaced since it ran, so the values cannot be compared — "
+              + STALE_REMEDIES["env-changed"])
+    else:
+        bound = env_identity(env_now, declared, key)
+        if bound["envId"] != identity.get("env"):
+            added = sorted(set(bound["passed"]) - set(env_then.get("passed") or []))
+            gone = sorted(set(env_then.get("passed") or []) - set(bound["passed"]))
+            values = [b["name"] for b, a in zip(bound["declared"],
+                                                env_then.get("declared") or [])
+                      if b.get("hmac") != a.get("hmac")]
+            if values:
+                what = (f"the environment variable"
+                        f"{'' if len(values) == 1 else 's'} "
+                        f"{', '.join(values)} changed since it passed")
+            elif added or gone:
+                what = ("the set of environment variables a check is given "
+                        "changed since it ran ("
+                        + "; ".join(p for p in (
+                            f"now also {', '.join(added)}" if added else "",
+                            f"no longer {', '.join(gone)}" if gone else "")
+                            if p) + ")")
+            else:
+                what = "the environment the check is given changed since it ran"
+            moved("env-changed", f"{what} — {STALE_REMEDIES['env-changed']}")
+    return provenance
 
 
 def outcome_now(record: dict) -> dict:
@@ -1597,6 +2174,41 @@ def outcome_now(record: dict) -> dict:
     return found
 
 
+_DRIFT: dict[str, tuple[float, dict]] = {}
+
+
+def identity_drift(record: dict) -> dict | None:
+    """Which dimensions of a record's *definition* — everything in its
+    result identity but the source — have moved since it ran: the check,
+    its coverage, programs, preparation, inputs, environment or runner.
+
+    None for a legacy record, which has no identity to compare. The gate
+    reads this to tell a record about this commit under the check as it is
+    now (`current`) from one under a definition that has since changed
+    (`outdated`, design §6.1 step 4), whatever its outcome — a failure
+    under an old command is not today's failure. Memoised as `outcome_now`
+    is, and for the same reason."""
+    if not record or not record.get("resultId"):
+        return None
+    if record.get("outcome") == "passed":
+        fresh = outcome_now(record)["freshness"]
+    else:
+        key = record.get("id") or ""
+        cached = _DRIFT.get(key)
+        if cached and time.time() - cached[0] < _FRESH_TTL:
+            fresh = cached[1]
+        else:
+            fresh = freshness(record)
+            if key:
+                if len(_DRIFT) > 500:
+                    _DRIFT.clear()
+                _DRIFT[key] = (time.time(), fresh)
+    pairs = [(r, c) for r, c in zip(fresh.get("reasons") or [],
+                                    fresh.get("changed") or [])
+             if r not in SOURCE_REASONS]
+    return {"reasons": [r for r, _ in pairs], "changed": [c for _, c in pairs]}
+
+
 def _outcome_now(record: dict) -> dict:
     fresh = freshness(record)
     if fresh["stale"]:
@@ -1623,6 +2235,10 @@ PUBLIC = ("v", "id", "runner", "task", "stage", "agent", "actor", "intent",
           "reason", "why", "rc", "started", "ended", "duration", "timeout",
           "checkId", "checkRevision", "required", "help", "queued",
           "duplicate", "program",
+          # the result identity and its provenance (design §4.1); absent
+          # on a legacy record, which is how a reader tells the two apart
+          "resultId", "identity", "checkSubstance", "provenance", "inputs",
+          "prepareSteps",
           # present only on a diagnosis's own record: which doctor fixture
           # it ran at. A reader must be able to tell a doctor's run from a
           # card's, and an absent key is a card's.
@@ -1637,6 +2253,13 @@ def public(record: dict | None) -> dict | None:
     if not record:
         return None
     out = {key: record[key] for key in PUBLIC if key in record}
+    if isinstance(out.get("env"), dict) and out["env"].get("declared"):
+        # A declared variable's keyed hash proves sameness to this board
+        # and is no use to anyone reading the page: names and whether each
+        # was set travel, the hash does not.
+        out["env"] = {**out["env"], "declared": [
+            {"name": d.get("name"), "set": d.get("set")}
+            for d in out["env"]["declared"]]}
     out["live"] = record.get("outcome") in LIVE
     return out
 
@@ -1807,6 +2430,7 @@ def forget_cached() -> None:
     changes a root under the board's feet, needs the door."""
     global _BOARD, _OFFERED
     _FRESH.clear()
+    _DRIFT.clear()
     _BOARD = None
     _OFFERED = None
 

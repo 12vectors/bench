@@ -513,13 +513,11 @@ class EndToEndInADisposableRepository(ReadinessCase):
                         "revision": plan["revision"]})
         gates.forget_cached()
         verify.forget_cached()
-        # the policy changed, so the earlier pass no longer speaks for it
+        # the policy changed, and nothing `unit` depends on did: the pass
+        # carries a result identity (#97), so it still speaks for this
+        # head — activation is provenance, not a reason to run again
         found = gates.evaluate(CARD, "acceptance")
-        self.assertEqual("blocked", found["decision"])
-        # a stale pass supersedes nothing, so the reading falls to the
-        # earlier controlled failure — unmet either way, never a pass
-        self.assertIn(found["unmet"][0]["reason"], ("stale", "failed"),
-                      found["summary"])
+        self.assertEqual("allowed", found["decision"], found["summary"])
         self.manifest()
         self.assertEqual("passed", self.ask()["outcome"])
         gates.forget_cached()
