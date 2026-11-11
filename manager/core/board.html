@@ -1200,6 +1200,7 @@
   .sheet .sbtns{display:flex;flex-direction:column;gap:6px;margin-top:2px}
   .sheet .sbtns button{text-align:left;padding:10px 12px;font-size:13px}
   .sheet .sbtns button small{display:block;font-size:11.5px;color:var(--dim);margin-top:2px}
+  .sheet .sbtns button:disabled{cursor:not-allowed;opacity:.75}
   .sheet .sbtns button.shipit{background:var(--calm);border-color:var(--calm);color:var(--on-calm);font-weight:500}
   .sheet .sbtns button.shipit small{color:color-mix(in oklab, var(--on-calm) 75%, transparent)}
   .sheet .sbtns button.shipit:hover{border-color:var(--calm);color:var(--on-calm);filter:brightness(1.06)}
@@ -3358,8 +3359,16 @@ async function gateSheet(task) {
   const scopes = data.scopes || [];
   const policy = data.policy || {};
   const blocked = scopes.filter(s => s.decision === 'blocked');
-  const first = blocked[0] || scopes[0] || null;
-  const canOverride = !!(policy.overrides || {}).allowed && blocked.length;
+  // Whether an override can be recorded is the server's answer
+  // (`overrides.eligible`, from the function the override route refuses
+  // with) — never worked out here. A blocked scope with no implementation
+  // commit, for one, is not overridable, and the sheet says why.
+  const eligible = blocked.filter(s => (s.overrides || {}).eligible);
+  const first = eligible[0] || blocked[0] || scopes[0] || null;
+  const canOverride = eligible.length > 0;
+  const refusal = !canOverride && blocked.length &&
+    (policy.overrides || {}).allowed
+    ? ((first.overrides || {}).ineligible || {}) : null;
 
   const verdicts = (data.verdicts || []).slice(0, 4).map(v =>
     `<div class="check-row ${v.verdict === 'APPROVE' ? 'pass' : 'fail'}">` +
@@ -3452,12 +3461,17 @@ async function gateSheet(task) {
         `${esc(String((first.head || {}).commit || '').slice(0, 12))}. It ` +
         `forges no evidence, makes no gate met, and authorises this commit ` +
         `only — the next one is a different question.</small></button>`
-      : '') +
+      : refusal
+        ? `<button id="sh-override" disabled aria-describedby="sh-override-why">` +
+          `Override<small id="sh-override-why">Not available: ` +
+          `${esc(refusal.why || 'this gate cannot be overridden here')}` +
+          `</small></button>`
+        : '') +
     `<button id="sh-nogate">Close<small>Nothing was run.</small></button>` +
     `</div></div>`;
   $('#sh-nogate').addEventListener('click', closeSheet);
   const btn = $('#sh-override');
-  if (btn) {
+  if (btn && canOverride) {
     wireAction(btn, `${task.file}::override`, {
       label: 'Override', confirm: 'record the override?', busy: 'recording…',
       run: async () => {

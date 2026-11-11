@@ -126,11 +126,18 @@ def gates_payload(name: str, stage: str) -> dict:
     elif not (task or {}).get("phase"):
         scopes = ["acceptance"]
     policy = profiles.gate_policy()
+    actor = taskfiles.actor_name() or ""
+    shown = []
+    for scope in scopes:
+        decision = gates.evaluate(name, scope, task=task, policy=policy)
+        # Whether *this board's identity* could record an override here,
+        # from the function the override route refuses with — the sheet
+        # draws this answer and never works one out for itself.
+        decision["overrides"].update(gates.eligibility(decision, actor=actor))
+        shown.append(gates.public(decision))
     return {
         "task": name, "stage": stage,
-        "scopes": [gates.public(gates.evaluate(name, scope, task=task,
-                                               policy=policy))
-                   for scope in scopes],
+        "scopes": shown,
         "policy": profiles.gate_policy_public(policy),
         "verdicts": gates.verdicts_for(name),
         "github": gates.github_reviews(name),
@@ -140,7 +147,7 @@ def gates_payload(name: str, stage: str) -> dict:
         # Who this board would record an override against. Sent so the
         # confirmation can name them rather than asking a person to trust
         # that something sensible will be written down.
-        "actor": taskfiles.actor_name(),
+        "actor": actor or None,
         "location": "local",
     }
 
@@ -883,12 +890,24 @@ class Handler(BaseHTTPRequestHandler):
                 # person is not a field a browser fills in. The head the
                 # confirmation was shown is sent back with it, so a sheet
                 # that has gone stale is refused rather than authorising
-                # a commit nobody looked at.
+                # a commit nobody looked at. A request naming no head is
+                # refused outright: without one, a direct call could
+                # authorise whatever the branch happens to hold by the time
+                # it lands, which is the stale-page case with the check
+                # removed.
+                seen = str(payload.get("head") or "").strip()
+                if not seen:
+                    self._json(400, {"error": (
+                        "an override names the commit it was confirmed for, "
+                        "and this request names none — there is no "
+                        "implementation commit to override at, so nothing "
+                        "was recorded. Read the gate again.")})
+                    return
                 result = gates.override(
                     payload["file"], payload["scope"],
                     actor=taskfiles.actor_name() or "",
                     reason=str(payload.get("reason") or ""),
-                    head=str(payload.get("head") or "") or None)
+                    head=seen)
                 self._json(200, {
                     "override": result["override"],
                     "duplicate": result["duplicate"],

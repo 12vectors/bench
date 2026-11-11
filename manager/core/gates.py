@@ -913,7 +913,22 @@ def evaluate(filename: str, scope: str, *, task: dict | None = None,
     one — a decision made from a hoisted read is the decision the
     mutation makes, which is why `board()` may share them and why the
     guarded paths deliberately do not.
+
+    The reading carries whether an override could be recorded against it
+    (`overrides.eligible`, and `overrides.ineligible` saying why not),
+    from the same function `override()` refuses with — so the page never
+    computes that answer for itself.
     """
+    found = _evaluate(filename, scope, task=task, tips=tips, policy=policy,
+                      records=records)
+    found["overrides"].update(eligibility(found))
+    return found
+
+
+def _evaluate(filename: str, scope: str, *, task: dict | None = None,
+              tips: dict[str, str] | None = None,
+              policy: dict | None = None,
+              records: list[dict] | None = None) -> dict:
     if scope not in profiles.GATE_SCOPES:
         raise ValueError(f"unknown gate scope '{scope}' — one of "
                          f"{', '.join(sorted(profiles.GATE_SCOPES))}")
@@ -931,6 +946,7 @@ def evaluate(filename: str, scope: str, *, task: dict | None = None,
         "overrides": {"allowed": policy["overrides"]["allowed"],
                       "why": policy["overrides"]["why"],
                       "actors": list(policy["overrides"]["actors"]),
+                      "scopePolicy": scope_policy_id(policy, scope),
                       "applied": None},
         "blockers": list(policy["blockers"]),
         "diagnostics": list(policy["diagnostics"]),
@@ -977,7 +993,8 @@ def evaluate(filename: str, scope: str, *, task: dict | None = None,
     # requirement holds the mutation even under an override. Letting it
     # through would be the override widening itself, which is the one
     # thing this record exists to stop.
-    applied = _override_in_force(filename, scope, head, unmet) \
+    applied = _override_in_force(filename, scope, head, unmet,
+                                 found["overrides"]["scopePolicy"]) \
         if not pending else None
     if applied is not None and unmet:
         for row in rows:
@@ -1067,17 +1084,44 @@ def require(decision: dict, doing: str = "this") -> dict:
 # ── overrides: explicit, bound, and never a pass ───────────────────────
 
 
+def scope_policy_id(policy: dict, scope: str) -> str:
+    """The part of the gate policy an override of `scope` is about: what
+    that scope requires (each check's definition and coverage, and its
+    review policy) and the override path itself (allowed, and by whom).
+
+    Narrower than the policy revision on purpose. An unrelated edit — a
+    context selection, another scope's checks — is not a decision about
+    this gate, and an override is not withdrawn by one. A change to what
+    this gate requires, or to who may proceed over it, is: the person who
+    overrode it decided about the rule as it stood.
+    """
+    entry = policy["scopes"].get(scope) or {}
+    over = policy.get("overrides") or {}
+    return "gscope:" + _digest(
+        scope,
+        json.dumps([[c.get("revision"), c.get("gateScope")]
+                    for c in entry.get("checks") or []]),
+        str(entry.get("review") or "none"),
+        json.dumps({"allowed": bool(over.get("allowed")),
+                    "actors": sorted(over.get("actors") or [])}),
+    )[:16]
+
+
 def _override_in_force(filename: str, scope: str, head: dict,
-                       unmet: list[dict]) -> dict | None:
+                       unmet: list[dict],
+                       scope_policy: str | None = None) -> dict | None:
     """The override that covers *this* head and *these* gates, or None.
 
-    Three conditions, and each exists because of a way an override could
+    Four conditions, and each exists because of a way an override could
     otherwise widen itself: the scope must match (an override of a
     member's merge is not an override of the phase's acceptance), the head
     must match exactly (an override authorises one commit, and the next
-    one is a different question), and every currently-unmet gate must be
+    one is a different question), every currently-unmet gate must be
     named in it (a gate that became unmet afterwards was never
-    authorised).
+    authorised), and what this scope requires must be what it required
+    when the override was recorded. A record written before that last
+    binding existed carries no `scopePolicy` and keeps the meaning it was
+    recorded with.
     """
     if not unmet:
         return None
@@ -1088,9 +1132,82 @@ def _override_in_force(filename: str, scope: str, head: dict,
     for record in overrides_for(filename):
         if record.get("scope") != scope or record.get("head") != commit:
             continue
+        bound = record.get("scopePolicy")
+        if bound and scope_policy and bound != scope_policy:
+            continue
         if wanted <= set(record.get("gates") or []):
             return record
     return None
+
+
+# Why an override cannot be recorded against a reading, by code. The
+# page draws `why`; `override()` raises the same sentence (or, where the
+# person has just tried, one that says nothing was recorded).
+INELIGIBLE = {
+    "not-allowed": "this board's gate policy does not enable overrides",
+    "actor-not-named": "the policy restricts overrides to named identities",
+    "no-actor": "there is no git identity to record the override against",
+    "in-force": "an override is already in force for this commit",
+    "nothing-unmet": "nothing is unmet, so there is nothing to override",
+    "no-target": "there is no implementation commit to override at",
+}
+
+
+def eligibility(decision: dict, actor: str | None = None) -> dict:
+    """Could an override be recorded against this reading? The one answer
+    the dialog and `override()` both read.
+
+    `actor` is checked only when given: a reading the page shows is
+    actor-agnostic, and `gates_payload` asks again naming this board's
+    identity. A reason is not part of eligibility — it is what the person
+    types into the confirmation, and its absence is refused there.
+    """
+    over = decision["overrides"]
+    head = decision.get("head") or {}
+    commit = head.get("commit")
+    ref = head.get("ref") or "the card's branch"
+
+    def no(code: str, why: str) -> dict:
+        return {"eligible": False, "ineligible": {"code": code, "why": why}}
+
+    if not over["allowed"]:
+        return no("not-allowed",
+                  f"this board does not allow overriding a gate: "
+                  f"{over['why']}. Add \"overrides\": {{\"allow\": true}} to "
+                  f"the document's \"gates\" block if an authorised "
+                  f"proceed-anyway is something this project wants.")
+    if actor is not None:
+        who = str(actor).strip()
+        allowed = over["actors"]
+        if allowed and who not in allowed:
+            return no("actor-not-named",
+                      f"{who or 'an unnamed actor'} is not one of the "
+                      f"identities this board's gate policy allows to "
+                      f"override ({', '.join(allowed)}) — nothing was "
+                      f"recorded.")
+        if not who:
+            return no("no-actor",
+                      "an override is recorded against a person, and this "
+                      "checkout has no git identity to record — set git "
+                      "config user.name, or do not override.")
+    if decision["decision"] == "overridden":
+        applied = over.get("applied") or {}
+        return no("in-force",
+                  f"an override by {applied.get('actor') or 'someone'} is "
+                  f"already in force for {_short(commit)} — the gate is "
+                  f"still unmet, and nothing more needs recording.")
+    if not decision.get("unmet"):
+        return no("nothing-unmet",
+                  f"there is nothing to override on {decision['task']}: its "
+                  f"{decision['scope']} gate reads {decision['decision']} — "
+                  f"{decision.get('summary', '')}")
+    if not commit:
+        return no("no-target",
+                  f"there is no implementation commit to override at: "
+                  f"{ref} has no commit on this board. An override "
+                  f"authorises exactly one commit, so there must be one — "
+                  f"commit the work first.")
+    return {"eligible": True, "ineligible": None}
 
 
 def overrides_for(filename: str) -> list[dict]:
@@ -1112,49 +1229,47 @@ def override(filename: str, scope: str, *, actor: str, reason: str,
     passed, no verdict appears, and the decision afterwards reads
     `overridden`, never `allowed`.
 
-    It refuses four things rather than recording a weaker version of them:
+    It refuses five things rather than recording a weaker version of them:
     an override on a board whose policy does not enable one, an actor the
-    policy does not name, an override of a gate that is not unmet, and an
-    override of a head other than the one the caller is looking at — which
-    is how a person confirming a sheet that has gone stale is caught.
+    policy does not name, an override of a gate that is not unmet, an
+    override with no implementation commit to bind it to, and an override
+    of a head other than the one the caller is looking at — which is how a
+    person confirming a sheet that has gone stale is caught. Every refusal
+    is raised before anything is written; `eligibility()` is the same
+    reading the page draws.
     """
     who = str(actor or "").strip()
     text = " ".join(str(reason or "").split())
     decision = evaluate(filename, scope, task=task)
-    if not decision["overrides"]["allowed"]:
-        raise ValueError(
-            f"this board does not allow overriding a gate: "
-            f"{decision['overrides']['why']}. Add \"overrides\": "
-            f"{{\"allow\": true}} to the document's \"gates\" block if an "
-            f"authorised proceed-anyway is something this project wants.")
-    allowed = decision["overrides"]["actors"]
-    if allowed and who not in allowed:
-        raise ValueError(
-            f"{who or 'an unnamed actor'} is not one of the identities this "
-            f"board's gate policy allows to override "
-            f"({', '.join(allowed)}) — nothing was recorded.")
-    if not who:
-        raise ValueError(
-            "an override is recorded against a person, and this checkout has "
-            "no git identity to record — set git config user.name, or do not "
-            "override.")
+    verdict = eligibility(decision, actor=who)["ineligible"]
+    code = (verdict or {}).get("code")
+    if code in ("not-allowed", "actor-not-named", "no-actor"):
+        raise ValueError(verdict["why"])
     if len(text) < 8:
         raise ValueError(
             "an override needs a reason somebody can read later: it is the "
             "only thing in the record that says why an unmet gate was "
             "proceeded over.")
-    if decision["decision"] == "overridden":
+    if code == "in-force":
         # Already in force for this head and these gates. Returned rather
         # than appended: a second click, a replayed request and a board
         # that restarted mid-confirmation must not produce two records of
         # one decision.
         return {"override": decision["overrides"]["applied"],
                 "decision": decision, "duplicate": True}
-    if not decision["unmet"]:
-        raise ValueError(
-            f"there is nothing to override on {filename}: its {scope} gate "
-            f"reads {decision['decision']} — {decision['summary']}")
+    if code == "nothing-unmet":
+        raise ValueError(verdict["why"])
     commit = decision["head"].get("commit")
+    if code == "no-target" or not commit:
+        # An override authorises one commit. With none — no branch, or a
+        # ref application git cannot read — a record would name `null`,
+        # could never apply, and would sit in the history looking like a
+        # decision somebody made about real work.
+        raise ValueError(
+            f"there is no implementation commit to override at, so nothing "
+            f"was recorded: {decision['head'].get('ref') or 'the branch'} "
+            f"has no commit on this board. Commit the work first, then read "
+            f"the gate again.")
     if head and head != commit:
         raise ValueError(
             f"the head moved while you were looking: you confirmed an "
@@ -1173,6 +1288,7 @@ def override(filename: str, scope: str, *, actor: str, reason: str,
                   for row in decision["unmet"]],
         "policyId": decision["policyId"],
         "policyRevision": decision["policyRevision"],
+        "scopePolicy": decision["overrides"]["scopePolicy"],
         "recorded": time.time(),
     }
     path = _path(filename, "overrides")
@@ -1180,6 +1296,7 @@ def override(filename: str, scope: str, *, actor: str, reason: str,
         found = _read_json(path, [])
         if any(r.get("scope") == scope and r.get("head") == commit
                and set(r.get("gates") or []) == set(gates)
+               and r.get("scopePolicy") in (None, record["scopePolicy"])
                for r in found if isinstance(r, dict)):
             _bump()
             return {"override": record, "decision": evaluate(filename, scope),
