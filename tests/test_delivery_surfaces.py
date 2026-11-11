@@ -161,6 +161,127 @@ class TheSurfacesAgree(matrix.TheCopyMatrix):
             self.assertTrue(chip["face"], "the review step's requirements left the face")
 
 
+FULL_HARNESS = """
+const S = { state: { delivery: {} }, dfull: {} };
+let now = 1000;
+Date.now = () => now;
+const timers = [];
+globalThis.setTimeout = (fn, ms) => { timers.push({ fn, at: now + ms }); return timers.length; };
+const asked = [];
+const answers = [];
+globalThis.fetch = (url) => {
+  asked.push(url);
+  return new Promise((resolve, reject) => answers.push({ resolve, reject }));
+};
+const reply = (i, status, body) => answers[i].resolve({
+  ok: status === 200, json: () => Promise.resolve(body) });
+const tick = () => new Promise(r => setImmediate(r));
+const task = { file: 'c.md', stage: 'review', mtime: 1 };
+const compact = (detail) => ({ status: { word: 'ready-to-merge' }, counts: { required: 1, met: 1 },
+  candidate: { state: 'present', commit: 'abc' }, classes: ['met'], detail });
+const rows = (name) => ({ detail: name, requirements: [{ kind: 'check', name }] });
+let repaints = 0;
+const done = () => { repaints++; };
+"""
+
+FULL_FUNCS = "\n".join([
+    const("DFULL_RETRY_MS"), "let dfullSeq = 0;",
+    "function deliveryOf(task) { return (S.state.delivery || {})[task.file] || null; }",
+    lift("deliveryFullKey"), lift("storeDeliveryFull"), lift("loadDeliveryFull"),
+])
+
+
+@unittest.skipUnless(NODE, "node not available — the page's functions are unchecked")
+class TheFullReadingFollowsTheServer(unittest.TestCase):
+    """The supervisor's finding at 4618dd5: the Overview's requirement rows
+    were cached by a key holding only the summary, so a rule moved from
+    one check to another with the same totals kept the old rows for good.
+    These drive the page's own `loadDeliveryFull` with a fetch the test
+    answers, in the order the test chooses."""
+
+    def run_js(self, body: str) -> dict:
+        script = FULL_HARNESS + FULL_FUNCS + "\n(async () => {\n" + body + \
+            "\n})().catch(e => { console.error(e.stack); process.exit(1); });"
+        out = subprocess.run([NODE, "-e", script], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)
+
+    def test_a_rule_replaced_with_the_same_summary_is_read_again(self):
+        found = self.run_js("""
+          S.state.delivery['c.md'] = compact('d-old');
+          loadDeliveryFull(task, done);
+          reply(0, 200, { delivery: rows('old-unit') }); await tick(); await tick();
+          const first = loadDeliveryFull(task, done);
+          // the rule moves to another check; word, counts, classes unchanged
+          S.state.delivery['c.md'] = compact('d-new');
+          const during = loadDeliveryFull(task, done);
+          reply(1, 200, { delivery: rows('new-unit') }); await tick(); await tick();
+          const after = loadDeliveryFull(task, done);
+          console.log(JSON.stringify({ asked: asked.length, first: first.detail,
+            during: during.detail, after: after.detail, repaints }));
+        """)
+        self.assertEqual(found["first"], "old-unit")
+        self.assertEqual(found["during"], "old-unit",
+                         "the last rows stay drawn while the new ones are asked for")
+        self.assertEqual(found["after"], "new-unit")
+        self.assertEqual(found["asked"], 2)
+
+    def test_an_unchanged_reading_is_not_asked_again(self):
+        found = self.run_js("""
+          S.state.delivery['c.md'] = compact('d');
+          loadDeliveryFull(task, done);
+          reply(0, 200, { delivery: rows('unit') }); await tick(); await tick();
+          for (let i = 0; i < 5; i++) loadDeliveryFull(task, done);
+          console.log(JSON.stringify({ asked: asked.length }));
+        """)
+        self.assertEqual(found["asked"], 1)
+
+    def test_an_older_reply_landing_last_never_overwrites_a_newer_one(self):
+        found = self.run_js("""
+          S.state.delivery['c.md'] = compact('d-1');
+          loadDeliveryFull(task, done);
+          S.state.delivery['c.md'] = compact('d-2');
+          loadDeliveryFull(task, done);
+          reply(1, 200, { delivery: rows('second') }); await tick(); await tick();
+          reply(0, 200, { delivery: rows('first') }); await tick(); await tick();
+          const held = loadDeliveryFull(task, done);
+          console.log(JSON.stringify({ asked: asked.length, held: held.detail, repaints }));
+        """)
+        self.assertEqual(found["asked"], 2)
+        self.assertEqual(found["held"], "second")
+        self.assertEqual(found["repaints"], 1, "a dropped reply repaints nothing")
+
+    def test_a_failed_read_says_so_keeps_the_last_rows_and_retries_after_a_wait(self):
+        found = self.run_js("""
+          S.state.delivery['c.md'] = compact('d-1');
+          loadDeliveryFull(task, done);
+          reply(0, 200, { delivery: rows('kept') }); await tick(); await tick();
+          S.state.delivery['c.md'] = compact('d-2');
+          loadDeliveryFull(task, done);
+          reply(1, 500, { error: 'boom' }); await tick(); await tick();
+          const failed = { ...S.dfull['c.md'] };
+          for (let i = 0; i < 3; i++) loadDeliveryFull(task, done);
+          const beforeWait = asked.length;
+          now += DFULL_RETRY_MS + 1;
+          const retryTimer = timers.length > 0;
+          loadDeliveryFull(task, done);
+          reply(2, 200, { delivery: rows('fresh') }); await tick(); await tick();
+          console.log(JSON.stringify({ error: failed.error, kept: failed.data.detail,
+            beforeWait, retryTimer, after: asked.length,
+            now: S.dfull['c.md'].data.detail, cleared: S.dfull['c.md'].error }));
+        """)
+        self.assertEqual(found["error"], "boom")
+        self.assertEqual(found["kept"], "kept", "the last rows are kept, marked")
+        self.assertEqual(found["beforeWait"], 2, "an error is not re-asked on every repaint")
+        self.assertTrue(found["retryTimer"], "a repaint is scheduled for the retry")
+        self.assertEqual(found["after"], 3)
+        self.assertEqual(found["now"], "fresh")
+        self.assertIsNone(found["cleared"])
+
+    def test_the_requirements_section_says_when_its_rows_could_not_be_read(self):
+        self.assertIn("The requirement rows could not be read", lift("requirementsHtml"))
+
+
 FACE = set(re.findall(r"'([a-z-]+)'", re.search(
     r"const FACE_WORDS = new Set\(\[(.*?)\]\);", HTML, re.S).group(1)))
 

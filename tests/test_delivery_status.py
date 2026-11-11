@@ -689,6 +689,88 @@ class TheCompactReadingCarriesWhatEverySurfaceDraws(DeliveryCase):
         self.assertEqual(found["classes"], ["needed"],
                          "a requirement that lies ahead is needed, never a problem")
 
+    # — the rows' identity: what the page keys its full reading by —
+
+    def compact(self) -> dict:
+        delivery.forget_cached()
+        task = delivery._find(CARD, None)
+        return delivery.board({"stages": [{"tasks": [task]}]})[CARD]
+
+    def summary(self, found: dict) -> tuple:
+        return (found["status"], found["counts"], found["classes"],
+                found["candidate"], found["history"])
+
+    def two_checks(self, required: list[str]) -> dict:
+        document = self.gated()
+        document["checks"].append({"name": "lint",
+                                   "run": str(self.executable("lint", PASSES)),
+                                   "root": "worktree"})
+        for intent in document["profiles"].values():
+            intent["verify"] = ["unit", "lint"]
+        document["gates"]["acceptance"]["checks"] = required
+        self.declares(document)
+        return document
+
+    def test_compact_and_full_carry_one_detail_identity(self):
+        self.passed_at_head(body=FAILS)
+        self.place("review", pr=PR_URL)
+        self.assertTrue(self.compact()["detail"])
+        self.assertEqual(self.compact()["detail"], self.read()["detail"])
+
+    def test_a_rule_replaced_with_the_same_totals_is_a_new_detail(self):
+        """The supervisor's finding: the approved rule moves from one
+        check to another, while the word, the counts, the classes and the
+        candidate stay exactly as they were. The rows changed, so the
+        identity the page keys them by must change with them."""
+        wt = self.worktree()
+        self.two_checks(["unit"])
+        self.commit_in(wt)
+        self.manifest()
+        self.assertEqual(self.ask("unit")["outcome"], "passed")
+        self.assertEqual(self.ask("lint")["outcome"], "passed")
+        verify.forget_cached()
+        self.place("review", pr=PR_URL)
+        before, rows_before = self.compact(), self.read()["requirements"]
+        self.assertEqual(before["status"]["word"], "ready-to-merge")
+        self.two_checks(["lint"])
+        after, rows_after = self.compact(), self.read()["requirements"]
+        self.assertEqual(self.summary(before), self.summary(after),
+                         "the fixture must keep every summary field equal")
+        self.assertNotEqual([r["check"] for r in rows_before],
+                            [r["check"] for r in rows_after])
+        self.assertNotEqual(before["detail"], after["detail"])
+        self.assertEqual(after["detail"], self.read()["detail"])
+
+    def test_new_evidence_behind_the_same_summary_is_a_new_detail(self):
+        """Same summary, different rows: a rerun of the required check
+        passes again, so every summary field — the sentence included — is
+        unchanged, while the row now names a different evidence record."""
+        self.passed_at_head()
+        self.place("review", pr=PR_URL)
+        before, row_before = self.compact(), self.read()["requirements"][0]
+        self.place("in-progress")
+        self.assertEqual(self.ask("unit")["outcome"], "passed")
+        verify.forget_cached()
+        self.place("review", pr=PR_URL)
+        after, row_after = self.compact(), self.read()["requirements"][0]
+        self.assertEqual(self.summary(before), self.summary(after))
+        self.assertNotEqual(row_before["evidence"], row_after["evidence"])
+        self.assertNotEqual(before["detail"], after["detail"])
+
+    def test_the_detail_is_stable_while_nothing_changes(self):
+        self.passed_at_head(body=FAILS)
+        self.place("review", pr=PR_URL)
+        self.assertEqual(self.compact()["detail"], self.compact()["detail"])
+        self.assertEqual(self.read()["detail"], self.read()["detail"])
+
+    def test_the_launch_check_names_its_intent_and_ownership(self):
+        self.full_gate()
+        self.place("in-progress")
+        launch = next(a for a in self.compact()["others"]
+                      if a["action"] == "launch-check")
+        self.assertEqual(launch["intent"], "work")
+        self.assertFalse(launch["takeover"])
+
 
 class CountsAreRequiredOnly(DeliveryCase):
 
