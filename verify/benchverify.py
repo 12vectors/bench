@@ -805,10 +805,10 @@ class Browser(PageOps):
 
     def key(self, key: str, shift: bool = False) -> None:
         vk = {"Tab": 9, "Enter": 13, "Escape": 27, "ArrowLeft": 37,
-              "ArrowRight": 39, "Home": 36, "End": 35}.get(key, 0)
+              "ArrowRight": 39, "Home": 36, "End": 35, "Space": 32}.get(key, 0)
         for kind in ("rawKeyDown", "keyUp"):
             self.call("Input.dispatchKeyEvent",
-                      {"type": kind, "key": key, "code": key,
+                      {"type": kind, "key": " " if key == "Space" else key, "code": key,
                        "windowsVirtualKeyCode": vk, "modifiers": 8 if shift else 0})
 
     def _click_at(self, x: float, y: float) -> None:

@@ -324,16 +324,16 @@ class TheCardFace(unittest.TestCase):
                       "…and follows the SSE stream between full loads")
 
     def test_it_wears_the_working_vocabulary_and_no_new_colour(self):
-        completing = re.search(r"if \(completing\) \{\n\s*//.*?\n\s*//.*?\n(.*?)\n  \}",
-                               self.card, re.S).group(1)
-        self.assertIn("text: 'completing'", completing)
-        self.assertIn("var(--accent)", completing)
-        for colour in ("--alarm", "--calm", "--idle"):
-            self.assertNotIn(colour, completing, "busy is not an alarm or a verdict")
+        """The word is the server's (task 99): `merging`, in the working
+        tone, which the face draws in the accent and lets breathe — busy
+        is not an alarm or a verdict."""
+        import delivery
+        self.assertEqual(delivery.WORDS["merging"], ("Merging", "working"))
+        self.assertIn("case 'working': return { tint: 'var(--accent)'", self.html)
         flat = self.html.replace(" ", "").replace("\n", "")
         self.assertIn(".card.completing{border-color:color-mix(inoklab,var(--accent)55%,var(--border))", flat)
         self.assertIn(".card.pill.status.breathing{animation:breathe", flat)
-        self.assertIn("""class="pill status${completing ? ' breathing' : ''}\"""", self.card)
+        self.assertIn("""class="pill status${pill.word === 'merging' ? ' breathing' : ''}""", self.card)
 
     def test_it_says_which_step(self):
         self.assertIn("esc(completing.step", self.card,

@@ -129,7 +129,7 @@ class StructuredDetail(unittest.TestCase):
         title = b.eval("document.querySelector('#drawer .dtitle').innerText")
         self.assertEqual(title, "Structured detail fixture")
         order = b.eval("(() => { const y = s => document.querySelector(s).getBoundingClientRect().top;"
-                       " return [y('#drawer .dtitle'), y('#dsec-overview .dnext'),"
+                       " return [y('#drawer .dtitle'), y('#dsec-overview .dstatus'),"
                        " y('#dsec-overview .cardtools, #dsec-overview #drawertools')]; })()")
         self.assertLess(order[0], order[1], "the title is not above the next step")
         self.assertLess(order[1], order[2], "the next step is not above the tools")
@@ -242,7 +242,10 @@ class StructuredDetail(unittest.TestCase):
 
         event("fix-reported", "Moved the title above the tools in the PR update.",
               "fix reported — awaiting recheck")
-        self.assertIn("fix reported", b.eval("document.querySelector('#dsec-overview .dnext').innerText"))
+        # the reported fix is a fact on the Overview, beside the findings;
+        # the status block above it is the server's delivery status
+        self.assertIn("fix reported — recheck and resolve",
+                      b.eval("document.querySelector('#dsec-overview > dl.dfacts').innerText"))
         shot("detail-reviews-fix-reported-1280x900")
         event("resolved", "Rechecked at 1280px: the title leads.", "resolved")
         self.assertIn("Resolved findings (1)",

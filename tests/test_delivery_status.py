@@ -461,6 +461,25 @@ class TheCopyMatrix(DeliveryCase):
         self.assertIn("complete", [a["action"] for a in found["others"]])
         self.assertEqual(found["counts"], {"required": 0, "met": 0})
 
+    def test_f29_ungated_bench_change_request_at_head_is_not_lost(self):
+        """Task 99: the face used to wear "changes asked" from a cascade
+        of its own. Drawing the delivery status instead must not lose it —
+        so Bench's own REQUEST CHANGES at the current commit is a current
+        problem even where no review is required, and one at an older
+        commit is history."""
+        wt = self.worktree()
+        older = self.commit_in(wt)
+        gates.record_verdict(CARD, verdict="REQUEST CHANGES", head=older)
+        self.place("review", pr=PR_URL)
+        found = self.expect("changes-requested", "act-pr")
+        self.assertIn(older[:12], found["status"]["sentence"])
+        self.commit_in(wt, "addressed\n")
+        delivery.forget_cached()
+        # a review is on record, so the ungated row offers the merge first
+        # and the review again among the alternatives
+        found = self.expect("review", "complete")
+        self.assertIn("review-pr", [a["action"] for a in found["others"]])
+
     def test_f30_the_safer36_shape(self):
         head = self.passed_at_head()
         gates.record_verdict(CARD, verdict="APPROVE", head=head)
@@ -637,6 +656,196 @@ class ARestartForgetsNothingDurable(DeliveryCase):
 
 
 # ── E10 / R4: counts are required obligations only ─────────────────────
+
+
+class TheCompactReadingCarriesWhatEverySurfaceDraws(DeliveryCase):
+    """Task 99: the face, the Overview and the merge dialog draw the one
+    compact reading in `/api/state`, so it carries the alternatives, the
+    history counts and the requirement classes — and agrees with the full
+    reading on every field the surfaces share."""
+
+    def test_compact_and_full_agree(self):
+        self.passed_at_head(body=FAILS)
+        self.place("review", pr=PR_URL)
+        task = delivery._find(CARD, None)
+        compact = delivery.board({"stages": [{"tasks": [task]}]})[CARD]
+        full = self.read()
+        for key in ("status", "counts", "history"):
+            self.assertEqual(compact[key], full[key], key)
+        for key, value in compact["candidate"].items():
+            self.assertEqual(value, full["candidate"][key], key)
+        self.assertEqual(compact["primary"]["action"], full["primary"]["action"])
+        self.assertEqual([a["action"] for a in compact["others"]],
+                         [a["action"] for a in full["others"]])
+        self.assertEqual(compact["classes"],
+                         sorted({r["class"] for r in full["requirements"]}))
+        self.assertIn("problem", compact["classes"])
+
+    def test_the_state_route_carries_it(self):
+        self.full_gate()
+        self.place("in-progress")
+        found = httpd.state_payload()["delivery"][CARD]
+        self.assertEqual(found["status"]["word"], "ready-to-start")
+        self.assertEqual(found["classes"], ["needed"],
+                         "a requirement that lies ahead is needed, never a problem")
+
+    # — the rows' identity: what the page keys its full reading by —
+
+    def compact(self) -> dict:
+        delivery.forget_cached()
+        task = delivery._find(CARD, None)
+        return delivery.board({"stages": [{"tasks": [task]}]})[CARD]
+
+    def summary(self, found: dict) -> tuple:
+        return (found["status"], found["counts"], found["classes"],
+                found["candidate"], found["history"])
+
+    def two_checks(self, required: list[str]) -> dict:
+        document = self.gated()
+        document["checks"].append({"name": "lint",
+                                   "run": str(self.executable("lint", PASSES)),
+                                   "root": "worktree"})
+        for intent in document["profiles"].values():
+            intent["verify"] = ["unit", "lint"]
+        document["gates"]["acceptance"]["checks"] = required
+        self.declares(document)
+        return document
+
+    def test_compact_and_full_carry_one_detail_identity(self):
+        self.passed_at_head(body=FAILS)
+        self.place("review", pr=PR_URL)
+        self.assertTrue(self.compact()["detail"])
+        self.assertEqual(self.compact()["detail"], self.read()["detail"])
+
+    def test_a_rule_replaced_with_the_same_totals_is_a_new_detail(self):
+        """The supervisor's finding: the approved rule moves from one
+        check to another, while the word, the counts, the classes and the
+        candidate stay exactly as they were. The rows changed, so the
+        identity the page keys them by must change with them."""
+        wt = self.worktree()
+        self.two_checks(["unit"])
+        self.commit_in(wt)
+        self.manifest()
+        self.assertEqual(self.ask("unit")["outcome"], "passed")
+        self.assertEqual(self.ask("lint")["outcome"], "passed")
+        verify.forget_cached()
+        self.place("review", pr=PR_URL)
+        before, rows_before = self.compact(), self.read()["requirements"]
+        self.assertEqual(before["status"]["word"], "ready-to-merge")
+        self.two_checks(["lint"])
+        after, rows_after = self.compact(), self.read()["requirements"]
+        self.assertEqual(self.summary(before), self.summary(after),
+                         "the fixture must keep every summary field equal")
+        self.assertNotEqual([r["check"] for r in rows_before],
+                            [r["check"] for r in rows_after])
+        self.assertNotEqual(before["detail"], after["detail"])
+        self.assertEqual(after["detail"], self.read()["detail"])
+
+    def test_new_evidence_behind_the_same_summary_is_a_new_detail(self):
+        """Same summary, different rows: a rerun of the required check
+        passes again, so every summary field — the sentence included — is
+        unchanged, while the row now names a different evidence record."""
+        self.passed_at_head()
+        self.place("review", pr=PR_URL)
+        before, row_before = self.compact(), self.read()["requirements"][0]
+        self.place("in-progress")
+        self.assertEqual(self.ask("unit")["outcome"], "passed")
+        verify.forget_cached()
+        self.place("review", pr=PR_URL)
+        after, row_after = self.compact(), self.read()["requirements"][0]
+        self.assertEqual(self.summary(before), self.summary(after))
+        self.assertNotEqual(row_before["evidence"], row_after["evidence"])
+        self.assertNotEqual(before["detail"], after["detail"])
+
+    def test_the_detail_is_stable_while_nothing_changes(self):
+        self.passed_at_head(body=FAILS)
+        self.place("review", pr=PR_URL)
+        self.assertEqual(self.compact()["detail"], self.compact()["detail"])
+        self.assertEqual(self.read()["detail"], self.read()["detail"])
+
+    def test_the_launch_check_names_its_intent_and_ownership(self):
+        self.full_gate()
+        self.place("in-progress")
+        launch = next(a for a in self.compact()["others"]
+                      if a["action"] == "launch-check")
+        self.assertEqual(launch["intent"], "work")
+        self.assertFalse(launch["takeover"])
+
+
+class ReviewsAreReadApart(DeliveryCase):
+    """The supervisor's second finding at d6ace0e: F16 is ready to merge on
+    a durable Bench APPROVE with no prose report in the card, and Signals
+    still said "Review: no verdict yet". The reading now carries each
+    review record bound to the revision it is about, so the page draws
+    what the authority says rather than folding the card's text and
+    GitHub's state into one word."""
+
+    def report(self, head: str, verdict: str = "APPROVE") -> None:
+        path = self.tasks / "review" / CARD
+        path.write_text(path.read_text(encoding="utf-8") +
+                        f"\n---\n\n## PR review at {head[:12]} — 2026-11-11 18:53 (Finch)"
+                        f"\n\nPR REVIEW: {verdict}\n\nRead the diff.\n",
+                        encoding="utf-8")
+
+    def compact(self) -> dict:
+        delivery.forget_cached()
+        task = delivery._find(CARD, None)
+        return delivery.board({"stages": [{"tasks": [task]}]})[CARD]
+
+    def test_a_durable_bench_approval_with_no_report_is_current(self):
+        head = self.passed_at_head()
+        gates.record_verdict(CARD, verdict="APPROVE", head=head)
+        self.place("review", pr=PR_URL)
+        for found in (self.read(), self.compact()):
+            self.assertEqual(found["status"]["word"], "ready-to-merge")
+            self.assertEqual(found["reviews"]["bench"],
+                             {"verdict": "APPROVE", "head": head, "current": True})
+            self.assertIsNone(found["reviews"]["report"],
+                              "no prose report is on the card, and none is invented")
+
+    def test_a_report_about_an_older_commit_is_history(self):
+        wt = self.worktree()
+        older = self.commit_in(wt)
+        self.place("review", pr=PR_URL)
+        self.report(older)
+        newer = self.commit_in(wt, "a later push\n")
+        found = self.compact()
+        self.assertEqual(found["reviews"]["report"],
+                         {"verdict": "APPROVE", "head": older[:12], "current": False})
+        self.assertIsNone(found["reviews"]["bench"])
+        self.assertNotEqual(found["status"]["word"], "ready-to-merge")
+        self.assertEqual(found["candidate"]["commit"], newer)
+
+    def test_a_bench_verdict_about_an_older_commit_is_not_current(self):
+        wt = self.worktree()
+        older = self.commit_in(wt)
+        gates.record_verdict(CARD, verdict="APPROVE", head=older)
+        self.commit_in(wt, "a later push\n")
+        self.place("review", pr=PR_URL)
+        self.assertEqual(self.compact()["reviews"]["bench"],
+                         {"verdict": "APPROVE", "head": older, "current": False})
+
+    def test_the_newest_report_is_read_with_its_own_revision(self):
+        head = self.passed_at_head()
+        self.place("review", pr=PR_URL)
+        self.report("0123abcd4567", "REQUEST CHANGES")
+        self.report(head)
+        self.assertEqual(self.read()["reviews"]["report"],
+                         {"verdict": "APPROVE", "head": head[:12], "current": True})
+
+    def test_github_review_state_is_kept_apart_from_ci(self):
+        """`verdict` folds CI, conflicts and the base in; `review` is the
+        review objects alone, so a failing check never reads as a review
+        that asked for changes."""
+        payload = {"reviews": [{"state": "APPROVED", "author": {"login": "elena"}}],
+                   "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "FAILURE"}],
+                   "mergeable": "MERGEABLE", "baseRefName": "main"}
+        folded = github._fold(payload, {})
+        self.assertEqual(folded["verdict"], "red")
+        self.assertEqual(folded["review"], "approved")
+        self.assertIsNone(github._fold({"reviews": []}, {})["review"])
+        changes = github._fold({"reviews": [{"state": "CHANGES_REQUESTED"}]}, {})
+        self.assertEqual(changes["review"], "changes")
 
 
 class CountsAreRequiredOnly(DeliveryCase):

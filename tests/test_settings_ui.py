@@ -246,8 +246,13 @@ class TheWordCarriesTheMeaning(Source):
         body = self.body("checkBlock")
         self.assertIn("checkBlock(page, c,", self.body("settingsVerification"))
         self.assertIn("Optional</span>", body)
-        self.assertIn('title="${esc(v.registrationIsNotRequirement)}"', body)
-        self.assertIn("required: ", body)
+        self.assertIn('title="No merge needs this check."', body)
+        self.assertIn("Required: ", body)
+        # #92 §3, retained by #94: no state word on a registered row — a
+        # badge in a state slot reads as a result to clear. A refusal is
+        # the one state still drawn, because it is a problem to fix.
+        self.assertIn("c.state === 'invalid' ? stateWord(c.state, page.states) : ''", body)
+        self.assertNotIn("stateWord(c.state, page.states) +", body)
 
     def test_the_overview_names_no_requirement_as_no_requirement(self):
         """No gate is not a passed gate: the overview says so in words, and
@@ -545,7 +550,15 @@ class ASurfaceOfItsOwn(Source):
         self.assertIn("<summary>Command <code>${esc(c.run)}</code></summary>", body)
         verification = self.body("settingsVerification")
         self.assertIn("spanel('Preparation steps'", verification)
-        self.assertIn("This is configuration, not results.", verification)
+        self.assertIn("These are your checks, not their results. Nothing to do here.",
+                      verification)
+        # what to do with one: usually nothing; results are per card; a
+        # pass is reused while nothing it depends on changed (#92 §4, #94 §13)
+        fold = verification[verification.index("sref('What to do with a registered check'"):]
+        for line in ("Nothing, by default.", "Results are per card.",
+                     "A pass is reused, not repeated.", "Run required checks",
+                     "Why a merge may still wait."):
+            self.assertIn(line, fold)
 
     def test_diagnostics_separates_inspection_from_execution(self):
         body = self.body("settingsDiagnostics")
