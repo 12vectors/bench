@@ -2263,9 +2263,12 @@ click:
   creates no local branch and moves nothing; the next reading reports
   what it found.
 - **The launch check** (`/api/card/delivery/launch-check`) runs the
-  launch's own preflight — the plan and the profile — and says what would
-  refuse. It may fetch as `/api/plan` does, claims nothing, starts
-  nothing, and the launch asks again.
+  launch's own refusals (`agents.launch_refusals`) — the very steps
+  **▸ start work** takes before its claim: the stage and the phase-card
+  rule, one agent per card, the plan, the profile, the prompt template,
+  and whether someone else holds the card — and says what would refuse.
+  It may fetch as `/api/plan` does, claims nothing, starts nothing, and
+  the launch asks again.
 
 ### The PR observation survives a restart
 
@@ -2291,6 +2294,12 @@ catches up, and cleanup still keeps anything uncommitted. A snapshot
 that says merged while the remote does not hold the commit is gated
 exactly as before. A stacked card stays a stacked card: it lands through
 its PR into its prerequisite, and its primary action says so.
+
+The merge speaks only for the commit it merged. When the card's branch
+on this board holds commits the merged head does not — work returned or
+reopened under the same card — the status is not `merged-elsewhere`:
+that newer commit's requirements apply as they would to any review
+card, and the sentence says the earlier merge does not deliver it.
 
 ### The cache is not authority
 
