@@ -1766,7 +1766,12 @@ reuses a record only when:
 - it is the **newest relevant answer** there, as at the gate: a newer
   failure, cancellation or error at that commit means the pass is not
   today's answer, and a run still in flight is newer than anything on
-  record — so it is joined, never stepped past;
+  record — so it is joined, never stepped past. "In flight" means
+  *reserved*, not *on disk*: a run holds its place in memory before its
+  first record is written, the reservations are read under the lock both
+  before and after the records are, and a run reserved for this check in
+  between — even one that has already finished — means the request runs
+  or joins rather than trusting what it read;
 - it passed over a **bound, clean** source, with the same coverage
   (scope), and `outcome_now` still reads `passed`;
 - its `resultId` **equals** the new one in every dimension: source,
@@ -1791,6 +1796,9 @@ the requester's run, intent, request and policy revision, and a copy of
 who the evidence was run for. No environment value and no hash of one;
 the ticker says *reused … nothing was run*. Reuse records are never
 evidence: `all_evidence()` does not list them and no gate reads them.
+The page is sent them through an allowlist (`verify.public_reuse`), as
+evidence is through `verify.public`, so the identity stays on this disk
+and a field added later does not reach a reader by default.
 
 **`--again` runs.** `bench-verify --again <check> [<scope>]`, the
 `"again": true` field on `POST /api/verify`, and the ◫ sheet's `↻` all
