@@ -2253,8 +2253,14 @@ it *can* start: that is the launch's own preflight to decide.
 Viewing a card, the dialog, `/api/state` or `/api/card/delivery` writes
 no state file, fetches nothing, asks GitHub nothing and launches nothing
 — the only processes it can cause are the read-only local git queries
-the authorities already make. Two POSTs sit beside it, each a person's
-click:
+the authorities already make. Those stay reads even in a repository
+configured otherwise: every git read bench makes (`config.git_run`)
+switches off textconv and external diff drivers, clean filters, the
+fsmonitor hook, hooks, signature checks and git's optional index
+writes, so an attribute or a config line in the application cannot turn
+a look at a card into running its program. A merge, a push, a fetch or a
+worktree bench was asked to make runs exactly as before. Two POSTs sit
+beside it, each a person's click:
 
 - **Check the remote** (`/api/card/delivery/check-remote`) asks the
   application remote whether `task/<stem>` and `phase/<stem>` exist

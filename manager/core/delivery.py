@@ -37,7 +37,10 @@ is presentation, never authorisation.
 It fetches nothing, asks GitHub nothing, runs no check, launches no
 agent and writes no record. The only processes it can cause are the
 read-only local git queries the authorities above already make (the
-branch walk, a containment test, a source digest). Two explicit actions
+branch walk, a containment test, a source digest), and those go through
+`config.git_run`, which keeps them reads: no textconv, external diff,
+filter, fsmonitor, hook or signature program, and no optional index
+write, whatever the repository configures. Two explicit actions
 live beside it and are POSTs a person clicks: **Check the remote**
 (`check_remote`, one bounded fetch of the card's own two branch names)
 and the launch check (`launch_check`, the launch's own preflight).
