@@ -238,6 +238,83 @@ REMEDIES = {
                        "Configuration check and the ⚖ sheet."),
 }
 
+# How serious each reason is, in one of five classes, so every surface
+# that draws a requirement agrees on whether it is a problem or simply a
+# step that lies ahead (design #94 §3.2, #93 §8.1). `cancelled`, `stale`
+# and `other-commit` are deliberately *needed*, not problems: nothing
+# failed, a result is simply not in for this commit.
+#
+#   met            satisfied by a record about this commit
+#   needed         a step that has not happened yet on this commit
+#   running        the answer is not in yet
+#   problem        something ran and said no, or could not run
+#   cannot-assess  there is nothing to bind a requirement to
+SEVERITY = {
+    "passed": "met", "bench-approved": "met", "approved": "met",
+    "approved-by-another": "met", "ungated": "met",
+    "not-run": "needed", "stale": "needed", "cancelled": "needed",
+    "other-commit": "needed", "source-dirty": "needed",
+    "source-unbound": "needed", "no-verdict": "needed",
+    "verdict-other-head": "needed", "no-approval": "needed",
+    "approval-other-head": "needed", "no-separate-reviewer": "needed",
+    "running": "running", "preparing": "running",
+    "failed": "problem", "prepare-failed": "problem", "denied": "problem",
+    "error": "problem", "verdict-changes": "problem",
+    "changes-requested": "problem", "same-account": "problem",
+    "overridden": "problem",
+    "head-unknown": "cannot-assess", "policy-refused": "cannot-assess",
+}
+SEVERITY_CLASSES = ("met", "needed", "running", "problem", "cannot-assess")
+
+# Each reason as a person reads it, short enough for one requirement row.
+# `{name}` is the requirement and `{at}` the commit it is about. These
+# describe the record *about this commit* — an older commit's outcome is
+# history and never the sentence (design §6).
+PLAIN = {
+    "passed": "Passed on {at}",
+    "bench-approved": "Approved by the Bench review of {at}",
+    "approved": "Approved on GitHub at {at}",
+    "approved-by-another": "Approved on GitHub at {at} by a separate reviewer",
+    "ungated": "Not required",
+    "not-run": "Has not run on {at}",
+    "stale": "Passed on {at}, and what it depends on has changed since",
+    "cancelled": "Cancelled before a result on {at}",
+    "other-commit": "Has not run on {at} (earlier runs are history)",
+    "source-dirty": "Passed with uncommitted files — commit, then run checks",
+    "source-unbound": "Passed, but could not be bound to {at}",
+    "no-verdict": "Not reviewed yet",
+    "verdict-other-head": "Reviewed an earlier commit, not {at}",
+    "no-approval": "No approval on GitHub yet",
+    "approval-other-head": "Approved an earlier commit, not {at}",
+    "no-separate-reviewer": "Needs approval from a separate reviewer",
+    "running": "Running on {at}",
+    "preparing": "Preparing to run on {at}",
+    "failed": "Failed on {at}",
+    "prepare-failed": "Could not run on {at}: its preparation failed",
+    "denied": "Could not run: the request was refused",
+    "error": "No result on {at} — the run did not finish",
+    "verdict-changes": "The Bench review of {at} asked for changes",
+    "changes-requested": "A GitHub review asks for changes",
+    "same-account": ("Cannot be met: GitHub refuses an approval from the "
+                     "account that opened the pull request"),
+    "overridden": "Overridden at {at} — still unmet",
+    "head-unknown": "Cannot assess: no implementation commit on this board",
+    "policy-refused": "Cannot assess: the merge rules do not resolve",
+}
+
+
+def plain(reason: str, at: str | None = None) -> str:
+    """One requirement's reason in the words a row shows."""
+    text = PLAIN.get(reason) or REASONS.get(reason) or reason
+    return text.replace("{at}", _short(at, "this commit"))
+
+
+def severity(reason: str) -> str:
+    """The class a reason is drawn in. An unknown reason is a problem,
+    never met: a word bench has no row for is not a pass."""
+    return SEVERITY.get(reason, "problem")
+
+
 # What a gate requires of a review, in the words `profiles` validated.
 REVIEW_POLICIES = profiles.REVIEW_POLICIES
 
@@ -365,6 +442,121 @@ def head_for(filename: str, scope: str, tips: dict[str, str] | None = None) -> d
                if (config.PHASE_BRANCH_PREFIX + stem) in tips
                else config.TASK_BRANCH_PREFIX + stem)
     return {"ref": ref, "commit": tips.get(ref), "known": ref in tips}
+
+
+# ── which implementation commit a card has, read from durable records ──
+
+
+# The four states a card's implementation commit can be in (#93 §4,
+# design #94 §3.5). Computed only from records that survive a restart, so
+# a board with empty agent memory reads exactly what it read before.
+CANDIDATES = {
+    "present": "the branch is on this board, and its tip is the commit "
+               "every requirement is read against",
+    "none-yet": "nothing on this board records an implementation commit",
+    "delivered": "the implementation was merged into the application base",
+    "unavailable": "records of earlier work exist, but the commit they are "
+                   "about is not on this board",
+}
+
+
+def _contained(commit: str, base: str) -> bool:
+    """Is `commit` already in `base`, in this checkout? A local read."""
+    if not commit or not base:
+        return False
+    return config._app_git("merge-base", "--is-ancestor", commit,
+                           base).returncode == 0
+
+
+def candidate(filename: str, scope: str, *, task: dict | None = None,
+              tips: dict[str, str] | None = None,
+              records: list[dict] | None = None,
+              pr: dict | None = None, completion: dict | None = None,
+              remote_tips: dict[str, str] | None = None,
+              plan: dict | None = None,
+              delivery_record: dict | None = None) -> dict:
+    """The implementation commit this card's merge rules are read against,
+    and which of the four states it is in.
+
+    Read from durable records only: the branch tip in application git, the
+    recorded plan, the card's `**PR:**` line, the persisted PR snapshot
+    (`pr`, which `github` owns and passes in), evidence and verdict
+    records, review checkout records, a completion record (`completion`)
+    and the worktree directory. Agent memory decides nothing here.
+
+    It fetches nothing and asks GitHub nothing. `remote_tips` is what this
+    checkout's remote-tracking refs already say — the last fetch, which
+    only **Check the remote** performs, on a person's click.
+    """
+    task = task or {}
+    stem = filename[:-3] if filename.endswith(".md") else filename
+    tips = _tips() if tips is None else tips
+    head = head_for(filename, scope, tips)
+    out = {"state": "none-yet", "commit": None, "ref": head["ref"],
+           "qualifier": None, "why": CANDIDATES["none-yet"],
+           "remote": None, "traces": []}
+    if head["commit"]:
+        out.update(state="present", commit=head["commit"],
+                   why=CANDIDATES["present"])
+        return out
+    remote_tips = remote_tips or {}
+    for prefix in (config.PHASE_BRANCH_PREFIX, config.TASK_BRANCH_PREFIX):
+        seen = remote_tips.get(prefix + stem)
+        if seen:
+            out["remote"] = {"ref": prefix + stem, "commit": seen}
+            break
+    app_base = (plan or {}).get("appBase") or config.APP_BASE
+    # Every commit a durable record says this card's work was at, newest
+    # record first, so a delivered reading names the latest delivery.
+    commits: list[tuple[str, str]] = []
+    if completion and completion.get("commit"):
+        commits.append(("completion", completion["commit"]))
+    if pr and pr.get("head"):
+        commits.append(("pr", pr["head"]))
+    mine = ([r for r in records if r.get("task") == filename]
+            if records is not None else verify.for_task(filename))
+    for record in mine:
+        at = (record.get("source") or {}).get("commit")
+        if at:
+            commits.append(("evidence", at))
+    for verdict in verdicts_for(filename):
+        if verdict.get("head"):
+            commits.append(("verdict", verdict["head"]))
+    traces = sorted({kind for kind, _ in commits})
+    if task.get("pr"):
+        traces.append("pr-line")
+    if (plan or {}).get("branch"):
+        traces.append("plan")
+    if (config.WORKTREES / stem).is_dir():
+        traces.append("worktree")
+    out["traces"] = sorted(set(traces))
+    merged = bool(pr and pr.get("merged"))
+    # Delivered is read from what says so: the card is in done/, the PR was
+    # seen merged, the board recorded a finished completion, or a reviewed
+    # head is already in the base. An evidence record's commit alone is
+    # not enough — a check run before the first commit is about the base
+    # itself, and reading that as a delivery would be a guess.
+    delivered = None
+    if delivery_record and delivery_record.get("commit"):
+        delivered = delivery_record["commit"]
+    if delivered is None:
+        delivered = next((c for kind, c in commits
+                          if kind in ("verdict", "pr", "completion")
+                          and _contained(c, app_base)), None)
+    if task.get("stage") == "done" or merged or delivered:
+        out.update(state="delivered",
+                   commit=delivered or (pr or {}).get("head")
+                   or (commits[0][1] if commits else None),
+                   why=CANDIDATES["delivered"])
+        return out
+    if out["traces"] or out["remote"]:
+        out.update(state="unavailable",
+                   commit=(out["remote"] or {}).get("commit")
+                   or (commits[0][1] if commits else None),
+                   why=(f"{head['ref']} is on {config.app_remote()} but not "
+                        f"checked out on this board"
+                        if out["remote"] else CANDIDATES["unavailable"]))
+    return out
 
 
 # ── the Bench review verdict, kept apart from GitHub's ─────────────────
