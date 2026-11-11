@@ -1888,16 +1888,42 @@ check; a scope covers only itself. So a narrow pass never satisfies a
 broader requirement — `unit backend` passing says nothing about `unit` —
 and a gate that needs both says so by requiring both.
 
-**The newest relevant answer is the gate's answer.** For a full-run
-requirement every run of the check is relevant; for a scope, that scope
-and the full run. A failed, errored or cancelled rerun supersedes an
-earlier pass, and one still running holds the gate `pending`. Passes that
-are not about this head, narrow passes and denied requests (which ran
-nothing) supersede nothing. Ordering is request time, then end time, and
-on a tie a non-pass reads as the newer — never the order files were
-listed in. The ⚖ sheet names each requirement's coverage (`unit · full
-run`, `unit · scope fast`), so a ◫ chip reading a scoped pass beside a
-gate requiring the full run is never left unexplained.
+**Relevance before precedence.** The gate fixes the commit it would
+merge *first*, and only then weighs the records about that commit. A
+record is relevant when it is about this check, its coverage overlaps the
+requirement's — for a full-run requirement every run of the check, for a
+scope that scope and the full run — and it ran against this commit. A
+request still preparing has not bound its source yet and counts as
+relevant. Everything else is **history**: kept in the requirement's
+history, counted (`otherCommits`), and never the reason. So an older
+commit's cancellation cannot become a newer commit's blocker, and a
+failure on a commit nobody is merging blocks nothing — the requirement
+reads `other-commit`, *"has not run on H"*, and names what the older
+commits said. A bench that cannot name the commit refuses with
+`head-unknown` before any record is read for a reason.
+
+**Among the relevant records, the newest answer is the gate's answer.**
+A failed, errored or cancelled rerun supersedes an earlier pass, and one
+still running holds the gate `pending`. A pass that has gone **stale** at
+this commit is an answer too: the requirement reads `stale` with that
+pass's own reason (`staleReason`, such as `policy-changed` or
+`context-changed`), it is never a pass, and nothing older at the same
+commit is resurrected past it. Passes with uncommitted work under them or
+no bound source did not run against this commit, narrow passes do not
+cover the requirement, and denied requests ran nothing, so none of them
+supersede anything. Ordering is request time, then end time, and on a
+tie a non-pass reads as the newer — never the order files were listed
+in. The ⚖ sheet names each requirement's coverage (`unit · full run`,
+`unit · scope fast`), so a ◫ chip reading a scoped pass beside a gate
+requiring the full run is never left unexplained.
+
+Records written today carry no result identity, so every record is read
+with today's freshness rules (`verify.outcome_now`), unchanged. The
+selection already has the two seams the rest of card 94's design plugs
+into — a record's result identity compared with the one the check would
+have at the head, and an operator-declared equivalent check that must
+also match the check's substance — and both answer "nothing" until they
+land. No record of another name satisfies a requirement.
 
 ### Evidence is bound to the commit
 
@@ -1925,7 +1951,7 @@ difference between the sentences a reader needs:
 | `cancelled` | it was stopped before reaching a verdict |
 | `error` | no verdict was reached — a timeout, or a board that restarted |
 | `stale` | it passed, and what it was about has changed since |
-| `other-commit` | it passed against a different commit from this one |
+| `other-commit` | it has not run on this commit; what is on record ran against others, and is history |
 | `source-dirty` | it passed with uncommitted work under it |
 | `source-unbound` | the source could not be bound, so it proves nothing |
 

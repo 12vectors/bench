@@ -1038,10 +1038,13 @@ def acceptance(doc: dict | None = None) -> dict:
             "pass never satisfies a broader requirement. A gate that needs "
             "both says so by requiring both."),
         "supersede": (
-            "The newest relevant answer is the gate's answer. A failed, "
-            "errored or cancelled rerun supersedes an earlier pass; one "
-            "still running holds the gate pending. A denied request ran "
-            "nothing and supersedes nothing."),
+            "The commit about to move is fixed first, and only records about "
+            "that commit are weighed; a record about another commit is "
+            "history, never the reason. Among them the newest answer is the "
+            "gate's answer. A failed, errored or cancelled rerun supersedes "
+            "an earlier pass; one still running holds the gate pending; a "
+            "pass that went stale gives its own reason and is never a pass. "
+            "A denied request ran nothing and supersedes nothing."),
         "sameAccount": (
             "GitHub does not accept an approval or a change request from the "
             "account that opened a pull request. A board whose reviewer runs "
