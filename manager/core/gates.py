@@ -553,9 +553,9 @@ def gate_policy() -> dict:
 
 # ── which records a requirement may read ───────────────────────────────
 #
-# Two seams the later #94 cards fill. Both answer "nothing" today, which
-# is exactly today's behaviour: no record carries a result identity yet
-# (#97), and no check declares an accepted equivalent (#104).
+# Two seams the #94 cards fill. Result identities (#97) are here: a record
+# written since carries one, and is partitioned by whether its definition
+# still holds. Declared equivalents (#104) still answer "nothing".
 
 
 def _accepted_equivalents(check: dict) -> tuple[str, ...]:
@@ -573,21 +573,23 @@ def _same_substance(record: dict, check: dict) -> bool:
     return bool(mine) and bool(theirs) and mine == theirs
 
 
-def _current_result_id(check: dict, head: dict) -> str | None:
-    """The result identity this check would have at this head now (#97).
-    None until result identities exist, which makes every record legacy."""
-    return None
+def _partition(record: dict, drift: dict | None) -> str:
+    """`current`, `outdated` or `legacy` (design §6.1 step 4).
 
-
-def _partition(record: dict, current_id: str | None) -> str:
-    """`current`, `outdated` or `legacy` (design §6.1 step 4). A record
-    with no result identity — every record today — is legacy, and is read
-    with `verify.outcome_now`'s rules, unchanged: a stale pass says why it
-    is stale and is never a pass."""
-    theirs = record.get("resultId")
-    if not theirs or not current_id:
+    A record with no result identity is legacy, and is read with
+    `verify.outcome_now`'s rules, unchanged: a stale pass says why it is
+    stale and is never a pass. A record with one is *current* when every
+    dimension of its definition — the check, coverage, programs,
+    preparation, inputs, environment and runner — still holds
+    (`verify.identity_drift`), and *outdated* when any has moved. Its
+    source is not part of this answer: the commit filter has already
+    chosen the records about this head. An identity that cannot be read
+    is outdated, never current — unknown never decides a gate."""
+    if not record.get("resultId"):
         return "legacy"
-    return "current" if theirs == current_id else "outdated"
+    if drift is None or drift.get("reasons"):
+        return "outdated"
+    return "current"
 
 
 def _check_requirement(filename: str, check: dict, head: dict,
@@ -635,10 +637,18 @@ def _check_requirement(filename: str, check: dict, head: dict,
     non-pass reads as the newer — the order never depends on how the
     evidence files happened to be listed.
 
-    The two seams the later #94 cards fill — result identities (#97) and
-    declared equivalents (#104) — are `_current_result_id` and
-    `_accepted_equivalents`. Both answer "nothing" today, which makes
-    every record *legacy* (read with `verify.outcome_now`, unchanged) and
+    **Result identities** (#97). A record about this head that carries a
+    result identity is *current* while its definition — check, coverage,
+    programs, preparation, inputs, environment, runner — still holds, and
+    *outdated* once any of it moved (`_partition`). Outdated records
+    decide nothing, so a failure under a command since replaced is not
+    today's failure; if nothing else decides, the newest outdated record's
+    own changed dimension is the reason. A record with no identity is
+    *legacy* and read with `verify.outcome_now`'s rules, unchanged. An
+    unrelated policy edit moves none of the dimensions, so it stales
+    nothing that carries one (design R1).
+
+    Declared equivalents (#104) are `_accepted_equivalents`, which still
     accepts no record of another name.
     """
     name = check["name"]
@@ -680,7 +690,6 @@ def _check_requirement(filename: str, check: dict, head: dict,
                 "why": REASONS["head-unknown"],
                 "remedy": REMEDIES["head-unknown"], "evidence": None,
                 "commit": None}
-    current_id = _current_result_id(check, head)
 
     # 2. Relevance: this commit, this requirement, not a refusal.
     seen: list[dict] = []
@@ -707,7 +716,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
             "agent": record.get("agent"),
             "actor": record.get("actor"),
             "freshness": reading["freshness"],
-            "partition": _partition(record, current_id),
+            "partition": "legacy",
         }
         seen.append(found)
         if found["outcome"] == "denied":
@@ -717,6 +726,14 @@ def _check_requirement(filename: str, check: dict, head: dict,
             # A request still preparing has not bound its source yet. It
             # may well be about this head, so it is not hidden as history.
             found["relevant"] = True
+            # Asked only of the records about this head: whether the check
+            # each ran is still the check as declared now (#97).
+            if found["outcome"] not in verify.LIVE:
+                drift = verify.identity_drift(record)
+                found["partition"] = _partition(record, drift)
+                if drift and drift["reasons"]:
+                    found["driftReason"] = drift["reasons"][0]
+                    found["driftWhy"] = drift["changed"][0]
             relevant.append(found)
         else:
             elsewhere.append(found)
@@ -779,8 +796,10 @@ def _check_requirement(filename: str, check: dict, head: dict,
                 "staleReason": stale["reason"],
                 "why": (f"'{label}' passed on {here}, and it no longer holds: "
                         f"{stale['why'] or REASONS['stale']}"),
-                "remedy": REMEDIES["stale"], "evidence": stale["evidence"],
-                "commit": stale["commit"]}
+                "remedy": verify.STALE_REMEDIES.get(stale["reason"],
+                                                    REMEDIES["stale"])
+                if stale["partition"] != "legacy" else REMEDIES["stale"],
+                "evidence": stale["evidence"], "commit": stale["commit"]}
     if blocker is not None:
         # The newest relevant answer is not a pass. Whether an earlier pass
         # at this head exists is said, because "it passed once" is exactly
@@ -822,12 +841,14 @@ def _check_requirement(filename: str, check: dict, head: dict,
         # A result identity (#97) that is not the one the check would have
         # here now: the specific dimension that moved is the reason.
         newest = outdated[0]
+        moved = newest.get("driftReason") or newest["reason"]
         return {**row, "state": "unmet", "reason": "stale",
-                "staleReason": newest["reason"],
+                "staleReason": moved,
                 "why": (f"'{label}' ran on {here} under a definition that has "
-                        f"changed since: {newest['why'] or REASONS['stale']}"),
-                "remedy": REMEDIES["stale"], "evidence": newest["evidence"],
-                "commit": newest["commit"]}
+                        f"changed since: "
+                        f"{newest.get('driftWhy') or newest['why'] or REASONS['stale']}"),
+                "remedy": verify.STALE_REMEDIES.get(moved, REMEDIES["stale"]),
+                "evidence": newest["evidence"], "commit": newest["commit"]}
     ran = sorted(set(narrow))
     if ran:
         why = (f"'{label}' has not run on {here} ({_coverage(want)}). Only "

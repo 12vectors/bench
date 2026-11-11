@@ -6495,6 +6495,14 @@ function checkBlock(page, c, editor) {
     fact('May be asked for by', c.intents.length
       ? esc(c.intents.join(', ')) : 'No launch intent') +
     (scopes.length ? fact('Scopes', scopes.map(s => `<code>${esc(s)}</code>`).join(', ')) : '') +
+    // what its result is bound to beyond its code and programs: names
+    // only — an input's content and a variable's value are never shown
+    ((c.inputs || []).length ? fact('Declared inputs',
+      c.inputs.map(s => `<code>${esc(s)}</code>`).join(', '),
+      'handed to the check as pinned copies; a change to one makes its pass stale') : '') +
+    ((c.env || []).length ? fact('Bound environment',
+      c.env.map(s => `<code>${esc(s)}</code>`).join(', '),
+      'values are bound by a keyed hash on this machine, never stored') : '') +
     `</dl>` +
     `<details class="fold scmd"><summary>Command <code>${esc(c.run)}</code></summary>` +
     `<div class="srefbody"><div class="skv">` +
@@ -6503,6 +6511,7 @@ function checkBlock(page, c, editor) {
     scopes.map(s => `<dt>scope ${esc(s)}</dt><dd><code>` +
       `${esc(JSON.stringify(c.scopes[s]))}</code></dd>`).join('') +
     `<dt>check identity</dt><dd><code>${esc(String(c.checkId))}</code></dd>` +
+    (c.checkSubstance ? `<dt>substance</dt><dd><code>${esc(String(c.checkSubstance))}</code></dd>` : '') +
     `</div></div></details>` + editor + `</article>`;
 }
 
