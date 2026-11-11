@@ -2193,8 +2193,8 @@ pulls has any business carrying them.
 
 ## Delivery status: one answer per card
 
-A person on the common path has three questions: **what is happening,
-what do I do next, and what, if anything, prevents delivery?** The face,
+A person on the common path asks **what is happening, what do I do
+next, and what, if anything, prevents delivery?** The face,
 the Overview and the merge dialog each used to work those out for
 themselves, and could disagree. `delivery.py` answers them once, on the
 server, and every surface is meant to draw that one result.
