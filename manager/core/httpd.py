@@ -16,6 +16,7 @@ import agents
 import agentsettings
 import commands
 import config
+import delivery
 import doctor
 import drive
 import events
@@ -280,6 +281,12 @@ def state_payload() -> dict:
         # carries the reason rather than a colour.
         "gates": gates.board(collected),
         "gatePolicy": profiles.gate_policy_public(profiles.gate_policy()),
+        # per card, the one delivery status every surface draws: the word,
+        # its sentence, the primary action and who holds it, the
+        # candidate commit's state and the required-only counts. Memoised
+        # by a fingerprint of every input it reads — never authority; the
+        # whole reading is `/api/card/delivery`, always recomputed.
+        "delivery": delivery.board(collected),
         # card refinements this board holds that are running, waiting for a
         # decision, or failed: the newest per card. Runtime state, local to
         # this board — the decisions themselves are in the cards
@@ -625,6 +632,18 @@ class Handler(BaseHTTPRequestHandler):
             stage = (query.get("stage") or [""])[0] or taskfiles.find_stage_of(name) or ""
             try:
                 self._json(200, acceptance.for_card(name, stage))
+            except (ValueError, OSError) as exc:
+                self._json(409, {"error": str(exc)})
+        elif path == "/api/card/delivery":
+            # One card's delivery status, always recomputed: what is
+            # happening, the next action and who holds it, and what the
+            # merge rules still need at the current commit. Read-only — no
+            # fetch, no GitHub call, no check, no record written.
+            query = parse_qs(url.query)
+            name = (query.get("file") or [""])[0]
+            stage = (query.get("stage") or [""])[0] or None
+            try:
+                self._json(200, {"delivery": delivery.for_card(name, stage)})
             except (ValueError, OSError) as exc:
                 self._json(409, {"error": str(exc)})
         elif path == "/api/settings/history":
@@ -1209,6 +1228,21 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/verify/cancel":
                 payload = self._read_body()
                 self._json(200, verify.cancel(payload["id"]))
+            elif path == "/api/card/delivery/check-remote":
+                # One bounded fetch of the card's own two branch names, on
+                # a person's click. Viewing never does this.
+                payload = self._read_body()
+                found = delivery.check_remote(payload["file"])
+                self._json(200, {"remote": found,
+                                 "delivery": delivery.for_card(payload["file"])})
+            elif path == "/api/card/delivery/launch-check":
+                # The launch's own preflight, asked explicitly and fresh.
+                # It claims nothing and starts nothing; the launch asks
+                # again when it is asked for.
+                payload = self._read_body()
+                self._json(200, {"launch": delivery.launch_check(
+                    payload["file"], payload.get("stage"),
+                    payload.get("intent") or "work")})
             elif path == "/api/agent/stop":
                 payload = self._read_body()
                 agent = agents.stop_agent(payload["id"])
