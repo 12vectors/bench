@@ -483,7 +483,11 @@ class TheCopyMatrix(DeliveryCase):
         self.phase_card()
         phases.SNAPSHOTS[PHASE] = {"running": True, "members": [
             {"number": "71", "state": "working"}]}
-        found = self.expect("phase-running", None, self.read(PHASE))
+        found = self.expect("phase-running", None, delivery.for_card(
+            PHASE, None, phases.public_state()))
+        self.assertEqual(
+            delivery.board(taskfiles.collect(), phases.public_state())
+            [PHASE]["status"]["word"], "phase-running")
         self.assertIn("#71", found["status"]["sentence"])
         self.assertEqual([a["action"] for a in found["others"]],
                          ["hold-phase"])
@@ -518,6 +522,23 @@ class TheVocabulary(unittest.TestCase):
                        for name in dir(TheCopyMatrix)
                        if name.startswith("test_f") and name[6:8].isdigit()})
         self.assertEqual(rows, list(range(1, 33)), "F1–F32, each one")
+
+    def test_it_imports_nothing_to_its_right_in_the_module_map(self):
+        """AGENTS.md's dependency order: delivery sits after
+        events / github / drive / sync and before agentsettings."""
+        import re
+        source = Path(delivery.__file__).read_text(encoding="utf-8")
+        imported = set(re.findall(r"^import (\w+)$", source, re.MULTILINE))
+        brief = (Path(__file__).resolve().parents[1] / "AGENTS.md").read_text(
+            encoding="utf-8")
+        line = next(ln for ln in brief.splitlines()
+                    if ln.startswith("config → "))
+        order = [name.strip() for step in line.split("→")
+                 for name in step.split("/")]
+        self.assertIn("delivery", order)
+        left = set(order[:order.index("delivery")])
+        project = imported & set(order)
+        self.assertEqual(project - left, set(), "only modules to its left")
 
     def test_severity_and_plain_cover_every_gate_reason(self):
         for reason in gates.REASONS:

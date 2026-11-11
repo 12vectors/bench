@@ -25,7 +25,7 @@ nothing here is a second reading of any of them:
 | requirements at that commit | `gates.evaluate()` |
 | the PR as last observed | `github.pr_snapshot()` (memory, or the persisted snapshot) |
 | review findings | `acceptance.summary()` |
-| a phase run | `phases.SNAPSHOTS` |
+| a phase run | the phase runner's last pass, handed in by the caller |
 
 **Mutations never read this result.** `agents.start_agent`,
 `verify.request`, `gates.override` and `github._complete` keep their own
@@ -64,7 +64,6 @@ import acceptance
 import config
 import gates
 import github
-import phases
 import plans
 import profiles
 import state
@@ -227,8 +226,12 @@ def _remote_tips() -> dict[str, str]:
     return found
 
 
-def _context() -> dict:
-    """Every board-wide read a pass needs, taken once."""
+def _context(phase_state: dict | None = None) -> dict:
+    """Every board-wide read a pass needs, taken once.
+
+    `phase_state` is the phase runner's last pass (`phases.public_state()`),
+    handed in by the caller: `phases` sits to the right of this module in
+    the dependency order, so it is read where both are in reach."""
     with state.LOCK:
         agents = [dict(record) for record in state.AGENTS.values()]
         completing = {k: dict(v) for k, v in state.COMPLETING.items()}
@@ -240,7 +243,7 @@ def _context() -> dict:
         "records": verify.all_evidence(),
         "agents": agents,
         "completing": completing,
-        "phases": {k: dict(v) for k, v in phases.SNAPSHOTS.items()},
+        "phases": {k: dict(v) for k, v in (phase_state or {}).items()},
         "me": taskfiles.actor_name() if config.COMMIT_MOVES else "",
         "remote": config.app_remote(),
         "gh": config.gh_available(),
@@ -870,14 +873,14 @@ def compact(found: dict) -> dict:
     return out
 
 
-def board(collected: dict) -> dict:
+def board(collected: dict, phase_state: dict | None = None) -> dict:
     """The compact reading for every card, for `/api/state`. Memoised by a
     fingerprint of every input and a time bucket — the cache is never
     authority, and a mutation never reads it."""
     global _BOARD
     tasks = [task for stage in collected.get("stages", [])
              for task in stage["tasks"]]
-    ctx = _context()
+    ctx = _context(phase_state)
     key = (_fingerprint(collected, ctx, tasks), int(time.time() / _TTL))
     with _LOCK:
         cached = _BOARD
@@ -899,10 +902,11 @@ def board(collected: dict) -> dict:
     return found
 
 
-def for_card(filename: str, stage: str | None = None) -> dict:
+def for_card(filename: str, stage: str | None = None,
+             phase_state: dict | None = None) -> dict:
     """The full reading for one card, always recomputed."""
     task = _find(filename, stage)
-    return compute(task, _context(), full=True)
+    return compute(task, _context(phase_state), full=True)
 
 
 def _find(filename: str, stage: str | None) -> dict:
@@ -1011,7 +1015,7 @@ def seams() -> dict:
                   "github.recovery_public", "github.pr_snapshot",
                   "github.delivered_record", "plans.recorded",
                   "plans.declared", "gates.candidate", "gates.evaluate",
-                  "acceptance.summary", "phases.SNAPSHOTS",
+                  "acceptance.summary", "phases.public_state (passed in)",
                   "verify.all_evidence"],
         "never": ["fetches on a read", "calls GitHub", "runs a check",
                   "launches an agent", "writes a record on a read",

@@ -286,7 +286,7 @@ def state_payload() -> dict:
         # candidate commit's state and the required-only counts. Memoised
         # by a fingerprint of every input it reads — never authority; the
         # whole reading is `/api/card/delivery`, always recomputed.
-        "delivery": delivery.board(collected),
+        "delivery": delivery.board(collected, phases.public_state()),
         # card refinements this board holds that are running, waiting for a
         # decision, or failed: the newest per card. Runtime state, local to
         # this board — the decisions themselves are in the cards
@@ -643,7 +643,8 @@ class Handler(BaseHTTPRequestHandler):
             name = (query.get("file") or [""])[0]
             stage = (query.get("stage") or [""])[0] or None
             try:
-                self._json(200, {"delivery": delivery.for_card(name, stage)})
+                self._json(200, {"delivery": delivery.for_card(
+                    name, stage, phases.public_state())})
             except (ValueError, OSError) as exc:
                 self._json(409, {"error": str(exc)})
         elif path == "/api/settings/history":
@@ -1234,7 +1235,9 @@ class Handler(BaseHTTPRequestHandler):
                 payload = self._read_body()
                 found = delivery.check_remote(payload["file"])
                 self._json(200, {"remote": found,
-                                 "delivery": delivery.for_card(payload["file"])})
+                                 "delivery": delivery.for_card(
+                                     payload["file"], None,
+                                     phases.public_state())})
             elif path == "/api/card/delivery/launch-check":
                 # The launch's own preflight, asked explicitly and fresh.
                 # It claims nothing and starts nothing; the launch asks

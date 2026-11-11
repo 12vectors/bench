@@ -52,7 +52,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports / templates → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → doctor → events / github / drive / sync → agentsettings → settings → setupguide → agents → setuptasks → readiness → previews → phases → refine → watch / httpd → board.py
+config → state / reports / templates → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → doctor → events / github / drive / sync → delivery → agentsettings → settings → setupguide → agents → setuptasks → readiness → previews → phases → refine → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -102,6 +102,12 @@ config → state / reports / templates → taskfiles → plans / profiles → re
 - `github.py` — PR opening, Copilot requests, review/CI polling
 - `drive.py` — runs the project driver, tracks the one live drive
 - `sync.py` — origin/main as the shared board: push on move, pull on a beat
+- `delivery.py` — one delivery status per card, computed server-side
+  from the authorities above: what is happening, the one next action and
+  who holds it, and the merge requirements that apply at the current
+  commit. It owns no policy and no enforcement, and a read of it fetches,
+  launches and writes nothing (see "Delivery status: one answer per
+  card")
 - `agentsettings.py` — Settings → Agents: the harness and model each
   purpose rides and the local prompt overrides, read from the one
   launch-time resolver and written only as the agent keys of
@@ -2184,6 +2190,116 @@ under `manager/local/state/gates/`, machine-local for the reason
 `state/evidence/` and `state/reviews/` are: they hold this machine's
 reading of a remote and this machine's paths, and nothing a teammate
 pulls has any business carrying them.
+
+## Delivery status: one answer per card
+
+A person on the common path has three questions: **what is happening,
+what do I do next, and what, if anything, prevents delivery?** The face,
+the Overview and the merge dialog each used to work those out for
+themselves, and could disagree. `delivery.py` answers them once, on the
+server, and every surface is meant to draw that one result.
+
+It owns no policy and no enforcement. Every fact comes from the
+authority that already answers for it: the card itself (`taskfiles`),
+the agent registry and the failure a dead run left, a completion in
+flight or merged-but-unpublished, the recorded plan, the commit the
+merge would take and the gate's reading of it (`gates.candidate`,
+`gates.evaluate`), the last PR observation, open review findings, and
+the phase runner's last pass. **Mutations never read it.** Starting
+work, verifying, overriding and merging keep their own checks and run
+them again at the moment they act, so a stale reading can mislead
+nobody into a merge.
+
+### What one reading says
+
+`GET /api/card/delivery?file=<card>` (always recomputed) returns, and
+`/api/state` carries as `delivery` in compact form:
+
+- **one status** — a word, its label, one sentence and a tone. The words
+  and the precedence that picks one are data in the module (`WORDS`,
+  `ROWS`), and the tests derive the vocabulary from them rather than
+  counting it. Lifecycle comes first (merging, not published, a failed
+  run, an agent or a phase working), then the stage, then — in review —
+  genuine problems on the *current* commit before steps that simply lie
+  ahead: `check-failed` and `cannot-run-check` before `checks-running`,
+  `checks-needed`, `review-needed` and `ready-to-merge`. `cancelled`,
+  `stale` and `not-run` are reasons inside `checks-needed`, never
+  failures.
+- **one primary action**, with who holds it (`you`, `agent`, `board`),
+  whether it is available and, if not, why; and every other legitimate
+  action in `others`, never hidden. An action whose handler belongs to a
+  later card (**Run required checks**, sign-off) is always
+  `enabled: false` with that reason — never a button that does nothing.
+- **the candidate commit**, in one of four states read only from durable
+  records — `present` (the branch is here), `none-yet`, `delivered` and
+  `unavailable` (records of earlier work exist, its commit is not here).
+  Agent memory decides none of them, so a restarted board reads what it
+  read before. When the board has a remote, or the card is held by
+  someone else, absence is said as *"on this board"*.
+- **the requirements that apply**, each with a class from one shared
+  table (`gates.SEVERITY`: met, needed, running, problem,
+  cannot-assess) and a plain sentence (`gates.PLAIN`). **Counts are
+  required obligations only**: optional checks and earlier runs are
+  counted apart under `history` and never inflate a headline or block.
+- **where it came from** — the PR observation's time and whether it was
+  read from the poll's memory or the persisted snapshot (*as of 14:02*).
+
+Before a card has a commit, its requirements are listed as *needed
+before merge*, in the neutral register. A ready-to-start card never says
+it *can* start: that is the launch's own preflight to decide.
+
+### Reading it is free; two actions are explicit
+
+Viewing a card, the dialog, `/api/state` or `/api/card/delivery` writes
+no state file, fetches nothing, asks GitHub nothing and launches nothing
+— the only processes it can cause are the read-only local git queries
+the authorities already make. Two POSTs sit beside it, each a person's
+click:
+
+- **Check the remote** (`/api/card/delivery/check-remote`) asks the
+  application remote whether `task/<stem>` and `phase/<stem>` exist
+  (`ls-remote`, bounded by `BOARD_FETCH_TIMEOUT`) and fetches only those
+  into remote-tracking refs. An absent ref is an answer, not an error. It
+  creates no local branch and moves nothing; the next reading reports
+  what it found.
+- **The launch check** (`/api/card/delivery/launch-check`) runs the
+  launch's own preflight — the plan and the profile — and says what would
+  refuse. It may fetch as `/api/plan` does, claims nothing, starts
+  nothing, and the launch asks again.
+
+### The PR observation survives a restart
+
+The PR poll now writes a small snapshot (`state/gates/<stem>.pr.json`:
+head, state, whether it merged, when it was observed) at the moment it
+updates its own state — never on a read. So a board that restarts still
+knows a pull request was merged on GitHub before its first poll. A
+finished merge & clean up leaves `state/gates/<stem>.delivered.json`, so
+a card reopened afterwards says its earlier work was delivered rather
+than reading as never started. Both are machine-local for the reason
+everything else under `state/gates/` is.
+
+### A pull request merged on GitHub is reconciled, not re-gated
+
+When the PR was merged outside the board, the status is
+`merged-elsewhere` — read before the review-stage requirement rows — and
+the action is **Finish: clean up**: the existing merge & clean up path.
+It asks the application remote whether the target already holds the
+branch's commit, and when it does, nothing is merged again and no merge
+rule is asked for — the gate guards a merge this board would make, and
+there is none. Publication is still read off the remote, the base still
+catches up, and cleanup still keeps anything uncommitted. A snapshot
+that says merged while the remote does not hold the commit is gated
+exactly as before. A stacked card stays a stacked card: it lands through
+its PR into its prerequisite, and its primary action says so.
+
+### The cache is not authority
+
+`/api/state`'s compact reading is memoised by a digest of every input it
+reads — the branch tips, the policy revision, the evidence and gate
+epochs, each card's own text and stage, the agent registry, completions
+in flight and unpublished, the phase runner's pass and the PR snapshots
+— plus a time bucket. A change to any of those is a different key, not a
+stale answer, and the full per-card reading is never cached.
 
 ## Readiness: asking before paying
 
