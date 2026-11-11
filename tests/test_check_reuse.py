@@ -32,6 +32,7 @@ import subprocess
 import sys
 import threading
 import unittest
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -147,6 +148,15 @@ class SameCheckTwice(ReuseCase):
         public = verify.public(second)
         self.assertEqual(public["reused"], first["id"])
         self.assertEqual(public["reuse"]["id"], reuse["id"])
+        # an allowlist, as evidence has: the identity stays on this disk,
+        # and a key added later does not reach the page by default
+        self.assertNotIn("identity", public["reuse"])
+        self.assertEqual(public["reuse"]["original"]["agent"], "run-1")
+        added = verify.public_reuse({**reuse, "later": "x",
+                                     "original": {**reuse["original"],
+                                                  "later": "x"}})
+        self.assertNotIn("later", added)
+        self.assertNotIn("later", added["original"])
         self.assertNotIn(reuse["id"], [r["id"] for r in verify.all_evidence()])
         self.assertTrue(any("reused" in e.get("summary", "")
                             for e in __import__("state").BOARD_EVENTS))
@@ -360,6 +370,87 @@ class NewestRelevantAnswerDecides(ReuseCase):
                 verify.cancel(ident)
             asking.join(timeout=20)
         self.assertFalse(asking.is_alive())
+
+    def test_a_reserved_rerun_not_yet_on_disk_is_not_bypassed(self):
+        """A forced rerun is reserved (in `RUNNING`) before its first record
+        is stored. Held exactly there, a plain request must join it rather
+        than return the older pass the disk still shows as newest."""
+        document = self.counted()
+        first = self.run_check(document)
+        self.flag.write_text("hang", encoding="utf-8")
+        self.declares(document)
+        self.manifest(agent="run-2")
+        self.manifest(agent="run-3")
+        reached, release = threading.Event(), threading.Event()
+        real = verify._store
+
+        def paused(record):
+            if record.get("again") and record.get("outcome") == "running" \
+                    and not reached.is_set():
+                reached.set()
+                release.wait(30)
+            return real(record)
+
+        patcher = mock.patch.object(verify, "_store", paused)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        rerun: dict = {}
+        asking = threading.Thread(target=lambda: rerun.update(
+            self.ask(agent="run-2", again=True)), daemon=True)
+        asking.start()
+        try:
+            self.assertTrue(reached.wait(30))
+            reserved = [i for i, r in list(verify.RUNNING.items())
+                        if r.get("again")]
+            self.assertEqual(len(reserved), 1)
+            self.assertIsNone(verify.read(reserved[0]),
+                              "held before its first record reached the disk")
+            self.fresh()
+            joined = self.ask(agent="run-3")
+            self.assertNotIn("reused", joined)
+            self.assertTrue(joined.get("duplicate"))
+            self.assertEqual(joined["id"], reserved[0])
+            self.assertNotEqual(joined["id"], first["id"])
+            self.assertEqual(verify.reuses_for_task(CARD), [])
+        finally:
+            release.set()
+            self.assertTrue(wait_for(lambda: self.runs() == 2))
+            for ident in list(verify.RUNNING):
+                verify.cancel(ident)
+            asking.join(timeout=20)
+        self.assertFalse(asking.is_alive())
+
+    def test_a_rerun_reserved_and_finished_during_the_read_is_not_missed(self):
+        """The records are read outside the lock. A forced rerun reserved,
+        run and failed while they were being read is in none of them — and
+        it is the newest answer, so the older pass is not returned."""
+        document = self.counted()
+        first = self.run_check(document)
+        self.declares(document)
+        self.manifest(agent="run-2")
+        self.manifest(agent="run-3")
+        real = verify.for_task
+        raced: dict = {}
+
+        def read_then_race(filename):
+            records = real(filename)
+            if not raced:
+                raced["records"] = records
+                self.flag.write_text("fail", encoding="utf-8")
+                raced["rerun"] = self.ask(agent="run-2", again=True)
+            return records
+
+        patcher = mock.patch.object(verify, "for_task", read_then_race)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.fresh()
+        plain = self.ask(agent="run-3")
+        self.assertEqual(raced["rerun"]["outcome"], "failed")
+        self.assertEqual([r["id"] for r in raced["records"]], [first["id"]],
+                         "the read saw only the older pass")
+        self.assertNotIn("reused", plain)
+        self.assertEqual(plain["outcome"], "failed")
+        self.assertEqual(self.runs(), 3)
 
 
 class AgainRuns(ReuseCase):
