@@ -27,9 +27,9 @@ What each case shows TODAY (and what the design says instead):
 - R4 `test_headline_count_includes_optional_checks` — the compact Bench
   checks count (`N of M passed`) counts optional checks next to required
   ones. (Design §7: required obligations only.)
-- R5 `test_override_is_recorded_with_no_commit` — an override can be written
-  for a card with no implementation commit, and then never applies.
-  (Design §9.3: refused.)
+- R5 — fixed by card 95 (an override with no implementation commit is
+  refused, nothing written). Its inverted case lives in
+  `tests/test_evidence_to_merge.py` (`AnOverrideNeedsATarget`).
 """
 
 from __future__ import annotations
@@ -146,19 +146,6 @@ class HeadlineCounts(GateCase):
         self.assertEqual(compact["passed"], 1)
         self.assertEqual(compact["outcome"], "not-run")
         self.assertEqual(self.decide()["decision"], "allowed")
-
-
-class OverrideNeedsATarget(GateCase):
-
-    def test_override_is_recorded_with_no_commit(self):
-        self.gated(overrides={"allow": True})
-        found = gates.override(CARD, "acceptance", actor="tester",
-                               reason="proceeding for the fixture")
-        # TODAY: written, with no head, and it can never apply.
-        self.assertFalse(found["duplicate"])
-        self.assertIsNone(found["override"]["head"])
-        self.assertEqual(found["decision"]["decision"], "blocked")
-        self.assertEqual(len(gates.overrides_for(CARD)), 1)
 
 
 if __name__ == "__main__":
