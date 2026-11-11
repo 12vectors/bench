@@ -709,6 +709,28 @@ def result_id(identity: dict) -> str:
         for d in IDENTITY_DIMENSIONS))[:16]
 
 
+def _identity(record: dict, source: dict, program: dict, steps: list[dict],
+              programs: list[dict], inputs: list[dict], klass: str,
+              env_id: str) -> dict:
+    """The result identity, from its parts. One function, so the identity
+    a run records and the identity a request *would* have (`_prospective`,
+    which decides reuse) can never be computed two different ways."""
+    return {
+        "v": IDENTITY_VERSION,
+        "source": source.get("sourceId") if source.get("bound") else None,
+        "check": record.get("checkSubstance"),
+        "coverage": coverage_id(record.get("scope"), record.get("scopeArgs") or []),
+        "program": program.get("programId") if program.get("bound") else None,
+        "prepare": {"definition": prepare_definition(steps),
+                    "programs": [p.get("programId") if p.get("bound") else None
+                                 for p in programs]},
+        "inputs": inputs_id(inputs),
+        "rootClass": klass,
+        "env": env_id,
+        "runner": RUNNER_REVISION,
+    }
+
+
 def root_class(policy: str, root: Path) -> str:
     """`worktree`, `fresh` or `reused` — what the checkout could have held
     that the source identity does not see.
@@ -1043,7 +1065,7 @@ FIXTURE_TASK = "bench-doctor.fixture.md"
 def request(*, check: str, task: str | None = None, agent: str | None = None,
             scope: str | None = None, intent: str | None = None,
             stage: str | None = None, actor: str = "agent",
-            fixture: dict | None = None) -> dict:
+            fixture: dict | None = None, again: bool = False) -> dict:
     """Run one named check, and record what happened.
 
     Synchronous: it returns when the check has ended, because the thing
@@ -1066,6 +1088,21 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
     is told anything. What it is *not* is a second runner, which is the
     whole reason the parameter exists rather than a copy of this body. The
     root is the caller's, so `_cleanup` removes nothing of it.
+
+    **Reuse** (design #94 §5.3, first route). Once the request is
+    authorised — the check is one the asking profile holds, its scope is
+    declared, its inputs and environment key are readable — and before any
+    checkout is made, bench asks whether this exact question already has a
+    current answer: the newest relevant record for this card, this check
+    and this coverage at the commit the check would run against, which
+    passed over a bound, clean source and whose result identity equals the
+    one this request would have now (`_reusable`). When it does, nothing
+    runs. The caller gets the original record back, unchanged, with
+    `reused` naming it, and a small reuse record (`reuse_of`) names who
+    asked — the evidence's own requester, checkout and provenance are
+    never rewritten. `again` skips the question and always runs; a
+    duplicate of a run in flight still joins it. A diagnosis (`fixture`)
+    never reuses: the point of it is to run.
     """
     frozen = None
     if fixture is not None:
@@ -1173,6 +1210,14 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
                            f"declared environment cannot be bound and nothing "
                            f"was run")
 
+    # — an equal, current answer already on record: return it, run nothing —
+    if fixture is None and not again:
+        reused = _reusable(shell, found, task, manifest, inputs, env_key)
+        if reused is not None:
+            return reused
+    if again:
+        shell["again"] = True
+
     # — the root, and nothing else's —
     if fixture is not None:
         root, prepared = Path(str(fixture["root"])), False
@@ -1278,6 +1323,235 @@ def _request_shell(check: str, task: str, scope: str | None, intent: str,
         "rc": None, "started": None, "ended": None, "duration": None,
         "logBytes": 0, "logTruncated": False,
     }
+
+
+# ── reuse: an equal, current answer is returned rather than run again ──
+#
+# Design #94 §5.3, the first route: one check, asked for twice at the same
+# commit by two runs — the work run after its last commit, the review run
+# at the PR head — runs once. The second asker gets the first record back.
+#
+# What makes that safe is that nothing is *inferred*. The identity this
+# request would record is computed the way `_execute` computes it, from
+# the same parts, before any checkout is made; reuse needs it to equal a
+# record's `resultId` in every dimension — source, substance, coverage,
+# programs, preparation, declared inputs, root class, declared environment,
+# runner. A record with no `resultId` (legacy) cannot show that, so it is
+# never reused and costs one new run. A name match across checks is not
+# this route at all (that is declared equivalence, card 104).
+#
+# And it is the *newest relevant* record that decides, as at the gate: a
+# failure, cancellation or error at this commit that is newer than a pass
+# means the pass is not today's answer, and a run still in flight is
+# newer than anything on record — so neither is ever stepped past.
+#
+# The evidence record is never copied, re-labelled or rewritten. What the
+# second asker leaves behind is a reuse record: who asked, under which
+# request and policy, which evidence answered, and the identity both had.
+
+REUSE_WHY = ("an equal, current result was already on record for this "
+             "check at this commit, so bench ran nothing and returned that "
+             "record. The evidence keeps its own requester, checkout and "
+             "provenance; this record names who asked this time")
+
+
+def reuse_dir() -> Path:
+    return config.EVIDENCE_DIR / "reuse"
+
+
+def _clean_source_id(commit: str) -> str:
+    """The `sourceId` `source_identity` gives a checkout of `commit` with
+    nothing uncommitted in it — what a fresh `source` checkout bench has
+    not made yet would read as. Computed rather than checked out, because
+    deciding reuse must not cost a checkout."""
+    return f"src:{_digest(commit, _digest(''))[:16]}"
+
+
+def _prospective(shell: dict, check: dict, task: str, manifest: dict,
+                 inputs: list[dict], env_key: bytes | None) -> dict | None:
+    """The result identity this request would record if it ran now, and
+    the commit it would run against — or None when that cannot be known
+    without side effects, or the source is not a clean, bound commit (no
+    such run could be reused, and none would be).
+
+    Read-only: a `worktree` or `review` root is only read, and a `source`
+    root that does not exist yet is described rather than made."""
+    policy = check["root"]
+    if policy == "source":
+        stem = task[:-3]
+        branch = config.branch_for(stem)
+        head = _git(config.app_repo(), "rev-parse", "--verify",
+                    f"{branch}^{{commit}}")
+        if head.returncode != 0:
+            return None
+        sha = head.stdout.strip()
+        root = config.VERIFY_DIR / "src" / f"{stem}-{sha[:12]}"
+        if root.is_dir():
+            if config.worktree_mismatch(root):
+                return None
+            source = source_identity(root)
+            klass = root_class("source", root)
+        else:
+            source = {"commit": sha, "bound": True, "dirty": [],
+                      "sourceId": _clean_source_id(sha)}
+            klass = "fresh"
+    else:
+        try:
+            # `worktree` and `review` roots are found, never made, so this
+            # is the same answer the run would get and costs only reads.
+            root, _, _ = _execution_root(check, task, manifest)
+        except ValueError:
+            return None
+        source = source_identity(root)
+        klass = root_class(policy, root)
+    if not source.get("bound") or source.get("dirty") or not source.get("commit"):
+        return None
+    env, _ = child_env(root, Path("/nonexistent"), Path("/nonexistent"), "",
+                       check["name"])
+    if check.get("inputs"):
+        env["BENCH_VERIFY_INPUTS"] = "/nonexistent"
+    env_id = env_identity(env, list(check.get("env") or []), env_key)["envId"]
+    search = env.get("PATH")
+    program = program_identity(shell["argv"], root, search)
+    steps = [*(shell.get("profilePrepare") or []), *check["prepare"]]
+    programs = [program_identity([s["executable"], *s["argv"]], root, search)
+                for s in steps]
+    identity = _identity(shell, source, program, steps, programs, inputs,
+                         klass, env_id)
+    return {"identity": identity, "resultId": result_id(identity),
+            "commit": source["commit"]}
+
+
+def _newest_first(records: list[dict]) -> list[dict]:
+    """The gate's order: request time, then end time, and on a tie a
+    non-pass reads as the newer."""
+    return sorted(records, key=lambda r: (
+        r.get("requested") or 0, r.get("ended") or r.get("started") or 0,
+        0 if r.get("outcome") == "passed" else 1, str(r.get("id") or "")),
+        reverse=True)
+
+
+def _reusable(shell: dict, check: dict, task: str, manifest: dict,
+              inputs: list[dict], env_key: bytes | None) -> dict | None:
+    """The original record, with a reuse record beside it, when this
+    request already has a current answer — else None, and the request runs
+    (or joins a run in flight) exactly as it always did."""
+    want = shell.get("scope") or None
+    try:
+        planned = _prospective(shell, check, task, manifest, inputs, env_key)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    if planned is None:
+        return None
+    at = planned["commit"]
+
+    def overlaps(scope) -> bool:
+        return want is None or scope is None or scope == want
+
+    relevant = []
+    for record in for_task(task):
+        if record.get("check") != shell["check"] or record.get("doctor") \
+                or not overlaps(record.get("scope") or None) \
+                or record.get("outcome") == "denied":
+            continue
+        commit = (record.get("source") or {}).get("commit")
+        if record.get("outcome") in LIVE:
+            # A run in flight is newer than anything on record, and one
+            # still preparing has not bound its source: either may be
+            # about this commit, so nothing older is returned past it.
+            if not commit or commit == at:
+                return None
+            continue
+        if commit == at:
+            relevant.append(record)
+    for record in _newest_first(relevant):
+        if record.get("outcome") != "passed":
+            # The newest relevant answer is a failure, a cancellation or no
+            # verdict: an older pass is not resurrected past it.
+            return None
+        source = record.get("source") or {}
+        if (record.get("scope") or None) != want \
+                or not source.get("bound") or source.get("dirty"):
+            # A pass of another coverage, or one over uncommitted work,
+            # answers a different question and supersedes nothing.
+            continue
+        if not record.get("resultId") \
+                or record["resultId"] != planned["resultId"]:
+            # Legacy (no identity to compare) or a different identity:
+            # one new run, never an inferred equivalence.
+            return None
+        if outcome_now(record).get("outcome") != "passed":
+            return None
+        return _record_reuse(shell, record, planned)
+    return None
+
+
+def _record_reuse(shell: dict, original: dict, planned: dict) -> dict:
+    """Write the requester's reuse record, tell the ticker, and hand back
+    the original evidence — unchanged on disk — naming the reuse."""
+    when = time.time()
+    reuse_id = "reuse:" + _digest("reuse/1", shell["requestId"],
+                                  shell["check"], shell.get("scope") or "",
+                                  original["id"], f"{when:.6f}")[:16]
+    reuse = {
+        "v": VERSION, "kind": "reuse", "id": reuse_id,
+        "reused": original["id"], "resultId": original["resultId"],
+        "identity": planned["identity"], "commit": planned["commit"],
+        "task": shell.get("task"), "stage": shell.get("stage"),
+        "check": shell.get("check"), "scope": shell.get("scope"),
+        "intent": shell.get("intent"), "agent": shell.get("agent"),
+        "actor": shell.get("actor"), "requested": when,
+        "requestId": shell.get("requestId"), "policyId": shell.get("policyId"),
+        "policyRevision": shell.get("policyRevision"),
+        "reviewId": shell.get("reviewId"),
+        "runner": {"module": "verify", "version": VERSION,
+                   "revision": RUNNER_REVISION},
+        # who the evidence was run for, as the evidence itself says it —
+        # copied for the reader, never written back
+        "original": {k: original.get(k) for k in (
+            "agent", "actor", "intent", "requestId", "requested", "ended")},
+        "location": "local", "why": REUSE_WHY,
+    }
+    reuse_dir().mkdir(parents=True, exist_ok=True)
+    (reuse_dir() / f"{_slug(reuse_id)}.json").write_text(
+        json.dumps(reuse, indent=2, sort_keys=True, default=str),
+        encoding="utf-8")
+    who = original.get("agent") or original.get("actor") or "an earlier request"
+    state.record_board_event({
+        "kind": "verify", "actor": "board", "file": shell.get("task") or "",
+        "summary": (f"{shell['check']} passed on {shell.get('task')} at "
+                    f"{planned['commit'][:12]} — reused {original['id']} "
+                    f"(run for {who}); nothing was run")})
+    state.broadcast({"type": "verify"})
+    return {**original, "reused": original["id"], "reuse": reuse}
+
+
+def read_reuse(reuse_id: str) -> dict | None:
+    if not _ID_OK.match(reuse_id or ""):
+        return None
+    try:
+        data = json.loads((reuse_dir() / f"{_slug(reuse_id)}.json")
+                          .read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def reuses_for_task(filename: str) -> list[dict]:
+    """Every reuse record for one card, newest first. Not evidence: the
+    gate never reads these, and `all_evidence` never lists them."""
+    found = []
+    if not reuse_dir().is_dir():
+        return found
+    for path in reuse_dir().glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict) and data.get("task") == filename:
+            found.append(data)
+    found.sort(key=lambda r: r.get("requested") or 0, reverse=True)
+    return found
 
 
 def _execution_root(check: dict, task: str,
@@ -1426,22 +1700,9 @@ def _execute(record: dict, check: dict, root: Path, owned: bool, *,
         {"name": s.get("name"), "executable": s.get("executable"),
          "argv": list(s.get("argv") or []), "network": bool(s.get("network")),
          "required": bool(s.get("required", True))} for s in steps]
-    identity = {
-        "v": IDENTITY_VERSION,
-        "source": record["source"].get("sourceId")
-        if record["source"].get("bound") else None,
-        "check": record.get("checkSubstance"),
-        "coverage": coverage_id(record.get("scope"), record.get("scopeArgs") or []),
-        "program": record["program"].get("programId")
-        if record["program"].get("bound") else None,
-        "prepare": {"definition": prepare_definition(steps),
-                    "programs": [p.get("programId") if p.get("bound") else None
-                                 for p in programs]},
-        "inputs": inputs_id(inputs),
-        "rootClass": root_class(check["root"], root),
-        "env": bound_env["envId"],
-        "runner": RUNNER_REVISION,
-    }
+    identity = _identity(record, record["source"], record["program"], steps,
+                         programs, inputs, root_class(check["root"], root),
+                         bound_env["envId"])
     record["identity"] = identity
     record["resultId"] = result_id(identity)
     # How the run came about, kept for ever and never an invalidator: the
@@ -2238,6 +2499,9 @@ PUBLIC = ("v", "id", "runner", "task", "stage", "agent", "actor", "intent",
           # on a legacy record, which is how a reader tells the two apart
           "resultId", "identity", "checkSubstance", "provenance", "inputs",
           "prepareSteps",
+          # a request answered by an existing record (`reused` names it,
+          # `reuse` is the requester's own record) and a forced rerun
+          "reused", "reuse", "again",
           # present only on a diagnosis's own record: which doctor fixture
           # it ran at. A reader must be able to tell a doctor's run from a
           # card's, and an absent key is a card's.

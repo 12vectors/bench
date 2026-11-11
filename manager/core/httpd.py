@@ -482,6 +482,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {
                 "rollup": verify.rollup(name, manifest),
                 "evidence": [verify.public(r) for r in verify.for_task(name)],
+                # requests answered by an existing record, each naming the
+                # evidence it returned and who asked — not evidence itself
+                "reuses": verify.reuses_for_task(name)[:20],
                 "outcomes": verify.OUTCOMES,
             })
         elif path == "/api/review":
@@ -883,6 +886,10 @@ class Handler(BaseHTTPRequestHandler):
                 # document says now. Without one it is a person's, and the
                 # profile resolves fresh. Neither can name a check the
                 # profile does not hold.
+                #
+                # An equal, current pass already on record is returned
+                # rather than run again (`reused` names it); `again` is
+                # the explicit request for a new run.
                 self._json(200, {"evidence": verify.public(verify.request(
                     check=payload["check"],
                     task=payload.get("file"),
@@ -890,7 +897,8 @@ class Handler(BaseHTTPRequestHandler):
                     scope=payload.get("scope") or None,
                     intent=payload.get("intent") or None,
                     stage=payload.get("stage") or None,
-                    actor="agent" if payload.get("agent") else "you"))})
+                    actor="agent" if payload.get("agent") else "you",
+                    again=payload.get("again") is True))})
             elif path == "/api/doctor/run":
                 payload = self._read_body()
                 # The active half, and a POST because each named mode does
