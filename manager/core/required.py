@@ -625,10 +625,6 @@ def _live(filename: str, item: dict) -> dict:
     return {"evidence": evidence if record else None, "outcome": outcome}
 
 
-DONE = ("met", "joined", "reused", "problem", "unavailable", "not-requested",
-        "other-candidate", "passed", "failed", "prepare-failed", "denied",
-        "cancelled", "error")
-
 PUBLIC_ITEM = ("check", "scope", "name", "coverage", "state", "reason",
                "outcome", "evidence", "why", "remedy", "plain", "started",
                "ended")
