@@ -683,7 +683,9 @@ class EvidenceIsBoundToItsSubject(VerifyCase):
             "profiles": {"work": {"verify": ["unit"]}}})
         reading = verify.outcome_now(verify.read(found["id"]))
         self.assertEqual(reading["outcome"], "stale")
-        self.assertEqual(reading["reason"], "policy-changed")
+        # a record with a result identity names the dimension that moved
+        # (#97); a legacy one still says `policy-changed`
+        self.assertEqual(reading["reason"], "check-changed")
 
     def test_the_memoised_reading_cannot_hold_a_pass_open(self):
         """Asking whether a pass is fresh costs git, so the answer is

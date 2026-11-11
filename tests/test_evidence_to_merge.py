@@ -592,13 +592,19 @@ class NoEquivalenceIsAcceptedYet(unittest.TestCase):
         self.assertEqual(gates._accepted_equivalents({"name": "unit",
                                                       "accepts": ["x"]}), ())
 
-    def test_every_record_is_legacy_until_result_identities_exist(self):
-        self.assertIsNone(gates._current_result_id({"name": "unit"},
-                                                   {"commit": H}))
-        self.assertEqual(gates._partition({"resultId": "r"}, None), "legacy")
-        self.assertEqual(gates._partition({"resultId": "r"}, "r"), "current")
-        self.assertEqual(gates._partition({"resultId": "r"}, "s"), "outdated")
-        self.assertEqual(gates._partition({}, "s"), "legacy")
+    def test_a_record_is_partitioned_by_its_own_identity(self):
+        """#97: no identity is legacy; an identity whose definition still
+        holds is current; one that moved — or cannot be read — is
+        outdated, never current."""
+        self.assertEqual(gates._partition({}, None), "legacy")
+        self.assertEqual(gates._partition({}, {"reasons": ["x"]}), "legacy")
+        self.assertEqual(gates._partition({"resultId": "r"},
+                                          {"reasons": []}), "current")
+        self.assertEqual(gates._partition({"resultId": "r"},
+                                          {"reasons": ["check-changed"]}),
+                         "outdated")
+        self.assertEqual(gates._partition({"resultId": "r"}, None),
+                         "outdated")
 
 
 class TheSafer36Shape(GateCase):
@@ -629,7 +635,7 @@ class TheSafer36Shape(GateCase):
         gates.forget_cached()
         self.assertEqual(self.decide()["decision"], "allowed")
 
-    def test_the_reason_cites_h_and_its_real_stale_reason(self):
+    def add_the_next_cards_context(self) -> None:
         mock = self.work / "reference" / "card37-mockup.md"
         mock.write_text("a mockup for the next card\n", encoding="utf-8")
         self.document["context"] = [{"name": "card37-mockup",
@@ -638,6 +644,45 @@ class TheSafer36Shape(GateCase):
         self.declares(self.document)
         verify.forget_cached()
         gates.forget_cached()
+
+    def make_legacy(self) -> None:
+        """B's pass as a record written before result identities: the
+        same file, without the fields #97 added."""
+        for record in verify.for_task(CARD):
+            if record.get("outcome") != "passed":
+                continue
+            path = verify.path_of(record["id"])
+            data = json.loads(path.read_text(encoding="utf-8"))
+            for key in ("resultId", "identity", "provenance", "inputs",
+                        "prepareSteps", "checkSubstance"):
+                data.pop(key, None)
+            path.write_text(json.dumps(data, indent=2, sort_keys=True),
+                            encoding="utf-8")
+        verify.forget_cached()
+        gates.forget_cached()
+
+    def test_new_evidence_survives_unrelated_context(self):
+        """E1 / R1 inverted at the gate: B's pass carries a result identity,
+        and nothing it depends on moved — the gate is met with zero
+        reruns, and the record still names the policy it ran under."""
+        before = next(r for r in verify.for_task(CARD)
+                      if r.get("outcome") == "passed")
+        self.add_the_next_cards_context()
+        found = self.decide()
+        self.assertEqual(found["decision"], "allowed")
+        record = verify.read(before["id"])
+        self.assertEqual(record["provenance"]["policyRevision"],
+                         before["policyRevision"])
+        reading = verify.outcome_now(record)
+        self.assertEqual(reading["outcome"], "passed")
+        self.assertTrue(reading["freshness"]["provenance"]["policyChanged"])
+
+    def test_the_reason_cites_h_and_its_real_stale_reason(self):
+        """The LEGACY shape (E14): B's pass written before #97 keeps
+        today's rules — `policy-changed` — cites H, never A, and needs
+        exactly one fresh run."""
+        self.make_legacy()
+        self.add_the_next_cards_context()
         found = self.decide()
         self.assertEqual(found["decision"], "blocked")
         row = found["unmet"][0]
@@ -650,6 +695,24 @@ class TheSafer36Shape(GateCase):
         self.assertIn(self.commit_a,
                       [h["commit"] for h in row["history"]],
                       "the older cancellation is kept, as history")
+
+    def test_a_legacy_record_needs_one_fresh_run_and_is_never_rewritten(self):
+        self.make_legacy()
+        legacy = {p: p.read_bytes()
+                  for p in (self.state / "evidence").glob("*.json")}
+        self.add_the_next_cards_context()
+        self.assertEqual(self.decide()["decision"], "blocked")
+        self.manifest(agent="run-3")
+        fresh = self.ask(agent="run-3")
+        self.assertEqual(fresh["outcome"], "passed")
+        self.assertTrue(fresh["resultId"])
+        verify.forget_cached()
+        gates.forget_cached()
+        self.assertEqual(self.decide()["decision"], "allowed")
+        for path, data in legacy.items():
+            self.assertEqual(path.read_bytes(), data,
+                             f"{path.name} is a legacy record and stays "
+                             f"byte for byte")
 
     def test_a_new_commit_leaves_both_as_history(self):
         head = self.commit_in(self.wt, "third attempt\n")
