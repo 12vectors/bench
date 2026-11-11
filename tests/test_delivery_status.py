@@ -40,12 +40,14 @@ from tests.test_integration_gates import (CARD, FAILS, HANGS, PASSES,  # noqa: E
                                           STEM, GateCase, card, git,
                                           wait_for)
 
+import agents  # noqa: E402
 import config  # noqa: E402
 import delivery  # noqa: E402
 import gates  # noqa: E402
 import github  # noqa: E402
 import httpd  # noqa: E402
 import phases  # noqa: E402
+import plans  # noqa: E402
 import state  # noqa: E402
 import taskfiles  # noqa: E402
 import verify  # noqa: E402
@@ -182,7 +184,7 @@ class TheCopyMatrix(DeliveryCase):
         self.place("in-progress", base_branch="no-such-branch")
         found = self.expect("ready-to-start", "start")
         self.assertIn("launch-check", [a["action"] for a in found["others"]])
-        checked = delivery.launch_check(CARD)
+        checked = delivery.launch_check(CARD, refusals=agents.launch_refusals)
         self.assertFalse(checked["ok"])
         self.assertIn("no-such-branch", checked["says"])
 
@@ -310,6 +312,36 @@ class TheCopyMatrix(DeliveryCase):
                          "check or review")
         self.assertEqual(found["counts"], {"required": 0, "met": 0})
         self.assertEqual(found["history"]["obsolete"], 2)
+
+    def test_f18_a_merged_pr_does_not_hide_work_pushed_after_it(self):
+        # Returned or reopened work under a card whose PR merged earlier:
+        # the snapshot is about the old head, the branch has moved on, and
+        # the new commit's requirements still apply.
+        merged = self.passed_at_head()
+        gates.record_verdict(CARD, verdict="APPROVE", head=merged)
+        self.place("review", pr=PR_URL)
+        self.snapshot(head=merged, prState="MERGED", merged=True)
+        newer = self.commit_in(config.WORKTREES / STEM, "work after the merge\n")
+        found = self.read()
+        self.assertNotEqual(found["status"]["word"], "merged-elsewhere")
+        self.assertEqual(found["candidate"]["commit"], newer)
+        self.assertEqual(found["counts"], {"required": 2, "met": 0})
+        self.assertEqual(found["history"]["obsolete"], 0)
+        self.assertNotEqual((found["primary"] or {}).get("label"),
+                            "Finish: clean up")
+        self.assertIn("does not deliver this work", found["status"]["sentence"])
+
+    def test_f18_a_merged_pr_ahead_of_this_board_still_closes(self):
+        # The local branch is behind what GitHub merged: it holds nothing
+        # the merge did not, so administrative closure stands.
+        older = self.passed_at_head(body=FAILS)
+        wt = config.WORKTREES / STEM
+        merged = self.commit_in(wt, "pushed from elsewhere\n")
+        git(wt, "reset", "-q", "--hard", older)
+        self.place("review", pr=PR_URL)
+        self.snapshot(head=merged, prState="MERGED", merged=True)
+        found = self.expect("merged-elsewhere", "complete")
+        self.assertEqual(found["counts"], {"required": 0, "met": 0})
 
     def test_f19_stacked_all_met(self):
         git(self.repo, "branch", "feature/x", "main")
@@ -779,6 +811,106 @@ class TheCacheFollowsItsInputs(DeliveryCase):
     def test_a_pr_snapshot(self):
         self.snapshot(head=self.head, prState="MERGED", merged=True)
         self.assertEqual(self.board_word(), "merged-elsewhere")
+
+    def test_a_recorded_plan(self):
+        # A ⌖ replan rewrites the recorded plan; a card retargeted onto a
+        # stacked branch is no longer one merge & clean up finishes.
+        gates.record_verdict(CARD, verdict="APPROVE", head=self.head)
+        reading = lambda: delivery.board(taskfiles.collect())[CARD]
+        self.assertEqual(reading()["primary"]["action"], "complete")
+        git(self.repo, "branch", "feature/x", "main")
+        config.PLANS_DIR.mkdir(parents=True, exist_ok=True)
+        plans.plan_path(CARD).write_text(json.dumps(
+            {"v": 1, "task": CARD, "branch": f"task/{STEM}",
+             "appBase": "main", "prBase": "feature/x"}), encoding="utf-8")
+        self.assertEqual(reading()["primary"]["action"], "open-pr-url")
+
+
+class TheCacheFollowsTheDeliveredRecord(DeliveryCase):
+
+    def test_a_delivered_record(self):
+        self.place("backlog")
+        reading = lambda: delivery.board(taskfiles.collect())[CARD]
+        self.assertEqual(reading()["candidate"]["state"], "none-yet")
+        github._record_delivered(CARD, "1a2b3c4d5e6f7a8b9c0d", "main", "local")
+        self.assertEqual(reading()["candidate"]["state"], "delivered")
+
+
+# ── the launch check asks the launch's own refusals ───────────────────
+
+
+class TheLaunchCheckIsTheLaunchsOwn(DeliveryCase):
+    """Plan and profile resolving cleanly is not the whole of a launch:
+    the stage, a phase card, ownership, a running agent and the prompt
+    template refuse too. Each case asserts the check says what
+    `start_agent` then does, and that the check wrote nothing."""
+
+    def check(self, **kw) -> dict:
+        return delivery.launch_check(CARD, refusals=agents.launch_refusals,
+                                     **kw)
+
+    def assert_same_refusal(self, stage: str, phrase: str) -> None:
+        card_bytes = (self.tasks / stage / CARD).read_bytes()
+        checked = self.check()
+        self.assertFalse(checked["ok"], checked)
+        self.assertIn(phrase, checked["says"])
+        self.assertEqual((self.tasks / stage / CARD).read_bytes(), card_bytes)
+        self.assertFalse((config.WORKTREES / STEM).exists())
+        self.assertFalse(state.AGENTS)
+        with self.assertRaises(ValueError) as caught:
+            agents.start_agent(CARD, stage)
+        self.assertIn(phrase, str(caught.exception))
+        self.assertEqual((self.tasks / stage / CARD).read_bytes(), card_bytes)
+
+    def test_backlog_is_refused_as_the_launch_refuses_it(self):
+        self.place("backlog")
+        self.assert_same_refusal("backlog", "work starts from in-progress/")
+
+    def test_a_phase_card_is_refused(self):
+        self.place("in-progress", type="Phase")
+        self.assert_same_refusal("in-progress", "is a phase card")
+
+    def test_someone_elses_card_is_refused_without_a_claim(self):
+        self.patch(COMMIT_MOVES=True)
+        self.addCleanup(setattr, agents, "actor_name", agents.actor_name)
+        agents.actor_name = lambda: "istos"
+        self.place("in-progress", assignee="elena")
+        self.assert_same_refusal("in-progress", "elena holds")
+        self.assertFalse([b for b in self.check(takeover=True)["blockers"]
+                          if "elena holds" in b])
+
+    def test_a_running_agent_is_refused(self):
+        self.place("in-progress")
+        self.running_agent()
+        self.addCleanup(state.AGENTS.clear)
+        checked = self.check()
+        self.assertFalse(checked["ok"])
+        with self.assertRaises(ValueError) as caught:
+            agents.start_agent(CARD, "in-progress")
+        self.assertEqual(checked["blockers"][0], str(caught.exception))
+
+    def test_a_broken_template_override_is_refused(self):
+        self.place("in-progress")
+        prompts = config.LOCAL / "prompts"
+        prompts.mkdir(parents=True, exist_ok=True)
+        (prompts / "work.md").write_text("no placeholders {nope}\n",
+                                         encoding="utf-8")
+        checked = self.check()
+        self.assertFalse(checked["ok"])
+        with self.assertRaises(ValueError) as caught:
+            agents.start_agent(CARD, "in-progress")
+        self.assertIn(str(caught.exception), checked["blockers"])
+
+    def test_a_clean_card_is_clear(self):
+        self.place("in-progress")
+        checked = self.check()
+        self.assertTrue(checked["ok"], checked["blockers"])
+        self.assertFalse((config.WORKTREES / STEM).exists())
+
+    def test_without_the_launchs_refusals_nothing_is_said_to_be_clear(self):
+        self.place("in-progress")
+        with self.assertRaises(ValueError):
+            delivery.launch_check(CARD)
 
 
 class MutationsStillRevalidate(DeliveryCase):

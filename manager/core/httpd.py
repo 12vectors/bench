@@ -1245,7 +1245,9 @@ class Handler(BaseHTTPRequestHandler):
                 payload = self._read_body()
                 self._json(200, {"launch": delivery.launch_check(
                     payload["file"], payload.get("stage"),
-                    payload.get("intent") or "work")})
+                    payload.get("intent") or "work",
+                    refusals=agents.launch_refusals,
+                    takeover=bool(payload.get("takeover")))})
             elif path == "/api/agent/stop":
                 payload = self._read_body()
                 agent = agents.stop_agent(payload["id"])

@@ -350,6 +350,22 @@ def _optional(policy_doc: dict, required: set[str], mine: list[dict]) -> int:
     return len((offered | ran) - required)
 
 
+def _merged_covers(pr: dict, candidate: dict) -> bool:
+    """Does a PR merged on GitHub speak for the work here now? Only when
+    the card's commit on this board is the head that PR merged, or is
+    contained in it. A branch that gained commits after the merge — work
+    returned, or reopened under the same card — is new, undelivered work:
+    the old merge says nothing about it, so its requirements still apply.
+    A card with no commit here has nothing newer to hide. One local read,
+    and an unknown merged head is not a cover."""
+    if candidate.get("state") != "present":
+        return True
+    commit, head = candidate.get("commit"), (pr or {}).get("head")
+    if not head:
+        return False
+    return commit == head or gates._contained(commit, head)
+
+
 def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
     """The delivery status of one card. `ctx` is the board-wide read,
     hoisted; `full` adds the parts only the card's own reading carries."""
@@ -392,7 +408,7 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
     at = candidate.get("commit") if candidate["state"] == "present" else None
     rows = (decision or {}).get("requirements") or []
     merged_elsewhere = bool(pr and pr.get("merged")) and stage == "review" \
-        and not member
+        and not member and _merged_covers(pr, candidate)
     requirements = [] if merged_elsewhere else [_requirement(r, at)
                                                 for r in rows]
     if candidate["state"] != "present" and stage != "review":
@@ -421,6 +437,12 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
         others_hold=others_hold, holder=holder, member=member,
         merged_elsewhere=merged_elsewhere, gated=gated)
 
+    if pr and pr.get("merged") and not merged_elsewhere \
+            and candidate["state"] == "present" and not member:
+        sentence = (f"{sentence} The PR merged on GitHub at "
+                    f"{_short(pr.get('head'))} does not contain "
+                    f"{_short(candidate.get('commit'))}, so it does not "
+                    f"deliver this work.")
     label, tone = WORDS[status]
     if status == "agent-working":
         label = label.replace("{name}", (alive or {}).get("name") or "An agent")
@@ -827,6 +849,16 @@ def bump() -> None:
 forget_cached = bump
 
 
+def _file_stamp(path) -> str | None:
+    """A digest of one record file's bytes, or None when there is none —
+    content rather than a modification time, so two writes inside one
+    second are still two different keys."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
 def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
     """Everything a reading depends on, digested. The cache is keyed by
     this *and* a time bucket, so a change to any authority — the source,
@@ -854,6 +886,13 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
         "phases": sorted((k, v.get("running"), v.get("halted"))
                          for k, v in ctx["phases"].items()),
         "snapshots": snaps,
+        # The recorded plan (a ⌖ replan rewrites it) and the delivered
+        # record (a finished merge & clean up writes it) are both read by
+        # every card's reading, so both are part of its identity.
+        "plans": [(t["file"], _file_stamp(plans.plan_path(t["file"])))
+                  for t in tasks],
+        "delivered": [(t["file"], github.delivered_record(t["file"]))
+                      for t in tasks],
         "records": len(ctx["records"]),
         "worktrees": sorted(p.name for p in config.WORKTREES.iterdir())
         if config.WORKTREES.is_dir() else [],
@@ -980,31 +1019,34 @@ def _git_bounded(args: list[str], timeout: float):
 
 
 def launch_check(filename: str, stage: str | None = None,
-                 intent: str = "work") -> dict:
-    """An explicit, fresh launch check: the launch's own preflight — the
-    plan (`plans.preflight`) and the profile (`profiles.manifest` +
-    `require`, exactly what `agents._preflight_profile` asks) — and
-    nothing else. It may fetch, as `/api/plan` does, because a person
-    asked; it claims nothing and starts nothing. A clean answer says the
-    launch's own checks passed *now*; the launch asks again."""
+                 intent: str = "work", *, refusals=None,
+                 takeover: bool = False) -> dict:
+    """An explicit, fresh launch check: the launch's own refusals, asked
+    of the launch's own steps and nothing else — the stage and phase-card
+    rule, one agent per card, the plan, the profile, the prompt template
+    and, for work, the claim's ownership rule.
+
+    `refusals` is `agents.launch_refusals`, handed in by the caller:
+    `agents` sits to the right of this module in the dependency order, so
+    it cannot be imported here, and the question must not be answered with
+    a second, shorter list of its own — without it, nothing is checked and
+    nothing is said to be clear. It may fetch, as `/api/plan` does,
+    because a person asked; it claims nothing and starts nothing. A clean
+    answer says the launch's own checks passed *now*; the launch asks
+    again."""
     task = _find(filename, stage)
     stage = task["stage"]
-    blockers: list[str] = []
-    try:
-        plan = plans.preflight(filename, stage, task=task)
-        blockers += list(plan.get("blockers") or [])
-    except (ValueError, OSError) as exc:
-        blockers.append(str(exc))
-    try:
-        profiles.require(profiles.manifest(intent, filename, stage))
-    except (ValueError, OSError) as exc:
-        blockers.append(str(exc))
+    if refusals is None:
+        raise ValueError("the launch check was not given the launch's own "
+                         "refusals (agents.launch_refusals); nothing was "
+                         "checked")
+    blockers = [str(b) for b in refusals(filename, stage, intent, takeover)]
     return {"task": filename, "stage": stage, "intent": intent,
             "ok": not blockers, "blockers": blockers, "at": time.time(),
             "says": ("the launch's own preflight found nothing in the way "
                      "just now; it runs again when the launch is asked for"
                      if not blockers else
-                     "starting work would be refused: " + blockers[0])}
+                     "the launch would be refused: " + blockers[0])}
 
 
 def seams() -> dict:
