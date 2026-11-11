@@ -97,6 +97,10 @@ def wait_text(fragment: str, timeout: float = 30) -> None:
 
 def fire(button: str):
     b = S["browser"]
+    # the toast the previous click raised sits over the sheet's buttons;
+    # a person waits for it to go, and so does this
+    b.eval("document.querySelector('#toast').classList.remove('show')")
+    time.sleep(0.6)
     b.click(f"{SHEET} #{button}")      # arm
     b.click(f"{SHEET} #{button}")      # fire
 

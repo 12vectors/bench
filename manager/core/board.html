@@ -1101,6 +1101,12 @@
   #reqsheet ul.dreqs{list-style:none;margin:0;padding:0}
   #reqsheet .check-row{flex-wrap:wrap}
   #reqsheet .check-row>.why{flex-basis:100%;margin:0 0 0 22px}
+  /* a command is one long token: it wraps anywhere rather than pushing
+     the sheet sideways on a narrow screen */
+  #reqsheet .check-row .name{min-width:0;overflow-wrap:anywhere}
+  #reqsheet .check-row .reqcmd{display:block;color:var(--dim);font-size:11px;
+    overflow-wrap:anywhere;word-break:break-all}
+  #reqsheet .why{overflow-wrap:anywhere}
   #reqsheet .reqfail{color:var(--alarm)}
   .dreqs .dreqfold>summary{cursor:pointer;font-size:12px;color:var(--muted)}
   .dreqs .dfoldbody{padding:6px 0 0 4px;display:flex;flex-direction:column;gap:6px;font-size:12px}
@@ -4280,7 +4286,7 @@ function requiredItemRow(i) {
   return `<li class="check-row ${cls}" data-req="${esc(i.check)}" title="${esc(i.why || '')}">` +
     `<span class="glyph" aria-hidden="true">${glyph}</span>` +
     `<span class="name">${esc(i.check)}${i.scope ? ' · scope ' + esc(i.scope) : ' — full run'}` +
-    (def && def.command ? `<small class="mono"> ${esc(def.command)} (${esc(def.root || '')})</small>` : '') +
+    (def && def.command ? `<small class="reqcmd">${esc(def.command)} (${esc(def.root || '')})</small>` : '') +
     `</span><span class="state">${esc(live)}` +
     (i.remedy ? `<span class="dreqfix">${esc(i.remedy)}</span>`
       : (['problem', 'failed', 'prepare-failed', 'denied', 'error', 'cancelled'].includes(i.state) && i.why
