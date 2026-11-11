@@ -45,12 +45,13 @@ def load(width=1440, height=900):
     return b
 
 
-def overrides_on_disk():
-    gates = S["backend"].tool / "manager" / "local" / "state" / "gates"
-    found = []
-    for path in sorted(gates.glob("*.overrides.json")) if gates.is_dir() else []:
-        found += json.loads(path.read_text(encoding="utf-8"))
-    return found
+def overrides_for(stem: str):
+    """What the backend has on record for one card, read back through its
+    own gate route rather than by guessing where its state lives."""
+    status, body = S["backend"].get(f"/api/gates?file={stem}.md&stage=review")
+    if status != 200:
+        raise bv.CheckFailed(f"/api/gates answered {status}: {body[:300]!r}")
+    return json.loads(body).get("overrides") or []
 
 
 def open_gate(stem: str):
@@ -108,8 +109,16 @@ class OverrideNeedsATarget(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        backend = S["backend"]
         for card in cls.cards:
             card.unlink(missing_ok=True)
+        # leave the shared fixture as the next case expects it
+        for repo, args in ((backend.work, ("config", "--unset", "user.name")),
+                           (backend.app, ("branch", "-D", f"task/{AT_COMMIT}"))):
+            try:
+                backend._git(repo, *args)
+            except bv.SetupError:
+                pass
         if cls.saved is None:
             cls.policy.unlink(missing_ok=True)
         else:
@@ -132,8 +141,8 @@ class OverrideNeedsATarget(unittest.TestCase):
         # clicking the disabled action records nothing
         b.click(f"{DIALOG} #sh-override")
         b.click(f"{DIALOG} #sh-override")
-        self.assertEqual([], [o for o in overrides_on_disk()
-                              if o.get("task") == f"{NO_TARGET}.md"])
+        self.assertEqual([], overrides_for(NO_TARGET))
+        S["metrics"]["overrideNoTarget"] = state
         close_sheet()
 
     def test_2_a_direct_call_cannot_bypass_it(self):
@@ -142,8 +151,7 @@ class OverrideNeedsATarget(unittest.TestCase):
             "reason": REASON, "head": "f" * 40})
         self.assertNotEqual(200, status, body)
         self.assertIn(b"no implementation commit to override at", body)
-        self.assertEqual([], [o for o in overrides_on_disk()
-                              if o.get("task") == f"{NO_TARGET}.md"])
+        self.assertEqual([], overrides_for(NO_TARGET))
 
     def test_3_narrow_layout_keeps_the_reason_readable(self):
         b = load(390, 844)
@@ -164,15 +172,16 @@ class OverrideNeedsATarget(unittest.TestCase):
                         "an eligible gate offers the override")
         self.assertTrue(b.eval(f"!!document.querySelector('{DIALOG} #sh-why')"))
         shot("override-eligible-1440x900")
-        b.eval(f"document.querySelector('{DIALOG} #sh-why').value = {json.dumps(REASON)}")
         b.click(f"{DIALOG} #sh-override")      # arm
+        b.eval(f"document.querySelector('{DIALOG} #sh-why').value = {json.dumps(REASON)}")
         b.click(f"{DIALOG} #sh-override")      # fire
         if not b.wait("!!document.querySelector('#sheetwrap .sheet') && "
                       "document.querySelector('#sheetwrap .sheet').innerText"
                       ".includes('recorded, never a pass')", 20):
             raise bv.CheckFailed("the override was not recorded and redrawn")
         shot("override-recorded-1440x900")
-        recorded = [o for o in overrides_on_disk() if o.get("task") == f"{AT_COMMIT}.md"]
+        recorded = overrides_for(AT_COMMIT)
+        S["metrics"]["overrideRecorded"] = recorded
         self.assertEqual(1, len(recorded), recorded)
         self.assertEqual("verify-operator", recorded[0]["actor"])
         self.assertTrue(recorded[0]["head"])
