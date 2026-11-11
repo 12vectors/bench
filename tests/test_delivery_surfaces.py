@@ -282,6 +282,87 @@ class TheFullReadingFollowsTheServer(unittest.TestCase):
         self.assertIn("The requirement rows could not be read", lift("requirementsHtml"))
 
 
+SIGNALS = "\n".join([
+    "const S = { state: {} };", lift("shortSha"), const("REVIEW_WORD"),
+    lift("reviewSignals"),
+])
+
+
+@unittest.skipUnless(NODE, "node not available — the page's functions are unchecked")
+class TheReviewSignalsSayWhatEachRecordSays(matrix.DeliveryCase):
+    """The supervisor's finding at d6ace0e: F16's Overview said *Ready to
+    merge* and *Review by Bench approved at the current commit*, while
+    Signals said an unqualified *Review: no verdict yet* — because it read
+    only the card's prose report and GitHub's folded state. These compute
+    the server's reading on disposable fixtures and draw Signals' review
+    rows with the page's own `reviewSignals`."""
+
+    def rows(self, pr=None) -> dict:
+        delivery.forget_cached()
+        task = delivery._find(matrix.CARD, None)
+        compact = delivery.board({"stages": [{"tasks": [task]}]})[matrix.CARD]
+        script = (SIGNALS + f"\nconst d = {json.dumps(compact)};"
+                  f"\nconsole.log(JSON.stringify(reviewSignals(d, {json.dumps(pr)})));")
+        out = subprocess.run([NODE, "-e", script], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return {label: (text, cls) for label, text, cls in json.loads(out.stdout)}
+
+    def test_f16_durable_bench_approval_with_no_report(self):
+        head = self.passed_at_head()
+        matrix.gates.record_verdict(matrix.CARD, verdict="APPROVE", head=head)
+        self.place("review", pr=matrix.PR_URL)
+        self.assertEqual(self.word(), "ready-to-merge")
+        rows = self.rows()
+        text, cls = rows["Bench review"]
+        self.assertIn(f"approved at {head[:7]}", text)
+        self.assertIn("the commit that would merge", text)
+        self.assertEqual(cls, "")
+        self.assertNotIn("Reported review", rows, "no report is on the card")
+        for label, (text, _) in rows.items():
+            self.assertNotIn("no verdict yet", text, label)
+        # unobserved is said as unobserved, never as "no review"
+        self.assertIn("not observed", rows["GitHub review"][0])
+
+    def test_github_observed_without_a_review_state_is_not_unobserved(self):
+        head = self.passed_at_head()
+        matrix.gates.record_verdict(matrix.CARD, verdict="APPROVE", head=head)
+        self.place("review", pr=matrix.PR_URL)
+        none = self.rows({"verdict": "red", "review": None, "ci": "fail"})
+        self.assertIn("no formal review state", none["GitHub review"][0])
+        self.assertEqual(none["GitHub review"][1], "", "failing CI is not a review")
+        approved = self.rows({"verdict": "green", "review": "approved"})
+        self.assertIn("approved on the pull request", approved["GitHub review"][0])
+        self.assertIn("not bound to a commit", approved["GitHub review"][0])
+        changes = self.rows({"verdict": "red", "review": "changes"})
+        self.assertEqual(changes["GitHub review"][1], "bad")
+
+    def test_a_report_about_an_older_head_is_history_not_approval(self):
+        wt = self.worktree()
+        older = self.commit_in(wt)
+        self.place("review", pr=matrix.PR_URL)
+        path = self.tasks / "review" / matrix.CARD
+        path.write_text(path.read_text(encoding="utf-8") +
+                        f"\n---\n\n## PR review at {older[:12]} — 2026-11-11 18:53 (Finch)"
+                        "\n\nPR REVIEW: REQUEST CHANGES\n\nFix it.\n", encoding="utf-8")
+        self.commit_in(wt, "addressed\n")
+        rows = self.rows()
+        text, cls = rows["Reported review"]
+        self.assertIn(f"changes requested in the card's report at {older[:7]}", text)
+        self.assertIn("an earlier commit, history", text)
+        self.assertEqual(cls, "", "a request about an older commit is not today's alarm")
+        self.assertEqual(rows["Bench review"][0], "no Bench verdict yet")
+
+    def test_a_report_that_is_the_bench_verdicts_prose_is_not_drawn_twice(self):
+        head = self.passed_at_head()
+        matrix.gates.record_verdict(matrix.CARD, verdict="APPROVE", head=head)
+        self.place("review", pr=matrix.PR_URL)
+        path = self.tasks / "review" / matrix.CARD
+        path.write_text(path.read_text(encoding="utf-8") +
+                        f"\n---\n\n## PR review at {head[:12]} — 2026-11-11 18:53 (Finch)"
+                        "\n\nPR REVIEW: APPROVE\n\nGood.\n", encoding="utf-8")
+        self.assertNotIn("Reported review", self.rows())
+
+
 FACE = set(re.findall(r"'([a-z-]+)'", re.search(
     r"const FACE_WORDS = new Set\(\[(.*?)\]\);", HTML, re.S).group(1)))
 

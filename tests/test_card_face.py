@@ -174,8 +174,14 @@ class EveryToolOneControlAway(Source):
 class SignalsAreKeptApart(Source):
     def test_ci_review_bench_and_merge_requirements_are_four_rows(self):
         body = self.body("signalsBlock")
-        for label in ("'Bench checks'", "'External CI'", "'Review'", "'Merge requirements'"):
+        for label in ("'Bench checks'", "'External CI'", "'Merge requirements'"):
             self.assertIn(label, body)
+        self.assertIn("reviewSignals(d, pr)", body)
+        self.assertNotIn("prVerdict(", body,
+                         "the card's report and GitHub's folded state are not one review")
+        review = self.body("reviewSignals")
+        for label in ("'Bench review'", "'GitHub review'", "'Reported review'"):
+            self.assertIn(label, review)
         self.assertIn("not a Bench check", body, "green CI is not a named check")
         self.assertIn("that is not a pass", body, "no gate is not a pass")
 
