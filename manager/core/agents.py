@@ -1440,9 +1440,8 @@ def agent_diff(agent_id: str) -> dict:
         raise ValueError("unknown agent")
     if not record.get("worktree"):
         return {"agent": agent_id, "files": []}
-    result = subprocess.run(
-        ["git", "-C", record["worktree"], "diff", "--numstat", record["base"]],
-        capture_output=True, text=True, timeout=10)
+    result = config.git_run(record["worktree"], "diff", "--numstat", record["base"],
+                            timeout=10)
     files = []
     for line in result.stdout.splitlines():
         parts = line.split("\t")

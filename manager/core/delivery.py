@@ -1011,9 +1011,7 @@ def check_remote(filename: str) -> dict:
 def _git_bounded(args: list[str], timeout: float):
     import subprocess
     try:
-        return subprocess.run(["git", "-C", str(config.app_repo()), *args],
-                              capture_output=True, text=True,
-                              timeout=timeout)
+        return config.git_run(config.app_repo(), *args, timeout=timeout)
     except (subprocess.SubprocessError, OSError):
         return None
 

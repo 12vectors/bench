@@ -709,8 +709,7 @@ def _version_text() -> str:
 
 def _git_at(repo: Path, *args: str) -> str | None:
     try:
-        result = subprocess.run(["git", "-C", str(repo), *args],
-                                capture_output=True, text=True, timeout=10)
+        result = config.git_run(repo, *args, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return None
     return result.stdout.strip() or None if result.returncode == 0 else None

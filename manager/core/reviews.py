@@ -143,8 +143,7 @@ def _git(*args: str, timeout: float = 30) -> subprocess.CompletedProcess:
     """git in the **application** repository, which is the only repository
     a branch, a commit or a worktree here belongs to."""
     try:
-        return subprocess.run(["git", "-C", str(config.app_repo()), *args],
-                              capture_output=True, text=True, timeout=timeout)
+        return config.git_run(config.app_repo(), *args, timeout=timeout)
     except (OSError, subprocess.SubprocessError) as exc:
         return subprocess.CompletedProcess(args, 128, "", str(exc))
 
@@ -603,8 +602,7 @@ def provision(filename: str, stage: str, agent_id: str, found: dict) -> dict:
 
 def _git_in(path: Path, *args: str) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(["git", "-C", str(path), *args],
-                              capture_output=True, text=True, timeout=30)
+        return config.git_run(path, *args)
     except (OSError, subprocess.SubprocessError) as exc:
         return subprocess.CompletedProcess(args, 128, "", str(exc))
 

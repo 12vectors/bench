@@ -76,8 +76,7 @@ def _git(*args: str, timeout: float = 30) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(args, 128, "",
                                            "no work-state repository")
     try:
-        return subprocess.run(["git", "-C", str(root), *args],
-                              capture_output=True, text=True, timeout=timeout)
+        return config.git_run(root, *args, timeout=timeout)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(args, 128, "", "timed out")
     except OSError as exc:

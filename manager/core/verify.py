@@ -314,8 +314,7 @@ _MAX_BIND_BYTES = 4 * 1024 * 1024
 
 def _git(root: Path | str, *args: str, timeout: float = 30) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(["git", "-C", str(root), *args],
-                              capture_output=True, text=True, timeout=timeout)
+        return config.git_run(root, *args, timeout=timeout)
     except (OSError, subprocess.SubprocessError) as exc:
         return subprocess.CompletedProcess(args, 128, "", str(exc))
 

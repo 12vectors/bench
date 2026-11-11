@@ -43,6 +43,16 @@ _OPENING: set[str] = set()       # filenames with a PR-open in flight
 
 
 def _run(cmd: list[str], cwd: Path | None = None, timeout: int = 60) -> subprocess.CompletedProcess:
+    if cmd and cmd[0] == "git":
+        # A git read runs nothing else (config.git_argv); anything else —
+        # a merge, a push, a worktree removal — is exactly as written.
+        root, rest = None, list(cmd[1:])
+        if rest[:1] == ["-C"] and len(rest) >= 2:
+            root, rest = rest[1], rest[2:]
+        where = str(cwd or config.REPO)
+        return subprocess.run(config.git_argv(root, *rest), cwd=where,
+                              env=config.git_env(root or where, *rest),
+                              capture_output=True, text=True, timeout=timeout)
     return subprocess.run(cmd, cwd=str(cwd or config.REPO),
                           capture_output=True, text=True, timeout=timeout)
 

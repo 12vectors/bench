@@ -746,6 +746,185 @@ class ReadingChangesNothing(DeliveryCase):
         self.assertEqual(self.fingerprint(), before)
 
 
+HELPER = """#!/bin/sh
+kind=$1; shift
+echo "$kind" >> "{marks}"
+case $kind in
+  clean) exec cat ;;
+  textconv) exec cat "$1" ;;
+  *) exit 0 ;;
+esac
+"""
+
+
+class ReadingRunsNoRepositoryHelper(DeliveryCase):
+    """A repository's own configuration can make a plain `git diff` or
+    `git status` run a program — a textconv, an external diff driver, a
+    clean filter, an fsmonitor hook, a signature check — or write its
+    index. Reading the board asks git those questions, so the
+    application here is configured to do every one of them, each helper
+    marking a file when it runs, and the reads must leave no mark and no
+    changed byte."""
+
+    def setUp(self):
+        super().setUp()
+        self.marks = self.tmp / "marks"
+        helper = self.tmp / "helper"
+        helper.write_text(HELPER.format(marks=self.marks), encoding="utf-8")
+        helper.chmod(0o755)
+        self.helper = helper
+
+    def arm(self) -> None:
+        """Configure every helper, after the fixture's own commits."""
+        common = Path(git(self.repo, "rev-parse", "--git-common-dir").stdout.strip())
+        if not common.is_absolute():
+            common = self.repo / common
+        (common / "info").mkdir(exist_ok=True)
+        (common / "info" / "attributes").write_text(
+            "* diff=probe filter=probe\n", encoding="utf-8")
+        hooks = self.tmp / "hooks"
+        hooks.mkdir(exist_ok=True)
+        for name in ("post-index-change", "reference-transaction", "post-checkout"):
+            hook = hooks / name
+            hook.write_text(f"#!/bin/sh\n\"{self.helper}\" hook-{name}\n", encoding="utf-8")
+            hook.chmod(0o755)
+        for key, value in (
+                ("diff.probe.textconv", f"{self.helper} textconv"),
+                ("diff.probe.command", f"{self.helper} extdiff"),
+                ("diff.external", f"{self.helper} external"),
+                ("filter.probe.clean", f"{self.helper} clean"),
+                ("filter.probe.smudge", "cat"),
+                ("core.fsmonitor", f"{self.helper} fsmonitor"),
+                ("core.hooksPath", str(hooks)),
+                ("log.showSignature", "true"),
+                ("gpg.program", f"{self.helper} gpg")):
+            git(self.repo, "config", key, value)
+
+    def bytes_of(self) -> dict:
+        found = {}
+        for root in (self.state, self.tasks, self.repo, config.WORKTREES):
+            for path in sorted(root.rglob("*")):
+                if path.is_file() and not path.is_symlink():
+                    found[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+        return found
+
+    def marked(self) -> list[str]:
+        if not self.marks.exists():
+            return []
+        return self.marks.read_text(encoding="utf-8").split()
+
+    def read_everything(self) -> dict:
+        delivery.forget_cached()
+        verify.forget_cached()
+        httpd.state_payload()
+        found = delivery.for_card(CARD)
+        httpd.gates_payload(CARD, "review")
+        return found
+
+    def a_reviewed_head(self) -> tuple[str, Path]:
+        self.origin()
+        head = self.passed_at_head()
+        gates.record_verdict(CARD, verdict="APPROVE", head=head)
+        self.place("review", pr=PR_URL)
+        self.snapshot(head=head)
+        return head, config.WORKTREES / STEM
+
+    def test_the_helpers_are_live_without_the_hardening(self):
+        """The control: the same configuration does run helpers for an
+        ordinary git, so the cases below prove something."""
+        _, wt = self.a_reviewed_head()
+        self.arm()
+        (wt / "code.txt").write_text("edited after the pass\n", encoding="utf-8")
+        git(wt, "diff", "HEAD")
+        git(wt, "status", "--porcelain")
+        self.assertTrue({"extdiff", "clean", "fsmonitor"} & set(self.marked()),
+                        self.marked())
+
+    def test_a_clean_checkout_is_read_without_running_a_helper(self):
+        _, wt = self.a_reviewed_head()
+        self.arm()
+        before = self.bytes_of()
+        found = self.read_everything()
+        self.assertEqual(self.marked(), [], "a repository helper ran during a read")
+        self.assertEqual(self.bytes_of(), before, "a read changed a byte")
+        self.assertEqual(found["status"]["word"], "ready-to-merge", found["status"])
+
+    def test_dirty_work_and_evidence_freshness_run_no_helper(self):
+        _, wt = self.a_reviewed_head()
+        self.arm()
+        (wt / "code.txt").write_text("edited after the pass\n", encoding="utf-8")
+        before = self.bytes_of()
+        found = self.read_everything()
+        self.assertEqual(self.marked(), [], "a repository helper ran during a read")
+        self.assertEqual(self.bytes_of(), before, "a read changed a byte")
+        # The uncommitted edit is still seen for what it is: the source
+        # identity names it, so the pass bound to the clean commit no
+        # longer reads as this checkout's.
+        identity = verify.source_identity(wt)
+        self.assertEqual(self.marked(), [])
+        self.assertIn("code.txt", " ".join(identity["dirty"]))
+        self.assertTrue(found["status"]["word"])
+
+    def test_a_textconv_alone_does_not_run(self):
+        """The acceptance probe exactly: a marker-only textconv through
+        info/attributes, a dirty tracked file and passing evidence."""
+        _, wt = self.a_reviewed_head()
+        common = Path(git(self.repo, "rev-parse", "--git-common-dir").stdout.strip())
+        if not common.is_absolute():
+            common = self.repo / common
+        (common / "info").mkdir(exist_ok=True)
+        (common / "info" / "attributes").write_text("code.txt diff=probe\n",
+                                                   encoding="utf-8")
+        git(self.repo, "config", "diff.probe.textconv", f"{self.helper} textconv")
+        (wt / "code.txt").write_text("edited after the pass\n", encoding="utf-8")
+        git(wt, "diff", "HEAD")
+        self.assertIn("textconv", self.marked(), "the control runs it")
+        self.marks.unlink()
+        delivery.forget_cached()
+        verify.forget_cached()
+        delivery.for_card(CARD)
+        self.assertEqual(self.marked(), [])
+
+    def test_without_the_hardening_the_read_would_run_it(self):
+        """What the switches are for: the same read through an unhardened
+        git does run the helper, so a regression here is caught."""
+        _, wt = self.a_reviewed_head()
+        self.arm()
+        (wt / "code.txt").write_text("edited after the pass\n", encoding="utf-8")
+        real_argv, real_env = config.git_argv, config.git_env
+        config.git_argv = lambda root, *a: ["git", "-C", str(root), *a]
+        config.git_env = lambda root, *a: None
+        try:
+            self.read_everything()
+        finally:
+            config.git_argv, config.git_env = real_argv, real_env
+        self.assertNotEqual(self.marked(), [])
+
+
+class GitReadsAreHardened(unittest.TestCase):
+    """`config.git_argv` and `git_env` change a read and nothing else."""
+
+    def test_a_read_diff_gains_the_switches(self):
+        argv = config.git_argv("/r", "diff", "HEAD")
+        self.assertEqual(argv, ["git", "-C", "/r", "diff", "--no-textconv",
+                                "--no-ext-diff", "HEAD"])
+        env = config.git_env(None, "rev-parse", "HEAD")
+        self.assertEqual(env["GIT_OPTIONAL_LOCKS"], "0")
+        keys = {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"]
+                for i in range(int(env["GIT_CONFIG_COUNT"]))}
+        self.assertEqual(keys["core.hooksPath"], "/dev/null")
+        self.assertEqual(keys["core.fsmonitor"], "false")
+
+    def test_an_authorised_write_is_run_exactly_as_written(self):
+        for args in (("merge", "--no-edit", "x"), ("push", "origin", "main"),
+                     ("fetch", "origin"), ("worktree", "add", "p", "b"),
+                     ("commit", "-m", "m")):
+            with self.subTest(args=args):
+                self.assertEqual(config.git_argv("/r", *args),
+                                 ["git", "-C", "/r", *args])
+                self.assertIsNone(config.git_env("/r", *args))
+
+
 # ── the cache is never authority ───────────────────────────────────────
 
 
