@@ -58,13 +58,21 @@ drifting towards "passed" on its own.
 
 ## Staleness is a property of the evidence, not of its age
 
-Every record is bound to what it was about: the policy revision, the
-check's own definition, the pinned context identities, and the exact
-source — the commit plus a digest of everything uncommitted in the
-checkout. `freshness()` re-reads that and says what moved. A `passed`
-whose binding no longer holds reads as `stale`, which is the whole reason
-the binding exists: modified tracked source, an edited check or a changed
-profile must not be able to reuse a pass.
+Every new record carries a **result identity** (`resultId`, design #94
+§4.1): the exact source — the commit plus a digest of everything
+uncommitted — the check's substance, its coverage, its programs, its
+preparation, the inputs it declares, its root class, the environment it
+declares and this runner. `freshness()` re-reads each dimension and says
+which moved, by its own reason. A `passed` whose identity no longer holds
+reads as `stale`: modified source, an edited check, a replaced program, a
+changed declared input or environment value must not be able to reuse a
+pass. What is *not* in it is **provenance** — the policy revision, the
+context pinned for the launch, who asked, the adapter, the paths — kept
+on the record and reported, never a reason to run again.
+
+A record written before identities existed is **legacy**: it has no
+`resultId` and is read with the rules it was written under, including
+the whole-policy `policy-changed`, and it is never rewritten.
 """
 
 from __future__ import annotations

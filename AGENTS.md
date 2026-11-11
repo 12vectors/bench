@@ -1752,9 +1752,29 @@ Four things it guarantees:
   closed as `error`, naming the restart. Nothing is re-run: asking again
   is a person's decision, and an automatic retry at boot is how an outage
   becomes a thundering herd.
-- **A pass is bound to what it was about.** Modified tracked source, a
-  new untracked file, a new commit, an edited check or a changed policy
-  all make a recorded `passed` read `stale`. So does a changed
+- **A pass is bound to what it was about, and to nothing else.** Every
+  new record carries a **result identity** (`resultId`): a digest of the
+  source, the check's substance (its argument list, root, time limit and
+  declared inputs and environment — not its name), the scope's
+  arguments, the programs, the preparation (each step's argument list,
+  network flag, whether it is required, and its program), the declared
+  inputs' content, the root class, the declared environment and the
+  runner. Modified tracked source, a new untracked file, a new commit, an
+  edited check, a changed scope, preparation, input or environment
+  variable make a recorded `passed` read `stale`, each with its own
+  reason — `source-changed`, `check-changed`, `scope-changed`,
+  `prepare-changed`, `program-changed`, `input-changed`, `env-changed`,
+  `runner-changed` — naming the input, variable, step or scope, with a
+  remedy. A changed **policy** on its own does not: which policy revision
+  was in force, the context pinned for some other card, who asked, the
+  model and the temporary paths are **provenance**, kept in the record's
+  `provenance` block and shown, never a reason. So approving a document
+  for the next card no longer sends this card's checks round again.
+  A record written before result identities existed has no `resultId`
+  and keeps the rules it was written under, byte for byte, including
+  `policy-changed` and `context-changed`; one fresh run replaces it.
+  An identity that cannot be read is `identity-unknown`, never a pass.
+  So does a changed
   **program**: the record hashes the executable as it resolved on the
   check's PATH, the interpreter its `#!` line names (one level), and every
   absolute-path argument outside the execution root (`python3
@@ -1766,10 +1786,45 @@ Four things it guarantees:
   the libraries, modules or services those programs load, and it is not a
   sandbox. `freshness()` compares and never resolves; `outcome_now()` may
   only ever disagree with the record in the safe direction.
+- **What a check reads, it declares.** A check's optional `"inputs"`
+  names selections from the document's top-level `"context"` list (from
+  the `tool`, `work` or `app` root — the checkout it runs in is its
+  source, and is bound as that). Bench reads and hashes each one when the
+  check is asked for, hands it over as a read-only copy in the directory
+  `$BENCH_VERIFY_INPUTS` names (`<name><suffix>` inside it), and records
+  the hash of exactly what it handed over. A required input that cannot
+  be read refuses the request (`input-unavailable`) and runs nothing; an
+  optional one that is not there is recorded as absent, and its
+  appearing later is a change. An input the context does not select is
+  refused where the document is read (`check-input-undeclared`). A
+  check's optional `"env"` names environment variables whose **values**
+  its result depends on (`check-env-invalid` refuses a non-name, a
+  duplicate, a credential bench removes and anything bench sets itself).
+  Their values are bound by HMAC-SHA256 under a key that exists only on
+  this machine (`local/state/verify/env.key`, mode 0600, made by the
+  runner the first time a check declaring `env` runs — never by reading
+  freshness), so the record proves "the same value" to this board and
+  says nothing to anyone else. A lost or replaced key reads `env-changed`
+  and costs one fresh run of each such check. The names of every variable
+  a check is given are bound too; undeclared values are not.
+- **What it does not bind, said plainly.** Bench pins what a check is
+  given, not everything it reads: a file read by an undeclared path, the
+  libraries and modules its programs load, ignored files in a `worktree`
+  root (the identity records `worktree`, `fresh` or `reused` as its root
+  class, and calls a `source` or `review` checkout `fresh` only when the
+  runner found it holding nothing beyond the commit), the values of
+  undeclared variables and any service it calls. Equal identity means
+  *the same declared thing ran on the same code*, not the same assurance
+  in every possible world; declare `inputs` and `env` for what matters.
+  And a valid result is evidence, never permission: whether a check may
+  be run is still the profile's answer at every request, and what a
+  merge requires is still the gate policy in force now.
 - **Secrets do not reach a reader.** The record names paths, revisions
-  and hashes and never content or an environment *value*; the log — the
-  one place bytes bench did not write get through — is scrubbed of
-  anything credential-shaped on the way out.
+  and hashes and never content or an environment *value*; the keyed
+  hashes of declared values stay in the record on this disk and are left
+  out of everything the page is sent; the key is never written anywhere
+  but its own file; the log — the one place bytes bench did not write
+  get through — is scrubbed of anything credential-shaped on the way out.
 - **It outlives the run, the worktree and the board.** Holding a run
   cancels the verifications bench was running for it, recorded as
   cancelled rather than as failures; a duplicate request for a check
@@ -1906,8 +1961,9 @@ commits said. A bench that cannot name the commit refuses with
 A failed, errored or cancelled rerun supersedes an earlier pass, and one
 still running holds the gate `pending`. A pass that has gone **stale** at
 this commit is an answer too: the requirement reads `stale` with that
-pass's own reason (`staleReason`, such as `policy-changed` or
-`context-changed`), it is never a pass, and nothing older at the same
+pass's own reason (`staleReason`, such as `check-changed` or
+`input-changed`, or `policy-changed` on a legacy record), it is never a
+pass, and nothing older at the same
 commit is resurrected past it. Passes with uncommitted work under them or
 no bound source did not run against this commit, narrow passes do not
 cover the requirement, and denied requests ran nothing, so none of them
@@ -1917,13 +1973,21 @@ in. The ⚖ sheet names each requirement's coverage (`unit · full run`,
 `unit · scope fast`), so a ◫ chip reading a scoped pass beside a gate
 requiring the full run is never left unexplained.
 
-Records written today carry no result identity, so every record is read
-with today's freshness rules (`verify.outcome_now`), unchanged. The
-selection already has the two seams the rest of card 94's design plugs
-into — a record's result identity compared with the one the check would
-have at the head, and an operator-declared equivalent check that must
-also match the check's substance — and both answer "nothing" until they
-land. No record of another name satisfies a requirement.
+**A record about this commit is current, outdated or legacy.** One with a
+result identity (see "The evidence") is *current* while everything its
+definition depends on — the check's substance, its coverage, programs,
+preparation, declared inputs, declared environment and the runner —
+still holds, and *outdated* once any of it moved. Outdated records decide
+nothing: a failure under a command that has since been replaced is not
+today's failure, and if nothing current decides, the requirement reads
+`stale` with the newest outdated record's own changed dimension and its
+remedy. A record with no identity — anything written before card 97 — is
+*legacy*, read with the freshness rules it was written under
+(`verify.outcome_now`), unchanged, `policy-changed` included. An identity
+that cannot be read is outdated, never current. The other seam card 94's
+design plugs in — an operator-declared equivalent check that must also
+match the check's substance — still answers "nothing", so no record of
+another name satisfies a requirement.
 
 ### Evidence is bound to the commit
 
@@ -2705,7 +2769,9 @@ or moved by any of it.
 3. **Preview** — two resolutions compared, never a prediction: what the
    requirements become, what a run may do, which recorded passes stop
    counting (changing a check's definition changes its identity, so every
-   pass of it reads `stale` — it is not deleted and it is not re-run), and
+   pass of it reads `stale` — it is not deleted and it is not re-run; an
+   edit elsewhere in the document leaves a pass with a result identity
+   standing, and only legacy records read `policy-changed`), and
    which cards waiting in `review/` would change their merge decision.
    Writes nothing.
 4. **Apply** — armed, and refused rather than repaired. An invalid
@@ -3055,9 +3121,12 @@ to replace it with a different one, which belongs in **Settings → Merge
 rules**. The preview names the effect and the limit of the chosen review
 policy: a Bench verdict is the review agent's, not a person's
 independent approval, and GitHub refuses a formal approval from the
-account that opened the pull request. Applying changes the policy, so
-earlier passes read `stale`, and the merge waits for a new run against
-the commit about to move. That is the gate working, not a fault.
+account that opened the pull request. Applying changes the policy and
+not the check, so a pass with a result identity at the commit about to
+move still counts and the merge needs no rerun for it; a pass recorded
+before result identities existed reads `stale` (`policy-changed`), and
+the merge waits for one new run against that commit. That is the gate
+working, not a fault.
 
 Who does what: the **author** (your team, or the agent on a verification
 setup card) writes the program and a controlled failing case and says
