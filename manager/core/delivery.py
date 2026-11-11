@@ -125,8 +125,8 @@ ROWS = (
     (8, "in progress, nobody on it", ("ready-to-start", "in-progress")),
     (9, "review, a phase member", ("waiting-for-phase",)),
     (17, "review, the PR was merged on GitHub", ("merged-elsewhere",)),
-    (10, "review, no commit to assess", ("cannot-assess",)),
     (11, "review, merge rules do not resolve", ("rules-invalid",)),
+    (10, "review, no commit to assess", ("cannot-assess",)),
     (12, "review, a current-commit failure or change request",
      ("check-failed", "cannot-run-check", "changes-requested")),
     (13, "review, a required check is running", ("checks-running",)),
@@ -617,6 +617,15 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
                 f"{_short((pr or {}).get('head'))}. Delivered through the PR; "
                 f"nothing is left to review.", finish, [])
 
+    # 11. merge rules do not resolve — read before 10: rules that do not
+    # resolve make every assessment impossible, and their fix is Settings
+    if decision and decision.get("decision") == "blocked" and any(
+            (r.get("reason") == "policy-refused") for r in requirements):
+        return ("rules-invalid",
+                f"Merge rules invalid: {decision.get('summary')}",
+                action("settings-merge-rules", "Open Settings → Merge rules"),
+                [])
+
     # 10. nothing to assess
     if candidate["state"] in ("unavailable", "none-yet") and gated:
         check = _check_remote_action(ctx, candidate)
@@ -624,14 +633,6 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
         return ("cannot-assess",
                 f"Cannot assess: {no_commit[0].lower()}{no_commit[1:]}",
                 check or back, [back] if check else [])
-
-    # 11. merge rules do not resolve
-    if decision and decision.get("decision") == "blocked" and any(
-            (r.get("reason") == "policy-refused") for r in requirements):
-        return ("rules-invalid",
-                f"Merge rules invalid: {decision.get('summary')}",
-                action("settings-merge-rules", "Open Settings → Merge rules"),
-                [])
 
     act_pr = action("act-pr", "↻ act on PR") if has_pr and not is_phase \
         and not (pr or {}).get("merged") else None

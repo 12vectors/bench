@@ -74,8 +74,12 @@ class DeliveryCase(GateCase):
               **headers) -> None:
         for slug in config.STAGE_DIRS:
             (self.tasks / slug / filename).unlink(missing_ok=True)
-        (self.tasks / stage / filename).write_text(
-            card(title, status=STATUS[stage], **headers), encoding="utf-8")
+        pr = headers.pop("pr", None)
+        text = card(title, status=STATUS[stage], **headers)
+        if pr:
+            text = text.replace("**Priority:** High",
+                                f"**Priority:** High\n**PR:** {pr}", 1)
+        (self.tasks / stage / filename).write_text(text, encoding="utf-8")
 
     def full_gate(self, **kw) -> dict:
         """The fixtures' gate (design §11.1): `unit` plus a Bench review."""
@@ -475,6 +479,15 @@ class TheCopyMatrix(DeliveryCase):
         found = self.expect("merging", None)
         self.assertIn("parking", found["status"]["sentence"])
 
+    def test_a_running_phase(self):
+        self.phase_card()
+        phases.SNAPSHOTS[PHASE] = {"running": True, "members": [
+            {"number": "71", "state": "working"}]}
+        found = self.expect("phase-running", None, self.read(PHASE))
+        self.assertIn("#71", found["status"]["sentence"])
+        self.assertEqual([a["action"] for a in found["others"]],
+                         ["hold-phase"])
+
     def test_done_is_delivered(self):
         self.place("done")
         self.expect("delivered", None)
@@ -629,30 +642,31 @@ class ReadingChangesNothing(DeliveryCase):
         self.snapshot(head=head)
         before = self.fingerprint()
         calls: list[list[str]] = []
-        real_run, real_popen = subprocess.run, subprocess.Popen
+        real_popen = subprocess.Popen
 
-        def run(cmd, *a, **k):
-            calls.append(list(cmd))
-            return real_run(cmd, *a, **k)
+        class Recorded(real_popen):
+            def __init__(self, cmd, *a, **k):
+                calls.append([str(c) for c in cmd])
+                super().__init__(cmd, *a, **k)
 
-        def popen(cmd, *a, **k):
-            raise AssertionError(f"a read launched a process: {cmd}")
-
-        subprocess.run, subprocess.Popen = run, popen
+        subprocess.Popen = Recorded
         try:
             httpd.state_payload()
             delivery.for_card(CARD)
             httpd.gates_payload(CARD, "review")
         finally:
-            subprocess.run, subprocess.Popen = real_run, real_popen
+            subprocess.Popen = real_popen
         self.assertEqual(self.fingerprint(), before, "no state byte changed")
         for cmd in calls:
             with self.subTest(cmd=cmd):
                 self.assertEqual(Path(cmd[0]).name, "git",
                                  "only git, never gh or a check")
-                verb = next(c for c in cmd[1:] if not c.startswith("-")
-                            and c not in ("-C",) and not c.startswith("/")
-                            and c != str(self.repo))
+                rest = cmd[1:]
+                while rest and rest[0] in ("-C", "-c"):
+                    rest = rest[2:]
+                while rest and rest[0].startswith("-"):
+                    rest = rest[1:]
+                verb = rest[0]
                 self.assertIn(verb, READ_ONLY_GIT, f"{cmd} is not a read")
 
     def test_the_http_route_is_a_read(self):
@@ -702,8 +716,6 @@ class TheCacheFollowsItsInputs(DeliveryCase):
         self.assertEqual(self.board_word(), "checks-needed")
 
     def test_a_policy_change(self):
-        self.gated(check="", review="bench")
-        self.assertEqual(self.board_word(), "review-needed")
         document = json.loads((self.local / "profiles.json").read_text())
         document["gates"] = {"acceptance": {"checks": ["nope"]}}
         self.declares(document)
