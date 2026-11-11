@@ -461,6 +461,25 @@ class TheCopyMatrix(DeliveryCase):
         self.assertIn("complete", [a["action"] for a in found["others"]])
         self.assertEqual(found["counts"], {"required": 0, "met": 0})
 
+    def test_f29_ungated_bench_change_request_at_head_is_not_lost(self):
+        """Task 99: the face used to wear "changes asked" from a cascade
+        of its own. Drawing the delivery status instead must not lose it —
+        so Bench's own REQUEST CHANGES at the current commit is a current
+        problem even where no review is required, and one at an older
+        commit is history."""
+        wt = self.worktree()
+        older = self.commit_in(wt)
+        gates.record_verdict(CARD, verdict="REQUEST CHANGES", head=older)
+        self.place("review", pr=PR_URL)
+        found = self.expect("changes-requested", "act-pr")
+        self.assertIn(older[:12], found["status"]["sentence"])
+        self.commit_in(wt, "addressed\n")
+        delivery.forget_cached()
+        # a review is on record, so the ungated row offers the merge first
+        # and the review again among the alternatives
+        found = self.expect("review", "complete")
+        self.assertIn("review-pr", [a["action"] for a in found["others"]])
+
     def test_f30_the_safer36_shape(self):
         head = self.passed_at_head()
         gates.record_verdict(CARD, verdict="APPROVE", head=head)
@@ -637,6 +656,38 @@ class ARestartForgetsNothingDurable(DeliveryCase):
 
 
 # ── E10 / R4: counts are required obligations only ─────────────────────
+
+
+class TheCompactReadingCarriesWhatEverySurfaceDraws(DeliveryCase):
+    """Task 99: the face, the Overview and the merge dialog draw the one
+    compact reading in `/api/state`, so it carries the alternatives, the
+    history counts and the requirement classes — and agrees with the full
+    reading on every field the surfaces share."""
+
+    def test_compact_and_full_agree(self):
+        self.passed_at_head(body=FAILS)
+        self.place("review", pr=PR_URL)
+        task = delivery._find(CARD, None)
+        compact = delivery.board({"stages": [{"tasks": [task]}]})[CARD]
+        full = self.read()
+        for key in ("status", "counts", "history"):
+            self.assertEqual(compact[key], full[key], key)
+        for key, value in compact["candidate"].items():
+            self.assertEqual(value, full["candidate"][key], key)
+        self.assertEqual(compact["primary"]["action"], full["primary"]["action"])
+        self.assertEqual([a["action"] for a in compact["others"]],
+                         [a["action"] for a in full["others"]])
+        self.assertEqual(compact["classes"],
+                         sorted({r["class"] for r in full["requirements"]}))
+        self.assertIn("problem", compact["classes"])
+
+    def test_the_state_route_carries_it(self):
+        self.full_gate()
+        self.place("in-progress")
+        found = httpd.state_payload()["delivery"][CARD]
+        self.assertEqual(found["status"]["word"], "ready-to-start")
+        self.assertEqual(found["classes"], ["needed"],
+                         "a requirement that lies ahead is needed, never a problem")
 
 
 class CountsAreRequiredOnly(DeliveryCase):
