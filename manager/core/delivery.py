@@ -482,15 +482,25 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
         },
         "read": {"at": ctx["now"], "local": True},
     }
+    decided = ({"decision": decision.get("decision"),
+                "scope": decision.get("scope", scope),
+                "summary": decision.get("summary"),
+                "gated": decision.get("gated"),
+                "head": decision.get("head")}
+               if decision else None)
+    # The identity of everything the full reading says beyond the compact
+    # one — every requirement row with its prose and remedy, the merge
+    # rule's reading and the completion — so the page refetches the rows
+    # whenever they change, even when the word, the counts and the
+    # classes do not (a check replaced by another, a remedy reworded).
+    out["detail"] = hashlib.sha256(json.dumps(
+        {"requirements": requirements, "decision": decided,
+         "completion": completion, "recovery": recovery},
+        sort_keys=True, default=str).encode()).hexdigest()[:16]
     if full:
         out["candidate"].update(why=candidate.get("why"),
                                 traces=candidate.get("traces"))
-        out["decision"] = ({"decision": decision.get("decision"),
-                            "scope": decision.get("scope", scope),
-                            "summary": decision.get("summary"),
-                            "gated": decision.get("gated"),
-                            "head": decision.get("head")}
-                           if decision else None)
+        out["decision"] = decided
         out["completion"] = completion
         out["pr"] = pr
         out["recovery"] = recovery
@@ -601,7 +611,11 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
 
     # 7 / 8. in progress, nobody on it
     if stage == "in-progress":
-        launch = action("launch-check", "Check whether it would start")
+        # the launch this stage offers is ▸ start work (or ▸ take over), so
+        # the check names that intent and that ownership rule itself rather
+        # than leaving the page to assume one
+        launch = action("launch-check", "Check whether it would start",
+                        intent="work", takeover=bool(others_hold))
         problem = _current_problem(requirements, candidate, open_findings,
                                    decision, verdict_now)
         if is_phase and snap.get("halted"):
@@ -854,12 +868,12 @@ _EPOCH = 0
 _TTL = 15.0
 _BOARD: tuple | None = None
 
-COMPACT = ("status", "primary", "candidate", "counts", "history")
+COMPACT = ("status", "primary", "candidate", "counts", "history", "detail")
 
 # What an action keeps in the compact reading: enough for the page to draw
 # it and route it, never anything the page would re-decide from.
 _ACTION_KEYS = ("action", "label", "who", "enabled", "why", "arm", "to",
-                "url", "agent", "evidence")
+                "url", "agent", "evidence", "intent", "takeover")
 
 
 def bump() -> None:
@@ -969,7 +983,7 @@ def board(collected: dict, phase_state: dict | None = None) -> dict:
                 "candidate": {"state": "unavailable"},
                 "counts": {"required": 0, "met": 0},
                 "history": {"older": 0, "optional": 0, "obsolete": 0},
-                "pr": None}
+                "detail": None, "pr": None}
     with _LOCK:
         _BOARD = (key, found)
     return found

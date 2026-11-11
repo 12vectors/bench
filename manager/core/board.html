@@ -3447,6 +3447,15 @@ async function gateSheet(task) {
   // one the face and the Overview draw — so the three cannot disagree;
   // the full reading adds only the rows under it
   const d = deliveryOf(task) || full;
+  // This read is the newest word on the rows, so the Overview shares it:
+  // when it is about the compact reading the page holds, it is that
+  // reading's rows; when it is not, the page's compact reading is the one
+  // behind, and asking for the board state again (a GET) brings both up.
+  if (full && d && full.detail && full.detail === d.detail) {
+    storeDeliveryFull(task.file, deliveryFullKey(task), ++dfullSeq, { data: full, error: null });
+  } else if (full && d && full.detail !== d.detail) {
+    loadState();
+  }
   const scopes = data.scopes || [];
   const policy = data.policy || {};
   const blocked = scopes.filter(s => s.decision === 'blocked');
@@ -3703,7 +3712,9 @@ function deliveryRun(task, a) {
     };
     case 'launch-check': return async () => {
       const { ok, data } = await post('/api/card/delivery/launch-check',
-        { file: task.file, stage: task.stage, intent: 'work' });
+        // the intent and the ownership rule are the server's, carried on
+        // the action: the check asks about the launch this card offers
+        { file: task.file, stage: task.stage, intent: a.intent, takeover: !!a.takeover });
       toast(ok ? `${(data.launch || {}).says || 'asked'} — nothing was claimed or started`
                : (data.error || 'the launch check could not be asked'),
             !ok || !(data.launch || {}).ok);
@@ -3806,26 +3817,55 @@ function deliveryActions(d, where) {
 }
 
 /* The full reading — the requirement rows, their remedies, the candidate
-   and where each fact came from. A GET that writes nothing; refetched only
-   when the compact reading it belongs to has changed. */
+   and where each fact came from. A GET that writes nothing; refetched
+   whenever the server says the rows it would return have changed.
+
+   The key carries the server's own `detail` — a digest of every row, its
+   prose and remedy, the merge rule's reading and the completion — so a
+   check replaced by another with the same totals, or a reworded remedy,
+   is a new key even when the word, the counts and the classes are not.
+   Only the newest request may answer: a reply to an older key is dropped
+   rather than written over a newer one. A failed read keeps the last rows
+   it had, marked with the error, and is asked again after a short wait
+   rather than on every repaint. */
+const DFULL_RETRY_MS = 5000;
+
 function deliveryFullKey(task) {
   const d = deliveryOf(task);
-  return JSON.stringify([task.stage, task.mtime, d && d.status, d && d.counts,
+  return JSON.stringify([task.stage, task.mtime, d && d.detail, d && d.status, d && d.counts,
                          d && d.candidate, d && d.classes]);
+}
+
+let dfullSeq = 0;
+function storeDeliveryFull(file, key, seq, entry) {
+  const cur = S.dfull[file];
+  if (cur && cur.seq > seq) return false;
+  S.dfull[file] = { ...entry, key, seq };
+  return true;
 }
 
 function loadDeliveryFull(task, done) {
   const key = deliveryFullKey(task);
   const cur = S.dfull[task.file];
-  if (cur && (cur.loading || cur.key === key)) return cur.data || null;
-  S.dfull[task.file] = { ...(cur || {}), loading: true, key };
+  if (cur && cur.key === key
+      && (cur.loading || !cur.error || Date.now() < cur.retryAt)) return cur.data || null;
+  const seq = ++dfullSeq;
+  const prior = (cur || {}).data || null;
+  S.dfull[task.file] = { data: prior, error: (cur || {}).error || null, loading: true, key, seq };
   fetch(`/api/card/delivery?file=${encodeURIComponent(task.file)}&stage=${encodeURIComponent(task.stage)}`)
     .then(res => res.json().then(data => ({ ok: res.ok, data })))
-    .then(({ ok, data }) => { S.dfull[task.file] = { key, data: ok ? data.delivery : (cur || {}).data,
-                                                     error: ok ? null : data.error }; })
-    .catch(() => { S.dfull[task.file] = { key, data: (cur || {}).data, error: 'the board could not be asked' }; })
-    .then(() => { if (done) done(); });
-  return (cur || {}).data || null;
+    .then(({ ok, data }) => ok && data.delivery
+      ? { data: data.delivery, error: null }
+      : { data: prior, error: (data && data.error) || 'the board did not answer',
+          retryAt: Date.now() + DFULL_RETRY_MS })
+    .catch(() => ({ data: prior, error: 'the board could not be asked',
+                    retryAt: Date.now() + DFULL_RETRY_MS }))
+    .then(entry => {
+      if (storeDeliveryFull(task.file, key, seq, entry) && done) done();
+      // an error is asked again once its wait is over, by the next repaint
+      if (entry.error && done) setTimeout(done, DFULL_RETRY_MS + 50);
+    });
+  return prior;
 }
 
 /* Merge requirements, as supporting detail under the status: the required
@@ -3855,8 +3895,14 @@ function requirementsHtml(task, d, full, where) {
       : 'not observed'],
     ['Read', `${fmtClock(full.read.at)} · local to this board · reading it ran nothing`],
   ].filter(([, v]) => v) : [];
+  const failed = (S.dfull[task.file] || {}).error;
   return `<section class="dreqs" aria-labelledby="dreqs-${where}">` +
     `<h3 id="dreqs-${where}">Merge requirements · ${esc(requirementsHeadline(d))}</h3>` +
+    (failed
+      ? `<p class="dnote dreqerr" role="status">The requirement rows could not be read: ${esc(failed)}. ` +
+        `${rows ? 'The rows below are the last reading, and may be out of date' : 'Nothing is shown in their place'}` +
+        ` — they are asked again in a few seconds.</p>`
+      : '') +
     (!gated && !(d.counts || {}).required
       ? `<p class="dnote">No merge requirements are configured on this board. Nothing is required before a merge, and that is not a pass.</p>`
       : rows === null ? `<p class="dnote">Reading the requirements…</p>`
