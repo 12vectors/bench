@@ -2001,7 +2001,8 @@ def _identity_moved(record: dict, moved, root: Path) -> dict:
         return {"policyRevision": record.get("policyRevision"),
                 "policyChanged": None}
     name = record.get("check")
-    if identity.get("runner") != RUNNER_REVISION:
+    if identity.get("runner") != RUNNER_REVISION or \
+            (record.get("runner") or {}).get("revision") != identity.get("runner"):
         moved("runner-changed", "bench's own runner has changed since this "
                                 "ran — " + STALE_REMEDIES["runner-changed"])
 
@@ -2055,15 +2056,17 @@ def _identity_moved(record: dict, moved, root: Path) -> dict:
     frozen_program = identity.get("program")
     now_program = program_identity(list(record.get("argv") or []), root,
                                    search)
-    if not frozen_program:
+    if not frozen_program or \
+            (record.get("program") or {}).get("programId") != frozen_program:
         moved("program-changed",
-              "the program this check ran was never identified, so it cannot "
-              "be shown to be unchanged — " + STALE_REMEDIES["program-changed"])
+              "the record names no program identity, so the executable this "
+              "check ran cannot be shown to be unchanged — "
+              + STALE_REMEDIES["program-changed"])
     elif now_program.get("programId") != frozen_program:
         moved("program-changed",
-              f"the program {(record.get('argv') or ['?'])[0]} (or its "
-              f"interpreter, or a file it was handed) changed since it ran — "
-              f"{STALE_REMEDIES['program-changed']}")
+              f"the check's executable {(record.get('argv') or ['?'])[0]}, "
+              f"its interpreter or a file it was handed changed since it ran "
+              f"— {STALE_REMEDIES['program-changed']}")
     frozen_steps = record.get("prepareSteps") or []
     frozen_programs = (identity.get("prepare") or {}).get("programs") or []
     for index, step in enumerate(frozen_steps):
