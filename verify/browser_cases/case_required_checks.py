@@ -292,7 +292,9 @@ class RunRequiredChecks(unittest.TestCase):
         wait_text("running the check")
         before = {n: self.runs(n) for n in ("unit", "build", "lint")}
         backend.stop()
-        backend.start()
+        # generous: a loaded machine restarts a board slowly, and that is
+        # not what this case measures
+        backend.start(timeout=120)
         b = load()
         open_sheet()
         wait_text("this board stopped during the batch")
