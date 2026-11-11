@@ -25,6 +25,11 @@ written. Everything is put back afterwards. Run through verify/browser.
   moves from one passed check to another (same word, same counts); after
   a live update, with no page reload, the Overview's rows name the new
   check and a merge dialog opened then draws the same rows.
+- **Review signals and narrow rows** — F16's durable Bench approval with
+  no prose report reads as that approval at the current commit in
+  Signals, GitHub as not observed, and nowhere "no verdict yet"; the
+  settled merge dialog keeps every row label readable at 390px. Space
+  arms a costly action without firing it, as Enter does.
 """
 
 import hashlib
@@ -540,6 +545,89 @@ class OneStatusEverywhere(unittest.TestCase):
         b.wait("!document.querySelector('#sheetwrap').classList.contains('open')", 5)
         close_detail()
         S["metrics"]["deliveryRuleMoved"] = {"overview": overview, "dialog": dialog}
+
+    def test_8_f16_review_signals_and_settled_dialog_rows_are_readable(self):
+        """The supervisor's findings at d6ace0e. F16 is ready to merge on
+        a durable Bench APPROVE with no prose report: Signals must say the
+        Bench approval at the current commit, and GitHub as not observed —
+        never an unqualified "no verdict yet". And the settled merge
+        dialog at 390px keeps its row labels readable: a name gets its own
+        line instead of a column a few characters wide."""
+        stem = "66-delivery-f16"
+        head = self.heads[stem]
+        for width, height in ((390, 844), (1280, 900)):
+            with self.subTest(width=width):
+                b = load(width, height)
+                wait_for_word(stem, "ready-to-merge")
+                open_detail(stem)
+                signals = b.eval("""Object.fromEntries([...document.querySelectorAll(
+                  '#drawer .pmembers .prow')].map(r => [r.querySelector('.pstage').innerText.trim(),
+                  r.querySelector('.ptitle').innerText.trim()]))""")
+                self.assertIn("Bench review", signals, signals)
+                self.assertIn(f"approved at {head[:7]}", signals["Bench review"])
+                self.assertIn("the commit that would merge", signals["Bench review"])
+                self.assertIn("not observed", signals["GitHub review"])
+                for label, text in signals.items():
+                    self.assertNotIn("no verdict yet", text, label)
+                self.assertNotIn("Reported review", signals, "no report is on the card")
+                close_detail()
+
+                b.eval(f"gateSheet(findTask({json.dumps(stem + '.md')}))")
+                if not b.wait(f"!!document.querySelector('{DIALOG} .dreqlist .check-row')", 20):
+                    raise bv.CheckFailed("the dialog drew no requirement rows")
+                b.wait(f"document.querySelector('{DIALOG}').getAnimations({{subtree: true}})"
+                       ".every(a => a.playState === 'finished')", 5)
+                time.sleep(0.5)
+                m = b.eval(f"""(() => {{
+                  const sheet = document.querySelector('{DIALOG}');
+                  const lines = (el) => {{
+                    const r = document.createRange(); r.selectNodeContents(el);
+                    return new Set([...r.getClientRects()].map(x => Math.round(x.top))).size; }};
+                  return {{
+                    over: sheet.scrollWidth - sheet.clientWidth,
+                    rows: [...sheet.querySelectorAll('.check-row')].map(row => {{
+                      const n = row.querySelector('.name');
+                      const text = n.innerText.trim();
+                      return {{ text, lines: lines(n), width: n.getBoundingClientRect().width,
+                               row: row.getBoundingClientRect().width }}; }}) }}; }})()""")
+                shot(f"delivery-f16-dialog-settled-{width}x{height}")
+                self.assertLessEqual(m["over"], 1, f"the dialog scrolls sideways at {width}")
+                names = {r["text"]: r for r in m["rows"]}
+                for label in ("Review by Bench", "no formal GitHub review state"):
+                    self.assertIn(label, names, list(names))
+                # every drawn row when narrow; the two review labels at both widths
+                for r in m["rows"]:
+                    if not r["text"] or not r["width"]:
+                        continue
+                    if width != 390 and r["text"] not in ("Review by Bench",
+                                                          "no formal GitHub review state"):
+                        continue
+                    per_line = len(r["text"]) / max(r["lines"], 1)
+                    self.assertGreaterEqual(per_line, min(len(r["text"]), 12),
+                                            f"{r['text']!r} is squeezed at {width}: {r}")
+                    if len(r["text"]) <= 30:
+                        self.assertEqual(r["lines"], 1, f"{r['text']!r} wraps at {width}: {r}")
+                    if width == 390:
+                        self.assertGreater(r["width"], r["row"] * 0.6,
+                                           f"{r['text']!r} has no readable width: {r}")
+                S["metrics"][f"deliveryF16Dialog-{width}"] = m
+                b.key("Escape")
+                b.wait("!document.querySelector('#sheetwrap').classList.contains('open')", 5)
+
+    def test_9_b3_space_arms_without_firing(self):
+        stem = "65-delivery-f13"          # ◔ review PR: costly, so armed
+        b = load()
+        open_detail(stem)
+        b.eval("document.querySelector('#dsec-overview .dsacts [data-dslot=\"ov-p\"]').focus()")
+        b.key("Space")
+        self.assertTrue(b.wait("document.activeElement.classList.contains('armed')", 5),
+                        "Space did not arm the primary action")
+        time.sleep(6)
+        status, body = S["backend"].get("/api/state")
+        agents = json.loads(body).get("agents") or []
+        self.assertFalse([a for a in agents if a.get("task") == f"{stem}.md"],
+                         "arming the action with Space launched something")
+        close_detail()
 
 
 if __name__ == "__main__":

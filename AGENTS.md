@@ -938,11 +938,19 @@ arrow keys, Home and End move along it.
   acceptance count, the findings, and the last review round explained
   against its revision and what has happened since. Then the **Signals**
   block — Bench checks (`Required: 1 of 1 passed on <commit>. Optional:
-  2 (see ◫).`), external CI, review and the merge requirements as four
+  2 (see ◫).`), external CI, review and the merge requirements as
   separate rows, each in its own words — and every tool and action the
   card has, with the branch plan folded underneath. Green CI is labelled
   as not a Bench check, and a board with no gate says that nothing is
-  required, which is not a pass.
+  required, which is not a pass. Review is the records it is, each on a
+  row of its own: **Bench review** (the durable verdict and the commit
+  it was bound to), **GitHub review** (the review objects alone — not
+  CI, not mergeability — and *not observed* where bench has not read the
+  pull request) and, when it says something the Bench verdict does not,
+  **Reported review** (the newest round filed in the card's text, with
+  its revision). A verdict about another commit reads *an earlier
+  commit, history*, never as today's answer, and none of the three is
+  inferred from another.
 - **Brief** — the requirement alone (the head's fields and the brief, no
   history), then #65's discussion and its refinement controls.
 - **Acceptance** — the criteria and their results; see "Acceptance and
@@ -2290,6 +2298,12 @@ nobody into a merge.
   counted apart under `history` and never inflate a headline or block.
 - **where it came from** — the PR observation's time and whether it was
   read from the poll's memory or the persisted snapshot (*as of 14:02*).
+- **the review records, apart** (`reviews`) — Bench's newest verdict
+  (`gates.verdict_at` for the current commit, else the newest on record)
+  and the newest round filed in the card's text, each with the revision
+  it is about and whether that is the commit that would merge. GitHub's
+  formal state stays the PR poll's, as `review` beside its folded
+  `verdict`.
 
 Before a card has a commit, its requirements are listed as *needed
 before merge*, in the neutral register. A ready-to-start card never says
