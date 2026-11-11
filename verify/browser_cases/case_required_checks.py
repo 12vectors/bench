@@ -83,14 +83,18 @@ def open_sheet():
 
 
 def sheet_text() -> str:
+    """The sheet's text as drawn, lower-cased: panel labels are set in
+    capitals by CSS, and innerText applies the transform."""
     return S["browser"].eval(
-        f"(document.querySelector('{SHEET}') || {{innerText: ''}}).innerText")
+        f"(document.querySelector('{SHEET}') || {{innerText: ''}})"
+        f".innerText.toLowerCase()")
 
 
 def wait_text(fragment: str, timeout: float = 30) -> None:
+    fragment = fragment.lower()
     if not S["browser"].wait(
             f"(document.querySelector('{SHEET}') || {{innerText: ''}})"
-            f".innerText.includes({json.dumps(fragment)})", timeout):
+            f".innerText.toLowerCase().includes({json.dumps(fragment)})", timeout):
         raise bv.CheckFailed(f"the sheet never said {fragment!r}; it says:\n"
                              + sheet_text()[:1500])
 
@@ -212,13 +216,13 @@ class RunRequiredChecks(unittest.TestCase):
         open_sheet()
         text = sheet_text()
         shot("required-checks-confirm-1440x900")
-        self.assertIn("Will be requested, in this order", text)
+        self.assertIn("will be requested, in this order", text)
         for name in ("unit", "build", "lint"):
             self.assertIn(name, text)
         self.assertNotIn("extra", text, "an optional check is not offered")
-        self.assertIn("Side effects, in full", text)
+        self.assertIn("side effects, in full", text)
         self.assertIn("moves no card", text)
-        self.assertIn("Preparation steps", text)
+        self.assertIn("preparation steps", text)
         self.assertIn("preparation first: deps", text)
         self.assertTrue(b.eval(f"!!document.querySelector('{SHEET} #sh-reqgo')"))
         # reading it ran nothing and made no checkout
@@ -261,7 +265,7 @@ class RunRequiredChecks(unittest.TestCase):
         self.flag("deps", "fail")
         b = load()
         open_sheet()
-        self.assertIn("Run required checks again", sheet_text(),
+        self.assertIn("run required checks again", sheet_text(),
                       "after a stop, the retry is a person's click")
         fire("sh-reqgo")
         wait_text("Finished", 60)
@@ -273,7 +277,7 @@ class RunRequiredChecks(unittest.TestCase):
         self.assertEqual("passed", found.get("unit"), found)
         self.assertEqual("passed", found.get("lint"), found)
         self.assertEqual(0, self.runs("build"), "the check itself never ran")
-        self.assertIn("preparation", text.lower())
+        self.assertIn("preparation", text)
         close()
         # read again: the failure is shown as one, not requested again
         open_sheet()
@@ -305,7 +309,7 @@ class RunRequiredChecks(unittest.TestCase):
         text = sheet_text()
         shot("required-checks-restarted-1440x900")
         self.assertIn("no result — the board restarted", text)
-        self.assertIn("Run required checks again", text)
+        self.assertIn("run required checks again", text)
         self.assertEqual(before, {n: self.runs(n) for n in before},
                          "nothing was asked again by itself")
         p = plan()
