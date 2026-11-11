@@ -965,6 +965,9 @@
   #drawer .prow .pref{flex:none}
   #drawer .prow .ptitle{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #drawer .prow .pstage{flex:none;color:var(--muted)}
+  /* a signal is a sentence about a revision: it wraps rather than losing
+     its "an earlier commit, history" to an ellipsis */
+  #drawer .pmembers.signals .ptitle{white-space:normal;overflow:visible;overflow-wrap:anywhere}
   #drawer .prow .pstate{flex:none}
   #drawer .pempty{font-size:12px;color:var(--dim);padding:4px 8px}
   #drawer .dbody{font-size:13px;line-height:1.6}
@@ -1086,9 +1089,13 @@
   .dreqs{display:flex;flex-direction:column;gap:6px;min-width:0}
   .dreqs h3{font-size:12px;font-weight:600;margin:4px 0 0;color:var(--text)}
   .dreqs .dreqlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
-  .dreqs .check-row{flex-wrap:wrap}
-  .dreqs .check-row .name{min-width:0;overflow-wrap:anywhere}
-  .dreqs .check-row .state{overflow-wrap:anywhere;min-width:0}
+  .dreqs .check-row,.msheet .check-row{align-items:baseline}
+  /* a row's name keeps its own width (up to the row's) and the state
+     wraps beside it: `flex:1` gave the name a zero basis, so a long state
+     could squeeze "Review by Bench" to a few characters a line */
+  .dreqs .check-row .name,.msheet .check-row .name{flex:1 0 auto;max-width:100%;
+    min-width:0;overflow-wrap:anywhere}
+  .dreqs .check-row .state,.msheet .check-row .state{flex:0 1 auto;overflow-wrap:anywhere;min-width:0}
   .dreqs .check-row.accent .glyph,.dreqs .check-row.accent .state{color:var(--accent)}
   .dreqs .dreqfix{display:block;color:var(--muted);font-size:11px}
   .dreqs .dreqfold>summary{cursor:pointer;font-size:12px;color:var(--muted)}
@@ -1108,9 +1115,9 @@
     /* a narrow row stacks: the name keeps the row's width and its state
        reads under it, rather than the two splitting a 390px line and
        squeezing the name to a few characters */
-    .dreqs .check-row,.sheet .check-row{flex-wrap:wrap;row-gap:2px}
-    .dreqs .check-row .name,.sheet .check-row .name{flex:1 1 calc(100% - 21px);min-width:0}
-    .dreqs .check-row .state,.sheet .check-row .state{flex:1 1 100%;text-align:left;
+    .dreqs .check-row,.msheet .check-row{flex-wrap:wrap;row-gap:2px}
+    .dreqs .check-row .name,.msheet .check-row .name{flex:1 1 calc(100% - 21px);min-width:0}
+    .dreqs .check-row .state,.msheet .check-row .state{flex:1 1 100%;text-align:left;
       padding-left:21px;min-width:0;overflow-wrap:anywhere}
   }
   #drawer dl.dfacts{display:grid;grid-template-columns:minmax(90px,max-content) 1fr;
@@ -3522,7 +3529,7 @@ async function gateSheet(task) {
     `${esc((o.gates || []).join(', '))} — ${esc(o.reason)}</span></div>`).join('');
 
   wrap.innerHTML =
-    `<div class="sheet" role="dialog" aria-label="Merge requirements">${head('merge requirements')}` +
+    `<div class="sheet msheet" role="dialog" aria-label="Merge requirements">${head('merge requirements')}` +
     deliveryStatusHtml(task, d, 'dlg') +
     requirementsHtml(task, d, full, 'dlg') +
     `<details class="fold dreqfold"><summary>Technical details: every merge rule, ` +
@@ -9545,7 +9552,7 @@ function signalsBlock(t) {
       + 'merge, and that is not a pass', '']);
   }
   if (!rows.length) return '';
-  return `<div class="pmembers"><div class="phead">Signals` +
+  return `<div class="pmembers signals"><div class="phead">Signals` +
     `<span class="mono">kept apart</span></div>` +
     rows.map(([k, v2, cls]) => `<div class="prow flat${cls === 'bad' ? ' bad' : ''}">` +
       `<span class="pstage">${esc(k)}</span>` +

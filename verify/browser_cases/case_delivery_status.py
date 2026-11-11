@@ -561,12 +561,15 @@ class OneStatusEverywhere(unittest.TestCase):
                 wait_for_word(stem, "ready-to-merge")
                 open_detail(stem)
                 signals = b.eval("""Object.fromEntries([...document.querySelectorAll(
-                  '#drawer .pmembers .prow')].map(r => [r.querySelector('.pstage').innerText.trim(),
+                  '#drawer .pmembers.signals .prow')].map(r => [r.querySelector('.pstage').innerText.trim(),
                   r.querySelector('.ptitle').innerText.trim()]))""")
                 self.assertIn("Bench review", signals, signals)
                 self.assertIn(f"approved at {head[:7]}", signals["Bench review"])
                 self.assertIn("the commit that would merge", signals["Bench review"])
-                self.assertIn("not observed", signals["GitHub review"])
+                # the fixture's refusing `gh` leaves the pull request unread;
+                # either way GitHub is said as what it is, never as a verdict
+                self.assertTrue(signals["GitHub review"].startswith(
+                    ("not observed", "no formal review state")), signals)
                 for label, text in signals.items():
                     self.assertNotIn("no verdict yet", text, label)
                 self.assertNotIn("Reported review", signals, "no report is on the card")

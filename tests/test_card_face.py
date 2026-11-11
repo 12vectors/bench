@@ -185,6 +185,22 @@ class SignalsAreKeptApart(Source):
         self.assertIn("not a Bench check", body, "green CI is not a named check")
         self.assertIn("that is not a pass", body, "no gate is not a pass")
 
+    def test_a_signal_wraps_rather_than_losing_its_revision(self):
+        self.assertIn('class="pmembers signals"', self.body("signalsBlock"))
+        self.assertIn("#drawer .pmembers.signals .ptitle{white-space:normal", self.html)
+
+    def test_requirement_names_keep_a_readable_width(self):
+        """The supervisor's 390px finding: `flex:1` gave a row's name a zero
+        basis, so the state squeezed "Review by Bench" to three characters
+        a line. The name keeps its own width, and a narrow row stacks."""
+        self.assertIn(".dreqs .check-row .name,.msheet .check-row .name{flex:1 0 auto", self.html)
+        narrow = self.html[self.html.index("@media (max-width:760px){\n    .dstatus .dsacts"):]
+        narrow = narrow[:narrow.index("\n  }")]
+        self.assertIn(".msheet .check-row{flex-wrap:wrap", narrow)
+        self.assertIn(".msheet .check-row .state{flex:1 1 100%;text-align:left", narrow)
+        self.assertIn('class="sheet msheet" role="dialog" aria-label="Merge requirements"',
+                      self.html)
+
     def test_bench_checks_count_required_obligations_only(self):
         """§7 / R4: "Required: 1 of 1 passed on X. Optional: 2 (see ◫)." —
         never the count of every check the policy offers."""
