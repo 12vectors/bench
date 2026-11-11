@@ -5004,8 +5004,13 @@ function closeSheet() {
   delete scrollMarks['v:sheet:doctor'];
   delete scrollMarks['v:sheet:launch'];
   // the configuration and launch checks give focus back to what opened them
-  const back = S.sheetReturn;
+  let back = S.sheetReturn;
   S.sheetReturn = null;
+  // a delivery action that opened it may have been redrawn meanwhile by a
+  // live update: the same action is found again by its slot
+  if (back && !back.isConnected && back.dataset && back.dataset.dslot) {
+    back = document.querySelector(`#drawerbody [data-dslot="${back.dataset.dslot}"]`);
+  }
   if (back && back.isConnected && back.focus) back.focus();
 }
 
@@ -10961,7 +10966,14 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if ($('#sheetwrap').classList.contains('open')) { closeSheet(); }
   else if (S.fileView) { S.fileView = null; renderDrawer(); }
-  else if (S.selected) { S.selected = null; renderCards(); }
+  else if (S.selected) {
+    // as the Close button does: back to the card the detail view was
+    // opened from, so a keyboard user is not dropped to the top of the page
+    const file = S.selected.file;
+    S.selected = null;
+    renderCards();
+    focusCard(file);
+  }
 });
 
 /* the drawer: drag its left edge to widen */
