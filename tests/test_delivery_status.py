@@ -195,8 +195,9 @@ class TheCopyMatrix(DeliveryCase):
         verify.forget_cached()
         self.place("review", pr=PR_URL)
         found = self.expect("checks-needed", "run-required-checks")
-        self.assertFalse(found["primary"]["enabled"])
-        self.assertIn("later", found["primary"]["why"])
+        # card 101: the action is real, and opens its confirmation
+        self.assertTrue(found["primary"]["enabled"])
+        self.assertEqual(found["primary"]["handler"], "/api/verify/required")
         self.assertIn(f"has not run on {head[:12]}", found["status"]["sentence"])
         self.assertEqual(found["counts"], {"required": 2, "met": 0})
 

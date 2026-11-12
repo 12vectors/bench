@@ -52,7 +52,7 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 Module map for `manager/core/` (dependencies flow strictly left to right):
 
 ```
-config → state / reports / templates → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → doctor → events / github / drive / sync → delivery → agentsettings → settings → setupguide → agents → setuptasks → readiness → previews → phases → refine → watch / httpd → board.py
+config → state / reports / templates → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → required → doctor → events / github / drive / sync → delivery → agentsettings → settings → setupguide → agents → setuptasks → readiness → previews → phases → refine → watch / httpd → board.py
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -94,6 +94,12 @@ config → state / reports / templates → taskfiles → plans / profiles → re
   to move; bench's own review verdict kept apart from GitHub's formal
   state; and an override that records who proceeded over what, and never
   forges a pass
+- `required.py` — **Run required checks**: one person's request for the
+  candidate commit's missing required checks, in the merge rule's order,
+  through `verify.request` and nothing else. Met is skipped, running is
+  joined, a failure is not rerun behind anyone's back, the candidate and
+  the rule are re-read between requests, and nothing is retried or
+  scheduled by itself
 - `doctor.py` — what this board would grant, run and refuse, asked
   without paying for a model: the same resolver a launch rides, read at
   four honest distances, with every diagnostic's remedy and a coverage
@@ -1974,6 +1980,106 @@ already in flight joined rather than doubled. Requests that were
 answered by an existing record are listed in a fold of their own, each
 naming the evidence that answered and who asked.
 
+### Run required checks: one click for what is missing
+
+Who asks for a check is three parties and nobody else. The **work run**
+(`work`, `act-pr`) asks for each required check after its last commit:
+where a gate is configured its prompt says *"Ask for every required check
+after your last commit; a pass before a later commit does not count"*,
+names the required checks its own frozen profile lets it ask for, and
+names any it may not ask for as a person's or the configuration's to
+supply. The person's **▸ start work** or **↻ act on PR** is the consent
+to the run; the profile's `verify` list is the authorisation inside it,
+and the sentence grants nothing new. The **review run** may ask for what
+its profile grants (an equal current pass is reused), so a review can
+still come first. And a **person** has **Run required checks**.
+
+**Nothing else.** A merge rule requires checks; it does not schedule
+them. Moving a card, opening a card, the Overview, the dialog and the
+sheet below request nothing, and no setting turns a requirement into an
+automatic run.
+
+**Run required checks** is the primary action of a card reading
+`checks-needed`. It opens a sheet (`GET /api/verify/required`, which
+reads the gate, the candidate, the checkout's cleanliness and a person's
+work reading, and starts nothing, pins nothing and makes no checkout)
+listing every required check at the candidate commit H as one of:
+
+| item | what the click does with it |
+| --- | --- |
+| will be requested | the requirement reads *needed* at H — not run, stale, cancelled, no result after a restart, history from another commit — and a person's work reading may ask for it |
+| already running — joined | a run of it is in flight at H; it is not doubled |
+| already met — skipped | a current pass at H is on record |
+| not requested — its last result did not pass | failed, preparation failed, refused, or no verdict for another reason. That is a result to read; **↻** in the ◫ sheet runs it again, deliberately |
+| not requested — your work reading may not ask for it | the rule requires a check the work profile does not grant. The row names the configuration remedy — add it to the work profile's `verify` list, or change the rule — and nothing widens the grant |
+
+Optional checks are not items at all, so they never run here. The
+sheet says, in the ◫ sheet's own words, what the click costs: each
+check's command in the card's checkout (or a detached one bench makes
+and removes), its preparation steps first — drawn apart from the check,
+because a preparation that fails is *preparation failed* and not a test
+failure — a new evidence record and log per check, one at a time in the
+merge rule's order, no card moved, no branch touched, nothing published,
+nothing retried. The armed button fires it.
+
+**What the backend refuses**, with nothing requested
+(`POST /api/verify/required`, behind the same door as a policy write —
+JSON, `X-Bench-Settings: 1`, the origin checks): a card with no
+implementation commit on this board; a checkout holding the branch with
+uncommitted or untracked files (*commit, then run checks*); a board with
+no merge rule here, or rules that do not resolve; a work reading that
+does not resolve; nothing left to request; a body naming a run (`agent`)
+— a run asks through `bench-verify` under the profile it launched with;
+and a request that does not name the head the sheet was shown — a
+missing or blank `head` is `head-required` (400), another commit is
+`head-moved`. A second click while a batch is in flight returns that
+batch rather than starting another.
+
+**Between requests the candidate is read again.** Before each check the
+branch tip, the merge rules' revision and the checkout's cleanliness are
+re-read, and the requirement itself is re-evaluated — an agent's request
+or another person's **↻** may have answered it meanwhile (it is then
+skipped as met, or joined). A tip that moved, a rule that changed or
+uncommitted work that appeared stops the batch, names why, and lists the
+rest as *not requested*. A result whose source is another commit is
+reported as *not this candidate's answer* and stops it too. Each request
+is `verify.request` as a person's work reading, exactly as **↻** asks,
+so every refusal, reuse, join and record is that function's.
+
+**Progress, and endings that are explicit.** The sheet follows the batch:
+how many of the checks it set out to request have an answer, which one
+is in flight — *preparing* apart from *running the check* — and which
+remain, with an armed **Stop the batch**. `/api/state` carries the same
+summary (`requiredRuns`), and the card's action reads *Required checks:
+1 of 3 answered* while it runs.
+
+- **Stop** cancels the check in flight through verify's own cancel —
+  recorded `cancelled`, never a failure — and the rest are *not
+  requested*. A Stop that lands after the batch chose a check but before
+  verify reserved a run of it runs nothing at all: `verify.request` asks
+  the batch before its reuse lookup, before and after making a checkout,
+  and once more in the same hold of the lock that would reserve the run.
+  No preparation or check starts, a `source` checkout made for it is
+  given back, no evidence is written, and the item reads *not
+  requested*. A run an agent asked for that the batch joined is that
+  run's, and Stop leaves it alone — **‖ hold** is what stops it.
+- **‖ hold** on a run cancels the checks that run asked for
+  (`cancelled-with-run`). Either way the requirement reads
+  *Cancelled before a result on H*, which is *needed*, and **Run
+  required checks** is the recovery.
+- **A board restart** closes a check left running as `error` with
+  *board-restart*, which the gate reads as the reason `restarted` —
+  *No result on H — the board restarted*, in the *needed* class beside a
+  cancellation rather than a problem — and closes the batch as stopped,
+  naming the restart. Again the recovery is a click.
+- **Nothing retries by itself.** Not after a stop, a hold, a failure or
+  a restart. A batch that ended leaves **Run required checks again** in
+  the sheet, and that is a person's decision.
+
+One record per card, the newest batch, machine-local under
+`state/evidence/required/<stem>.json` beside the evidence it points at.
+It names checks, states and evidence ids, never a path.
+
 ## Gates: nothing merges on a report
 
 A gate is an acceptance rule you configure: for example, “the full test
@@ -2132,7 +2238,8 @@ difference between the sentences a reader needs:
 | `prepare-failed` | a dependency would not install, so the check never ran |
 | `denied` | the request was refused before anything ran |
 | `cancelled` | it was stopped before reaching a verdict |
-| `error` | no verdict was reached — a timeout, or a board that restarted |
+| `error` | no verdict was reached — a timeout, or the runner itself failed |
+| `restarted` | the board stopped while it was running, so it has no result. A step still ahead, like `cancelled` — **Run required checks** is the recovery |
 | `stale` | it passed, and what it was about has changed since |
 | `other-commit` | it has not run on this commit; what is on record ran against others, and is history |
 | `source-dirty` | it passed with uncommitted work under it |
@@ -2350,8 +2457,13 @@ nobody into a merge.
 - **one primary action**, with who holds it (`you`, `agent`, `board`),
   whether it is available and, if not, why; and every other legitimate
   action in `others`, never hidden. An action whose handler belongs to a
-  later card (**Run required checks**, sign-off) is always
-  `enabled: false` with that reason — never a button that does nothing.
+  later card (sign-off) is always `enabled: false` with that reason —
+  never a button that does nothing. **Run required checks** is the
+  primary action of `checks-needed`; where every needed check is one a
+  person's work reading may not ask for, it arrives disabled with the
+  configuration remedy, and while a batch is in flight it opens its
+  progress instead (see "Run required checks: one click for what is
+  missing").
 - **the candidate commit**, in one of four states read only from durable
   records — `present` (the branch is here), `none-yet`, `delivered` and
   `unavailable` (records of earlier work exist, its commit is not here).
@@ -2413,7 +2525,8 @@ disagreeing.
   and the technical details folded away.
 - **Every action is the existing route**, wired once: a move, a launch,
   a hold, **↑ open PR**, the completion sheet (which is itself the
-  confirmation), **Check the remote**, the launch check, a cancel, or a
+  confirmation), the **Run required checks** sheet (likewise),
+  **Check the remote**, the launch check, a cancel, or a
   view that opens a sheet and changes nothing. Costly actions arm on the
   first click or Enter/Space and fire on the second. An action whose
   handler belongs to a later card arrives disabled from the server and
@@ -2449,6 +2562,10 @@ beside it, each a person's click:
   and whether someone else holds the card — and says what would refuse.
   It may fetch as `/api/plan` does, claims nothing, starts nothing, and
   the launch asks again.
+
+**Run required checks** is a third explicit action and, unlike those
+two, runs the project's programs; it has a section of its own under
+"Verification: bench runs the check".
 
 ### The PR observation survives a restart
 

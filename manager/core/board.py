@@ -46,6 +46,7 @@ import httpd
 import phases
 import progress
 import refine
+import required
 import reviews
 import state
 import sync
@@ -128,6 +129,10 @@ def main() -> None:
     # verification drifting towards "passed" because nobody closed it.
     # Nothing is re-run: asking again is a person's decision.
     verify.recover()
+    # A batch of required checks a dead board was running is closed the
+    # same way: the check in flight reads "no result — the board
+    # restarted", the rest not requested. Nothing is asked for again.
+    required.recover()
     # And a review checkout a dead board left holding one: the record is
     # the only thing that can say who owned it, so an unreleased record
     # from another process is released here — removing the checkout only

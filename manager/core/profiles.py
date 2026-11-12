@@ -2807,7 +2807,66 @@ def verification_block(found: dict | None) -> str:
             "check afterwards**, and if you commit again, ask again. "
             "Nothing merges on a report, an exit code, or new commits.",
         ]
+        lines += _required_lines(found, checks)
     return "\n".join(lines)
+
+
+# The intents that commit, and so end with a commit the merge rules will
+# read. A review run may still ask for what its profile grants (design
+# #94 §10.1 — review-first stays possible, and an equal current pass is
+# reused), but it is not told to cover the merge rules: it changes no
+# commit.
+_COMMITTING_INTENTS = ("work", "act-pr")
+
+
+def _required_lines(found: dict, checks: list[dict]) -> list[str]:
+    """Design #94 §10.1: a committing run asks for every required check it
+    is authorised to ask for, after its last commit. What it may ask for is
+    still its frozen profile — this names checks, it grants none — and a
+    requirement it cannot ask for is said to be a person's or the
+    configuration's, never something that will happen by itself."""
+    if found.get("intent") not in _COMMITTING_INTENTS:
+        return []
+    try:
+        policy = gate_policy()
+    except (ValueError, OSError):
+        return []
+    if policy.get("blockers"):
+        return []
+    wanted: list[str] = []
+    for scope in GATE_SCOPES:
+        for check in (policy["scopes"].get(scope) or {}).get("checks") or []:
+            label = check["name"] + (f" {check['gateScope']}"
+                                     if check.get("gateScope") else "")
+            if label not in wanted:
+                wanted.append(label)
+    if not wanted:
+        return []
+    mine = {c["name"] for c in checks}
+    asked = [w for w in wanted if w.split(" ")[0] in mine]
+    missing = [w for w in wanted if w.split(" ")[0] not in mine]
+    out = [""]
+    if asked:
+        out.append(
+            "Ask for every required check after your last commit; a pass "
+            "before a later commit does not count. The merge rules here "
+            "require: " + ", ".join(f"`{w}`" for w in asked) + " (run each "
+            "as `bench-verify <check> [<scope>]`). Launching you was the "
+            "person's consent to this run; these checks are the ones your "
+            "own profile already lets you ask for, and asking grants "
+            "nothing new.")
+    if missing:
+        out.append(
+            "The merge rules also require "
+            + ", ".join(f"`{w}`" for w in missing)
+            + ", which this run may not ask for. Do not try to run it "
+            "another way. Say so in your report: a person runs it from the "
+            "card (Run required checks), or the configuration changes.")
+    out.append(
+        "Nothing runs these checks on its own: a merge rule requires them, "
+        "it does not schedule them. If you do not ask, they stay not run "
+        "until someone does.")
+    return out
 
 
 # ── gate requirements: what an integration refuses without ─────────────

@@ -1069,7 +1069,8 @@ FIXTURE_TASK = "bench-doctor.fixture.md"
 def request(*, check: str, task: str | None = None, agent: str | None = None,
             scope: str | None = None, intent: str | None = None,
             stage: str | None = None, actor: str = "agent",
-            fixture: dict | None = None, again: bool = False) -> dict:
+            fixture: dict | None = None, again: bool = False,
+            cancelled=None) -> dict:
     """Run one named check, and record what happened.
 
     Synchronous: it returns when the check has ended, because the thing
@@ -1107,6 +1108,15 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
     never rewritten. `again` skips the question and always runs; a
     duplicate of a run in flight still joins it. A diagnosis (`fixture`)
     never reuses: the point of it is to run.
+
+    `cancelled` is a caller's stop, asked before a run exists: a callable
+    that answers True once the caller no longer wants the check (the Run
+    required checks batch, when a person pressed Stop). It is asked before
+    the reuse lookup, before a checkout is made, after one is made, and
+    once more under the lock in the same hold that reserves the run — so a
+    stop that lands before the reservation runs nothing, makes no checkout
+    that survives it and writes no evidence (`_not_run`), and one that
+    lands after is the reserved run's to honour through `cancel()`.
     """
     frozen = None
     if fixture is not None:
@@ -1214,6 +1224,12 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
                            f"declared environment cannot be bound and nothing "
                            f"was run")
 
+    def stopped() -> bool:
+        return bool(cancelled is not None and cancelled())
+
+    if stopped():
+        return _not_run(shell)
+
     # — an equal, current answer already on record: return it, run nothing —
     if fixture is None and not again:
         reused = _reusable(shell, found, task, manifest, inputs, env_key)
@@ -1232,6 +1248,8 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
                            f"the fixture root {root} is not there, so nothing "
                            f"was run")
     else:
+        if stopped():
+            return _not_run(shell)
         try:
             root, prepared, root_note = _execution_root(found, task, manifest)
         except ValueError as exc:
@@ -1240,6 +1258,8 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
             return _refuse(shell, reason, str(exc))
     shell["root"] = {"policy": found["root"], "path": str(root),
                      "owned": prepared, "note": root_note}
+    if stopped():
+        return _not_run(shell, root if prepared else None)
 
     # — one at a time per check, and a duplicate joins rather than doubles —
     key = _key(task, check, scope)
@@ -1250,10 +1270,16 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
                         if k not in ("proc", "cancelling")}
             existing["duplicate"] = True
             return existing
-        _KEYS[key] = shell["id"]
-        RUNNING[shell["id"]] = shell
-        reserved = (task, check)
-        _RESERVED[reserved] = _RESERVED.get(reserved, 0) + 1
+        # The last word before a run exists, in the same hold that would
+        # reserve it: a stop that has landed by now runs nothing.
+        late_stop = stopped()
+        if not late_stop:
+            _KEYS[key] = shell["id"]
+            RUNNING[shell["id"]] = shell
+            reserved = (task, check)
+            _RESERVED[reserved] = _RESERVED.get(reserved, 0) + 1
+    if late_stop:
+        return _not_run(shell, root if prepared else None)
     shell["outcome"] = "running"
     shell["reason"] = None
     shell["why"] = "bench is running it"
@@ -1285,6 +1311,23 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
             RUNNING.pop(shell["id"], None)
             if _KEYS.get(key) == shell["id"]:
                 _KEYS.pop(key, None)
+
+
+NOT_RUN_WHY = ("stopped before bench reserved a run of it, so nothing was "
+               "run and no evidence was recorded")
+
+
+def _not_run(shell: dict, owned_root: Path | None = None) -> dict:
+    """A caller's stop that landed before a run existed. Nothing ran and
+    nothing is stored: the answer is the caller's alone, with no evidence
+    id, because there is no evidence. A checkout this request made for the
+    run is given back first, under `_release_root`'s rules."""
+    if owned_root is not None and shell.get("root"):
+        _release_root(shell["root"], owned_root)
+    out = {k: v for k, v in shell.items() if k not in ("proc", "cancelling")}
+    out.update(id=None, outcome="cancelled", reason="cancelled-by-request",
+               why=NOT_RUN_WHY, notRun=True, log=None)
+    return out
 
 
 def _request_shell(check: str, task: str, scope: str | None, intent: str,
@@ -1960,6 +2003,38 @@ def _clip_log(path: Path) -> bool:
     return True
 
 
+def _owned_tmp(record: dict) -> Path | None:
+    """The temporary directory `_execute` made for this record — or None.
+
+    Recursive removal is only ever pointed at a path proved to be that
+    directory: the one `_execute` names from the record's own id, inside
+    bench's verification tmp, and not a link. An absent, empty or relative
+    `env.tmp` (a record that ended before `_execute` set it) is None —
+    `Path("")` is the current directory, and the current directory is
+    never bench's to remove — and so is anything naming elsewhere."""
+    named = (record.get("env") or {}).get("tmp")
+    evidence_id = record.get("id")
+    if not isinstance(named, str) or not named or not evidence_id:
+        return None
+    base = config.VERIFY_DIR / "tmp"
+    expected = base / _slug(str(evidence_id))
+    candidate = Path(named)
+    if not candidate.is_absolute() or candidate != expected:
+        return None
+    try:
+        if candidate.is_symlink() or not candidate.is_dir():
+            return None
+        resolved = candidate.resolve(strict=True)
+        if resolved.parent != base.resolve(strict=True):
+            return None
+    except OSError:
+        return None
+    if resolved in (Path(resolved.anchor), Path.cwd().resolve(),
+                    Path.home().resolve()):
+        return None
+    return resolved
+
+
 def _cleanup(record: dict, owned: bool, root: Path) -> None:
     """What bench made, bench removes — and nothing it did not.
 
@@ -1970,27 +2045,34 @@ def _cleanup(record: dict, owned: bool, root: Path) -> None:
     is deliberately left: it holds the caches the next verification of
     this card would otherwise rebuild.
     """
-    tmp = Path((record.get("env") or {}).get("tmp") or "")
-    if tmp.is_dir():
+    tmp = _owned_tmp(record)
+    if tmp is not None:
         shutil.rmtree(tmp, ignore_errors=True)
     if not owned:
         return
+    _release_root(record["root"], root)
+
+
+def _release_root(described: dict, root: Path) -> None:
+    """Give back a `source` checkout this verification made: through git,
+    never `--force`, and never one with uncommitted work in it. What
+    happened is written into `described` — the record's `root` block."""
     dirty = config.dirty_files(root)
     if dirty:
-        record["root"]["kept"] = (
+        described["kept"] = (
             f"{len(dirty)} uncommitted change"
             f"{'' if len(dirty) == 1 else 's'} in bench's own checkout at "
             f"{root}, so it was kept rather than removed")
         return
     removed = _git(config.app_repo(), "worktree", "remove", str(root), timeout=60)
     if removed.returncode != 0:
-        record["root"]["kept"] = (
+        described["kept"] = (
             f"git would not remove bench's checkout at {root}: "
             f"{(removed.stderr or removed.stdout).strip().splitlines()[-1][:120]}"
             if (removed.stderr or removed.stdout).strip() else
             f"git would not remove bench's checkout at {root}")
     else:
-        record["root"]["removed"] = True
+        described["removed"] = True
 
 
 # ── cancelling, and what a stopped board owes ──────────────────────────

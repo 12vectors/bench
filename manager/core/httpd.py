@@ -29,6 +29,7 @@ import progress
 import readiness
 import previews
 import refine
+import required
 import reviews
 import settings
 import setupguide
@@ -287,6 +288,10 @@ def state_payload() -> dict:
         # by a fingerprint of every input it reads — never authority; the
         # whole reading is `/api/card/delivery`, always recomputed.
         "delivery": delivery.board(collected, phases.public_state()),
+        # per card, a batch of required checks in flight on this board:
+        # how many it set out to request, how many have an answer, the one
+        # running now. The whole record is `/api/verify/required`.
+        "requiredRuns": required.running(),
         # card refinements this board holds that are running, waiting for a
         # decision, or failed: the newest per card. Runtime state, local to
         # this board — the decisions themselves are in the cards
@@ -544,6 +549,19 @@ class Handler(BaseHTTPRequestHandler):
                     (parse_qs(url.query).get("id") or [""])[0]))
             except (ValueError, OSError) as exc:
                 self._json(404, {"error": str(exc)})
+        elif path == "/api/verify/required":
+            # What Run required checks would do for one card, now, and the
+            # last batch it ran. A reading: the gate, the candidate, the
+            # checkout's cleanliness and the work reading's checks. It
+            # starts nothing, pins nothing and creates no checkout, which
+            # is why the confirmation may be opened freely.
+            query = parse_qs(url.query)
+            try:
+                self._json(200, {"plan": required.plan(
+                    (query.get("file") or [""])[0],
+                    (query.get("stage") or [""])[0] or None)})
+            except required.Refused as exc:
+                self._json(exc.status, {"error": str(exc), "code": exc.code})
         elif path == "/api/verify/checks":
             # What one run may ask for, read off its frozen manifest — the
             # same answer `bench-verify` with no arguments prints.
@@ -1238,6 +1256,35 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/verify/cancel":
                 payload = self._read_body()
                 self._json(200, verify.cancel(payload["id"]))
+            elif path in ("/api/verify/required",
+                          "/api/verify/required/cancel"):
+                # Run required checks, and stopping it: a person's click,
+                # through the same door as a policy write, because it runs
+                # the project's programs. Nothing in the body makes the
+                # request a run's — a body naming one is refused, since a
+                # run asks for its own checks through bench-verify under
+                # the profile it was launched with. The head the
+                # confirmation was shown is sent back, so a stale sheet
+                # is refused rather than requesting checks about a commit
+                # nobody looked at.
+                problem = origin_problem(self.headers, config.PORT)
+                if problem:
+                    self._json(403, {"error": problem})
+                    return
+                payload = self._read_body()
+                try:
+                    if path.endswith("/cancel"):
+                        found = required.cancel(payload["file"])
+                    else:
+                        found = required.start(
+                            payload["file"], payload.get("stage") or None,
+                            head=str(payload.get("head") or "") or None,
+                            agent=payload.get("agent") or None)
+                except required.Refused as exc:
+                    self._json(exc.status, {"error": str(exc),
+                                            "code": exc.code})
+                    return
+                self._json(200, {"batch": found})
             elif path == "/api/card/delivery/check-remote":
                 # One bounded fetch of the card's own two branch names, on
                 # a person's click. Viewing never does this.
