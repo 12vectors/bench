@@ -550,6 +550,25 @@ class TheCopyMatrix(DeliveryCase):
         self.place("done")
         self.expect("delivered", None)
 
+    def test_signoff_needed_where_a_rule_asks_for_one(self):
+        """Design §8.3 (card 103): checks and review met, `signoff:
+        criteria` on the rule, and criteria nobody tracked — the status is
+        `signoff-needed`, its action opens the Acceptance section, and the
+        sign-off is one more required obligation in the counts."""
+        head = self.passed_at_head()
+        document = json.loads((self.local / "profiles.json").read_text())
+        document["gates"]["acceptance"]["signoff"] = "criteria"
+        self.declares(document)
+        gates.record_verdict(CARD, verdict="APPROVE", head=head)
+        self.place("review", pr=PR_URL)
+        path = self.tasks / "review" / CARD
+        path.write_text(path.read_text() + "\n## Acceptance\n\n"
+                        "- [ ] The thing works\n", encoding="utf-8")
+        found = self.expect("signoff-needed", "confirm-criteria")
+        self.assertEqual(found["primary"]["label"], "Track acceptance")
+        self.assertTrue(found["primary"]["enabled"])
+        self.assertEqual(found["counts"], {"required": 3, "met": 2})
+
 
 # ── the vocabulary, derived rather than counted ────────────────────────
 

@@ -452,9 +452,16 @@ def _record_id(prefix: str, filename: str, request) -> str:
 
 def _branch_head(filename: str) -> str | None:
     """The tip of the card's branch in the application, if it has one — the
-    code revision a manual decision was made against. Read, never moved."""
+    code revision a manual decision was made against. Read, never moved.
+
+    `phase/<stem>` before `task/<stem>`: the order `config.branch_for` and
+    `gates.head_for` pick the commit a merge would take in, so a sign-off
+    is recorded against the very commit the gate reads it about. Asked the
+    other way round, a card holding both branches recorded every decision
+    against the task tip and could never meet its sign-off."""
     stem = filename[:-3]
-    for branch in (f"task/{stem}", f"phase/{stem}"):
+    for branch in (config.PHASE_BRANCH_PREFIX + stem,
+                   config.TASK_BRANCH_PREFIX + stem):
         try:
             found = config.git_run(config.REPO, "rev-parse", "--verify", "--quiet",
                                    f"refs/heads/{branch}", timeout=10)

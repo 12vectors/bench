@@ -681,7 +681,15 @@ class Handler(BaseHTTPRequestHandler):
             name = (query.get("file") or [""])[0]
             stage = (query.get("stage") or [""])[0] or taskfiles.find_stage_of(name) or ""
             try:
-                self._json(200, acceptance.for_card(name, stage))
+                found = acceptance.for_card(name, stage)
+                # Whether a merge rule asks this card for a sign-off — so
+                # the section can say so, or say that none does. Read, as
+                # the rest of this answer is.
+                try:
+                    found["signoff"] = gates.signoff_reading(name, stage)
+                except (ValueError, OSError) as exc:
+                    found["signoff"] = {"required": None, "error": str(exc)}
+                self._json(200, found)
             except (ValueError, OSError) as exc:
                 self._json(409, {"error": str(exc)})
         elif path == "/api/card/delivery":

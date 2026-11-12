@@ -42,9 +42,28 @@ def clean(text: str) -> str:
     """An agent's -p output is its final report; strip the hook-failure
     noise other tools may have interleaved. No capping — that is `report`
     (head + tail) or `tail` (a dead run's ending)."""
-    lines = [l for l in (text or "").strip().splitlines()
+    lines = [defuse(l) for l in (text or "").strip().splitlines()
              if not ("hook" in l and "failed" in l)]
     return "\n".join(lines).strip()
+
+
+# The start of every line the board reads back out of a card's history as
+# a record of its own — an acceptance decision, a finding event, a
+# discussion entry. Only the board writes those.
+_RECORD_PREFIX = "<!-- bench:"
+
+
+def defuse(line: str) -> str:
+    """A report line shaped like one of the board's own records, made
+    harmless. A run's report is appended to the card's history, and the
+    acceptance, finding and discussion readers parse history by line — so
+    a line a run wrote reading `<!-- bench:acceptance {...} -->` would be
+    taken for a person's decision, and a merge rule requiring sign-off
+    would read it. Quoted instead, as a discussion entry is: still there
+    to read, never a record. Every other line is returned unchanged."""
+    if line.lstrip().startswith(_RECORD_PREFIX):
+        return "> " + line
+    return line
 
 
 def tail(text: str, cap: int) -> str:

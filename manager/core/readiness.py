@@ -933,7 +933,15 @@ def activate(payload: dict) -> dict:
     gate["checks"] = existing + [w for w in wanted if w not in have]
     strength = ("none", "bench", "github", "separate-reviewer")
     kept_review = gate.get("review") or "none"
-    if review_policy != "none" and kept_review not in strength[1:]:
+    if isinstance(kept_review, list):
+        # The advanced list is kept exactly as written: a policy it already
+        # names adds nothing, and any other is a change for Settings.
+        if review_policy != "none" and review_policy not in kept_review:
+            raise Refused(f"the {scope} rule already requires all of "
+                          f"{', '.join(map(str, kept_review))}; change it in "
+                          f"Settings → Merge rules if that is what you mean",
+                          409, code="review-exists")
+    elif review_policy != "none" and kept_review not in strength[1:]:
         gate["review"] = review_policy
     elif review_policy != "none" and kept_review != review_policy:
         # an existing review requirement is preserved; a different one is

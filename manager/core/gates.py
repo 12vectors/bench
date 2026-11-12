@@ -96,9 +96,11 @@ import threading
 import time
 from pathlib import Path
 
+import acceptance
 import config
 import profiles
 import state
+import taskfiles
 import verify
 
 # One decision word per answer, and the word carries the meaning rather
@@ -172,6 +174,23 @@ REASONS = {
                      "there is nothing to bind evidence to"),
     "policy-refused": ("this board's gate policy does not resolve, so no "
                        "gate can be evaluated and none is assumed met"),
+    "signoff-untracked": ("the card's acceptance criteria are not tracked, "
+                          "so there is no record of a person accepting any "
+                          "of them"),
+    "signoff-no-criteria": ("the card's brief has no acceptance criteria, so "
+                            "there is nothing a person could sign off"),
+    "signoff-pending": ("not every tracked acceptance criterion has been "
+                        "accepted by a person"),
+    "signoff-recheck": ("an acceptance no longer stands: the criterion was "
+                        "reworded, marked for recheck, or its evidence "
+                        "stopped reading passed"),
+    "signoff-other-head": ("criteria were accepted against an earlier "
+                           "commit, and a sign-off is about the commit that "
+                           "would merge"),
+    "signoff-needs-work": ("a person recorded that an acceptance criterion "
+                           "is not met"),
+    "signoff-unreadable": ("the card's text could not be read, so no "
+                           "acceptance record can be weighed"),
 }
 
 # How a reader gets from an unmet requirement to a met one. Per reason,
@@ -243,6 +262,29 @@ REMEDIES = {
     "policy-refused": ("Fix the gate block in the profile document — every "
                        "refusal is named with its remedy in the ⚕ "
                        "Configuration check and the ⚖ sheet."),
+    "signoff-untracked": ("Open the card's Acceptance section and use Track "
+                          "acceptance, then confirm each criterion. Tracking "
+                          "only adds ids; it accepts nothing."),
+    "signoff-no-criteria": ("Write the acceptance criteria into the brief as a "
+                            "checklist, track them, and confirm each — or use "
+                            "a merge rule without sign-off for this kind of "
+                            "card."),
+    "signoff-pending": ("Confirm each remaining criterion in the card's "
+                        "Acceptance section, with a note saying what was "
+                        "checked, or map a current passing evidence record to "
+                        "it. An agent's report or review verdict accepts "
+                        "nothing."),
+    "signoff-recheck": ("Read the criterion as it stands now and decide it "
+                        "again in the Acceptance section. The earlier decision "
+                        "is kept as history."),
+    "signoff-other-head": ("The code changed after the criteria were accepted. "
+                           "Confirm them again against the commit that would "
+                           "merge — the earlier decisions are kept as "
+                           "history."),
+    "signoff-needs-work": ("Fix what the decision says is missing, then have "
+                           "a person decide the criterion again."),
+    "signoff-unreadable": ("Make the card readable on this board (refresh, or "
+                           "check the work state), then read the gate again."),
 }
 
 # How serious each reason is, in one of five classes, so every surface
@@ -271,6 +313,12 @@ SEVERITY = {
     "changes-requested": "problem", "same-account": "problem",
     "overridden": "problem",
     "head-unknown": "cannot-assess", "policy-refused": "cannot-assess",
+    "signoff-accepted": "met",
+    "signoff-untracked": "needed", "signoff-pending": "needed",
+    "signoff-recheck": "needed", "signoff-other-head": "needed",
+    "signoff-no-criteria": "needed",
+    "signoff-needs-work": "problem",
+    "signoff-unreadable": "cannot-assess",
 }
 SEVERITY_CLASSES = ("met", "needed", "running", "problem", "cannot-assess")
 
@@ -309,6 +357,14 @@ PLAIN = {
     "overridden": "Overridden at {at} — still unmet",
     "head-unknown": "Cannot assess: no implementation commit on this board",
     "policy-refused": "Cannot assess: the merge rules do not resolve",
+    "signoff-accepted": "Every criterion accepted for {at}",
+    "signoff-untracked": "Acceptance not tracked — Track acceptance, then confirm",
+    "signoff-no-criteria": "No acceptance criteria to sign off",
+    "signoff-pending": "Not every criterion is accepted yet",
+    "signoff-recheck": "A criterion needs to be decided again",
+    "signoff-other-head": "Accepted against an earlier commit, not {at}",
+    "signoff-needs-work": "A criterion was recorded as needing work",
+    "signoff-unreadable": "Cannot assess: the card could not be read",
 }
 
 
@@ -646,8 +702,9 @@ def needs_github_reviews() -> bool:
         policy = gate_policy()
     except (OSError, ValueError):
         return False
-    return any(entry["review"] in ("github", "separate-reviewer")
-               for entry in policy["scopes"].values())
+    return any(word in ("github", "separate-reviewer")
+               for entry in policy["scopes"].values()
+               for word in entry.get("reviews") or [])
 
 
 def observe_reviews(filename: str, *, reviews: list[dict], author: str | None,
@@ -1210,6 +1267,154 @@ def _review_requirement(filename: str, policy: str, head: dict) -> dict:
             "why": REASONS["no-approval"], "remedy": REMEDIES["no-approval"]}
 
 
+def review_words(entry: dict) -> list[str]:
+    """The review requirements one gate scope counts, in order: the one
+    word of the ordinary form, every word of the advanced list, nothing
+    for `none`. A policy built before the list existed carries only
+    `review`, and reads exactly as it did."""
+    if "reviews" in entry:
+        return list(entry["reviews"] or [])
+    word = str(entry.get("review") or "none")
+    return [] if word == "none" else [word]
+
+
+def _card_text(filename: str, task: dict | None) -> str | None:
+    """The card as it is on disk now — read fresh at every evaluation, so
+    the reading a mutation asks for immediately before it acts weighs the
+    acceptance records as they stand then, not as a page last saw them.
+    The task the caller holds is only the fallback for a card the work
+    state can no longer find."""
+    stage = taskfiles.find_stage_of(filename)
+    if stage:
+        try:
+            return (config.TASKS / stage / filename).read_text(
+                encoding="utf-8")
+        except OSError:
+            pass
+    body = (task or {}).get("body")
+    return body if isinstance(body, str) else None
+
+
+def _signoff_requirement(filename: str, policy: str, head: dict,
+                         task: dict | None) -> dict:
+    """The sign-off half → met, or unmet with the reason and the remedy.
+
+    Read from `acceptance`, the one authority for what a criterion's state
+    is: a named person's decision, recomputed from the card's records,
+    bench's evidence as it reads now, and the criterion's wording. Four
+    things keep it from saying more than anyone established:
+
+    - **Tracked, all of it.** An untracked card, or criteria added since
+      tracking, have no identity a decision could be about — so the gate
+      asks for Track acceptance first, and tracking accepts nothing.
+    - **Every tracked criterion accepted.** `reported` (an agent's claim,
+      or a tick by hand before tracking), `pending`, `needs work` and
+      `needs recheck` are all unmet, each with its own sentence.
+    - **About this commit.** A manual decision records the branch tip it
+      was made against; a sign-off is about the commit that would merge,
+      so an acceptance from an earlier commit — or from before there was
+      one — does not travel. The earlier decision is kept and shown.
+    - **Never inferred.** A review verdict, a passing suite, a merge or a
+      move to done/ is not an acceptance, and nothing here writes one.
+    """
+    row = {"kind": "signoff", "name": "sign-off", "policy": policy,
+           "policyWhy": profiles.SIGNOFF_POLICIES.get(policy, policy)}
+    commit = head.get("commit")
+    text = _card_text(filename, task)
+    if text is None:
+        return {**row, "state": "unmet", "reason": "signoff-unreadable",
+                "why": REASONS["signoff-unreadable"],
+                "remedy": REMEDIES["signoff-unreadable"]}
+    found = acceptance.read_text(text, filename)
+    criteria, untracked = found["criteria"], found["untracked"]
+    row["criteria"] = [{"id": c["id"], "label": c["label"],
+                        "state": c["state"], "word": c["word"],
+                        "commit": ((c.get("decision") or {}).get("commit")
+                                   if c["state"] == "accepted" else None)}
+                       for c in criteria]
+    row["counts"] = {"accepted": sum(1 for c in criteria
+                                     if c["state"] == "accepted"),
+                     "tracked": len(criteria), "untracked": len(untracked)}
+
+    def unmet(reason: str, why: str) -> dict:
+        return {**row, "state": "unmet", "reason": reason, "why": why,
+                "remedy": REMEDIES[reason]}
+
+    if not criteria and not untracked:
+        return unmet("signoff-no-criteria", REASONS["signoff-no-criteria"])
+    if untracked:
+        return unmet("signoff-untracked",
+                     REASONS["signoff-untracked"] if not criteria else
+                     f"{len(untracked)} criteri"
+                     f"{'on is' if len(untracked) == 1 else 'a are'} not "
+                     f"tracked yet, so no person can have accepted "
+                     f"{'it' if len(untracked) == 1 else 'them'}")
+    by_state: dict[str, list[dict]] = {}
+    for item in criteria:
+        by_state.setdefault(item["state"], []).append(item)
+
+    def listed(items: list[dict]) -> str:
+        return "; ".join(f"'{c['label']}' ({c['word']})" for c in items[:3]) \
+            + (f" and {len(items) - 3} more" if len(items) > 3 else "")
+
+    if by_state.get("needs-work"):
+        return unmet("signoff-needs-work",
+                     f"{REASONS['signoff-needs-work']}: "
+                     f"{listed(by_state['needs-work'])}")
+    if by_state.get("recheck"):
+        return unmet("signoff-recheck",
+                     f"{REASONS['signoff-recheck']}: "
+                     f"{listed(by_state['recheck'])}")
+    waiting = by_state.get("pending", []) + by_state.get("reported", [])
+    if waiting:
+        return unmet("signoff-pending",
+                     f"{row['counts']['accepted']} of {len(criteria)} "
+                     f"criteria accepted; still to decide: {listed(waiting)}. "
+                     f"A reported criterion is an agent's claim, not an "
+                     f"acceptance")
+    # Every criterion reads accepted. Now: about which commit?
+    if not commit:
+        return unmet("signoff-other-head",
+                     "every criterion is accepted, and there is no commit "
+                     "here for a sign-off to be about")
+    earlier = [c for c in criteria
+               if not str(((c.get("decision") or {}).get("commit")) or "")
+               or not commit.startswith(
+                   str((c.get("decision") or {}).get("commit")))]
+    if earlier:
+        return unmet("signoff-other-head",
+                     f"{len(earlier)} of {len(criteria)} acceptance"
+                     f"{'' if len(earlier) == 1 else 's'} "
+                     f"{'was' if len(earlier) == 1 else 'were'} recorded "
+                     f"against another commit, or before there was one, and "
+                     f"this would merge {_short(commit)}: "
+                     f"{listed(earlier)}")
+    return {**row, "state": "met", "reason": "signoff-accepted",
+            "why": (f"all {len(criteria)} tracked criteria were accepted by "
+                    f"a named person against {_short(commit)}"),
+            "remedy": None}
+
+
+def signoff_reading(filename: str, stage: str) -> dict:
+    """Does a merge rule ask this card for a sign-off, and what does it
+    read now? For the card's Acceptance section, which says so as a fact —
+    and, where no rule asks, says that too, so "never accepted on record"
+    is never drawn as a step somebody skipped. A read: nothing written."""
+    path = config.TASKS / stage / filename
+    task = taskfiles.read_task(path, stage)
+    scope = scope_for(task)
+    entry = gate_policy()["scopes"].get(scope) or {}
+    policy = str(entry.get("signoff") or "none")
+    if policy == "none":
+        return {"required": False, "scope": scope, "policy": policy}
+    head = head_for(filename, scope)
+    row = _signoff_requirement(filename, policy, head, task)
+    return {"required": True, "scope": scope, "policy": policy,
+            "state": row["state"], "reason": row["reason"],
+            "plain": plain(row["reason"], head.get("commit")),
+            "why": row["why"], "remedy": row.get("remedy")}
+
+
 # What the review half is, and is not. Bench reads the review objects
 # GitHub returned to the last poll; GitHub's own branch protection —
 # required approvals, code owners, its dismissal settings — is a separate
@@ -1297,6 +1502,8 @@ def _evaluate(filename: str, scope: str, *, task: dict | None = None,
         "configured": policy["configured"],
         "gated": entry["gated"], "head": head,
         "review": entry["review"], "reviewWhy": entry["reviewWhy"],
+        "reviews": review_words(entry),
+        "signoff": entry.get("signoff", "none"),
         "requirements": [], "unmet": [], "pending": [],
         "overrides": {"allowed": policy["overrides"]["allowed"],
                       "why": policy["overrides"]["why"],
@@ -1335,9 +1542,15 @@ def _evaluate(filename: str, scope: str, *, task: dict | None = None,
             if records is not None else verify.for_task(filename))
     rows = [_check_requirement(filename, check, head, mine)
             for check in entry["checks"]]
-    rows.append(_review_requirement(filename, entry["review"], head))
-    rows = [r for r in rows if not (r["kind"] == "review"
-                                    and r["policy"] == "none")]
+    # One row per configured review word. The ordinary form is one word
+    # and therefore one row; the advanced list is a conjunction, and each
+    # of its words is its own requirement, met or unmet on its own record
+    # and explained on its own — never collapsed into one tick.
+    rows.extend(_review_requirement(filename, word, head)
+                for word in review_words(entry))
+    if entry.get("signoff", "none") != "none":
+        rows.append(_signoff_requirement(filename, entry["signoff"], head,
+                                         task))
     found["requirements"] = rows
     unmet = [r for r in rows if r["state"] == "unmet"]
     pending = [r for r in rows if r["state"] == "pending"]
@@ -1452,6 +1665,10 @@ def scope_policy_id(policy: dict, scope: str) -> str:
     """
     entry = policy["scopes"].get(scope) or {}
     over = policy.get("overrides") or {}
+    # A sign-off joins the identity only when one is required, so an
+    # override recorded before sign-off existed keeps applying to the rule
+    # it was about. The review list is already in `review`, joined.
+    signoff = str(entry.get("signoff") or "none")
     return "gscope:" + _digest(
         scope,
         json.dumps([[c.get("revision"), c.get("gateScope")]
@@ -1459,6 +1676,7 @@ def scope_policy_id(policy: dict, scope: str) -> str:
         str(entry.get("review") or "none"),
         json.dumps({"allowed": bool(over.get("allowed")),
                     "actors": sorted(over.get("actors") or [])}),
+        *([f"signoff:{signoff}"] if signoff != "none" else []),
     )[:16]
 
 
@@ -1674,7 +1892,8 @@ def override(filename: str, scope: str, *, actor: str, reason: str,
 
 
 PUBLIC = ("v", "task", "scope", "why", "decision", "summary", "configured",
-          "gated", "head", "review", "reviewWhy", "requirements", "unmet",
+          "gated", "head", "review", "reviewWhy", "reviews", "signoff",
+          "requirements", "unmet",
           "pending", "overrides", "blockers", "diagnostics", "policyId",
           "policyRevision", "policySource", "location", "read",
           "overriddenGates")
