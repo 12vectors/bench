@@ -99,6 +99,9 @@ REFUSALS = {
                        "this commit"),
     "head-moved": ("the candidate commit has moved since this was read — "
                    "read it again before confirming"),
+    "head-required": ("a batch starts only for the commit its confirmation "
+                      "showed, and this request named none — read the "
+                      "required checks again and confirm"),
     "authority": ("Run required checks is a person's action. A run asks "
                   "for its own checks through bench-verify, under the "
                   "profile it was launched with"),
@@ -159,6 +162,10 @@ _LOCK = threading.Lock()
 # The batch in flight per card, in this board's memory. On disk a record
 # marked running with no entry here is a batch an earlier board owned.
 ACTIVE: dict[str, dict] = {}
+# The threads running batches, so a caller that must see every request end
+# (a test, before it removes its fixture) can join them. Finished ones are
+# dropped as new ones start.
+THREADS: list[threading.Thread] = []
 
 
 def dir_for() -> Path:
@@ -372,11 +379,13 @@ def start(filename: str, stage: str | None = None, *,
     for a caller that must see the ending (the tests).
 
     Refused, with nothing requested, when a run asks (`agent`), when the
-    plan refuses, or when `head` — the commit the confirmation was shown —
-    is not the candidate now. A batch already in flight for this card is
-    returned rather than doubled."""
+    plan refuses, or when `head` — the commit the confirmation was shown,
+    which a request must name — is missing or is not the candidate now. A
+    batch already in flight for this card is returned rather than
+    doubled."""
     if agent:
         raise Refused("authority", status=403)
+    head = head.strip() if isinstance(head, str) else None
     with _LOCK:
         live = ACTIVE.get(filename)
         if live is not None:
@@ -384,7 +393,14 @@ def start(filename: str, stage: str | None = None, *,
             found["joinedBatch"] = True
             return public(found)
     reading = plan(filename, stage)
-    if head and reading["head"] and head != reading["head"]:
+    if not head:
+        # Nothing confirmed, so nothing starts. A plan that refuses anyway
+        # (no candidate, a dirty checkout) says that instead: it is the
+        # reason a confirmation could not have been shown a head at all.
+        if reading["refusal"]:
+            raise Refused(reading["refusal"], reading["why"])
+        raise Refused("head-required", status=400)
+    if reading["head"] and head != reading["head"]:
         raise Refused("head-moved",
                       f"{REFUSALS['head-moved']} (it was "
                       f"{str(head)[:12]}, it is now "
@@ -423,8 +439,20 @@ def start(filename: str, stage: str | None = None, *,
     if wait:
         _run(batch)
     else:
-        threading.Thread(target=_run, args=(batch,), daemon=True).start()
+        thread = threading.Thread(target=_run, args=(batch,), daemon=True)
+        with _LOCK:
+            THREADS[:] = [t for t in THREADS if t.is_alive()]
+            THREADS.append(thread)
+        thread.start()
     return public(latest(filename))
+
+
+def join(timeout: float | None = None) -> None:
+    """Wait for every batch thread this board started to end."""
+    with _LOCK:
+        threads = list(THREADS)
+    for thread in threads:
+        thread.join(timeout)
 
 
 def _names(batch: dict, states: tuple[str, ...]) -> str:
@@ -507,9 +535,13 @@ def _run(batch: dict) -> None:
             with _LOCK:
                 item.update(state="requesting", started=time.time())
             _save(batch)
+            # Stop is asked inside the request too, up to the moment a run
+            # is reserved: a click that lands while the requirement is read
+            # or a checkout is made runs nothing (verify's `_not_run`).
             record = verify.request(check=item["check"], task=batch["task"],
                                     scope=item.get("scope"), intent=INTENT,
-                                    stage=batch["stage"], actor=batch["actor"])
+                                    stage=batch["stage"], actor=batch["actor"],
+                                    cancelled=lambda: bool(batch.get("cancel")))
             source = (record.get("source") or {}).get("commit")
             with _LOCK:
                 item["evidence"] = record.get("id")
@@ -517,7 +549,10 @@ def _run(batch: dict) -> None:
                 item["outcome"] = record.get("outcome")
                 item["reason"] = record.get("reason")
                 item["why"] = record.get("why")
-                if record.get("duplicate"):
+                if record.get("notRun"):
+                    item["state"] = "not-requested"
+                    item["why"] = STOPS["cancelled"]
+                elif record.get("duplicate"):
                     item["state"] = "joined"
                     item["why"] = ITEM_STATES["joined"]
                 elif source and source != batch["head"]:
@@ -575,7 +610,9 @@ def cancel(filename: str) -> dict:
                         if i["state"] == "requesting"), None)
     if current is not None:
         live = _live(filename, current)
-        if live.get("evidence"):
+        # Only a person's run is this batch's to stop. A run an agent asked
+        # for, which the request joined, is that run's: ‖ hold stops it.
+        if live.get("evidence") and not live.get("agent"):
             try:
                 verify.cancel(live["evidence"])
             except ValueError:
@@ -622,7 +659,9 @@ def _live(filename: str, item: dict) -> dict:
         evidence = verify._KEYS.get(key)
         record = verify.RUNNING.get(evidence) if evidence else None
         outcome = (record or {}).get("outcome")
-    return {"evidence": evidence if record else None, "outcome": outcome}
+        agent = (record or {}).get("agent")
+    return {"evidence": evidence if record else None, "outcome": outcome,
+            "agent": agent}
 
 
 PUBLIC_ITEM = ("check", "scope", "name", "coverage", "state", "reason",

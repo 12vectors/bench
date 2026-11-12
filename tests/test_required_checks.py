@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 import time
 import unittest
@@ -87,6 +88,12 @@ class BatchCase(GateCase):
         wait_for(lambda: not verify.RUNNING and not required.ACTIVE, 20)
         for thread in self.threads:
             thread.join(20)
+        required.join(20)
+
+    def start(self, stage: str = "in-progress", **kwargs) -> dict:
+        """A click, as the page sends it: with the head its sheet showed."""
+        kwargs.setdefault("head", required.plan(CARD, stage)["head"])
+        return required.start(CARD, stage, **kwargs)
 
     def check(self, name: str, flag: str = "pass", **extra) -> dict:
         (self.marks / f"{name}.flag").write_text(flag, encoding="utf-8")
@@ -129,7 +136,7 @@ class BatchCase(GateCase):
         return found
 
     def run_batch(self, **kwargs) -> dict:
-        found = required.start(CARD, "in-progress", wait=True, **kwargs)
+        found = self.start(wait=True, **kwargs)
         self.fresh()
         return required.public(required.latest(CARD)) or found
 
@@ -355,10 +362,10 @@ class RevalidatedBetweenRequests(BatchCase):
 
     def test_a_second_click_joins_the_batch_in_flight(self):
         self.flag("one", "hang")
-        first = required.start(CARD, "in-progress")
+        first = self.start()
         self.assertTrue(wait_for(lambda: any(
             r.get("outcome") == "running" for r in verify.RUNNING.values()), 20))
-        second = required.start(CARD, "in-progress")
+        second = self.start()
         self.assertTrue(second.get("joinedBatch"))
         self.assertEqual(second["id"], first["id"])
         required.cancel(CARD)
@@ -418,6 +425,23 @@ class TheDoor(BatchCase):
         self.assertTrue(wait_for(lambda: CARD not in required.ACTIVE, 30))
         self.assertEqual(self.runs("unit"), 1)
 
+    def test_a_batch_starts_only_for_the_confirmed_head(self):
+        headers = {"Content-Type": "application/json", "X-Bench-Settings": "1"}
+        cases = (("missing", {"file": CARD}, 400, "head-required"),
+                 ("empty", {"file": CARD, "head": ""}, 400, "head-required"),
+                 ("blank", {"file": CARD, "head": "   "}, 400, "head-required"),
+                 ("mismatched", {"file": CARD, "head": "0" * 40}, 409,
+                  "head-moved"))
+        for label, body, status, code in cases:
+            with self.subTest(head=label):
+                found, answer = self.post("/api/verify/required", body, headers)
+                self.assertEqual(found, status, answer)
+                self.assertEqual(answer["code"], code)
+                self.assertEqual(self.runs("unit"), 0, "nothing ran")
+                self.assertIsNone(required.latest(CARD), "nothing recorded")
+                self.assertFalse(verify.for_task(CARD))
+                self.assertNotIn(CARD, required.ACTIVE)
+
 
 # ── acceptance 3 ───────────────────────────────────────────────────────
 
@@ -428,7 +452,7 @@ class InterruptionIsExplicit(BatchCase):
         self.policy([self.check("unit", prepare=["deps"])], gate=["unit"],
                     prepare=[{"name": "deps", "run": str(self.executable(
                         "deps", "#!{python}\nimport time\ntime.sleep(600)\n"))}])
-        required.start(CARD, "in-progress")
+        self.start()
         self.assertTrue(wait_for(lambda: (
             (required.public(required.latest(CARD)) or {}).get("items")
             or [{}])[0].get("live") == "preparing", 20))
@@ -463,7 +487,7 @@ class InterruptionIsExplicit(BatchCase):
     def test_cancel_stops_the_rest_and_a_click_recovers(self):
         self.policy([self.check("one", "hang"), self.check("two")],
                     gate=["one", "two"])
-        required.start(CARD, "in-progress")
+        self.start()
         self.assertTrue(wait_for(lambda: any(
             r.get("outcome") == "running" for r in verify.RUNNING.values()), 20))
         required.cancel(CARD)
@@ -506,7 +530,7 @@ class InterruptionIsExplicit(BatchCase):
     def test_a_restart_closes_the_batch_and_reads_no_result(self):
         self.policy([self.check("one", "hang"), self.check("two")],
                     gate=["one", "two"])
-        required.start(CARD, "in-progress")
+        self.start()
         self.assertTrue(wait_for(lambda: any(
             r.get("outcome") == "running" for r in verify.RUNNING.values()), 20))
         # what a dead board leaves on disk: the batch and the evidence both
@@ -543,6 +567,224 @@ class InterruptionIsExplicit(BatchCase):
         self.assertIn("board restarted", found["status"]["sentence"])
         # recover twice changes nothing more
         self.assertEqual(required.recover(), [])
+
+
+class StopBeforeARunExists(BatchCase):
+    """Stop pressed after the batch chose a check and before verify
+    reserved a run of it. The real runner is used throughout: what is
+    counted is the check program's own executions, and its preparation's."""
+
+    def setUp(self):
+        super().setUp()
+        self.prep_marks = self.marks / "deps.count"
+
+    def prepared_policy(self, root: str = "worktree") -> None:
+        deps = self.executable(
+            "deps", "#!{python}\nopen(%r, 'a').write('ran\\n')\n"
+            % str(self.prep_marks))
+        self.policy([self.check("unit", root=root, prepare=["deps"]),
+                     self.check("two")], gate=["unit", "two"],
+                    prepare=[{"name": "deps", "run": str(deps)}])
+
+    def stop_on_requesting(self):
+        """Press Stop the moment an item is saved as `requesting` — after
+        the batch committed to it, before `verify.request` is entered."""
+        real = required._save
+        pressed = []
+
+        def save(batch):
+            real(batch)
+            if not pressed and any(i["state"] == "requesting"
+                                   for i in batch["items"]):
+                pressed.append(required.cancel(CARD))
+        return mock.patch.object(required, "_save", side_effect=save), pressed
+
+    def assert_nothing_ran(self, batch: dict) -> None:
+        self.assertEqual(self.runs("unit"), 0, "the check never ran")
+        self.assertEqual(self.runs("two"), 0)
+        self.assertFalse(self.prep_marks.exists(), "no preparation ran")
+        self.assertEqual(verify.for_task(CARD), [], "no evidence was written")
+        self.assertEqual(batch["state"], "stopped")
+        self.assertEqual(batch["stop"], "cancelled")
+        unit = self.item(batch, "unit")
+        self.assertEqual(unit["state"], "not-requested")
+        self.assertIsNone(unit.get("evidence"))
+        self.assertEqual(self.item(batch, "two")["state"], "not-requested")
+        self.assertFalse(verify.RUNNING)
+        self.assertFalse(verify._KEYS)
+
+    def source_checkouts(self) -> list[str]:
+        folder = config.VERIFY_DIR / "src"
+        return sorted(p.name for p in folder.iterdir()) if folder.is_dir() else []
+
+    def test_stop_after_requesting_is_saved_runs_nothing(self):
+        self.prepared_policy()
+        patch, pressed = self.stop_on_requesting()
+        with patch:
+            batch = self.run_batch()
+        self.assertTrue(pressed, "Stop was pressed mid-batch")
+        self.assert_nothing_ran(batch)
+        row = gates.evaluate(CARD, "acceptance")["requirements"][0]
+        self.assertEqual(row["reason"], "not-run", "still needed, not a failure")
+
+    def test_a_source_check_makes_no_checkout_and_prepares_nothing(self):
+        self.prepared_policy(root="source")
+        patch, pressed = self.stop_on_requesting()
+        with patch:
+            batch = self.run_batch()
+        self.assertTrue(pressed)
+        self.assert_nothing_ran(batch)
+        self.assertEqual(self.source_checkouts(), [], "no checkout was made")
+
+    def test_stop_while_the_checkout_is_made_gives_it_back(self):
+        self.prepared_policy(root="source")
+        real = verify._execution_root
+        made = []
+
+        def root(*args, **kwargs):
+            found = real(*args, **kwargs)
+            made.append(found)
+            required.cancel(CARD)
+            return found
+
+        with mock.patch.object(verify, "_execution_root", side_effect=root):
+            batch = self.run_batch()
+        self.assertTrue(made and made[0][1], "bench made the checkout")
+        self.assertFalse(made[0][0].exists(), "and gave it back")
+        self.assertEqual(self.source_checkouts(), [])
+        self.assert_nothing_ran(batch)
+
+    def test_stop_at_the_reservation_runs_nothing(self):
+        self.prepared_policy()
+        real = verify.request
+        asked = []
+
+        def request(**kwargs):
+            stop = kwargs["cancelled"]
+
+            def cancelled():
+                asked.append(state_locked())
+                if asked[-1]:
+                    # the press lands in the very hold that would reserve
+                    required.ACTIVE[CARD]["cancel"] = True
+                return stop()
+            kwargs["cancelled"] = cancelled
+            return real(**kwargs)
+
+        def state_locked() -> bool:
+            return verify.state.LOCK.locked()
+
+        with mock.patch.object(verify, "request", side_effect=request):
+            batch = self.run_batch()
+        self.assertTrue(asked[-1], "the last question is asked under the lock")
+        self.assert_nothing_ran(batch)
+
+    def test_stop_after_the_reservation_is_the_runs_to_honour(self):
+        self.policy([self.check("unit", "hang"), self.check("two")],
+                    gate=["unit", "two"])
+        self.start()
+        self.assertTrue(wait_for(lambda: self.runs("unit") == 1, 20))
+        required.cancel(CARD)
+        self.assertTrue(wait_for(lambda: CARD not in required.ACTIVE, 20))
+        self.fresh()
+        batch = required.public(required.latest(CARD))
+        self.assertEqual(self.item(batch, "unit")["state"], "cancelled")
+        self.assertIsNotNone(self.item(batch, "unit")["evidence"])
+        self.assertEqual(self.runs("two"), 0)
+
+    def test_stop_never_cancels_a_joined_agent_run(self):
+        self.policy([self.check("unit", "hang")], gate=["unit"])
+        self.manifest(agent="run-1", worktree=self.wt)
+        real = required._save
+        agent_thread = []
+
+        def save(batch):
+            real(batch)
+            if not agent_thread and any(i["state"] == "requesting"
+                                        for i in batch["items"]):
+                # an agent asks for the same check between the batch's
+                # choice and its request, then a person presses Stop
+                thread = threading.Thread(target=self.ask,
+                                          kwargs={"agent": "run-1"},
+                                          daemon=True)
+                thread.start()
+                agent_thread.append(thread)
+                self.threads.append(thread)
+                self.assertTrue(wait_for(lambda: any(
+                    r.get("agent") == "run-1" and r.get("outcome") == "running"
+                    for r in verify.RUNNING.values()), 20))
+                required.cancel(CARD)
+
+        with mock.patch.object(required, "_save", side_effect=save):
+            batch = self.run_batch()
+        self.assertEqual(batch["stop"], "cancelled")
+        agent_runs = [r for r in verify.RUNNING.values()
+                      if r.get("agent") == "run-1"]
+        self.assertEqual(len(agent_runs), 1, "the agent's run is still going")
+        self.assertFalse(agent_runs[0].get("cancelling"))
+        self.assertEqual(self.runs("unit"), 1, "only the agent's own run")
+
+
+class CleanupRemovesOnlyItsOwnTemp(BatchCase):
+    """`verify._cleanup` removes recursively, so what it is pointed at is
+    proved first. Every path here is inside this case's temporary
+    directory, and the process's working directory is moved into a
+    disposable directory holding a sentinel for the whole case."""
+
+    def setUp(self):
+        super().setUp()
+        self.here = self.tmp / "cwd"
+        self.here.mkdir()
+        self.sentinel = self.here / "sentinel.txt"
+        self.sentinel.write_text("keep me\n", encoding="utf-8")
+        previous = Path.cwd()
+        os.chdir(self.here)
+        self.addCleanup(os.chdir, previous)
+        self.base = config.VERIFY_DIR / "tmp"
+        self.base.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        self.assertTrue(self.sentinel.is_file(),
+                        "the working directory was never touched")
+
+    def test_unproven_paths_are_never_chosen(self):
+        evidence = "verification@abc"
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        (outside / "keep.txt").write_text("x", encoding="utf-8")
+        link = self.base / verify._slug("verification@link")
+        link.symlink_to(outside, target_is_directory=True)
+        for label, record in (
+                ("no env", {"id": evidence}),
+                ("env none", {"id": evidence, "env": None}),
+                ("no tmp", {"id": evidence, "env": {}}),
+                ("empty", {"id": evidence, "env": {"tmp": ""}}),
+                ("relative", {"id": evidence, "env": {"tmp": "."}}),
+                ("cwd", {"id": evidence, "env": {"tmp": str(self.here)}}),
+                ("root", {"id": evidence, "env": {"tmp": "/"}}),
+                ("outside", {"id": evidence, "env": {"tmp": str(outside)}}),
+                ("the base", {"id": evidence, "env": {"tmp": str(self.base)}}),
+                ("climbing", {"id": evidence, "env": {"tmp": str(
+                    self.base / verify._slug(evidence) / "..")}}),
+                ("another id's", {"id": evidence, "env": {"tmp": str(
+                    self.base / "verification-other")}}),
+                ("no id", {"env": {"tmp": str(self.base / "x")}}),
+                ("a link out", {"id": "verification@link", "env": {
+                    "tmp": str(link)}})):
+            with self.subTest(record=label):
+                self.assertIsNone(verify._owned_tmp(record))
+        self.assertTrue((outside / "keep.txt").is_file())
+        self.assertTrue(self.base.is_dir())
+
+    def test_a_complete_record_removes_its_own_temp_and_nothing_else(self):
+        self.policy([self.check("unit")], gate=["unit"])
+        record = verify.request(check="unit", task=CARD, stage="in-progress",
+                                actor="you")
+        self.assertEqual(record["outcome"], "passed")
+        self.assertFalse(Path(record["env"]["tmp"]).exists(),
+                         "its own temp was removed")
+        self.assertTrue(self.base.is_dir(), "the base is kept")
+        self.assertTrue(self.wt.is_dir(), "the checkout is kept")
 
 
 # ── acceptance 4 ───────────────────────────────────────────────────────
@@ -619,7 +861,7 @@ class TheDeliveryAction(BatchCase):
     def test_a_batch_in_flight_shows_its_progress(self):
         self.policy([self.check("one", "hang"), self.check("two")],
                     gate=["one", "two"])
-        required.start(CARD, "review")
+        self.start("review")
         self.assertTrue(wait_for(lambda: any(
             r.get("outcome") == "running" for r in verify.RUNNING.values()), 20))
         self.fresh()
