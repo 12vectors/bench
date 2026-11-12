@@ -1095,6 +1095,13 @@ left to infer that something was removed. A *failed* run is the deliberate
 exception: its excerpt keeps the log's tail, because for a crash the end
 is the story.
 
+A report is the run's words, and the card's history is also where the
+board keeps records of its own — acceptance decisions, finding events,
+discussion entries, each a line starting `<!-- bench:`. So a report line
+shaped like one is quoted (`> `) on the way in, by the same helper, in
+the task file and the PR body alike: still there to read, never parsed
+as a decision a person made.
+
 ### A run that died
 
 An agent that exits non-zero is the one outcome a person must not miss, so
@@ -2400,6 +2407,68 @@ where the reviewer's own log shows GitHub refusing the attempt, that is
 recorded as a note on bench's verdict rather than as a verdict or a
 review state.
 
+**One review is counted, unless you ask for distinct ones.** The ordinary
+form is one word, and only that review is a requirement: a Bench
+`APPROVE` and a GitHub `APPROVED` on a `bench` rule are one requirement
+met, with the other shown as information — never two approval counters.
+Comments, Copilot, relevance checks and agent summaries are shown in the
+card's Reviews and counted nowhere. A project that wants an agent's
+review **and** an independent person's approval writes the advanced
+form, a list — `"review": ["bench", "separate-reviewer"]` — and every
+word in it is its own requirement row, met or unmet on its own record and
+explained on its own; a Bench verdict never stands in for the separate
+reviewer, and the same-account refusal above is never read as an
+approval. A list is a conjunction of genuinely distinct assurance, so a
+repeated word, `none` inside a list and `github` beside
+`separate-reviewer` (a separate reviewer's approval is a GitHub approval
+already) are refused where the document is read
+(`gate-review-duplicate`), as are an empty list and a non-word
+(`gate-invalid`). A scalar `review` reads exactly as it always did: its
+gate revision and every override's scope identity are unchanged byte for
+byte. Settings → Merge rules shows a list as *all of* its words and
+leaves it as written; the Advanced policy editor has a box per word,
+where one tick writes the ordinary word and two or more write the list.
+
+### Sign-off: a person's decision, only where a rule asks for one
+
+The PR review already judges the work against the card's acceptance
+criteria — each one, at the exact head it was pinned to, with what it
+could not judge listed (see "Pull requests"). That is a reviewer's
+assessment and records no acceptance. Where the decision has to be a
+person's — visual, business, regulated — a gate scope asks for it:
+
+```jsonc
+"gates": {"acceptance": {"checks": ["unit"], "review": "bench",
+                         "signoff": "criteria"}}
+```
+
+`signoff` is `"none"` (the default, and what every existing document
+means) or `"criteria"`; anything else is `gate-signoff-unknown`. With
+`criteria`, the gate has one more requirement row, `sign-off`, read from
+`acceptance` — the one authority for what a criterion's state is — every
+time the gate is evaluated, the reading immediately before the merge
+included:
+
+| reason | what it means | class |
+| --- | --- | --- |
+| `signoff-untracked` | the criteria (or some added since) have no ids, so no person can have accepted them — **Track acceptance** | needed |
+| `signoff-no-criteria` | the brief has no checklist to sign off | needed |
+| `signoff-pending` | not every tracked criterion is accepted; an agent's `reported` claim counts as nothing | needed |
+| `signoff-recheck` | an acceptance no longer stands: reworded, marked for recheck, or its evidence stopped reading passed | needed |
+| `signoff-other-head` | accepted against an earlier commit (or before there was one); a sign-off is about the commit that would merge | needed |
+| `signoff-needs-work` | a person recorded a criterion as not met | problem |
+| `signoff-accepted` | every tracked criterion accepted by a named person against this commit | met |
+
+The card reads `signoff-needed` with **Track acceptance** or **Confirm
+criteria**, which opens its Acceptance section and changes nothing; every
+decision there is the existing armed write. Turning sign-off on rewrites
+nothing — existing acceptance records and decisions are read as they
+are, no criterion is accepted by the setting, and nothing in bench writes
+`signoff` into a document. An override can proceed over it (`sign-off`
+is named in the record like any gate) and accepts nothing. Without
+`signoff`, nothing about acceptance is required and nothing on the board
+asks for it.
+
 ### An override is explicit, bound, and never a pass
 
 A gate can be proceeded over, and only through a path the policy turns on
@@ -2519,8 +2588,12 @@ nobody into a merge.
 - **one primary action**, with who holds it (`you`, `agent`, `board`),
   whether it is available and, if not, why; and every other legitimate
   action in `others`, never hidden. An action whose handler belongs to a
-  later card (sign-off) is always `enabled: false` with that reason —
-  never a button that does nothing. **Run required checks** is the
+  later card is always `enabled: false` with that reason — never a
+  button that does nothing. `signoff-needed` exists only where a merge
+  rule asks for sign-off; its action, **Track acceptance** or **Confirm
+  criteria**, opens the card's Acceptance section and changes nothing
+  itself (see "Sign-off: a person's decision, only where a rule asks for
+  one"). **Run required checks** is the
   primary action of `checks-needed`; where every needed check is one a
   person's work reading may not ask for, it arrives disabled with the
   configuration remedy, and while a batch is in flight it opens its
@@ -3771,6 +3844,16 @@ Review-stage cards with a PR carry two actions:
   GitHub accepted a formal review of it: the account that opened a pull
   request cannot approve it, and the comment that attempt falls back to
   is never read as an approval — see "Gates: nothing merges on a report".
+  This one review is the ordinary acceptance assessment: its contract
+  asks it to assess **each acceptance criterion** against that exact
+  head, from the diff, the code and substantive evidence together (a
+  file and line, a test it read, a result bench recorded at the head —
+  never a report's "tests pass"), and to list what it could not judge
+  and why, in an *Acceptance assessment* section of its report. That is
+  a reviewer's assessment, not a person's acceptance: the run is told to
+  record none, it gains no grant for it, and a sign-off where one is
+  required is still a person's (see "Sign-off: a person's decision, only
+  where a rule asks for one").
 - **⚑ copilot** — requests a GitHub Copilot review via the API. Works iff
   Copilot code review is enabled for the repo; the error is relayed to the
   toast if not. The card tracks the whole arc with a `⚑` chip: `⚑ ◌` asked,
@@ -4316,6 +4399,16 @@ record is stated in the Acceptance section, as a fact, rather than as a
 next step. Every control and every record below is still there and
 works exactly as described; a criterion a person recorded as needing
 work, and an open finding, are current problems and are on the face.
+
+Where a merge rule *does* configure one (`"signoff": "criteria"`, see
+"Sign-off: a person's decision, only where a rule asks for one"), the
+Acceptance section leads with **Sign-off required**, what it reads now
+and its remedy, and the gate holds the merge until every tracked
+criterion reads `accepted` against the commit that would merge. The
+records are the same records; only the rule reading them is new. A run's
+report can never add one: a report line shaped like a board record
+(`<!-- bench:…`) is quoted before the report reaches the card, so it is
+still there to read and is never parsed as a decision.
 
 ### Tracking is explicit, and viewing changes nothing
 
