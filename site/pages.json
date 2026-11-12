@@ -115,6 +115,17 @@
       "lede": "A plan says which checkout a run works in. This is the other half of the same decision: the named commands it may launch, the inputs pinned read-only for it, how strongly each of those actually holds, and the manifest that says what this particular run rode.",
       "source": "AGENTS.md",
       "from": "## Execution profiles and approved context",
+      "to": "## From evidence to merge: the whole journey"
+    },
+    {
+      "path": "/concepts/evidence-to-merge/",
+      "title": "From evidence to merge",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "Checks, review and merge requirements in plain words, the one recommended verification route, what each extra assurance buys, and the journey from a card's first commit to its merge, counted.",
+      "lede": "Before the reference pages: what a check, a review and a merge requirement each are, the single setup most projects need, why a pass is reused only when bench can prove it is the same check, and what one legacy record still costs.",
+      "source": "AGENTS.md",
+      "from": "## From evidence to merge: the whole journey",
       "to": "## Verification: bench runs the check"
     },
     {

@@ -7,6 +7,20 @@ document changed no configuration, evidence, gate, card, agent or SAFER
 file. Only this document and one fixture module that the suite does not
 collect (`tests/repro_94_evidence_to_merge.py`) were added.
 
+> **Implementation status (card 106).** This design has been implemented
+> by cards 95–105; the text below is kept as the design record and is
+> not updated. The repro module it names in §1.2 is retired: R1, R2 and
+> R5 are inverted regression tests (`tests/test_result_identity.py`,
+> `tests/test_evidence_to_merge.py`), R3 stays true as a negative
+> invariant (`tests/test_declared_equivalence.py`, `R3StaysTrue`), and R4
+> is inverted in `tests/test_delivery_journey.py`, which also maps every
+> E, B and F scenario below to the tests that exercise it. Two caveats
+> correct this text: "zero runs" in §12 holds for evidence recorded with
+> a result identity — a legacy pass of the SAFER36 shape needs one fresh
+> run — and the status-word count in §3.4 is not 22; the module's own
+> list (`delivery.WORDS`) is the count. The current user documentation is
+> "From evidence to merge: the whole journey" in `AGENTS.md`.
+
 The goal is that a person on the common path only has to answer three
 questions:
 

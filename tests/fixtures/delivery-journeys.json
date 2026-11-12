@@ -1,0 +1,93 @@
+{
+  "about": "Design #94 section 12's journeys as explicit rows. tests/test_delivery_journey.py computes decisions, required looks and check runs from these rows, holds them to `expected`, and requires AGENTS.md's journey table to state the computed numbers. A `k` count is the number of acceptance criteria, kept symbolic. `optional` rows are counted apart. Every decision kept `after` names the distinct assurance it buys.",
+  "journeys": {
+    "safer36": {
+      "label": {
+        "before": "SAFER36, before",
+        "after": "SAFER36, after (evidence with a result identity)"
+      },
+      "before": [
+        {"kind": "look", "what": "Read the face: a failed gate chip, a stale evidence chip, 0 of 5 passed (optional checks and history counted)"},
+        {"kind": "look", "what": "Open the merge-requirements dialog: its headline is a cancelled run at an older commit"},
+        {"kind": "look", "what": "Open the evidence sheet: find the stale / policy-changed pass at the same commit"},
+        {"kind": "look", "what": "Work out that the policy change was unrelated context for the next card"},
+        {"kind": "decision", "what": "Rerun the required check at the unchanged commit"},
+        {"kind": "run", "what": "The full suite runs again on the same source and program", "redundant": true},
+        {"kind": "decision", "count": "k", "what": "Accept each criterion with a note because the Overview asked (no gate enforced it)"},
+        {"kind": "decision", "what": "Drag to done"},
+        {"kind": "decision", "what": "Choose merge & clean up"}
+      ],
+      "after": [
+        {"kind": "look", "optional": true, "what": "Read the face: Ready to merge"},
+        {"kind": "decision", "what": "Merge & clean up", "assurance": "delivery: the person decides the work lands"},
+        {"kind": "decision", "what": "Confirm in the completion sheet", "assurance": "shows what will be pushed where before it happens"}
+      ]
+    },
+    "safer36-legacy": {
+      "label": {
+        "before": "SAFER36, before",
+        "after": "SAFER36, after (legacy evidence, no result identity)"
+      },
+      "before": [
+        {"kind": "look", "what": "Read the face: a failed gate chip, a stale evidence chip, 0 of 5 passed"},
+        {"kind": "look", "what": "Open the merge-requirements dialog: its headline is a cancelled run at an older commit"},
+        {"kind": "look", "what": "Open the evidence sheet: find the stale / policy-changed pass"},
+        {"kind": "look", "what": "Work out that the policy change was unrelated"},
+        {"kind": "decision", "what": "Rerun the required check"},
+        {"kind": "run", "what": "The full suite runs again", "redundant": true},
+        {"kind": "decision", "count": "k", "what": "Accept each criterion because the Overview asked"},
+        {"kind": "decision", "what": "Drag to done"},
+        {"kind": "decision", "what": "Choose merge & clean up"}
+      ],
+      "after": [
+        {"kind": "look", "optional": true, "what": "Read the face: Checks needed — the pass predates result identities, policy changed"},
+        {"kind": "decision", "what": "Run required checks", "assurance": "a legacy record cannot prove its result identity, so one fresh run binds it"},
+        {"kind": "run", "what": "One fresh run, which records a result identity; later asks at this commit reuse it"},
+        {"kind": "decision", "what": "Merge & clean up", "assurance": "delivery: the person decides the work lands"},
+        {"kind": "decision", "what": "Confirm in the completion sheet", "assurance": "shows what will be pushed where before it happens"}
+      ]
+    },
+    "ordinary": {
+      "label": {
+        "before": "Ordinary card, before (SAFER-like checks)",
+        "after": "Ordinary card, after (recommended setup)"
+      },
+      "before": [
+        {"kind": "decision", "what": "Drag to in-progress"},
+        {"kind": "decision", "what": "Start work"},
+        {"kind": "run", "what": "The work run asks for the required check after its last commit"},
+        {"kind": "decision", "optional": true, "what": "If the agent did not ask: open the evidence sheet and rerun the check"},
+        {"kind": "look", "what": "The card reaches review; read the gate chip"},
+        {"kind": "decision", "what": "Review PR"},
+        {"kind": "run", "what": "The review run asks for a differently named check in its review root", "redundant": true},
+        {"kind": "decision", "count": "k", "what": "Accept each criterion because the Overview asked"},
+        {"kind": "decision", "what": "Drag to done"},
+        {"kind": "decision", "what": "Choose merge & clean up"}
+      ],
+      "after": [
+        {"kind": "decision", "what": "Drag to in-progress", "assurance": "commitment to the work"},
+        {"kind": "decision", "what": "Start work", "assurance": "launch consent: it spends tokens"},
+        {"kind": "run", "what": "The work run asks for the required check after its last commit"},
+        {"kind": "decision", "optional": true, "what": "If the agent did not ask: Run required checks", "assurance": "the person authorises a run"},
+        {"kind": "decision", "what": "Review PR, offered as the primary action", "assurance": "independent review of the exact commit"},
+        {"kind": "run", "count": 0, "what": "The review asks for the same check at the same commit and is answered by the existing pass"},
+        {"kind": "decision", "what": "Merge & clean up", "assurance": "delivery"},
+        {"kind": "decision", "what": "Confirm", "assurance": "shows where it lands"}
+      ]
+    }
+  },
+  "expected": {
+    "safer36": {
+      "before": {"decisions": 3, "k": 1, "looks": 4, "runs": 1, "optionalDecisions": 0},
+      "after": {"decisions": 2, "k": 0, "looks": 0, "runs": 0, "optionalDecisions": 0}
+    },
+    "safer36-legacy": {
+      "before": {"decisions": 3, "k": 1, "looks": 4, "runs": 1, "optionalDecisions": 0},
+      "after": {"decisions": 3, "k": 0, "looks": 0, "runs": 1, "optionalDecisions": 0}
+    },
+    "ordinary": {
+      "before": {"decisions": 5, "k": 1, "looks": 1, "runs": 2, "optionalDecisions": 1},
+      "after": {"decisions": 5, "k": 0, "looks": 0, "runs": 1, "optionalDecisions": 1}
+    }
+  }
+}

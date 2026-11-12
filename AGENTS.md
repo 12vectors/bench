@@ -1550,6 +1550,239 @@ reason. Technical detail (identities, hashes, the settings precedence, the
 capability table) folds away rather than leading, and an approved
 document's contents are nowhere on the page.
 
+## From evidence to merge: the whole journey
+
+The next four sections — verification, gates, delivery status and
+acceptance — are reference. This one is the route through them, for a
+person who wants a card merged and asks only this: **what is happening,
+what do I do next, and what, if anything, prevents delivery?** The card's delivery status answers all three in one word, one
+sentence and one primary action (see "Delivery status: one answer per
+card"). Nothing below requires reading a policy hash, a root name, an
+evidence id or a gate scope.
+
+### Checks, review and merge requirements, in plain words
+
+- **A check** is a program your team provides — a test suite, a build —
+  that bench runs on request and records the result of, bound to the
+  exact commit it ran on. An agent saying "tests pass" is not a check
+  result; bench's own record is.
+- **A review** is a judgement of the change at that exact commit. By
+  default it is one review: **◔ review PR**, which assesses each
+  acceptance criterion and says what it could not judge. Copilot, comments
+  and agent summaries are shown and counted nowhere.
+- **Merge requirements** are what you decided must be true before a card
+  merges: which checks must have passed on the commit about to merge, and
+  which review. They are listed on the card as `m of n merge requirements
+  met for <commit>`, counting required obligations only — an optional
+  check never inflates the count and never blocks. Registering a check
+  does not make it required; requiring it is a separate decision.
+
+Three signals stay apart and never stand in for each other: **local
+verification** (bench ran the check and recorded it), **independent
+review** (a review of the exact commit — bench's agent, or a separate
+person on GitHub when you ask for that), and **CI** (your remote's own
+runs, shown as CI and never counted as a Bench check).
+
+### The recommended route: one required check, one review
+
+One canonical check, run on a fresh checkout of the exact commit, that
+the implementation run, the PR-fix run and the review run may all ask
+for — and one review:
+
+```jsonc
+{
+  "checks": [{"name": "unit", "run": "python3 -m unittest discover -s tests",
+              "root": "source", "prepare": ["deps"], "timeout": 900}],
+  "prepare": [{"name": "deps", "run": "python3 -m pip install -e .",
+               "network": true}],
+  "profiles": {"work": {"verify": ["unit"]}, "act-pr": {"verify": ["unit"]},
+               "review": {"verify": ["unit"]}},
+  "gates": {"acceptance": {"checks": ["unit"], "review": "bench"}}
+}
+```
+
+The implementation run asks for `unit` after its last commit; the
+review asks for the same check at the same commit and is handed the
+existing pass, so it runs once. `root: "source"` keeps ignored state
+(`node_modules`, caches) out of the result, which is what lets one pass
+be reused safely.
+
+Add anything further only for **distinct assurance**, and each addition
+says what it buys:
+
+| addition | what it buys | when |
+| --- | --- | --- |
+| a second required check, such as a browser suite | a different environment and coverage — never "the same check again" | the first check cannot see that class of failure |
+| `"review": ["bench", "separate-reviewer"]` | an independent person's approval as well as the agent's review | independence is the point (GitHub refuses approval from the account that opened the PR) |
+| `"signoff": "criteria"` | a named person accepts each criterion against the merging commit | visual, business or regulated decisions |
+| `"accepts": ["unit-review"]` on `unit` | a second name the project keeps for its own reasons, counted only when bench proves the definitions equal | an existing setup you do not want to rename |
+| `BOARD_VERIFY_ON_REVIEW=1` | the missing required checks are requested when you move a card into review | you would otherwise always click **Run required checks**. Off by default |
+
+### The journey, counted
+
+A **decision** is a click that commits you to something (an armed
+action is one decision), a **look** is opening something only to
+understand the state, and a **run** is a check execution. `k` is the
+number of acceptance criteria. The counts are computed from explicit
+journey rows (`tests/fixtures/delivery-journeys.json`), and a test holds
+this table to them.
+
+| Journey | Decisions | Required looks | Check runs |
+| --- | --- | --- | --- |
+| SAFER36, before | 3 + k | 4 | 1 |
+| SAFER36, after (evidence with a result identity) | 2 | 0 | 0 |
+| SAFER36, after (legacy evidence, no result identity) | 3 | 0 | 1 |
+| Ordinary card, before (SAFER-like checks) | 5 + k | 1 | 2 |
+| Ordinary card, after (recommended setup) | 5 | 0 | 1 |
+
+Every decision left is one a person should make: committing to the
+work, consenting to a launch that spends tokens, an independent review
+of the exact commit, and the merge with its confirmation. An optional
+**Run required checks** is added when the agent did not ask; with
+`signoff` configured the `k` criterion decisions come back, as the human
+assurance you chose.
+
+**"Zero redundant reruns" holds for evidence recorded with a result
+identity** — every record written since result identities exist. A pass
+recorded before them (the SAFER36 card's own evidence is one) cannot
+prove what it depended on, so an unrelated policy edit still reads
+`stale / policy-changed` on it, exactly as it did when it was written.
+It needs **one** fresh run. That run records an identity, and from then
+on unrelated edits leave it standing and later asks at that commit are
+answered by it. The legacy record is never rewritten or upgraded.
+
+### Which record decides, exactly
+
+The gate fixes the commit H it would merge first, and only then reads
+records. For a requirement on check C with coverage `want`, a record r
+is **relevant** when:
+
+```
+relevant(r) =
+      ( r.check == C
+        or ( r.check in C.accepts and equivalent(r, C) ) )
+  and overlaps(r.scope, want)
+  and r.source.commit == H          -- a request still preparing counts
+  and r.outcome != "denied"         -- a denial ran nothing
+```
+
+Relevant records are then partitioned. **Current**: it has a result
+identity and nothing in its definition (check, coverage, programs,
+preparation, inputs, environment, runner) has moved. **Outdated**: it
+has one and something moved. **Legacy**: it has none. Current and legacy
+records decide, newest first by request time, then end time, a non-pass
+winning a tie: a run in flight holds the requirement pending; a covering
+pass over a clean, bound source meets it; a failure, preparation failure
+or error is the problem; a cancellation or restart means it is needed
+again. Outdated records decide nothing; if nothing decides, the newest
+outdated record's own changed dimension is the reason. Records at other
+commits are history, counted and never the reason.
+
+**Legacy stale precedence.** A legacy pass is read with the rules it was
+written under, so after a policy edit it reads `stale /
+policy-changed` — and a stale pass is an *answer*: it is the reason, and
+no older pass at the same commit is resurrected past it. Every legacy
+record predates every current one, so one fresh run at H is newer than
+all of them and decides.
+
+### What bench binds, and what it does not
+
+- **Declared, bound:** the command and its arguments, the root class, the
+  time limit, preparation steps and their programs, the programs invoked
+  (and a script's interpreter, one level), declared `inputs` by content,
+  declared `env` values by keyed hash, the names of every variable passed,
+  and bench's own runner revision.
+- **Not bound:** libraries and modules the programs load, services they
+  call, files read by an undeclared path, ignored files in a `worktree`
+  root, and the values of undeclared variables. Declare `inputs` and
+  `env` for what matters, pin dependencies in tracked lockfiles, and
+  prefer a `source` root.
+- **The HMAC key.** Declared `env` values are bound by a key that exists
+  only on this machine (`state/verify/env.key`). Replacing or losing it
+  reads every such pass `env-changed` — fail closed — and costs one fresh
+  run of each. There is no rotation and none is needed.
+- **Exact-head revalidation.** On a gated board the gate is read again
+  immediately before every merge, the merge takes the commit the gate
+  read, and a merge on origin passes `--match-head-commit`. A push landing in between is a
+  refusal, not a stale merge. A ready status on the page is never the
+  merge's licence.
+- **Bounded diagnostics.** A run whose check failed gets the tail of the
+  check's output in the reply — scrubbed, at most 80 lines and 6 KiB,
+  its own card only, prefixed so no line reads as a board marker — and
+  never a log path to read.
+- **Interruption and recovery.** Holding a run cancels its checks;
+  stopping a batch cancels the one in flight; a restart closes a running
+  check as "no result — the board restarted". Each reads *needed*, never
+  failed, and **Run required checks** is the recovery. Nothing retries by
+  itself.
+- **Scheduling is off by default.** A merge rule requires checks; it
+  never schedules them. `BOARD_VERIFY_ON_REVIEW` is the one opt-in, read
+  at start-up, and asks only on a person's own move into review.
+
+### Migration choices, and what each costs
+
+Nothing migrates by itself: no policy is rewritten, no evidence
+upgraded, no gate enabled, disabled or relaxed. These are the operator's
+choices, each made deliberately:
+
+| choice | effect | cost |
+| --- | --- | --- |
+| do nothing | legacy passes keep their rules; new passes carry identities | at most one fresh run per legacy pass that an unrelated edit has staled |
+| move the required check's root from `worktree` to `source` | a fresh checkout of the exact commit, no ignored state, reusable passes | a definition change: its passes read `check-changed` once. Run both once on one commit and compare first |
+| remove a duplicate required check | fewer runs | compare real coverage first; or keep both names and declare `accepts`, which bench then proves |
+| stop configuring `github` review on a one-account project | removes a requirement that could never be met | none |
+
+To see what a change of resolver does to an existing board before
+adopting it, `python3 verify/gate-compare` copies what the gates read
+(`snapshot`), evaluates every card with two resolvers on private copies
+(`run --before-core <installed core>`), and explains each changed
+reading. A reading that became less restrictive must be one the design
+names — an unrelated policy change that is now provenance, an older
+commit's outcome that is now history, or an equivalence bench proved —
+or the comparison fails. It writes nothing it read from, asks GitHub
+nothing, and leaves out `.env`, secrets, logs and the HMAC key.
+
+### Every status word
+
+The words a card can wear, from `delivery.WORDS`, with the precedence
+row that produces each. The count is not written down anywhere: a test
+holds this table to the module's own list.
+
+| word | label | tone | row |
+| --- | --- | --- | --- |
+| `merging` | Merging | working | 1 |
+| `not-published` | Not published | alarm | 2 |
+| `run-failed` | Run failed | alarm | 3 |
+| `agent-working` | *name* is working | working | 4 |
+| `phase-running` | Phase running | working | 5 |
+| `not-started` | Not started | neutral | 6 |
+| `queued` | Queued | neutral | 6 |
+| `returned` | Returned — earlier work exists | neutral | 6 |
+| `ready-to-start` | Ready to start | neutral | 8 |
+| `in-progress` | In progress | neutral | 8 |
+| `waiting-for-phase` | Waiting for phase | neutral | 9 |
+| `merged-elsewhere` | Merged on GitHub | neutral | 17 (read before 10–16) |
+| `cannot-assess` | Can't assess | alarm | 6, 10 |
+| `rules-invalid` | Merge rules invalid | alarm | 11 |
+| `check-failed` | Check failed | alarm | 7, 12 |
+| `cannot-run-check` | Check could not run | alarm | 7, 12 |
+| `changes-requested` | Changes requested | alarm | 7, 12 |
+| `checks-running` | Checks running | working | 13 |
+| `checks-needed` | Checks needed | neutral | 14 |
+| `review-needed` | Review needed | neutral | 15 |
+| `signoff-needed` | Sign-off needed | neutral | 16 |
+| `ready-to-merge` | Ready to merge | calm | 18 |
+| `ready-overridden` | Ready — overridden | alarm | 18 |
+| `review` | Review | neutral | 19 |
+| `delivered` | Delivered | idle | 20 |
+
+`cancelled`, `stale` and `not-run` are reasons inside `checks-needed`,
+never statuses and never failures. Every row of the design's 32-fixture
+copy matrix (F1–F32), its backend scenarios (E1–E20) and its browser
+scenarios (B1–B5) maps to named regression tests in
+`tests/test_delivery_journey.py`, which fails if a scenario loses its
+test.
+
 ## Verification: bench runs the check
 
 ### Start here: you provide the checks; bench runs them

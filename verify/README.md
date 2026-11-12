@@ -385,6 +385,47 @@ not make available to the run that wrote these cases. It is **blocked**,
 not passing: no screenshot, no metric and no accessibility tree from it
 exists yet.
 
+## Comparing gate readings: `verify/gate-compare`
+
+Not a check — a read-only comparison, for the moment before a candidate
+resolver is promoted onto a board that already has cards and evidence
+(design #94 §15.2). Run it with `python3 verify/gate-compare`:
+
+```bash
+python3 verify/gate-compare snapshot --tool <install> --work <work root> \
+    --app <application> [--worktrees <dir>] --out <empty dir>
+python3 verify/gate-compare run --snapshot <dir> \
+    --before-core <install>/manager/core --out <report dir>
+```
+
+- `snapshot` only reads the live roots: `git clone` of the application
+  (every branch, no remote kept), the cards and reference documents, the
+  policy document, and the evidence, gate, review, plan and completion
+  records. It never copies `.env` (settings that shape a check — a
+  default time limit — are carried as values; roots, ports, remotes and
+  anything credential-shaped are not), preview secrets, any log, or the
+  HMAC key that binds declared environment values unless
+  `--include-env-key` is given. The worktrees evidence names are rebuilt
+  as worktrees of the copy with the live files laid over them.
+- `run` evaluates every card with the `--before-core` resolver and the
+  candidate (`--after-core`, this checkout's by default), each on its own
+  private copy, with GitHub unreachable and nothing to push to. The
+  snapshot is hashed before and after each read and must not move (exit
+  3 if it did). The environment *names* a check was given are part of its
+  result identity and are a fact about the operator's board process, so
+  the reader reproduces the names on the newest evidence record; values
+  of undeclared variables are not bound and are not reproduced.
+- The report (`report.json`, `report.md`) explains every changed reading.
+  A reading that became less restrictive must be one the design names —
+  E1 (an unrelated policy change is now provenance), E4 (an older
+  commit's outcome is now history) or E7 (an equivalence bench proved) —
+  or it is **unaccounted** and the program exits 1. Stricter readings are
+  reported, not refused.
+
+Its regression tests (`tests/test_gate_compare.py`) run on fixture boards
+only. A comparison over an operator's real inventory is a separate act by
+whoever holds that data; a fixture run says nothing about that board.
+
 ## Not covered here
 
 These checks do not cover live lifecycle behaviour (real agents, PRs,

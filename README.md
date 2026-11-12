@@ -13,6 +13,14 @@ run one at a time and merged back on green — ending in a single PR into
 themselves, every board pulls on a beat, and the person who claimed a
 card first keeps it.
 
+Nothing merges on an agent's word. Your team provides the checks; bench
+runs them against the exact commit, records the result, and each card
+says in one word what is happening, the one thing to do next, and which
+merge requirements are met — counting only what you made required. The
+usual setup is one required check and one review; anything more is a
+deliberate choice of distinct assurance ("From evidence to merge" in the
+docs).
+
 **Docs: [bench.12vectors.com](https://bench.12vectors.com)** — guides,
 concepts, and a settings reference, every page of it generated from this
 repository's own markdown, so what the docs say and what bench does
@@ -299,6 +307,14 @@ built by `./release.sh` from the manifest at
 `manager/core/release-manifest`: tag = `v<VERSION>`, one stable asset
 name (`bench.tar.gz`), contents at the tarball root — the two things the
 install one-liner above depends on.
+
+Bench's own checks live in `verify/` (see `verify/README.md`):
+`verify/backend` runs the whole suite and refuses a skip, `verify/docs`
+builds this site, and `verify/browser` drives the board in a sandboxed
+Chromium. `python3 verify/gate-compare` reads an existing board's gates
+with two resolvers — the installed one and a candidate — on private
+copies, and explains every reading that would change before you promote
+anything; it writes nothing it reads from.
 
 ## The three-layer law
 
