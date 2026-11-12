@@ -142,10 +142,9 @@ ROWS = (
     (20, "done", ("delivered",)),
 )
 
-# Words no row produces yet, and the card that brings them. Sign-off is
-# an opt-in gate field that does not exist until it is built (design §8.3).
-NOT_YET = {"signoff-needed": "the sign-off gate field (design #94 §8.3) "
-                             "is not implemented yet"}
+# Words no row produces yet, and the card that brings them. Empty since
+# card 103 built the opt-in sign-off gate field (design #94 §8.3).
+NOT_YET: dict[str, str] = {}
 
 # The actions a result may name. `handler` is the route that performs it
 # today; None means a later #94 card brings it, and the action is then
@@ -176,9 +175,9 @@ ACTIONS = {
     # completion sheet is merge & clean up's confirmation).
     "run-required-checks": {"handler": "/api/verify/required", "kind": "api",
                             "arm": False},
-    "confirm-criteria": {"handler": None, "kind": "view", "arm": False,
-                         "later": ("sign-off (design §8.3) is not "
-                                   "implemented yet")},
+    # Opens the card's Acceptance section, where Track acceptance and each
+    # criterion's decision already live: the action changes nothing itself.
+    "confirm-criteria": {"handler": None, "kind": "view", "arm": False},
     "read-failure": {"handler": None, "kind": "view", "arm": False},
     "evidence": {"handler": None, "kind": "view", "arm": False},
     "gates": {"handler": None, "kind": "view", "arm": False},
@@ -341,7 +340,11 @@ def _requirement(row: dict, at: str | None) -> dict:
     if row["kind"] == "review" and cls != "met":
         action_key = "review-pr" if row.get("policy") == "bench" \
             else "open-pr-url"
+    if row["kind"] == "signoff" and cls not in ("met", "cannot-assess"):
+        action_key = "confirm-criteria"
     name = row.get("name")
+    if row["kind"] == "signoff":
+        name = "Sign-off on acceptance criteria"
     if row["kind"] == "review":
         name = {"bench": "Review by Bench", "github": "GitHub approval",
                 "separate-reviewer": "Approval by a separate reviewer"}.get(
@@ -798,6 +801,20 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
                 action("open-pr-url", "Open the PR", url=pr_url),
                 [review_pr] if review_pr else [])
 
+    # 16. sign-off — only where a merge rule asks for one (design §8.3).
+    # Without `signoff` there is no such row, so nothing here asks anyone
+    # to confirm criteria as a matter of course.
+    signoff_rows = [r for r in requirements if r["kind"] == "signoff"
+                    and r["state"] not in ("met", "overridden")]
+    if signoff_rows:
+        row = signoff_rows[0]
+        label = ("Track acceptance" if row["reason"] == "signoff-untracked"
+                 else "Confirm criteria")
+        return ("signoff-needed",
+                f"Sign-off needed for {here}: {row['plain'][0].lower()}"
+                f"{row['plain'][1:]}.",
+                action("confirm-criteria", label), [])
+
     # 18. met or overridden
     if decision and decision.get("decision") in ("allowed", "overridden"):
         overridden = decision["decision"] == "overridden"
@@ -903,6 +920,9 @@ def _current_problem(requirements: list[dict], candidate: dict,
                       else "a GitHub review asks for changes")
     elif not reviewed and (verdict_now or {}).get("verdict") == "REQUEST CHANGES":
         review_bit = f"changes were requested by the Bench review of {here}"
+    elif any(r["kind"] == "signoff" and r["reason"] == "signoff-needs-work"
+             for r in requirements):
+        review_bit = "a person recorded an acceptance criterion as needing work"
     elif open_findings:
         review_bit = (f"{open_findings} review finding"
                       f"{'' if open_findings == 1 else 's'} "

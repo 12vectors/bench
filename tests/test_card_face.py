@@ -261,7 +261,10 @@ class OneStatusAcrossSurfaces(Source):
         # Run required checks (card 101) opens its own confirmation sheet
         self.assertIn("case 'run-required-checks':", run)
         self.assertIn("requiredSheet(task)", run)
-        self.assertNotIn("case 'confirm-criteria':", run)
+        # sign-off (card 103) opens the card's Acceptance section — a view
+        # that writes nothing; each decision there is its own armed write
+        self.assertIn("case 'confirm-criteria':", run)
+        self.assertIn("S.dtab[task.file] = 'acceptance'", run)
 
     def test_requirements_are_supporting_detail_with_history_apart(self):
         body = self.body("requirementsHtml")

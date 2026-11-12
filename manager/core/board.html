@@ -3756,6 +3756,15 @@ function deliveryRun(task, a) {
     // and holds the armed fire, as the completion sheet does for a merge
     case 'run-required-checks': return () => { requiredSheet(task); return true; };
     case 'evidence': return () => { verifySheet(task); return true; };
+    // a merge rule asks for sign-off: open the Acceptance section, where
+    // Track acceptance and each criterion's decision already live. Opening
+    // it changes nothing; every decision is still its own armed write
+    case 'confirm-criteria': return () => {
+      S.dtab[task.file] = 'acceptance';
+      closeSheet();
+      showDetail(task);
+      return true;
+    };
     case 'gates': return () => { gateSheet(task); return true; };
     case 'phases': return () => { setView('phases'); return true; };
     case 'settings-merge-rules': return () => {
@@ -9084,8 +9093,19 @@ function acceptanceHtml(t, acc) {
     `${c.legacyTick ? ' <span class="ameta">ticked by hand — a legacy claim, not an acceptance</span>' : ''}</li>`).join('');
   const trackBtn = (word) => `<div class="racts"><button class="dact" id="accTrack">` +
     `${actLabel(word, 'click again — adds ids to the brief', 'tracking…')}</button></div>`;
+  // Only where a merge rule asks for sign-off is it a requirement, and
+  // then it says so here in words, with what it reads now (design #94
+  // §8.3). Without one, nothing on this card asks anyone to confirm
+  // criteria, and the section does not pretend otherwise.
+  const so = acc.signoff || {};
+  const signoffLine = so.required
+    ? `<p class="dnote" id="accSignoff">` +
+      `<b>Sign-off required</b> by this board's ${esc(so.scope)} merge rule: ` +
+      `${esc(so.plain || so.why || '')}.` +
+      (so.state !== 'met' && so.remedy ? ` ${esc(so.remedy)}` : '') + `</p>`
+    : '';
   if (!acc.tracked) {
-    return `<h3>Acceptance results not recorded</h3>` +
+    return signoffLine + `<h3>Acceptance results not recorded</h3>` +
       (acc.untracked.length
         ? `<p class="dnote">Nothing on record says whether these criteria were met. The card's stage says nothing about it either, and nothing here is inferred from it.</p>` +
           `<ul class="chain" style="list-style:none">${legacy}</ul>` +
@@ -9096,13 +9116,14 @@ function acceptanceHtml(t, acc) {
   const breakdown = ['reported', 'pending', 'needs-work', 'recheck']
     .filter(k => counts[k]).map(k => `${counts[k]} ${esc(acc.states[k])}`).join(' · ');
   // Done is not acceptance — said here, as a fact about the records, and
-  // not as a step on the Overview: no merge rule on this board requires a
-  // sign-off, so nothing asked for one (design #94 §8.1)
+  // not as a step on the Overview. Whether a rule asked for a sign-off is
+  // the server's answer, never assumed (design #94 §8.1, §8.3)
   const unaccepted = t.stage === 'done' ? counts.total - counts.accepted : 0;
-  return `<p class="acount"><b>${counts.accepted} of ${counts.total}</b> criteria accepted` +
+  return signoffLine + `<p class="acount"><b>${counts.accepted} of ${counts.total}</b> criteria accepted` +
     `${breakdown ? ` · ${breakdown}` : ''}</p>` +
     (unaccepted ? `<p class="dnote">Delivered, and ${unaccepted} criteri${unaccepted === 1 ? 'on was' : 'a were'} ` +
-      `never accepted on record. Done is not acceptance; no merge rule here requires a sign-off.</p>` : '') +
+      `never accepted on record. Done is not acceptance` +
+      (so.required ? `.</p>` : `; no merge rule here requires a sign-off.</p>`) : '') +
     `<p class="dnote">Accepted means a named person confirmed it, or mapped one of bench's own current passing records to it. It is not a measure of how complete the work is, and an agent's report never ticks one.</p>` +
     acc.criteria.map(c => criterionHtml(t, c)).join('') +
     (acc.untracked.length ? `<h3>New criteria, not yet tracked</h3><ul class="chain">${legacy}</ul>` +

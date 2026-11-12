@@ -1395,6 +1395,26 @@ def _signoff_requirement(filename: str, policy: str, head: dict,
             "remedy": None}
 
 
+def signoff_reading(filename: str, stage: str) -> dict:
+    """Does a merge rule ask this card for a sign-off, and what does it
+    read now? For the card's Acceptance section, which says so as a fact —
+    and, where no rule asks, says that too, so "never accepted on record"
+    is never drawn as a step somebody skipped. A read: nothing written."""
+    path = config.TASKS / stage / filename
+    task = taskfiles.read_task(path, stage)
+    scope = scope_for(task)
+    entry = gate_policy()["scopes"].get(scope) or {}
+    policy = str(entry.get("signoff") or "none")
+    if policy == "none":
+        return {"required": False, "scope": scope, "policy": policy}
+    head = head_for(filename, scope)
+    row = _signoff_requirement(filename, policy, head, task)
+    return {"required": True, "scope": scope, "policy": policy,
+            "state": row["state"], "reason": row["reason"],
+            "plain": plain(row["reason"], head.get("commit")),
+            "why": row["why"], "remedy": row.get("remedy")}
+
+
 # What the review half is, and is not. Bench reads the review objects
 # GitHub returned to the last poll; GitHub's own branch protection —
 # required approvals, code owners, its dismissal settings — is a separate
