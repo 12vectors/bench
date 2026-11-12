@@ -68,6 +68,7 @@ import config
 import doctor
 import gates
 import profiles
+import required
 import sync
 import taskfiles
 import verify
@@ -484,6 +485,10 @@ CATALOGUE = (
      "the longest a preparation step may run"),
     ("BOARD_VERIFY_PARALLEL", "verification", "restart",
      "how many verifications bench runs at once"),
+    ("BOARD_VERIFY_ON_REVIEW", "verification", "restart",
+     "whether a card you move into Review asks for its missing required "
+     "checks by itself (off by default; Settings → Merge rules says what "
+     "it runs)"),
     ("BOARD_VERIFY_ENV_DENY", "verification", "fresh",
      "extra environment variable names a check never inherits"),
     ("BOARD_PR_POLL_INTERVAL", "installation", "restart",
@@ -1137,6 +1142,13 @@ def acceptance(doc: dict | None = None) -> dict:
             "guards is still a person's click or the phase runner's own "
             "beat."),
         "gh": {"available": gh, "repo": config.gh_repo()},
+        # BOARD_VERIFY_ON_REVIEW (task 105): what it runs, what it costs,
+        # how to turn it off, and where its value came from — the catalogue
+        # row, so provenance has one reader
+        "onReview": {**required.on_review_setting(public),
+                     "provenance": next(
+                         (row for row in catalog()
+                          if row["key"] == required.ON_REVIEW_KEY), None)},
     }
 
 

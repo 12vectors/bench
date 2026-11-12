@@ -1330,6 +1330,16 @@ PREPARE_TIMEOUT = float(setting("BOARD_VERIFY_PREPARE_TIMEOUT", "900"))
 # request over the cap waits its turn rather than being refused.
 VERIFY_PARALLEL = max(1, int(setting("BOARD_VERIFY_PARALLEL", "2")))
 
+# Opt-in: a card a person moves into review/ through this board asks for
+# its missing required checks, exactly as one **Run required checks**
+# click would (`required.on_review`). Off by default, and off means a
+# move into review requests nothing at all. Read once at start-up, like
+# its neighbours, so turning it on or off is an edit to
+# manager/local/.env and a restart — never something a page or a pull
+# changes under a running board. It grants nothing: the request rides a
+# person's work reading and the policy's own checks.
+VERIFY_ON_REVIEW = flag("BOARD_VERIFY_ON_REVIEW")
+
 # A cap on one verification's log, so a check that prints forever cannot
 # fill the disk. The evidence names the cap when it bites.
 VERIFY_LOG_CAP = int(setting("BOARD_VERIFY_LOG_CAP", str(4 * 1024 * 1024)))
