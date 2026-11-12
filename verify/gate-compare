@@ -1,0 +1,710 @@
+#!/usr/bin/env python3
+"""Compare two gate resolvers over one copied board, read-only.
+
+    verify/gate-compare snapshot --tool T --work W --app A --out SNAP
+    verify/gate-compare read     --snapshot SNAP --core CORE --out FILE
+    verify/gate-compare compare  --before FILE --after FILE [--out REPORT]
+    verify/gate-compare run      --snapshot SNAP --before-core CORE
+                                 [--after-core CORE] --out DIR
+
+Design #94 §15.2 asks for "a dry comparison on the operator's own board,
+read-only, listing every card whose gate reading would change", with
+every change explained. This is that contract, as a program:
+
+- **snapshot** copies what a gate reads — the task cards, the reference
+  documents, the policy document, the evidence, gate, review, plan and
+  completion records, and the application's branches — into a new
+  directory. It only *reads* the live roots: `git clone` from the
+  application, plain file copies from the rest. It leaves out what a gate
+  does not read and nobody should copy: `.env`, preview secrets, check
+  logs, agent logs, session timelines, and the HMAC key that binds
+  declared environment values (`--include-env-key` opts in; without it a
+  check that declares `env` reads `env-changed` under both resolvers,
+  which the report says). Card worktrees named by evidence are rebuilt as
+  worktrees of the copied repository, with the live worktree's files laid
+  over them, so a `worktree` check's source identity reads as it does
+  live.
+- **read** evaluates every card on the copy with one resolver — a
+  `manager/core` directory, for example the operator's installed one
+  (before) or this checkout's (after). The resolver and the snapshot are
+  both copied into a temporary directory first, so neither the snapshot
+  nor the core is written; GitHub is never asked (`BOARD_GH_BIN` is
+  `false`), the copied repository has no remote, and the snapshot's
+  digest is compared before and after and must not move.
+- **compare** lines the two readings up card by card and explains every
+  changed reading. A reading that became *less* restrictive must be one
+  of the relaxations the design names (§6.2, §4.1, §5): an unrelated
+  policy change that is now provenance (E1), an older commit's outcome
+  that is now history (E4), or an equivalence the operator declared and
+  bench proved (E7). Anything else is an **unaccounted relaxation**, and
+  the comparison exits 1.
+- **run** is the three in order, writing `before.json`, `after.json` and
+  `report.json` / `report.md` into `--out`.
+
+Exit 0: every change accounted for. 1: an unaccounted relaxation. 2: it
+could not be judged (a bad argument, a resolver that would not load, a
+snapshot that does not validate). 3: the snapshot changed while it was
+read — which this program never does, so it means something else did.
+
+It changes no live task, policy, evidence record, agent, permission or
+runtime, and it does not promote the resolver it reads with: nothing it
+runs is the operator's board.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+
+V = 1
+HERE = Path(__file__).resolve().parent
+CANDIDATE_CORE = HERE.parent / "manager" / "core"
+
+# What a gate reads under the tool's local state, and nothing else.
+STATE_DIRS = ("evidence", "gates", "reviews", "plans", "completions")
+# Never copied: secrets, machine credentials and logs.
+NEVER = {".env", "preview.secrets", "env.key"}
+WORK_DIRS = ("tasks", "reference", "plans", "setup")
+# Settings are carried from the operator's `.env` because some of them
+# are part of what a check *is* (its default time limit is in its result
+# identity). Roots, ports, remotes and binaries are this machine's and are
+# replaced; anything credential-shaped is never copied at all.
+SETTINGS_REPLACED = {"BOARD_APP_ROOT", "BOARD_WORK_ROOT", "BOARD_WORKTREES",
+                     "BOARD_AGENT_PROFILES", "BOARD_PORT", "BOARD_GH_BIN",
+                     "BOARD_GIT_REMOTE", "BOARD_STATE_GIT_REMOTE", "BOARD_SYNC",
+                     "BOARD_COMMIT_MOVES", "BOARD_CLAUDE_BIN", "BOARD_OPENCODE_BIN"}
+SECRET_SHAPED = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "KEY",
+                 "AUTH", "COOKIE", "SESSION")
+
+
+def carried(settings: dict[str, str]) -> dict[str, str]:
+    return {k: v for k, v in settings.items()
+            if k.startswith("BOARD_") and k not in SETTINGS_REPLACED
+            and not any(word in k.upper() for word in SECRET_SHAPED)}
+
+DECISION_RANK = {"allowed": 0, "ungated": 0, "overridden": 1, "pending": 2,
+                 "blocked": 3}
+
+
+class Refused(Exception):
+    pass
+
+
+# ── small helpers ──────────────────────────────────────────────────────
+
+
+def git(cwd: Path | str, *args: str, check: bool = True) -> str:
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0")
+    found = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True,
+                           text=True, env=env, timeout=300)
+    if check and found.returncode != 0:
+        raise Refused(f"git {' '.join(args)} in {cwd}: {found.stderr.strip()}")
+    return found.stdout
+
+
+def digest_tree(root: Path) -> str:
+    """Every path, link and byte under root, so a reader that wrote
+    anything — an index refresh included — is caught."""
+    h = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            h.update(f"L {rel} {os.readlink(path)}\n".encode())
+        elif path.is_file():
+            h.update(f"F {rel} ".encode())
+            h.update(hashlib.sha256(path.read_bytes()).digest())
+        elif path.is_dir():
+            h.update(f"D {rel}\n".encode())
+    return h.hexdigest()
+
+
+def copy_files(src: Path, dst: Path, *, skip_logs: bool = False) -> None:
+    if not src.is_dir():
+        return
+
+    def ignore(directory, names):
+        out = {n for n in names if n in NEVER or n == "__pycache__"}
+        if skip_logs:
+            out |= {n for n in names if n.endswith(".log")}
+        return out
+
+    shutil.copytree(src, dst, symlinks=True, ignore=ignore, dirs_exist_ok=True)
+
+
+def read_env_file(path: Path) -> dict[str, str]:
+    found: dict[str, str] = {}
+    if not path.is_file():
+        return found
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        found[key.strip()] = value.strip().strip("'\"")
+    return found
+
+
+# ── snapshot ───────────────────────────────────────────────────────────
+
+
+def snapshot(tool: Path, work: Path, app: Path, out: Path, *,
+             worktrees: Path | None, profiles: Path | None,
+             include_env_key: bool) -> dict:
+    for name, root in (("--tool", tool), ("--work", work), ("--app", app)):
+        if not root.is_dir():
+            raise Refused(f"{name} {root} is not a directory")
+    if out.exists() and any(out.iterdir()):
+        raise Refused(f"--out {out} exists and is not empty")
+    for live in (tool, work, app):
+        if out.resolve() == live.resolve() or live.resolve() in out.resolve().parents:
+            raise Refused(f"--out {out} is inside a live root ({live})")
+    out.mkdir(parents=True, exist_ok=True)
+    local = tool / "manager" / "local"
+    settings_file = read_env_file(local / ".env")
+    worktrees = worktrees or Path(settings_file.get("BOARD_WORKTREES", "")
+                                  or (app.parent / "worktrees"))
+    profiles = profiles or Path(settings_file.get("BOARD_AGENT_PROFILES", "")
+                                or (local / "profiles.json"))
+
+    # the tool's local half, without its state, secrets or logs
+    snap_local = out / "tool" / "manager" / "local"
+    snap_local.mkdir(parents=True)
+    for entry in local.iterdir() if local.is_dir() else ():
+        if entry.name in NEVER or entry.name == "state":
+            continue
+        if entry.is_dir():
+            copy_files(entry, snap_local / entry.name)
+        else:
+            shutil.copy2(entry, snap_local / entry.name)
+    if profiles.is_file():
+        shutil.copy2(profiles, snap_local / "profiles.json")
+    for name in STATE_DIRS:
+        copy_files(local / "state" / name, snap_local / "state" / name,
+                   skip_logs=True)
+    key = local / "state" / "verify" / "env.key"
+    if include_env_key and key.is_file():
+        (snap_local / "state" / "verify").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(key, snap_local / "state" / "verify" / "env.key")
+
+    for name in WORK_DIRS:
+        copy_files(work / name, out / "work" / name)
+
+    # the application: every local branch, as local branches, and no remote
+    git(out, "clone", "-q", "--no-hardlinks", str(app), "app")
+    git(out / "app", "fetch", "-q", "--update-head-ok", "origin",
+        "+refs/heads/*:refs/heads/*")
+    git(out / "app", "remote", "remove", "origin")
+    git(out / "app", "config", "user.name", "gate-compare")
+    git(out / "app", "config", "user.email", "gate-compare@invalid")
+
+    rebuilt = rebuild_worktrees(out, worktrees)
+    manifest = {
+        "kind": "bench-gate-snapshot", "v": V,
+        "live": {"tool": str(tool), "work": str(work), "app": str(app),
+                 "worktrees": str(worktrees)},
+        "settings": carried(settings_file),
+        "worktrees": rebuilt,
+        "envKey": bool(include_env_key and key.is_file()),
+        "omitted": sorted(NEVER) + ["check and agent logs",
+                                    "sessions, manifests, agent state"],
+    }
+    (out / "snapshot.json").write_text(json.dumps(manifest, indent=2, sort_keys=True),
+                                       encoding="utf-8")
+    manifest["digest"] = digest_tree(out)
+    return manifest
+
+
+def rebuild_worktrees(out: Path, live_root: Path) -> list[str]:
+    """Each worktree a `worktree`-rooted record ran in, as a worktree of
+    the copied repository with the live files laid over it, so its
+    source identity (commit, tracked diff, untracked files) reads the
+    same. Live worktrees are only read."""
+    names: set[str] = set()
+    for record in (out / "tool/manager/local/state/evidence").glob("*.json"):
+        try:
+            data = json.loads(record.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        root = (data.get("root") or {}).get("path") or ""
+        if root and Path(root).parent == live_root:
+            names.add(Path(root).name)
+    rebuilt = []
+    for name in sorted(names):
+        live = live_root / name
+        if not live.is_dir():
+            continue
+        head = git(live, "rev-parse", "HEAD").strip()
+        branch = git(live, "symbolic-ref", "-q", "--short", "HEAD", check=False).strip()
+        target = out / "worktrees" / name
+        if branch:
+            git(out / "app", "worktree", "add", "-q", str(target), branch)
+        else:
+            git(out / "app", "worktree", "add", "-q", "--detach", str(target), head)
+        tracked = set(git(target, "ls-files", "-z").split("\0")) - {""}
+        for rel in tracked:
+            if not (live / rel).exists():
+                (target / rel).unlink(missing_ok=True)
+        copy_files_excluding_git(live, target)
+        rebuilt.append(name)
+    return rebuilt
+
+
+def copy_files_excluding_git(src: Path, dst: Path) -> None:
+    shutil.copytree(src, dst, symlinks=True, dirs_exist_ok=True,
+                    ignore=lambda d, names: {".git"} & set(names))
+
+
+# ── read ───────────────────────────────────────────────────────────────
+
+
+def read(snap: Path, core: Path) -> dict:
+    manifest = snap / "snapshot.json"
+    if not manifest.is_file():
+        raise Refused(f"{snap} has no snapshot.json — make one with `snapshot`")
+    if not (core / "gates.py").is_file() or not (core / "config.py").is_file():
+        raise Refused(f"{core} is not a manager/core directory")
+    meta = json.loads(manifest.read_text(encoding="utf-8"))
+    before = digest_tree(snap)
+    with tempfile.TemporaryDirectory(prefix="gate-compare-") as tmp:
+        tmp = Path(tmp)
+        # a private copy of everything, so neither resolver touches the
+        # snapshot or the other's view of it
+        shutil.copytree(snap, tmp / "snap", symlinks=True)
+        tool = tmp / "snap" / "tool"
+        shutil.copytree(core, tool / "manager" / "core", symlinks=True,
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        wts = tmp / "snap" / "worktrees"
+        for name in meta.get("worktrees", []):
+            git(tmp / "snap" / "app", "worktree", "repair", str(wts / name))
+        retarget(tool / "manager" / "local" / "state",
+                 meta["live"]["worktrees"], str(wts))
+        home = tmp / "home"
+        home.mkdir()
+        (home / ".gitconfig").write_text("", encoding="utf-8")
+        env = reader_env(meta, tool / "manager" / "local" / "state" / "evidence",
+                         home, tmp / "snap")
+        found = subprocess.run(
+            [sys.executable, "-I", "-B", str(Path(__file__).resolve()), "_reader",
+             str(tool / "manager" / "core")],
+            capture_output=True, text=True, env=env, cwd=str(tmp), timeout=900)
+    after = digest_tree(snap)
+    if after != before:
+        raise SnapshotMoved(f"the snapshot changed while it was read "
+                            f"({before[:12]} → {after[:12]})")
+    if found.returncode != 0:
+        raise Refused(f"the resolver at {core} could not read the snapshot:\n"
+                      f"{found.stderr.strip()[-4000:]}")
+    reading = json.loads(found.stdout)
+    reading["core"] = str(core)
+    reading["coreRevision"] = core_revision(core)
+    reading["snapshot"] = {"path": str(snap), "digest": before,
+                           "envKey": meta.get("envKey", False),
+                           "worktrees": meta.get("worktrees", [])}
+    return reading
+
+
+class SnapshotMoved(Exception):
+    pass
+
+
+# Names bench sets for a check itself, whatever the board's environment.
+CHECK_SET = {"HOME", "TMPDIR", "TEMP", "TMP", "XDG_CACHE_HOME", "XDG_CONFIG_HOME",
+             "XDG_DATA_HOME", "XDG_STATE_HOME", "PIP_CACHE_DIR", "NPM_CONFIG_CACHE",
+             "YARN_CACHE_FOLDER", "CARGO_HOME", "GOCACHE", "GOMODCACHE",
+             "BENCH_VERIFY", "BENCH_VERIFY_CHECK", "BENCH_VERIFY_ROOT",
+             "BENCH_VERIFY_INPUTS", "PWD"}
+
+
+def recorded_env_names(evidence: Path) -> list[str] | None:
+    """The environment *names* the operator's board gave its newest
+    check. They are part of a result identity, and they are a fact about
+    the board's process that no file holds, so the reader takes them from
+    the record. Values of undeclared variables are not bound by bench and
+    are not reproduced."""
+    newest, names = "", None
+    for path in evidence.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        passed = (data.get("env") or {}).get("passed")
+        when = str(data.get("requested") or data.get("started") or "")
+        if isinstance(passed, list) and when >= newest:
+            newest, names = when, passed
+    return names
+
+
+def reader_env(meta: dict, evidence: Path, home: Path, snap: Path) -> dict:
+    """The resolver's process environment: the copy's roots (names a check
+    never receives), the carried settings, and — where a record says what
+    the board's checks were given — exactly those names, so an unchanged
+    environment reads unchanged. Everything this machine must not do (ask
+    GitHub, push, sync) is switched off after import instead, where it
+    adds no name."""
+    names = recorded_env_names(evidence)
+    carried_settings = meta.get("settings") or {}
+    if names is None:
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("BOARD_", "AGENT_"))}
+        env.update(carried_settings)
+    else:
+        env = {}
+        for name in names:
+            if name in CHECK_SET:
+                continue
+            if name in SAFE:
+                env[name] = SAFE[name]
+            elif name.startswith("BOARD_"):
+                # a setting the snapshot did not carry (it was in the
+                # board's process environment, not its .env): this
+                # machine's value if it has one, else the name is left
+                # out and a check bound to it reads `env-changed` under
+                # both resolvers alike
+                if name in os.environ:
+                    env[name] = os.environ[name]
+            else:
+                env[name] = os.environ.get(name, "")
+        env.setdefault("PATH", os.environ.get("PATH", "/usr/bin:/bin"))
+        # the operator's .env always applies: some of it (a default time
+        # limit) is part of what a check is. Its names were the board's
+        # too, so they are normally among the recorded ones already.
+        env.update(carried_settings)
+    env.update({"HOME": str(home),
+                "BOARD_APP_ROOT": str(snap / "app"),
+                "BOARD_WORK_ROOT": str(snap / "work")})
+    for name, value in SAFE.items():
+        if name in env:
+            env[name] = value
+    return env
+
+
+# What a name the board's checks were given is set to here, when the
+# operator's value must not be used on this machine.
+SAFE = {"BOARD_GH_BIN": "false", "BOARD_GIT_REMOTE": "", "BOARD_STATE_GIT_REMOTE": "",
+        "BOARD_SYNC": "0", "BOARD_COMMIT_MOVES": "0", "BOARD_WORKTREES": "",
+        "BOARD_AGENT_PROFILES": ""}
+
+
+def retarget(state: Path, live: str, here: str) -> None:
+    """Point every record that names a live worktree at its rebuilt copy
+    — in the private copy only."""
+    if not live or not state.is_dir():
+        return
+    for path in state.rglob("*.json"):
+        text = path.read_text(encoding="utf-8")
+        if live in text:
+            path.write_text(text.replace(json.dumps(live)[1:-1],
+                                         json.dumps(here)[1:-1]),
+                            encoding="utf-8")
+
+
+def core_revision(core: Path) -> str | None:
+    found = subprocess.run(["git", "-C", str(core), "rev-parse", "HEAD"],
+                           capture_output=True, text=True)
+    if found.returncode == 0:
+        dirty = subprocess.run(["git", "-C", str(core), "status", "--porcelain", "--", "."],
+                               capture_output=True, text=True).stdout.strip()
+        return found.stdout.strip() + ("+dirty" if dirty else "")
+    h = hashlib.sha256()
+    for path in sorted(core.rglob("*.py")):
+        h.update(path.read_bytes())
+    return "files:" + h.hexdigest()[:16]
+
+
+def _reader(core: str) -> None:
+    """Runs in a fresh interpreter, inside the private copy."""
+    sys.path.insert(0, core)
+    import config
+    # nothing here may reach GitHub, a remote or the work state's history
+    for attr, value in (("GH_BIN", "false"), ("GIT_REMOTE", ""),
+                        ("STATE_GIT_REMOTE", ""), ("SYNC", False),
+                        ("COMMIT_MOVES", False)):
+        if hasattr(config, attr):
+            setattr(config, attr, value)
+    problems = config.problems() if hasattr(config, "problems") else []
+    if problems:
+        raise SystemExit("the copied layout does not validate: " + "; ".join(
+            str(p) for p in problems))
+    import gates
+    import taskfiles
+    import verify
+    try:
+        import delivery
+    except ImportError:
+        delivery = None
+    collected = taskfiles.collect()
+    policy = gates.gate_policy()
+    cards = {}
+    for stage in collected.get("stages", []):
+        for task in stage["tasks"]:
+            scope = gates.scope_for(task)
+            if task.get("phase") and not task.get("isPhase"):
+                scope = "member"
+            try:
+                found = gates.evaluate(task["file"], scope, task=task)
+            except Exception as exc:  # one card must not end the reading
+                cards[task["file"]] = {"stage": stage.get("slug") or stage.get("name"),
+                                       "scope": scope, "error": str(exc)}
+                continue
+            rows = []
+            for r in found.get("requirements", []):
+                row = {k: r.get(k) for k in ("name", "kind", "state", "reason",
+                                             "staleReason", "commit", "evidence",
+                                             "scope", "why")}
+                # the requirement's identity: older resolvers label a
+                # scoped check differently, so key on the check itself
+                row["key"] = r.get("check") or r.get("name")
+                cited = r.get("evidence")
+                cited_id = cited.get("id") if isinstance(cited, dict) else cited
+                if r.get("acceptedFrom"):
+                    row["acceptedFrom"] = (r["acceptedFrom"] or {}).get("evidence")
+                if cited_id and r.get("state") == "met":
+                    record = verify.read(cited_id) if hasattr(verify, "read") else None
+                    if record:
+                        now = verify.outcome_now(record)
+                        prov = ((now.get("freshness") or {}).get("provenance") or {})
+                        row["identity"] = bool(record.get("resultId"))
+                        row["policyChanged"] = bool(prov.get("policyChanged"))
+                        row["recordCommit"] = (record.get("source") or {}).get("commit")
+                rows.append(row)
+            entry = {
+                "stage": stage.get("slug") or stage.get("name"),
+                "scope": scope, "decision": found.get("decision"),
+                "head": (found.get("head") or {}).get("commit"),
+                "requirements": rows,
+            }
+            if delivery is not None:
+                try:
+                    entry["delivery"] = delivery.compute(task)["status"]["word"]
+                except Exception as exc:
+                    entry["delivery"] = f"unreadable: {type(exc).__name__}"
+            cards[task["file"]] = entry
+    json.dump({"kind": "bench-gate-reading", "v": V,
+               "policyRevision": policy.get("revision"),
+               "policyBlockers": policy.get("blockers") or [],
+               "cards": cards}, sys.stdout, indent=2, sort_keys=True)
+
+
+# ── compare ────────────────────────────────────────────────────────────
+
+
+def _rows(entry: dict) -> dict[tuple, dict]:
+    return {(r.get("kind"), r.get("key") or r.get("name"), r.get("scope")): r
+            for r in entry.get("requirements") or []}
+
+
+def explain_relaxation(before: dict | None, after: dict, head: str | None) -> str | None:
+    """Why a requirement unmet before is met now — one of the design's
+    named relaxations, or None."""
+    if after.get("kind") != "check" or after.get("state") != "met":
+        return None
+    if after.get("recordCommit") and head and after["recordCommit"] != head:
+        return None
+    reason = (before or {}).get("reason")
+    if after.get("acceptedFrom"):
+        return ("E7 — a run of a check this one declares in `accepts`, proven "
+                "the same definition by bench at this commit")
+    if reason == "stale" and after.get("identity") and after.get("policyChanged"):
+        return ("E1 — the pass carries a result identity and nothing it "
+                "depends on moved; the policy change since it ran is "
+                "provenance, not an invalidator")
+    if reason in ("cancelled", "failed", "error", "prepare-failed") and \
+            (before or {}).get("commit") not in (None, head):
+        return ("E4 — the outcome cited before was at another commit; it is "
+                "history, and the newest relevant record at this commit passed")
+    return None
+
+
+def compare(before: dict, after: dict) -> dict:
+    changes, unaccounted = [], 0
+    files = sorted(set(before["cards"]) | set(after["cards"]))
+    for name in files:
+        b, a = before["cards"].get(name), after["cards"].get(name)
+        if b == a:
+            continue
+        item = {"card": name, "before": summarise(b), "after": summarise(a),
+                "explanations": [], "accounted": True}
+        if b is None or a is None or "error" in (b or {}) or "error" in (a or {}):
+            item["accounted"] = DECISION_RANK.get((a or {}).get("decision"), 3) >= \
+                DECISION_RANK.get((b or {}).get("decision"), 3) and "error" not in (a or {})
+            item["explanations"].append(
+                "the card is read by only one resolver, or could not be read"
+                + ("" if item["accounted"] else " — treated as unaccounted"))
+        else:
+            head = a.get("head")
+            brows, arows = _rows(b), _rows(a)
+            for key in sorted(set(brows) | set(arows), key=str):
+                br, ar = brows.get(key), arows.get(key)
+                label = f"{key[1]} ({key[0]}{', ' + key[2] if key[2] else ''})"
+                if ar is None:
+                    if br and br.get("state") != "met":
+                        item["accounted"] = False
+                        item["explanations"].append(
+                            f"{label}: required before and not any more — unaccounted")
+                    continue
+                if br is None:
+                    item["explanations"].append(
+                        f"{label}: a requirement only the after reading has "
+                        f"({ar.get('state')}) — stricter, not a relaxation")
+                    continue
+                if br.get("state") == ar.get("state") and br.get("reason") == ar.get("reason"):
+                    continue
+                if br.get("state") != "met" and ar.get("state") == "met":
+                    why = explain_relaxation(br, ar, head)
+                    if why:
+                        item["explanations"].append(f"{label}: {why}")
+                    else:
+                        item["accounted"] = False
+                        item["explanations"].append(
+                            f"{label}: {br.get('reason') or br.get('state')} → met, "
+                            f"which no rule in the design explains — unaccounted")
+                elif br.get("state") == "met":
+                    item["explanations"].append(
+                        f"{label}: met → {ar.get('reason') or ar.get('state')} — stricter")
+                else:
+                    item["explanations"].append(
+                        f"{label}: still unmet; the reason moved from "
+                        f"{br.get('reason')} to {ar.get('reason')}"
+                        + (" — the reading now names the current commit"
+                           if ar.get("reason") in ("other-commit", "not-run",
+                                                   "stale", "cancelled") else ""))
+            if DECISION_RANK.get(a.get("decision"), 3) < DECISION_RANK.get(b.get("decision"), 3) \
+                    and not any("E1" in e or "E4" in e or "E7" in e
+                                for e in item["explanations"]):
+                item["accounted"] = False
+                item["explanations"].append(
+                    f"decision {b.get('decision')} → {a.get('decision')} with no "
+                    f"requirement-level explanation — unaccounted")
+            if not item["explanations"]:
+                item["explanations"].append("only presentation fields differ")
+        unaccounted += 0 if item["accounted"] else 1
+        changes.append(item)
+    return {"kind": "bench-gate-comparison", "v": V,
+            "before": {"core": before.get("core"), "revision": before.get("coreRevision"),
+                       "policyRevision": before.get("policyRevision")},
+            "after": {"core": after.get("core"), "revision": after.get("coreRevision"),
+                      "policyRevision": after.get("policyRevision")},
+            "snapshot": after.get("snapshot"),
+            "cards": len(set(before["cards"]) | set(after["cards"])),
+            "changed": len(changes), "unaccounted": unaccounted,
+            "changes": changes}
+
+
+def summarise(entry: dict | None) -> dict | None:
+    if entry is None:
+        return None
+    if "error" in entry:
+        return {"error": entry["error"]}
+    return {"decision": entry.get("decision"), "head": entry.get("head"),
+            "delivery": entry.get("delivery"),
+            "unmet": [f"{r.get('name')}: {r.get('reason') or r.get('state')}"
+                      for r in entry.get("requirements") or [] if r.get("state") != "met"]}
+
+
+def markdown(report: dict) -> str:
+    out = ["# Gate comparison (read-only)", "",
+           f"- before: `{report['before']['core']}` at `{report['before']['revision']}`",
+           f"- after: `{report['after']['core']}` at `{report['after']['revision']}`",
+           f"- snapshot digest: `{(report.get('snapshot') or {}).get('digest')}`",
+           f"- cards read: {report['cards']}; changed readings: {report['changed']}; "
+           f"unaccounted relaxations: {report['unaccounted']}", ""]
+    if (report.get("snapshot") or {}).get("envKey") is False:
+        out += ["The HMAC key was not copied, so a check that declares `env` reads "
+                "`env-changed` under both resolvers.", ""]
+    for c in report["changes"]:
+        b, a = c["before"] or {}, c["after"] or {}
+        out.append(f"## {c['card']} — {b.get('decision')} → {a.get('decision')}"
+                   f"{'' if c['accounted'] else ' (UNACCOUNTED)'}")
+        out += [f"- {e}" for e in c["explanations"]]
+        out.append("")
+    if not report["changes"]:
+        out.append("No card's gate reading changed.")
+    return "\n".join(out) + "\n"
+
+
+# ── the command line ───────────────────────────────────────────────────
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] == ["_reader"]:
+        _reader(argv[1])
+        return 0
+    p = argparse.ArgumentParser(prog="gate-compare",
+                                description=__doc__.split("\n\n")[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("snapshot", help="copy what a gate reads, read-only on the sources")
+    s.add_argument("--tool", type=Path, required=True)
+    s.add_argument("--work", type=Path, required=True)
+    s.add_argument("--app", type=Path, required=True)
+    s.add_argument("--worktrees", type=Path)
+    s.add_argument("--profiles", type=Path)
+    s.add_argument("--include-env-key", action="store_true")
+    s.add_argument("--out", type=Path, required=True)
+    r = sub.add_parser("read", help="one resolver's readings of a snapshot")
+    r.add_argument("--snapshot", type=Path, required=True)
+    r.add_argument("--core", type=Path, default=CANDIDATE_CORE)
+    r.add_argument("--out", type=Path, required=True)
+    c = sub.add_parser("compare", help="explain every changed reading")
+    c.add_argument("--before", type=Path, required=True)
+    c.add_argument("--after", type=Path, required=True)
+    c.add_argument("--out", type=Path)
+    a = sub.add_parser("run", help="read with both resolvers and compare")
+    a.add_argument("--snapshot", type=Path, required=True)
+    a.add_argument("--before-core", type=Path, required=True)
+    a.add_argument("--after-core", type=Path, default=CANDIDATE_CORE)
+    a.add_argument("--out", type=Path, required=True)
+    args = p.parse_args(argv)
+    try:
+        if args.cmd == "snapshot":
+            found = snapshot(args.tool.resolve(), args.work.resolve(), args.app.resolve(),
+                             args.out.resolve(), worktrees=args.worktrees,
+                             profiles=args.profiles,
+                             include_env_key=args.include_env_key)
+            print(json.dumps({k: found[k] for k in ("digest", "worktrees", "envKey")}))
+            return 0
+        if args.cmd == "read":
+            write(args.out, read(args.snapshot.resolve(), args.core.resolve()))
+            return 0
+        if args.cmd == "compare":
+            report = compare(load(args.before), load(args.after))
+        else:
+            args.out.mkdir(parents=True, exist_ok=True)
+            before = read(args.snapshot.resolve(), args.before_core.resolve())
+            write(args.out / "before.json", before)
+            after = read(args.snapshot.resolve(), args.after_core.resolve())
+            write(args.out / "after.json", after)
+            report = compare(before, after)
+            args.out = args.out / "report.json"
+        if args.out:
+            write(args.out, report)
+            args.out.with_suffix(".md").write_text(markdown(report), encoding="utf-8")
+        sys.stdout.write(markdown(report))
+        return 1 if report["unaccounted"] else 0
+    except SnapshotMoved as exc:
+        print(f"gate-compare: {exc}", file=sys.stderr)
+        return 3
+    except (Refused, OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(f"gate-compare: {exc}", file=sys.stderr)
+        return 2
+
+
+def load(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
