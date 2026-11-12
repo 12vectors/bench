@@ -854,6 +854,9 @@ def verification(doc: dict | None = None) -> dict:
             # variables whose values are bound — names only, never values
             "inputs": [entry["name"] for entry in check.get("inputs") or []],
             "env": list(check.get("env") or []),
+            # other checks whose evidence may answer this one, as declared
+            # (card 104) — a precondition, never sufficient on its own
+            "accepts": list(check.get("accepts") or []),
             "timeout": check["timeout"],
             "checkId": check["checkId"],
             "checkSubstance": check.get("checkSubstance"),

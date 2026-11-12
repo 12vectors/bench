@@ -1098,6 +1098,7 @@
   .dreqs .check-row .state,.msheet .check-row .state{flex:0 1 auto;overflow-wrap:anywhere;min-width:0}
   .dreqs .check-row.accent .glyph,.dreqs .check-row.accent .state{color:var(--accent)}
   .dreqs .dreqfix{display:block;color:var(--muted);font-size:11px}
+  .dreqs .dreqvia{display:block;color:var(--muted);font-size:11px}
   #reqsheet ul.dreqs{list-style:none;margin:0;padding:0}
   #reqsheet .check-row{flex-wrap:wrap}
   #reqsheet .check-row>.why{flex-basis:100%;margin:0 0 0 22px}
@@ -3684,12 +3685,24 @@ function requirementRows(rows) {
     const cls = overridden ? 'fail' : (REQ_ROW[r.class] || '');
     const glyph = overridden ? '!' : (REQ_GLYPH[r.class] || '·');
     const name = r.kind === 'check' ? `${r.name} — ${r.coverage}` : r.name;
+    // A record of a declared equivalent (card 104) keeps its own name,
+    // evidence and requester, and is said to be that; one that is declared
+    // and is not the same check says which dimension stops it.
+    const via = r.reusedFrom
+      ? `<span class="dreqvia">run as <code>${esc(r.reusedFrom.check)}</code>` +
+        ` (evidence ${esc(r.reusedFrom.evidence || '')}, run for ` +
+        `${esc(r.reusedFrom.agent || r.reusedFrom.actor || 'an earlier request')}` +
+        `), which this check accepts as the same check</span>`
+      : r.equivalence
+        ? `<span class="dreqvia"><code>${esc(r.equivalence.check)}</code> ran ` +
+          `here and does not count: ${esc(r.equivalence.why || r.equivalence.dimension)}</span>`
+        : '';
     return `<li class="check-row ${cls}" title="${esc(r.why || '')}">` +
       `<span class="glyph" aria-hidden="true">${glyph}</span>` +
       `<span class="name">${esc(name)}</span>` +
       `<span class="state">${esc(overridden ? 'Overridden — still unmet' : (r.plain || r.state))}` +
       `${r.remedy && ['problem', 'cannot-assess'].includes(r.class)
-        ? `<span class="dreqfix">${esc(r.remedy)}</span>` : ''}</span></li>`;
+        ? `<span class="dreqfix">${esc(r.remedy)}</span>` : ''}${via}</span></li>`;
   }).join('');
 }
 
@@ -7115,6 +7128,10 @@ function checkBlock(page, c, editor) {
     ((c.env || []).length ? fact('Bound environment',
       c.env.map(s => `<code>${esc(s)}</code>`).join(', '),
       'values are bound by a keyed hash on this machine, never stored') : '') +
+    ((c.accepts || []).length ? fact('Accepts evidence of',
+      c.accepts.map(s => `<code>${esc(s)}</code>`).join(', '),
+      'only a run whose definition is the same in every dimension, in the ' +
+      'same kind of checkout, counts — a name alone never does') : '') +
     `</dl>` +
     `<details class="fold scmd"><summary>Command <code>${esc(c.run)}</code></summary>` +
     `<div class="srefbody"><div class="skv">` +

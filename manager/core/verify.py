@@ -735,6 +735,110 @@ def _identity(record: dict, source: dict, program: dict, steps: list[dict],
     }
 
 
+# ── declared equivalence (design §5, card 104) ─────────────────────────
+#
+# A record of another check answers this one only when three things hold
+# together, and never when any one of them holds alone: the operator
+# declared it (`"accepts"` on this check, read from the policy in force
+# now), the two definitions agree in every substantive dimension
+# (`profiles.check_differences` — the name is the only thing allowed to
+# differ, and the declared root only by name within its class), and the
+# record itself ran in the root class this check would run in, with a
+# result identity to show it. Everything else a pass depends on — the
+# source, the programs and interpreters, the input contents, the declared
+# environment's values and the runner — is the record's own result
+# identity, judged exactly as it is for a record of this check's own name.
+
+EQUIVALENCE_WHY = {
+    "not-accepted": "a different check, which this check does not declare "
+                    "that it accepts — names never make two checks the same",
+    "legacy-record": "recorded before result identities existed, so it "
+                     "cannot be shown to be the same check",
+    "root-class": "it did not run in the kind of checkout this check runs in",
+}
+
+
+def accepted_now(check: dict) -> dict:
+    """The checks `check` accepts in the policy as it reads *now*, by name,
+    with their current definitions — never what a frozen manifest said.
+    Empty when the document does not declare `check`, or accepts nothing:
+    a declaration removed since a run was launched is removed."""
+    try:
+        doc = profiles.document()
+        steps, _ = profiles.document_steps(doc)
+        declared, _ = profiles.document_checks(doc, steps)
+    except (OSError, ValueError):
+        return {}
+    current = declared.get(check.get("name"))
+    if current is None:
+        return {}
+    return {name: declared[name] for name in current.get("accepts") or []
+            if name in declared}
+
+
+def equivalence(record: dict, check: dict, accepted: dict) -> dict:
+    """Whether `record` — evidence filed under some check's name — may
+    answer a requirement for `check`, and if not, which dimension stops it.
+
+    `accepted` is what `check` accepts now, by name, with each current
+    definition (`accepted_now`, or the gate policy's `acceptedChecks`). A
+    record of `check`'s own name is trivially its own; this function is
+    about the other names, and it fails closed at every step."""
+    name = record.get("check")
+    mine = check.get("name")
+    if name == mine:
+        return {"equivalent": True, "dimension": None, "why": None}
+
+    def refuse(dimension: str, why: str) -> dict:
+        return {"equivalent": False, "dimension": dimension, "why": why}
+
+    other = accepted.get(name)
+    if other is None:
+        return refuse("not-accepted",
+                      f"'{name}' is {EQUIVALENCE_WHY['not-accepted']} "
+                      f"('{mine}')")
+    differs = profiles.check_differences(check, other,
+                                         record.get("scope") or None)
+    if differs:
+        return refuse(*differs[0])
+    if record.get("outcome") in LIVE:
+        # Still running: its identity is not written yet, and the two
+        # definitions agree, so it is the newer answer in flight.
+        return {"equivalent": True, "dimension": None, "why": None}
+    identity = record.get("identity") if isinstance(record.get("identity"),
+                                                   dict) else {}
+    if not record.get("resultId") or not identity:
+        return refuse("legacy-record",
+                      f"the '{name}' record was "
+                      f"{EQUIVALENCE_WHY['legacy-record']} as '{mine}'")
+    want = ("worktree" if profiles.root_class_of(str(check.get("root")))
+            == "worktree" else "fresh")
+    klass = identity.get("rootClass")
+    if klass != want:
+        if klass == "worktree":
+            why = (f"'{name}' ran in the working checkout, which can hold "
+                   f"files a fresh checkout does not, and '{mine}' runs in a "
+                   f"pinned one")
+        elif want == "fresh":
+            why = (f"'{name}' ran in a pinned checkout that already held files "
+                   f"beyond its commit, so it was not a clean pinned checkout "
+                   f"of that commit")
+        else:
+            why = (f"'{name}' ran in a fresh pinned checkout and '{mine}' runs "
+                   f"in the card's working checkout — different root classes "
+                   f"are distinct assurance")
+        return refuse("root-class", why)
+    return {"equivalent": True, "dimension": None, "why": None}
+
+
+def comparable(identity: dict) -> dict:
+    """A result identity without its `check` dimension — the substance
+    digest, which carries the check's declared root by name. Two records
+    of different names are compared on everything else here, and on their
+    definitions by `equivalence`, which compares the root by its class."""
+    return {k: v for k, v in (identity or {}).items() if k != "check"}
+
+
 def root_class(policy: str, root: Path) -> str:
     """`worktree`, `fresh` or `reused` — what the checkout could have held
     that the source identity does not see.
@@ -1677,7 +1781,9 @@ def _request_shell(check: str, task: str, scope: str | None, intent: str,
 # programs, preparation, declared inputs, root class, declared environment,
 # runner. A record with no `resultId` (legacy) cannot show that, so it is
 # never reused and costs one new run. A name match across checks is not
-# this route at all (that is declared equivalence, card 104).
+# this route at all; a record of another name is reused only where the
+# check declares it (`accepts`) and `equivalence` proves the definitions
+# the same — and then every other dimension of its identity must equal.
 #
 # And it is the *newest relevant* record that decides, as at the gate: a
 # failure, cancellation or error at this commit that is newer than a pass
@@ -1793,27 +1899,40 @@ def _reusable(shell: dict, check: dict, task: str, manifest: dict,
     # and after the records are: one live now, or one made while they were
     # being read — and possibly finished, its answer missed — means the
     # records cannot be today's answer, and the request runs or joins.
-    reserved = (task, shell["check"])
+    #
+    # Declared equivalents (card 104) are read through the same filters:
+    # what this check accepts in the policy *now*, and only a record whose
+    # definition agrees in every dimension (`equivalence`). A run of an
+    # accepted check in flight is newer than anything on record too.
+    accepted = accepted_now(check)
+    names = (shell["check"], *accepted)
+    reserved = [(task, n) for n in names]
 
     def live() -> bool:
-        return any(r.get("task") == task and r.get("check") == shell["check"]
+        return any(r.get("task") == task and r.get("check") in names
                    and not r.get("doctor") and overlaps(r.get("scope") or None)
                    for r in RUNNING.values())
+
+    def generations() -> list[int]:
+        return [_RESERVED.get(key, 0) for key in reserved]
 
     with state.LOCK:
         if live():
             return None
-        generation = _RESERVED.get(reserved, 0)
+        generation = generations()
     records = for_task(task)
     with state.LOCK:
-        if live() or _RESERVED.get(reserved, 0) != generation:
+        if live() or generations() != generation:
             return None
 
     relevant = []
     for record in records:
-        if record.get("check") != shell["check"] or record.get("doctor") \
+        if record.get("check") not in names or record.get("doctor") \
                 or not overlaps(record.get("scope") or None) \
                 or record.get("outcome") == "denied":
+            continue
+        if record.get("check") != shell["check"] and \
+                not equivalence(record, check, accepted)["equivalent"]:
             continue
         commit = (record.get("source") or {}).get("commit")
         if record.get("outcome") in LIVE:
@@ -1836,10 +1955,20 @@ def _reusable(shell: dict, check: dict, task: str, manifest: dict,
             # A pass of another coverage, or one over uncommitted work,
             # answers a different question and supersedes nothing.
             continue
-        if not record.get("resultId") \
-                or record["resultId"] != planned["resultId"]:
-            # Legacy (no identity to compare) or a different identity:
-            # one new run, never an inferred equivalence.
+        if not record.get("resultId"):
+            # Legacy (no identity to compare): one new run, never an
+            # inferred equivalence.
+            return None
+        if record.get("check") == shell["check"]:
+            if record["resultId"] != planned["resultId"]:
+                return None
+        elif comparable(record.get("identity") or {}) != \
+                comparable(planned["identity"]) or \
+                result_id(record.get("identity") or {}) != record["resultId"]:
+            # A declared equivalent whose definition agreed: every other
+            # dimension of its identity — source, coverage, programs,
+            # preparation, inputs, root class, environment, runner — must
+            # equal the one this request would record.
             return None
         if outcome_now(record).get("outcome") != "passed":
             return None
@@ -1851,7 +1980,7 @@ def _reusable(shell: dict, check: dict, task: str, manifest: dict,
             # is newer than this answer, so nothing is reused. A run
             # reserved after that hold is newer than the reuse, which is
             # the order the reuse record then says.
-            return not live() and _RESERVED.get(reserved, 0) == generation
+            return not live() and generations() == generation
 
         return _record_reuse(shell, record, planned, unchanged)
     return None
@@ -1884,9 +2013,22 @@ def _record_reuse(shell: dict, original: dict, planned: dict,
         # who the evidence was run for, as the evidence itself says it —
         # copied for the reader, never written back
         "original": {k: original.get(k) for k in (
-            "agent", "actor", "intent", "requestId", "requested", "ended")},
+            "agent", "actor", "intent", "requestId", "requested", "ended",
+            "check", "scope")},
         "location": "local", "why": REUSE_WHY,
     }
+    if original.get("check") != shell.get("check"):
+        # Answered by a declared equivalent (card 104): which check the
+        # evidence is filed under stays the evidence's own, and is said.
+        reuse["acceptedFrom"] = original.get("check")
+        reuse["why"] = (f"'{shell.get('check')}' accepts "
+                        f"'{original.get('check')}', and an equal, current "
+                        f"result of it — the same definition in every "
+                        f"dimension, in the same kind of checkout — was "
+                        f"already on record at this commit, so bench ran "
+                        f"nothing and returned that record. The evidence "
+                        f"keeps its own name, requester, checkout and "
+                        f"provenance; this record names who asked this time")
     reuse_dir().mkdir(parents=True, exist_ok=True)
     with state.LOCK:
         if not unchanged():
@@ -1899,7 +2041,9 @@ def _record_reuse(shell: dict, original: dict, planned: dict,
         "kind": "verify", "actor": "board", "file": shell.get("task") or "",
         "summary": (f"{shell['check']} passed on {shell.get('task')} at "
                     f"{planned['commit'][:12]} — reused {original['id']} "
-                    f"(run for {who}); nothing was run")})
+                    + (f"of {original.get('check')}, which it accepts, "
+                       if reuse.get("acceptedFrom") else "")
+                    + f"(run for {who}); nothing was run")})
     state.broadcast({"type": "verify"})
     return {**original, "reused": original["id"], "reuse": reuse}
 
@@ -1910,9 +2054,9 @@ def _record_reuse(shell: dict, original: dict, planned: dict,
 PUBLIC_REUSE = ("v", "kind", "id", "reused", "resultId", "commit", "task",
                 "stage", "check", "scope", "intent", "agent", "actor",
                 "requested", "requestId", "policyId", "policyRevision",
-                "reviewId", "location", "why")
+                "reviewId", "location", "why", "acceptedFrom")
 PUBLIC_ORIGINAL = ("agent", "actor", "intent", "requestId", "requested",
-                   "ended")
+                   "ended", "check", "scope")
 
 
 def public_reuse(reuse: dict | None) -> dict | None:

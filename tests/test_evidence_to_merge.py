@@ -543,34 +543,42 @@ class Precedence(unittest.TestCase):
 
 
 class TheEquivalentBranchIsHeldToTheSameFilters(Precedence):
-    """No equivalence is accepted until #104 lands, but the branch exists
-    and is written with every filter the direct branch has. Patched on
-    here, so the filters are executable now."""
+    """A declared equivalent (#104) goes through every filter the direct
+    branch has. The record's own identity is read as current here, so each
+    case is the selection and the precedence and nothing else; the real
+    fixtures are in `test_declared_equivalence`."""
 
     def setUp(self):
         super().setUp()
-        self.addCleanup(setattr, gates, "_accepted_equivalents",
-                        gates._accepted_equivalents)
-        gates._accepted_equivalents = lambda check: ("unit-review",)
+        self.addCleanup(setattr, verify, "identity_drift",
+                        verify.identity_drift)
+        verify.identity_drift = lambda rec: (
+            {"reasons": [], "changed": []} if rec.get("resultId") else None)
 
     def decide(self, records, *, head: str | None = H, scope=None,
-               check: str = "unit") -> dict:
+               check: str = "unit", twin_run: str = "x") -> dict:
         return gates._check_requirement(
             CARD, {"name": check, "gateScope": scope, "run": "x",
-                   "checkSubstance": "same"}, {"commit": head}, records)
+                   "root": "worktree", "accepts": ["unit-review"],
+                   "acceptedChecks": {"unit-review": {
+                       "name": "unit-review", "run": twin_run,
+                       "root": "worktree"}}},
+            {"commit": head}, records)
 
     def twin(self, ident, outcome, **kw):
-        return record(ident, outcome, check="unit-review",
-                      checkSubstance=kw.pop("substance", "same"), **kw)
+        return record(ident, outcome, check="unit-review", resultId="result:t",
+                      identity={"rootClass": "worktree"}, **kw)
 
     def test_an_equal_twin_at_h_answers(self):
-        self.assertEqual(self.decide([self.twin("t", "passed", when=1)])
-                         ["state"], "met")
+        found = self.decide([self.twin("t", "passed", when=1)])
+        self.assertEqual(found["state"], "met")
+        self.assertEqual(found["acceptedFrom"]["check"], "unit-review")
 
     def test_a_declaration_without_equal_substance_does_not(self):
-        found = self.decide([self.twin("t", "passed", when=1,
-                                       substance="other")])
+        found = self.decide([self.twin("t", "passed", when=1)],
+                            twin_run="y")
         self.assertEqual(found["reason"], "not-run")
+        self.assertEqual(found["equivalence"]["dimension"], "command")
 
     def test_a_twin_on_another_head_is_history(self):
         found = self.decide([self.twin("t", "cancelled", at=G, when=1)])
@@ -586,11 +594,13 @@ class TheEquivalentBranchIsHeldToTheSameFilters(Precedence):
         self.assertEqual(found["state"], "met")
 
 
-class NoEquivalenceIsAcceptedYet(unittest.TestCase):
+class OnlyTheResolvedDeclarationCounts(unittest.TestCase):
 
-    def test_no_check_declares_an_equivalent(self):
+    def test_a_raw_accepts_list_is_not_a_declaration(self):
+        """Equivalents come from the policy's resolved `acceptedChecks` —
+        definitions read now — never from a bare list of names."""
         self.assertEqual(gates._accepted_equivalents({"name": "unit",
-                                                      "accepts": ["x"]}), ())
+                                                      "accepts": ["x"]}), {})
 
     def test_a_record_is_partitioned_by_its_own_identity(self):
         """#97: no identity is legacy; an identity whose definition still
