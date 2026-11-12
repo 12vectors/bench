@@ -2030,8 +2030,10 @@ uncommitted or untracked files (*commit, then run checks*); a board with
 no merge rule here, or rules that do not resolve; a work reading that
 does not resolve; nothing left to request; a body naming a run (`agent`)
 — a run asks through `bench-verify` under the profile it launched with;
-and a head that is not the one the sheet was shown. A second click while
-a batch is in flight returns that batch rather than starting another.
+and a request that does not name the head the sheet was shown — a
+missing or blank `head` is `head-required` (400), another commit is
+`head-moved`. A second click while a batch is in flight returns that
+batch rather than starting another.
 
 **Between requests the candidate is read again.** Before each check the
 branch tip, the merge rules' revision and the checkout's cleanliness are
@@ -2053,7 +2055,14 @@ summary (`requiredRuns`), and the card's action reads *Required checks:
 
 - **Stop** cancels the check in flight through verify's own cancel —
   recorded `cancelled`, never a failure — and the rest are *not
-  requested*.
+  requested*. A Stop that lands after the batch chose a check but before
+  verify reserved a run of it runs nothing at all: `verify.request` asks
+  the batch before its reuse lookup, before and after making a checkout,
+  and once more in the same hold of the lock that would reserve the run.
+  No preparation or check starts, a `source` checkout made for it is
+  given back, no evidence is written, and the item reads *not
+  requested*. A run an agent asked for that the batch joined is that
+  run's, and Stop leaves it alone — **‖ hold** is what stops it.
 - **‖ hold** on a run cancels the checks that run asked for
   (`cancelled-with-run`). Either way the requirement reads
   *Cancelled before a result on H*, which is *needed*, and **Run

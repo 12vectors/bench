@@ -722,7 +722,11 @@ class StopBeforeARunExists(BatchCase):
                       if r.get("agent") == "run-1"]
         self.assertEqual(len(agent_runs), 1, "the agent's run is still going")
         self.assertFalse(agent_runs[0].get("cancelling"))
+        self.assertTrue(wait_for(lambda: self.runs("unit") == 1, 20))
+        time.sleep(0.3)
         self.assertEqual(self.runs("unit"), 1, "only the agent's own run")
+        self.assertFalse(agent_runs[0].get("cancelling"),
+                         "and nothing stopped it")
 
 
 class CleanupRemovesOnlyItsOwnTemp(BatchCase):
