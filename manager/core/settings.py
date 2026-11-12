@@ -1030,6 +1030,50 @@ def acceptance(doc: dict | None = None) -> dict:
         "reasons": dict(gates.REASONS),
         "remedies": dict(gates.REMEDIES),
         "reviewModes": modes,
+        "signoffModes": [{"name": word, "why": why}
+                         for word, why in profiles.SIGNOFF_POLICIES.items()],
+        "signoff": {
+            "what": (
+                "Off by default. The PR review already assesses the work "
+                "against each acceptance criterion at the exact head, and "
+                "that assessment is a reviewer's, not a person's acceptance. "
+                "Turn sign-off on where the decision has to be a person's — "
+                "visual, business, regulated or other human judgement: every "
+                "tracked criterion must then read accepted, decided by a "
+                "named person against the commit that would merge."),
+            "untracked": (
+                "A card whose criteria are not tracked reads Sign-off needed, "
+                "with Track acceptance as its action. Tracking adds ids and "
+                "accepts nothing."),
+            "headBinding": (
+                "An acceptance is about the commit it was decided against. A "
+                "new commit asks for the criteria to be confirmed again; the "
+                "earlier decisions stay in the card's history."),
+            "activation": (
+                "Applies the next time the guarded merge is attempted, and to "
+                "every card's next reading. Nothing is rewritten: existing "
+                "acceptance records and decisions are read as they are, and "
+                "no criterion is accepted by turning this on."),
+        },
+        "reviewList": {
+            "what": (
+                "Advanced: a list of review policies requires all of them, "
+                "each as its own requirement — for a project that wants an "
+                "agent's review and an independent person's approval, "
+                "[\"bench\", \"separate-reviewer\"]. The ordinary form is one "
+                "word, and only that one approval is counted."),
+            "distinct": (
+                "Only genuinely distinct assurance may be combined: a word "
+                "may not repeat, `none` is not part of a list, and `github` "
+                "with `separate-reviewer` is refused — a separate reviewer's "
+                "approval is a GitHub approval already."),
+            "comments": (
+                "A Bench verdict, a GitHub approval and a separate "
+                "reviewer's approval are three records. Comments, Copilot, "
+                "relevance checks and agent summaries are none of them, and "
+                "a GitHub approval the opening account was refused is never "
+                "counted."),
+        },
         "fields": _fields(public["diagnostics"]),
         "ungatedIsNotAPass": (
             "A board that declares no gate reads `ungated`, which is "
@@ -1311,11 +1355,16 @@ def _gate_detail(policy: dict) -> str:
     if not gated:
         return ("no gate is configured, so nothing is required before a "
                 "merge and nothing is proved by one")
-    return ", ".join(
-        f"{scope}: "
-        + (", ".join(c["requirement"] for c in policy["scopes"][scope]["checks"])
-           or "review only")
-        for scope in sorted(gated))
+    def what(entry: dict) -> str:
+        parts = [c["requirement"] for c in entry["checks"]]
+        if entry.get("review", "none") != "none":
+            parts.append(f"review {entry['review']}")
+        if entry.get("signoff", "none") != "none":
+            parts.append("sign-off")
+        return ", ".join(parts)
+
+    return ", ".join(f"{scope}: {what(policy['scopes'][scope])}"
+                     for scope in sorted(gated))
 
 
 def _access_detail(intents: dict) -> str:
@@ -1432,7 +1481,8 @@ def recommendations(doc: dict | None = None) -> list[dict]:
             section="access", state="unsupported"))
 
     for scope, entry in sorted(policy["scopes"].items()):
-        if entry["review"] in ("github", "separate-reviewer") \
+        if any(word in ("github", "separate-reviewer")
+               for word in entry.get("reviews") or []) \
                 and not config.gh_available():
             out.append(_rec(
                 f"review-unsatisfiable-{scope}", "high",
@@ -1789,16 +1839,22 @@ def _checks_of(doc: dict) -> dict:
 
 def _requirement_words(entry: dict | None) -> dict:
     if not entry:
-        return {"checks": [], "review": "none"}
+        return {"checks": [], "review": "none", "signoff": "none"}
     return {"checks": sorted(c["requirement"] for c in entry["checks"]),
-            "review": entry["review"]}
+            "review": entry["review"],
+            "signoff": entry.get("signoff", "none")}
+
+
+def _ungated_words(words: dict) -> bool:
+    return not words["checks"] and words["review"] == "none" \
+        and words.get("signoff", "none") == "none"
 
 
 def _gate_change_detail(scope: str, was: dict, now: dict) -> str:
-    if not was["checks"] and was["review"] == "none":
+    if _ungated_words(was):
         return (f"{scope} becomes gated: it was `ungated`, where nothing is "
                 f"required and nothing is proved")
-    if not now["checks"] and now["review"] == "none":
+    if _ungated_words(now):
         return (f"{scope} becomes `ungated` — nothing will be required "
                 f"before it, and nothing proved by it")
     return f"what {scope} requires changes"

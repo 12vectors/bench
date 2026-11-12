@@ -6976,7 +6976,9 @@ function settingsOverview(page) {
       value: a.policy.blockers.length ? ''
         : gated.length
           ? gated.map(([s, e]) => `${SCOPE_LABEL[s] || s}: ` +
-              (e.checks.map(c => c.requirement).join(', ') || 'review only')).join(' · ')
+              ([...e.checks.map(c => c.requirement),
+                ...(e.signoff && e.signoff !== 'none' ? ['sign-off'] : [])].join(', ')
+               || 'review only')).join(' · ')
           : '',
       // the absence that changes what a merge means wears amber, in words
       tag: a.policy.blockers.length ? ['bad', 'Invalid']
@@ -7217,9 +7219,14 @@ function settingsAcceptance(page) {
     label: SCOPE_LABEL[scope] || scope, sub: scope, states,
     value: (entry.checks.length
       ? entry.checks.map(c => c.requirement).join(', ') : 'No check required') +
-      ' · review: ' + entry.review,
+      // the advanced list is each of its words, every one its own
+      // requirement — never one tick standing for two approvals
+      ' · review: ' + ((entry.reviews || []).length > 1
+        ? 'all of ' + entry.reviews.join(', ') : entry.review) +
+      ' · sign-off: ' + (entry.signoff && entry.signoff !== 'none'
+        ? 'every criterion accepted by a person' : 'not required'),
     help: a.scopes[scope] || entry.why,
-    title: entry.reviewWhy || '',
+    title: [entry.reviewWhy, entry.signoffWhy].filter(Boolean).join(' — '),
     state: entry.gated ? 'configured-untested' : 'not-configured',
     // ungated is a consequential absence: amber, in words, with the
     // definition on its title — never the colour of a pass
@@ -7246,10 +7253,15 @@ function settingsAcceptance(page) {
         edit: 'overrides', act: 'Edit', aria: 'edit the override policy',
         after: ed && ed.kind === 'overrides' ? overridesEditor(page) : '' })) +
     settingsCi(page) +
+    sref('Sign-off on acceptance criteria — optional',
+      `<p>${esc(a.signoff.what)}</p><p>${esc(a.signoff.untracked)}</p>` +
+      `<p>${esc(a.signoff.headBinding)}</p><p>${esc(a.signoff.activation)}</p>`) +
     sref('Review policies, and which this board can read',
       a.reviewModes.map(m => sline({ label: m.name,
         value: m.available ? 'Offered' : 'Unavailable here',
         help: m.unavailableWhy || m.why })).join('') +
+      `<p>${esc(a.reviewList.what)}</p><p>${esc(a.reviewList.distinct)}</p>` +
+      `<p>${esc(a.reviewList.comments)}</p>` +
       `<p>${esc(a.sameAccount)}</p>` +
       `<p>${esc(a.outstandingChanges)}</p>` +
       `<p>${esc(a.notBranchProtection)}</p>`) +
@@ -8195,6 +8207,14 @@ function draftConsequences() {
 /* The review requirement for one gate scope, with the policies this board
    cannot enforce offered disabled and saying why. */
 function reviewSelect(page, scope, chosen) {
+  // The advanced list is not a value this one-choice control can hold, so
+  // it is shown as what it is and left exactly as written; changing it is
+  // the Advanced policy editor's, where each word is its own box
+  if (Array.isArray(chosen)) {
+    return `<div class="frow" id="f-gates:${esc(scope)}:reviewlist"><span>review: all of ` +
+      `<b>${esc(chosen.map(String).join(', '))}</b> — an advanced list, each its own ` +
+      `requirement. Edit it in Advanced policy.</span></div>`;
+  }
   return `<div class="frow"><label for="f-gates:${esc(scope)}:review">review` +
     `</label><select id="f-gates:${esc(scope)}:review" ` +
     `data-field="gates:${scope}:review" aria-label="${esc(scope)} review ` +
@@ -8205,6 +8225,32 @@ function reviewSelect(page, scope, chosen) {
         `${m.available ? '' : ' disabled'}>${esc(word)}` +
         `${m.available ? '' : ' — not available on this board'}</option>`;
     }).join('') + `</select></div>`;
+}
+
+/* Opt-in sign-off for one gate scope (design #94 §8.3): off unless ticked,
+   and the label says what it is for, so it never reads as a default step. */
+function signoffBox(scope, gate) {
+  return checkbox(`gates:${scope}:signoff`, 'require sign-off: every tracked ' +
+    'acceptance criterion accepted by a named person, at the commit that ' +
+    'merges — for visual, business, regulated or other human decisions',
+    gate.signoff === 'criteria');
+}
+
+/* The advanced review list: one box per policy word, every ticked word
+   its own requirement. One tick writes the ordinary single word; two or
+   more write the list; the server refuses a combination that is not
+   genuinely distinct (github with separate-reviewer). */
+function reviewListBoxes(page, scope, gate) {
+  const raw = gate.review;
+  const words = Array.isArray(raw) ? raw.map(String)
+    : raw && raw !== 'none' ? [String(raw)] : [];
+  return `<p class="shelp">Advanced: tick more than one only for genuinely ` +
+    `distinct assurance — for example an agent review and an independent ` +
+    `person's approval. Every ticked policy must be met.</p>` +
+    page.acceptance.reviewModes.filter(m => m.name !== 'none').map(m =>
+      checkbox(`gates:${scope}:reviews:${m.name}`, `require review: ${m.name}` +
+        (m.available ? '' : ' — not available on this board'),
+        words.includes(m.name))).join('');
 }
 
 function draftCheckNames() {
@@ -8277,6 +8323,7 @@ function gateEditor(page, scope) {
       : `<p>No check is declared, so this rule can require none. Add one in ` +
         `Checks first.</p>`) +
     reviewSelect(page, scope, gate.review || 'none') +
+    signoffBox(scope, gate) +
     draftBar(page, mine) + `</div>`;
 }
 
@@ -8368,7 +8415,7 @@ function settingsPolicy(page) {
         ? names.map(name => checkbox(`gates:${scope}:checks:${name}`,
             `require ${name}`, want.includes(name))).join('')
         : `<p>No check is declared yet, so this gate can require none.</p>`) +
-      reviewSelect(page, scope, gate.review || 'none') + `</div>`;
+      reviewListBoxes(page, scope, gate) + signoffBox(scope, gate) + `</div>`;
   }).join('');
 
   const over = ((draft.document.gates || {}).overrides) || {};
@@ -8510,6 +8557,21 @@ function writeField(path, el) {
       const gate = gates[parts[1]] = gates[parts[1]] || {};
       if (parts[2] === 'review') {
         if (value === 'none') delete gate.review; else gate.review = value;
+      } else if (parts[2] === 'signoff') {
+        // opt-in: ticked writes the field, unticked removes it entirely,
+        // so a document that never used sign-off reads byte for byte
+        if (value) gate.signoff = 'criteria'; else delete gate.signoff;
+      } else if (parts[2] === 'reviews') {
+        // one word stays the ordinary scalar form; two or more are the
+        // advanced list, in the order the boxes list them
+        const order = S.settings.page.acceptance.reviewModes.map(m => m.name);
+        const raw = gate.review;
+        const want = new Set(Array.isArray(raw) ? raw.map(String)
+          : raw && raw !== 'none' ? [String(raw)] : []);
+        if (value) want.add(parts[3]); else want.delete(parts[3]);
+        const words = order.filter(w => want.has(w));
+        if (!words.length) delete gate.review;
+        else gate.review = words.length === 1 ? words[0] : words;
       } else {
         // entries are kept as written: ticking a check adds its full run,
         // unticking removes every requirement on it, and a scoped
