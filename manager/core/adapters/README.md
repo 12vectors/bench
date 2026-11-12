@@ -141,6 +141,15 @@ run the tests is not a review that can commit, and both shipped adapters
 show the shape: the shim gets an allow-rule, `git commit` and `git push`
 get deny-rules, in the same generated document.
 
+That one rule also covers a failed check's details. `bench-verify`
+prints a bounded, scrubbed tail of the check's output after the verdict,
+and `bench-verify --details <evidence-id>` prints it again later — both
+answered by the board over the loopback, so an adapter grants **no read
+of the evidence directory** for them and must not add one. The shim
+proves the run with `BOARD_PROGRESS_TOKEN` where the launch was handed
+one, so an adapter that passes the environment through unchanged needs
+nothing new.
+
 `AGENT_CONTEXT` is the read-only inputs bench pinned for the run — `[{"name",
 "path", "source", "sha256", "access": "read-only"}]`, paths and hashes
 only, never content. The prompt already names them; an adapter that can

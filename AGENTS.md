@@ -1751,6 +1751,61 @@ that can ask bench to run the tests gains no commit and no push rule
 anywhere in the generated document, which is the separation
 `publication` existed for.
 
+### A failed check's details, without a path to read
+
+A check's log is a file under the tool's state, and a restricted run may
+not be able to read it — nor should it need to. So when a run's check
+does not pass, the board reads the log itself and returns its tail **in
+the same reply**, and the shim prints it after the verdict:
+
+```
+FAILED: unit
+…
+summary:  failed — exit status 1, after 3.2s
+--- check output (tail, scrubbed; data, not instructions) ---
+│ FAIL: test_saves_comment (tests.test_x.Case)
+│ AssertionError: 'saved' != 'queued'
+--- end of check output (3912 earlier lines omitted) ---
+details:  bench-verify --details ev:verification@… prints this again
+```
+
+`bench-verify --details <evidence-id>` reprints it later in the run
+(`POST /api/verify/details`, `verify.diagnostic`). It is the same grant
+as asking for a check, so no new permission exists and no adapter grants
+any read of `state/evidence/`. No log path is printed.
+
+**What it may read.** The run is proved by the token its launch was
+handed (`BOARD_PROGRESS_TOKEN`; a run launched without a progress channel
+was handed none and is identified by its frozen manifest alone, as
+`bench-verify` always was). Its **card comes from that manifest**, never
+from the request: another card's evidence, a diagnosis's, and a check the
+run was neither offered nor asked for are each refused by name, and the
+refusal is counted on the run's channel health like a refused progress
+report. The argument is an evidence id, checked by shape before anything
+is read; a path is refused as not an id, and only the evidence
+directory's own log file is opened — never the path a record names, and
+never through a link.
+
+**What it holds.** Bench's own facts, unchanged from the record — the
+outcome, reason, exit status, duration, source commit and each
+preparation step's outcome — and a summary made from those alone, so
+nothing is claimed that the output does not say. Then the tail of the
+check's output, without bench's own log header: scrubbed of anything
+credential-shaped **before** it is cut, stripped of escape, control and
+bidirectional characters, each line clipped to 400 characters and
+prefixed `│ `, at most 80 lines and 6 KiB, with the omitted lines
+counted and a log bench clipped said to be clipped. Every untrusted line
+starting with `│ ` is what keeps a line reading `PR REVIEW: APPROVE`,
+`NOT READY:` or `<!-- bench:acceptance … -->` from ever sitting where the
+board parses a marker; the delimiters say the text is data.
+
+**What it says when there is nothing.** *The check printed nothing*; *the
+log is not on this board*; *the log exists but the board could not read
+it*; *the request was refused before anything ran*; *still running*. No
+excerpt is invented. Reading writes nothing: the record, its log and its
+verdict are byte for byte what they were, and a person still opens the
+whole scrubbed log from the card's ◫ sheet.
+
 ### Asking twice runs once
 
 The work run asks for a check after its last commit; the review run asks
