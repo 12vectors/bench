@@ -7268,7 +7268,8 @@ function settingsAcceptance(page) {
         help: over.allowed ? 'Recorded against one commit; never a pass.'
           : 'An unmet merge rule stays unmet.',
         edit: 'overrides', act: 'Edit', aria: 'edit the override policy',
-        after: ed && ed.kind === 'overrides' ? overridesEditor(page) : '' })) +
+        after: ed && ed.kind === 'overrides' ? overridesEditor(page) : '' }) +
+      onReviewLine(a.onReview, states)) +
     settingsCi(page) +
     sref('Sign-off on acceptance criteria — optional',
       `<p>${esc(a.signoff.what)}</p><p>${esc(a.signoff.untracked)}</p>` +
@@ -7292,6 +7293,37 @@ function settingsAcceptance(page) {
         .map(([k, why]) => `${k}\n  ${why}`).join('\n\n'))}</pre>`) +
     sref('What an override records',
       `<p>${esc(over.why)}</p><p>${esc(a.overrideLaw)}</p>`);
+}
+
+/* BOARD_VERIFY_ON_REVIEW (task 105): an operator setting in
+   manager/local/.env, so read-only here like every .env row — its value,
+   where that value came from, what turning it on would run and cost, and
+   how to turn it off. Off is the default and is drawn as plain words, not
+   as a fault and not as a pass. */
+function onReviewLine(o, states) {
+  if (!o) return '';
+  const p = o.provenance || {};
+  const source = p.source === 'environment' ? 'set in the environment (locked)'
+    : p.source === 'local-file' ? 'set in manager/local/.env' : 'default';
+  const moved = p.movedSinceStart
+    ? ` · manager/local/.env now says ${p.value}; in force after a restart` : '';
+  return sline({ label: 'Run required checks on entering Review',
+    sub: o.key, states,
+    value: o.enabled ? 'On' : 'Off',
+    tag: o.enabled ? null : ['dim', 'default'],
+    help: (o.enabled ? o.runs : o.what) + ' ' + o.disable,
+    title: source + moved,
+    chips: `<span class="sbadge dim" title="${esc(p.how || '')}">` +
+      `${esc(source)}</span>` }) +
+    sref('What “run required checks on entering Review” runs, and costs',
+      `<p>${esc(o.what)}</p><p>${esc(o.runs)}</p>` +
+      (o.checks.length ? `<div class="skv">` + o.checks.map(c =>
+        `<dt>${esc(c.name)}</dt><dd><code>${esc(c.run || '')}</code> ` +
+        `in ${esc(c.root || '')}</dd>`).join('') + `</div>` : '') +
+      `<p>${esc(o.cost)}</p><p>${esc(o.never)}</p>` +
+      `<p><b>Turn it on:</b> ${esc(o.enable)}</p>` +
+      `<p><b>Turn it off:</b> ${esc(o.disable)}</p>` +
+      (p.how ? `<p>${esc(p.how)}${esc(moved)}</p>` : ''));
 }
 
 /* Bench-run checks, external CI and review — three things one green tick
