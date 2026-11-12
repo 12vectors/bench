@@ -297,6 +297,106 @@ class SignoffIsOptIn(SignoffCase):
         self.assertTrue(reading["remedy"])
 
 
+class SignoffIsAboutTheMergeCandidate(SignoffCase):
+    """A decision records the commit the gate reads it about. A card can
+    hold both `task/<stem>` and `phase/<stem>`; the merge takes the phase
+    tip (`gates.head_for`), so a confirmation recorded against the task
+    tip would read `signoff-other-head` after every fresh confirmation."""
+
+    def phase_branch(self, text: str = "the phase's line\n") -> str:
+        """`phase/<stem>` at a commit of its own, distinct from the task
+        tip — made without a checkout, so the task worktree is untouched."""
+        tree = git(self.repo, "rev-parse", "main^{tree}").stdout.strip()
+        sha =subprocess_out(self.repo, "commit-tree", tree, "-p", "main",
+                             "-m", text.strip())
+        git(self.repo, "update-ref", f"refs/heads/phase/{CARD[:-3]}", sha)
+        return sha
+
+    def recorded_commits(self) -> set[str]:
+        return {r.get("commit") for r in taskfiles.acceptance_records(
+            (self.tasks / "review" / CARD).read_text(encoding="utf-8"))
+            if r.get("state") == "accepted"}
+
+    def test_task_only_records_and_meets_at_the_task_tip(self):
+        self.rule(signoff="criteria")
+        self.track()
+        self.accept(0)
+        self.accept(1)
+        self.assertEqual(gates.head_for(CARD, "acceptance")["ref"],
+                         f"task/{CARD[:-3]}")
+        self.assertEqual(self.recorded_commits(), {self.head[:12]})
+        self.assertEqual(self.signoff_row(self.decide())["state"], "met")
+
+    def test_distinct_task_and_phase_tips_record_the_phase_tip(self):
+        phase = self.phase_branch()
+        self.assertNotEqual(phase, self.head)
+        self.rule(signoff="criteria")
+        self.track()
+        self.accept(0)
+        self.accept(1)
+        candidate = gates.head_for(CARD, "acceptance")
+        self.assertEqual(candidate["ref"], f"phase/{CARD[:-3]}")
+        self.assertEqual(candidate["commit"], phase)
+        self.assertEqual(self.recorded_commits(), {phase[:12]},
+                         "decided against the commit the merge would take")
+        row = self.signoff_row(self.decide())
+        self.assertEqual((row["state"], row["reason"]),
+                         ("met", "signoff-accepted"))
+        self.assertIn(phase[:12], row["why"])
+
+    def test_decisions_at_the_task_tip_do_not_count_for_the_phase_tip(self):
+        """An acceptance recorded before the phase branch existed was about
+        the task tip; once the merge would take the phase tip it does not
+        travel, and a fresh confirmation meets it."""
+        self.rule(signoff="criteria")
+        self.track()
+        self.accept(0)
+        self.accept(1)
+        phase = self.phase_branch()
+        row = self.signoff_row(self.decide())
+        self.assertEqual(row["reason"], "signoff-other-head")
+        self.assertIn(phase[:12], row["why"])
+        self.accept(0)
+        self.accept(1)
+        self.assertEqual(self.signoff_row(self.decide())["state"], "met")
+
+    def test_phase_only_records_and_meets_at_the_phase_tip(self):
+        git(self.repo, "worktree", "remove", "--force", str(self.wt))
+        git(self.repo, "branch", "-D", f"task/{CARD[:-3]}")
+        phase = self.phase_branch()
+        self.rule(signoff="criteria")
+        self.track()
+        self.accept(0)
+        self.accept(1)
+        self.assertEqual(self.recorded_commits(), {phase[:12]})
+        self.assertEqual(self.signoff_row(self.decide())["state"], "met")
+
+    def test_a_later_candidate_change_blocks_again(self):
+        first = self.phase_branch()
+        self.rule(signoff="criteria")
+        self.track()
+        self.accept(0)
+        self.accept(1)
+        self.assertEqual(self.decide()["decision"], "allowed")
+        moved = subprocess_out(self.repo, "commit-tree",
+                               git(self.repo, "rev-parse",
+                                   "main^{tree}").stdout.strip(),
+                               "-p", first, "-m", "a member merged in")
+        git(self.repo, "update-ref", f"refs/heads/phase/{CARD[:-3]}", moved)
+        decision = self.decide()
+        row = self.signoff_row(decision)
+        self.assertEqual(row["reason"], "signoff-other-head")
+        self.assertIn(moved[:12], row["why"])
+        with self.assertRaises(ValueError):
+            gates.require(decision, "the merge")
+
+
+def subprocess_out(cwd: Path, *args: str) -> str:
+    found = git(cwd, *args)
+    assert found.returncode == 0, found.stderr
+    return found.stdout.strip()
+
+
 # ── compatibility: what existed reads exactly as it did ────────────────
 
 
@@ -506,6 +606,23 @@ class ReviewListsAreConjunctions(SignoffCase):
         decision = self.decide()
         self.assertEqual([r["name"] for r in decision["requirements"]],
                          ["bench"])
+        self.assertEqual(delivery.for_card(CARD)["counts"],
+                         {"required": 1, "met": 1})
+
+    def test_a_one_word_list_is_one_requirement(self):
+        """`["bench"]` is accepted and reads as the word: one review row,
+        one counter, met by the Bench verdict alone."""
+        self.rule(review=["bench"])
+        policy = profiles.gate_policy()
+        self.assertFalse(policy["diagnostics"])
+        entry = policy["scopes"]["acceptance"]
+        self.assertEqual((entry["review"], entry["reviews"]),
+                         ("bench", ["bench"]))
+        gates.record_verdict(CARD, verdict="APPROVE", head=self.head)
+        decision = self.decide()
+        self.assertEqual([r["name"] for r in decision["requirements"]
+                          if r["kind"] == "review"], ["bench"])
+        self.assertEqual(decision["decision"], "allowed")
         self.assertEqual(delivery.for_card(CARD)["counts"],
                          {"required": 1, "met": 1})
 
