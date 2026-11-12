@@ -408,9 +408,14 @@ def retarget(state: Path, live: str, here: str) -> None:
 
 
 def core_revision(core: Path) -> str | None:
+    """The commit a core is, when git tracks it there; otherwise a digest
+    of its files — a core copied out of a release or an archive is not
+    the commit of whatever repository it happens to sit in."""
+    tracked = subprocess.run(["git", "-C", str(core), "ls-files", "--error-unmatch",
+                              "gates.py"], capture_output=True, text=True)
     found = subprocess.run(["git", "-C", str(core), "rev-parse", "HEAD"],
                            capture_output=True, text=True)
-    if found.returncode == 0:
+    if tracked.returncode == 0 and found.returncode == 0:
         dirty = subprocess.run(["git", "-C", str(core), "status", "--porcelain", "--", "."],
                                capture_output=True, text=True).stdout.strip()
         return found.stdout.strip() + ("+dirty" if dirty else "")
@@ -519,8 +524,12 @@ def explain_relaxation(before: dict | None, after: dict, head: str | None) -> st
                 "provenance, not an invalidator")
     if reason in ("cancelled", "failed", "error", "prepare-failed") and \
             (before or {}).get("commit") not in (None, head):
+        also = (" (E1 too: the pass carries a result identity, and the policy "
+                "change since it ran is provenance)"
+                if after.get("identity") and after.get("policyChanged") else "")
         return ("E4 — the outcome cited before was at another commit; it is "
-                "history, and the newest relevant record at this commit passed")
+                "history, and the newest relevant record at this commit passed"
+                + also)
     return None
 
 
