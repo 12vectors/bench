@@ -1859,9 +1859,15 @@ reuses a record only when:
 
 A legacy record (no `resultId`) cannot show that equality, so it is
 never reused and costs one new run; it is not rewritten either. A record
-of another name is never this route — declared equivalence is a separate
-rule (card 104). A review verdict, a progress claim or a comment is not a
-record at all.
+of another name is reused only where the check declares it in
+`"accepts"` and the two are proven the same (see "Another name counts
+only when declared and proven the same"): then every dimension of its
+identity but the substance digest — which carries the declared root by
+name — must equal the new one, the definitions are compared dimension by
+dimension instead, the reuse record names it (`acceptedFrom`), and a run
+of the accepted check in flight is joined-or-run around exactly as one
+of the check's own. A review verdict, a progress claim or a comment is
+not a record at all.
 
 **The evidence is not copied.** The record keeps its own id, requester,
 checkout, log and provenance, byte for byte, and the gate goes on citing
@@ -2278,10 +2284,83 @@ today's failure, and if nothing current decides, the requirement reads
 remedy. A record with no identity — anything written before card 97 — is
 *legacy*, read with the freshness rules it was written under
 (`verify.outcome_now`), unchanged, `policy-changed` included. An identity
-that cannot be read is outdated, never current. The other seam card 94's
-design plugs in — an operator-declared equivalent check that must also
-match the check's substance — still answers "nothing", so no record of
-another name satisfies a requirement.
+that cannot be read is outdated, never current.
+
+### Another name counts only when declared and proven the same
+
+A record is filed under the name of the check that ran, and a requirement
+names a check. So by default a record of another name answers nothing —
+two checks running the same command line under two names are still two
+checks, and a matching argv, a matching label or matching output never
+makes them one. A project that keeps two names for one definition (say
+`unit` rooted at `source` for the work run, and `unit-review` rooted at
+`review` for the PR review) can say so, on the check the gate requires:
+
+```jsonc
+"checks": [
+  {"name": "unit", "run": "python3 -m unittest", "root": "source",
+   "accepts": ["unit-review"]},
+  {"name": "unit-review", "run": "python3 -m unittest", "root": "review"}
+]
+```
+
+**It is one-way, and it is not transitive.** `accepts` on `unit` lets a
+`unit-review` record answer a requirement for `unit`; it says nothing
+about what answers `unit-review`. A check may only accept checks that
+accept nothing themselves, so a chain or a cycle is refused where the
+document is read (`check-accepts-cyclic`), as are a value that is not a
+list of names, the check itself, a repeat (`check-accepts-invalid`) and a
+name the document does not declare (`check-accepts-undeclared`). A
+refused declaration refuses its check, so the gate reads shut, not open.
+`accepts` is not part of a check's revision, `checkId` or substance:
+declaring it stales nothing and migrates nothing, and a document that
+does not use it reads byte for byte as before.
+
+**The declaration is necessary and never sufficient.** A record of an
+accepted name counts only when all of these hold too:
+
+- the two definitions are the same in every substantive dimension —
+  the command, the root *class*, the time limit, the declared inputs, the
+  declared environment, the preparation, and for a scoped run the
+  scope's arguments. The root is compared by class: `source` and
+  `review` are both a checkout bench pins to one commit, and the
+  `worktree` is a separate class because it can hold ignored state a
+  pinned checkout does not. (A check's own substance keeps its declared
+  root by name, so moving one check from `source` to `review` still
+  stales its own passes; only the comparison *across* names reads the
+  class.)
+- the record ran in that class, as the runner found it: a pinned
+  checkout counts as fresh only when it held nothing beyond its commit,
+  so a `reused` one does not.
+- the record has a result identity — a legacy record cannot show any of
+  this — and that identity holds now under its own name: programs and
+  interpreters, preparation programs, input contents, declared
+  environment values and the runner, exactly as for any record.
+- and everything a record of the check's own name must satisfy: this
+  commit, a bound and clean source, coverage, not a refusal.
+
+A qualifying record is not a separate route. It goes through the same
+walk as the check's own records — relevance to this head, then the newest
+answer — so a newer failure, cancellation or run in flight of *either*
+name decides over an older pass of the other, and an equivalent run
+still preparing holds the requirement pending. Whether a check may be
+*asked for* is still the asking profile's answer at every request
+(§ "How a run asks"), and the declaration is read from the policy in
+force now, never from a frozen manifest: removing `accepts` stops a
+record counting at the next read.
+
+**What it says.** A requirement met this way says so — *bench ran
+'unit-review' … — a run of 'unit-review' (evidence …, run for rev-1),
+which 'unit' accepts as the same check* — and its row carries
+`acceptedFrom` (and the delivery reading `reusedFrom`): the record's own
+check name, evidence id, requester, intent, root and root class. The
+evidence is never copied or relabelled. A declared record that is not
+the same check leaves the requirement `not-run` and names the one
+dimension that stops it (`equivalence`, e.g. *'unit-review' runs a
+different preparation, so it is not the same check as 'unit'*). A browser
+check and a backend check run different commands, so no declaration
+makes one stand for the other; a review verdict, a progress claim, a
+comment or CI is never a record at all.
 
 ### Evidence is bound to the commit
 

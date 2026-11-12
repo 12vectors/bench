@@ -1415,10 +1415,15 @@ def check_substance(run: str, root: str, timeout: float, inputs: list,
     """What a check *is*, without what it is called: its argument list, the
     root it runs in, its time limit, and the inputs and environment
     variables it declares. Unlike its revision this excludes the name, so
-    two checks with the same substance are the same definition — which is
-    the only thing a declared equivalence may ever rely on (design §5).
-    Coverage and preparation are separate dimensions of a result, and are
-    not part of it."""
+    two checks with the same substance are the same definition.
+
+    The root is kept here *by name*, so moving one check between `source`
+    and `review` still stales its own passes. A declared equivalence
+    across names (card 104) does not compare this digest: it compares the
+    definitions dimension by dimension (`check_differences`), the root by
+    its class, so a `source` and a `review` check of one command can be
+    the same while a `worktree` one never is. Coverage and preparation are
+    separate dimensions of a result, and are not part of it."""
     return "subst:" + _digest(
         "check-substance/1", run, root, f"{timeout:.0f}",
         json.dumps([[i["name"], i["source"], i["required"]] for i in inputs]),

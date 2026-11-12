@@ -1781,7 +1781,9 @@ def _request_shell(check: str, task: str, scope: str | None, intent: str,
 # programs, preparation, declared inputs, root class, declared environment,
 # runner. A record with no `resultId` (legacy) cannot show that, so it is
 # never reused and costs one new run. A name match across checks is not
-# this route at all (that is declared equivalence, card 104).
+# this route at all; a record of another name is reused only where the
+# check declares it (`accepts`) and `equivalence` proves the definitions
+# the same — and then every other dimension of its identity must equal.
 #
 # And it is the *newest relevant* record that decides, as at the gate: a
 # failure, cancellation or error at this commit that is newer than a pass
