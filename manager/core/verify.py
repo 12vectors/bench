@@ -1218,7 +1218,19 @@ def _diagnose(record: dict) -> dict:
     lines = scrub(text).split("\n")
     if lines and lines[-1] == "":
         lines.pop()
-    if not lines or not any(line.strip() for line in lines):
+    if not read_clipped and lines[:1] == [f"bench verification {evidence_id}"]:
+        # bench's own header (what ran, where, against what) is in the
+        # reply's facts already; it ends at the first blank line, and none
+        # of its own lines is blank
+        lines = lines[lines.index(""):] if "" in lines else []
+        while lines and not lines[0].strip():
+            lines.pop(0)
+    # bench's own lines between the steps: the command line it ran and its
+    # notes. Kept for context, but they are not output from the check.
+    ours = {f"$ {record.get('command')}"} | {
+        f"$ {s.get('command')}" for s in record.get("prepare") or []}
+    if not any(line.strip() and line not in ours
+               and not line.startswith("bench: ") for line in lines):
         code = "running" if record.get("outcome") in LIVE else "empty"
         out["unavailable"] = {"code": code, "why": UNAVAILABLE[code]}
         return out
