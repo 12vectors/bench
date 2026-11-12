@@ -2069,10 +2069,11 @@ and the sentence grants nothing new. The **review run** may ask for what
 its profile grants (an equal current pass is reused), so a review can
 still come first. And a **person** has **Run required checks**.
 
-**Nothing else.** A merge rule requires checks; it does not schedule
-them. Moving a card, opening a card, the Overview, the dialog and the
-sheet below request nothing, and no setting turns a requirement into an
-automatic run.
+**Nothing else, by default.** A merge rule requires checks; it does not
+schedule them. Moving a card, opening a card, the Overview, the dialog
+and the sheet below request nothing. The one exception is an operator's
+explicit opt-in, `BOARD_VERIFY_ON_REVIEW`, which is off unless someone
+turns it on and is described under "Asking on entering Review" below.
 
 **Run required checks** is the primary action of a card reading
 `checks-needed`. It opens a sheet (`GET /api/verify/required`, which
@@ -2154,6 +2155,70 @@ summary (`requiredRuns`), and the card's action reads *Required checks:
 One record per card, the newest batch, machine-local under
 `state/evidence/required/<stem>.json` beside the evidence it points at.
 It names checks, states and evidence ids, never a path.
+
+### Asking on entering Review: an operator's opt-in
+
+`BOARD_VERIFY_ON_REVIEW=1` in `manager/local/.env` makes one more thing
+ask: **a card a person moves into `review/` through this board's own
+page** requests what one **Run required checks** click would request at
+that moment. It is off by default, it is read once when the board starts
+(so turning it on or off is an edit to that file and a restart, like its
+neighbours), and an update never changes it — `.env` is yours. Off, a
+move into review runs nothing at all.
+
+It is the click, not a second mechanism. The same plan, the same batch,
+the same person's **work** reading and `verify.request` — so it can run
+nothing a click could not, and every rule above holds: only `needed`
+requirements are requested, met ones are skipped, running ones joined,
+optional checks never run, a check the work reading may not ask for is
+named in the ticker with its configuration remedy and nothing is
+widened, a dirty checkout or a missing candidate requests nothing and
+says why, and the candidate is re-read between requests. The batch
+record says `trigger: review-entry`, and the ticker line says the
+setting asked.
+
+What it answers to, and what it does not:
+
+- **Only this board's person.** The move must be `you` — a move made
+  through the page (`taskfiles.move_task`). An agent's move after a
+  work run, a phase runner's, a hand `mv` on disk (*nobody in
+  particular*), and a move a sync pull brought from another board all
+  request nothing: a replica renders, the actor acts (see "State syncs;
+  reactions don't").
+- **Not a start or a restart.** The watcher's first signature is the
+  baseline, so a board starting up with cards already in `review/`
+  requests nothing.
+- **One commit, once.** A card's commit is asked for at most once on
+  entry — in memory, so two notifications or two racing moves start one
+  batch, and in `state/evidence/required/on-review/<stem>.json`, so a
+  board that restarted remembers. Moving the card out and back at the
+  same commit requests nothing again, including a check that failed, was
+  cancelled or was refused: that is a person's **Run required checks**
+  or ↻. A new commit is a new question. The record is written **before**
+  anything runs, so a board that stops mid-batch does not ask again after
+  its restart; it is given back only when nothing was requested — the
+  plan refused, or a batch for another commit of the card was still
+  running (that batch is not this commit's answer, and the ticker says
+  so). An interrupted entry therefore asks less, never twice, and **Run
+  required checks** is the way on. A record bench cannot write requests
+  nothing.
+- **Only the card's own rule.** An ordinary card asks for what the Card
+  merge rule requires, a phase member for the Phase member merge rule's,
+  a phase card for Phase acceptance's. The Settings fold names, for each
+  check, the rules that require it.
+- **Nothing follows from it.** No agent is launched, no review is
+  started, nothing is merged, nothing retries, and no gate reads it.
+  Stopping the batch, **‖ hold** and a restart behave exactly as they do
+  for a click.
+
+**Settings → Merge rules** shows it as a row — on or off, where the
+value came from (default, `manager/local/.env`, or the environment,
+locked), whether the file has moved since the board started — with a
+fold naming the checks it would run and their commands, the cost
+sentence the confirmation uses, and how to turn it on and off. It is
+listed under **Installation** with every other `.env` setting. Applying
+a policy change in Settings writes the policy document only, so it
+neither changes this setting nor any grant.
 
 ## Gates: nothing merges on a report
 

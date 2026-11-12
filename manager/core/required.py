@@ -373,7 +373,8 @@ def plan(filename: str, stage: str | None = None) -> dict:
 
 def start(filename: str, stage: str | None = None, *,
           head: str | None = None, actor: str = "you",
-          agent: str | None = None, wait: bool = False) -> dict:
+          agent: str | None = None, wait: bool = False,
+          trigger: str = "click") -> dict:
     """Begin a batch, on a person's click. Returns the batch record at once
     (the requests run on a thread of their own); `wait` runs them inline,
     for a caller that must see the ending (the tests).
@@ -415,6 +416,7 @@ def start(filename: str, stage: str | None = None, *,
         "scope": reading["scope"], "head": reading["head"],
         "ref": reading["ref"], "policyRevision": reading["policyRevision"],
         "intent": INTENT, "actor": actor, "requested": now,
+        "trigger": trigger if trigger in TRIGGERS else "click",
         "state": "running", "ended": None, "stop": None, "stopWhy": None,
         "cancel": False, "location": "local",
         "items": [{k: v for k, v in item.items() if k != "definition"}
@@ -432,7 +434,10 @@ def start(filename: str, stage: str | None = None, *,
     _store(batch)
     state.record_board_event({
         "kind": "verify", "actor": actor, "file": filename,
-        "summary": (f"run required checks on {filename} at "
+        "summary": (("" if batch["trigger"] == "click" else
+                     f"{filename} entered review with "
+                     f"BOARD_VERIFY_ON_REVIEW on: ")
+                    + f"run required checks on {filename} at "
                     f"{str(batch['head'])[:12]} — "
                     f"{_names(batch, ('queued',))}")})
     state.broadcast({"type": "verify"})
@@ -453,6 +458,275 @@ def join(timeout: float | None = None) -> None:
         threads = list(THREADS)
     for thread in threads:
         thread.join(timeout)
+
+
+# ── on entering review, where the operator opted in ────────────────────
+#
+# Design #94 §10.3: `BOARD_VERIFY_ON_REVIEW=1` makes a card entering
+# review/ ask for its missing required checks, on the board whose user
+# made the move, as that user's request. It is the batch above and
+# nothing else — the same plan, the same `start`, the same person's work
+# reading — so it can run nothing a click could not, and every refusal,
+# join, skip and stop is that click's. What it adds is the answer to
+# "whose move was this, and has this commit been asked for already?"
+
+# Why a batch was started: a person's click, or a person's move into
+# review/ on a board that opted in. Recorded on the batch and shown.
+TRIGGERS = ("click", "review-entry")
+
+ON_REVIEW_KEY = "BOARD_VERIFY_ON_REVIEW"
+
+# The one mover this answers to: a person moving the card through this
+# board's own page (`taskfiles.move_task`'s default actor). An agent's
+# move, a phase runner's, a hand `mv` on disk ("disk": nobody in
+# particular) and a move a pull brought from another board are not this
+# board's person consenting to run anything.
+ON_REVIEW_ACTORS = ("you",)
+
+# How many commits per card are remembered as already asked for on entry.
+ON_REVIEW_KEEP = 50
+
+ON_REVIEW_WORDS = {
+    "off": f"{ON_REVIEW_KEY} is off, so entering review requested nothing",
+    "not-local-person": (
+        "only a move a person makes through this board's own page asks for "
+        "checks on entering review — not an agent's, a phase's, a hand mv "
+        "or a move another board made and a pull brought here"),
+    "already": (
+        "this commit was already asked for once on entering review, so "
+        "nothing was requested again by itself. Run required checks on the "
+        "card is the way to ask again"),
+    "unrecorded": (
+        "bench could not record that this commit was asked for, and asks "
+        "only for what it can remember having asked, so nothing ran. Run "
+        "required checks on the card asks by hand"),
+    "other-batch": (
+        "a Run required checks batch for another commit of this card is "
+        "still running, so this commit was not asked for. Run required "
+        "checks on the card once it ends"),
+}
+
+_ON_REVIEW_LOCK = threading.Lock()
+# (card, commit) pairs this process has claimed, so two notifications of
+# one move — or two moves racing — start one batch. The file below is the
+# same fact for a board that restarted.
+_ON_REVIEW_CLAIMED: set[tuple[str, str]] = set()
+
+
+def _entered_path(filename: str) -> Path:
+    stem = filename[:-3] if filename.endswith(".md") else filename
+    return dir_for() / "on-review" / f"{stem}.json"
+
+
+def entered(filename: str) -> list[str]:
+    """The commits of this card already asked for on entering review."""
+    try:
+        found = json.loads(_entered_path(filename).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    heads = found.get("heads") if isinstance(found, dict) else None
+    return [h for h in heads or [] if isinstance(h, str)]
+
+
+def _write_entered(filename: str, heads: list[str]) -> None:
+    path = _entered_path(filename)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".entered-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"v": VERSION, "task": filename,
+                       "heads": heads[-ON_REVIEW_KEEP:]}, fh, indent=2)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def _mark_entered(filename: str, head: str) -> None:
+    _write_entered(filename,
+                   [h for h in entered(filename) if h != head] + [head])
+
+
+def _release(filename: str, head: str) -> None:
+    """Give a claim back — only when nothing was requested for `head`."""
+    with _ON_REVIEW_LOCK:
+        _ON_REVIEW_CLAIMED.discard((filename, head))
+        heads = entered(filename)
+        if head in heads:
+            try:
+                _write_entered(filename, [h for h in heads if h != head])
+            except OSError:
+                pass            # kept: an unreleased claim only asks less
+
+
+def _say(filename: str, why: str) -> None:
+    state.record_board_event({
+        "kind": "verify", "actor": "board", "file": filename,
+        "summary": (f"{filename} entered review with {ON_REVIEW_KEY} on — "
+                    f"{why}")})
+    state.broadcast({"type": "verify"})
+
+
+def on_review(filename: str, *, actor: str, remote: bool = False,
+              enabled: bool | None = None, wait: bool = False) -> dict:
+    """A card entered review/. If the operator opted in and the move was
+    this board's person's, request what **Run required checks** would.
+
+    Returns what happened, as a slug (`outcome`) and its words (`why`):
+    `off`, `not-local-person`, `refused` (with the plan's own `code` —
+    nothing needed, ungated, a dirty checkout…), `already`, `started` or
+    `joined`. Only `started` requested anything. A commit is asked for at
+    most once this way — in this process and, through a small machine-local
+    record, across a restart — so a check that failed, was cancelled or was
+    refused is never asked for again by a second entry: that is a person's
+    click. The record is written before the batch starts and given back
+    only when nothing was requested (`refused`, including `other-batch`
+    when a batch for another commit is running), so a board stopped mid-
+    batch does not ask again after its restart."""
+    on = config.VERIFY_ON_REVIEW if enabled is None else bool(enabled)
+    if not on:
+        return {"outcome": "off", "why": ON_REVIEW_WORDS["off"]}
+    if remote or actor not in ON_REVIEW_ACTORS:
+        return {"outcome": "not-local-person",
+                "why": ON_REVIEW_WORDS["not-local-person"]}
+    try:
+        reading = plan(filename, "review")
+    except Refused as exc:                  # moved on again, or gone
+        return {"outcome": "refused", "code": exc.code, "why": str(exc)}
+    head = reading.get("head")
+    if reading["refusal"]:
+        # An ungated board has nothing to ask for, and saying so on every
+        # move would be noise; every other refusal is setup a person can
+        # fix, so it is said, with its remedy.
+        if reading["refusal"] != "ungated":
+            _say(filename, f"nothing was requested: {reading['why']}")
+        return {"outcome": "refused", "code": reading["refusal"],
+                "why": reading["why"]}
+    key = (filename, head)
+    with _ON_REVIEW_LOCK:
+        if key in _ON_REVIEW_CLAIMED or head in entered(filename):
+            _say(filename, ON_REVIEW_WORDS["already"])
+            return {"outcome": "already", "why": ON_REVIEW_WORDS["already"]}
+        # The claim is durable before anything runs. `start` with `wait`
+        # (the watcher's path) returns only once every check has ended, so
+        # a claim written after it would leave a board that stopped
+        # mid-batch with no record of having asked, and its restart would
+        # ask again. A board that stops between this write and the batch
+        # reads `already` on the next entry instead: an interrupted claim
+        # asks less, never twice, and Run required checks is the way on.
+        try:
+            _mark_entered(filename, head)
+        except OSError as exc:
+            why = ON_REVIEW_WORDS["unrecorded"]
+            _say(filename, f"nothing was requested: {why} ({exc})")
+            return {"outcome": "refused", "code": "unrecorded", "why": why}
+        _ON_REVIEW_CLAIMED.add(key)
+    try:
+        batch = start(filename, "review", head=head, actor=actor, wait=wait,
+                      trigger="review-entry")
+    except Refused as exc:
+        _release(filename, head)            # nothing was requested
+        _say(filename, f"nothing was requested: {exc}")
+        return {"outcome": "refused", "code": exc.code, "why": str(exc)}
+    # Any other exception leaves the claim standing: whether anything
+    # started is not known, and the safe direction is to ask less.
+    if batch and batch.get("joinedBatch") and batch.get("head") != head:
+        # A batch for another commit of this card is in flight. It is not
+        # this commit's answer and nothing was requested for this one, so
+        # the claim is given back rather than recorded as asked.
+        _release(filename, head)
+        why = (f"{ON_REVIEW_WORDS['other-batch']} (it is running at "
+               f"{str(batch.get('head'))[:12]}; the card is at "
+               f"{str(head)[:12]})")
+        _say(filename, f"nothing was requested: {why}")
+        return {"outcome": "refused", "code": "other-batch", "why": why}
+    for item in reading["items"]:
+        if item["state"] == "unavailable":
+            _say(filename, f"'{_label(item)}' was not requested: "
+                           f"{item['remedy']}")
+    if batch and batch.get("joinedBatch"):
+        return {"outcome": "joined", "batch": batch,
+                "why": "a batch already running on this card was joined"}
+    return {"outcome": "started", "batch": batch, "why": None}
+
+
+def on_review_async(filename: str, *, actor: str, remote: bool = False) -> None:
+    """`on_review` off the watcher's thread: reading the plan asks git, and
+    the watcher narrates every other move meanwhile. Off, or not a local
+    person's move, it starts no thread at all."""
+    if not config.VERIFY_ON_REVIEW or remote or actor not in ON_REVIEW_ACTORS:
+        return
+
+    def go() -> None:
+        try:
+            on_review(filename, actor=actor, remote=remote, wait=True)
+        except Exception as exc:             # noqa: BLE001 — said, not raised
+            _say(filename, f"bench could not ask for its checks: {exc}")
+
+    thread = threading.Thread(target=go, daemon=True)
+    with _LOCK:
+        THREADS[:] = [t for t in THREADS if t.is_alive()]
+        THREADS.append(thread)
+    thread.start()
+
+
+def on_review_setting(policy: dict | None = None) -> dict:
+    """What Settings says about the option: whether this board is running
+    with it, what it would run, what it costs and how to turn it off. A
+    reading of `config` and the gate policy (`policy`, the public form, or
+    the one in force); it changes nothing."""
+    if policy is None:
+        policy = profiles.gate_policy_public(gates.gate_policy())
+    # Each check with the merge rules that require it: a card entering
+    # review asks only for its own rule's checks (`scope_of`), so a check
+    # only the phase rules name never runs for an ordinary card.
+    checks: list[dict] = []
+    for scope, entry in policy["scopes"].items():
+        for check in entry["checks"]:
+            found = next((c for c in checks if c["name"] == check["name"]),
+                         None)
+            if found is None:
+                found = {"name": check["name"], "run": check["run"],
+                         "root": check["root"], "scopes": []}
+                checks.append(found)
+            if scope not in found["scopes"]:
+                found["scopes"].append(scope)
+    on = bool(config.VERIFY_ON_REVIEW)
+    return {
+        "key": ON_REVIEW_KEY, "enabled": on, "default": False,
+        "checks": checks,
+        "what": (
+            "When on, a card you move into Review through this board asks "
+            "bench for the required checks it is still missing at its "
+            "commit — exactly what one Run required checks click asks for, "
+            "as your request, under a person's work reading. Off (the "
+            "default), entering Review runs nothing."),
+        "runs": (
+            "What runs: each check the card's own merge rule requires that "
+            "has no current answer at the card's commit — the Card merge "
+            "rule for an ordinary card, the Phase member merge rule for a "
+            "phase member, Phase acceptance for a phase card — with its "
+            "registered command and its preparation steps first, on this "
+            "machine. Met checks are skipped and running ones joined."
+            if checks else
+            "No merge rule requires a check on this board, so turning it on "
+            "would run nothing until one does."),
+        "cost": SIDE_EFFECTS,
+        "never": (
+            "It never asks for a check a person's work reading may not ask "
+            "for (that is named with its remedy), never asks again for a "
+            "check that failed, was cancelled or was refused, asks for one "
+            "commit at most once, and launches no agent, opens no review "
+            "and merges nothing. Moves an agent, a phase or a hand mv made, "
+            "moves a pull brought from another board, and a board starting "
+            "up request nothing."),
+        "enable": (f"Set {ON_REVIEW_KEY}=1 in manager/local/.env and "
+                   f"restart the board."),
+        "disable": (f"Set {ON_REVIEW_KEY}=0 (or remove the line) in "
+                    f"manager/local/.env and restart the board. Run "
+                    f"required checks on a card stays available either "
+                    f"way."),
+    }
 
 
 def _names(batch: dict, states: tuple[str, ...]) -> str:
@@ -677,7 +951,7 @@ def public(batch: dict | None) -> dict | None:
         return None
     out = {k: batch.get(k) for k in (
         "v", "id", "task", "stage", "scope", "head", "ref", "intent", "actor",
-        "requested", "state", "ended", "stop", "stopWhy", "location",
+        "trigger", "requested", "state", "ended", "stop", "stopWhy", "location",
         "joinedBatch") if k in batch}
     items = []
     for item in batch.get("items") or []:

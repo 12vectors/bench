@@ -822,7 +822,8 @@ class ReadingRunsNothing(BatchCase):
         time.sleep(0.3)
         self.assertEqual(self.runs("unit"), 0)
         self.assertIsNone(required.latest(CARD))
-        self.assertNotIn("VERIFY_ON_REVIEW", dir(config))
+        # the opt-in (task 105) exists and is off unless an operator set it
+        self.assertFalse(config.VERIFY_ON_REVIEW)
 
     def test_the_plan_states_its_side_effects(self):
         plan = required.plan(CARD, "in-progress")

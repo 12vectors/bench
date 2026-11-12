@@ -18,6 +18,7 @@ import time
 import agents
 import config
 import github
+import required
 import state
 import sync
 
@@ -72,6 +73,10 @@ def narrate(prev: dict[str, set[str]], cur: dict[str, set[str]]) -> None:
                 # the actor's board only, or the team gets one PR attempt
                 # per replica
                 github.open_pr_async(f)
+                # and, where the operator opted in, its missing required
+                # checks — on a person's move only, never a replica's, an
+                # agent's or a startup's (required.on_review)
+                required.on_review_async(f, actor=actor, remote=remote)
         elif f not in prev_loc:
             actor, remote, quiet = _actor(f, stage)
             if quiet:
