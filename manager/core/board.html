@@ -7304,7 +7304,7 @@ function onReviewLine(o, states) {
   if (!o) return '';
   const p = o.provenance || {};
   const source = p.source === 'environment' ? 'set in the environment (locked)'
-    : p.source === 'local-file' ? 'set in manager/local/.env' : 'default';
+    : p.source === 'local-file' ? 'set in the local settings file' : 'default';
   const moved = p.movedSinceStart
     ? ` · manager/local/.env now says ${p.value}; in force after a restart` : '';
   return sline({ label: 'Run required checks on entering Review',
