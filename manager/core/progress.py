@@ -426,6 +426,36 @@ def _reject(record: dict | None, code: str, status: int, why: str) -> Refused:
     return Refused(status, code, why)
 
 
+def authenticate(agent_id: str, token) -> None:
+    """Whether a request naming this run carries this run's own token —
+    the capability `open_run` handed it, reused by the other run-scoped
+    reads (a check's diagnostics) so that knowing a run's id is not
+    enough to speak as it.
+
+    A run this board issued a token to must present it; a refusal is
+    counted on its channel health like a refused report. A run launched
+    without a channel was given no token to present, and is identified
+    by its frozen manifest alone, exactly as `bench-verify` always has."""
+    with _LOCK:
+        record = RUNS.get(agent_id or "")
+    if record is None or not record.get("tokenHash"):
+        return
+    if not isinstance(token, str) or not hmac.compare_digest(
+            _hash(token), record["tokenHash"]):
+        raise _reject(record, "identity", 403,
+                      "the request's token does not belong to this run — a "
+                      "run may only read its own diagnostics")
+
+
+def refused(agent_id: str, code: str, status: int, why: str) -> Refused:
+    """A run-scoped request the board would not answer, counted on that
+    run's channel health when the board knows the run — so a spoof or a
+    broken shim is visible rather than silent. Returns the exception."""
+    with _LOCK:
+        record = RUNS.get(agent_id or "")
+    return _reject(record, code, status, why)
+
+
 def _notify_health(agent_id: str) -> None:
     """Tell the page a run's channel health changed — at most once per
     REJECT_NOTIFY_GAP, with one trailing notice so the last refusal of a
