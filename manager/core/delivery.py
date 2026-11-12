@@ -359,7 +359,12 @@ def _requirement(row: dict, at: str | None) -> dict:
             "plain": gates.plain(reason, at),
             "why": row.get("why"), "remedy": row.get("remedy"),
             "action": action_key, "evidence": row.get("evidence"),
-            "reusedFrom": None,
+            # a record of a declared equivalent (card 104): its own check
+            # name, evidence id, requester and checkout, never relabelled
+            "reusedFrom": dict(row["acceptedFrom"])
+            if row.get("acceptedFrom") else None,
+            "equivalence": dict(row["equivalence"])
+            if row.get("equivalence") else None,
             "otherCommits": row.get("otherCommits", 0)}
 
 

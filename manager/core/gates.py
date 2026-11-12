@@ -811,24 +811,22 @@ def gate_policy() -> dict:
 
 # ── which records a requirement may read ───────────────────────────────
 #
-# Two seams the #94 cards fill. Result identities (#97) are here: a record
-# written since carries one, and is partitioned by whether its definition
-# still holds. Declared equivalents (#104) still answer "nothing".
+# Two seams the #94 cards fill. Result identities (#97): a record written
+# since carries one, and is partitioned by whether its definition still
+# holds. Declared equivalents (#104): a record of another name answers
+# only when the check declares it in `accepts` *and* the two definitions
+# agree in every dimension *and* the record ran in this check's root
+# class (`verify.equivalence`) — then it goes through exactly the same
+# head, coverage, denial, partition and precedence filters as a record of
+# the check's own name. There is no second route.
 
 
-def _accepted_equivalents(check: dict) -> tuple[str, ...]:
-    """Other check names whose records may answer this requirement, as the
-    operator declared them on the check. None until declared equivalence
-    lands (#104) — and a declaration alone is never enough: the record
-    must also carry this check's substance (`_same_substance`)."""
-    return ()
-
-
-def _same_substance(record: dict, check: dict) -> bool:
-    """Whether a record of another check ran this check's definition.
-    Fails closed: a side that names no substance is not the same."""
-    mine, theirs = check.get("checkSubstance"), record.get("checkSubstance")
-    return bool(mine) and bool(theirs) and mine == theirs
+def _accepted_equivalents(check: dict) -> dict:
+    """Other checks whose records may answer this requirement, by name,
+    with their definitions as the policy declares them now — the
+    operator's `accepts` on the check. A declaration alone is never
+    enough (`verify.equivalence`)."""
+    return dict(check.get("acceptedChecks") or {})
 
 
 def _partition(record: dict, drift: dict | None) -> str:
@@ -906,14 +904,23 @@ def _check_requirement(filename: str, check: dict, head: dict,
     unrelated policy edit moves none of the dimensions, so it stales
     nothing that carries one (design R1).
 
-    Declared equivalents (#104) are `_accepted_equivalents`, which still
-    accepts no record of another name.
+    **Declared equivalents** (#104, design §5). A record filed under a name
+    the check `accepts` is weighed only when `verify.equivalence` finds the
+    two definitions the same in every dimension and the record ran in this
+    check's root class; it is then one more record in the walk above —
+    the same head filter, the same coverage, the same denial rule, the
+    same partition and the same newest-first precedence, so a newer
+    failure of either name beats an older pass of the other. One that is
+    declared and is not the same check answers nothing, and the row says
+    which dimension stops it (`equivalents`). A record that answers keeps
+    its own name, evidence id, requester and checkout (`acceptedFrom`).
     """
     name = check["name"]
     want = check.get("gateScope")
     label = check.get("requirement") or name
     at = head.get("commit")
     accepts = _accepted_equivalents(check)
+    considered: list[dict] = []
 
     def covers(scope) -> bool:
         return scope is None or scope == want
@@ -923,11 +930,24 @@ def _check_requirement(filename: str, check: dict, head: dict,
 
     def answers(record: dict) -> bool:
         # The same filters for a direct record and a declared equivalent:
-        # the name (or the declaration *and* the substance), then coverage.
-        return ((record.get("check") == name
-                 or (record.get("check") in accepts
-                     and _same_substance(record, check)))
-                and overlaps(record.get("scope") or None))
+        # the name — or the declaration *and* the same definition in every
+        # dimension — then coverage. Nothing else is a route in.
+        other = record.get("check")
+        if not overlaps(record.get("scope") or None):
+            return False
+        if other == name:
+            return True
+        if other not in accepts or record.get("outcome") == "denied":
+            return False
+        found = verify.equivalence(record, check, accepts)
+        considered.append({
+            "evidence": record.get("id"), "check": other,
+            "commit": (record.get("source") or {}).get("commit"),
+            "scope": record.get("scope"),
+            "outcome": record.get("outcome"),
+            "equivalent": found["equivalent"],
+            "dimension": found["dimension"], "why": found["why"]})
+        return found["equivalent"]
 
     mine = sorted(
         (r for r in records if answers(r)),
@@ -973,9 +993,21 @@ def _check_requirement(filename: str, check: dict, head: dict,
             "started": record.get("started"),
             "agent": record.get("agent"),
             "actor": record.get("actor"),
+            "intent": record.get("intent"),
             "freshness": reading["freshness"],
             "partition": "legacy",
         }
+        if record.get("check") != name:
+            # Answered by a declared equivalent: the evidence is not copied
+            # or re-labelled as this check. Its own name, id, requester and
+            # checkout are kept, and said wherever it is cited.
+            found["acceptedFrom"] = {
+                "check": record.get("check"), "evidence": record.get("id"),
+                "agent": record.get("agent"), "actor": record.get("actor"),
+                "intent": record.get("intent"),
+                "rootPolicy": (record.get("root") or {}).get("policy"),
+                "rootClass": (record.get("identity") or {}).get("rootClass"),
+                "requestId": record.get("requestId")}
         seen.append(found)
         if found["outcome"] == "denied":
             denied.append(found)
@@ -996,8 +1028,29 @@ def _check_requirement(filename: str, check: dict, head: dict,
         else:
             elsewhere.append(found)
     row.update(history=seen[:8], otherCommits=len(elsewhere))
+    if accepts:
+        # Every record of a declared equivalent this requirement weighed,
+        # with whether it is the same check and, if not, which dimension
+        # says so — about this head first, then history.
+        row["accepts"] = sorted(accepts)
+        row["equivalents"] = sorted(
+            considered, key=lambda c: c["commit"] != at)[:8]
     deciding = [f for f in relevant if f["partition"] != "outdated"]
     outdated = [f for f in relevant if f["partition"] == "outdated"]
+
+    def via(found: dict) -> str:
+        # Said wherever a record of another name is the one cited.
+        other = found.get("acceptedFrom")
+        if not other:
+            return ""
+        who = other.get("agent") or other.get("actor") or "an earlier request"
+        return (f" — a run of '{other['check']}' (evidence "
+                f"{other['evidence']}, run for {who}), which '{name}' accepts "
+                f"as the same check")
+
+    def cited(found: dict) -> dict:
+        return ({"acceptedFrom": dict(found["acceptedFrom"])}
+                if found.get("acceptedFrom") else {})
 
     # 3. Precedence, among the relevant records only. A rerun in flight is
     # newer than anything on record, so even an earlier pass at this head
@@ -1007,9 +1060,9 @@ def _check_requirement(filename: str, check: dict, head: dict,
         return {**row, "state": "pending", "reason": running["outcome"],
                 "why": (f"'{label}' is {running['outcome']} "
                         f"({_coverage(running['scope'])}) — the answer is "
-                        f"not in yet"),
+                        f"not in yet{via(running)}"),
                 "remedy": None, "evidence": running["evidence"],
-                "commit": running["commit"]}
+                "commit": running["commit"], **cited(running)}
 
     # Walk newest first and stop at the first record that is an answer
     # about this commit and this coverage.
@@ -1037,14 +1090,15 @@ def _check_requirement(filename: str, check: dict, head: dict,
         blocker = found
         break
     if met is not None:
-        ran = (f"the full '{name}' run, which covers scope {want},"
+        ran_as = (met.get("acceptedFrom") or {}).get("check") or name
+        ran = (f"the full '{ran_as}' run, which covers scope {want},"
                if want and met["scope"] is None
-               else f"'{name}' ({_coverage(met['scope'])})")
+               else f"'{ran_as}' ({_coverage(met['scope'])})")
         return {**row, "state": "met", "reason": "passed",
                 "why": (f"bench ran {ran} against "
-                        f"{_short(met['commit'])} and it passed"),
+                        f"{_short(met['commit'])} and it passed{via(met)}"),
                 "evidence": met["evidence"], "commit": met["commit"],
-                "remedy": None}
+                "remedy": None, **cited(met)}
     here = _short(at)
     if stale is not None:
         # The newest answer at this head is a pass whose binding has gone.
@@ -1053,11 +1107,12 @@ def _check_requirement(filename: str, check: dict, head: dict,
         return {**row, "state": "unmet", "reason": "stale",
                 "staleReason": stale["reason"],
                 "why": (f"'{label}' passed on {here}, and it no longer holds: "
-                        f"{stale['why'] or REASONS['stale']}"),
+                        f"{stale['why'] or REASONS['stale']}{via(stale)}"),
                 "remedy": verify.STALE_REMEDIES.get(stale["reason"],
                                                     REMEDIES["stale"])
                 if stale["partition"] != "legacy" else REMEDIES["stale"],
-                "evidence": stale["evidence"], "commit": stale["commit"]}
+                "evidence": stale["evidence"], "commit": stale["commit"],
+                **cited(stale)}
     if blocker is not None:
         # The newest relevant answer is not a pass. Whether an earlier pass
         # at this head exists is said, because "it passed once" is exactly
@@ -1076,13 +1131,15 @@ def _check_requirement(filename: str, check: dict, head: dict,
                 else "has no result — the board restarted while it ran"
                 if reason == "restarted" else "did not pass")
         why = (f"'{label}' {what} on {here} — the newest run there "
-               f"({_coverage(blocker['scope'])}): {blocker['why'] or said}")
+               f"({_coverage(blocker['scope'])}){via(blocker)}: "
+               f"{blocker['why'] or said}")
         if older is not None:
             why += (". It is newer than the pass on the same commit, and the "
                     "newest relevant answer is the one a gate reads")
         return {**row, "state": "unmet", "reason": reason, "why": why,
                 "remedy": REMEDIES.get(reason, REMEDIES["failed"]),
-                "evidence": blocker["evidence"], "commit": blocker["commit"]}
+                "evidence": blocker["evidence"], "commit": blocker["commit"],
+                **cited(blocker)}
     # Nothing at this head decided. Which of the several ways that can be
     # true matters, because they are different things to go and do — so
     # the reason is the most specific one, and it is about this head.
@@ -1098,9 +1155,10 @@ def _check_requirement(filename: str, check: dict, head: dict,
             why = (f"'{label}' passed with {dirty} uncommitted "
                    f"file{'' if dirty == 1 else 's'} in the checkout, so it "
                    f"was not about the commit that would merge")
-        return {**row, "state": "unmet", "reason": reason, "why": why,
+        return {**row, "state": "unmet", "reason": reason,
+                "why": why + via(aside),
                 "remedy": REMEDIES[reason], "evidence": aside["evidence"],
-                "commit": aside["commit"]}
+                "commit": aside["commit"], **cited(aside)}
     if outdated:
         # A result identity (#97) that is not the one the check would have
         # here now: the specific dimension that moved is the reason.
@@ -1110,15 +1168,34 @@ def _check_requirement(filename: str, check: dict, head: dict,
                 "staleReason": moved,
                 "why": (f"'{label}' ran on {here} under a definition that has "
                         f"changed since: "
-                        f"{newest.get('driftWhy') or newest['why'] or REASONS['stale']}"),
+                        f"{newest.get('driftWhy') or newest['why'] or REASONS['stale']}"
+                        f"{via(newest)}"),
                 "remedy": verify.STALE_REMEDIES.get(moved, REMEDIES["stale"]),
-                "evidence": newest["evidence"], "commit": newest["commit"]}
+                "evidence": newest["evidence"], "commit": newest["commit"],
+                **cited(newest)}
     ran = sorted(set(narrow))
     if ran:
         why = (f"'{label}' has not run on {here} ({_coverage(want)}). Only "
                f"narrower scopes ran ({', '.join(ran)}), and a narrow pass "
                f"does not cover the {_coverage(want)}")
         return {**row, "state": "unmet", "reason": "not-run", "why": why,
+                "remedy": REMEDIES["not-run"], "evidence": None,
+                "commit": None}
+    refused = next((c for c in considered
+                    if not c["equivalent"] and c["commit"] == at
+                    and c["outcome"] not in verify.LIVE), None)
+    if refused is not None:
+        # A declared equivalent ran here and is not the same check. Said,
+        # with the one dimension that stops it, so "it ran, why does it
+        # not count?" has an answer that is not a guess.
+        return {**row, "state": "unmet", "reason": "not-run",
+                "why": (f"'{label}' has not run on {here} ({_coverage(want)}). "
+                        f"'{refused['check']}' ran there "
+                        f"({refused['outcome']}, evidence "
+                        f"{refused['evidence']}) and does not count: "
+                        f"{refused['why']}"),
+                "equivalence": {k: refused[k] for k in (
+                    "check", "evidence", "dimension", "why")},
                 "remedy": REMEDIES["not-run"], "evidence": None,
                 "commit": None}
     if elsewhere:

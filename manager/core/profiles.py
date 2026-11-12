@@ -442,6 +442,22 @@ DIAGNOSTICS = {
         "the same name, or drop it from the check's \"inputs\". A check's "
         "result is bound to the inputs it declares, so an input bench cannot "
         "read is refused rather than bound to nothing."),
+    "check-accepts-invalid": (
+        "a check's \"accepts\" is not a list of other check names",
+        "Write \"accepts\": [\"<check>\", …] — the names of other checks "
+        "this document declares, each once and never the check itself. An "
+        "equivalence bench cannot read is refused rather than guessed at."),
+    "check-accepts-undeclared": (
+        "a check accepts a check the document does not declare",
+        "Name a check declared in the document's top-level \"checks\" list, "
+        "or drop it from \"accepts\". Evidence is only ever compared with a "
+        "definition bench can read now."),
+    "check-accepts-cyclic": (
+        "a check accepts a check that itself accepts others",
+        "Declare equivalence in one direction only, on the check a gate "
+        "requires, and only of checks that accept nothing themselves. "
+        "Equivalence is not transitive here, so a chain or a cycle would be "
+        "an answer bench has to guess, and it is refused instead."),
     "check-env-invalid": (
         "a check declares an environment variable bench cannot bind",
         "Name variables the check actually receives: one environment "
@@ -1584,6 +1600,7 @@ def document_checks(doc: dict, steps: dict) -> tuple[dict, list[tuple[str, str]]
         return checks, trouble
     raw = doc.get("checks")
     selections = context_selections(doc)
+    raw_accepts: dict = {}
     for entry in raw if isinstance(raw, list) else []:
         if not isinstance(entry, dict):
             trouble.append(("check-invalid",
@@ -1604,7 +1621,160 @@ def document_checks(doc: dict, steps: dict) -> tuple[dict, list[tuple[str, str]]
                               source=doc["identity"] or "the document",
                               scale=config.VERIFY_TIMEOUT,
                               selections=selections)
+        raw_accepts[name] = entry.get("accepts")
+    # Declared equivalence (#104), read once every check is known, because
+    # what it names is other checks. A check whose declaration does not
+    # hold is refused whole, as any other malformed check is.
+    refused: list[str] = []
+    for name, check in checks.items():
+        accepts, problem = _accepts(name, raw_accepts.get(name), checks,
+                                    raw_accepts)
+        if problem:
+            trouble.append(problem)
+            refused.append(name)
+            continue
+        check["accepts"] = accepts
+    for name in refused:
+        checks.pop(name, None)
     return checks, trouble
+
+
+def _accepts(name: str, raw, checks: dict,
+             raw_accepts: dict) -> tuple[list[str], tuple[str, str] | None]:
+    """One check's `accepts`, validated — or why it is refused.
+
+    **Directionality.** `"accepts": ["review-unit"]` on `unit` says that a
+    record of `review-unit` may answer a requirement for `unit`. It says
+    nothing the other way round, and nothing about what `review-unit`
+    accepts. So a declaration names checks that accept nothing themselves:
+    a chain (A accepts B, B accepts C) or a cycle (A and B accepting each
+    other) is refused, because either would leave bench to decide whether
+    equivalence carries over, and it does not guess.
+
+    A declaration is never enough on its own. It is a precondition the
+    gate and the reuse rule check *before* comparing the two definitions
+    dimension by dimension (`check_differences`) and the record's own
+    result identity — a name that is declared but whose substance differs
+    still answers nothing."""
+    if raw is None:
+        return [], None
+    if not isinstance(raw, list):
+        return [], ("check-accepts-invalid",
+                    f"the check '{name}' declares \"accepts\" that is not a "
+                    f"list of check names")
+    found: list[str] = []
+    for entry in raw:
+        word = entry.strip() if isinstance(entry, str) else None
+        if not word or not NAME_RE.match(word):
+            return [], ("check-accepts-invalid",
+                        f"the check '{name}' accepts {entry!r}, which is not "
+                        f"a check name — names match [a-z0-9][a-z0-9._-]*")
+        if word == name:
+            return [], ("check-accepts-invalid",
+                        f"the check '{name}' accepts itself — a check's own "
+                        f"records already answer it, and \"accepts\" names "
+                        f"other checks")
+        if word in found:
+            return [], ("check-accepts-invalid",
+                        f"the check '{name}' accepts '{word}' twice")
+        if word not in checks:
+            return [], ("check-accepts-undeclared",
+                        f"the check '{name}' accepts '{word}', which this "
+                        f"document does not declare as a check it can read — "
+                        f"evidence is only compared with a definition bench "
+                        f"can read now")
+        if raw_accepts.get(word):
+            return [], ("check-accepts-cyclic",
+                        f"the check '{name}' accepts '{word}', which itself "
+                        f"declares \"accepts\" — equivalence is declared one "
+                        f"way, on the check a gate requires, and is not "
+                        f"transitive, so a chain or a cycle is refused rather "
+                        f"than resolved by guessing")
+        found.append(word)
+    return found, None
+
+
+# The dimensions of a check's *definition* two different names are
+# compared by, in the order a reader is told about them. Programs,
+# interpreters, input contents, environment values, the runner and the
+# source are the record's own result identity, compared separately.
+EQUIVALENCE_DIMENSIONS = ("command", "root", "timeout", "inputs", "env",
+                          "prepare", "scope")
+
+
+def root_class_of(root: str) -> str:
+    """What a check's declared root *is*, for comparing two checks: the
+    card's working checkout, or a checkout bench pins to one commit.
+    `source` and `review` are both pinned — a detached checkout of exactly
+    the commit, made by bench — and differ only in which commit selects
+    it, which the record's source binds. The worktree is a separate class:
+    it can hold ignored state a pinned checkout does not."""
+    return "worktree" if root == "worktree" else "pinned"
+
+
+def _prepare_shape(check: dict) -> list:
+    return [[s.get("executable"), list(s.get("argv") or []),
+             bool(s.get("network")), bool(s.get("required", True))]
+            for s in check.get("prepare") or []]
+
+
+def check_differences(mine: dict, theirs: dict,
+                      scope: str | None = None) -> list[tuple[str, str]]:
+    """Every way the check `theirs` is not the check `mine`, as
+    `(dimension, sentence)` — empty only when the two definitions agree in
+    every substantive dimension (`EQUIVALENCE_DIMENSIONS`).
+
+    Names are not compared: they are what makes the two checks two. The
+    declared root is compared by its class (`root_class_of`), so a
+    `source` check and a `review` check of the same command can be the
+    same definition while a `worktree` one never is. `scope` is the
+    coverage a record of `theirs` ran; its arguments must be the ones
+    `mine` declares under that scope name."""
+    a, b = mine.get("name"), theirs.get("name")
+    out: list[tuple[str, str]] = []
+    if mine.get("run") != theirs.get("run"):
+        out.append(("command",
+                    f"'{b}' runs a different command from '{a}', so it is "
+                    f"not the same check"))
+    if root_class_of(str(mine.get("root"))) != root_class_of(str(theirs.get("root"))):
+        out.append(("root",
+                    f"'{b}' runs in the {theirs.get('root')} checkout and "
+                    f"'{a}' in the {mine.get('root')} checkout — a working "
+                    f"checkout can hold files a pinned checkout does not, so "
+                    f"they are not the same check"))
+    if f"{float(mine.get('timeout') or 0):.0f}" != \
+            f"{float(theirs.get('timeout') or 0):.0f}":
+        out.append(("timeout",
+                    f"'{b}' has a different time limit from '{a}', so it is "
+                    f"not the same check"))
+    if [[i.get("name"), i.get("source"), i.get("required")]
+            for i in mine.get("inputs") or []] != \
+            [[i.get("name"), i.get("source"), i.get("required")]
+             for i in theirs.get("inputs") or []]:
+        out.append(("inputs",
+                    f"'{b}' declares different inputs from '{a}', so it is "
+                    f"not the same check"))
+    if list(mine.get("env") or []) != list(theirs.get("env") or []):
+        out.append(("env",
+                    f"'{b}' binds a different environment from '{a}', so it "
+                    f"is not the same check"))
+    if _prepare_shape(mine) != _prepare_shape(theirs):
+        out.append(("prepare",
+                    f"'{b}' runs a different preparation, so it is not the "
+                    f"same check as '{a}'"))
+    if scope:
+        want = (mine.get("scopes") or {}).get(scope)
+        have = (theirs.get("scopes") or {}).get(scope)
+        if want is None or have is None or list(want) != list(have):
+            out.append(("scope",
+                        f"'{b}' ran scope '{scope}', and '{a}' declares no "
+                        f"scope of that name with the same arguments, so the "
+                        f"coverage is not the same"
+                        if want is None or have is None else
+                        f"scope '{scope}' of '{b}' runs different arguments "
+                        f"from scope '{scope}' of '{a}', so the coverage is "
+                        f"not the same"))
+    return out
 
 
 # ── approved context ───────────────────────────────────────────────────
@@ -3207,6 +3377,12 @@ def gate_policy(doc: dict | None = None) -> dict:
                     continue
                 checks.append({
                     **found, "gateScope": wanted_scope,
+                    # the definitions its declared equivalents have *now*,
+                    # read from the same document in the same pass, so a
+                    # gate compares two checks as the policy declares them
+                    "acceptedChecks": {other: known[other]
+                                       for other in found.get("accepts") or []
+                                       if other in known},
                     "requirement": (f"{name}:{wanted_scope}"
                                     if wanted_scope else name)})
             raw_review = entry.get("review")
@@ -3292,9 +3468,16 @@ def gate_policy(doc: dict | None = None) -> dict:
         # The new fields join the digest only when they say something, so
         # a document that does not use them keeps its revision byte for
         # byte — nothing the operator did not write may stale a record.
-        json.dumps({s: {"checks": [[c["revision"], c["gateScope"]]
-                                   if c["gateScope"] else c["revision"]
-                                   for c in v["checks"]],
+        json.dumps({s: {"checks": [
+                            ([c["revision"], c["gateScope"]]
+                             if c["gateScope"] else c["revision"])
+                            if not c.get("accepts") else
+                            # what else may answer the requirement is part
+                            # of the rule, but only where it was declared
+                            [c["revision"], c["gateScope"],
+                             sorted((n, d.get("revision"))
+                                    for n, d in c["acceptedChecks"].items())]
+                            for c in v["checks"]],
                         "review": v["review"],
                         **({"signoff": v["signoff"]}
                            if v["signoff"] != "none" else {})}
