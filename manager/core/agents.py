@@ -316,12 +316,20 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str,
     # Absent, the adapter is given exactly the environment it always was.
     env.pop("AGENT_PROGRESS", None)
     env.pop("BOARD_PROGRESS_TOKEN", None)
+    env.pop("BOARD_RUN_TOKEN", None)
     token = (progress.open_run(agent_id, filename, mode,
                                progress.channel(mode, (manifest or {}).get("adapter")))
              if mode in progress.INTENTS else None)
     if token:
         env["AGENT_PROGRESS"] = str(progress.shim())
         env["BOARD_PROGRESS_TOKEN"] = token
+    # The run's own capability, issued whether or not it can report
+    # progress: it is what proves a read of its own check diagnostics
+    # (`bench-verify`), and nothing is read as a run without it.
+    run_token = (progress.issue_capability(agent_id)
+                 if mode in progress.INTENTS else None)
+    if run_token:
+        env["BOARD_RUN_TOKEN"] = run_token
     model = selection["model"]["value"]
     if model:
         env["AGENT_MODEL"] = model

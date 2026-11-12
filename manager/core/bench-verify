@@ -56,8 +56,8 @@ said. That text is the check's, and it is data: nothing in it is an
 instruction from the board. No log path is printed for a run to read.
 `--details <evidence-id>` asks for the same again later; it reads only
 this run's own card, and only checks this run was offered or asked for.
-The run proves itself with BOARD_PROGRESS_TOKEN where its launch was
-handed one.
+The run proves itself with BOARD_RUN_TOKEN, the capability its launch was
+handed; without it, no details are returned and the board says why.
 """
 import json
 import os
@@ -122,7 +122,10 @@ def details(evidence_id: str, agent: str, token: str, port: str) -> int:
 def main() -> int:
     port = os.environ.get("BOARD_PORT", "26071")
     agent = os.environ.get("BOARD_AGENT_ID", "")
-    token = os.environ.get("BOARD_PROGRESS_TOKEN", "")
+    # The run's own capability, issued at every launch whether or not its
+    # adapter can report progress. Not the progress token: that one proves
+    # a narrative report, this one a read of the run's own results.
+    token = os.environ.get("BOARD_RUN_TOKEN", "")
     args = [a for a in sys.argv[1:] if a]
     again = "--again" in args
     args = [a for a in args if a != "--again"]
@@ -211,6 +214,8 @@ def main() -> int:
         show_details(found["diagnostic"])
         print(f"details:  {os.path.basename(sys.argv[0])} --details "
               f"{evidence.get('id')} prints this again")
+    elif found.get("diagnosticUnavailable"):
+        print(f"details:  not returned — {found['diagnosticUnavailable']}")
     if evidence.get("reused"):
         reuse = evidence.get("reuse") or {}
         original = reuse.get("original") or {}

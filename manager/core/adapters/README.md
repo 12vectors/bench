@@ -146,9 +146,12 @@ prints a bounded, scrubbed tail of the check's output after the verdict,
 and `bench-verify --details <evidence-id>` prints it again later — both
 answered by the board over the loopback, so an adapter grants **no read
 of the evidence directory** for them and must not add one. The shim
-proves the run with `BOARD_PROGRESS_TOKEN` where the launch was handed
-one, so an adapter that passes the environment through unchanged needs
-nothing new.
+proves the run with `BOARD_RUN_TOKEN`, a capability bench hands every
+`work`, `act-pr` and `review` launch whether or not the adapter declares
+`progress-report`, so an adapter that passes the environment through
+unchanged needs nothing new. One that scrubs it must keep
+`BOARD_RUN_TOKEN`: without it the board returns no details, and says so,
+rather than taking a run id on trust.
 
 `AGENT_CONTEXT` is the read-only inputs bench pinned for the run — `[{"name",
 "path", "source", "sha256", "access": "read-only"}]`, paths and hashes

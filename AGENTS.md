@@ -1774,10 +1774,17 @@ details:  bench-verify --details ev:verification@… prints this again
 as asking for a check, so no new permission exists and no adapter grants
 any read of `state/evidence/`. No log path is printed.
 
-**What it may read.** The run is proved by the token its launch was
-handed (`BOARD_PROGRESS_TOKEN`; a run launched without a progress channel
-was handed none and is identified by its frozen manifest alone, as
-`bench-verify` always was). Its **card comes from that manifest**, never
+**What it may read.** The run is proved by its own capability,
+`BOARD_RUN_TOKEN`, which bench hands every `work`, `act-pr` and `review`
+launch whether or not its adapter can report progress, and keeps only a
+hash of, beside the run's progress record (so it survives a board
+restart). It is not the progress token, and that token does not stand in
+for it. Nothing is read without it: a run id the board issued nothing
+to, a run launched before capabilities existed, and a missing or wrong
+token are each refused — a run id and a recorded manifest say what a run
+would be allowed, not that the caller is that run. A failed check's
+immediate reply then carries no details and says why (`details: not
+returned — …`). Its **card comes from that manifest**, never
 from the request: another card's evidence, a diagnosis's, and a check the
 run was neither offered nor asked for are each refused by name, and the
 refusal is counted on the run's channel health like a refused progress

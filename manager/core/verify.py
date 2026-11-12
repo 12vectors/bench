@@ -1048,8 +1048,18 @@ _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]"            # CSI
                    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?"  # OSC
                    r"|\x1b[@-Z\\-_]")                     # two-byte escapes
 _UNSAFE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f"
-                     "؜​-‏  ‪-‮"
-                     "⁠-⁩﻿]")
+                     # Named rather than pasted, so a reviewer can read
+                     # what is refused: the Arabic letter mark, the
+                     # zero-width and directional marks, the line and
+                     # paragraph separators, the bidirectional embeddings
+                     # and overrides, the word joiner and the isolates,
+                     # and the byte-order mark.
+                     "\N{ARABIC LETTER MARK}"
+                     "\N{ZERO WIDTH SPACE}-\N{RIGHT-TO-LEFT MARK}"
+                     "\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}"
+                     "\N{LEFT-TO-RIGHT EMBEDDING}-\N{RIGHT-TO-LEFT OVERRIDE}"
+                     "\N{WORD JOINER}-\N{POP DIRECTIONAL ISOLATE}"
+                     "\N{ZERO WIDTH NO-BREAK SPACE}]")
 
 
 class DiagnosticRefused(ValueError):
@@ -1081,7 +1091,10 @@ def _bench_words(value) -> str | None:
     reason that quoted something from outside cannot carry it through."""
     if not isinstance(value, str) or not value:
         return None
-    return _UNSAFE.sub("", _ANSI.sub("", scrub(value)))[:1000]
+    # One line, always: a line break in a reason would print as a line of
+    # its own, outside the `│ ` prefix that marks text bench did not write.
+    flat = " ".join(scrub(value).splitlines())
+    return _UNSAFE.sub("", _ANSI.sub("", flat))[:1000]
 
 
 def _diag_summary(record: dict) -> str:

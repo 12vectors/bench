@@ -104,29 +104,31 @@ def doctor_payload(modes: list[str], *, approve: bool = False,
     return doctor.report(modes, approve_real_agent=approve)
 
 
-def run_diagnostic(payload: dict, evidence_id, *, count: bool = True) -> dict | None:
+def run_diagnostic(payload: dict, evidence_id, *, count: bool = True) -> dict:
     """A run's own check diagnostics (design #94 §9): the run proved by
-    the token its launch was handed, then `verify.diagnostic`'s access
-    contract — its card and its checks, read off its frozen manifest.
+    the capability its launch was handed (BOARD_RUN_TOKEN) — never by a
+    run id alone — then `verify.diagnostic`'s access contract: its card
+    and its checks, read off its frozen manifest.
 
     `count` is the explicit request (`/api/verify/details`): a refusal is
     raised, and counted on the run's channel health as a refused progress
     report is. Without it — the details riding along with a verification
-    reply — a refusal simply leaves them out."""
+    reply — a refusal leaves them out and says why
+    (`{"unavailable": …}`), so the run is not left guessing."""
     agent = str(payload.get("agent") or "")
     try:
         progress.authenticate(agent, payload.get("token"))
         return verify.diagnostic_reply(verify.diagnostic(
             evidence_id, agent=agent,
             task=(payload.get("file") or None) if count else None))
-    except progress.Refused:
+    except progress.Refused as exc:
         if count:
             raise
-        return None
+        return {"unavailable": exc.why, "code": exc.code}
     except verify.DiagnosticRefused as exc:
         if count:
             raise progress.refused(agent, exc.code, exc.status, exc.why)
-        return None
+        return {"unavailable": exc.why, "code": exc.code}
 
 
 def gates_payload(name: str, stage: str) -> dict:
@@ -952,7 +954,9 @@ class Handler(BaseHTTPRequestHandler):
                                          count=False) \
                     if payload.get("agent") and (found or {}).get("outcome") \
                     not in ("passed", None) else None
-                if details is not None:
+                if details is not None and "unavailable" in details:
+                    reply["diagnosticUnavailable"] = details["unavailable"]
+                elif details is not None:
                     reply["diagnostic"] = details
                 self._json(200, reply)
             elif path == "/api/verify/details":

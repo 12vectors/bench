@@ -23,6 +23,10 @@ The contract, end to end:
   a run that has ended is refused — and a refused report against a real
   run is counted on that run's channel health, so a spoof attempt or a
   broken shim is visible rather than silent.
+- **A run capability, apart from the channel.** Every run with a record is
+  also handed BOARD_RUN_TOKEN, whether or not it can report progress. It
+  proves the run's own run-scoped reads (a failed check's diagnostics),
+  and nothing is read as a run without it.
 - **What a report may hold.** A stage, what it is doing now, milestones
   done, what remains, a blocker, a short narrative, and references to
   commits or to bench's own evidence records — each bounded, control
@@ -272,6 +276,27 @@ def open_run(agent_id: str, task: str, intent: str, chan: dict) -> str | None:
     return token
 
 
+def issue_capability(agent_id: str) -> str | None:
+    """Mint the run's own capability (BOARD_RUN_TOKEN) and keep its hash on
+    the run's record: what proves a run-scoped read — a check's diagnostics
+    — comes from this run and no other.
+
+    Issued to every run that has a record, whether or not its adapter can
+    report progress: the narrative channel is a vendor capability, and a
+    run's right to read its own failure is not. Kept apart from the
+    progress token, so holding one is never mistaken for the other. Only
+    the hash is kept, and it is persisted with the record, so a run that
+    outlives a board restart can still prove itself to the next board."""
+    token = secrets.token_urlsafe(24)
+    with _LOCK:
+        record = RUNS.get(agent_id or "")
+        if record is None:
+            return None
+        record["capabilityHash"] = _hash(token)
+        _store(record)
+    return token
+
+
 def close_run(agent_id: str, outcome: str) -> None:
     """The run ended, as the board observed it. Idempotent, and a later
     call may refine the outcome (a clean exit that turns out to have been a
@@ -427,23 +452,31 @@ def _reject(record: dict | None, code: str, status: int, why: str) -> Refused:
 
 
 def authenticate(agent_id: str, token) -> None:
-    """Whether a request naming this run carries this run's own token —
-    the capability `open_run` handed it, reused by the other run-scoped
-    reads (a check's diagnostics) so that knowing a run's id is not
-    enough to speak as it.
+    """Whether a request naming this run carries this run's own capability
+    — the BOARD_RUN_TOKEN `issue_capability` handed it at launch — so that
+    knowing a run's id is not enough to read as it.
 
-    A run this board issued a token to must present it; a refusal is
-    counted on its channel health like a refused report. A run launched
-    without a channel was given no token to present, and is identified
-    by its frozen manifest alone, exactly as `bench-verify` always has."""
+    It fails closed. A run this board has no record of, a run whose launch
+    was issued no capability (one launched before capabilities existed),
+    and a missing or wrong token are each refused. A run id and a recorded
+    manifest say what a run would be allowed; they do not prove the caller
+    is that run. Refusals against a known run are counted on its channel
+    health like a refused report, so a spoof is visible."""
     with _LOCK:
         record = RUNS.get(agent_id or "")
-    if record is None or not record.get("tokenHash"):
-        return
-    if not isinstance(token, str) or not hmac.compare_digest(
-            _hash(token), record["tokenHash"]):
+    if record is None:
+        raise Refused(403, "unknown-run",
+                      "this board issued no capability to that run, so "
+                      "nothing can be read as it")
+    if not record.get("capabilityHash"):
+        raise _reject(record, "no-capability", 403,
+                      "this run was launched without a run capability, so "
+                      "it cannot prove it is the run asking; "
+                      + verify.DIAG_FULL_LOG)
+    if not isinstance(token, str) or not token or not hmac.compare_digest(
+            _hash(token), record["capabilityHash"]):
         raise _reject(record, "identity", 403,
-                      "the request's token does not belong to this run — a "
+                      "the request's token is not this run's capability — a "
                       "run may only read its own diagnostics")
 
 
