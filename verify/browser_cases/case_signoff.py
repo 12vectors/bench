@@ -192,9 +192,12 @@ class SignoffIsOptIn(unittest.TestCase):
         self.assertEqual(found["primary"]["label"], "Track acceptance")
         b = load()
         wait_for_word("signoff-needed")
-        face = b.eval(f"(document.querySelector('#board article.card[data-file=\"{FILE}\"]')"
-                      " || {}).innerText || ''")
-        self.assertIn("Sign-off needed", face)
+        # read as case_delivery_status reads it: the pill's word, not its
+        # styled text
+        face = b.eval(f"(() => {{ const p = document.querySelector("
+                      f"'#board article.card[data-file=\"{FILE}\"] .pill.status');"
+                      " return p ? p.dataset.word || p.innerText : null; })()")
+        self.assertEqual("signoff-needed", face)
         open_detail()
         status = b.eval(f"(() => {{ const s = document.querySelector('{OVERVIEW} .dstatus');"
                         " const p = s.querySelector('.dsacts [data-dslot]');"
@@ -203,8 +206,9 @@ class SignoffIsOptIn(unittest.TestCase):
                         " disabled: p ? !!p.disabled : null}; })()")
         shot("signoff-needed-overview-1280x900")
         self.assertEqual("signoff-needed", status["word"])
-        self.assertIn("Sign-off needed", status["heading"])
-        self.assertIn("Track acceptance", status["primary"])
+        # the heading is styled upper-case, so innerText reads it that way
+        self.assertIn("sign-off needed", status["heading"].lower())
+        self.assertIn("track acceptance", status["primary"].lower())
         self.assertFalse(status["disabled"])
         S["metrics"]["signoffOverview"] = status
         close_detail()
@@ -222,8 +226,8 @@ class SignoffIsOptIn(unittest.TestCase):
                                  "with its sign-off line")
         line = b.eval("document.querySelector('#accSignoff').innerText")
         shot("signoff-acceptance-section-1280x900")
-        self.assertIn("Sign-off required", line)
-        self.assertIn("Track acceptance", line)
+        self.assertIn("sign-off required", line.lower())
+        self.assertIn("track acceptance", line.lower())
         self.assertEqual(before, card_digest(), "opening the section wrote something")
         close_detail()
 
@@ -286,7 +290,7 @@ class SettingsOffersItWithoutCeremony(unittest.TestCase):
 
     def test_1_merge_rules_show_signoff_only_where_it_is_asked(self):
         b = open_settings("acceptance")
-        text = b.eval("document.querySelector('#sbody').innerText")
+        text = b.eval("document.querySelector('#sbody').textContent").lower()
         self.assertIn("sign-off: every criterion accepted by a person", text)
         self.assertIn("sign-off: not required", text)
         for scope, ticked in (("acceptance", True), ("member", False)):
