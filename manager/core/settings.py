@@ -308,6 +308,8 @@ FIELD_OF = {
     "gate-check-undeclared": "gates",
     "gate-scope-undeclared": "gates",
     "gate-review-unknown": "gates",
+    "gate-review-duplicate": "gates",
+    "gate-signoff-unknown": "gates",
 }
 
 # The top-level keys this editor understands. A key outside this list is

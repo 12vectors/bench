@@ -496,8 +496,10 @@ DIAGNOSTICS = {
     "gate-invalid": (
         "a gate requirement is not the shape a gate is read in",
         "Each scope takes \"checks\" (a list of declared check names), "
-        "\"review\" (one review policy word) and nothing else; "
-        "\"overrides\" takes \"allow\" and an optional \"actors\" list."),
+        "\"review\" (one review policy word, or — the advanced form — a list "
+        "of distinct ones), \"signoff\" (\"none\" or \"criteria\") and "
+        "nothing else; \"overrides\" takes \"allow\" and an optional "
+        "\"actors\" list."),
     "gate-check-undeclared": (
         "a gate requires a check this document does not declare",
         "Declare it in the document's top-level \"checks\" list. A gate "
@@ -532,6 +534,21 @@ DIAGNOSTICS = {
         "`separate-reviewer` requires that approval to be authored by "
         "somebody other than the account that proposed the head — a "
         "COMMENTED review is never read as either."),
+    "gate-review-duplicate": (
+        "a review list names one requirement twice, or names one another "
+        "already includes",
+        "A review list is a conjunction of genuinely distinct assurance — "
+        "for example [\"bench\", \"separate-reviewer\"]: an agent's review "
+        "and an independent person's approval. Name each word once, leave "
+        "`none` out of a list, and do not pair `github` with "
+        "`separate-reviewer` (a separate reviewer's approval already is a "
+        "formal GitHub approval). One requirement is written as a plain "
+        "word."),
+    "gate-signoff-unknown": (
+        "a gate asks for a sign-off policy bench has no word for",
+        "Use \"criteria\" — every tracked acceptance criterion on the card "
+        "must read accepted, decided by a named person — or \"none\", the "
+        "default, which requires nothing about acceptance."),
 }
 
 
@@ -2931,7 +2948,70 @@ REVIEW_POLICIES = {
                           "which GitHub applies separately"),
 }
 
+# What a gate may insist on about a card's own acceptance criteria. Off by
+# default — the PR review already assesses the work against the criteria,
+# and per-criterion bookkeeping is not a ceremony nobody asked for (design
+# #94 §8). `criteria` is the configuration for a decision that has to be a
+# person's: visual, business, regulated.
+SIGNOFF_POLICIES = {
+    "none": "no sign-off is required by this gate",
+    "criteria": ("every tracked acceptance criterion on the card reads "
+                 "accepted — a decision a named person recorded, about this "
+                 "exact commit — and the card's criteria are tracked. An "
+                 "agent's report, its review verdict and a move to done/ "
+                 "accept nothing"),
+}
+
 GATE_POLICY_VERSION = 1
+
+
+def _review_words(raw) -> tuple[list[str], list[tuple[str, str]], str]:
+    """A gate's `review` value → (the distinct words it requires, the
+    refusals as (code, why), the form it was written in).
+
+    Two spellings. The ordinary one is one word, which is every document
+    written before the list existed and reads exactly as it did. The
+    advanced one is a list, and it means *all of them*: a conjunction of
+    genuinely distinct assurance, each its own requirement row. So a list
+    may not repeat a word, may not hide `none` inside it, and may not pair
+    `github` with `separate-reviewer` — a separate reviewer's approval is
+    a formal GitHub approval already, and counting it twice is the
+    duplicate approval this design exists to stop."""
+    if raw is None:
+        return [], [], "scalar"
+    if isinstance(raw, str):
+        word = raw.strip()
+        if word not in REVIEW_POLICIES:
+            return [], [("gate-review-unknown", word)], "scalar"
+        return ([] if word == "none" else [word]), [], "scalar"
+    if not isinstance(raw, list):
+        return [], [("gate-invalid", type(raw).__name__)], "list"
+    if not raw:
+        return [], [("gate-invalid", "an empty list")], "list"
+    words: list[str] = []
+    trouble: list[tuple[str, str]] = []
+    for item in raw:
+        if not isinstance(item, str):
+            trouble.append(("gate-invalid", type(item).__name__))
+            continue
+        word = item.strip()
+        if word not in REVIEW_POLICIES:
+            trouble.append(("gate-review-unknown", word))
+        elif word == "none":
+            trouble.append(("gate-review-duplicate", "none"))
+        elif word in words:
+            trouble.append(("gate-review-duplicate", word))
+        else:
+            words.append(word)
+    if "github" in words and "separate-reviewer" in words:
+        trouble.append(("gate-review-duplicate", "github+separate-reviewer"))
+    return words, trouble, "list"
+
+
+def review_label(words: list[str]) -> str:
+    """The one-string name of a review requirement: the word, `none`, or
+    the advanced list joined with `+` — never two approval counters."""
+    return "+".join(words) if words else "none"
 
 
 def _gates_something(doc: dict) -> bool:
@@ -2946,7 +3026,9 @@ def _gates_something(doc: dict) -> bool:
         entry = raw.get(scope)
         if not isinstance(entry, dict):
             continue
-        if entry.get("checks") or str(entry.get("review") or "none") != "none":
+        review = entry.get("review")
+        if entry.get("checks") or (review and review != "none") \
+                or str(entry.get("signoff") or "none") != "none":
             return True
     return False
 
@@ -3036,19 +3118,22 @@ def gate_policy(doc: dict | None = None) -> dict:
     for scope, why in GATE_SCOPES.items():
         entry = declared.get(scope)
         checks: list[dict] = []
-        review = "none"
+        reviews: list[str] = []
+        review_form = "scalar"
+        signoff = "none"
         if entry is not None and not isinstance(entry, dict):
             trouble.add("gate-invalid",
                         f"the '{scope}' gate is {type(entry).__name__} — a "
-                        f"gate is an object with \"checks\" and \"review\"")
+                        f"gate is an object with \"checks\", \"review\" and "
+                        f"\"signoff\"")
             entry = None
         if isinstance(entry, dict):
             for key in entry:
-                if key not in ("checks", "review"):
+                if key not in ("checks", "review", "signoff"):
                     trouble.add("gate-invalid",
                                 f"the '{scope}' gate declares {key!r}, which "
                                 f"a gate has no meaning for — it takes "
-                                f"\"checks\" and \"review\"")
+                                f"\"checks\", \"review\" and \"signoff\"")
             raw_checks = entry.get("checks")
             if raw_checks is not None and not isinstance(raw_checks, list):
                 trouble.add("gate-invalid",
@@ -3125,25 +3210,71 @@ def gate_policy(doc: dict | None = None) -> dict:
                     "requirement": (f"{name}:{wanted_scope}"
                                     if wanted_scope else name)})
             raw_review = entry.get("review")
-            if raw_review is not None:
-                word = str(raw_review).strip()
-                if word not in REVIEW_POLICIES:
+            if raw_review is not None and not isinstance(raw_review,
+                                                         (str, list)):
+                # A number or an object was never a word; read it the way
+                # the scalar form always has, so it is refused as one.
+                raw_review = str(raw_review)
+            reviews, review_trouble, review_form = _review_words(raw_review)
+            for code, what in review_trouble:
+                if code == "gate-review-unknown":
                     trouble.add(
-                        "gate-review-unknown",
+                        code,
                         f"the '{scope}' gate asks for the review policy "
-                        f"{word!r} — one of "
+                        f"{what!r} — one of "
                         f"{', '.join(sorted(REVIEW_POLICIES))}")
+                elif code == "gate-review-duplicate":
+                    trouble.add(
+                        code,
+                        f"the '{scope}' gate's review list "
+                        + ("puts `none` inside a list, which requires "
+                           "everything it names" if what == "none" else
+                           "pairs `github` with `separate-reviewer` — a "
+                           "separate reviewer's approval is a formal GitHub "
+                           "approval already, so the list would count one "
+                           "approval twice"
+                           if what == "github+separate-reviewer" else
+                           f"names {what!r} twice")
+                        + " — a list is a conjunction of distinct "
+                          "requirements")
                 else:
-                    review = word
+                    trouble.add(
+                        code,
+                        f"the '{scope}' gate's \"review\" holds {what} — it "
+                        f"is one review policy word, or a non-empty list of "
+                        f"distinct ones")
+            raw_signoff = entry.get("signoff")
+            if raw_signoff is not None:
+                word = raw_signoff.strip() if isinstance(raw_signoff, str) \
+                    else None
+                if word not in SIGNOFF_POLICIES:
+                    trouble.add(
+                        "gate-signoff-unknown",
+                        f"the '{scope}' gate asks for the sign-off policy "
+                        f"{raw_signoff!r} — one of "
+                        f"{', '.join(sorted(SIGNOFF_POLICIES))}")
+                else:
+                    signoff = word
+        review = review_label(reviews)
         scopes[scope] = {
             "scope": scope, "why": why,
             "declared": isinstance(entry, dict),
             "checks": checks,
+            # `review` stays one string, as it has always been: the word,
+            # or the advanced list joined with `+`. `reviews` is the list
+            # a gate evaluates — one requirement row per word, each
+            # explained on its own, never collapsed into one tick.
             "review": review,
-            "reviewWhy": REVIEW_POLICIES[review],
+            "reviews": list(reviews),
+            "reviewForm": review_form,
+            "reviewWhy": (REVIEW_POLICIES[review] if len(reviews) <= 1
+                          else "all of: " + "; ".join(
+                              f"{w} — {REVIEW_POLICIES[w]}" for w in reviews)),
+            "signoff": signoff,
+            "signoffWhy": SIGNOFF_POLICIES[signoff],
             # A gate with nothing to insist on is ungated, and the word is
             # the one the board shows. It is not a pass.
-            "gated": bool(checks) or review != "none",
+            "gated": bool(checks) or bool(reviews) or signoff != "none",
         }
 
     # Resolved last, because a document with *any* refusal in it is a
@@ -3158,10 +3289,15 @@ def gate_policy(doc: dict | None = None) -> dict:
 
     revision = _digest(
         str(GATE_POLICY_VERSION), doc.get("revision") or "",
+        # The new fields join the digest only when they say something, so
+        # a document that does not use them keeps its revision byte for
+        # byte — nothing the operator did not write may stale a record.
         json.dumps({s: {"checks": [[c["revision"], c["gateScope"]]
                                    if c["gateScope"] else c["revision"]
                                    for c in v["checks"]],
-                        "review": v["review"]}
+                        "review": v["review"],
+                        **({"signoff": v["signoff"]}
+                           if v["signoff"] != "none" else {})}
                     for s, v in scopes.items()}, sort_keys=True),
         json.dumps(overrides, sort_keys=True))
     return {
@@ -3175,6 +3311,7 @@ def gate_policy(doc: dict | None = None) -> dict:
         "scopes": scopes,
         "overrides": overrides,
         "reviewPolicies": dict(REVIEW_POLICIES),
+        "signoffPolicies": dict(SIGNOFF_POLICIES),
         "blockers": list(trouble),
         "diagnostics": trouble.coded,
     }
@@ -3192,6 +3329,9 @@ def gate_policy_public(found: dict) -> dict:
             "scope": scope, "why": entry["why"], "declared": entry["declared"],
             "gated": entry["gated"], "review": entry["review"],
             "reviewWhy": entry["reviewWhy"],
+            "reviews": list(entry["reviews"]),
+            "reviewForm": entry["reviewForm"],
+            "signoff": entry["signoff"], "signoffWhy": entry["signoffWhy"],
             "checks": [{"name": c["name"], "scope": c["gateScope"],
                         "requirement": c["requirement"],
                         "run": c["run"], "root": c["root"],
@@ -3200,6 +3340,7 @@ def gate_policy_public(found: dict) -> dict:
         } for scope, entry in found["scopes"].items()},
         "overrides": dict(found["overrides"]),
         "reviewPolicies": dict(found["reviewPolicies"]),
+        "signoffPolicies": dict(found["signoffPolicies"]),
         "blockers": list(found["blockers"]),
         "diagnostics": list(found["diagnostics"]),
     }
