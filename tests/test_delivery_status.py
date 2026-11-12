@@ -114,11 +114,43 @@ class DeliveryCase(GateCase):
                                     "status": "running", "name": name,
                                     "started": time.time(), "mode": "work"}
 
-    def hang_a_check(self) -> threading.Thread:
-        asking = threading.Thread(target=lambda: self.ask(), daemon=True)
+    def hang_a_check(self, head: str) -> threading.Thread:
+        """Ask for a check that hangs, and return once it is genuinely
+        running at `head`: its child process is on the run's record, and
+        the record on disk says `running` bound to that commit.
+
+        `RUNNING` alone is not that moment. It fills when the run is
+        reserved, before the record binds its source and before the
+        process exists, so a reading taken then is about a record a
+        reader cannot see yet. The request thread is the test's own, so
+        it is cancelled and joined before the fixture is taken down —
+        whether the test passed or not."""
+        asking = threading.Thread(target=self.ask, daemon=True)
         asking.start()
-        self.assertTrue(wait_for(lambda: bool(verify.RUNNING)))
+        self.addCleanup(self._release, asking)
+
+        def running() -> bool:
+            with state.LOCK:
+                live = [ident for ident, record in verify.RUNNING.items()
+                        if record.get("proc") is not None]
+            for ident in live:
+                record = verify.read(ident) or {}
+                if (record.get("outcome") == "running"
+                        and (record.get("source") or {}).get("commit") == head):
+                    return True
+            return False
+
+        self.assertTrue(wait_for(running),
+                        f"no check was running with its record bound to "
+                        f"{head[:12]}: {list(verify.RUNNING)}")
         return asking
+
+    def _release(self, asking: threading.Thread) -> None:
+        self._cancel_running()
+        asking.join(timeout=20)
+        self.assertFalse(asking.is_alive(),
+                         "the request thread did not end after its check "
+                         "was cancelled")
 
     def origin(self) -> Path:
         bare = self.tmp / "origin.git"
@@ -204,12 +236,10 @@ class TheCopyMatrix(DeliveryCase):
     def test_f08_review_check_running(self):
         wt = self.worktree()
         self.full_gate(body=HANGS)
-        self.commit_in(wt)
+        head = self.commit_in(wt)
         self.manifest()
-        self.hang_a_check()
+        self.hang_a_check(head)
         self.place("review", pr=PR_URL)
-        # RUNNING fills a moment before the record binds its source.
-        wait_for(lambda: self.word() == "checks-running")
         found = self.expect("checks-running", None)
         self.assertEqual([a["action"] for a in found["others"]],
                          ["cancel-check"])
@@ -239,7 +269,7 @@ class TheCopyMatrix(DeliveryCase):
         self.full_gate(body=HANGS)
         head = self.commit_in(wt)
         self.manifest()
-        asking = self.hang_a_check()
+        asking = self.hang_a_check(head)
         self._cancel_running()
         asking.join(timeout=20)
         verify.forget_cached()
