@@ -521,6 +521,84 @@ class ReviewListsAreConjunctions(SignoffCase):
         self.assertEqual(kinds, ["review", "review", "signoff"])
 
 
+# ── Settings: opt-in, previewed, written only on Apply ─────────────────
+
+
+class SettingsOffersItOptIn(SignoffCase):
+
+    def test_the_default_board_requires_no_signoff_and_one_review_at_most(self):
+        import settings
+        found = settings.acceptance()
+        for scope, entry in found["policy"]["scopes"].items():
+            with self.subTest(scope=scope):
+                self.assertEqual(entry["signoff"], "none")
+                self.assertEqual(entry["reviews"], [])
+                self.assertFalse(entry["gated"])
+        self.assertEqual([m["name"] for m in found["signoffModes"]],
+                         ["none", "criteria"])
+        for key in ("what", "untracked", "headBinding", "activation"):
+            self.assertTrue(found["signoff"][key])
+        self.assertIn("human", found["signoff"]["what"])
+        self.assertIn("Nothing is rewritten", found["signoff"]["activation"])
+        self.assertIn("Advanced", found["reviewList"]["what"])
+
+    def test_a_signoff_draft_validates_previews_and_applies_once(self):
+        import settings
+        path = self.declares({"v": 1, "gates": {"acceptance": {
+            "review": "bench"}}})
+        draft = {"v": 1, "gates": {"acceptance": {
+            "review": "bench", "signoff": "criteria"}}}
+        before = path.read_bytes()
+        checked = settings.validate({"document": draft})
+        self.assertTrue(checked["ok"], checked["errors"])
+        self.assertEqual(checked["gate"]["scopes"]["acceptance"]["signoff"],
+                         "criteria")
+        shown = settings.preview({"document": draft})
+        gate_changes = [c for c in shown["changes"]
+                        if c["kind"] == "gate-changed"]
+        self.assertEqual([c["what"] for c in gate_changes], ["acceptance"])
+        self.assertEqual(path.read_bytes(), before, "previewing wrote nothing")
+        settings.apply({"document": draft,
+                        "revision": settings.revision_of(path)})
+        written = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(written["gates"]["acceptance"],
+                         {"review": "bench", "signoff": "criteria"})
+        # nothing about a card changed: its criteria are still untracked
+        self.assertFalse(acceptance.for_card(CARD, "review")["tracked"])
+        self.assertEqual(self.signoff_row(self.decide())["reason"],
+                         "signoff-untracked")
+
+    def test_a_duplicate_review_list_is_refused_at_its_field(self):
+        import settings
+        checked = settings.validate({"document": {"v": 1, "gates": {
+            "acceptance": {"review": ["github", "separate-reviewer"]}}}})
+        self.assertFalse(checked["ok"])
+        self.assertEqual({(e["code"], e["field"]) for e in checked["errors"]},
+                         {("gate-review-duplicate", "gates")})
+
+    def test_the_advanced_list_validates_as_two_requirements(self):
+        import settings
+        checked = settings.validate({"document": {"v": 1, "gates": {
+            "acceptance": {"review": ["bench", "separate-reviewer"]}}}})
+        self.assertTrue(checked["ok"], checked["errors"])
+        entry = checked["gate"]["scopes"]["acceptance"]
+        self.assertEqual(entry["reviews"], ["bench", "separate-reviewer"])
+        self.assertEqual(entry["reviewForm"], "list")
+
+    def test_the_editor_writes_signoff_only_when_ticked(self):
+        source = (config.CORE / "board.html").read_text(encoding="utf-8")
+        write = source[source.index("function writeField("):]
+        write = write[:write.index("\nfunction ")]
+        self.assertIn("if (value) gate.signoff = 'criteria'; "
+                      "else delete gate.signoff;", write)
+        self.assertIn("gate.review = words.length === 1 ? words[0] : words;",
+                      write)
+        box = source[source.index("function signoffBox("):]
+        box = box[:box.index("\nfunction ")]
+        self.assertIn("gate.signoff === 'criteria'", box)
+        self.assertIn("visual, business, regulated", box)
+
+
 # ── the review-pr prompt ───────────────────────────────────────────────
 
 
