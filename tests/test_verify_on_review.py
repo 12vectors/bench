@@ -252,6 +252,81 @@ class NeverTwice(OnReviewCase):
         self.assertEqual(found["outcome"], "already")
         self.assertEqual(self.runs("unit"), 1)
 
+    def test_the_watchers_path_records_the_commit_before_anything_runs(self):
+        # The watcher calls on_review with wait=True, which returns only
+        # once the checks end. A board stopped mid-batch must already have
+        # the commit on record, or its restart asks a second time.
+        self.back_to_progress()
+        self.flag("unit", "hang")
+        before = watch._board_sig()
+        self.to_review()
+        state.expect_move(CARD, "review", "you")
+        with mock.patch.object(sync, "arrived_actor", return_value=None):
+            watch.narrate(before, watch._board_sig())
+        self.assertTrue(wait_for(lambda: self.runs("unit") == 1, 20))
+        self.assertEqual(required.entered(CARD), [self.head],
+                         "on record while the first check is still running")
+        required._ON_REVIEW_CLAIMED.clear()      # a new process, mid-batch
+        found = required.on_review(CARD, actor="you", wait=True)
+        self.assertNotIn(found["outcome"], ("started", "joined"), found)
+        # the batch ends without a result: cancelled reads `needed` again,
+        # so only the record written before it ran stops a second ask
+        required.cancel(CARD)
+        self.assertTrue(wait_for(lambda: CARD not in required.ACTIVE, 20))
+        required.join(30)
+        self.fresh()
+        required._ON_REVIEW_CLAIMED.clear()      # and again, after it ended
+        found = required.on_review(CARD, actor="you", wait=True)
+        self.assertEqual(found["outcome"], "already")
+        self.assertEqual(self.runs("unit"), 1)
+
+    def test_an_interrupted_entry_asks_less_never_twice(self):
+        # Whether anything started is unknown, so the claim stands.
+        with mock.patch.object(required, "start",
+                               side_effect=RuntimeError("board stopped")):
+            with self.assertRaises(RuntimeError):
+                required.on_review(CARD, actor="you", wait=True)
+        self.assertEqual(required.entered(CARD), [self.head])
+        required._ON_REVIEW_CLAIMED.clear()
+        found = required.on_review(CARD, actor="you", wait=True)
+        self.assertEqual(found["outcome"], "already")
+        self.assertEqual(self.runs("unit"), 0)
+        # the manual recovery is untouched
+        self.assertEqual(required.plan(CARD, "review")["requestable"], 1)
+
+    def test_a_record_that_cannot_be_written_requests_nothing(self):
+        with mock.patch.object(required, "_mark_entered",
+                               side_effect=OSError("read-only")):
+            found = required.on_review(CARD, actor="you", wait=True)
+        self.assertEqual(found["code"], "unrecorded")
+        self.assertEqual(self.runs("unit"), 0)
+        self.assertIsNone(required.latest(CARD))
+        self.assertFalse(required._ON_REVIEW_CLAIMED)
+
+    def test_a_refusal_gives_the_claim_back(self):
+        with mock.patch.object(required, "start", side_effect=required.Refused(
+                "head-moved")):
+            found = required.on_review(CARD, actor="you", wait=True)
+        self.assertEqual(found["outcome"], "refused")
+        self.assertEqual(required.entered(CARD), [])
+        self.assertFalse(required._ON_REVIEW_CLAIMED)
+
+    def test_a_batch_at_another_commit_is_not_this_commits_answer(self):
+        self.flag("unit", "hang")
+        old = self.head
+        self.start("review")                     # a person's click at `old`
+        self.assertTrue(wait_for(lambda: self.runs("unit") == 1, 20))
+        self.head = self.commit_in(self.wt, "a later line\n")
+        self.fresh()
+        found = required.on_review(CARD, actor="you", wait=True)
+        self.assertEqual(found["code"], "other-batch", found)
+        self.assertIn(old[:12], found["why"])
+        self.assertEqual(required.entered(CARD), [],
+                         "the new commit was not asked for")
+        self.assertFalse(required._ON_REVIEW_CLAIMED)
+        self.assertEqual(self.runs("unit"), 1)
+        required.cancel(CARD)
+
     def test_racing_moves_start_one_batch(self):
         self.flag("unit", "hang")
         results = []
@@ -295,6 +370,19 @@ class InSettings(OnReviewCase):
         self.assertIn("=0", found["disable"])
         self.assertIn("moves no card", found["cost"])
         self.assertIn("launches no agent", found["never"])
+
+    def test_each_check_names_the_rules_that_require_it(self):
+        self.declares({"v": 1,
+                       "checks": [self.check("unit"), self.check("phase")],
+                       "profiles": {"work": {"verify": ["unit", "phase"]}},
+                       "gates": {"acceptance": {"checks": ["unit"]},
+                                 "integration": {"checks": ["unit", "phase"]}}})
+        found = {c["name"]: c["scopes"]
+                 for c in settings.acceptance()["onReview"]["checks"]}
+        self.assertEqual(sorted(found["unit"]), ["acceptance", "integration"])
+        self.assertEqual(found["phase"], ["integration"])
+        self.assertIn("card's own merge rule",
+                      settings.acceptance()["onReview"]["runs"])
 
     def test_a_local_file_value_is_reported_from_where_it_came(self):
         (self.local / ".env").write_text("BOARD_VERIFY_ON_REVIEW=1\n",

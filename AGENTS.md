@@ -2194,7 +2194,18 @@ What it answers to, and what it does not:
   board that restarted remembers. Moving the card out and back at the
   same commit requests nothing again, including a check that failed, was
   cancelled or was refused: that is a person's **Run required checks**
-  or ↻. A new commit is a new question.
+  or ↻. A new commit is a new question. The record is written **before**
+  anything runs, so a board that stops mid-batch does not ask again after
+  its restart; it is given back only when nothing was requested — the
+  plan refused, or a batch for another commit of the card was still
+  running (that batch is not this commit's answer, and the ticker says
+  so). An interrupted entry therefore asks less, never twice, and **Run
+  required checks** is the way on. A record bench cannot write requests
+  nothing.
+- **Only the card's own rule.** An ordinary card asks for what the Card
+  merge rule requires, a phase member for the Phase member merge rule's,
+  a phase card for Phase acceptance's. The Settings fold names, for each
+  check, the rules that require it.
 - **Nothing follows from it.** No agent is launched, no review is
   started, nothing is merged, nothing retries, and no gate reads it.
   Stopping the batch, **‖ hold** and a restart behave exactly as they do

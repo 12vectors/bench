@@ -496,6 +496,14 @@ ON_REVIEW_WORDS = {
         "this commit was already asked for once on entering review, so "
         "nothing was requested again by itself. Run required checks on the "
         "card is the way to ask again"),
+    "unrecorded": (
+        "bench could not record that this commit was asked for, and asks "
+        "only for what it can remember having asked, so nothing ran. Run "
+        "required checks on the card asks by hand"),
+    "other-batch": (
+        "a Run required checks batch for another commit of this card is "
+        "still running, so this commit was not asked for. Run required "
+        "checks on the card once it ends"),
 }
 
 _ON_REVIEW_LOCK = threading.Lock()
@@ -520,15 +528,35 @@ def entered(filename: str) -> list[str]:
     return [h for h in heads or [] if isinstance(h, str)]
 
 
-def _mark_entered(filename: str, head: str) -> None:
-    heads = [h for h in entered(filename) if h != head] + [head]
+def _write_entered(filename: str, heads: list[str]) -> None:
     path = _entered_path(filename)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".entered-")
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump({"v": VERSION, "task": filename,
-                   "heads": heads[-ON_REVIEW_KEEP:]}, fh, indent=2)
-    os.replace(tmp, path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"v": VERSION, "task": filename,
+                       "heads": heads[-ON_REVIEW_KEEP:]}, fh, indent=2)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def _mark_entered(filename: str, head: str) -> None:
+    _write_entered(filename,
+                   [h for h in entered(filename) if h != head] + [head])
+
+
+def _release(filename: str, head: str) -> None:
+    """Give a claim back — only when nothing was requested for `head`."""
+    with _ON_REVIEW_LOCK:
+        _ON_REVIEW_CLAIMED.discard((filename, head))
+        heads = entered(filename)
+        if head in heads:
+            try:
+                _write_entered(filename, [h for h in heads if h != head])
+            except OSError:
+                pass            # kept: an unreleased claim only asks less
 
 
 def _say(filename: str, why: str) -> None:
@@ -551,7 +579,10 @@ def on_review(filename: str, *, actor: str, remote: bool = False,
     most once this way — in this process and, through a small machine-local
     record, across a restart — so a check that failed, was cancelled or was
     refused is never asked for again by a second entry: that is a person's
-    click."""
+    click. The record is written before the batch starts and given back
+    only when nothing was requested (`refused`, including `other-batch`
+    when a batch for another commit is running), so a board stopped mid-
+    batch does not ask again after its restart."""
     on = config.VERIFY_ON_REVIEW if enabled is None else bool(enabled)
     if not on:
         return {"outcome": "off", "why": ON_REVIEW_WORDS["off"]}
@@ -576,16 +607,39 @@ def on_review(filename: str, *, actor: str, remote: bool = False,
         if key in _ON_REVIEW_CLAIMED or head in entered(filename):
             _say(filename, ON_REVIEW_WORDS["already"])
             return {"outcome": "already", "why": ON_REVIEW_WORDS["already"]}
+        # The claim is durable before anything runs. `start` with `wait`
+        # (the watcher's path) returns only once every check has ended, so
+        # a claim written after it would leave a board that stopped
+        # mid-batch with no record of having asked, and its restart would
+        # ask again. A board that stops between this write and the batch
+        # reads `already` on the next entry instead: an interrupted claim
+        # asks less, never twice, and Run required checks is the way on.
+        try:
+            _mark_entered(filename, head)
+        except OSError as exc:
+            why = ON_REVIEW_WORDS["unrecorded"]
+            _say(filename, f"nothing was requested: {why} ({exc})")
+            return {"outcome": "refused", "code": "unrecorded", "why": why}
         _ON_REVIEW_CLAIMED.add(key)
     try:
         batch = start(filename, "review", head=head, actor=actor, wait=wait,
                       trigger="review-entry")
     except Refused as exc:
-        with _ON_REVIEW_LOCK:
-            _ON_REVIEW_CLAIMED.discard(key)
+        _release(filename, head)            # nothing was requested
         _say(filename, f"nothing was requested: {exc}")
         return {"outcome": "refused", "code": exc.code, "why": str(exc)}
-    _mark_entered(filename, head)
+    # Any other exception leaves the claim standing: whether anything
+    # started is not known, and the safe direction is to ask less.
+    if batch and batch.get("joinedBatch") and batch.get("head") != head:
+        # A batch for another commit of this card is in flight. It is not
+        # this commit's answer and nothing was requested for this one, so
+        # the claim is given back rather than recorded as asked.
+        _release(filename, head)
+        why = (f"{ON_REVIEW_WORDS['other-batch']} (it is running at "
+               f"{str(batch.get('head'))[:12]}; the card is at "
+               f"{str(head)[:12]})")
+        _say(filename, f"nothing was requested: {why}")
+        return {"outcome": "refused", "code": "other-batch", "why": why}
     for item in reading["items"]:
         if item["state"] == "unavailable":
             _say(filename, f"'{_label(item)}' was not requested: "
@@ -623,12 +677,20 @@ def on_review_setting(policy: dict | None = None) -> dict:
     the one in force); it changes nothing."""
     if policy is None:
         policy = profiles.gate_policy_public(gates.gate_policy())
-    checks = []
-    for entry in policy["scopes"].values():
+    # Each check with the merge rules that require it: a card entering
+    # review asks only for its own rule's checks (`scope_of`), so a check
+    # only the phase rules name never runs for an ordinary card.
+    checks: list[dict] = []
+    for scope, entry in policy["scopes"].items():
         for check in entry["checks"]:
-            if check["name"] not in [c["name"] for c in checks]:
-                checks.append({"name": check["name"], "run": check["run"],
-                               "root": check["root"]})
+            found = next((c for c in checks if c["name"] == check["name"]),
+                         None)
+            if found is None:
+                found = {"name": check["name"], "run": check["run"],
+                         "root": check["root"], "scopes": []}
+                checks.append(found)
+            if scope not in found["scopes"]:
+                found["scopes"].append(scope)
     on = bool(config.VERIFY_ON_REVIEW)
     return {
         "key": ON_REVIEW_KEY, "enabled": on, "default": False,
@@ -640,10 +702,13 @@ def on_review_setting(policy: dict | None = None) -> dict:
             "as your request, under a person's work reading. Off (the "
             "default), entering Review runs nothing."),
         "runs": (
-            "What runs: each required check the merge rules name that has "
-            "no current answer at the card's commit, with its registered "
-            "command and its preparation steps first, on this machine. Met "
-            "checks are skipped and running ones joined." if checks else
+            "What runs: each check the card's own merge rule requires that "
+            "has no current answer at the card's commit — the Card merge "
+            "rule for an ordinary card, the Phase member merge rule for a "
+            "phase member, Phase acceptance for a phase card — with its "
+            "registered command and its preparation steps first, on this "
+            "machine. Met checks are skipped and running ones joined."
+            if checks else
             "No merge rule requires a check on this board, so turning it on "
             "would run nothing until one does."),
         "cost": SIDE_EFFECTS,

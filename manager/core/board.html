@@ -7319,7 +7319,9 @@ function onReviewLine(o, states) {
       `<p>${esc(o.what)}</p><p>${esc(o.runs)}</p>` +
       (o.checks.length ? `<div class="skv">` + o.checks.map(c =>
         `<dt>${esc(c.name)}</dt><dd><code>${esc(c.run || '')}</code> ` +
-        `in ${esc(c.root || '')}</dd>`).join('') + `</div>` : '') +
+        `in ${esc(c.root || '')} · required by ` +
+        `${esc((c.scopes || []).map(s => SCOPE_LABEL[s] || s).join(', '))}` +
+        `</dd>`).join('') + `</div>` : '') +
       `<p>${esc(o.cost)}</p><p>${esc(o.never)}</p>` +
       `<p><b>Turn it on:</b> ${esc(o.enable)}</p>` +
       `<p><b>Turn it off:</b> ${esc(o.disable)}</p>` +
