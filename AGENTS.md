@@ -2457,7 +2457,14 @@ included:
 | `signoff-recheck` | an acceptance no longer stands: reworded, marked for recheck, or its evidence stopped reading passed | needed |
 | `signoff-other-head` | accepted against an earlier commit (or before there was one); a sign-off is about the commit that would merge | needed |
 | `signoff-needs-work` | a person recorded a criterion as not met | problem |
+| `signoff-unreadable` | the card's text could not be read on this board, so nothing about its criteria is known | cannot-assess |
 | `signoff-accepted` | every tracked criterion accepted by a named person against this commit | met |
+
+"This commit" is the one the merge would take: `phase/<stem>` when the
+card has that branch, else `task/<stem>` — the order `gates.head_for`
+reads, and the one a person's decision records its commit by. A card
+holding both branches is therefore confirmed against the phase tip, and
+an acceptance recorded against the task tip does not travel to it.
 
 The card reads `signoff-needed` with **Track acceptance** or **Confirm
 criteria**, which opens its Acceptance section and changes nothing; every
