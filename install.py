@@ -51,6 +51,13 @@ reference/ that is exactly the untouched skeleton an older release
 unpacked is removed; anything else there is kept whole and named, and a
 changed work root is reported with the previous one left as it was.
 
+The project's own notes in manager/local/ are seeded the same way (task
+78): AGENTS.md and CLAUDE.md are copied from the tool-owned
+manager/core/seed/local/, one file at a time and only where that file is
+missing. Neither starter names a test framework. Nothing in manager/local/
+is ever replaced, and bench's own development policy, where an older
+source checkout left it, is reported rather than removed.
+
 A project with no manager/local/.env then gets one written, because the
 settings that change what bench *is* — claim-on-move and syncing through
 origin/main — are otherwise invisible to anyone who has not read
@@ -778,6 +785,126 @@ def initialize_work_state(work: Path, external: bool, dry_run: bool) -> int:
     return 0
 
 
+# ── the project's own notes in manager/local/ (task 78) ───────────────
+#
+# manager/local/ belongs to the destination project. Neither a release nor
+# a source checkout carries any file there except the .gitkeep
+# placeholders, so nothing an unpack or a pull brings can overwrite the
+# project's notes. The two starters come from the tool-owned seed under
+# manager/core/seed/local/ and are copied one file at a time, only where
+# that file is missing. Neither says anything about how a project is
+# tested: bench's own definition of done lives in develop/operator-local/
+# and is never installed anywhere.
+
+LOCAL_SEED = CORE / "seed" / "local"
+LOCAL_STARTERS = ("AGENTS.md", "CLAUDE.md")
+
+# Every version of a manager/local/ file bench's own repository ever
+# tracked, by sha256, split by what it says. A source checkout made before
+# task 78 carries one of these. The policy versions are bench's own
+# definition of done (`python3 -m unittest`), and are reported wherever
+# they turn up in a project that is not bench. The neutral ones say
+# nothing about any project. protect-local.py keeps an identical copy of
+# both sets, because it must run from a revision fetched before the pull;
+# a test holds the two copies equal.
+BENCH_POLICY = {
+    "AGENTS.md": frozenset({
+        "707ebbb54f706bbb8004a1ed7db1158ef07da39121fea56494a234bbe9ff56b1"}),
+    "CLAUDE.md": frozenset({
+        "707ebbb54f706bbb8004a1ed7db1158ef07da39121fea56494a234bbe9ff56b1"}),
+    "checks": frozenset({
+        "f51d6439a6fc9241b2671c05ff1792bd3e5e8c9414dcc1f4c947bf1892149d26"}),
+}
+BENCH_NEUTRAL = {
+    "AGENTS.md": frozenset(),
+    "CLAUDE.md": frozenset({
+        "cb30344e1300efe1069c3fe8aed9cba8b959d0654bd5752c23d8e5cfc1500f28",
+        "d5eb0b65783373489020aadb3d3a248fd07fa8b3c81d5299a9313136b5e40b3c"}),
+    "checks": frozenset(),
+}
+
+
+def local_seed_refusals(local: Path, tm: Path) -> list[str]:
+    """Every starter this run would write that a link would carry out of
+    the install. Asked before the first write, so a refusal leaves
+    manager/local/ exactly as it was."""
+    found = []
+    for name in LOCAL_STARTERS:
+        path = local / name
+        if _present(path):
+            continue
+        real = _escapes(path, tm)
+        if real is not None:
+            found.append(f"manager/local/{name} would be written at {real}, "
+                         f"outside the install {tm} — a link on the way "
+                         f"there leads out")
+    return found
+
+
+def seed_local(local: Path, tm: Path, dry_run: bool) -> list[str]:
+    """Copy each missing starter into manager/local/. A file that exists —
+    edited or not, empty, or a link, dangling included — is the project's
+    and is never touched, so a second run writes nothing."""
+    created = []
+    for name in LOCAL_STARTERS:
+        source, path = LOCAL_SEED / name, local / name
+        if not source.is_file() or _present(path):
+            continue
+        created.append(f"manager/local/{name}")
+        if not dry_run:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # Exclusive create: something appearing at the path between the
+            # check and the write is kept, not replaced.
+            with open(path, "xb") as out:
+                out.write(source.read_bytes())
+    return created
+
+
+def bench_policy_found(local: Path) -> list[str]:
+    """manager/local/ files that are byte-for-byte bench's own development
+    policy, as an older source checkout carried it."""
+    found = []
+    for name, digests in BENCH_POLICY.items():
+        path = local / name
+        if path.is_file() and not path.is_symlink() \
+                and _sha256(path) in digests:
+            found.append(name)
+    return found
+
+
+def initialize_local(dry_run: bool) -> int:
+    """The project's notes: seed what is missing, report bench's own
+    policy where a source checkout left it, replace nothing. 1 when a link
+    would carry a write out of the install, with nothing written."""
+    refusals = local_seed_refusals(LOCAL, TM)
+    if refusals:
+        print("The project notes in manager/local/ cannot be seeded:\n")
+        for refusal in refusals:
+            print(f"  - {refusal}")
+        print("\nNothing was written.")
+        return 1
+    created = seed_local(LOCAL, TM, dry_run)
+    if created:
+        print(f"{'would seed' if dry_run else 'seeded'} the neutral "
+              f"starters, from manager/core/seed/local/:")
+        for entry in created:
+            print(f"  {entry}")
+        print()
+    policy = bench_policy_found(LOCAL)
+    if policy:
+        print("bench's own development policy is in this install — its "
+              "definition of done is `python3 -m unittest`, which is "
+              "bench's, not this project's:")
+        for name in policy:
+            print(f"  manager/local/{name}")
+        print("  It was left exactly as it is, and headless runs are still "
+              "told to read it. If this project is not bench, replace it "
+              "with your own notes, or delete it and run install.py again "
+              "for the neutral starter. If this install develops bench, "
+              "see develop/README.md in a bench checkout.\n")
+    return 0
+
+
 def report_problems(problems: list[str]) -> None:
     print("This layout cannot be served:\n")
     for problem in problems:
@@ -863,8 +990,14 @@ def main() -> int:
 
     # Self-hosted — bench's own checkout, where the tool IS the project —
     # tasks/ is that repository's history and is left to it.
+    # The same for manager/local/: in bench's own checkout nothing reads
+    # its notes (they would sit inside the application), and a starter
+    # written there would only be an untracked file in bench's history.
     if external or PROJECT.resolve() != TM.resolve():
         status = initialize_work_state(work, external, dry_run)
+        if status:
+            return status
+        status = initialize_local(dry_run)
         if status:
             return status
 

@@ -1,4 +1,7 @@
 # Bench's own definition of done: the stdlib test suite, nothing else —
 # no lint step, no frontend build. Replaces core/checks wholesale; format
 # documented there.
+#
+# Bench-development only. This is not an installation default: nothing
+# copies it into manager/local/ for you. See develop/README.md.
 unittest: \bunittest\b

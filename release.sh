@@ -22,33 +22,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="$ROOT/manager/core/release-manifest"
 ASSET="bench.tar.gz"
 
-# The starter manager/local/ notes a fresh install unpacks — bench's own
-# repo has its real ones, so these are generated, never copied. AGENTS.md
-# is the content; CLAUDE.md is the compatibility pointer, mirroring the
-# root pair (task 13).
-seed_local_agents_md() {
-  cat <<'MD'
-# Project-specific workflow notes
-
-This file is yours — updates never touch manager/local/. Put here what an
-agent or teammate needs that the core doc cannot know: post-merge chores,
-what the driver assumes, what each local command is for.
-
-Settings live in manager/local/.env (gitignored); every option and its
-default is documented in manager/core/.env.example. A `checks` file here
-replaces core/checks as the Focus view's definition-of-done panel.
-MD
-}
-
-seed_local_claude_md() {
-  cat <<'MD'
-<!-- Compatibility pointer, load-bearing: the project notes live in AGENTS.md
-(the vendor-neutral name all coding agents read); this file makes Claude Code
-CLIs without native AGENTS.md support load it via the import below. -->
-
-@AGENTS.md
-MD
-}
+# The artifact carries no manager/local/ notes at all (task 78). Their
+# neutral starters live in manager/core/seed/local/, inside the core tree,
+# and install.py copies each one into manager/local/ only where that file
+# is missing — the same rule for a release and for a source checkout, and
+# one an unpacked tarball can never break by overwriting a project's own.
 
 # origin's URL as "owner/repo" — what gets stamped into the shipped
 # update.sh so a fresh install can update with zero configuration.
@@ -88,19 +66,6 @@ build_tarball() { # build_tarball <out.tar.gz> <source-repo-or-empty>
       keep)
         mkdir -p "$stage/$path"
         touch "$stage/$path/.gitkeep"
-        ;;
-      seed)
-        case "$path" in
-          manager/local/AGENTS.md)
-            mkdir -p "$stage/$(dirname "$path")"
-            seed_local_agents_md > "$stage/$path"
-            ;;
-          manager/local/CLAUDE.md)
-            mkdir -p "$stage/$(dirname "$path")"
-            seed_local_claude_md > "$stage/$path"
-            ;;
-          *) echo "manifest seeds a file this script cannot generate: $path" >&2; return 1;;
-        esac
         ;;
       ''|'#'*) ;;
       *) echo "manifest has an unknown entry class: $kind $path" >&2; return 1;;
