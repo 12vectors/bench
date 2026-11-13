@@ -714,18 +714,26 @@ class GitUpdateMigration(unittest.TestCase):
 
         applied = self.protect("--apply")
         self.assertEqual(0, applied.returncode, applied.stdout)
-        self.assertNotIn("manager/local/AGENTS.md", self.index())
-        self.assertNotIn("manager/local/checks", self.index())
-        self.assertIn("manager/local/CLAUDE.md", self.index(),
-                      "the untouched pointer is git's to remove")
+        self.assertIn("git pull --ff-only", applied.stdout)
         record = json.loads((self.local / "state" / "migrations" /
                              "local-ownership" / "record.json").read_text())
         for name, body in mine.items():
             entry = record["files"][f"manager/local/{name}"]
             copy = self.tm / entry["copy"]
             self.assertEqual(body, copy.read_bytes())
+            # Put back to bench's committed version, only once the copy
+            # was verified, so the update can remove it.
+            self.assertEqual((FIXTURES / name).read_bytes(),
+                             (self.local / name).read_bytes())
+        self.assertEqual("", git(self.tm, "status", "--porcelain",
+                                 "--untracked-files=no").stdout)
+        # Asked again before the pull: still protected, nothing redone.
+        again = self.protect("--apply")
+        self.assertEqual(0, again.returncode, again.stdout)
+        self.assertIn("protected  manager/local/AGENTS.md", again.stdout)
 
         self.pull()
+        self.assertFalse((self.local / "AGENTS.md").exists())
         install(self.tm, "--app", str(make_project(self.tmp / "app")),
                 "--work", str(self.tmp / "work"), cwd=self.tmp)
         for name, body in mine.items():
@@ -761,7 +769,8 @@ class GitUpdateMigration(unittest.TestCase):
         git(self.tm, "commit", "-q", "-am", "our notes")
         applied = self.protect("--apply")
         self.assertEqual(0, applied.returncode, applied.stdout)
-        self.assertIn("Commit the untracking", applied.stdout)
+        self.assertIn("commit     manager/local/AGENTS.md", applied.stdout)
+        self.assertIn("commit the untracking", applied.stdout)
         git(self.tm, "commit", "-q", "-m", "Untrack manager/local notes")
         git(self.tm, "pull", "-q", "--no-rebase", "--no-edit")
         self.assertEqual(b"# committed here\n",
@@ -791,6 +800,37 @@ class GitUpdateMigration(unittest.TestCase):
                 self.assertEqual(index, git(self.tm, "ls-files", "-s",
                                             "manager/local").stdout)
                 self.assertEqual(disk, snapshot(self.local))
+
+    def test_a_file_edited_again_after_protecting_is_ambiguous(self):
+        (self.local / "AGENTS.md").write_bytes(b"# first\n")
+        self.protect("--apply")
+        (self.local / "AGENTS.md").write_bytes(b"# second thoughts\n")
+        index = git(self.tm, "ls-files", "-s", "manager/local").stdout
+        result = self.protect("--apply")
+        self.assertEqual(2, result.returncode, result.stdout)
+        self.assertIn("changed again after it was protected", result.stdout)
+        self.assertEqual(b"# second thoughts\n",
+                         (self.local / "AGENTS.md").read_bytes())
+        self.assertEqual(index, git(self.tm, "ls-files", "-s",
+                                    "manager/local").stdout)
+
+    def test_a_restore_never_overwrites_a_different_file(self):
+        (self.local / "AGENTS.md").write_bytes(b"# protected version\n")
+        self.protect("--apply")
+        self.pull()
+        (self.local / "AGENTS.md").write_bytes(b"# written meanwhile\n")
+        record_path = (self.local / "state" / "migrations" /
+                       "local-ownership" / "record.json")
+        before = record_path.read_bytes()
+        result = install(self.tm, cwd=self.tmp)
+        self.assertIn("need a decision", result.stdout)
+        self.assertIn("a different file is there now", result.stdout)
+        self.assertEqual(b"# written meanwhile\n",
+                         (self.local / "AGENTS.md").read_bytes())
+        self.assertEqual(before, record_path.read_bytes())
+        copy = self.tm / json.loads(before)["files"][
+            "manager/local/AGENTS.md"]["copy"]
+        self.assertEqual(b"# protected version\n", copy.read_bytes())
 
     def test_an_untracked_file_where_the_target_adds_one_is_named(self):
         # A target that adds a local file over an untracked one of ours.
