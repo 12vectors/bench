@@ -446,7 +446,10 @@ class Drawn(unittest.TestCase):
     def test_mixed_multiple_and_legacy_rounds_are_labelled(self):
         out = self.render(card(LEGACY, RELEVANCE, PR_ROUND, RELEVANCE_2))
         rel, pr = self.groups(out["reviews"])
-        self.assertIn("Earlier relevance reviews (2)", rel)
+        self.assertIn("3 relevance reviews, newest first", rel)
+        self.assertEqual(rel.count('class="rpt rvrel"'), 3, "every round is kept")
+        self.assertLess(rel.index("Wren · 2026-11-10 11:30"), rel.index("Hazel · 2026-11-09"),
+                        "newest first")
         self.assertIn("Wren · 2026-11-10 11:30", rel)
         self.assertIn("filed in an older format", rel)
         self.assertIn("reviewer not recorded", rel)

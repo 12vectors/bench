@@ -64,7 +64,8 @@ PR REVIEW: REQUEST CHANGES
 """
 
 DRAWER = "document.querySelector('#drawerbody')"
-LATEST = "#dsec-reviews > details.rpt[data-keep^=\"rv-\"]"
+# PR review rounds sit in their own group of Reviews since task 84
+LATEST = "#dsec-reviews .rvgroup > details.rpt[data-keep^=\"rv-\"]"
 BODY = f"{LATEST} .rmd"
 
 
@@ -252,13 +253,16 @@ class ReviewMarkdown(unittest.TestCase):
         self.assertIn("<script>", b.eval(f"document.querySelector('{hostile}').innerText"),
                       "the script tag was dropped rather than shown as text")
         shot("review-markdown-hostile-light-1280x900")
-        b.click("#dtab-activity")
-        self.assertTrue(b.wait("!document.querySelector('#dsec-activity').hidden", 5))
-        rel = "#dsec-activity details.rpt[data-keep^=\"rep:Relevance review\"]"
-        b.click(f"{rel} > summary")
+        # the relevance review is read in Reviews, under its own group
+        # (task 84); Activity dates it and links there
+        rel = "#dsec-reviews details.rvrel"
         self.assertTrue(b.wait(f"!!document.querySelector('{rel} .rmd strong')", 5),
                         "the relevance review is not rendered")
         self.assertEqual(b.eval(f"document.querySelector('{rel} .rmd code').innerText"), "board.html")
+        b.click("#dtab-activity")
+        self.assertTrue(b.wait("!document.querySelector('#dsec-activity').hidden", 5))
+        self.assertTrue(b.eval("!!document.querySelector('#dsec-activity [data-goreview^=\"rl-\"]')"),
+                        "Activity does not link to the relevance review")
 
         # — reading changed nothing and reached nowhere —
         self.assertEqual(b.eval("window.__posts"), [], "reading a report posted something")

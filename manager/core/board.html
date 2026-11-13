@@ -9400,9 +9400,14 @@ function reviewsHtml(t, acc) {
     `<p class="dnote">Whether the brief is still needed and current, and what to change in it. ` +
     `A relevance verdict is about the card's definition: it is not a code review, approves nothing ` +
     `and counts toward no acceptance or merge requirement.</p>` +
-    (rel.length ? relevanceHtml(t, rel[0], true) +
-      (rel.length > 1 ? `<details class="rpt" data-keep="oldrel"${S.accOpen[`${t.file}:oldrel`] ? ' open' : ''}><summary>Earlier relevance reviews (${rel.length - 1})</summary>` +
-        `<div style="padding:6px 10px;display:flex;flex-direction:column;gap:6px">${rel.slice(1).map(r => relevanceHtml(t, r, false)).join('')}</div></details>` : '')
+    // newest first, every one at the same level: a review arriving later
+    // must not fold away the one somebody is reading or commenting on, so
+    // the newest opens the first time it is drawn and each keeps its own
+    // open state from then on
+    (rel.length ? rel.map((r, i) => {
+      if (i === 0 && S.accOpen[`${t.file}:${r.id}`] === undefined) S.accOpen[`${t.file}:${r.id}`] = true;
+      return relevanceHtml(t, r, false);
+    }).join('') + (rel.length > 1 ? `<p class="dnote">${rel.length} relevance reviews, newest first. Each is about the brief as it stood when it was filed.</p>` : '')
       : `<p class="dnote">No relevance review has been filed on this card. ◔ still true? asks for one.</p>`) +
     `</section>`;
   return relevance +
@@ -9439,8 +9444,6 @@ function openReview(t, id) {
   S.accOpen[`${t.file}:${id}`] = true;
   const acc = (S.acc[t.file] || {}).data;
   if (acc) {
-    const rel = acc.relevance || [];
-    if (rel.length > 1 && rel.slice(0, -1).some(r => r.id === id)) S.accOpen[`${t.file}:oldrel`] = true;
     if (acc.rounds.length > 1 && acc.rounds.slice(0, -1).some(r => r.id === id)) S.accOpen[`${t.file}:oldrounds`] = true;
   }
   renderDrawer();

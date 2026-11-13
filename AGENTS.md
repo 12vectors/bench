@@ -961,12 +961,17 @@ arrow keys, Home and End move along it.
   history), then #65's discussion and its refinement controls.
 - **Acceptance** — the criteria and their results; see "Acceptance and
   review findings".
-- **Reviews** — open findings first, each with its fix and resolution
-  chain, then resolved findings and earlier rounds folded away.
+- **Reviews** — two groups, each with its own empty state: **Relevance
+  reviews** (is the brief still needed and current? — see "Relevance
+  reviews: comment, then update the card from one") and **PR reviews**
+  (the implementation at a code revision): open findings first, each with
+  its fix and resolution chain, then resolved findings and earlier rounds
+  folded away.
 - **Activity** — the dated record, newest first: progress updates
-  (labelled as the run's), work reports and reviews (each folded, whole),
-  comments and decisions, and acceptance and finding records. Raw reads,
-  edits and commands stay in the Sessions view.
+  (labelled as the run's), work reports (each folded, whole), each review
+  as a dated line linking to the exact review in Reviews rather than a
+  second copy, comments and decisions, and acceptance and finding
+  records. Raw reads, edits and commands stay in the Sessions view.
 
 A filed report — a review round, a work report, a PR update, a
 relevance review — is drawn as the document it is: through the same
@@ -4411,8 +4416,48 @@ assumptions stale? still worth doing as written? — and its report is
 appended to the task file under a `## Relevance review — <date>` heading,
 with the verdict (`Still relevant | Partly done | Already done | Needs
 rewrite`) in the ticker. The card does not move; deciding what to do with
-the verdict is yours. One agent per task at a time applies across both
-kinds.
+the verdict is yours — in the card's **Reviews**, where you can comment
+on it and ask for the card to be updated from it (next section). One
+agent per task at a time applies across both kinds.
+
+### Relevance reviews: comment, then update the card from one
+
+A relevance review judges the card's *definition*; a PR review judges
+code at a revision. The detail view's **Reviews** section keeps them in
+two labelled groups, each with its own empty state, so a card whose only
+review is a relevance review never reads "no review". Each relevance
+review shows its own verdict words, its reviewer, when it was filed, its
+stable identity (`rl-…`, a hash of its heading line, so every board
+computes the same one) and the revision of the brief it read — *not
+recorded* for every review filed so far, never a guess. A heading in an
+older format (a date, no time or reviewer) is shown as written. Its
+report is drawn by the same renderer as every other report. A relevance
+verdict approves nothing: it changes no PR verdict, no acceptance count
+and no merge requirement. Activity dates each review and links to it,
+and so does the Overview; neither draws a second copy.
+
+Under each relevance review are two actions, deliberately two:
+
+- **Comment** saves your note to the card's discussion, linked to that
+  review (the entry gains `"review": "rl-…"`). Nothing else: no agent,
+  no requirement edit. A repeated click is one comment.
+- **✎ Update card from this review** (armed) saves your instruction —
+  or, left empty, "apply this review's recommendations" — as a comment
+  linked to the review, and asks the existing `refine` intent for one
+  proposal, sending it that review's report beside the instruction. It
+  is not another relevance review and not an implementation run. The
+  proposal, its diff and **Apply**/**Discard** are exactly those of
+  "Refining a card"; the job and the decision name the review they came
+  from. Applying records what changed — it does not say every
+  recommendation was met, resolves no finding and approves nothing.
+
+A comment already linked to a review carries that review into its
+refinement and its **↻ Retry**. A request naming a review that is not on
+this card, or a comment that is about a different review, is refused
+with nothing written. A proposal whose review is no longer on the card
+reads stale, like one whose brief moved. The comment and refine routes
+take a JSON body only, and refuse a stated origin that is not this
+board.
 
 Dragging a card with work attached (branch or PR) to `done/` opens a
 three-way choice instead of just moving: **keep it where it is** (nothing
@@ -4745,6 +4790,13 @@ and for anyone editing a card by hand. Every marker carries `"v": 1`.
   `kind` is `comment` or `decision`, and a decision's `outcome` is
   `applied` or `discarded`, naming the `proposal` and the `comment` it
   answered. `briefBefore`/`briefAfter` are short brief revisions.
+- A comment about a relevance review carries `"review": "rl-…"`, the
+  review's identity; a decision on a proposal asked from one carries the
+  same field. A comment saved with the page's request identity carries
+  `"request"`, so the same request again — after a restart, or on a
+  replica — answers with the comment already written. Both are optional:
+  an entry without them reads exactly as before, and nothing rewrites an
+  entry to add them.
 - **Acceptance criteria** keep a stable identity when they carry one on
   their own line — `- [ ] Saving a comment runs nothing <!-- ac:no-run -->`.
   Identity is the id, never the position, so reordering an unchanged
