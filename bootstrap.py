@@ -752,12 +752,17 @@ def plan(found: dict, resolved: dict) -> list[dict]:
                               "inside this install"),
        command)
     fresh = not ENV_FILE.is_file()
-    changes = settings_changes(settings_answers(c, fresh))
-    if changes:
+    answers = settings_answers(c, fresh)
+    changes = settings_changes(answers)
+    if changes or fresh:
+        # A fresh install always gets its .env, even when every answer is
+        # the example's own default: the file is where the project reads
+        # what else it can change.
+        shown = changes or [{"key": k, "to": v} for k, v in answers.items()]
         op("settings", "settings",
            "write the chosen settings into manager/local/.env: "
            + ", ".join(f"{ch['key']}={ch['to'] or '(empty)'}"
-                       for ch in changes))
+                       for ch in shown))
     if c["mode"] == "external" and (c["workRepo"] == "new"
                                     or c.get("initializedHere")):
         op("work-first-commit", "git",
@@ -971,7 +976,7 @@ def perform(op: dict, resolved: dict, add_remote: str | None) -> dict:
                 if ENV_FILE.is_file() else \
                 (CORE / ".env.example").read_text(encoding="utf-8")
             updated = install.substitute(base, answers)
-            if updated == base:
+            if updated == base and ENV_FILE.is_file():
                 result.update(outcome="already", detail="already set")
             else:
                 ENV_FILE.parent.mkdir(parents=True, exist_ok=True)

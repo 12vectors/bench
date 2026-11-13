@@ -328,8 +328,8 @@ class FirstRunSettings(unittest.TestCase):
         self.env_file.write_text(
             self.example.replace("BOARD_PORT=26071", "BOARD_PORT=26099")
                         .replace("BOARD_SYNC=\n", "BOARD_SYNC=1\n")
-                        .replace("BOARD_AGENT_COMMANDS=python3 -m unittest",
-                                 "BOARD_AGENT_COMMANDS=make test"),
+                        .replace("BOARD_AGENT_COMMANDS=\n",
+                                 "BOARD_AGENT_COMMANDS=make test\n"),
             encoding="utf-8")
         out = run_install_tty(self.tm, ["", ""], "--setup")
         self.assertIn("[team]", out)          # the current file's answer…

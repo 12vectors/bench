@@ -187,8 +187,8 @@ class TheSettingsPageIsTheEnvFile(BuiltSite):
         file, not a retyping of the value — and it is fenced as `env` so
         the stylesheet can draw a value you set differently from a
         terminal that printed something."""
-        self.assertIn('<pre><code class="language-env">BOARD_AGENT_COMMANDS='
-                      "python3 -m unittest\n</code></pre>", self.html)
+        self.assertIn('<pre><code class="language-env">BOARD_PORT=26071\n'
+                      "</code></pre>", self.html)
         css = (SITE / "static" / "site.css").read_text("utf-8")
         self.assertIn("code.language-env", css,
                       "nothing in the stylesheet tells a default from a "

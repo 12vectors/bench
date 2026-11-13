@@ -80,12 +80,19 @@ class LocalOverride(unittest.TestCase):
                                   "good: \\bok\\b\n")
         self.assertEqual([c["label"] for c in checks], ["good"])
 
-    def test_bench_defines_its_own(self):
-        """Bench's real local/checks: the stdlib suite, so the self-hosted
-        Focus view shows a check that can actually run here."""
-        checks = config.checks()
-        self.assertEqual([c["label"] for c in checks], ["unittest"])
-        self.assertTrue(re.search(checks[0]["pattern"], "python3 -m unittest"))
+    def test_benchs_own_matcher_is_developer_material(self):
+        """Bench's stdlib-suite matcher lives in develop/operator-local/,
+        not in manager/local/ where every source checkout would hand it to
+        another project (task 78). The repository resolves core's default;
+        an operator developing bench copies the matcher in by hand."""
+        self.assertFalse((REPO / "manager" / "local" / "checks").exists())
+        dev = (REPO / "develop" / "operator-local" / "checks").read_text(
+            encoding="utf-8")
+        line = next(l for l in dev.splitlines()
+                    if l.strip() and not l.startswith("#"))
+        label, _, pattern = line.partition(":")
+        self.assertEqual("unittest", label.strip())
+        self.assertTrue(re.search(pattern.strip(), "python3 -m unittest"))
 
 
 class AdapterReadsTheSameFile(unittest.TestCase):

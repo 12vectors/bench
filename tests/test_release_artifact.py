@@ -152,16 +152,17 @@ class ArtifactContents(unittest.TestCase):
         # an empty one forever.
         self.assertIn("manager/core/board.py", self.files)
 
-    def test_local_is_the_generated_starter_not_benchs_own(self):
-        # The starter mirrors the root pair (task 13): AGENTS.md holds the
-        # notes, CLAUDE.md is the compatibility pointer.
-        seeded = self.read_member("manager/local/AGENTS.md")
+    def test_local_ships_empty_and_the_starters_ship_as_seed(self):
+        # Nothing in manager/local/ but its placeholders (task 78): an
+        # unpack over an install must have nothing there to overwrite.
+        # The starter mirrors the root pair (task 13) and is tool-owned:
+        # install.py copies each file only where it is missing.
+        self.assertNotIn("manager/local/AGENTS.md", self.files)
+        self.assertNotIn("manager/local/CLAUDE.md", self.files)
+        seeded = self.read_member("manager/core/seed/local/AGENTS.md")
         self.assertIn("This file is yours", seeded)
-        self.assertNotEqual(
-            seeded,
-            (REPO / "manager" / "local" / "AGENTS.md").read_text("utf-8"),
-            "bench's own local notes must never ship")
-        pointer = self.read_member("manager/local/CLAUDE.md")
+        self.assertNotIn("unittest", seeded)
+        pointer = self.read_member("manager/core/seed/local/CLAUDE.md")
         self.assertIn("@AGENTS.md", pointer)
         for sub in ("adapters", "commands", "driver", "prompts"):
             self.assertIn(f"manager/local/{sub}/.gitkeep", self.files)
