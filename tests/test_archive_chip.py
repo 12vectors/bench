@@ -156,7 +156,7 @@ class ArmThenFire(unittest.TestCase):
 
     def test_the_label_swaps_in_place_like_every_other_action(self):
         push_to_row = self.html[self.html.index("if (c.arch) return"):]
-        line = push_to_row.split("\n", 1)[0]
+        line = push_to_row.split("</button>`;", 1)[0]
         self.assertIn("actLabel(c.label, 'archive it?', 'archiving…')", line,
                       "rest / confirm / busy share one grid cell")
         self.assertIn("<button", line, "an action chip is a button")
@@ -181,6 +181,61 @@ class ArmThenFire(unittest.TestCase):
         wiring = re.search(r"el\.querySelectorAll\('\[data-arch\]'\).*?\n  \}\);",
                            self.html, re.S).group(0)
         self.assertIn("e.stopPropagation()", wiring)
+
+
+class OnTheFaceOfADoneCard(unittest.TestCase):
+    """Task 85: on a done card archiving is the one thing left to do, so
+    the chip is on the face there — the same chip, the same wiring — and
+    in the ⋯ tools everywhere else."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = html()
+        cls.push = re.search(r"if \(canArchive\(task\)\) \{(.*?)\n  \}",
+                             cls.html, re.S).group(1)
+        cls.card = re.search(r"function cardFor\(task\) \{.*?\n\}\n", cls.html, re.S).group(0)
+
+    def test_the_face_is_the_done_stage_only(self):
+        self.assertIn("face: task.stage === 'done'", self.push,
+                      "the chip says for itself where it is on the face")
+        body = re.search(r"function chipOnFace\(c, task\) \{(.*?)\n\}", self.html, re.S).group(1)
+        self.assertIn("if (c.face !== undefined) return c.face;", body,
+                      "chipOnFace honours a chip's own answer first")
+
+    def test_one_chip_one_wiring_no_second_archive_path(self):
+        self.assertEqual(len(re.findall(r"data-arch", self.card)), 2,
+                         "still written once and wired once")
+        self.assertEqual(self.html.count("'/api/archive'"), 1)
+
+    def test_it_is_a_named_button_with_its_glyph_hidden(self):
+        line = self.html[self.html.index("if (c.arch) return"):]
+        line = line.split("</button>`;", 1)[0]
+        self.assertIn('type="button"', line)
+        self.assertIn('aria-hidden="true"', line, "the ⌸ glyph is not read out")
+        self.assertIn('class="srx"', line, "the name says which card it archives")
+
+    def test_the_face_style_is_visible_and_never_outranks_live_states(self):
+        flat = self.html.replace(" ", "").replace("\n", "")
+        rule = re.search(r":where\(\.chiprow\)\.chip2\.arch\{([^}]*)\}", flat)
+        self.assertIsNotNone(rule, "the face chip has no visible style of its own")
+        self.assertIn("border-color:var(--border)", rule.group(1),
+                      "a border, so it reads as a control without hovering")
+        self.assertIn("min-height:28px", rule.group(1))
+        self.assertIn("@media(pointer:coarse){:where(.chiprow).chip2.arch{min-height:44px",
+                      flat, "a touch-sized target on touch screens")
+
+    def test_pressing_the_chip_never_starts_a_drag(self):
+        wiring = re.search(r"el\.querySelectorAll\('\[data-arch\]'\).*?\n  \}\);",
+                           self.html, re.S).group(0)
+        self.assertIn("el.dataset.nodrag = '1'", wiring)
+        self.assertIn("delete el.dataset.nodrag", wiring, "released on pointerup")
+        drag = re.search(r"el\.addEventListener\('dragstart', \(e\) => \{\n(.*?)\n",
+                         self.card, re.S).group(1)
+        self.assertIn("if (el.dataset.nodrag) { e.preventDefault(); return; }", drag)
+
+    def test_a_done_card_has_no_empty_tools_menu(self):
+        self.assertIn("if (chips.length && (task.stage !== 'done' || "
+                      "chips.some(c => !chipOnFace(c, task)))) {", self.card)
 
 
 class TheUndoStaysThePromise(unittest.TestCase):
