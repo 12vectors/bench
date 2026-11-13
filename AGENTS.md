@@ -256,11 +256,14 @@ the script at build time, `BENCH_SOURCE` in `local/.env` overrides it),
 replaces `manager/core/` wholesale plus the top-level files named in the
 artifact's `manager/core/release-manifest`, and touches nothing else —
 tasks, plans, reference documents, your task template, driver, prompt
-overrides, `.env` and state all survive, in either layout. The tool-owned
+overrides, your `manager/local/` notes and checks, `.env` and state all
+survive byte for byte, in either layout. The tool-owned
 seed under `manager/core/seed/` is replaced with the rest of core; your
 template at the work root is not. No release
 published → it says so and changes nothing; developers working on bench
-itself update their clone with git instead. Then re-run `install.py`
+itself update their clone with git instead — and a clone made before
+task 78 runs `protect-local.py` from the target revision first (see
+"The project's own notes in manager/local/"). Then re-run `install.py`
 (idempotent re-wire) and restart the board — which, after an update from
 a release that still unpacked a skeleton beside the tool, is also what
 tidies that skeleton away in an external install (see "Where the work
@@ -291,6 +294,72 @@ a vendored install that is inside `.task-manager/`, exactly where it
 always was. Whatever already exists is left as it is, so a second run
 creates nothing.
 
+### The project's own notes in manager/local/
+
+`manager/local/` belongs to the project an install manages, and neither
+a release nor a source checkout carries a file there except the
+`.gitkeep` placeholders. So an unpacked tarball or a pull has nothing to
+overwrite. `install.py` copies the two neutral starters, `AGENTS.md` and
+its `CLAUDE.md` pointer, from the tool-owned `manager/core/seed/local/`.
+It copies each file on its own and only where that file is missing. An
+existing one, edited, empty or a link, is never touched, and a second
+run writes nothing. The starters name no test framework: a project's
+definition of done is the project's to write, in the application's own
+`AGENTS.md` or in this file. No check matcher, profile document or gate
+is installed with them. `BOARD_AGENT_COMMANDS` defaults to empty and is
+filled from the application's own runner when detected (see the next
+section).
+
+Bench's own development policy (its definition of done,
+`python3 -m unittest`, and the matching Focus `checks`) is not an
+installation default. It lives in `develop/operator-local/`, which ships
+nowhere and which no install reads. An operator that develops bench
+copies it in by hand, as `develop/README.md` describes. Where an older
+source checkout left bench's policy in an install's `manager/local/`,
+`install.py` names it on every run and leaves it exactly as it is.
+Replacing it is the project's decision.
+
+| Path | Owner | What install, reinstall and update do |
+| --- | --- | --- |
+| `manager/core/seed/local/AGENTS.md`, `CLAUDE.md` | the tool | replaced with the rest of core |
+| `manager/local/AGENTS.md`, `CLAUDE.md` | the project | seeded once each if missing, never changed after |
+| `manager/local/checks`, `.env`, `profiles.json`, `prompts/`, `driver/`, `commands/`, `adapters/`, `state/` | the project | never touched (`.env` is written once, as below) |
+| `develop/operator-local/` | bench's developers | never shipped, never read |
+
+A project may keep its notes in its own git history. A vendored install
+committed into the host repository does exactly that, and nothing here
+stops it.
+
+**A source checkout made before task 78** tracks bench's
+`manager/local/AGENTS.md`, `CLAUDE.md` and `checks`. Through git alone,
+the update that stops tracking them deletes an untouched copy and
+refuses to pull over an edited one. So the supported update runs a
+preflight from the revision being updated to:
+
+```bash
+git fetch origin
+git show origin/main:protect-local.py > /tmp/protect-local.py
+python3 /tmp/protect-local.py            # report; changes nothing
+python3 /tmp/protect-local.py --apply
+git pull --ff-only
+python3 install.py                       # puts protected versions back
+```
+
+The preflight judges every file the update stops tracking. Bench's own
+version, untouched, is left for git to remove, so bench's policy is not
+resurrected, and the starter is seeded in its place. An edit of bench's
+version is copied under `manager/local/state/migrations/local-ownership/`
+and verified by hash, then put back to the committed version so the pull
+can go ahead. `install.py` restores it afterwards. A version the checkout
+committed itself is copied and untracked; commit that untracking, then
+merge. A link, a conflict, staged and unstaged content at once, a file
+edited again after it was protected, or an untracked file where the
+update adds one changes nothing and exits 2, naming each decision.
+Restoring never overwrites: a different file found in place is kept
+beside the protected copy, and both are named. Running any step again
+changes nothing more. A vendored or release install has nothing to
+migrate.
+
 ### The first run writes local/.env
 
 A project with no `manager/local/.env` runs on the documented defaults, so
@@ -312,7 +381,12 @@ project matching none of them gets `BOARD_AGENT_COMMANDS` empty, which
 is honest: an agent then runs no project commands until someone fills it
 in. A wrong guess costs nothing an empty value would not, since a prefix
 that matches nothing denies exactly the same way. An existing value is
-never overwritten, so `--setup` cannot undo a hand-edit.
+never overwritten, so `--setup` cannot undo a hand-edit. The same
+detection, against the application, fills the key when `--app`/`--work`
+write the file for an external layout. With no `.env` at all the setting
+is empty too: bench's own `python3 -m unittest` used to be the default,
+which granted bench's test runner to every project that had not said
+otherwise (task 78).
 
 Empty is honest, but honest and invisible is a board that lets an agent
 discover the problem on your behalf, slowly — so the board says it out
@@ -721,6 +795,13 @@ The two can share one work state or keep separate ones, and either way
 `start.sh` and `stop.sh` tell their boards apart by the triple above, so
 a candidate board opened for a look does not reopen or stop the
 operator's.
+
+Bench's own definition of done is the operator's local policy, not
+something bench installs. Its notes and Focus checks live in
+`develop/operator-local/`, and the operator copies them into its own
+`manager/local/` by hand (`develop/README.md`). Promoting a release or a
+pull into the operator never puts them there or takes them away, and no
+other install ever receives them.
 
 ## Seeing the board
 

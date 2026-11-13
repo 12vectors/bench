@@ -35,6 +35,10 @@ An adapter is a directory with two executables, and may declare one file
   Vendors that read `AGENTS.md` from the working directory's tree
   natively — opencode does, as does current Claude Code — pick it up in
   every worktree with no adapter work; `run` never needs to inject it.
+  Briefs outside the checkout (the work root's `AGENTS.md`, the install's
+  `manager/local/AGENTS.md`) are named in the prompt by absolute path.
+  The latter is the destination project's own notes, seeded neutral;
+  bench's own development policy is never among them.
 
 ### Launch intents (`AGENT_MODE`)
 

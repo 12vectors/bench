@@ -65,6 +65,26 @@ name coding agents read natively — with `CLAUDE.md` beside it as a one-line
 compatibility pointer. Both live inside `.task-manager/`, so a host repo's
 own root `AGENTS.md` is never touched.
 
+Your project's own notes go in `manager/local/AGENTS.md` (with
+`CLAUDE.md` as its pointer). Nothing ships there: `install.py` copies a
+neutral starter from `manager/core/seed/local/` for each of the two that
+is missing, and never touches one that exists. The starter names no test
+framework. Your definition of done is your project's to write, in your
+application's `AGENTS.md` or in this file.
+
+**From a source checkout instead of a release.** Clone, then install:
+
+```bash
+git clone --depth 1 https://github.com/12vectors/bench.git .task-manager
+rm -rf .task-manager/.git        # vendored: the host repo tracks it
+./.task-manager/start.sh
+```
+
+A clone carries nothing in `manager/local/` but the empty placeholders,
+so it follows the same rules as a release. Do not copy a checkout
+recursively over an existing install: update with `update.sh`, or with
+git as "Working on bench itself" describes.
+
 ## Install outside the repo
 
 Bench does not have to live in the repository it manages. Name an
@@ -286,8 +306,9 @@ needs no configuration; `BENCH_SOURCE=<owner/repo>` in
 `manager/core/` and the top-level scripts wholesale and touch nothing
 else — tasks, plans, reference, your task template, and everything under
 `manager/local/` (your driver, commands, prompt overrides, settings,
-state) survive every update, wherever the work root is. Only the
-tool-owned seed in `manager/core/seed/` changes. Then
+state, and your `AGENTS.md`, `CLAUDE.md` and `checks`) survive every
+update byte for byte, wherever the work root is. Only the tool-owned
+seed in `manager/core/seed/` changes. Then
 `python3 .task-manager/install.py` and restart the board.
 If the source repo has no published release yet, `update.sh` says so and
 changes nothing.
@@ -298,9 +319,14 @@ changes nothing.
 git clone git@github.com:12vectors/bench.git && cd bench && ./start.sh
 ```
 
-A clone carries bench's own cards and local/ content — that is dev mode,
-not an install. (Installing from a clone anyway works: `install.py`
-clears the shipped cards on its first boot in a host repo.) In the clone
+A clone carries bench's own cards — that is dev mode, not an install.
+(Installing from a clone anyway works: `install.py` clears the shipped
+cards on its first boot in a host repo.) It carries no `manager/local/`
+content: bench's own definition of done and Focus checks live in
+`develop/operator-local/`, which no install reads. `develop/README.md`
+says how to give an operator that develops bench that policy, and how to
+update a clone made before the split with `protect-local.py`, which keeps
+your own local notes through the pull. In the clone
 the task template lives at `manager/core/seed/task-template.md`, the seed
 every install copies from. Releases are
 built by `./release.sh` from the manifest at
