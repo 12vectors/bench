@@ -44,6 +44,7 @@ import gates  # noqa: E402
 import httpd  # noqa: E402
 import profiles  # noqa: E402
 import required  # noqa: E402
+import state  # noqa: E402
 import templates  # noqa: E402
 import verify  # noqa: E402
 
@@ -143,14 +144,30 @@ class BatchCase(GateCase):
     def item(self, batch: dict, name: str) -> dict:
         return next(i for i in batch["items"] if i["check"] == name)
 
+    def running_published(self, name: str) -> bool:
+        """Whether a run of `name` is genuinely under way *and* readable by
+        the gate. `verify.request` reserves a run in `RUNNING` (and marks it
+        `running`) before its first `_store` writes the evidence the gate
+        and `required.plan` read, so the reservation alone is not enough:
+        wait for the check's process to exist and for the record on disk to
+        say `running`."""
+        with state.LOCK:
+            live = [eid for eid, r in verify.RUNNING.items()
+                    if r.get("check") == name
+                    and r.get("outcome") == "running"
+                    and r.get("proc") is not None]
+        return any((verify.read(eid) or {}).get("outcome") == "running"
+                   for eid in live)
+
     def hang_in_background(self, name: str) -> threading.Thread:
         thread = threading.Thread(target=self.person, args=(name,),
                                   daemon=True)
         thread.start()
         self.threads.append(thread)
-        self.assertTrue(wait_for(lambda: any(
-            r.get("check") == name and r.get("outcome") == "running"
-            for r in verify.RUNNING.values()), 20))
+        self.assertTrue(wait_for(lambda: self.running_published(name), 20),
+                        f"{name} never reached a running, persisted record")
+        # what the gate memoised before the record landed is not its answer
+        self.fresh()
         return thread
 
     def state_files(self) -> dict[str, str]:
@@ -201,6 +218,51 @@ class OnlyMissingRequired(BatchCase):
         rows = {r["check"]: r for r in decision["requirements"]}
         self.assertEqual(rows["missing"]["state"], "met")
         self.assertEqual(rows["slow"]["state"], "pending")
+
+    def test_a_join_waits_for_the_running_record_to_be_published(self):
+        """The CI race, held open on purpose: `verify.request` reserves the
+        run before its first `_store` writes the record the gate reads. An
+        event barrier holds that first write; while it is held the run is
+        reserved but unpublished, the plan honestly reads `request`, and
+        `running_published` says no. Released, it says yes and the plan
+        reads `joined`. No sleeps: every step waits on a cause."""
+        real = verify._store
+        held, release = threading.Event(), threading.Event()
+
+        def delayed(record):
+            if (record.get("check") == "slow"
+                    and record.get("outcome") == "running"
+                    and not held.is_set()):
+                held.set()
+                release.wait(20)          # bounded; the test releases it
+            return real(record)
+
+        self.addCleanup(release.set)
+        with mock.patch.object(verify, "_store", delayed):
+            thread = threading.Thread(target=self.person, args=("slow",),
+                                      daemon=True)
+            thread.start()
+            self.threads.append(thread)
+            self.assertTrue(held.wait(20), "the initial store never came")
+            with state.LOCK:
+                reserved = any(r.get("check") == "slow"
+                               and r.get("outcome") == "running"
+                               for r in verify.RUNNING.values())
+            self.assertTrue(reserved, "the old predicate is already true")
+            self.assertFalse(self.running_published("slow"))
+            self.fresh()
+            states = {i["check"]: i["state"]
+                      for i in required.plan(CARD, "in-progress")["items"]}
+            self.assertEqual(states["slow"], "request",
+                             "unpublished, nothing on disk to join")
+            release.set()
+            self.assertTrue(wait_for(lambda: self.running_published("slow"),
+                                     20))
+        self.fresh()
+        states = {i["check"]: i["state"]
+                  for i in required.plan(CARD, "in-progress")["items"]}
+        self.assertEqual(states["slow"], "joined")
+        self.assertEqual(self.runs("slow"), 1)
 
     def test_unavailable_check_names_the_configuration_remedy(self):
         plan = required.plan(CARD, "in-progress")
