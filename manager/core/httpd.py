@@ -215,17 +215,18 @@ SETTINGS_TOKEN = "1"
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]", "::1")
 
 
-def origin_problem(headers, port: int) -> str | None:
+def origin_problem(headers, port: int, token: bool = True) -> str | None:
     """Why this request may not change policy, or None.
 
     Read from headers only. Nothing in the body may make a request
-    trusted: that is what a forged post would fill in.
+    trusted: that is what a forged post would fill in. `token=False` is
+    the card-write door, which asks everything but the custom header.
     """
     ctype = (headers.get("Content-Type") or "").split(";")[0].strip().lower()
     if ctype != "application/json":
         return (f"a policy change must be sent as application/json "
                 f"(this was {ctype or 'nothing'}). Nothing was changed.")
-    if (headers.get(SETTINGS_HEADER) or "").strip() != SETTINGS_TOKEN:
+    if token and (headers.get(SETTINGS_HEADER) or "").strip() != SETTINGS_TOKEN:
         return (f"a policy change must carry the {SETTINGS_HEADER}: "
                 f"{SETTINGS_TOKEN} header. A cross-origin form cannot set it "
                 f"and a cross-origin fetch cannot send it without a "
@@ -245,6 +246,20 @@ def origin_problem(headers, port: int) -> str | None:
             return (f"this request states Origin: {origin}, which is a "
                     f"different board on this machine. Nothing was changed.")
     return None
+
+
+def card_write_problem(headers, port: int) -> str | None:
+    """Why this request may not write a card's discussion or ask for a
+    refinement, or None (task 84).
+
+    The policy door minus its custom header, which the card's own page has
+    never sent: a JSON content type — so a cross-origin form, which can
+    only send form encodings, is not parsed, and a cross-origin `fetch`
+    needs a preflight nothing here answers — and, from browsers that state
+    them, an origin that is this board's. A comment can start a
+    refinement, so it is held to more than the body's word."""
+    problem = origin_problem(headers, port, token=False)
+    return problem.replace("a policy change", "a card write") if problem else None
 
 
 def state_payload() -> dict:
@@ -1232,25 +1247,45 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/card/comment":
                 # Add comment: written to the card, and nothing else — no
                 # agent is asked anything because a comment exists.
+                # `review` links it to one relevance review on this card
+                # (task 84); `request` makes a repeated click one comment.
+                problem = card_write_problem(self.headers, config.PORT)
+                if problem:
+                    self._json(403, {"error": problem})
+                    return
                 payload = self._read_body()
+                review = payload.get("review")
                 self._json(200, {"comment": refine.comment(
-                    str(payload["file"]), str(payload["stage"]), payload.get("body"))})
+                    str(payload["file"]), str(payload["stage"]), payload.get("body"),
+                    review=str(review) if review else None,
+                    request_key=str(payload.get("request") or "") or None)})
             elif path == "/api/card/refine":
                 # Update card with agent: one refinement of one comment —
                 # a new one (`text`) or one already on the card
                 # (`comment`). `request` is the page's identity for the
                 # click, so a repeat answers with the job it already made.
+                # `review` asks from one relevance review on this card.
+                problem = card_write_problem(self.headers, config.PORT)
+                if problem:
+                    self._json(403, {"error": problem})
+                    return
                 payload = self._read_body()
                 comment_id = payload.get("comment")
                 text = payload.get("text")
+                review = payload.get("review")
                 self._json(200, refine.request(
                     str(payload["file"]), str(payload["stage"]),
                     comment_id=str(comment_id) if comment_id else None,
                     text=text if text is not None else None,
                     request_key=str(payload.get("request") or "") or None,
-                    retry=bool(payload.get("retry"))))
+                    retry=bool(payload.get("retry")),
+                    review_id=str(review) if review else None))
             elif path in ("/api/card/refine/apply", "/api/card/refine/discard",
                           "/api/card/refine/cancel"):
+                problem = card_write_problem(self.headers, config.PORT)
+                if problem:
+                    self._json(403, {"error": problem})
+                    return
                 payload = self._read_body()
                 job = str(payload["id"])
                 try:

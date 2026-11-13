@@ -88,6 +88,17 @@ REPORT_RE = re.compile(
     r"^##\s+(.+?)\s+[—–-]\s+(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?)(?:\s+\(([^)]*)\))?\s*$",
     re.MULTILINE)
 VERDICT_RE = re.compile(r"^PR REVIEW:\s*(APPROVE|REQUEST CHANGES)", re.MULTILINE)
+# `## Relevance review — 2026-11-08 08:11 (Hazel)` — the heading agents.py
+# files a relevance check under (task 84). Older boards wrote the date
+# alone, and sometimes no reviewer; those are read as legacy, never
+# completed with a time or a name nobody recorded.
+RELEVANCE_RE = re.compile(
+    r"^##\s+Relevance review\s+[—–-]\s+(\d{4}-\d{2}-\d{2})(?: (\d{2}:\d{2}))?"
+    r"(?:\s+\(([^)]*)\))?\s*$")
+RELEVANCE_VERDICT_RE = re.compile(r"^\**\s*RELEVANCE REVIEW:\**\s*(.+?)\s*$", re.MULTILINE)
+# The verdict words the relevance prompt asks for, read off the start of
+# the marker line. Anything else stays the reviewer's own words.
+RELEVANCE_WORDS = ("Still relevant", "Partly done", "Already done", "Needs rewrite")
 
 
 # ── reading ────────────────────────────────────────────────────────────
@@ -236,9 +247,63 @@ def rounds(text: str) -> list[dict]:
     return out
 
 
+def relevance_id(heading_line: str) -> str:
+    """A relevance review's stable identity: a hash of its heading line,
+    which agents.py writes once and nothing rewrites — so the id survives
+    moves, syncs and restarts, and two boards compute the same one."""
+    return "rl-" + hashlib.sha256(heading_line.strip().encode("utf-8")).hexdigest()[:10]
+
+
+def relevance_reviews(text: str) -> list[dict]:
+    """The card's relevance reviews, oldest first (task 84).
+
+    A relevance review judges whether the *brief* is still needed and
+    current; it is not a review of code at a revision, so it carries no
+    commit and nothing here reads it as approval, an accepted criterion or
+    a merge requirement. Where a revision of the brief was not recorded —
+    every review filed so far — it says so (`briefRevision: None`) rather
+    than guessing one. A heading with no time or no reviewer is `legacy`
+    and is shown as written."""
+    history = taskfiles.card_parts(text)["history"]
+    heads = list(REPORT_RE.finditer(history))
+    out = []
+    for index, head in enumerate(heads):
+        line = head.group(0).strip()
+        match = RELEVANCE_RE.match(line)
+        if not match:
+            continue
+        stop = heads[index + 1].start() if index + 1 < len(heads) else len(history)
+        body = history[head.end():stop].strip("\n")
+        while body.rstrip().endswith("---"):
+            body = body.rstrip()[:-3].rstrip()
+        said = RELEVANCE_VERDICT_RE.search(body)
+        raw = said.group(1).strip() if said else None
+        word = next((w for w in RELEVANCE_WORDS
+                     if raw and raw.lower().startswith(w.lower())), None)
+        date, clock, who = match.group(1), match.group(2), (match.group(3) or "").strip()
+        out.append({
+            "id": relevance_id(line), "type": "relevance",
+            "heading": line.lstrip("#").strip(),
+            "at": f"{date} {clock}" if clock else date,
+            "reviewer": who, "verdict": word, "verdictLine": raw,
+            "briefRevision": None,
+            "legacy": not clock or not who,
+            "report": body,
+            "reportSha": hashlib.sha256(body.encode("utf-8")).hexdigest()[:12],
+        })
+    return out
+
+
+def find_relevance(text: str, review_id: str) -> dict | None:
+    return next((r for r in relevance_reviews(text) if r["id"] == review_id), None)
+
+
 def reports(text: str) -> list[dict]:
     """Every dated report in the card's history — work reports, PR updates,
-    reviews, relevance reviews — in file order, for the Activity section."""
+    reviews, relevance reviews — in file order, for the Activity section.
+    A review carries the identity Reviews files it under (`rv-…` for a PR
+    review round, `rl-…` for a relevance review), so Activity can point at
+    the one authoritative copy rather than drawing a second."""
     history = taskfiles.card_parts(text)["history"]
     heads = list(REPORT_RE.finditer(history))
     out = []
@@ -248,8 +313,15 @@ def reports(text: str) -> list[dict]:
         while body.rstrip().endswith("---"):
             body = body.rstrip()[:-3].rstrip()
         kind = head.group(1).strip()
-        out.append({"kind": kind, "at": head.group(2), "by": head.group(3) or "",
-                    "text": body})
+        line = head.group(0)
+        item = {"kind": kind, "at": head.group(2), "by": head.group(3) or "",
+                "text": body}
+        if ROUND_RE.match(line):
+            item.update(review="rv-" + hashlib.sha256(line.strip().encode("utf-8"))
+                        .hexdigest()[:10], reviewType="pr")
+        elif RELEVANCE_RE.match(line.strip()):
+            item.update(review=relevance_id(line), reviewType="relevance")
+        out.append(item)
     return out
 
 
@@ -336,6 +408,9 @@ def read_text(text: str, filename: str) -> dict:
         "legacyTicks": sum(1 for v in ticks.values() if v),
         "counts": {**counts, "total": len(criteria) + len(untracked)},
         "rounds": rounds(text),
+        # relevance reviews are their own kind (task 84): they judge the
+        # brief, not code, and feed no count, verdict or gate above
+        "relevance": relevance_reviews(text),
         "findings": found_list,
         "findingCounts": {state: sum(1 for f in found_list if f["state"] == state)
                           for state in FINDING_STATES},

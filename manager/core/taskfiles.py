@@ -1200,20 +1200,52 @@ def add_discussion_entry(filename: str, stage: str, meta: dict, title: str,
     return {"written": True, "committed": committed}
 
 
-def add_comment(filename: str, stage: str, body, author: str) -> dict:
+REVIEW_LINK_RE = re.compile(r"^rl-[0-9a-f]{10}$")
+COMMENT_REQUEST_RE = re.compile(r"^[A-Za-z0-9._:-]{8,80}$")
+
+
+def add_comment(filename: str, stage: str, body, author: str, *,
+                review: str | None = None, request: str | None = None) -> dict:
     """A person's comment, saved and nothing else: no agent is asked
-    anything because a comment exists. Returns the entry as written."""
+    anything because a comment exists. Returns the entry as written.
+
+    `review` links the comment to one relevance review by its stable id
+    (task 84) — the same discussion, the same entry shape, one more field;
+    the caller has checked the review is on this card. `request` is the
+    page's identity for the click: written into the entry, so the same
+    request again — after a restart, or on a replica a sync reached — is
+    answered with the comment it already made instead of a second one."""
     problem = comment_problem(body)
     if problem:
         raise ValueError(problem)
+    if review is not None and not REVIEW_LINK_RE.match(str(review)):
+        raise ValueError("that is not a review identity")
+    key = str(request or "").strip() or None
+    if key is not None and not COMMENT_REQUEST_RE.match(key):
+        raise ValueError("that is not a request identity")
     at = now_iso()
     meta = {"v": DISCUSSION_VERSION, "id": f"c-{secrets.token_hex(5)}",
             "kind": "comment", "author": _one_line(author) or "unattributed",
             "at": at}
+    if review is not None:
+        meta["review"] = review
+    if key is not None:
+        meta["request"] = key
     text = body.replace("\r\n", "\n").strip()
     title = f"Comment {meta['id']} — {meta['author']} · {stamp(at)}"
-    result = add_discussion_entry(filename, stage, meta, title, text,
-                                  f"comment {meta['id']}")
+    with WRITE_LOCK:
+        if key is not None:
+            if Path(filename).name != filename or stage not in config.STAGE_DIRS:
+                raise ValueError("bad filename")
+            path = config.TASKS / stage / filename
+            seen = next((e for e in discussion(path.read_text(encoding="utf-8"))
+                         if e.get("kind") == "comment" and e.get("request") == key),
+                        None) if path.is_file() else None
+            if seen is not None:
+                return {**seen, "written": False, "committed": None,
+                        "duplicate": True}
+        result = add_discussion_entry(filename, stage, meta, title, text,
+                                      f"comment {meta['id']}")
     return {**meta, "body": text, **result}
 
 
