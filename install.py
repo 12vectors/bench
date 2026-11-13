@@ -484,6 +484,12 @@ def write_layout_env(answers: dict[str, str], dry_run: bool) -> bool:
         base = ENV_FILE.read_text(encoding="utf-8")
     elif ENV_EXAMPLE.is_file():
         base = ENV_EXAMPLE.read_text(encoding="utf-8")
+        # A new file is a first run, so it gets the first run's one
+        # detected answer: the application's own runner, never a default
+        # that happens to be bench's (task 78).
+        app = Path(answers.get("BOARD_APP_ROOT") or PROJECT).expanduser()
+        answers = {**answers,
+                   "BOARD_AGENT_COMMANDS": detect_test_command(app)}
     updated = substitute(base, answers)
     if base == updated:
         return False
@@ -886,6 +892,39 @@ def refuse_local() -> bool:
     return bool(refusals)
 
 
+def restore_protected(dry_run: bool) -> None:
+    """Put back the versions protect-local.py set aside before a git
+    update, once that update has removed bench's. Only a source checkout
+    carries protect-local.py, and only one that ran it has anything
+    waiting; a release has neither. It never overwrites: what came back
+    different is named beside the protected copy, and both are kept."""
+    script = TM / "protect-local.py"
+    if not script.is_file():
+        return
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("bench_protect_local",
+                                                  script)
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+        done, needed = module.restore(TM, dry_run=dry_run)
+    except Exception as error:   # noqa: BLE001 — report, never stop wiring
+        print(f"protected manager/local/ files were not restored: {error}\n")
+        return
+    if done:
+        print(f"{'would restore' if dry_run else 'restored'} what "
+              f"protect-local.py kept through the update:")
+        for line in done:
+            print(f"  {line}")
+        print()
+    if needed:
+        print("protected manager/local/ files need a decision — nothing "
+              "was overwritten:")
+        for line in needed:
+            print(f"  - {line}")
+        print()
+
+
 def initialize_local(dry_run: bool) -> int:
     """The project's notes: seed what is missing, report bench's own
     policy where a source checkout left it, replace nothing. 1 when a link
@@ -1001,6 +1040,11 @@ def main() -> int:
 
     # Self-hosted — bench's own checkout, where the tool IS the project —
     # tasks/ is that repository's history and is left to it.
+    # Before anything is seeded, so a starter never takes the place of a
+    # version the project set aside. Self-hosted too: a bench developer's
+    # own notes are as much theirs as anyone's.
+    restore_protected(dry_run)
+
     # The same for manager/local/: in bench's own checkout nothing reads
     # its notes (they would sit inside the application), and a starter
     # written there would only be an untracked file in bench's history.

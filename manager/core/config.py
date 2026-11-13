@@ -396,8 +396,10 @@ ADAPTER = setting("BOARD_AGENT_ADAPTER", "claude")
 # Command prefixes headless agents may run in a worktree (the project's
 # test/check commands) — neutral, comma-separated; each adapter renders
 # them in its own permission-rule syntax. The universal git/gh grants are
-# the adapter's own knowledge; this list is the project's half.
-AGENT_COMMANDS = setting("BOARD_AGENT_COMMANDS", "python3 -m unittest")
+# the adapter's own knowledge; this list is the project's half. Empty by
+# default (task 78): bench's own runner is not another project's, so a
+# board nobody configured grants none and says so.
+AGENT_COMMANDS = setting("BOARD_AGENT_COMMANDS", "")
 
 
 def agent_commands() -> list[str]:
