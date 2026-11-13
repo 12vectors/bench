@@ -358,6 +358,20 @@ class FromAReview(_Board):
             refine.apply(job["id"])
         self.assertEqual(self.text(), text, "a stale proposal writes nothing")
 
+    def test_comments_after_the_newest_review_are_not_part_of_it(self):
+        """The discussion is written after the last review; it is the
+        board's section, never the review's text — so a comment saved later
+        neither changes the report nor stales a proposal made from it."""
+        job = self.run_job(proposal(REWORDED), text="from the newest",
+                           review_id=self.hazel["id"])
+        refine.comment(FILENAME, "to-do", "A later note", review=self.hazel["id"])
+        [_, hazel] = acceptance.relevance_reviews(self.text())
+        self.assertEqual(hazel["report"], self.hazel["report"])
+        self.assertNotIn("Discussion", hazel["report"])
+        self.assertTrue(refine.public(job)["fresh"]["fresh"], refine.public(job)["fresh"])
+        last = acceptance.reports(self.text())[-1]
+        self.assertNotIn("bench:entry", last["text"], "Activity's copy stops there too")
+
     def test_retry_of_a_failed_review_refinement_keeps_its_review(self):
         failed = self.run_job("EXIT 1", text="x", review_id=self.juno["id"])
         self.assertEqual(failed["status"], "failed")

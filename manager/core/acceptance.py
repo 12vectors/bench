@@ -231,9 +231,7 @@ def rounds(text: str) -> list[dict]:
         if not match:
             continue
         stop = heads[index + 1].start() if index + 1 < len(heads) else len(history)
-        body = history[head.end():stop].strip("\n")
-        while body.rstrip().endswith("---"):
-            body = body.rstrip()[:-3].rstrip()
+        body = _report_body(history, head.end(), stop)
         verdict = VERDICT_RE.search(body)
         out.append({
             "id": "rv-" + hashlib.sha256(head.group(0).strip().encode("utf-8")).hexdigest()[:10],
@@ -245,6 +243,26 @@ def rounds(text: str) -> list[dict]:
             "report": body,
         })
     return out
+
+
+_SECTION_RE = re.compile(
+    r"^##\s+(?:Discussion|Phase log|Acceptance record|Review findings)[ \t]*$",
+    re.MULTILINE)
+
+
+def _report_body(history: str, start: int, stop: int) -> str:
+    """One filed report's text: from its heading to the next dated report
+    — or to the next board-written section (the discussion, the records),
+    which is the board's, not the report's. Without that stop, a comment
+    saved after the newest review would read as part of that review."""
+    body = history[start:stop]
+    section = _SECTION_RE.search(body)
+    if section:
+        body = body[:section.start()]
+    body = body.strip("\n")
+    while body.rstrip().endswith("---"):
+        body = body.rstrip()[:-3].rstrip()
+    return body
 
 
 def relevance_id(heading_line: str) -> str:
@@ -273,9 +291,7 @@ def relevance_reviews(text: str) -> list[dict]:
         if not match:
             continue
         stop = heads[index + 1].start() if index + 1 < len(heads) else len(history)
-        body = history[head.end():stop].strip("\n")
-        while body.rstrip().endswith("---"):
-            body = body.rstrip()[:-3].rstrip()
+        body = _report_body(history, head.end(), stop)
         said = RELEVANCE_VERDICT_RE.search(body)
         raw = said.group(1).strip() if said else None
         word = next((w for w in RELEVANCE_WORDS
@@ -309,9 +325,7 @@ def reports(text: str) -> list[dict]:
     out = []
     for index, head in enumerate(heads):
         stop = heads[index + 1].start() if index + 1 < len(heads) else len(history)
-        body = history[head.end():stop].strip("\n")
-        while body.rstrip().endswith("---"):
-            body = body.rstrip()[:-3].rstrip()
+        body = _report_body(history, head.end(), stop)
         kind = head.group(1).strip()
         line = head.group(0)
         item = {"kind": kind, "at": head.group(2), "by": head.group(3) or "",

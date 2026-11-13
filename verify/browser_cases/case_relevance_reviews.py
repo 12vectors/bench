@@ -235,8 +235,14 @@ class RelevanceReviews(unittest.TestCase):
         b.eval(f"{DRAWER}.scrollTop = document.querySelector('{REL}[data-keep=\"{self.rid}\"] .rvcompose').offsetTop - 60")
         b.eval(f"{DRAWER}.dispatchEvent(new Event('scroll'))")
         kept = b.eval(f"document.getElementById('rvbox-{self.rid}').getBoundingClientRect().top")
+        # a review is filed by agents.py, which then nudges every page; the
+        # watcher does not notice a content edit, so the nudge here is a
+        # teammate's comment through the API, after the review lands
         with self.card.open("a", encoding="utf-8") as fh:
             fh.write(LATER)
+        code, body = S["backend"].post("/api/card/comment", {
+            "file": FILE, "stage": "to-do", "body": "A teammate's unrelated note"})
+        self.assertEqual(code, 200, body[:300])
         self.assertTrue(b.wait(f"document.querySelectorAll('{REL}').length === 2", 20),
                         "the new review never arrived")
         self.assertEqual(b.eval(f"document.getElementById('rvbox-{self.rid}').value"), "half a thought",

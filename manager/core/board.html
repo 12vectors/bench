@@ -9360,7 +9360,8 @@ function relevanceHtml(t, r, open) {
   const tone = RELEVANCE_TONE[r.verdict] || '';
   return `<details class="rpt rvrel" id="rvw-${esc(r.id)}" data-keep="${esc(r.id)}"` +
     `${(S.accOpen[`${t.file}:${r.id}`] ?? open) ? ' open' : ''}>` +
-    `<summary><b class="${tone}">${esc(r.verdict || r.verdictLine || 'No verdict line')}</b>` +
+    // the summary has an id so a live redraw gives focus back to it
+    `<summary id="rvs-${esc(r.id)}"><b class="${tone}">${esc(r.verdict || r.verdictLine || 'No verdict line')}</b>` +
     `<span class="rvwho">${esc(r.reviewer || 'reviewer not recorded')} · ${esc(r.at)}</span>` +
     `<span class="ameta">${esc(r.id)}</span></summary>` +
     `<dl class="dfacts rvmeta">` +
@@ -9392,7 +9393,7 @@ function reviewsHtml(t, acc) {
   const rounds = [...acc.rounds].reverse();
   const rel = [...(acc.relevance || [])].reverse();
   const roundHtml = (r, open) => `<details class="rpt" id="rvw-${esc(r.id)}" data-keep="${esc(r.id)}"${(S.accOpen[`${t.file}:${r.id}`] ?? open) ? ' open' : ''}>` +
-    `<summary><b>${esc(roundLine(r))}</b>${sinceRound(r, acc) ? `<span class="dnote">${esc(sinceRound(r, acc))}</span>` : ''}` +
+    `<summary id="rvs-${esc(r.id)}"><b>${esc(roundLine(r))}</b>${sinceRound(r, acc) ? `<span class="dnote">${esc(sinceRound(r, acc))}</span>` : ''}` +
     `<span class="ameta">${esc(r.id)}</span></summary>${reportHtml(t, r.report, r.id)}</details>`;
   const fc = acc.findingCounts;
   const relevance = `<section class="rvgroup" aria-labelledby="rvg-rel-${esc(t.number || 'x')}">` +
