@@ -52,11 +52,16 @@ HARNESS = "\n".join([
     lift(r"^const esc = \(s\) =>.*?\n.*?\n", "esc()"),
     lift(r"^const DTABS = .*?\];\n", "DTABS"),
     lift(r"^const ACC_GLYPH = .*?\n", "ACC_GLYPH"),
+    lift(r"^const JOB_WORD = \{.*?\n\};\n", "JOB_WORD"),
+    lift(r"^const RELEVANCE_TONE = .*?\n", "RELEVANCE_TONE"),
     *(function(name) for name in (
         "actLabel", "ago", "whenOf", "stampOf", "cardSplit", "recordHtml",
         "evidenceOptions", "criterionHtml", "accActor", "acceptanceHtml",
         "roundLine", "sinceRound", "findingHtml", "md", "reportHtml", "reviewsHtml",
-        "acceptanceChips", "dtabsHtml")),
+        "acceptanceChips", "dtabsHtml",
+        # task 84: relevance reviews and their threads
+        "relevanceLine", "reviewRefineWhy", "reviewThreadHtml", "relevanceHtml",
+        "jobsByComment", "reviewRef", "commentRowHtml", "diffHtml", "jobHtml")),
     "const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));",
     "const S = { state: { acceptance: { [input.file]: input.summary } },",
     "  accOpen: {}, accDraft: {}, evidence: { [input.file]: { evidence: [] } },",

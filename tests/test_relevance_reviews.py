@@ -27,7 +27,11 @@ no model, no network, never the live board.
 from __future__ import annotations
 
 import hashlib
+import json
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -40,6 +44,7 @@ import refine  # noqa: E402
 import state  # noqa: E402
 import taskfiles  # noqa: E402
 
+from tests import test_card_detail_ui as detail_ui  # noqa: E402
 from tests.test_card_refinement import FILENAME, _Board, git, proposal  # noqa: E402
 
 FIXTURE = (REPO / "tests" / "fixtures" / "relevance" / "card-79.md").read_text(
@@ -361,6 +366,145 @@ class FromAReview(_Board):
         self.assertEqual(retried["status"], "proposed", retried.get("error"))
         self.assertEqual(retried["review"], self.juno["id"])
         self.assertEqual(retried["retryOf"], failed["id"])
+
+
+NODE = shutil.which("node")
+HARNESS = "\n".join([
+    detail_ui.HARNESS.split("const input = JSON.parse")[0],
+    detail_ui.function("activityHtml"),
+    "const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));",
+    "const S = { state: {}, accOpen: {}, accDraft: {}, commentDraft: {},",
+    "  evidence: { [input.file]: { evidence: [] } },",
+    "  acc: { [input.file]: { data: input.acc } },",
+    "  disc: input.disc ? { [input.file]: { data: input.disc } } : {} };",
+    "const t = { file: input.file, stage: 'to-do', number: '79', body: input.body };",
+    "process.stdout.write(JSON.stringify({",
+    "  reviews: reviewsHtml(t, input.acc), activity: activityHtml(t, input.acc) }));",
+])
+
+
+@unittest.skipUnless(NODE, "node is needed to run the page's own renderers")
+class Drawn(unittest.TestCase):
+    """The page's own renderers, fed the server's own reading."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._dir = tempfile.TemporaryDirectory()
+        cls.js = Path(cls._dir.name) / "reviews.js"
+        cls.js.write_text(HARNESS, encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._dir.cleanup()
+
+    def render(self, text: str, disc: dict | None = None) -> dict:
+        acc = acceptance.read_text(text, "79-x.md")
+        acc["reports"] = acceptance.reports(text)
+        out = subprocess.run([NODE, str(self.js)], text=True, capture_output=True,
+                             input=json.dumps({"file": "79-x.md", "acc": acc,
+                                               "body": text, "disc": disc}))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)
+
+    @staticmethod
+    def groups(html: str) -> tuple[str, str]:
+        rel, pr = html.split('aria-labelledby="rvg-pr-', 1)
+        return rel, pr
+
+    def test_card_79_review_is_under_relevance_beside_a_pr_empty_state(self):
+        out = self.render(FIXTURE)
+        rel, pr = self.groups(out["reviews"])
+        [review] = acceptance.relevance_reviews(FIXTURE)
+        self.assertIn("Relevance reviews", rel)
+        self.assertIn(f'id="rvw-{review["id"]}"', rel)
+        self.assertIn("Partly done", rel)
+        self.assertIn("Hazel · 2026-11-10 14:22", rel)
+        self.assertIn("Brief revision</dt><dd>not recorded", rel)
+        self.assertIn("<strong>not</strong>", rel, "the report is drawn as Markdown")
+        self.assertIn("No PR review has been filed on this card.", pr)
+        self.assertNotIn("No relevance review", rel)
+        self.assertIn("✎ Update card from this review", rel)
+        self.assertIn(">Comment</button>", rel)
+        # untrusted text stays inert
+        self.assertNotIn("<script>", out["reviews"])
+        self.assertNotIn('href="javascript:', out["reviews"])
+        # Activity dates it and links to that exact copy, without a second one
+        self.assertIn(f'data-goreview="{review["id"]}"', out["activity"])
+        self.assertNotIn("Recommendation: update the task", out["activity"])
+
+    def test_type_specific_empty_states(self):
+        pr_only = self.render(card(PR_ROUND))["reviews"]
+        rel, pr = self.groups(pr_only)
+        self.assertIn("No relevance review has been filed on this card.", rel)
+        self.assertNotIn("No PR review has been filed", pr)
+        self.assertIn("Juno approved at 0123456789ab", pr)
+        rel_only = self.render(card(RELEVANCE))["reviews"]
+        rel, pr = self.groups(rel_only)
+        self.assertIn("Needs rewrite", rel)
+        self.assertIn("No PR review has been filed on this card.", pr)
+
+    def test_mixed_multiple_and_legacy_rounds_are_labelled(self):
+        out = self.render(card(LEGACY, RELEVANCE, PR_ROUND, RELEVANCE_2))
+        rel, pr = self.groups(out["reviews"])
+        self.assertIn("Earlier relevance reviews (2)", rel)
+        self.assertIn("Wren · 2026-11-10 11:30", rel)
+        self.assertIn("filed in an older format", rel)
+        self.assertIn("reviewer not recorded", rel)
+        self.assertNotIn("Still relevant", pr, "a relevance verdict is not a PR verdict")
+        self.assertIn("Juno approved", pr)
+        self.assertNotIn("approved", rel.lower().replace("approves nothing", ""),
+                         "no relevance verdict is drawn as approval")
+
+    def test_a_linked_comment_and_its_job_sit_in_the_reviews_thread(self):
+        [review] = acceptance.relevance_reviews(FIXTURE)
+        disc = {"entries": [
+            {"id": "c-aaaaaaaaaa", "kind": "comment", "author": "ron", "at": "2026-11-11",
+             "body": "<img src=x onerror=alert(1)> take it", "review": review["id"]},
+            {"id": "c-bbbbbbbbbb", "kind": "comment", "author": "ron", "at": "2026-11-11",
+             "body": "unrelated"}],
+            "jobs": [{"id": "p-1", "comment": "c-aaaaaaaaaa", "status": "proposed",
+                      "attempt": 1, "name": "Juno", "explanation": "Dropped a bullet.",
+                      "review": review["id"], "reviewHeading": review["heading"],
+                      "sections": ["What to build"], "affected": [],
+                      "diff": [{"op": "-", "text": "- Lead with one result."}],
+                      "fresh": {"fresh": True}}],
+            "blocked": None, "refine": {"ready": True, "blockers": []}}
+        out = self.render(FIXTURE, disc)
+        rel, _ = self.groups(out["reviews"])
+        thread = rel.split('class="rvthread"')[1]
+        self.assertIn("c-aaaaaaaaaa", thread)
+        self.assertNotIn("c-bbbbbbbbbb", thread, "only this review's comments")
+        self.assertNotIn("<img", thread)
+        self.assertIn("Asked from relevance review", thread)
+        self.assertIn("not another review and not an implementation run", thread)
+        self.assertIn('data-act="apply"', thread)
+        self.assertIn('data-act="discard"', thread)
+        self.assertIn('aria-label="proposed change to the brief"', thread)
+        self.assertIn("about a relevance review", out["activity"])
+
+    def test_a_blocked_board_disables_update_and_says_why(self):
+        disc = {"entries": [], "jobs": [], "blocked": "Wren is implementing 79-x.md (work)",
+                "refine": {"ready": True, "blockers": []}}
+        rel, _ = self.groups(self.render(FIXTURE, disc)["reviews"])
+        self.assertRegex(rel, r'data-rvact="refine" disabled')
+        self.assertIn("Wren is implementing", rel)
+        self.assertNotRegex(rel, r'data-rvact="comment" disabled',
+                            "a comment can always be saved")
+
+
+class SourceInvariants(unittest.TestCase):
+    def test_review_actions_arm_and_carry_request_keys(self):
+        body = detail_ui.function("wireReviews")
+        self.assertIn("label: 'Update card from this review', confirm: true", body)
+        self.assertIn("review: id, request", body)
+        self.assertIn("'/api/card/comment'", body)
+        self.assertNotIn("/api/review", body, "no review is asked for")
+        self.assertNotIn("/api/agents", body, "no implementation is started")
+
+    def test_activity_links_rather_than_copies_reviews(self):
+        body = detail_ui.function("activityHtml")
+        self.assertIn("if (r.review)", body)
+        self.assertIn("data-goreview", body)
 
 
 class Headers(dict):

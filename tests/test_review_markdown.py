@@ -249,7 +249,9 @@ class SourceInvariants(unittest.TestCase):
 
     def test_no_report_is_drawn_as_a_raw_pre_any_more(self):
         self.assertNotIn('<pre class="rtext">', HTML)
-        self.assertEqual(HTML.count("reportHtml(t, r.report, r.id)"), 1, "review rounds")
+        # review rounds and relevance reviews (task 84), one call each
+        self.assertEqual(HTML.count("reportHtml(t, r.report, r.id)"), 2,
+                         "review rounds and relevance reviews")
         self.assertEqual(HTML.count("reportHtml(t, it.report, it.key)"), 1, "activity reports")
 
     def test_one_renderer(self):

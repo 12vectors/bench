@@ -1209,6 +1209,23 @@
   #drawer .rsrc .racts{margin:6px 0}
   #drawer .rsrc .rraw{margin:0;padding:8px 10px;background:var(--sunken);border-radius:8px;
     font-family:var(--mono);font-size:11.5px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted)}
+  /* Reviews holds two kinds (task 84): a relevance review of the brief
+     and a PR review of code, each under its own heading. A relevance
+     review carries its thread and composer inside its own fold. */
+  #drawer .rvgroup{display:flex;flex-direction:column;gap:8px;min-width:0}
+  #drawer .rvgroup+.rvgroup{border-top:1px solid var(--border-soft);padding-top:12px;margin-top:6px}
+  #drawer .rvgroup>h3 .n{font-family:var(--mono);font-size:11px;color:var(--dim);font-weight:400;margin-left:4px}
+  #drawer .rvgroup>h4{margin:6px 0 0;font-size:12.5px;color:var(--muted)}
+  #drawer .rvrel>summary .rvwho{color:var(--muted)}
+  #drawer .rvrel>summary b.bad{color:var(--alarm)}
+  #drawer .rvrel .rvmeta{margin:2px 14px 8px;font-size:12px}
+  #drawer .rvrel .rvdisc{margin:4px 14px 12px;min-width:0}
+  #drawer .rvrel .rvdisc h4{margin:0;font-size:12.5px;color:var(--text)}
+  #drawer .rvrel .rvthread{display:flex;flex-direction:column;gap:8px}
+  #drawer .rvrel .rvcompose label{font-size:12px;color:var(--muted)}
+  #drawer .rvrel .rvwhy:empty{display:none}
+  #drawer .rjob .rvfrom{font-size:11.5px;color:var(--muted)}
+  #drawer .tline .tl .tx .dlink{white-space:nowrap}
   #drawer .chain{display:flex;flex-direction:column;gap:4px;margin:0;padding:0;list-style:none}
   #drawer .chain li{font-size:12px;border-left:2px solid var(--line);padding-left:8px;
     overflow-wrap:anywhere}
@@ -1493,6 +1510,7 @@ const S = {
   disc: {},              // file -> {data, stamp, error}: the card's discussion
   commentDraft: {},      // file -> unsent comment text, kept across redraws
   refineKey: {},         // file -> the request key for that text's refinement
+  commentKey: {},        // file::review -> the request key for that review comment
   dtab: {},              // file -> the detail view's open section (task 81)
   acc: {},               // file -> {data, stamp, error}: acceptance, findings, reports
   dfull: {},             // file -> {data, key, error}: the full delivery reading
@@ -8887,6 +8905,7 @@ function renderDrawer() {
     `<div class="dmeta">${esc(t.stage)}/${esc(t.file)} · ${t.words} words · edited ${esc(when)}</div>`;
   wireDiscussion(t);
   wireDetail(t);
+  wireReviews(t);
   const ov = $('#dsec-overview');
   wireDeliveryButtons(ov, t, deliveryActions(dl, 'ov'));
   ov.querySelectorAll('[data-dview="evidence"]').forEach(b =>
@@ -9094,6 +9113,7 @@ function overviewHtml(t, acc, failBlock, signals, plan, members) {
   });
   const counts = acc ? acc.counts : null;
   const last = acc && acc.rounds.length ? acc.rounds[acc.rounds.length - 1] : null;
+  const lastRel = acc && (acc.relevance || []).length ? acc.relevance[acc.relevance.length - 1] : null;
   const link = (tab, text) => `<button class="dlink" data-goto="${tab}">${esc(text)}</button>`;
   const accFact = !acc ? 'reading…'
     : !acc.tracked ? `${link('acceptance', 'Acceptance results not recorded')}`
@@ -9115,7 +9135,11 @@ function overviewHtml(t, acc, failBlock, signals, plan, members) {
     fact('Findings', findFact) +
     fact('Last review', last ? esc(roundLine(last)) +
       (sinceRound(last, acc) ? ` — ${esc(sinceRound(last, acc))}` : '') +
-      ` · ${link('reviews', 'rounds')}` : '') +
+      ` · <button class="dlink" data-goreview="${esc(last.id)}">open this review</button>` : '') +
+    // the brief's own review, apart from the code's: never an approval
+    fact('Relevance', lastRel ? esc(relevanceLine(lastRel)) +
+      ` · <button class="dlink" data-goreview="${esc(lastRel.id)}">open this review</button>` +
+      ((acc.relevance || []).length > 1 ? ` · ${acc.relevance.length} on record` : '') : '') +
     `</dl>` +
     (last ? `<p class="dnote">A reviewer's verdict is about the revision it names. GitHub's formal approval and Bench's own verdict are separate facts, in Signals below.</p>` : '') +
     signals + members +
@@ -9295,16 +9319,97 @@ function reportHtml(t, text, key) {
     `<pre class="rraw" tabindex="0" aria-label="Original Markdown of this report">${esc(text)}</pre></details>`;
 }
 
+/* Relevance reviews (task 84): a reviewer's judgement of whether the
+   *brief* is still needed and current — not of code, so no commit, no
+   approval and no merge requirement is read from one. Each keeps its own
+   verdict words, its reviewer and time and its stable id; the revision
+   of the brief it read is said to be unrecorded rather than guessed. */
+const RELEVANCE_TONE = { 'Still relevant': '', 'Partly done': '', 'Already done': '', 'Needs rewrite': 'bad' };
+
+function relevanceLine(r) {
+  return `${r.reviewer || 'Reviewer not recorded'} · ${r.verdict || r.verdictLine || 'no verdict line'} · ${r.at}`;
+}
+
+function reviewRefineWhy(d) {
+  if (!d) return 'reading whether a refinement can be asked for…';
+  if (d.blocked) return esc(d.blocked);
+  if (!d.refine.ready) return esc('Update card from this review is not available on this board: ' +
+    (d.refine.blockers[0] || 'the refine intent does not resolve'));
+  return '';
+}
+
+/* The comments linked to one relevance review, oldest first, each with
+   the refinement attempts that answer it — the same rows the Brief's
+   discussion draws, read from the same store. */
+function reviewThreadHtml(t, id) {
+  const c = (S.disc || {})[t.file];
+  const d = c && c.data;
+  if (!d) return c && c.error ? `<p class="dnote bad">${esc(c.error)}</p>`
+                              : `<p class="dnote">reading comments…</p>`;
+  const jobs = jobsByComment(d);
+  const mine = d.entries.filter(e => e.kind === 'comment' && e.review === id);
+  return mine.length
+    ? mine.map(e => commentRowHtml(t, e, jobs[e.id] || [], d, true)).join('')
+    : `<p class="dnote">No comments on this review yet.</p>`;
+}
+
+function relevanceHtml(t, r, open) {
+  const key = `${t.file}::${r.id}`;
+  const d = ((S.disc || {})[t.file] || {}).data;
+  const cannot = !d || !!d.blocked || !d.refine.ready;
+  const tone = RELEVANCE_TONE[r.verdict] || '';
+  return `<details class="rpt rvrel" id="rvw-${esc(r.id)}" data-keep="${esc(r.id)}"` +
+    `${(S.accOpen[`${t.file}:${r.id}`] ?? open) ? ' open' : ''}>` +
+    `<summary><b class="${tone}">${esc(r.verdict || r.verdictLine || 'No verdict line')}</b>` +
+    `<span class="rvwho">${esc(r.reviewer || 'reviewer not recorded')} · ${esc(r.at)}</span>` +
+    `<span class="ameta">${esc(r.id)}</span></summary>` +
+    `<dl class="dfacts rvmeta">` +
+    `<dt>Purpose</dt><dd>Whether the brief is still needed and current</dd>` +
+    `<dt>Reviewer</dt><dd>${esc(r.reviewer || 'not recorded')}</dd>` +
+    `<dt>Filed</dt><dd>${esc(r.at)}${r.legacy ? ' — filed in an older format; nothing more was recorded' : ''}</dd>` +
+    `<dt>Brief revision</dt><dd>${r.briefRevision ? `<span class="mono">${esc(r.briefRevision)}</span>` : 'not recorded'}</dd>` +
+    `<dt>Identity</dt><dd><span class="mono">${esc(r.id)}</span></dd></dl>` +
+    reportHtml(t, r.report, r.id) +
+    `<div class="discussion rvdisc" role="group" aria-label="Comments on this review"><h4>Comments on this review</h4>` +
+    `<div class="rvthread" data-review="${esc(r.id)}">${reviewThreadHtml(t, r.id)}</div>` +
+    `<div class="composer rvcompose" data-review="${esc(r.id)}">` +
+    `<label for="rvbox-${esc(r.id)}">Comment, or what to take from this review into the brief</label>` +
+    `<textarea id="rvbox-${esc(r.id)}" rows="3">${esc((S.commentDraft || {})[key] || '')}</textarea>` +
+    `<div class="racts"><button class="dact" data-rvact="comment">Comment</button>` +
+    `<button class="dact" data-rvact="refine"${cannot ? ' disabled' : ''}>` +
+    `${actLabel('✎ Update card from this review', 'click again — asks an agent', 'asking…')}</button></div>` +
+    `<p class="dnote bad rvwhy" role="status">${reviewRefineWhy(d)}</p>` +
+    `<p class="dnote">Comment only saves your note, linked to this review. Update card from this review ` +
+    `sends this review and your instruction (or, if you leave it empty, “apply its recommendations”) ` +
+    `to an agent that proposes edits to the brief. It is not another review and starts no implementation; ` +
+    `the brief changes only when you apply the proposal.</p></div></div></details>`;
+}
+
 function reviewsHtml(t, acc) {
   if (!acc) return `<p class="dnote">reading reviews…</p>`;
   const live = acc.findings.filter(f => f.state !== 'resolved');
   const done = acc.findings.filter(f => f.state === 'resolved');
   const rounds = [...acc.rounds].reverse();
-  const roundHtml = (r, open) => `<details class="rpt" data-keep="${esc(r.id)}"${(S.accOpen[`${t.file}:${r.id}`] ?? open) ? ' open' : ''}>` +
+  const rel = [...(acc.relevance || [])].reverse();
+  const roundHtml = (r, open) => `<details class="rpt" id="rvw-${esc(r.id)}" data-keep="${esc(r.id)}"${(S.accOpen[`${t.file}:${r.id}`] ?? open) ? ' open' : ''}>` +
     `<summary><b>${esc(roundLine(r))}</b>${sinceRound(r, acc) ? `<span class="dnote">${esc(sinceRound(r, acc))}</span>` : ''}` +
     `<span class="ameta">${esc(r.id)}</span></summary>${reportHtml(t, r.report, r.id)}</details>`;
   const fc = acc.findingCounts;
-  return `<p class="acount"><b>${fc.open}</b> open · <b>${fc['fix-reported']}</b> fix reported · <b>${fc.resolved}</b> resolved</p>` +
+  const relevance = `<section class="rvgroup" aria-labelledby="rvg-rel-${esc(t.number || 'x')}">` +
+    `<h3 id="rvg-rel-${esc(t.number || 'x')}">Relevance reviews <span class="n">${rel.length}</span></h3>` +
+    `<p class="dnote">Whether the brief is still needed and current, and what to change in it. ` +
+    `A relevance verdict is about the card's definition: it is not a code review, approves nothing ` +
+    `and counts toward no acceptance or merge requirement.</p>` +
+    (rel.length ? relevanceHtml(t, rel[0], true) +
+      (rel.length > 1 ? `<details class="rpt" data-keep="oldrel"${S.accOpen[`${t.file}:oldrel`] ? ' open' : ''}><summary>Earlier relevance reviews (${rel.length - 1})</summary>` +
+        `<div style="padding:6px 10px;display:flex;flex-direction:column;gap:6px">${rel.slice(1).map(r => relevanceHtml(t, r, false)).join('')}</div></details>` : '')
+      : `<p class="dnote">No relevance review has been filed on this card. ◔ still true? asks for one.</p>`) +
+    `</section>`;
+  return relevance +
+    `<section class="rvgroup" aria-labelledby="rvg-pr-${esc(t.number || 'x')}">` +
+    `<h3 id="rvg-pr-${esc(t.number || 'x')}">PR reviews <span class="n">${rounds.length}</span></h3>` +
+    `<p class="dnote">The implementation at a code revision, and the findings recorded against it.</p>` +
+    `<p class="acount"><b>${fc.open}</b> open · <b>${fc['fix-reported']}</b> fix reported · <b>${fc.resolved}</b> resolved</p>` +
     (live.length ? live.map(f => findingHtml(t, f, acc)).join('')
                  : `<p class="dnote">No open findings on record.</p>`) +
     `<details class="rpt" data-keep="newfinding"${S.accOpen[`${t.file}:newfinding`] ? ' open' : ''}><summary>Record a finding</summary>` +
@@ -9317,12 +9422,84 @@ function reviewsHtml(t, acc) {
     `<div class="racts"><button class="dact" id="fndOpen">Record finding</button></div></div></details>` +
     (done.length ? `<details class="rpt" data-keep="resolved"${S.accOpen[`${t.file}:resolved`] ? ' open' : ''}><summary>Resolved findings (${done.length})</summary>` +
       `<div style="padding:6px 10px;display:flex;flex-direction:column;gap:6px">${done.map(f => findingHtml(t, f, acc)).join('')}</div></details>` : '') +
-    `<h3>Review rounds</h3>` +
+    `<h4>Review rounds</h4>` +
     (rounds.length ? roundHtml(rounds[0], true) +
       (rounds.length > 1 ? `<details class="rpt" data-keep="oldrounds"${S.accOpen[`${t.file}:oldrounds`] ? ' open' : ''}><summary>Earlier rounds (${rounds.length - 1})</summary>` +
         `<div style="padding:6px 10px;display:flex;flex-direction:column;gap:6px">${rounds.slice(1).map(r => roundHtml(r, false)).join('')}</div></details>` : '')
       : `<p class="dnote">No PR review has been filed on this card.</p>`) +
-    `<p class="dnote">A round's verdict is about the revision it names. A request for changes stays what it was; what happened after it is the fixes and resolutions above, and formal GitHub approval is a separate fact in Overview's Signals.</p>`;
+    `<p class="dnote">A round's verdict is about the revision it names. A request for changes stays what it was; what happened after it is the fixes and resolutions above, and formal GitHub approval is a separate fact in Overview's Signals.</p>` +
+    `</section>`;
+}
+
+/* Open one review where it lives — from Activity, the Overview or a
+   comment's link: the Reviews section, that review unfolded (and the
+   fold of earlier ones holding it), scrolled to and focused. */
+function openReview(t, id) {
+  S.dtab[t.file] = 'reviews';
+  S.accOpen[`${t.file}:${id}`] = true;
+  const acc = (S.acc[t.file] || {}).data;
+  if (acc) {
+    const rel = acc.relevance || [];
+    if (rel.length > 1 && rel.slice(0, -1).some(r => r.id === id)) S.accOpen[`${t.file}:oldrel`] = true;
+    if (acc.rounds.length > 1 && acc.rounds.slice(0, -1).some(r => r.id === id)) S.accOpen[`${t.file}:oldrounds`] = true;
+  }
+  renderDrawer();
+  requestAnimationFrame(() => {
+    const el = document.getElementById(`rvw-${id}`);
+    if (!el) { toast('that review is no longer on this card', true); return; }
+    el.scrollIntoView({ block: 'start' });
+    const sum = el.querySelector('summary');
+    if (sum) sum.focus({ preventScroll: true });
+  });
+}
+
+/* A relevance review's own two actions. Comment saves and starts
+   nothing; Update card from this review is armed, because it asks an
+   agent. Both carry a request identity, so a double click or a resent
+   request is one comment and one job. The text survives a redraw. */
+function wireReviews(t) {
+  const body = $('#drawerbody');
+  body.querySelectorAll('.rvcompose').forEach(box => {
+    const id = box.dataset.review;
+    const key = `${t.file}::${id}`;
+    const area = box.querySelector('textarea');
+    area.addEventListener('input', () => {
+      S.commentDraft[key] = area.value;
+      delete S.refineKey[key];
+      delete S.commentKey[key];
+    });
+    const comment = box.querySelector('[data-rvact="comment"]');
+    comment.addEventListener('click', async () => {
+      if (comment.disabled) return;
+      const request = S.commentKey[key] = S.commentKey[key] || newRequestKey();
+      comment.disabled = true;
+      const data = await postCard('/api/card/comment',
+        { file: t.file, stage: t.stage, body: area.value, review: id, request });
+      comment.disabled = false;
+      if (!data) return;
+      S.commentDraft[key] = '';
+      delete S.commentKey[key];
+      toast(data.comment.duplicate ? 'that comment was already saved'
+        : `comment ${data.comment.id} saved on the review` +
+          (data.comment.committed ? '' : ' — written to the card, not committed'));
+      afterCardWrite(t);
+    });
+    wireAction(box.querySelector('[data-rvact="refine"]'), `${key}::refine`, {
+      label: 'Update card from this review', confirm: true,
+      run: async () => {
+        const request = S.refineKey[key] = S.refineKey[key] || newRequestKey();
+        const data = await postCard('/api/card/refine',
+          { file: t.file, stage: t.stage, text: area.value, review: id, request });
+        if (!data) return false;
+        S.commentDraft[key] = '';
+        delete S.refineKey[key];
+        toast(data.duplicate ? 'that refinement was already asked for'
+          : `${data.job.name || 'an agent'} is proposing edits to the brief from this review — nothing changes until you apply`);
+        afterCardWrite(t);
+        return true;
+      },
+    });
+  });
 }
 
 function activityHtml(t, acc) {
@@ -9338,8 +9515,22 @@ function activityHtml(t, acc) {
     }
   }
   if (acc) {
-    for (const r of acc.reports) items.push({ at: whenOf(r.at), src: `${r.kind}${r.by ? ' · ' + r.by : ''}`,
-      report: r.text, key: `rep:${r.kind}|${r.at}|${r.by}` });
+    for (const r of acc.reports) {
+      // a review is kept once, in Reviews: Activity dates it and links to
+      // that exact copy rather than drawing a second one (task 84)
+      if (r.review) {
+        const rel = r.reviewType === 'relevance'
+          ? (acc.relevance || []).find(x => x.id === r.review) : null;
+        const round = r.reviewType === 'pr' ? acc.rounds.find(x => x.id === r.review) : null;
+        items.push({ at: whenOf(r.at), src: `${r.reviewType === 'relevance' ? 'relevance review' : 'PR review'}${r.by ? ' · ' + r.by : ''}`,
+          goreview: r.review, key: `rep:${r.review}`,
+          text: rel ? `Filed: ${rel.verdict || rel.verdictLine || 'no verdict line'}`
+            : round ? `Filed: ${roundLine(round)}` : 'Filed' });
+        continue;
+      }
+      items.push({ at: whenOf(r.at), src: `${r.kind}${r.by ? ' · ' + r.by : ''}`,
+        report: r.text, key: `rep:${r.kind}|${r.at}|${r.by}` });
+    }
     for (const c of [...acc.criteria, ...acc.removed]) {
       for (const r of c.history) items.push({ at: whenOf(r.at), src: `acceptance · ${r.actor || ''}`,
         text: `${r.state} — ${(c.label || r.text || c.id)}${r.note ? ': ' + r.note : ''}` });
@@ -9350,17 +9541,22 @@ function activityHtml(t, acc) {
     }
   }
   const disc = ((S.disc[t.file] || {}).data || {}).entries || [];
-  for (const e of disc) items.push({ at: whenOf(e.at), src: `${e.kind === 'decision' ? 'decision ' + (e.outcome || '') : 'comment'} · ${e.author || ''}`, text: e.body || '' });
+  for (const e of disc) items.push({ at: whenOf(e.at), src: `${e.kind === 'decision' ? 'decision ' + (e.outcome || '') : 'comment'} · ${e.author || ''}`,
+    text: e.body || '', ...(e.review ? { goreview: e.review, link: 'about a relevance review' } : {}) });
   items.sort((a, b) => b.at - a.at);
   // a report's key is what it is, never where it sits: a record arriving
   // above it must not open, close or move a different one
-  const row = (it) => it.report
+  const row = (it) => it.goreview
+    ? `<div class="tl"${it.key ? ` data-keep="${esc(it.key)}"` : ''}><time>${esc(it.at ? new Date(it.at).toLocaleString() : '—')}</time>` +
+      `<span><span class="src">${esc(it.src)}</span><div class="tx">${esc(it.text)}` +
+      ` <button class="dlink" data-goreview="${esc(it.goreview)}">${it.link ? esc(it.link) + ' — open it' : 'Open in Reviews'}</button></div></span></div>`
+    : it.report
     ? `<details class="rpt" data-keep="${esc(it.key)}"${S.accOpen[`${t.file}:${it.key}`] ? ' open' : ''}><summary><b>${esc(it.src)}</b>` +
       `<span class="ameta">${esc(it.at ? new Date(it.at).toLocaleString() : '')}</span></summary>` +
       `${reportHtml(t, it.report, it.key)}</details>`
     : `<div class="tl"><time>${esc(it.at ? new Date(it.at).toLocaleString() : '—')}</time>` +
       `<span><span class="src">${esc(it.src)}</span><div class="tx">${esc(it.text)}</div></span></div>`;
-  return `<p class="dnote">Newest first: progress the runs reported (labelled as theirs), work reports and reviews, comments and decisions, and acceptance and finding records. Raw reads, edits and commands are technical detail, in the Sessions view.</p>` +
+  return `<p class="dnote">Newest first: progress the runs reported (labelled as theirs), work reports, reviews (dated here, read in Reviews), comments and decisions, and acceptance and finding records. Raw reads, edits and commands are technical detail, in the Sessions view.</p>` +
     (items.length ? `<div class="tline">${items.map(row).join('')}</div>` : `<p class="dnote">Nothing has happened on this card yet.</p>`);
 }
 
@@ -9397,6 +9593,12 @@ function wireDetail(t) {
     });
   });
   body.querySelectorAll('[data-goto]').forEach(btn => btn.addEventListener('click', () => go(btn.dataset.goto, true)));
+  // a link to one exact review; the discussion's and a thread's own rows
+  // are wired with the rows (wireCommentRows), which a live read redraws
+  body.querySelectorAll('[data-goreview]').forEach(btn => {
+    if (btn.closest('#disc-live, .rvthread')) return;
+    btn.addEventListener('click', () => openReview(t, btn.dataset.goreview));
+  });
   $('#dwide').addEventListener('click', () => { S.dwide = !S.dwide; renderDrawer(); $('#dwide').focus(); });
   // open/closed folds and unsent text survive a live redraw
   body.querySelectorAll('details[data-keep], details[data-fold]').forEach(d => d.addEventListener('toggle', () => {
@@ -9574,7 +9776,15 @@ function jobHtml(job, t) {
   const who = job.name ? `${esc(job.name)} · ` : '';
   let out = `<div class="rjob ${cls}" data-job="${esc(job.id)}">` +
     `<div class="rhead"><span class="rstate">${esc(word)}</span>` +
-    `<span class="mono">${who}${esc(job.id)}${job.attempt > 1 ? ` · attempt ${job.attempt}` : ''}</span></div>`;
+    `<span class="mono">${who}${esc(job.id)}${job.attempt > 1 ? ` · attempt ${job.attempt}` : ''}</span></div>` +
+    // a refinement asked from a review says which, and what it is not:
+    // it proposes brief edits — it is not another review, and applying it
+    // does not make the review's recommendations met (task 84)
+    (job.review ? `<p class="dnote rvfrom">Asked from relevance review ` +
+      `<span class="mono">${esc(job.review)}</span>${job.reviewHeading ? ` (${esc(job.reviewHeading)})` : ''}` +
+      ` — a proposed edit to the brief, not another review and not an implementation run.` +
+      (job.status === 'applied' ? ' Applied: the decision in the discussion records which sections changed; it does not mark the review’s recommendations as met or resolve any finding.' : '') +
+      `</p>` : '');
   if (job.status === 'queued' || job.status === 'running') {
     out += `<p>Reading the card and the code. It proposes; nothing changes until you apply it.</p>` +
       `<div class="racts"><button class="dact" data-act="cancel">Cancel</button></div>`;
@@ -9631,34 +9841,60 @@ function discussionLive(t) {
     : !d.persistence.syncs
     ? `<p class="dnote">Comments and decisions are committed to the work state; ` +
       `BOARD_SYNC is off, so they reach other boards when you push.</p>` : '';
-  const jobs = {};
-  for (const job of d.jobs) (jobs[job.comment] = jobs[job.comment] || []).push(job);
-  const rows = d.entries.map(e => {
-    if (e.kind === 'decision') {
-      return `<div class="dentry decision"><div class="dhead2">` +
-        `<b>${esc(e.outcome)}</b> <span class="mono">${esc(e.proposal || '')}</span>` +
-        ` · ${esc(e.author || '')} · ${esc(e.at || '')}</div>` +
-        `<div class="cbody">${esc(e.body || '')}</div></div>`;
-    }
-    const mine = jobs[e.id] || [];
-    const latest = mine[0];
-    return `<div class="dentry comment" data-comment="${esc(e.id)}">` +
-      `<div class="dhead2"><b>${esc(e.author || 'unattributed')}</b> · ` +
-      `${esc(e.at || '')} <span class="mono">${esc(e.id)}</span></div>` +
-      `<div class="cbody">${esc(e.body || '')}</div>` +
-      (latest ? jobHtml(latest, t) +
-                (mine.length > 1 ? `<p class="dnote">${mine.length - 1} earlier attempt` +
-                 `${mine.length === 2 ? '' : 's'}: ${mine.slice(1).map(j => esc(j.status)).join(', ')}</p>` : '')
-              : `<div class="racts"><button class="dact" data-act="refine"` +
-                `${d.blocked || !d.refine.ready ? ' disabled' : ''}>` +
-                `${actLabel('✎ Update card with agent', 'click again — asks an agent', 'asking…')}` +
-                `</button></div>`) +
-      `</div>`;
-  }).join('');
+  const jobs = jobsByComment(d);
+  const rows = d.entries.map(e => e.kind === 'decision' ? decisionRowHtml(t, e)
+    : commentRowHtml(t, e, jobs[e.id] || [], d, false)).join('');
   return (notes.length ? `<div class="well bad"><span class="lead">·</span><div class="wbody">` +
            notes.map(esc).join('<br>') + `</div></div>` : '') +
     persistence +
     (rows || `<p class="dnote">No comments yet.</p>`);
+}
+
+function jobsByComment(d) {
+  const jobs = {};
+  for (const job of (d && d.jobs) || []) (jobs[job.comment] = jobs[job.comment] || []).push(job);
+  return jobs;
+}
+
+/* The relevance review a comment or a decision is about (task 84), as a
+   link to that exact review in Reviews — or, where the card no longer
+   holds it, the id in words. */
+function reviewRef(t, id) {
+  if (!id) return '';
+  const acc = ((S.acc || {})[t.file] || {}).data;
+  const r = acc && (acc.relevance || []).find(x => x.id === id);
+  return ` · on relevance review ` + (r
+    ? `<button class="dlink" data-goreview="${esc(id)}">${esc(relevanceLine(r))}</button>`
+    : `<span class="mono">${esc(id)}</span>`);
+}
+
+function decisionRowHtml(t, e) {
+  return `<div class="dentry decision"><div class="dhead2">` +
+    `<b>${esc(e.outcome)}</b> <span class="mono">${esc(e.proposal || '')}</span>` +
+    ` · ${esc(e.author || '')} · ${esc(e.at || '')}${reviewRef(t, e.review)}</div>` +
+    `<div class="cbody">${esc(e.body || '')}</div></div>`;
+}
+
+/* One comment and the refinement attempts that answer it. `inReview`
+   draws it inside its review's thread, where naming the review again
+   would only repeat the heading above it. */
+function commentRowHtml(t, e, mine, d, inReview) {
+  const latest = mine[0];
+  const fromReview = !!e.review;
+  return `<div class="dentry comment" data-comment="${esc(e.id)}">` +
+    `<div class="dhead2"><b>${esc(e.author || 'unattributed')}</b> · ` +
+    `${esc(e.at || '')} <span class="mono">${esc(e.id)}</span>` +
+    `${inReview ? '' : reviewRef(t, e.review)}</div>` +
+    `<div class="cbody">${esc(e.body || '')}</div>` +
+    (latest ? jobHtml(latest, t) +
+              (mine.length > 1 ? `<p class="dnote">${mine.length - 1} earlier attempt` +
+               `${mine.length === 2 ? '' : 's'}: ${mine.slice(1).map(j => esc(j.status)).join(', ')}</p>` : '')
+            : `<div class="racts"><button class="dact" data-act="refine"` +
+              `${!d || d.blocked || !d.refine.ready ? ' disabled' : ''}>` +
+              `${actLabel(fromReview ? '✎ Update card from this review' : '✎ Update card with agent',
+                          'click again — asks an agent', 'asking…')}` +
+              `</button></div>`) +
+    `</div>`;
 }
 
 function discussionPanel(t) {
@@ -9733,10 +9969,17 @@ function wireDiscussion(t) {
   wireLive(t);
 }
 
+/* Every comment row's job buttons — in the Brief's discussion and in each
+   relevance review's thread alike (task 84), so the two can never act
+   differently. */
 function wireLive(t) {
-  const live = $('#disc-live');
-  if (!live) return;
-  live.querySelectorAll('.dentry.comment').forEach(row => {
+  const roots = [$('#disc-live'), ...document.querySelectorAll('#drawerbody .rvthread')]
+    .filter(Boolean);
+  for (const root of roots) wireRows(root);
+  function wireRows(root) {
+  root.querySelectorAll('[data-goreview]').forEach(btn =>
+    btn.addEventListener('click', () => openReview(t, btn.dataset.goreview)));
+  root.querySelectorAll('.dentry.comment').forEach(row => {
     const comment = row.dataset.comment;
     row.querySelectorAll('button[data-act]').forEach(btn => {
       const jobEl = btn.closest('[data-job]');
@@ -9772,6 +10015,7 @@ function wireLive(t) {
       if (acts[act]) wireAction(btn, key, acts[act]);
     });
   });
+  }
 }
 
 function renderDiscussion(t) {
@@ -9781,6 +10025,17 @@ function renderDiscussion(t) {
   const c = (S.disc[t.file] || {}).data;
   const btn = $('#refineNew');
   if (btn && !btn.classList.contains('busy')) btn.disabled = !c || !!c.blocked || !c.refine.ready;
+  // each relevance review's thread and its refine button follow the same
+  // read; the composer around them — and the text in it — is left alone
+  document.querySelectorAll('#drawerbody .rvthread').forEach(el => {
+    el.innerHTML = reviewThreadHtml(t, el.dataset.review);
+  });
+  document.querySelectorAll('#drawerbody .rvcompose').forEach(el => {
+    const why = el.querySelector('.rvwhy');
+    if (why) why.innerHTML = reviewRefineWhy(c);
+    const b = el.querySelector('[data-rvact="refine"]');
+    if (b && !b.classList.contains('busy')) b.disabled = !c || !!c.blocked || !c.refine.ready;
+  });
   wireLive(t);
 }
 

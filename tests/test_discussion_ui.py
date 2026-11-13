@@ -46,6 +46,12 @@ HARNESS = "\n".join([
     function("diffHtml"),
     function("jobHtml"),
     function("discussionLive"),
+    # task 84: the rows the discussion and a review's thread share
+    function("jobsByComment"),
+    function("relevanceLine"),
+    function("reviewRef"),
+    function("decisionRowHtml"),
+    function("commentRowHtml"),
     function("discussionPanel"),
     function("md"),
     "const S = { state: {}, commentDraft: {}, disc: {} };",
