@@ -509,7 +509,13 @@ class EveryOutcomeIsItsOwn(VerifyCase):
         self.assertEqual(done[0]["outcome"], "cancelled")
         self.assertEqual(done[0]["reason"], "cancelled-by-request")
 
-    def test_holding_the_run_cancels_what_bench_was_running_for_it(self):
+    def hold_while_running(self, cancel_for_agent) -> None:
+        """Ask for a hanging check, then hold its run with `cancel_for_agent`.
+
+        What the run was running is read *before* the hold: a cancellation
+        may finish — and its reservation leave RUNNING — before it returns,
+        so reading RUNNING afterwards races the very thing being tested.
+        """
         self.declares(self.one_check(run=str(self.executable("hangs", HANGS))))
         self.worktree()
         self.manifest()
@@ -517,11 +523,43 @@ class EveryOutcomeIsItsOwn(VerifyCase):
         thread = threading.Thread(
             target=lambda: done.append(self.ask("unit")), daemon=True)
         thread.start()
+
+        def stop_and_join():
+            # whatever an assertion below did, no hanging check outlives it
+            with state.LOCK:
+                left = list(verify.RUNNING)
+            for eid in left:
+                try:
+                    verify.cancel(eid)
+                except ValueError:
+                    pass
+            thread.join(timeout=30)
+        self.addCleanup(stop_and_join)
+
         self.assertTrue(wait_for(lambda: bool(verify.RUNNING)))
-        self.assertEqual(verify.cancel_for_agent("run-1"), list(verify.RUNNING))
+        with state.LOCK:
+            expected = [eid for eid, record in verify.RUNNING.items()
+                        if record.get("agent") == "run-1"]
+        self.assertTrue(expected, "the check is reserved for the run")
+        self.assertEqual(cancel_for_agent("run-1"), expected)
         thread.join(timeout=30)
+        self.assertFalse(thread.is_alive())
         self.assertEqual(done[0]["outcome"], "cancelled")
         self.assertEqual(done[0]["reason"], "cancelled-with-run")
+        self.assertEqual(done[0]["id"], expected[0])
+
+    def test_holding_the_run_cancels_what_bench_was_running_for_it(self):
+        self.hold_while_running(verify.cancel_for_agent)
+
+    def test_a_hold_that_finishes_before_it_returns_still_names_the_run(self):
+        """The cancellation completes, and RUNNING empties, before the
+        answer is compared: the run's checks are still the ones named."""
+        def finishes_first(agent_id):
+            stopped = verify.cancel_for_agent(agent_id)
+            self.assertTrue(wait_for(lambda: not verify.RUNNING),
+                            "the cancelled check leaves RUNNING")
+            return stopped
+        self.hold_while_running(finishes_first)
 
     def test_a_restart_closes_evidence_this_board_does_not_own(self):
         self.declares(self.one_check())
