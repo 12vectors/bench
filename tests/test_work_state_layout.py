@@ -136,6 +136,10 @@ class Releases(unittest.TestCase):
             (stage / rel / ".gitkeep").touch()
         shutil.copyfile(LEGACY_TEMPLATE, stage / "tasks" / "task-template.md")
         shutil.rmtree(stage / "manager" / "core" / "seed")
+        # Releases before task 78 unpacked their local notes directly.
+        (stage / "manager" / "local" / "AGENTS.md").write_text(
+            "# Project-specific workflow notes\n\nThis file is yours.\n",
+            encoding="utf-8")
         (stage / "manager" / "core" / "VERSION").write_text("0.0.1\n")
         with tarfile.open(cls.old_tarball, "w:gz") as tar:
             tar.add(stage, arcname=".")

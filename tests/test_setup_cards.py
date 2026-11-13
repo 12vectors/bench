@@ -68,8 +68,12 @@ class Proposals(unittest.TestCase):
                       {e["ref"] for e in found["fixtures"]["evidence"]})
         self.assertIn("the `test` script", " ".join(found["verification"]["deliverables"]))
         self.assertEqual(["fixtures", "preview"], found["ui-smoke"]["after"])
-        # the default board grants python3 -m unittest, so commands exist
-        self.assertEqual([], found["verification"]["authority"]["missing"])
+        # The default board grants no project command (task 78): bench's
+        # own runner is not a default for anybody else, and the card says
+        # so rather than adding a grant.
+        missing = found["verification"]["authority"]["missing"]
+        self.assertEqual(1, len(missing))
+        self.assertIn("BOARD_AGENT_COMMANDS is empty", missing[0])
 
     def test_a_project_with_working_capabilities_gets_no_redundant_card(self):
         p = Project(self, instructions=True, driver=True, policy={
