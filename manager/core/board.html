@@ -221,6 +221,15 @@
      tidy-up, not somewhere the card is asking you to go. Hover, armed and
      busy all outrank this rule, so it never dulls a live state. */
   .chip2.arch{margin-left:auto;color:var(--dim);border-color:transparent}
+  /* …except on a done card's face, where tidying away is the one thing
+     left to do (task 85): labelled and bordered, so it reads as a control
+     without hovering. `:where()` holds this at the quiet rule's own weight,
+     so hover, armed and busy still outrank it. */
+  :where(.chiprow) .chip2.arch{color:var(--muted);border-color:var(--border);
+    min-height:28px;cursor:pointer}
+  @media (pointer:coarse){:where(.chiprow) .chip2.arch{min-height:44px;padding:0 14px}}
+  .chip2 .srx{position:absolute;width:1px;height:1px;overflow:hidden;
+    clip-path:inset(50%);white-space:nowrap}
   /* the tools: every destination and action a card has, one labelled
      control away instead of a row of operational chrome on every face.
      Closed by default; on a card it lists what the face does not already
@@ -4894,13 +4903,18 @@ function cardFor(task) {
   // tray's own glyph, and only on the stages the tray itself accepts —
   // a working card is finished or walked back, never tidied away
   if (canArchive(task)) {
+    // a done card has nothing left to do but this, so there it is on the
+    // face (task 85); every other stage keeps it in the ⋯ tools
     chips.push({ label: 'archive', pre: '⌸', cls: 'arch', arch: true,
+      face: task.stage === 'done',
       title: 'Archive this card — out of every column, never deleted. ⌘Z brings it back.' });
   }
   const chipHtml = (c) => {
         const g = c.glyph ? `<span class="g2">${c.glyph}</span>` : '';
         const p = c.pre ? `<span class="g2">${c.pre}</span>` : '';
-        if (c.arch) return `<button class="chip2 ${c.cls}" data-arch="1" title="${esc(c.title)}">${p}${actLabel(c.label, 'archive it?', 'archiving…')}</button>`;
+        if (c.arch) return `<button type="button" class="chip2 ${c.cls}" data-arch="1" title="${esc(c.title)}">` +
+          `${p.replace('<span ', '<span aria-hidden="true" ')}${actLabel(c.label, 'archive it?', 'archiving…')}` +
+          `<span class="srx"> ${esc(task.number ? '#' + task.number : task.file)}</span></button>`;
         if (c.href) return `<a class="chip2 ${c.cls}" href="${esc(c.href)}" target="_blank" rel="noopener" title="${esc(c.title)}">${p}${esc(c.label)}${g}</a>`;
         if (c.act) return `<button class="chip2 ${c.cls}" data-drive="${c.act}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
         if (c.phase) return `<button class="chip2 ${c.cls}" data-phase="${esc(c.phase)}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
@@ -4986,6 +5000,18 @@ function cardFor(task) {
     }));
   el.querySelectorAll('[data-arch]').forEach(btn => {
     btn.addEventListener('click', (e) => e.stopPropagation());
+    // pressing the chip is not picking up the card: a press that wanders a
+    // few pixels before its release archives or does nothing, never drags
+    btn.addEventListener('pointerdown', () => {
+      el.dataset.nodrag = '1';
+      const release = () => {
+        delete el.dataset.nodrag;
+        window.removeEventListener('pointerup', release, true);
+        window.removeEventListener('pointercancel', release, true);
+      };
+      window.addEventListener('pointerup', release, true);
+      window.addEventListener('pointercancel', release, true);
+    });
     wireAction(btn, `${task.file}::archive`, {
       label: 'archive', confirm: 'archive it?', busy: 'archiving…',
       run: () => archiveCard(task.file, task.stage),
@@ -5027,7 +5053,9 @@ function cardFor(task) {
   // the tools menu: one labelled control on every card that has anything
   // in it, at the end of the top row, so the face stays quiet and nothing
   // a chip used to do is more than one keystroke away
-  if (chips.length) {
+  // a done card whose only tool is the archive on its face has nothing
+  // left for a menu, so it gets none rather than an empty one
+  if (chips.length && (task.stage !== 'done' || chips.some(c => !chipOnFace(c, task)))) {
     const more = document.createElement('button');
     more.className = 'moretools';
     more.dataset.more = task.file;
@@ -5045,6 +5073,7 @@ function cardFor(task) {
   }
 
   el.addEventListener('dragstart', (e) => {
+    if (el.dataset.nodrag) { e.preventDefault(); return; }
     el.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('application/json', JSON.stringify({ file: task.file, from: task.stage }));

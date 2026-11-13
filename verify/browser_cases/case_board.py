@@ -133,9 +133,13 @@ class CardFace(unittest.TestCase):
             # nothing in the fixture is live, failed, idle or awaiting a
             # verdict, so the column says everything a pill would have
             self.assertEqual(0, f["pills"], f"{f['file']} repeats its column's status")
-            self.assertEqual(0, f["faceChips"], f"{f['file']} has a row of chips on its face")
-        # cards with tools offer them through one labelled control
-        archivable = [f for f in faces if f["file"].split("/")[-1][:2] in ("01", "02", "05", "06")]
+            # …except a done card's archive, the one thing left to do on
+            # it, which sits on its face (task 85)
+            expected = 1 if f["file"].startswith("05-") else 0
+            self.assertEqual(expected, f["faceChips"], f"{f['file']}: chips on its face")
+        # cards with tools offer them through one labelled control; a done
+        # card's only tool is on its face, so it has no empty menu
+        archivable = [f for f in faces if f["file"].split("/")[-1][:2] in ("01", "02", "06")]
         for f in archivable:
             self.assertTrue(f["more"] and f["more"].startswith("Tools for #"), f)
         shot("cards-quiet-1440x900")
