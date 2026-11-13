@@ -872,16 +872,25 @@ def bench_policy_found(local: Path) -> list[str]:
     return found
 
 
-def initialize_local(dry_run: bool) -> int:
-    """The project's notes: seed what is missing, report bench's own
-    policy where a source checkout left it, replace nothing. 1 when a link
-    would carry a write out of the install, with nothing written."""
+def refuse_local() -> bool:
+    """Print why the starters cannot be written, and say so. Asked again
+    at the very start of a run, ahead of the first-boot stamp, so a
+    manager/local/ that leads out of the install refuses with nothing at
+    all written through it."""
     refusals = local_seed_refusals(LOCAL, TM)
     if refusals:
         print("The project notes in manager/local/ cannot be seeded:\n")
         for refusal in refusals:
             print(f"  - {refusal}")
         print("\nNothing was written.")
+    return bool(refusals)
+
+
+def initialize_local(dry_run: bool) -> int:
+    """The project's notes: seed what is missing, report bench's own
+    policy where a source checkout left it, replace nothing. 1 when a link
+    would carry a write out of the install, with nothing written."""
+    if refuse_local():
         return 1
     created = seed_local(LOCAL, TM, dry_run)
     if created:
@@ -966,6 +975,8 @@ def main() -> int:
     # It never runs externally — it exists to clear the *distribution's*
     # shipped cards out of a vendored install, and an external work root
     # is a board of its own whose cards are nobody's residue.
+    if (external or PROJECT.resolve() != TM.resolve()) and refuse_local():
+        return 1
     if not external:
         first_boot_clean(dry_run=dry_run)
 
