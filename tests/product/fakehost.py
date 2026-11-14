@@ -20,10 +20,19 @@ It models four operations — create, view, merge, review listing — and
 `gh pr merge --help`, which bench reads to learn whether
 `--match-head-commit` is offered. Every other `gh` invocation exits 4
 with `refused:` on stderr, so a test that grows a call nobody modelled
-fails instead of reaching GitHub. Every call is logged (`calls()`).
+fails instead of reaching GitHub, and so does a `gh api` call that would
+write (another method, or a body). Every call is logged (`calls()`).
+
+A merge is a real merge, as on GitHub: a change made only on the base
+since the branch was cut is kept, and a conflict refuses the merge with
+the base, the branch and the pull request exactly as they were (`view`
+reports such a pull request `CONFLICTING`).
 
 `merge_pr` and `origin_url` are the plain functions the stub scripts of
-older tests used; they keep their behaviour exactly.
+older tests used. Their signatures and return values are unchanged;
+`merge_pr` now merges as faithfully as `FakeHost.merge`, returning ""
+(nothing merged, base untouched) on a conflict, where it used to write
+the branch's tree over the base's.
 """
 
 from __future__ import annotations
@@ -60,18 +69,61 @@ def origin_url(cwd: str | None = None) -> str:
                           capture_output=True, text=True).stdout.strip()
 
 
-def merge_pr(bare: str, head: str, base: str = "main") -> str:
-    """Merge `head` into `base` on `bare` with a merge commit, as GitHub's
-    `--merge` does. Returns the new base tip, or "" when there was nothing
-    to merge from."""
+def _is_ancestor(bare: str, older: str, newer: str) -> bool:
+    return subprocess.run(["git", "--git-dir", str(bare), "merge-base",
+                           "--is-ancestor", older, newer],
+                          capture_output=True).returncode == 0
+
+
+def merge_tree(bare: str, onto: str, tip: str) -> tuple[str, list[str]]:
+    """The tree a real merge of `tip` into `onto` produces, and the paths
+    that conflict (empty when it merges cleanly; the tree is then "").
+
+    A base that has not moved since the branch was cut merges to the
+    branch's own tree, which needs nothing beyond `rev-parse`. A base that
+    has moved is merged by git itself (`merge-tree --write-tree`), so a
+    change made only on the base survives exactly as it does on GitHub.
+    A git too old to say is an error, never a guessed tree."""
+    if _is_ancestor(bare, onto, tip):
+        return _git(bare, "rev-parse", f"{tip}^{{tree}}"), []
+    done = subprocess.run(["git", "--git-dir", str(bare), "merge-tree",
+                           "--write-tree", "--name-only", "--no-messages", onto, tip],
+                          capture_output=True, text=True,
+                          env=dict(os.environ, **IDENTITY))
+    lines = done.stdout.splitlines()
+    if done.returncode == 0 and lines:
+        return lines[0].strip(), []
+    if done.returncode == 1 and lines:
+        return "", sorted({line.strip() for line in lines[1:] if line.strip()})
+    raise RuntimeError(f"git merge-tree could not merge {tip} into {onto}: "
+                       f"{done.stderr.strip() or done.returncode}")
+
+
+def _merge(bare: str, head: str, base: str) -> tuple[str, list[str]]:
+    """Merge `head` into `base` on `bare` with a merge commit. Returns
+    (new base tip, conflicts): ("", []) when either branch is missing or
+    the base moved under the merge, ("", paths) on a conflict. Nothing is
+    written to a ref unless the merge is clean."""
     tip = _git(bare, "rev-parse", "--verify", "--quiet", f"refs/heads/{head}")
     onto = _git(bare, "rev-parse", "--verify", "--quiet", f"refs/heads/{base}")
     if not tip or not onto:
-        return ""
-    merged = _git(bare, "commit-tree", f"{tip}^{{tree}}", "-p", onto, "-p", tip,
+        return "", []
+    tree, conflicts = merge_tree(bare, onto, tip)
+    if conflicts:
+        return "", conflicts
+    merged = _git(bare, "commit-tree", tree, "-p", onto, "-p", tip,
                   "-m", f"Merge pull request from {head}")
-    _git(bare, "update-ref", f"refs/heads/{base}", merged, onto)
-    return merged
+    moved = subprocess.run(["git", "--git-dir", str(bare), "update-ref",
+                            f"refs/heads/{base}", merged, onto], capture_output=True)
+    return (merged if moved.returncode == 0 else ""), []
+
+
+def merge_pr(bare: str, head: str, base: str = "main") -> str:
+    """Merge `head` into `base` on `bare` with a merge commit, as GitHub's
+    `--merge` does. Returns the new base tip, or "" when nothing was
+    merged: a branch missing, or a merge that conflicts — which, as on
+    GitHub, leaves the base exactly where it was."""
+    return _merge(bare, head, base)[0]
 
 
 class Refused(Exception):
@@ -157,12 +209,18 @@ class FakeHost:
         data = self._load()
         pr = self._find(data, selector)
         head = pr["mergedOid"] if pr["state"] == "MERGED" else self._tip(pr["head"])
+        mergeable = "UNKNOWN"
+        if pr["state"] == "OPEN":
+            onto = self._tip(pr["base"])
+            mergeable = "MERGEABLE"
+            if head and onto and merge_tree(data["bare"], onto, head)[1]:
+                mergeable = "CONFLICTING"
         full = {
             "url": self.url(pr["number"]), "number": pr["number"],
             "title": pr["title"], "body": pr["body"], "state": pr["state"],
             "baseRefName": pr["base"], "headRefName": pr["head"],
             "headRefOid": head, "mergedAt": pr["mergedAt"],
-            "mergeable": "MERGEABLE" if pr["state"] == "OPEN" else "UNKNOWN",
+            "mergeable": mergeable,
             "author": {"login": pr["author"]}, "reviewRequests": [],
             "statusCheckRollup": [],
             "reviews": [{"author": {"login": r["login"]}, "state": r["state"],
@@ -181,7 +239,11 @@ class FakeHost:
         if match_head and tip != match_head:
             raise Refused("GraphQL: Head branch was modified. Review and try "
                           "the merge again. (mergePullRequest)")
-        merged = merge_pr(data["bare"], pr["head"], pr["base"])
+        merged, conflicts = _merge(data["bare"], pr["head"], pr["base"])
+        if conflicts:
+            raise Refused(f"Pull request #{pr['number']} is not mergeable: the "
+                          f"merge commit cannot be cleanly created "
+                          f"(conflicts: {', '.join(conflicts)})")
         if not merged:
             raise Refused(f"Pull request #{pr['number']} could not be merged")
         pr.update(state="MERGED", mergedAt=_now(), mergedOid=tip,
@@ -283,9 +345,14 @@ def _dispatch(host: FakeHost, args: list[str]) -> int:
             host.merge(pos[0], flags.get("--match-head-commit") or None)
             return 0
     if args[:1] == ["api"]:
-        pos, _ = _flags(args[1:], {"-X", "--method"})
+        pos, flags = _flags(args[1:], {"-X", "--method"})
+        method = str(flags.get("-X") or flags.get("--method") or "GET").upper()
+        # a body (-f/-F/--field/--input) makes gh send a POST by default
+        writes = any(f in flags for f in ("-f", "-F", "--field", "--raw-field",
+                                          "--input"))
         parts = pos[0].split("/") if pos else []
-        if len(parts) == 6 and parts[0] == "repos" and parts[3] == "pulls" \
+        if method == "GET" and not writes and len(parts) == 6 \
+                and parts[0] == "repos" and parts[3] == "pulls" \
                 and parts[5] == "reviews":
             print(json.dumps(host.reviews(parts[4])))
             return 0

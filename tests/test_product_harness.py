@@ -103,6 +103,69 @@ class TheFakeHostApi(HostCase):
         self.assertEqual(fakehost.origin_url(str(self.app)), str(self.origin))
 
 
+class ADivergedBaseMergesAsGitHubWould(HostCase):
+    """The base moves after the branch is cut. A clean merge keeps both
+    sides; a conflicting one is refused and changes nothing at all."""
+
+    def advance_main(self, path: str, text: str) -> str:
+        self.s.git(self.app, "checkout", "-q", "main")
+        sha = self.s.commit(self.app, path, text, f"main: {path}")
+        self.s.git(self.app, "push", "-q", "origin", "main")
+        self.s.git(self.app, "checkout", "-q", BRANCH)
+        return sha
+
+    def show(self, rev: str, path: str) -> str:
+        return self.s.git(self.origin, "show", f"{rev}:{path}")
+
+    def unchanged(self, base: str, before: dict) -> None:
+        self.assertEqual(self.remote("main"), base)
+        self.assertEqual(self.remote(BRANCH), self.tip)
+        self.assertEqual(self.host.view("1", list(before)), before)
+
+    def test_a_change_made_only_on_the_base_survives_the_merge(self):
+        base = self.advance_main("base-only.txt", "kept\n")
+        self.host.create(BRANCH, "main")
+        self.assertEqual(self.host.view("1", ["mergeable"]), {"mergeable": "MERGEABLE"})
+        merged = self.host.merge("1", match_head=self.tip)
+        self.assertEqual(self.remote("main"), merged)
+        self.assertEqual(self.s.git(self.origin, "rev-parse", f"{merged}^1"), base)
+        self.assertEqual(self.s.git(self.origin, "rev-parse", f"{merged}^2"), self.tip)
+        self.assertEqual(self.show(merged, "base-only.txt"), "kept")
+        self.assertEqual(self.show(merged, "code.txt"), "two")
+        self.assertEqual(self.host.view("1", ["state"]), {"state": "MERGED"})
+
+    def test_the_gh_executable_keeps_it_too(self):
+        self.advance_main("base-only.txt", "kept\n")
+        self.host.create(BRANCH, "main")
+        done = self.gh_run("pr", "merge", "1", "--merge", "--match-head-commit", self.tip)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.show("main", "base-only.txt"), "kept")
+        self.assertEqual(self.show("main", "code.txt"), "two")
+
+    def test_merge_pr_keeps_it_too(self):
+        self.advance_main("base-only.txt", "kept\n")
+        merged = fakehost.merge_pr(str(self.origin), BRANCH)
+        self.assertEqual(self.remote("main"), merged)
+        self.assertEqual(self.show(merged, "base-only.txt"), "kept")
+        self.assertEqual(self.show(merged, "code.txt"), "two")
+
+    def test_a_conflict_is_refused_and_moves_nothing(self):
+        base = self.advance_main("code.txt", "three\n")
+        self.host.create(BRANCH, "main")
+        before = {"state": "OPEN", "mergedAt": None, "headRefOid": self.tip,
+                  "mergeable": "CONFLICTING"}
+        self.unchanged(base, before)
+        with self.assertRaisesRegex(fakehost.Refused, r"not mergeable.*code\.txt"):
+            self.host.merge("1", match_head=self.tip)
+        self.unchanged(base, before)
+        done = self.gh_run("pr", "merge", "1", "--merge", "--match-head-commit", self.tip)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("not mergeable", done.stderr)
+        self.unchanged(base, before)
+        self.assertEqual(fakehost.merge_pr(str(self.origin), BRANCH), "")
+        self.unchanged(base, before)
+
+
 class TheGhExecutable(HostCase):
 
     def test_the_four_operations_through_gh(self):
@@ -133,6 +196,19 @@ class TheGhExecutable(HostCase):
             self.assertEqual(done.returncode, 4, args)
             self.assertIn("refused:", done.stderr)
             self.assertIn("no real GitHub is invoked", done.stderr)
+
+    def test_a_write_to_the_review_listing_path_is_refused_not_listed(self):
+        path = "repos/acme/widget/pulls/1/reviews"
+        self.host.create(BRANCH, "main")
+        for args in (["api", "-X", "POST", path], ["api", "--method", "post", path],
+                     ["api", path, "-f", "event=APPROVE"],
+                     ["api", path, "--input", "review.json"]):
+            done = self.gh_run(*args)
+            self.assertEqual(done.returncode, 4, args)
+            self.assertIn("refused:", done.stderr)
+        listed = self.gh_run("api", "-X", "GET", path)
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertEqual(json.loads(listed.stdout), [])
 
 
 class BenchTalksToTheFakeHost(HostCase):
