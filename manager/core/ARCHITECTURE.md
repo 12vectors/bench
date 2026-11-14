@@ -14,9 +14,9 @@ from the tree at `df72007`. It describes; it changes no behaviour.
 
 **`A → B` means A imports B.** B is therefore the lower-level module, and
 a layer may import only from layers with a smaller number. Arrows never
-mean execution order or data flow here. (The module-map line in
-`AGENTS.md` predates this convention and reads left to right, lowest
-first; the two say the same thing.)
+mean execution order or data flow here. (The one-line module map in
+`AGENTS.md` therefore separates layers with `<`, lowest first, rather
+than with arrows; a test keeps it equal to the table below.)
 
 Two inventories are kept apart on purpose:
 

@@ -634,9 +634,10 @@ class TheVocabulary(unittest.TestCase):
         imported = set(re.findall(r"^import (\w+)$", source, re.MULTILINE))
         brief = (Path(__file__).resolve().parents[1] / "AGENTS.md").read_text(
             encoding="utf-8")
+        # lowest first, `<` between layers (task 107: `→` means "imports")
         line = next(ln for ln in brief.splitlines()
-                    if ln.startswith("config → "))
-        order = [name.strip() for step in line.split("→")
+                    if ln.startswith("config < "))
+        order = [name.strip() for step in line.split(" < ")
                  for name in step.split("/")]
         self.assertIn("delivery", order)
         left = set(order[:order.index("delivery")])
