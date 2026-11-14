@@ -1344,6 +1344,18 @@ class ThePageReadsTheSameAnswer(unittest.TestCase):
     def test_the_conflicts_chip_names_the_base_the_card_targets(self):
         self.assertIn("prState.wantBase", self.html)
 
+    def test_the_chip_carries_the_whole_branch_and_the_preflight_copies_it(self):
+        """Task 72: the chip's CSS cuts a long branch to the card's width,
+        so the label itself is whole (its accessible name), and the
+        preflight draws each branch unclipped beside a copy control. The
+        containment is measured in a browser by verify/browser_cases/
+        case_board.py; this only pins the wiring."""
+        label = self.html.split("function planChipLabel(p) {", 1)[1].split("\n}\n", 1)[0]
+        self.assertNotIn("clip(", label)
+        sheet = self.html.split("async function planSheet(task) {", 1)[1][:4000]
+        self.assertIn('<div class="prows full">', sheet)
+        self.assertIn("copyButton(copy, k)", sheet)
+
 
 class ThePromptsCarryThePlan(unittest.TestCase):
     """The placeholder has to be in the template, or the board would fill

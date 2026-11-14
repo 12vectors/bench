@@ -216,6 +216,247 @@ class CardFace(unittest.TestCase):
         S["metrics"]["cardsNarrow"] = found
 
 
+LONG_BRANCH = "phase/66-configurable-verifiable-headless-execution"
+LONG_PHASE = ("74-configurable-verifiable-headless-execution-for-every-launch-intent")
+LONG_CARDS = {
+    # card 71 of the supplied screenshot: one long execution-plan target
+    "71-gate-integration-and-acceptance": (
+        "backlog", "71 — Gate integration and acceptance on current verification "
+        "and review evidence", f"**Base branch:** {LONG_BRANCH}\n"),
+    # two long branches, so the arrow variant has to fit as well
+    "72-stacked-on-a-long-branch": (
+        "backlog", "72 — Stacked on a long branch",
+        "**Base branch:** task/56-external-workspaces-and-a-second-long-segment\n"
+        "**PR base:** task/57-another-rather-long-pull-request-target-branch\n"),
+    # one unbroken label: nothing to wrap at
+    "73-an-unbroken-reference": (
+        "backlog", "73 — An unbroken reference",
+        "**Base branch:** release/" + "unbrokenreferencename" * 4 + "\n"),
+    # a phase with a long title, and the member that wears it
+    LONG_PHASE: (
+        "to-do", "74 — Configurable, verifiable headless execution for every "
+        "launch intent the board knows", "**Type:** Phase\n"),
+    "75-a-member-of-the-long-phase": (
+        "backlog", "75 — A member of the long phase", ""),
+}
+FIT_JS = """window.__fit = (host, chipSel) => {
+  host = typeof host === 'string' ? document.querySelector(host) : host;
+  if (!host) return null;
+  const r = host.getBoundingClientRect(), s = getComputedStyle(host);
+  const lo = r.left + parseFloat(s.borderLeftWidth) + parseFloat(s.paddingLeft);
+  const hi = r.right - parseFloat(s.borderRightWidth) - parseFloat(s.paddingRight);
+  const chips = [...host.querySelectorAll(chipSel)].filter(e => e.getClientRects().length)
+    .map(e => { const b = e.getBoundingClientRect();
+      return { text: e.textContent.replace(/\\s+/g, ' ').trim(),
+        left: Math.round(b.left), right: Math.round(b.right),
+        inside: b.left >= lo - 1 && b.right <= hi + 1,
+        plan: e.hasAttribute('data-plan'), phase: e.hasAttribute('data-phase'),
+        name: e.getAttribute('aria-label') || e.textContent.replace(/\\s+/g, ' ').trim(),
+        parts: [...e.querySelectorAll('.g2, .cpos, .carr')].map(g => {
+          const q = g.getBoundingClientRect();
+          return { w: Math.round(q.width), whole: g.scrollWidth <= g.clientWidth + 1
+                   || g.clientWidth === 0 && q.width > 0,
+                   inside: q.left >= b.left - 1 && q.right <= b.right + 1 }; }),
+        clipped: [...e.querySelectorAll('.clab')].some(l => l.scrollWidth > l.clientWidth + 1) }; });
+  return { lo: Math.round(lo), hi: Math.round(hi), scroll: host.scrollWidth,
+           client: host.clientWidth, chips };
+};"""
+# the board the screenshot showed: no containment at all, which is how the
+# check proves it would have caught the spill
+UNCONTAINED = (".chiprow .chip2,.cardtools .chip2{flex:none!important;max-width:none!important}"
+               ".chip2 .clab{overflow:visible!important}")
+
+
+class LongChips(unittest.TestCase):
+    """Card 72: a chip carrying a long branch, phase or unbroken label
+    stays inside its card — on the face, in the open tools row and in the
+    detail view — at ordinary and narrow widths and at 200% zoom. Its glyphs
+    and a phase position stay whole, its full value stays its accessible
+    name, and the ⌖ preflight draws it whole beside a copy control."""
+
+    @classmethod
+    def setUpClass(cls):
+        backend = S["backend"]
+        cls.files = []
+        for stem, (stage, title, head) in LONG_CARDS.items():
+            card = backend.work / "tasks" / stage / f"{stem}.md"
+            body = "A disposable card for the long-chip case.\n"
+            if stem == LONG_PHASE:
+                body += "\n## Cards\n\n- 75 — A member of the long phase\n"
+            card.write_text(f"# {title}\n\n**Status:** {bv.STATUS[stage]}\n**Priority:** Low\n"
+                            f"{head}\n{body}", encoding="utf-8")
+            cls.files.append(card)
+        # card 71's base exists, so its preflight resolves rather than refusing
+        backend._git(backend.app, "branch", LONG_BRANCH)
+
+    @classmethod
+    def tearDownClass(cls):
+        for card in cls.files:
+            card.unlink(missing_ok=True)
+        try:
+            S["backend"]._git(S["backend"].app, "branch", "-D", LONG_BRANCH)
+        except bv.SetupError:
+            pass
+
+    def view(self, w, h, which="board"):
+        load(w, h)
+        b = S["browser"]
+        if which != "board":
+            b.click(f'#views button[data-view="{which}"]')
+        stem = "75-a-member-of-the-long-phase" if which == "phases" else \
+            "71-gate-integration-and-acceptance"
+        self.assertTrue(b.wait(f"!!document.querySelector('#view-{which}.on "
+                               f"article.card[data-file=\"{stem}.md\"] .chip2')", 10),
+                        f"the {which} view never drew {stem} with its chips")
+        b.eval(FIT_JS)
+
+    def assert_fits(self, fit, where, *, want_plan=False, want_phase=False):
+        self.assertIsNotNone(fit, f"{where}: nothing to measure")
+        self.assertLessEqual(fit["scroll"], fit["client"] + 1, f"{where}: overflows its box")
+        self.assertTrue(fit["chips"], f"{where}: no chips drawn")
+        for c in fit["chips"]:
+            self.assertTrue(c["inside"], f"{where}: {c['text']!r} spills past "
+                            f"[{fit['lo']}, {fit['hi']}]: [{c['left']}, {c['right']}]")
+            for p in c["parts"]:
+                self.assertTrue(p["w"] > 0 and p["inside"] and p["whole"],
+                                f"{where}: a glyph or position of {c['text']!r} is cut: {p}")
+        if want_plan:
+            self.assertTrue(any(c["plan"] for c in fit["chips"]), f"{where}: no ⌖ chip")
+        if want_phase:
+            self.assertTrue(any(c["phase"] for c in fit["chips"]), f"{where}: no ⟶ chip")
+
+    def test_face_chips_stay_inside_their_cards(self):
+        found = {}
+        for w, h in [(1440, 900), (390, 780), ZOOMED]:
+            self.view(w, h)
+            b = S["browser"]
+            for stem in ("71-gate-integration-and-acceptance", "72-stacked-on-a-long-branch",
+                         "73-an-unbroken-reference"):
+                fit = b.eval(f"__fit('{card_sel(stem)}', ':scope > .chiprow .chip2')")
+                found[f"{stem}@{w}x{h}"] = fit
+                self.assert_fits(fit, f"{stem} at {w}x{h}", want_plan=True)
+                plan = next(c for c in fit["chips"] if c["plan"])
+                # the stored value is whole in the chip's accessible name,
+                # however much of it the width shows
+                if stem.startswith("71-"):
+                    self.assertIn(LONG_BRANCH, plan["name"])
+            self.assertLessEqual(b.eval("document.documentElement.scrollWidth"), w + 1,
+                                 f"page-wide horizontal overflow at {w}x{h}")
+            # a short label is not cut: the phase card's own summary chip
+            short = b.eval(f"__fit('{card_sel(LONG_PHASE)}', ':scope > .chiprow .chip2')")
+            self.assert_fits(short, f"the phase card at {w}x{h}", want_phase=True)
+            self.assertFalse(any(c["clipped"] for c in short["chips"]),
+                             f"a short chip label was ellipsized at {w}x{h}: {short}")
+            shot(f"long-chips-face-{w}x{h}")
+        # at the narrowest card the long target genuinely needs cutting:
+        # proof the fixture exercises the ellipsis rather than fitting by luck
+        narrow = found[f"71-gate-integration-and-acceptance@390x780"]
+        self.assertTrue(any(c["clipped"] for c in narrow["chips"] if c["plan"]), narrow)
+        S["metrics"]["longChipsFace"] = found
+
+    def test_without_containment_the_same_card_spills(self):
+        """The negative control, and the 'before' screenshot: with the fix's
+        rules overridden, the measurement sees exactly the spill card 71's
+        screenshot showed."""
+        self.view(390, 780)
+        b = S["browser"]
+        b.eval("(() => { const s = document.createElement('style'); s.id = 'uncontained';"
+               f" s.textContent = {json.dumps(UNCONTAINED)};"
+               " document.head.appendChild(s); })()")
+        try:
+            fit = b.eval(f"__fit('{card_sel('71-gate-integration-and-acceptance')}',"
+                         " ':scope > .chiprow .chip2')")
+            shot("long-chips-uncontained-before-390x780")
+        finally:
+            b.eval("document.getElementById('uncontained').remove()")
+        S["metrics"]["longChipsUncontained"] = fit
+        self.assertTrue(any(c["plan"] and not c["inside"] for c in fit["chips"]),
+                        f"without containment the ⌖ chip should spill at 390px: {fit}")
+        shot("long-chips-contained-after-390x780")
+
+    def test_phase_member_chips_fit_on_the_face_and_in_the_open_tools(self):
+        found = {}
+        member = "75-a-member-of-the-long-phase"
+        sel = f'#view-phases article.card[data-file="{member}.md"]'
+        for w, h in [(1440, 900), (390, 780), ZOOMED]:
+            self.view(w, h, "phases")
+            b = S["browser"]
+            face = b.eval(f"__fit('{sel}', ':scope > .chiprow .chip2')")
+            self.assert_fits(face, f"the member's face at {w}x{h}", want_phase=True)
+            phase = next(c for c in face["chips"] if c["phase"])
+            self.assertTrue(phase["text"].endswith("1/1"), phase)
+            self.assertIn("Configurable, verifiable headless execution for every launch "
+                          "intent the board knows", phase["name"])
+            # the open tools row: a member's plan chip is there, not on its face
+            b.eval(f"document.querySelector('{sel} [data-more]').click()")
+            self.assertTrue(b.wait(f"!!document.querySelector('{sel} .cardtools.open')", 5),
+                            f"the member's tools did not open at {w}x{h}")
+            b.eval(FIT_JS)
+            tools = b.eval(f"__fit('{sel}', '.cardtools.open .chip2')")
+            self.assert_fits(tools, f"the member's open tools at {w}x{h}", want_plan=True)
+            card = b.eval(f"__fit('{sel}', '.chip2')")
+            self.assertLessEqual(card["scroll"], card["client"] + 1,
+                                 f"the member card overflows with its tools open at {w}x{h}")
+            plan = next(c for c in tools["chips"] if c["plan"])
+            self.assertIn(f"phase/{LONG_PHASE}", plan["name"])
+            found[f"{w}x{h}"] = {"face": face, "tools": tools}
+            shot(f"long-chips-phase-tools-{w}x{h}")
+            b.key("Escape")
+        S["metrics"]["longChipsPhase"] = found
+
+    def test_the_detail_views_tools_fit(self):
+        found = {}
+        stem = "72-stacked-on-a-long-branch"
+        for w, h in [(1280, 800), (390, 780), ZOOMED]:
+            self.view(w, h)
+            b = S["browser"]
+            b.eval(f"document.querySelector('{card_sel(stem)}').focus()")
+            b.key("Enter")
+            self.assertTrue(b.wait("document.querySelector('#drawer').classList.contains('open')"
+                                   " && !!document.querySelector('#drawer .dtools .chip2')", 5),
+                            f"the detail view did not open with its tools at {w}x{h}")
+            b.eval(FIT_JS)
+            fit = b.eval("__fit('#drawer .dtools', '.chip2')")
+            self.assert_fits(fit, f"the detail tools at {w}x{h}", want_plan=True)
+            arrow = next(c for c in fit["chips"] if c["plan"])
+            self.assertIn("→", arrow["text"])
+            found[f"{w}x{h}"] = fit
+            shot(f"long-chips-detail-{w}x{h}")
+            b.click("#closeDrawer")
+        S["metrics"]["longChipsDetail"] = found
+
+    def test_the_preflight_shows_the_whole_value_and_copies_it(self):
+        self.view(390, 780)
+        b = S["browser"]
+        chip = f"{card_sel('71-gate-integration-and-acceptance')} > .chiprow [data-plan]"
+        # by keyboard: the face chip is a button, so the value is not hover-only
+        b.eval(f"document.querySelector('{chip}').focus()")
+        b.key("Enter")
+        self.assertTrue(b.wait("!!document.querySelector('#sheetwrap .prows.full')", 15),
+                        "the ⌖ preflight did not resolve")
+        self.assertTrue(b.wait("document.activeElement && document.activeElement.id === 'pf-title'",
+                               5), "the preflight did not take focus")
+        m = b.eval("(() => { const sheet = document.querySelector('#sheetwrap .sheet');"
+                   " const sr = sheet.getBoundingClientRect();"
+                   " return { copies: [...sheet.querySelectorAll('[data-copy]')].map(c =>"
+                   "   ({ value: c.dataset.copy, name: c.getAttribute('aria-label') })),"
+                   "  values: [...sheet.querySelectorAll('.prows.full .v')].map(v => {"
+                   "   const r = v.getBoundingClientRect(); return { text: v.textContent,"
+                   "   cut: v.scrollWidth > v.clientWidth + 1,"
+                   "   inside: r.left >= sr.left - 1 && r.right <= sr.right + 1 }; }) }; })()")
+        S["metrics"]["longChipsPreflight"] = m
+        shot("long-chips-preflight-390x780")
+        self.assertIn(LONG_BRANCH, [c["value"] for c in m["copies"]], m)
+        self.assertTrue(all(c["name"] and c["name"].startswith("Copy ") for c in m["copies"]), m)
+        start = next(v for v in m["values"] if LONG_BRANCH in v["text"])
+        self.assertFalse(start["cut"], f"the preflight cut the value it exists to show: {start}")
+        self.assertTrue(all(v["inside"] for v in m["values"]), m)
+        b.key("Escape")
+        self.assertTrue(b.wait("document.activeElement && document.activeElement.matches"
+                               "('[data-plan]')", 5),
+                        "closing the preflight did not give focus back to the ⌖ chip")
+
+
 class Views(unittest.TestCase):
     def test_each_view_opens_from_the_switcher_and_fits(self):
         load(1280, 800)

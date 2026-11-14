@@ -208,7 +208,18 @@
     font-family:var(--mono);font-size:11px;color:var(--muted);
     white-space:nowrap;text-decoration:none;
   }
-  .chip2 .g2{font-size:9.5px;opacity:.75}
+  .chip2 .g2{font-size:9.5px;opacity:.75;flex:none}
+  /* a chip is never wider than the row it sits in (task 72): its text
+     shrinks to an ellipsis, while its glyphs and a phase position stay
+     whole. A label too long for a row of its own wraps the chip onto one,
+     then ellipsizes there — so containment follows the card's real width,
+     not a character count. The whole text stays in the chip's accessible
+     name and its title; the plan chip opens the ⌖ preflight, which shows
+     it wrapped and offers a copy. */
+  .chiprow,.cardtools{min-width:0}
+  .chiprow .chip2,.cardtools .chip2{flex:0 1 auto;min-width:0;max-width:100%}
+  .chip2 .clab{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chip2 .cpos,.chip2 .carr{flex:none}
   a.chip2:hover,button.chip2:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
   .chip2.ok{color:var(--calm);border-color:color-mix(in oklab, var(--calm) 45%, transparent)}
   .chip2.accent{color:var(--accent);border-color:color-mix(in oklab, var(--accent) 55%, transparent)}
@@ -303,6 +314,10 @@
   button.armed .actlbl .l-rest,button.busy .actlbl .l-rest{visibility:hidden}
   button.armed .actlbl .l-arm{visibility:visible}
   button.busy .actlbl .l-busy{visibility:visible}
+  /* in a chip (a project command, archive) the label ellipsizes like any
+     chip text rather than widening the chip past its card (task 72) */
+  .chip2 .actlbl{min-width:0;max-width:100%;grid-template-columns:minmax(0,max-content)}
+  .chip2 .actlbl>span{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis}
   /* armed = alarm, and the disarm window drains visibly along the bottom */
   .lacts button.armed,.hoveracts button.armed,button.chip2.armed{color:var(--alarm);border-color:var(--alarm)}
   button.armed::after{
@@ -1287,6 +1302,12 @@
   .sheet .prows .v{font-family:var(--mono);font-size:11.5px;color:var(--ink);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .sheet .prows .why{margin-left:auto;flex:none;font-size:11.5px;color:var(--dim)}
+  /* the ⌖ preflight is where a clipped plan chip's whole value is read
+     (task 72), so there a value wraps rather than ellipsizing again */
+  .sheet .prows.full .prow{flex-wrap:wrap}
+  .sheet .prows.full .v{flex:1 1 12ch;min-width:0;white-space:normal;overflow-wrap:anywhere}
+  .sheet .prows.full .why{flex:1 1 100%;margin-left:95px}
+  .sheet .prows.full .ccopy{align-self:center;flex:none}
   /* the profile sheet reuses the Focus panels, so a named grant and a
      readable input read the same wherever they are drawn */
   .sheet .panel{padding:10px 12px;gap:6px}
@@ -2292,6 +2313,13 @@ function phaseLabel(phase) {
   return name.length > 22 ? name.slice(0, 21) + '…' : name;
 }
 
+/* The unclipped name, for a card's chip: there the chip's CSS ellipsizes
+   to the card's real width (task 72), and the header chip keeps the cut
+   above. */
+function phaseFullName(phase) {
+  return phase.title ? phase.title.replace(/^\s*\d+\s*[—–-]\s*/, '') : phase.file;
+}
+
 /* The phase card is now the only thing standing for its members on this
    view, so it carries the summary it owes them: how far the run has got.
    Progress is what has landed on the phase branch, which only a run knows
@@ -2354,11 +2382,21 @@ function phaseFlight(task) {
    case — the arrow is redundant, so only one name is drawn. */
 function planChipLabel(p) {
   if ((p.drift || []).length) return 'plan drift';
-  // a chip never wraps, so a long branch name is clipped here rather than
-  // widening its card past a narrow page; the whole name is in the title,
-  // the ⌖ preflight and the launch check
-  return p.startBranch === p.prBase ? clip(p.startBranch, 34)
-    : `${clip(p.startBranch, 24)} → ${clip(p.prBase, 24)}`;
+  // whole: the chip's CSS ellipsizes to the card's real width (task 72),
+  // so the full name stays its accessible name; the ⌖ preflight draws it
+  // wrapped with a copy control
+  return p.startBranch === p.prBase ? p.startBranch : `${p.startBranch} → ${p.prBase}`;
+}
+
+/* The same label as markup: each branch name ellipsizes on its own and the
+   arrow between them stays, so a narrow card still shows that there are
+   two and where each begins. */
+function planChipHtml(p) {
+  if ((p.drift || []).length || p.startBranch === p.prBase) {
+    return `<span class="clab">${esc(planChipLabel(p))}</span>`;
+  }
+  return `<span class="clab">${esc(p.startBranch)}</span><span class="carr">→</span>` +
+    `<span class="clab">${esc(p.prBase)}</span>`;
 }
 
 function planChipTitle(p) {
@@ -2392,6 +2430,8 @@ function planChipTitle(p) {
    refuses; it never resets, rebases or removes anything. */
 async function planSheet(task) {
   const wrap = $('#sheetwrap');
+  // opened from a keyboard, the preflight takes focus and gives it back
+  if (!wrap.classList.contains('open')) S.sheetReturn = document.activeElement;
   wrap.innerHTML = `<div class="sheet"><div class="stitle"><span>${esc(task.title)}</span>` +
     `<span class="mono">⌖ preflight</span></div><p>Resolving…</p></div>`;
   wrap.classList.add('open');
@@ -2409,27 +2449,32 @@ async function planSheet(task) {
     return;
   }
   const p = data.plan;
+  // the branch values are the ones a card's ⌖ chip may show clipped, so
+  // here each is drawn whole and carries its own copy control (task 72)
   const rows = [
     ['Starts from', (p.startRef || p.startBranch) +
-      (p.startCommit ? ` · ${p.startCommit.slice(0, 9)}` : ''), p.source],
+      (p.startCommit ? ` · ${p.startCommit.slice(0, 9)}` : ''), p.source,
+      p.startRef || p.startBranch],
     ['Branch', p.branch, p.continuing ? 'already exists — the run continues on it'
-                                      : 'cut by the board when the run starts'],
-    ['PR targets', p.prBase, p.prSource],
+                                      : 'cut by the board when the run starts', p.branch],
+    ['PR targets', p.prBase, p.prSource, p.prBase],
     ['Delivery', p.delivery === 'pr' ? 'a PR is opened automatically' : 'local-only',
       p.delivery === 'pr' ? `${p.appRemote} and gh are both available`
                           : 'the work itself is unaffected'],
   ];
   const blocked = (p.blockers || []).length;
   wrap.innerHTML =
-    `<div class="sheet"><div class="stitle"><span>${esc(task.title)}</span>` +
+    `<div class="sheet" role="dialog" aria-label="${esc('branch plan for ' + task.title)}">` +
+    `<div class="stitle"><span id="pf-title" tabindex="-1">${esc(task.title)}</span>` +
     `<span class="mono">${task.number ? '#' + esc(task.number) + ' · ' : ''}⌖ preflight</span></div>` +
     (blocked
       ? `<p class="bad">This card will not start: ${esc(p.blockers[0])}</p>`
       : `<p>Resolved and validated. Nothing has been created — a branch, a ` +
         `worktree and a run follow the launch, not this.</p>`) +
-    `<div class="prows">` +
-    rows.map(([k, v, why]) => `<div class="prow"><span class="k">${esc(k)}</span>` +
-      `<span class="v">${esc(v)}</span><span class="why">${esc(why || '')}</span></div>`).join('') +
+    `<div class="prows full">` +
+    rows.map(([k, v, why, copy]) => `<div class="prow"><span class="k">${esc(k)}</span>` +
+      `<span class="v">${esc(v)}</span>` + (copy ? copyButton(copy, k) : '') +
+      `<span class="why">${esc(why || '')}</span></div>`).join('') +
     `</div>` +
     ((p.notes || []).length
       ? `<p>${p.notes.map(n => esc(n)).join('<br>')}</p>` : '') +
@@ -2441,6 +2486,7 @@ async function planSheet(task) {
     `</div></div>`;
   $('#sh-noplan').addEventListener('click', closeSheet);
   $('#sh-replan').addEventListener('click', () => { closeSheet(); replan(task); });
+  $('#pf-title').focus();
 }
 
 /* ── what a run may do, and what it is guaranteed to have read ─────────
@@ -4770,7 +4816,11 @@ function cardFor(task) {
   // where this card sits in its phase — derived from the phase card's own
   // list, and a destination like the rest of the row: it opens that card
   if (task.phase) {
-    chips.push({ label: `${phaseLabel(task.phase)} ${task.phase.index}/${task.phase.total}`,
+    // the title ellipsizes to the card's width; the position never does
+    const phaseName = phaseFullName(task.phase);
+    const pos = `${task.phase.index}/${task.phase.total}`;
+    chips.push({ label: `${phaseName} ${pos}`,
+      html: `<span class="clab">${esc(phaseName)}</span><span class="cpos">${esc(pos)}</span>`,
       pre: '⟶', cls: '', phase: task.phase.file,
       title: `Card ${task.phase.index} of ${task.phase.total} in phase `
            + `${task.phase.number ? '#' + task.phase.number + ' — ' : ''}${task.phase.title}` });
@@ -4781,7 +4831,7 @@ function cardFor(task) {
   // the default has no such chip anywhere.
   const planned = (S.state.plans || {})[task.file];
   if (planned) {
-    chips.push({ label: planChipLabel(planned), pre: '⌖',
+    chips.push({ label: planChipLabel(planned), html: planChipHtml(planned), pre: '⌖',
       cls: (planned.drift || []).length ? 'bad' : '', plan: true,
       title: planChipTitle(planned) });
   }
@@ -4912,20 +4962,22 @@ function cardFor(task) {
   const chipHtml = (c) => {
         const g = c.glyph ? `<span class="g2">${c.glyph}</span>` : '';
         const p = c.pre ? `<span class="g2">${c.pre}</span>` : '';
+        // the text that may ellipsize, apart from the glyphs that may not
+        const l = c.html || `<span class="clab">${esc(c.label)}</span>`;
         if (c.arch) return `<button type="button" class="chip2 ${c.cls}" data-arch="1" title="${esc(c.title)}">` +
           `${p.replace('<span ', '<span aria-hidden="true" ')}${actLabel(c.label, 'archive it?', 'archiving…')}` +
           `<span class="srx"> ${esc(task.number ? '#' + task.number : task.file)}</span></button>`;
-        if (c.href) return `<a class="chip2 ${c.cls}" href="${esc(c.href)}" target="_blank" rel="noopener" title="${esc(c.title)}">${p}${esc(c.label)}${g}</a>`;
-        if (c.act) return `<button class="chip2 ${c.cls}" data-drive="${c.act}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
-        if (c.phase) return `<button class="chip2 ${c.cls}" data-phase="${esc(c.phase)}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
-        if (c.plan) return `<button class="chip2 ${c.cls}" data-plan="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
-        if (c.profile) return `<button class="chip2 ${c.cls}" data-profile="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
-        if (c.verify) return `<button class="chip2 ${c.cls}" data-verify="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
-        if (c.gate) return `<button class="chip2 ${c.cls}" data-gate="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
-        if (c.review) return `<button class="chip2 ${c.cls}" data-review="1" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
-        if (c.section) return `<button class="chip2 ${c.cls}" data-section="${esc(c.section)}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</button>`;
+        if (c.href) return `<a class="chip2 ${c.cls}" href="${esc(c.href)}" target="_blank" rel="noopener" title="${esc(c.title)}">${p}${l}${g}</a>`;
+        if (c.act) return `<button class="chip2 ${c.cls}" data-drive="${c.act}" title="${esc(c.title)}">${p}${l}${g}</button>`;
+        if (c.phase) return `<button class="chip2 ${c.cls}" data-phase="${esc(c.phase)}" title="${esc(c.title)}">${p}${l}${g}</button>`;
+        if (c.plan) return `<button class="chip2 ${c.cls}" data-plan="1" title="${esc(c.title)}">${p}${l}${g}</button>`;
+        if (c.profile) return `<button class="chip2 ${c.cls}" data-profile="1" title="${esc(c.title)}">${p}${l}${g}</button>`;
+        if (c.verify) return `<button class="chip2 ${c.cls}" data-verify="1" title="${esc(c.title)}">${p}${l}${g}</button>`;
+        if (c.gate) return `<button class="chip2 ${c.cls}" data-gate="1" title="${esc(c.title)}">${p}${l}${g}</button>`;
+        if (c.review) return `<button class="chip2 ${c.cls}" data-review="1" title="${esc(c.title)}">${p}${l}${g}</button>`;
+        if (c.section) return `<button class="chip2 ${c.cls}" data-section="${esc(c.section)}" title="${esc(c.title)}">${p}${l}${g}</button>`;
         if (c.cmd) return `<button class="chip2 ${c.cls}" data-cmd="${esc(c.cmd)}" title="${esc(c.title)}">${actLabel(c.label, 'run it?', 'running…')}${g}</button>`;
-        return `<span class="chip2 ${c.cls}" title="${esc(c.title)}">${p}${esc(c.label)}${g}</span>`;
+        return `<span class="chip2 ${c.cls}" title="${esc(c.title)}">${p}${l}${g}</span>`;
   };
   // the face carries the exceptions; every chip, the face's included, is
   // in the card's tools — opened from the ⋯ button, and drawn in full in
