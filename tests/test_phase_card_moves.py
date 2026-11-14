@@ -379,7 +379,7 @@ class TheGuardIsOnEveryDoorOut(unittest.TestCase):
     is in all ask, and they ask before anything is written."""
 
     def setUp(self):
-        self.source = (REPO / "manager" / "core" / "httpd.py").read_text(
+        self.source = (REPO / "manager" / "core" / "routes.py").read_text(
             encoding="utf-8")
 
     def test_move_archive_and_complete_all_ask(self):

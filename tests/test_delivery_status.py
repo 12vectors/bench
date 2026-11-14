@@ -1388,7 +1388,8 @@ class ActionsAreHonest(unittest.TestCase):
                     self.assertIsNotNone(spec["handler"])
 
     def test_every_handler_is_a_route_the_server_answers(self):
-        source = (Path(httpd.__file__)).read_text(encoding="utf-8")
+        source = Path(httpd.__file__).with_name("routes.py").read_text(
+            encoding="utf-8")
         for key, spec in delivery.ACTIONS.items():
             if spec["handler"]:
                 with self.subTest(action=key):

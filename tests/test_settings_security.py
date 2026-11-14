@@ -655,12 +655,16 @@ class SavingCannotMoveWork(unittest.TestCase):
     def test_the_settings_route_is_the_only_one_that_writes_the_document(self):
         """A grep, because the guarantee is about the whole server: one
         writer, one path."""
-        text = (CORE / "httpd.py").read_text(encoding="utf-8")
+        text = (CORE / "routes.py").read_text(encoding="utf-8")
         self.assertEqual(1, len(re.findall(r"(?<![a-z])settings\.apply\(", text)),
                          "more than one route writes the policy")
         # and Settings → Agents has exactly one writer too (task 77)
         self.assertEqual(1, text.count("agentsettings.apply("))
-        self.assertGreaterEqual(text.count("origin_problem(self.headers"), 2)
+        # both writers sit behind the policy door, by their routes' class
+        self.assertIn('Route("POST", "/api/settings/apply", "policy-mutation", '
+                      'post_settings)', text)
+        self.assertIn('Route("POST", "/api/settings/agents/apply", '
+                      '"policy-mutation",', text)
 
 
 if __name__ == "__main__":

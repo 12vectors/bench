@@ -1035,9 +1035,9 @@ class TheApi(unittest.TestCase):
             self.assertFalse(rows[mode]["asked"], mode)
 
     def test_the_route_exists_for_reading_and_for_asking_separately(self):
-        source = (CORE / "httpd.py").read_text(encoding="utf-8")
-        self.assertIn('elif path == "/api/doctor":', source)
-        self.assertIn('elif path == "/api/doctor/run":', source)
+        source = (CORE / "routes.py").read_text(encoding="utf-8")
+        self.assertIn('Route("GET", "/api/doctor", "read", get_doctor)', source)
+        self.assertIn('Route("POST", "/api/doctor/run", ', source)
 
     def test_the_post_refuses_the_real_agent_without_approval(self):
         with self.assertRaises(ValueError) as caught:

@@ -59,7 +59,7 @@ names reached across modules — live in
 `tests/test_architecture.py`:
 
 ```
-gitproc / records / redact < config < state / reports / templates < taskfiles < plans / profiles < reviews < verify < progress < acceptance < gates < required < doctor < commands / drive / events / sync < github < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < watch / httpd < board
+gitproc / records / redact < config < state / reports / templates < taskfiles < plans / profiles < reviews < verify < progress < acceptance < gates < required < doctor < commands / drive / events / sync < github < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -176,7 +176,12 @@ gitproc / records / redact < config < state / reports / templates < taskfiles < 
   card; this holds only machine-local job state
 - `watch.py` — 2s disk poller narrating moves made outside the API, and
   the gate that keeps a move a pull applied from triggering anything
-- `httpd.py` — HTTP routes, the SSE stream, serving the page
+- `routes.py` — every HTTP route: its method and path, its request
+  class, and its handler, in one literal table the architecture test
+  reads
+- `httpd.py` — the socket: finds a request's route, applies the door its
+  class names and checks the body before any handler runs; the SSE
+  stream and serving the page
 - `board.py` — argparse + startup wiring only
 
 ## Agent adapters

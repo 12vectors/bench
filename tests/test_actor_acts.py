@@ -597,7 +597,7 @@ class TheCardFace(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.html = pagesource.page()
-        cls.httpd = (REPO / "manager" / "core" / "httpd.py").read_text(encoding="utf-8")
+        cls.httpd = (REPO / "manager" / "core" / "routes.py").read_text(encoding="utf-8")
 
     def test_the_board_knows_who_it_is(self):
         self.assertIn('"me": taskfiles.actor_name() if config.COMMIT_MOVES else ""',
@@ -621,7 +621,7 @@ class TheCardFace(unittest.TestCase):
         self.assertIn("label: 'open PR', confirm: 'open it?', busy: 'opening…'", self.html)
         self.assertIn("run: () => openPR(task)", self.html)
         self.assertIn('/api/pr/open', self.html)
-        self.assertIn('elif path == "/api/pr/open":', self.httpd)
+        self.assertIn('Route("POST", "/api/pr/open", ', self.httpd)
 
     def test_the_open_pr_action_needs_a_branch_and_no_pr(self):
         index = self.html.index("label: 'open PR'")

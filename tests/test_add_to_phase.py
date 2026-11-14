@@ -453,10 +453,11 @@ class TheRouteBehindIt(unittest.TestCase):
     """The one place the action reaches the write path."""
 
     def test_the_route_narrates_what_it_wrote(self):
-        source = (REPO / "manager" / "core" / "httpd.py").read_text(encoding="utf-8")
-        match = re.search(r'elif path == "/api/phase/add":.*?self\._json\(200, result\)',
+        source = (REPO / "manager" / "core" / "routes.py").read_text(encoding="utf-8")
+        self.assertIn('Route("POST", "/api/phase/add", ', source)
+        match = re.search(r'def post_phase_add\(req\).*?req\.reply\(200, result\)',
                           source, re.S)
-        self.assertIsNotNone(match, "httpd.py has no /api/phase/add route")
+        self.assertIsNotNone(match, "routes.py has no /api/phase/add handler")
         route = match.group(0)
         self.assertIn("taskfiles.add_to_phase", route)
         self.assertIn("record_board_event", route)

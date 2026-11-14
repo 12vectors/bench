@@ -585,7 +585,7 @@ class TheTickerReadsPhaseEvents(unittest.TestCase):
 
 class TheApiHasAStop(unittest.TestCase):
     def test_the_route_exists(self):
-        source = (REPO / "manager" / "core" / "httpd.py").read_text(encoding="utf-8")
+        source = (REPO / "manager" / "core" / "routes.py").read_text(encoding="utf-8")
         self.assertIn('"/api/phase/stop"', source)
         self.assertIn("phases.stop_phase", source)
 

@@ -305,91 +305,49 @@ def direction(facts, block, identity: str) -> str:
 
 # ── routes ─────────────────────────────────────────────────────────────
 
-DOORS = {"origin_problem": "policy-door", "card_write_problem": "card-write-door"}
-
-
 def _const_str(node) -> str:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     raise ValueError(f"line {node.lineno}: expected a string literal")
 
 
-def _is_path(node) -> bool:
-    return isinstance(node, ast.Name) and node.id == "path"
-
-
-def _branch_paths(test) -> list[str]:
-    """The literal paths an `if`/`elif` test on `path` dispatches. A form
-    this does not understand is an error, never an omission."""
-    if isinstance(test, ast.Compare) and _is_path(test.left) and len(test.ops) == 1:
-        op, right = test.ops[0], test.comparators[0]
-        if isinstance(op, ast.Eq):
-            return [_const_str(right)]
-        if isinstance(op, ast.In) and isinstance(right, (ast.Tuple, ast.List)):
-            return [_const_str(e) for e in right.elts]
-    if (isinstance(test, ast.Call) and isinstance(test.func, ast.Attribute)
-            and _is_path(test.func.value) and test.func.attr == "startswith"):
-        return [_const_str(test.args[0]) + "*"]
-    if (isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And)
-            and len(test.values) == 2):
-        prefix = _branch_paths(test.values[0])
-        tail = test.values[1]
-        if (len(prefix) == 1 and prefix[0].endswith("*")
-                and isinstance(tail, ast.Compare)
-                and isinstance(tail.ops[0], ast.In)
-                and isinstance(tail.comparators[0], (ast.Tuple, ast.List))
-                and "path" in ast.unparse(tail.left)):
-            return [prefix[0][:-1] + _const_str(e)
-                    for e in tail.comparators[0].elts]
-    raise ValueError(f"line {test.lineno}: a route test this inventory cannot "
-                     f"read: {ast.unparse(test)}")
-
-
-def _door(body: list) -> str:
-    found = set()
-    for stmt in body:
-        for node in ast.walk(stmt):
-            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                    and node.func.id in DOORS):
-                found.add(DOORS[node.func.id])
-    return "+".join(sorted(found)) or "none"
-
-
-def _dispatch(stmts) -> ast.If | None:
-    for stmt in stmts:
-        if isinstance(stmt, ast.If) and "path" in ast.unparse(stmt.test):
-            return stmt
-        if isinstance(stmt, ast.Try):
-            found = _dispatch(stmt.body)
-            if found:
-                return found
-    return None
-
-
-def routes(httpd: Path) -> dict[str, tuple[str, int]]:
-    """`METHOD path` → (door, line) for every route `httpd.py` dispatches."""
+def routes(table: Path) -> dict[str, tuple[str, int]]:
+    """`METHOD path` → (request class, line) for every row of the `ROUTES`
+    table in `routes.py` (WP04). Every row must be a literal
+    `Route("METHOD", "path", "class", handler, …)` call: a row this cannot
+    read is an error, never an omission."""
     found: dict[str, tuple[str, int]] = {}
-    for node in ast.walk(_parse(httpd)):
-        if not (isinstance(node, ast.FunctionDef)
-                and node.name in ("do_GET", "do_POST", "do_PUT", "do_DELETE",
-                                  "do_PATCH", "do_HEAD", "do_OPTIONS")):
-            continue
-        method = node.name[3:]
-        branch = _dispatch(node.body)
-        if branch is None:
-            raise ValueError(f"{node.name}: no dispatch on `path` found")
-        while branch is not None:
-            for path in _branch_paths(branch.test):
-                key = f"{method} {path}"
-                if key in found:
-                    raise ValueError(f"{key} is dispatched twice")
-                door = _door(branch.body)
-                if door == "none" and method in ("GET", "HEAD"):
-                    door = "read"
-                found[key] = (door, branch.lineno)
-            orelse = branch.orelse
-            branch = orelse[0] if (len(orelse) == 1
-                                   and isinstance(orelse[0], ast.If)) else None
+    rows = None
+    for node in _parse(table).body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == "ROUTES"):
+            rows = node.value
+    if not isinstance(rows, (ast.Tuple, ast.List)):
+        raise ValueError(f"{table.name}: no literal ROUTES table found")
+    for row in rows.elts:
+        if not (isinstance(row, ast.Call) and isinstance(row.func, ast.Name)
+                and row.func.id == "Route" and len(row.args) >= 4):
+            raise ValueError(f"line {row.lineno}: a route row this inventory "
+                             f"cannot read: {ast.unparse(row)}")
+        method, path, klass = (_const_str(a) for a in row.args[:3])
+        key = f"{method} {path}"
+        if key in found:
+            raise ValueError(f"{key} is declared twice")
+        found[key] = (klass, row.lineno)
+    return found
+
+
+def handlers_calling_doors(table: Path) -> list[str]:
+    """Handlers in `routes.py` that call a door themselves. The door is the
+    dispatcher's, by class, so that no route can skip it by forgetting a
+    call — a handler checking its own origin is a second, divergent door."""
+    found = []
+    for node in ast.walk(_parse(table)):
+        if (isinstance(node, ast.Call) and isinstance(node.func, (ast.Name, ast.Attribute))
+                and (getattr(node.func, "id", None) or getattr(node.func, "attr", ""))
+                in ("origin_problem", "card_write_problem", "door_problem")):
+            found.append(f"line {node.lineno}: {ast.unparse(node)}")
     return found
 
 
@@ -830,17 +788,20 @@ DYNAMIC_PATCH_TARGETS: dict[str, tuple[int, int]] = {
 # `redact`'s four are GitHub's credential *shapes* (task 111 moved them
 # out of `settings` and `agentsettings`, two each): what a token looks
 # like, not provider behaviour, so WP08 leaves them where they are.
+# `routes`' fourteen are `httpd`'s thirteen, moved with the handlers by
+# WP04, plus the route table's one reference to the Copilot handler.
 PROVIDER_VOCABULARY: dict[str, int] = {
     "agents": 2, "board": 3, "config": 10,
-    "delivery": 22, "doctor": 3, "gates": 25, "httpd": 13, "phases": 4,
+    "delivery": 22, "doctor": 3, "gates": 25, "phases": 4,
     "plans": 6, "profiles": 17, "readiness": 9, "redact": 4,
-    "reviews": 18, "settings": 39, "setupguide": 16, "templates": 1,
+    "reviews": 18, "routes": 14, "settings": 39, "setupguide": 16,
+    "templates": 1,
     "verify": 1, "watch": 2,
 }
 
-# Every route and the door its branch calls, as httpd.py stands. `read`
-# is a GET that calls no door; `none` is a POST that calls none — which
-# is a fact recorded here, not a judgement (WP04 classifies them).
+# Every route and its request class, as routes.py declares it (WP04).
+# The dispatcher in httpd.py applies the class's door before a handler
+# runs; a route changing class is a reviewed edit of this snapshot.
 ROUTES: dict[str, str] = {
     "GET /": "read",
     "GET /api/card/acceptance": "read",
@@ -872,67 +833,67 @@ ROUTES: dict[str, str] = {
     "GET /board.html": "read",
     "GET /files/*": "read",
     "GET /index.html": "read",
-    "POST /api/agent/act-pr": "none",
-    "POST /api/agent/review": "none",
-    "POST /api/agent/review-pr": "none",
-    "POST /api/agent/start": "none",
-    "POST /api/agent/stop": "none",
-    "POST /api/archive": "none",
-    "POST /api/card/acceptance/decide": "none",
-    "POST /api/card/acceptance/track": "none",
-    "POST /api/card/comment": "card-write-door",
-    "POST /api/card/delivery/check-remote": "none",
-    "POST /api/card/delivery/launch-check": "none",
-    "POST /api/card/finding": "none",
-    "POST /api/card/refine": "card-write-door",
-    "POST /api/card/refine/apply": "card-write-door",
-    "POST /api/card/refine/cancel": "card-write-door",
-    "POST /api/card/refine/discard": "card-write-door",
-    "POST /api/command/run": "none",
-    "POST /api/doctor/run": "none",
-    "POST /api/drive/start": "none",
-    "POST /api/drive/stop": "none",
-    "POST /api/events": "none",
-    "POST /api/gates/override": "none",
-    "POST /api/move": "none",
-    "POST /api/phase/add": "none",
-    "POST /api/phase/run": "none",
-    "POST /api/phase/stop": "none",
-    "POST /api/plan/replan": "none",
-    "POST /api/pr/copilot": "none",
-    "POST /api/pr/open": "none",
-    "POST /api/preview/cancel": "policy-door",
-    "POST /api/preview/check": "policy-door",
-    "POST /api/preview/configure": "policy-door",
-    "POST /api/preview/prepare": "policy-door",
-    "POST /api/preview/start": "policy-door",
-    "POST /api/preview/stop": "policy-door",
-    "POST /api/preview/validate": "policy-door",
-    "POST /api/progress": "none",
-    "POST /api/settings/agents/apply": "policy-door",
-    "POST /api/settings/agents/preview": "policy-door",
-    "POST /api/settings/agents/render": "policy-door",
-    "POST /api/settings/agents/validate": "policy-door",
-    "POST /api/settings/apply": "policy-door",
-    "POST /api/settings/preview": "policy-door",
-    "POST /api/settings/validate": "policy-door",
-    "POST /api/setup/cards/create": "policy-door",
-    "POST /api/setup/cards/decide": "policy-door",
-    "POST /api/setup/cards/preview": "policy-door",
-    "POST /api/setup/cards/start": "policy-door",
-    "POST /api/setup/decide": "policy-door",
-    "POST /api/setup/task": "policy-door",
-    "POST /api/setup/verification/activate": "policy-door",
-    "POST /api/setup/verification/register": "policy-door",
-    "POST /api/setup/verification/review": "policy-door",
-    "POST /api/task/complete": "none",
-    "POST /api/task/complete/forget": "none",
-    "POST /api/unarchive": "none",
-    "POST /api/verify": "none",
-    "POST /api/verify/cancel": "none",
-    "POST /api/verify/details": "none",
-    "POST /api/verify/required": "policy-door",
-    "POST /api/verify/required/cancel": "policy-door",
+    "POST /api/agent/act-pr": "open",
+    "POST /api/agent/review": "open",
+    "POST /api/agent/review-pr": "open",
+    "POST /api/agent/start": "open",
+    "POST /api/agent/stop": "open",
+    "POST /api/archive": "open",
+    "POST /api/card/acceptance/decide": "open",
+    "POST /api/card/acceptance/track": "open",
+    "POST /api/card/comment": "card-write",
+    "POST /api/card/delivery/check-remote": "open",
+    "POST /api/card/delivery/launch-check": "open",
+    "POST /api/card/finding": "open",
+    "POST /api/card/refine": "card-write",
+    "POST /api/card/refine/apply": "card-write",
+    "POST /api/card/refine/cancel": "card-write",
+    "POST /api/card/refine/discard": "card-write",
+    "POST /api/command/run": "open",
+    "POST /api/doctor/run": "open",
+    "POST /api/drive/start": "open",
+    "POST /api/drive/stop": "open",
+    "POST /api/events": "open",
+    "POST /api/gates/override": "open",
+    "POST /api/move": "open",
+    "POST /api/phase/add": "open",
+    "POST /api/phase/run": "open",
+    "POST /api/phase/stop": "open",
+    "POST /api/plan/replan": "open",
+    "POST /api/pr/copilot": "open",
+    "POST /api/pr/open": "open",
+    "POST /api/preview/cancel": "policy-mutation",
+    "POST /api/preview/check": "policy-mutation",
+    "POST /api/preview/configure": "policy-mutation",
+    "POST /api/preview/prepare": "policy-mutation",
+    "POST /api/preview/start": "policy-mutation",
+    "POST /api/preview/stop": "policy-mutation",
+    "POST /api/preview/validate": "policy-mutation",
+    "POST /api/progress": "open",
+    "POST /api/settings/agents/apply": "policy-mutation",
+    "POST /api/settings/agents/preview": "policy-mutation",
+    "POST /api/settings/agents/render": "policy-mutation",
+    "POST /api/settings/agents/validate": "policy-mutation",
+    "POST /api/settings/apply": "policy-mutation",
+    "POST /api/settings/preview": "policy-mutation",
+    "POST /api/settings/validate": "policy-mutation",
+    "POST /api/setup/cards/create": "policy-mutation",
+    "POST /api/setup/cards/decide": "policy-mutation",
+    "POST /api/setup/cards/preview": "policy-mutation",
+    "POST /api/setup/cards/start": "policy-mutation",
+    "POST /api/setup/decide": "policy-mutation",
+    "POST /api/setup/task": "policy-mutation",
+    "POST /api/setup/verification/activate": "policy-mutation",
+    "POST /api/setup/verification/register": "policy-mutation",
+    "POST /api/setup/verification/review": "policy-mutation",
+    "POST /api/task/complete": "open",
+    "POST /api/task/complete/forget": "open",
+    "POST /api/unarchive": "open",
+    "POST /api/verify": "open",
+    "POST /api/verify/cancel": "open",
+    "POST /api/verify/details": "open",
+    "POST /api/verify/required": "policy-mutation",
+    "POST /api/verify/required/cancel": "policy-mutation",
 }
 
 
@@ -975,7 +936,7 @@ def inventory(core: Path = CORE, tests: Path = TESTS) -> dict:
     blocks = read_blocks((core / DOC).read_text(encoding="utf-8"))
     facts = scan_core(core)
     inert, dynamic, checked = patch_targets(core, tests)
-    route_lines = routes(core / "httpd.py")
+    route_lines = routes(core / "routes.py")
     return {
         "inert": inert,
         "checked": checked,
@@ -1033,6 +994,8 @@ def governance_problems(core: Path = CORE, tests: Path = TESTS) -> list[str]:
     for key, baseline in BASELINES.items():
         problems += ratchet(key, found[key], baseline)
     problems += [f"route {p}" for p in _route_problems(found["routes"])]
+    problems += [f"route handler checks its own door: {p}"
+                 for p in handlers_calling_doors(core / "routes.py")]
     problems += composition_problems(found["facts"], blocks["current"])
     problems += standalone_problems(core)
     problems += leaf_problems(core)
@@ -1298,24 +1261,45 @@ class ScratchCopyCatchesViolations(unittest.TestCase):
                       f"and lower the count: {some!r}",
                       "\n".join(governance_problems(self.core, self.tests)))
 
+    ANCHOR = '    Route("POST", "/api/agent/stop",'
+
     def test_a_new_route_fails_the_snapshot(self):
-        path = self.core / "httpd.py"
+        path = self.core / "routes.py"
         text = path.read_text(encoding="utf-8")
-        anchor = '            elif path == "/api/agent/stop":'
-        self.assertIn(anchor, text)
-        path.write_text(text.replace(anchor, (
-            '            elif path == "/api/wp01-probe":\n'
-            '                self._json(200, {})\n' + anchor)), encoding="utf-8")
+        self.assertIn(self.ANCHOR, text)
+        path.write_text(text.replace(self.ANCHOR, (
+            '    Route("POST", "/api/wp01-probe", "open", post_agent_stop),\n'
+            + self.ANCHOR)), encoding="utf-8")
         self.assertIn("route new, not in the snapshot: 'POST /api/wp01-probe'",
                       "\n".join(governance_problems(self.core, self.tests)))
 
-    def test_an_unreadable_route_test_is_an_error_not_an_omission(self):
-        path = self.core / "httpd.py"
+    def test_a_route_changing_class_fails_the_snapshot(self):
+        path = self.core / "routes.py"
         text = path.read_text(encoding="utf-8")
-        anchor = '            elif path == "/api/agent/stop":'
-        path.write_text(text.replace(anchor, (
-            '            elif path.endswith("/wp01"):\n'
-            '                self._json(200, {})\n' + anchor)), encoding="utf-8")
+        row = '    Route("POST", "/api/settings/apply", "policy-mutation",'
+        self.assertIn(row, text)
+        path.write_text(text.replace(row, row.replace(
+            '"policy-mutation"', '"open"')), encoding="utf-8")
+        self.assertIn("route 'POST /api/settings/apply' passes 'open'",
+                      "\n".join(governance_problems(self.core, self.tests)))
+
+    def test_a_handler_checking_its_own_door_fails(self):
+        path = self.core / "routes.py"
+        text = path.read_text(encoding="utf-8")
+        anchor = "def post_agent_stop(req) -> None:\n"
+        self.assertIn(anchor, text)
+        path.write_text(text.replace(anchor, anchor + (
+            "    httpd_door = origin_problem(req.headers, 1)\n")),
+            encoding="utf-8")
+        self.assertIn("route handler checks its own door",
+                      "\n".join(governance_problems(self.core, self.tests)))
+
+    def test_an_unreadable_route_row_is_an_error_not_an_omission(self):
+        path = self.core / "routes.py"
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace(self.ANCHOR, (
+            '    *[Route(m, "/api/wp01", "open", post_agent_stop) for m in "X"],\n'
+            + self.ANCHOR)), encoding="utf-8")
         with self.assertRaises(ValueError):
             routes(path)
 

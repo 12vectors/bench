@@ -551,11 +551,11 @@ class TheSurfaces(unittest.TestCase):
     merge rule only for a ready check and writes only through Apply."""
 
     def test_the_writes_are_behind_the_settings_door(self):
-        src = (REPO / "manager" / "core" / "httpd.py").read_text()
-        block = src[src.index('"/api/setup/verification/register"'):]
-        block = block[:block.index("self._json(200")]
-        self.assertIn("origin_problem(self.headers", block)
-        self.assertIn('elif path == "/api/setup/verification":', src)
+        src = (REPO / "manager" / "core" / "routes.py").read_text()
+        for action in ("register", "review", "activate"):
+            self.assertIn(f'Route("POST", "/api/setup/verification/{action}", '
+                          f'"policy-mutation",', src)
+        self.assertIn('Route("GET", "/api/setup/verification", "read",', src)
 
     def test_the_page_writes_only_through_apply_and_arms_it(self):
         html = pagesource.page()

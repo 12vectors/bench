@@ -62,9 +62,10 @@ L20 readiness
 L21 previews
 L22 phases
 L23 refine
-L24 httpd watch
-L25 board
-composition: board httpd watch
+L24 routes watch
+L25 httpd
+L26 board
+composition: board httpd routes watch
 ```
 
 This is the order `AGENTS.md` states, with two facts made explicit:
@@ -158,7 +159,7 @@ L28 httpd
 L29 board
 composition: board httpd routes
 retired: github
-new: gitrepo githost gatepolicy evidence resultidentity staleness changes completion stacks routes
+new: gitrepo githost gatepolicy evidence resultidentity staleness changes completion stacks
 ```
 
 The plan wrote same-layer orderings as `gitrepo → githost`; with the
@@ -186,7 +187,7 @@ One owner per question; `AGENTS.md` describes each module in full.
 | reading | `delivery` | one status per card, owning no policy |
 | surfaces | `agentsettings`, `settings`, `setupguide`, `setuptasks`, `readiness`, `previews` | configuration pages and the setup guide's areas |
 | runs | `agents`, `phases`, `refine` | headless launches; the phase beat; refinement jobs |
-| composition | `watch`, `httpd`, `board` | the disk poller; HTTP routes and the page; startup wiring |
+| composition | `watch`, `routes`, `httpd`, `board` | the disk poller; every route with its request class and handler; the socket, the class doors and the body checks; startup wiring |
 
 Standalone programs — `adapters/*/` and the `bench-verify` and
 `bench-progress` shims — run as separate processes and import no core
@@ -291,9 +292,11 @@ core module:
    shrink.
 3. Cross-module private reaches are on a reviewed list that may only
    shrink.
-4. Every route in `httpd.py`, and the door its branch calls
-   (`policy-door`, `card-write-door`, or none), matches a snapshot. A
-   dispatch the scanner cannot read is an error, not an omission.
+4. Every route in `routes.py`'s `ROUTES` table, and its request class,
+   matches a snapshot, and no handler calls a door itself: the
+   dispatcher in `httpd.py` applies the class's door before any handler
+   runs (WP04). A table row the scanner cannot read is an error, not an
+   omission.
 5. Standalone programs import no core module; composition is imported
    only by composition.
 6. GitHub vocabulary in core outside `github.py` is counted per module
@@ -319,14 +322,13 @@ inventory for comparison and writes nothing.
 **Deferred**, because what they check does not exist yet — each is
 written by the package that builds its subject, not now against
 nothing: purity of `providers/*`
-(WP08); route *classes* beyond the doors that exist (WP04);
-frontend import direction and offline assets (checks 7 and 8; WP14–15).
+(WP08); frontend import direction and offline assets (checks 7 and 8; WP14–15).
 
 ```architecture counts
 top-level-exceptions 0
 function-imports 26
 private-reaches 68
 dynamic-patch-targets 1
-provider-vocabulary 195
+provider-vocabulary 196
 routes 91
 ```
