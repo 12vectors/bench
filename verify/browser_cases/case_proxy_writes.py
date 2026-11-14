@@ -152,11 +152,12 @@ class PageWritesOverLoopbackAndAProxy(unittest.TestCase):
         return b
 
     @staticmethod
-    def status_of(b, path: str) -> int:
-        """The page posting a bodyless write the way it now does."""
+    def status_of(b, path: str) -> list:
+        """The page posting a bodyless write the way it now does: its
+        status and the error it was answered with."""
         return b.eval(f"fetch({path!r}, {{method: 'POST', headers: "
                       "{'Content-Type': 'application/json'}, body: '{}'})"
-                      ".then(r => r.status)")
+                      ".then(async r => [r.status, (await r.json()).error || ''])")
 
     def write_round(self, b) -> dict:
         """The page's own writes: a move away and back through `rawMove`,
@@ -175,10 +176,12 @@ class PageWritesOverLoopbackAndAProxy(unittest.TestCase):
         self.assertTrue(got["moved"], got)
         self.assertNotEqual(got["start"], got["afterMove"], got)
         self.assertTrue(got["back"], got)
-        self.assertEqual(200, got["park"], got)
-        # nothing was archived on this backend: the undo's own refusal
-        # (409), which means the request passed the door
-        self.assertEqual(409, got["undo"], got)
+        # nothing is driven and nothing was archived on this backend, so
+        # both bodyless writes get their handler's own refusal — which
+        # means each passed the door and reached the handler
+        self.assertEqual([409, "nothing is being driven"], got["park"], got)
+        self.assertEqual(409, got["undo"][0], got)
+        self.assertIn("nothing to unarchive", got["undo"][1])
         self.assertEqual(got["start"], got["end"], got)
 
     def test_1_loopback_writes_land(self):
@@ -217,9 +220,10 @@ class PageWritesOverLoopbackAndAProxy(unittest.TestCase):
         self.assertFalse(moved)
         self.assertEqual(403, refused[0], refused)
         self.assertIn("BOARD_ALLOWED_ORIGINS", refused[1])
-        self.assertEqual(403, park)
+        self.assertEqual(403, park[0], park)
+        self.assertIn("Nothing was changed", park[1])
         self.assertEqual(start, self.where(), "a refused write moved the card")
         self.assertTrue(self.seen_unlisted, "nothing went through the proxy")
         S["metrics"]["proxyWritesUnlisted"] = {
-            "moved": moved, "status": refused[0], "park": park,
+            "moved": moved, "status": refused[0], "park": park[0],
             "forwardedOrigins": sorted({o for (_, o, _) in self.seen_unlisted})}

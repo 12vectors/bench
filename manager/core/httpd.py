@@ -103,7 +103,8 @@ def _origin_refusal(origin: str, port: int, allowed) -> str | None:
             return None
         return (f"this request states Origin: {origin}, which is a "
                 f"different board or server on this machine (this board "
-                f"serves http on port {port})")
+                f"serves http on port {port}) and is not in "
+                f"BOARD_ALLOWED_ORIGINS")
     return (f"this request states Origin: {origin}, which is not this board "
             f"and is not in BOARD_ALLOWED_ORIGINS")
 
