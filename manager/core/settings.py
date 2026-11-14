@@ -71,6 +71,7 @@ import doctor
 import gates
 import profiles
 import records
+import redact
 import required
 import sync
 import taskfiles
@@ -343,13 +344,8 @@ class Conflict(ValueError):
 
 MASK = "••••••••"
 
-# A value worth masking whatever its name: the shapes a credential pasted
-# into a settings file actually takes.
-SECRET_VALUES = re.compile(
-    r"(gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|"
-    r"sk-[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|"
-    r"AKIA[0-9A-Z]{12,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|"
-    r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})")
+# What a credential *value* looks like, whatever its name, is `redact`'s
+# one table; this module keeps only its own marker.
 
 # A setting name that holds a credential rather than a path or a flag.
 SECRET_KEYS = re.compile(
@@ -373,9 +369,10 @@ def scrub(text: str) -> str:
 
     The same job `verify.log_text` does for a check's output, applied to
     the one other place bytes bench did not write get through: a value
-    read out of a settings file.
+    read out of a settings file. The shapes are `redact`'s; the marker
+    is this page's own.
     """
-    return SECRET_VALUES.sub(MASK, str(text or ""))
+    return redact.scrub(text, MASK)
 
 
 def masked(name: str, value: str) -> tuple[str, bool]:

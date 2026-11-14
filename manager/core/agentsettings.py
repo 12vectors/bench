@@ -60,6 +60,7 @@ from pathlib import Path
 import config
 import profiles
 import records
+import redact
 import templates
 
 VERSION = 1
@@ -77,9 +78,6 @@ PURPOSES = (
 # the ones that keep it one token on one `.env` line: no whitespace, no
 # quote, no comment mark, no control character.
 MODEL_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+\-\[\]]{0,199}$")
-CREDENTIAL = re.compile(
-    r"(gh[pousr]_[A-Za-z0-9]{16,}|github_pat_|sk-[A-Za-z0-9_-]{16,}|"
-    r"xox[baprs]-|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{10,}\.)")
 RECOVERY_KEEP = 20
 
 APPLIES_WHY = ("read fresh on every launch: a change reaches the next launch "
@@ -341,7 +339,7 @@ def validate(payload: dict) -> dict:
                                "why": "a model is one vendor identifier: letters, "
                                       "digits and . _ : / @ + - [ ], no spaces "
                                       "or quotes, at most 200 characters"})
-            elif value and CREDENTIAL.search(value):
+            elif value and redact.looks_secret(value):
                 errors.append({"code": "model-credential", "field": key,
                                "why": "that looks like a credential, not a "
                                       "model name — secrets are not managed here"})

@@ -18,7 +18,8 @@ standard library's `ast` and `re` — nothing here imports a core module:
    that may only shrink.
 9. Every attribute a test assigns, `setattr`s or patches on a core module
    still exists in that module, so a patch cannot silently go inert.
-10. Stdlib leaves (`gitproc`, task 109) import no core module and nothing
+10. Stdlib leaves (`gitproc`, task 109; `records`, task 110; `redact`,
+   task 111) import no core module and nothing
    outside the standard library, anywhere in the file.
 
 Checks 7 and 8 of the plan (frontend import direction, offline assets)
@@ -728,7 +729,6 @@ FUNCTION_IMPORTS: dict[str, tuple[int, int]] = {
     "drive.py::_watch -> previews": (1, 327),                # up
     "plans.py::_resolve_ref -> agents": (1, 714),            # up
     "previews.py::discover -> setuptasks": (1, 676),         # down
-    "previews.py::scrub -> verify": (1, 217),                # down
     "readiness.py::_card_records -> verify": (1, 456),       # down
     "readiness.py::_evidence -> verify": (1, 761),           # down
     "readiness.py::check_states -> verify": (1, 481),        # down
@@ -1040,7 +1040,7 @@ def governance_problems(core: Path = CORE, tests: Path = TESTS) -> list[str]:
 # Stdlib leaves (check 10): modules that import nothing from core and
 # nothing outside the standard library, anywhere in the file. Each joins
 # the list in the package that builds it (WP03a: gitproc).
-STDLIB_LEAVES = ("gitproc", "records")
+STDLIB_LEAVES = ("gitproc", "records", "redact")
 
 
 def leaf_problems(core: Path) -> list[str]:
@@ -1122,7 +1122,7 @@ class DocumentIsTheSource(unittest.TestCase):
         """AGENTS.md's one-line map is a summary for people; it may not
         drift from the block that is the source."""
         text = (REPO / "AGENTS.md").read_text(encoding="utf-8")
-        line = next(l for l in text.splitlines() if l.startswith("gitproc / records < config < "))
+        line = next(l for l in text.splitlines() if l.startswith("gitproc / records / redact < config < "))
         tiers = [set(t.replace("/", " ").split()) for t in line.split(" < ")]
         self.assertEqual(tiers, [set(l) for l in self.blocks["current"]["layers"]])
 

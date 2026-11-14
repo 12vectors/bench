@@ -59,7 +59,7 @@ names reached across modules — live in
 `tests/test_architecture.py`:
 
 ```
-gitproc / records < config < state / reports / templates < taskfiles < plans / profiles < reviews < verify < progress < acceptance < gates < required < doctor < commands / drive / events / sync < github < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < watch / httpd < board
+gitproc / records / redact < config < state / reports / templates < taskfiles < plans / profiles < reviews < verify < progress < acceptance < gates < required < doctor < commands / drive / events / sync < github < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < watch / httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -70,6 +70,11 @@ gitproc / records < config < state / reports / templates < taskfiles < plans / p
   file and directory flush, tolerant reads, and the interprocess lock a
   record family with more than one writing process holds. Stdlib only;
   takes paths as arguments and knows no record family
+- `redact.py` — what a credential looks like: one pattern table, the
+  union of the ones `settings`, `agentsettings`, `previews` and
+  `bootstrap.py` used to keep apart, masking only the secret part of a
+  match. The marker is the caller's, so each page keeps its own words.
+  Stdlib only; `verify.py` adopts it with the verify train (WP12)
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution;
   `git_argv`, `git_env` and `git_run` as patchable wrappers over `gitproc`
 - `state.py` — shared registries, event log persistence, SSE fan-out

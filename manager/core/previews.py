@@ -73,6 +73,7 @@ from pathlib import Path
 import config
 import drive
 import records
+import redact
 import settings
 import setupguide
 import state as board_state
@@ -197,6 +198,7 @@ TOP_KEYS = {"v", "start", "prepare", "port", "host", "ready", "env",
 STEP_KEYS = {"name", "run", "network", "data", "timeout"}
 READY_KEYS = {"path", "status", "contains", "timeout"}
 SECRET_MARK = "«secret»"
+REDACTED_MARK = "«redacted»"
 
 LOCK = threading.RLock()
 PREPARING: dict | None = None        # the one preparation in flight
@@ -214,13 +216,14 @@ def _digest(value) -> str:
 
 def scrub(text: str, values=None) -> str:
     """Text on its way to a reader: every secret value this preview was
-    given replaced by a marker, then anything credential-shaped."""
-    import verify
+    given replaced by `«secret»`, then anything credential-shaped — the
+    shapes `redact`'s one table knows — by `«redacted»`, the marker a
+    preview's log has always shown."""
     out = str(text or "")
     for value in sorted({v for v in (values or ()) if v and len(v) >= 4},
                         key=len, reverse=True):
         out = out.replace(value, SECRET_MARK)
-    return settings.scrub(verify.scrub(out))
+    return redact.scrub(out, REDACTED_MARK)
 
 
 def _raw_config() -> str | None:
@@ -585,7 +588,7 @@ def validate(doc) -> dict:
                                      "a value is one line of text",
                                      "quote it as a string"))
             continue
-        if settings.secret_key(key) or settings.SECRET_VALUES.search(value):
+        if settings.secret_key(key) or redact.looks_secret(value):
             problems.append(_problem(
                 "literal-secret", field,
                 f"{key} holds a credential, written into the configuration",

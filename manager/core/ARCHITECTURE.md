@@ -38,7 +38,7 @@ the top level. `composition` modules are imported by nothing outside
 composition.
 
 ```architecture current
-L0  gitproc records
+L0  gitproc records redact
 L1  config
 L2  state reports templates
 L3  taskfiles
@@ -79,10 +79,22 @@ module and only the standard library, which `tests/test_architecture.py`
 holds it to. `config.git_argv`, `git_env` and `git_run` remain real
 functions that call it, so patches on `config` keep intercepting.
 
+`redact` (task 111, WP03c) is the third: one table of what a credential
+looks like — the union of the tables `settings`, `agentsettings`,
+`previews` (through `verify`) and `bootstrap.py` kept apart — with the
+marker passed in, so each caller keeps the words its readers see
+(`settings` its `••••••••`, `previews` its `«redacted»`). `settings`,
+`agentsettings` and `previews` delegate to it. `verify.py` keeps its own
+table until the verify train (WP12), since any edit there changes every
+recorded pass's runner identity; `doctor` and `progress` reach that table
+through `verify.scrub` until then. `bootstrap.py` runs before an install
+exists and keeps its copy; `tests/test_redact.py` holds the union to
+every pattern of all five.
+
 ### Where the code does not obey it
 
 The order holds at the top level only because some imports are
-deferred into functions. The test lists all **27 function-level core
+deferred into functions. The test lists all **26 function-level core
 imports**; thirteen of them point *up* the table and are the real
 violations:
 
@@ -94,9 +106,11 @@ violations:
 | `setupguide` (L17) | `readiness`, `previews`, `setuptasks` (L19–L21), in six functions | the guide composes the three modules that are built on it |
 | `setuptasks` (L19) | `previews` (L21), in `gaps` | the same cycle, the other way |
 
-The other fourteen are deferred *downward* imports (`readiness → verify`,
+The other thirteen are deferred *downward* imports (`readiness → verify`,
 `setuptasks → agents`, `board → previews` …) that could be top-level;
-they are counted so the list can only shrink.
+they are counted so the list can only shrink. (There were fourteen:
+`previews.scrub → verify` went with task 111, when `previews` began
+asking `redact` instead.)
 
 **68 private reaches** — `module._name` used from another module — are
 listed the same way. The clusters, which the later packages remove:
@@ -144,7 +158,7 @@ L28 httpd
 L29 board
 composition: board httpd routes
 retired: github
-new: redact gitrepo githost gatepolicy evidence resultidentity staleness changes completion stacks routes
+new: gitrepo githost gatepolicy evidence resultidentity staleness changes completion stacks routes
 ```
 
 The plan wrote same-layer orderings as `gitrepo → githost`; with the
@@ -161,7 +175,7 @@ One owner per question; `AGENTS.md` describes each module in full.
 
 | Layer group | Modules | Owns |
 | --- | --- | --- |
-| stdlib leaves | `gitproc` | the hardened git subprocess: which verbs are reads, the argv and environment a read runs with, the one `subprocess.run` |
+| stdlib leaves | `gitproc`, `records`, `redact` | the hardened git subprocess: which verbs are reads, the argv and environment a read runs with, the one `subprocess.run`; atomic and durable record writes; what a credential looks like |
 | settings | `config` | paths, roots and layout problems, settings and their provenance, prompt/adapter/driver resolution, the patchable git wrappers over `gitproc` |
 | shared state | `state`, `reports`, `templates` | registries and the SSE fan-out; the report clip; the four launch prompt contracts |
 | work state | `taskfiles` | the only code touching `tasks/` |
@@ -290,8 +304,7 @@ core module:
    that module. One computed target is counted rather than read.
 10. Stdlib leaves are pure: `gitproc` imports no core module, at the top
    level or inside a function, and nothing outside the standard library
-   (task 109) and `records` (task 110). `redact` joins the check when it
-   exists.
+   (task 109), `records` (task 110) and `redact` (task 111).
 
 An exception's identity is file, enclosing function and what it reaches,
 never a line number, so moving code does not churn it; each entry keeps
@@ -305,13 +318,13 @@ inventory for comparison and writes nothing.
 
 **Deferred**, because what they check does not exist yet — each is
 written by the package that builds its subject, not now against
-nothing: purity of `redact` and `providers/*`
-(WP03, WP08); route *classes* beyond the doors that exist (WP04);
+nothing: purity of `providers/*`
+(WP08); route *classes* beyond the doors that exist (WP04);
 frontend import direction and offline assets (checks 7 and 8; WP14–15).
 
 ```architecture counts
 top-level-exceptions 0
-function-imports 27
+function-imports 26
 private-reaches 68
 dynamic-patch-targets 1
 provider-vocabulary 195
