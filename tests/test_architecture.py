@@ -44,6 +44,7 @@ inventory to stdout for a reviewer to compare; it writes no file.
 from __future__ import annotations
 
 import ast
+import functools
 import re
 import shutil
 import sys
@@ -147,7 +148,14 @@ def core_modules(core: Path) -> dict[str, Path]:
 
 
 def _parse(path: Path) -> ast.Module:
-    return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    return _parse_text(path.read_text(encoding="utf-8"))
+
+
+@functools.lru_cache(maxsize=None)
+def _parse_text(text: str) -> ast.Module:
+    # keyed by content, so a scratch copy re-parses only what it changed;
+    # nothing here mutates a tree
+    return ast.parse(text)
 
 
 class _Scope(ast.NodeVisitor):
@@ -706,7 +714,7 @@ def patch_targets(core: Path, tests: Path) -> tuple[list[str], dict[str, tuple[i
 # Top-level imports against the current layer table: none at review.
 TOP_LEVEL_EXCEPTIONS: dict[str, tuple[int, int]] = {}
 
-# Deferred core imports. "up" marks the twelve that hide an upward
+# Deferred core imports. "up" marks the thirteen that hide an upward
 # dependency against the current layers; the rest are deferred downward
 # imports that could be top-level, and are listed so they stay counted.
 FUNCTION_IMPORTS: dict[str, tuple[int, int]] = {
@@ -961,8 +969,11 @@ def inventory(core: Path = CORE, tests: Path = TESTS) -> dict:
     """Every inventory, computed from the tree at `core` and `tests`."""
     blocks = read_blocks((core / DOC).read_text(encoding="utf-8"))
     facts = scan_core(core)
-    _inert, dynamic, _checked = patch_targets(core, tests)
+    inert, dynamic, checked = patch_targets(core, tests)
+    route_lines = routes(core / "httpd.py")
     return {
+        "inert": inert,
+        "checked": checked,
         "blocks": blocks,
         "facts": facts,
         "edges": top_level_edges(facts),
@@ -971,8 +982,8 @@ def inventory(core: Path = CORE, tests: Path = TESTS) -> dict:
         "private-reaches": private_reaches(facts),
         "dynamic-patch-targets": dynamic,
         "provider-vocabulary": provider_vocabulary(core),
-        "routes": {k: v[0] for k, v in routes(core / "httpd.py").items()},
-        "route-lines": routes(core / "httpd.py"),
+        "routes": {k: v[0] for k, v in route_lines.items()},
+        "route-lines": route_lines,
     }
 
 
@@ -1019,8 +1030,7 @@ def governance_problems(core: Path = CORE, tests: Path = TESTS) -> list[str]:
     problems += [f"route {p}" for p in _route_problems(found["routes"])]
     problems += composition_problems(found["facts"], blocks["current"])
     problems += standalone_problems(core)
-    inert, _dynamic, _checked = patch_targets(core, tests)
-    problems += [f"inert patch target: {p}" for p in inert]
+    problems += [f"inert patch target: {p}" for p in found["inert"]]
     return problems
 
 
@@ -1070,6 +1080,14 @@ class DocumentIsTheSource(unittest.TestCase):
     def test_composition_is_named(self):
         self.assertLessEqual({"board", "httpd"}, self.blocks["current"]["composition"])
 
+    def test_the_agents_md_map_says_what_the_block_says(self):
+        """AGENTS.md's one-line map is a summary for people; it may not
+        drift from the block that is the source."""
+        text = (REPO / "AGENTS.md").read_text(encoding="utf-8")
+        line = next(l for l in text.splitlines() if l.startswith("config < "))
+        tiers = [set(t.replace("/", " ").split()) for t in line.split(" < ")]
+        self.assertEqual(tiers, [set(l) for l in self.blocks["current"]["layers"]])
+
     def test_counts_block_matches_the_baselines(self):
         counts = self.blocks["counts"]
         expected = {key: total(base) for key, base in BASELINES.items()}
@@ -1118,10 +1136,11 @@ class TreeIsGoverned(unittest.TestCase):
                                  PROVIDER_VOCABULARY), [])
 
     def test_test_patch_targets_exist(self):
-        inert, dynamic, checked = patch_targets(CORE, TESTS)
-        self.assertGreater(checked, 100, "too few patch targets read: vacuous")
-        self.assertEqual(inert, [])
-        self.assertEqual(ratchet("dynamic-patch-targets", dynamic,
+        self.assertGreater(self.found["checked"], 100,
+                           "too few patch targets read: vacuous")
+        self.assertEqual(self.found["inert"], [])
+        self.assertEqual(ratchet("dynamic-patch-targets",
+                                 self.found["dynamic-patch-targets"],
                                  DYNAMIC_PATCH_TARGETS), [])
 
     def test_the_whole_tree_has_no_problem(self):
@@ -1212,10 +1231,11 @@ class ScratchCopyCatchesViolations(unittest.TestCase):
         self.edit("httpd.py", prefix=shifted)
         self.assertEqual(governance_problems(self.core, self.tests), [])
         moved = inventory(self.core, self.tests)
+        before = inventory(CORE, TESTS)
         for key in ("function-imports", "private-reaches"):
             for identity, (count, line) in moved[key].items():
                 self.assertEqual(count, BASELINES[key][identity][0])
-                self.assertEqual(line, inventory()[key][identity][1] + 25)
+                self.assertEqual(line, before[key][identity][1] + 25)
 
     def test_a_removed_exception_must_leave_the_baseline(self):
         some = next(k for k in PRIVATE_REACHES if PRIVATE_REACHES[k][0] == 1)

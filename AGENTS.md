@@ -49,10 +49,17 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 `tasks/` holds only state and works as a plain folder kanban even if
 `manager/` is deleted; the board narrates hand-moves when it happens to run.
 
-Module map for `manager/core/` (dependencies flow strictly left to right):
+Module map for `manager/core/`, lowest layer first: a module imports
+only modules to its left, at least at the top level. The authoritative
+layer table, the convention (`A → B` means A imports B, so B is lower),
+the proposed target layers and the reviewed, shrink-only list of
+today's exceptions — deferred imports that point up the table, private
+names reached across modules — live in
+[`manager/core/ARCHITECTURE.md`](manager/core/ARCHITECTURE.md), held by
+`tests/test_architecture.py`:
 
 ```
-config → state / reports / templates → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → required → doctor → events / github / drive / sync → delivery → agentsettings → settings → setupguide → agents → setuptasks → readiness → previews → phases → refine → watch / httpd → board.py
+config < state / reports / templates < taskfiles < plans / profiles < reviews < verify < progress < acceptance < gates < required < doctor < commands / drive / events / sync < github < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < watch / httpd < board
 ```
 
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution
@@ -104,10 +111,13 @@ config → state / reports / templates → taskfiles → plans / profiles → re
   without paying for a model: the same resolver a launch rides, read at
   four honest distances, with every diagnostic's remedy and a coverage
   table that says which distances were *not* taken
+- `commands.py` — local commands: a project's chores run against a
+  task's worktree
 - `events.py` — ingests NORMALIZED events (the adapter contract), session registry
-- `github.py` — PR opening, Copilot requests, review/CI polling
 - `drive.py` — runs the project driver, tracks the one live drive
 - `sync.py` — origin/main as the shared board: push on move, pull on a beat
+- `github.py` — PR opening, Copilot requests, review/CI polling (it
+  imports `drive`, which is why it sits a layer above)
 - `delivery.py` — one delivery status per card, computed server-side
   from the authorities above: what is happening, the one next action and
   who holds it, and the merge requirements that apply at the current
