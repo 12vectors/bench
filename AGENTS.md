@@ -59,7 +59,7 @@ names reached across modules — live in
 `tests/test_architecture.py`:
 
 ```
-gitproc / records / redact < config < state / reports / templates < taskfiles < plans / profiles < reviews < verify < progress < acceptance < gates < required < doctor < commands / drive / events / sync < github < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < state / reports / templates < taskfiles < plans / profiles < reviews < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < github < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -110,6 +110,13 @@ gitproc / records / redact < config < state / reports / templates < taskfiles < 
   carried through fix and recheck; and the three explicit, attributed
   writes (track, decide, a finding event) — never a tick inferred from a
   lane, an exit or a green suite
+- `callers.py` — who is calling, at the HTTP boundary: whether a
+  request naming a run (`/api/verify`, `/api/events`) proves it with that
+  run's own `BOARD_RUN_TOKEN`, whether the `Host` a request names is this
+  board on loopback or a host of `BOARD_ALLOWED_ORIGINS`, each in an
+  explicit `report` or `enforce` mode; and the bounded, sanitized Host and
+  Origin values Settings → Installation shows (see "Callers: run identity
+  and Host, reported before enforced")
 - `gates.py` — may this merge happen? The operator's requirement per
   guarded mutation, read against evidence bound to the exact commit about
   to move; bench's own review verdict kept apart from GitHub's formal

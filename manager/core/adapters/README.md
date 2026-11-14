@@ -375,7 +375,17 @@ POST to `http://127.0.0.1:$BOARD_PORT/api/events`:
 
     {"v": 1, "session": str, "kind": str, "summary": str,
      "id"?: str, "file"?: str, "cmd"?: str, "detail"?: str, "ok"?: bool,
-     "running"?: bool, "agent"?: $BOARD_AGENT_ID, "task"?: $BOARD_TASK}
+     "running"?: bool, "agent"?: $BOARD_AGENT_ID, "task"?: $BOARD_TASK,
+     "token"?: $BOARD_RUN_TOKEN}
+
+`token` is optional and additive: send `BOARD_RUN_TOKEN` beside `agent`
+when the environment has it. It is what proves the claim to be that run
+— the board compares it in constant time against the run's capability and
+removes it before anything is recorded. An event naming a run without it
+is counted as an unproven claim on the run's channel health; with
+`BOARD_RUN_IDENTITY=enforce` it is recorded as a session with no run link
+(no agent, no task). An adapter that never sends it keeps display-only
+events, exactly as before.
 
 kinds: `session end idle edit read search command test check git plan
 subagent web other`. `running: true` marks an in-flight action (shown as

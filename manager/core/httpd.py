@@ -15,6 +15,7 @@ import queue
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer  # noqa: F401
 from urllib.parse import parse_qs, unquote, urlparse
 
+import callers
 import config
 import routes
 import state
@@ -76,38 +77,10 @@ from routes import (doctor_payload, gates_payload, page_bytes,  # noqa: F401
 SETTINGS_HEADER = "X-Bench-Settings"
 SETTINGS_TOKEN = "1"
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]", "::1")
-_LOOPBACK = ("127.0.0.1", "localhost", "::1")
 
-
-def _origin_refusal(origin: str, port: int, allowed) -> str | None:
-    """Why a stated Origin is not this board's page, or None."""
-    if origin.lower() == "null" or not origin:
-        return (f"this request states Origin: {origin or '(empty)'}, which a "
-                f"sandboxed frame, a data: page or a file sends — not this "
-                f"board's page")
-    try:
-        parts = urlparse(origin)
-        stated_port = parts.port
-    except ValueError:
-        return f"this request states Origin: {origin}, which is not an origin"
-    scheme = (parts.scheme or "").lower()
-    host = (parts.hostname or "").lower()
-    if parts.path or parts.query or parts.params or parts.fragment \
-            or parts.username is not None:
-        return f"this request states Origin: {origin}, which is not an origin"
-    effective = stated_port or (443 if scheme == "https" else 80)
-    if (scheme, host, effective) in allowed:
-        return None
-    if host in _LOOPBACK:
-        if scheme == "http" and effective == port:
-            return None
-        return (f"this request states Origin: {origin}, which is a "
-                f"different board or server on this machine (this board "
-                f"serves http on port {port}) and is not in "
-                f"BOARD_ALLOWED_ORIGINS")
-    return (f"this request states Origin: {origin}, which is not this board "
-            f"and is not in BOARD_ALLOWED_ORIGINS")
-
+# The origin rule lives with the other caller checks (WP05), so an
+# observation of an Origin in Settings says what this door would.
+_origin_refusal = callers.origin_refusal
 
 def write_problem(headers, port: int, *, what: str = "a write",
                   token: bool = False, allowed=None) -> str | None:
@@ -191,6 +164,31 @@ def claim_problem(klass: str, headers, body: dict) -> str | None:
     return None
 
 
+# ── user files are documents, not pages of this board (WP05) ───────────
+#
+# plans/ and reference/ hold what people and agents wrote. Served as they
+# were, an .html or .svg among them ran its scripts as this origin, and so
+# could call every API the page can. Now every file is sent with nosniff,
+# so nothing is read as a type it was not served as (an unknown suffix is
+# octet-stream and downloads), and the two active types are sent with a
+# CSP sandbox: an opaque origin, no script, no form, no plugin. They still
+# render — markup, styles and images — and a reference document that needs
+# script will not run it (plan §9.2, decision 6). A PDF is left out of the
+# sandbox only because Chromium's viewer is a plugin the sandbox refuses;
+# nosniff still holds it to the type it was served as.
+ACTIVE_SUFFIXES = (".html", ".svg")
+SANDBOX_POLICY = ("sandbox; script-src 'none'; object-src 'none'; "
+                  "base-uri 'none'; form-action 'none'")
+
+
+def file_headers(suffix: str) -> dict:
+    """The headers one served user file is sent with."""
+    headers = {"X-Content-Type-Options": "nosniff"}
+    if suffix.lower() in ACTIVE_SUFFIXES:
+        headers["Content-Security-Policy"] = SANDBOX_POLICY
+    return headers
+
+
 class BodyRefused(Exception):
     def __init__(self, status: int, code: str, why: str):
         super().__init__(why)
@@ -209,11 +207,14 @@ class Handler(BaseHTTPRequestHandler):
 
     # ── the surface a handler in routes.py uses ────────────────────────
 
-    def send(self, code: int, body: bytes, content_type: str) -> None:
+    def send(self, code: int, body: bytes, content_type: str,
+             headers: dict | None = None) -> None:
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -243,8 +244,25 @@ class Handler(BaseHTTPRequestHandler):
         self.path = self.url.path
         return route
 
+    def _host_refused(self, method: str) -> bool:
+        """The Host check (WP05): observed on every request, refused only
+        where BOARD_HOST_CHECK is enforce. A refusal reads and changes
+        nothing."""
+        problem = callers.check_request(self.headers, self.served_port(),
+                                        method)
+        if problem is None:
+            return False
+        if method == "POST":
+            self.reply(421, {"error": problem, "code": "host-unlisted"})
+        else:
+            self.send(421, problem.encode("utf-8"),
+                      "text/plain; charset=utf-8")
+        return True
+
     def do_GET(self) -> None:
         raw = self.path
+        if self._host_refused("GET"):
+            return
         route = self._route("GET")
         if route is None:
             self.path = raw
@@ -253,6 +271,8 @@ class Handler(BaseHTTPRequestHandler):
         route.handler(self)
 
     def do_POST(self) -> None:
+        if self._host_refused("POST"):
+            return
         route = self._route("POST")
         if route is None:
             self.send(404, b"not found", "text/plain")
@@ -270,6 +290,13 @@ class Handler(BaseHTTPRequestHandler):
         problem = claim_problem(route.klass, self.headers, self.body)
         if problem:
             self.reply(403, {"error": problem, "code": "browser-claims-run"})
+            return
+        # A shim's claim to be a run is proved by that run's own token
+        # (WP05) — reported, or refused where BOARD_RUN_IDENTITY enforces.
+        try:
+            self.body = callers.claim(self.url.path, self.body)
+        except callers.ClaimRefused as refused:
+            self.reply(403, {"error": refused.why, "code": refused.code})
             return
         try:
             route.handler(self)
@@ -342,8 +369,9 @@ class Handler(BaseHTTPRequestHandler):
         if not file_path.is_file():
             self.send(404, b"not found", "text/plain")
             return
-        ctype = self._MIME.get(file_path.suffix.lower(), "application/octet-stream")
-        self.send(200, file_path.read_bytes(), ctype)
+        suffix = file_path.suffix.lower()
+        ctype = self._MIME.get(suffix, "application/octet-stream")
+        self.send(200, file_path.read_bytes(), ctype, file_headers(suffix))
 
     def stream(self) -> None:
         self.send_response(200)

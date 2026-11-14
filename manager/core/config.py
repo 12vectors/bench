@@ -370,6 +370,37 @@ def parse_origins(raw: str) -> tuple[frozenset, list[str]]:
 ALLOWED_ORIGINS, ALLOWED_ORIGIN_PROBLEMS = parse_origins(
     setting("BOARD_ALLOWED_ORIGINS", ""))
 
+# Caller checks (WP05), each `report` or `enforce`. `report` — the
+# default, and what every board runs until an operator decides otherwise —
+# counts and shows what would be refused and refuses nothing; it is not a
+# security pass. `enforce` refuses. Nothing advances a board from one to
+# the other: not a timer, not an update, not a merge of the source. It is
+# an edit to manager/local/.env and a restart, made by a person.
+CALLER_MODES = ("report", "enforce")
+
+
+def parse_mode(key: str, raw: str) -> tuple[str, str | None]:
+    """A caller-check mode, and why the setting was not taken. Anything
+    but the two words reads `report` and is named — an operator who typed
+    something else must not believe the board enforces."""
+    value = (raw or "").strip().lower()
+    if value in ("", "report"):
+        return "report", None
+    if value == "enforce":
+        return "enforce", None
+    return "report", (f"{key}={raw.strip()!r} is not one of report or "
+                      f"enforce, so the board reports and refuses nothing")
+
+
+# A request naming a run (`/api/verify`, `/api/events`) proved by that
+# run's own BOARD_RUN_TOKEN.
+RUN_IDENTITY_MODE, RUN_IDENTITY_PROBLEM = parse_mode(
+    "BOARD_RUN_IDENTITY", setting("BOARD_RUN_IDENTITY", "report"))
+# The Host a request names: loopback on the served port, or a host of
+# BOARD_ALLOWED_ORIGINS.
+HOST_CHECK_MODE, HOST_CHECK_PROBLEM = parse_mode(
+    "BOARD_HOST_CHECK", setting("BOARD_HOST_CHECK", "report"))
+
 # Which agent adapter runs headless jobs. Resolution ladder: local wins.
 # The *startup* reading; a launch asks `agent_choice()`, which reads the
 # agent settings fresh (task 77).

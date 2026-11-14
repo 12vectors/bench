@@ -478,6 +478,48 @@ def authenticate(agent_id: str, token) -> None:
                       "run may only read its own diagnostics")
 
 
+def proves(agent_id: str, token) -> str | None:
+    """Whether `token` is this run's own capability — the same contract
+    and the same constant-time comparison as `authenticate`, without
+    raising and without counting. None when it proves the run; otherwise
+    the reason's code: `unknown-run` (no record of that run),
+    `no-capability` (a run launched without one, or one that holds no
+    capability, such as a card refinement), `no-token` or `identity`.
+
+    The caller decides what an unproven claim costs (`callers.py`); this
+    answers only whether it was proved."""
+    with _LOCK:
+        record = RUNS.get(agent_id or "")
+        expected = (record or {}).get("capabilityHash")
+    if record is None:
+        return "unknown-run"
+    if not expected:
+        return "no-capability"
+    if not isinstance(token, str) or not token:
+        return "no-token"
+    if not hmac.compare_digest(_hash(token), expected):
+        return "identity"
+    return None
+
+
+def note_unproven(agent_id: str, where: str, code: str) -> bool:
+    """Count one unproven claim to be `agent_id` on that run's channel
+    health (`unproven`, per route), apart from refused progress reports.
+    Returns whether the board knows the run — a claim to be a run it has
+    no record of has no channel to count on."""
+    with _LOCK:
+        record = RUNS.get(agent_id or "")
+        if record is None:
+            return False
+        counts = record.setdefault("unproven", {})
+        counts[where] = counts.get(where, 0) + 1
+        record["lastUnproven"] = {"at": time.time(), "where": where,
+                                  "code": code}
+        _store(record)
+    _notify_health(agent_id)
+    return True
+
+
 def refused(agent_id: str, code: str, status: int, why: str) -> Refused:
     """A run-scoped request the board would not answer, counted on that
     run's channel health when the board knows the run — so a spoof or a
@@ -793,6 +835,10 @@ def public(agent_id: str, full: bool = False) -> dict | None:
         "counts": {k: record.get(k, 0) for k in
                    ("accepted", "coalesced", "duplicates", "rejected")},
         "lastRejection": record.get("lastRejection"),
+        # requests that named this run without its capability (WP05):
+        # counted per route, apart from refused reports
+        "unproven": dict(record.get("unproven") or {}),
+        "lastUnproven": record.get("lastUnproven"),
         "updates": len(record.get("history") or []),
         "milestones": milestones(record),
         "milestonesOmitted": len(record.get("milestonesOmitted") or []),

@@ -46,7 +46,7 @@ L4  plans profiles
 L5  reviews
 L6  verify
 L7  progress
-L8  acceptance
+L8  acceptance callers
 L9  gates
 L10 required
 L11 doctor
@@ -138,7 +138,7 @@ L7  evidence resultidentity
 L8  staleness
 L9  verify
 L10 progress
-L11 acceptance
+L11 acceptance callers
 L12 gates
 L13 required doctor
 L14 events drive sync commands
@@ -181,7 +181,7 @@ One owner per question; `AGENTS.md` describes each module in full.
 | shared state | `state`, `reports`, `templates` | registries and the SSE fan-out; the report clip; the four launch prompt contracts |
 | work state | `taskfiles` | the only code touching `tasks/` |
 | policy | `plans`, `profiles`, `reviews` | which branch, what a run may do and read, the pinned review checkout |
-| evidence | `verify`, `progress`, `acceptance` | the check runner and its records; a run's own claims; criterion decisions and findings |
+| evidence | `verify`, `progress`, `acceptance`, `callers` | the check runner and its records; a run's own claims; criterion decisions and findings; whether a request's claim to be a run is proved, and the Host and Origin a request names (report or enforce) |
 | decisions | `gates`, `required`, `doctor` | may this merge happen; run missing required checks; readiness diagnosis |
 | services | `commands`, `drive`, `events`, `sync`, `github` | local chores; the one live drive; normalized events; ticket sync; PRs, polling and merge-and-clean-up |
 | reading | `delivery` | one status per card, owning no policy |
