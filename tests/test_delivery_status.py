@@ -636,7 +636,7 @@ class TheVocabulary(unittest.TestCase):
             encoding="utf-8")
         # lowest first, `<` between layers (task 107: `→` means "imports")
         line = next(ln for ln in brief.splitlines()
-                    if ln.startswith("gitproc / records < config < "))
+                    if ln.startswith("gitproc / records / redact < config < "))
         order = [name.strip() for step in line.split(" < ")
                  for name in step.split("/")]
         self.assertIn("delivery", order)
