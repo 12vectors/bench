@@ -311,6 +311,16 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str,
     else:
         env.pop("AGENT_PROFILE", None)
         env.pop("AGENT_CONTEXT", None)
+    # The workflow briefs the prompt names outside the checkout, by
+    # canonical path and approved hash, so an adapter that grants reads
+    # narrowly can grant exactly these (task 126). Absent when there are
+    # none — every vendored board — so the adapter's environment is then
+    # exactly what it always was.
+    guidance = profiles.adapter_guidance(manifest)
+    if guidance:
+        env["AGENT_GUIDANCE"] = json.dumps(guidance)
+    else:
+        env.pop("AGENT_GUIDANCE", None)
     # The progress channel: one executable and a token scoped to this run,
     # handed over only when the adapter declares it can render the grant.
     # Absent, the adapter is given exactly the environment it always was.

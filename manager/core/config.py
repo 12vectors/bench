@@ -1213,7 +1213,11 @@ def problems(require_tasks: bool = True,
 def guidance_outside_app() -> list[Path]:
     """Workflow briefs a headless run cannot find by reading its own
     checkout: the work root's and the tool project's, when they exist and
-    are not inside the application already."""
+    are not inside the application already.
+
+    Named by their canonical path (task 126): the path the prompt tells a
+    run to read is the path the adapter is told to grant an exact read of,
+    so a link on the way cannot make the two disagree."""
     seen: set[Path] = set()
     found: list[Path] = []
     for candidate in (work_root() / "AGENTS.md", LOCAL / "AGENTS.md"):
@@ -1226,7 +1230,7 @@ def guidance_outside_app() -> list[Path]:
         if resolved in seen or _inside(resolved, REPO.resolve()):
             continue
         seen.add(resolved)
-        found.append(candidate)
+        found.append(resolved)
     return found
 
 

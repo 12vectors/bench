@@ -2893,6 +2893,48 @@ def adapter_context(found: dict) -> list[dict]:
             if i.get("status") in ("pinned", "resolved")]
 
 
+def adapter_guidance(found: dict | None) -> list[dict]:
+    """The workflow briefs the prompt tells a run to read outside its own
+    checkout (`config.guidance_outside_app`), for an adapter that grants
+    reads narrowly — the explicit core-to-adapter contract behind
+    `AGENT_GUIDANCE` (task 126). Same shape as `adapter_context`.
+
+    Only these files: bench's own fixed brief locations, which the prompt
+    already makes mandatory reading, by canonical path. A context entry
+    naming some other original file grants nothing here — an approved
+    input is delivered as its pinned copy, never as its source.
+
+    Where the run's pinned context also holds a copy of a brief, the
+    brief's approved hash is *the pinned content*, so an adapter that
+    re-hashes the original proves it is the very file and content that
+    was approved, and a source that drifted since the pin fails closed
+    rather than granting a file that is no longer what bench validated.
+    """
+    pinned: dict[str, str] = {}
+    for item in (found or {}).get("context") or []:
+        if item.get("status") not in ("pinned", "resolved") or not item.get("path"):
+            continue
+        try:
+            pinned[str(Path(item["path"]).resolve())] = str(item.get("sha256") or "")
+        except OSError:
+            continue
+    out: list[dict] = []
+    for number, brief in enumerate(config.guidance_outside_app(), 1):
+        path = str(brief)
+        if path in pinned:
+            sha, approved = pinned[path], "pinned-context"
+        else:
+            try:
+                sha = hashlib.sha256(brief.read_bytes()).hexdigest()
+            except OSError:
+                sha = ""
+            approved = "launch"
+        out.append({"name": f"workflow-brief-{number}",
+                    "path": path, "sha256": sha, "access": "read-only",
+                    "kind": "workflow-brief", "approvedAt": approved})
+    return out
+
+
 def prompt_block(found: dict | None) -> str:
     """What the run is told about its effective inputs.
 

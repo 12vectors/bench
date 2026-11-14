@@ -861,6 +861,7 @@ def _describe(adapter: dict, seam: dict, intent: str,
         "AGENT_COMMANDS": ",".join(config.agent_commands()),
         "AGENT_PROFILE": json.dumps(profiles.adapter_policy(found)),
         "AGENT_CONTEXT": json.dumps(profiles.adapter_context(found)),
+        "AGENT_GUIDANCE": json.dumps(profiles.adapter_guidance(found)),
         "AGENT_CWD": str(found["cwd"]["path"] or ""),
     })
     try:
@@ -974,6 +975,55 @@ def _conformance_rows(adapter: dict, seam: dict, intent: str,
                     "bench pinned. Contents are never passed."
                     if absent or leaked else None)))
 
+    # — the approved inputs as exact read grants (task 126) —
+    # Generated permission text only: this row proves the adapter *wrote*
+    # an exact grant per approved file, never that the vendor honoured it,
+    # and it says so. `reads` is optional in the describe contract, so an
+    # adapter that does not report it is skipped rather than accused.
+    wanted_paths = [str(i.get("pinned") or i.get("path")) for i in pinned] + \
+        [g["path"] for g in profiles.adapter_guidance(found)]
+    if described.get("refused"):
+        rows.append(_finding(
+            "conformance", "context-reads", "failed",
+            "whether every approved input became an exact read grant",
+            f"the adapter would refuse this launch: {described['refused']}",
+            intent=intent,
+            remedy=("An approved input the adapter cannot grant exactly is "
+                    "refused, never widened or dropped. Re-pin it, or fix the "
+                    "path the refusal names.")))
+    elif not wanted_paths:
+        rows.append(_finding(
+            "conformance", "context-reads", "skipped",
+            "whether every approved input became an exact read grant",
+            "this intent has no approved input or outside workflow brief",
+            intent=intent))
+    elif "reads" not in described:
+        rows.append(_finding(
+            "conformance", "context-reads", "skipped",
+            "whether every approved input became an exact read grant",
+            "this adapter's describe does not report read grants, so nothing "
+            "here says whether the run can read its approved inputs",
+            intent=intent,
+            remedy=("Report `reads` from describe (see core/adapters/README.md) "
+                    "if the adapter grants file reads narrowly.")))
+    else:
+        granted = {str(r.get("path")) for r in described.get("reads") or []}
+        missing = [p for p in wanted_paths if p not in granted]
+        extra = sorted(granted - set(wanted_paths))
+        rows.append(_finding(
+            "conformance", "context-reads",
+            "failed" if (missing or extra) else "passed",
+            "whether every approved input became an exact read grant",
+            (f"no read grant for {', '.join(missing)}" if missing else
+             f"a read grant bench did not approve: {', '.join(extra)}" if extra else
+             f"{len(wanted_paths)} exact read grant"
+             f"{'' if len(wanted_paths) == 1 else 's'} generated — permission "
+             f"text, not proof the vendor honours it"),
+            intent=intent,
+            remedy=("Each approved input, and each workflow brief the prompt "
+                    "names outside the checkout, is one exact file grant — "
+                    "no more and no fewer." if (missing or extra) else None)))
+
     # — asking bench for a check, review included —
     shim = next((g for g in found["commands"]
                  if g["name"] == profiles.VERIFY_GRANT), None)
@@ -1028,7 +1078,10 @@ def _conformance_rows(adapter: dict, seam: dict, intent: str,
 
     # — a refinement: reads and proposes, and nothing else at all —
     if intent == "refine":
-        allowed = [str(r) for r in (described.get("allow") or [])]
+        # An exact read grant of an approved file is not a command.
+        reading = {str(r.get("rule")) for r in described.get("reads") or []}
+        allowed = [str(r) for r in (described.get("allow") or [])
+                   if str(r) not in reading]
         rows.append(_finding(
             "conformance", "no-commands",
             "failed" if allowed else "passed",
@@ -1146,6 +1199,8 @@ def _stub_rows(adapter: dict, seam: dict, intent: str,
             "AGENT_COMMANDS": ",".join(config.agent_commands()),
             "AGENT_PROFILE": json.dumps(profiles.adapter_policy(found)),
             "AGENT_CONTEXT": json.dumps(profiles.adapter_context(found)),
+            "AGENT_GUIDANCE": json.dumps(profiles.adapter_guidance(found)),
+        "AGENT_GUIDANCE": json.dumps(profiles.adapter_guidance(found)),
             "AGENT_CWD": str(cwd),
         })
         # The model this intent resolved, exactly as `_launch` would hand
@@ -1562,6 +1617,7 @@ def _real_agent_probe(adapter: dict, root: Path, probe: dict,
         "AGENT_COMMANDS": ",".join(config.agent_commands()),
         "AGENT_PROFILE": json.dumps(profiles.adapter_policy(found)),
         "AGENT_CONTEXT": json.dumps(profiles.adapter_context(found)),
+        "AGENT_GUIDANCE": json.dumps(profiles.adapter_guidance(found)),
         "AGENT_CWD": str(root),
     })
     # The configured model, and nothing invented here: absent means the

@@ -45,8 +45,11 @@ and a custom adapter working unchanged.
 Absolute path to emit.py, so the hooks work from any worktree regardless
 of what that checkout contains.
 """
+import hashlib
 import json
 import os
+import re
+import stat
 import sys
 from pathlib import Path
 
@@ -207,8 +210,129 @@ def deny_rules(mode: str, profile: dict | None = None) -> list[str]:
     return rules
 
 
+# ── approved read-only inputs, as exact file reads (task 126) ───────────
+#
+# AGENT_CONTEXT (the files bench pinned for this run) and AGENT_GUIDANCE
+# (the workflow briefs core's prompt guidance names outside the checkout)
+# are both lists of {"name", "path", "sha256", "access": "read-only"}.
+# Each becomes one `Read(//<absolute path>)` allow-rule — `//` is
+# filesystem-root absolute in Claude Code's rule syntax; a single leading
+# slash would be relative to the settings source — plus an `Edit(//…)`
+# deny-rule, so a read grant can never be read as licence to change the
+# document (Edit rules cover every built-in file-writing tool).
+#
+# Every entry is validated before a rule is made, and a bad one refuses
+# the whole launch rather than being dropped: the prompt tells the run it
+# may read these files, so a silently missing grant is a silently weakened
+# requirement. Refused: a malformed entry, a path that is not absolute,
+# not canonical (a symlink anywhere in it, `.`/`..`, doubled slashes), or
+# carries any character outside a conservative set — which excludes every
+# gitignore-style pattern character (`* ? [ ] ! \`), the rule delimiters
+# `( )`, whitespace and control characters, so no path can become a
+# wildcard or a directory grant — a path that is not a regular file, and
+# content whose SHA-256 is not the one bench approved (drift fails closed).
+#
+# Neither variable present renders exactly the document it always did.
+
+CONTEXT_EXIT = 65
+_SAFE_PATH = re.compile(r"/[A-Za-z0-9._@+=,:~/-]+")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+class ReadRefused(ValueError):
+    """An approved input this adapter cannot grant exactly."""
+
+
+def _parse_inputs(raw: str | None, variable: str) -> list:
+    if not (raw or "").strip():
+        return []
+    try:
+        found = json.loads(raw)
+    except (TypeError, ValueError):
+        raise ReadRefused(f"{variable} is not JSON, so the approved inputs it "
+                          f"names cannot be granted")
+    if not isinstance(found, list):
+        raise ReadRefused(f"{variable} is not a list of approved inputs")
+    return found
+
+
+def _validated(entry, variable: str) -> dict:
+    if not isinstance(entry, dict):
+        raise ReadRefused(f"{variable} holds an entry that is not an object")
+    name = str(entry.get("name") or "").strip()
+    path = entry.get("path")
+    sha = entry.get("sha256")
+    label = f"{variable} entry '{name or '?'}'"
+    if not name:
+        raise ReadRefused(f"{variable} holds an entry with no name")
+    if entry.get("access") != "read-only":
+        raise ReadRefused(f"{label} is not marked read-only access")
+    if not isinstance(path, str) or not path.startswith("/"):
+        raise ReadRefused(f"{label} has no absolute path")
+    if not _SAFE_PATH.fullmatch(path):
+        raise ReadRefused(f"{label} has a path with a character this adapter "
+                          f"will not put in a permission rule (wildcard, "
+                          f"bracket, parenthesis, whitespace or control "
+                          f"character)")
+    parts = path.split("/")[1:]
+    if "//" in path or path.endswith("/") or any(p in ("", ".", "..")
+                                                 for p in parts):
+        raise ReadRefused(f"{label} has a path that is not canonical")
+    if os.path.realpath(path) != path:
+        raise ReadRefused(f"{label} resolves somewhere else through a link; "
+                          f"only the canonical file path is granted")
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        raise ReadRefused(f"{label} is not there: {exc.strerror or exc}")
+    if not stat.S_ISREG(st.st_mode):
+        raise ReadRefused(f"{label} is not a regular file — a directory or "
+                          f"special file is never granted")
+    if not isinstance(sha, str) or not _SHA256.fullmatch(sha):
+        raise ReadRefused(f"{label} carries no SHA-256 to check it against")
+    try:
+        with open(path, "rb") as handle:
+            got = hashlib.sha256(handle.read()).hexdigest()
+    except OSError as exc:
+        raise ReadRefused(f"{label} could not be read: {exc.strerror or exc}")
+    if got != sha:
+        raise ReadRefused(f"{label} no longer holds the content bench approved "
+                          f"(sha256 {got[:12]}, approved {sha[:12]}); refusing "
+                          f"rather than granting a changed file")
+    return {"name": name, "path": path, "sha256": sha,
+            "source": entry.get("source"), "kind": variable}
+
+
+def approved_reads(context: str | None, guidance: str | None) -> list[dict]:
+    """The validated, de-duplicated exact reads for one launch. Raises
+    ReadRefused rather than returning a shorter list."""
+    out: list[dict] = []
+    seen: dict[str, str] = {}
+    for variable, raw in (("AGENT_CONTEXT", context),
+                          ("AGENT_GUIDANCE", guidance)):
+        for entry in _parse_inputs(raw, variable):
+            item = _validated(entry, variable)
+            if item["path"] in seen:
+                if seen[item["path"]] != item["sha256"]:
+                    raise ReadRefused(f"{item['path']} is approved twice with "
+                                      f"two different hashes")
+                continue
+            seen[item["path"]] = item["sha256"]
+            out.append(item)
+    return out
+
+
+def read_rule(path: str) -> str:
+    return f"Read(/{path})"
+
+
+def edit_deny_rule(path: str) -> str:
+    return f"Edit(/{path})"
+
+
 def settings(mode: str, commands: list[str],
-             profile: dict | None = None, progress: str | None = None) -> dict:
+             profile: dict | None = None, progress: str | None = None,
+             reads: list[dict] | None = None) -> dict:
     emit = Path(__file__).resolve().parent / "emit.py"
     hook = {"type": "command", "command": f'python3 "{emit}"', "timeout": 5}
     plain = [{"hooks": [hook]}]
@@ -221,9 +345,13 @@ def settings(mode: str, commands: list[str],
     }}
     perms = {}
     rules = allow_rules(mode, commands, profile) + progress_rules(mode, progress)
+    if mode in INTENTS:
+        rules += [read_rule(r["path"]) for r in reads or []]
     if rules:
         perms["allow"] = rules
     denies = deny_rules(mode, profile)
+    if mode in INTENTS:
+        denies += [edit_deny_rule(r["path"]) for r in reads or []]
     if denies:
         perms["deny"] = denies
     if perms:
@@ -247,6 +375,14 @@ if __name__ == "__main__":
         sys.exit(0)
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     commands = split_commands(os.environ.get("AGENT_COMMANDS", ""))
+    try:
+        reads = approved_reads(os.environ.get("AGENT_CONTEXT"),
+                               os.environ.get("AGENT_GUIDANCE"))
+    except ReadRefused as exc:
+        print(f"claude adapter: refusing the launch — {exc}. An approved "
+              f"input that cannot be granted exactly is not granted more "
+              f"broadly, and is not silently dropped.", file=sys.stderr)
+        sys.exit(CONTEXT_EXIT)
     print(json.dumps(settings(mode, commands,
                               load_profile(os.environ.get("AGENT_PROFILE")),
-                              os.environ.get("AGENT_PROGRESS"))))
+                              os.environ.get("AGENT_PROGRESS"), reads)))

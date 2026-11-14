@@ -41,6 +41,12 @@ is shown rather than interpreted):
               of any kind can be launched
     context   the pinned inputs as delivered — paths and hashes, never
               content. `contextContents` is deliberately never a key
+    reads     the approved inputs (AGENT_CONTEXT) and workflow briefs
+              (AGENT_GUIDANCE) as the exact read grants generated for
+              them: name, path, kind, sha256 and the rule text. Generated
+              permission metadata — not evidence the vendor honoured it
+    refused   why `run` would refuse the launch before the vendor starts
+              (an approved input it cannot grant exactly), or null
 """
 import json
 import os
@@ -57,7 +63,14 @@ def described() -> dict:
     prompt = os.environ.get("AGENT_PROMPT", "")
     commands = hook_settings.split_commands(os.environ.get("AGENT_COMMANDS", ""))
     profile = hook_settings.load_profile(os.environ.get("AGENT_PROFILE"))
-    settings = hook_settings.settings(mode, commands, profile)
+    refused = None
+    try:
+        reads = hook_settings.approved_reads(os.environ.get("AGENT_CONTEXT"),
+                                             os.environ.get("AGENT_GUIDANCE"))
+    except hook_settings.ReadRefused as exc:
+        reads, refused = [], str(exc)
+    settings = hook_settings.settings(mode, commands, profile,
+                                      os.environ.get("AGENT_PROGRESS"), reads)
     model = os.environ.get("AGENT_MODEL", "").strip()
 
     argv = ["-p", prompt, "--settings", json.dumps(settings)]
@@ -84,6 +97,16 @@ def described() -> dict:
         # whether the run is launched with no shell at all
         "noShell": "Bash" in withheld,
         "context": context if isinstance(context, list) else [],
+        # the approved inputs as exact read grants: generated permission
+        # text, which is not the same fact as a vendor having honoured it
+        "reads": [{"name": r["name"], "path": r["path"], "kind": r["kind"],
+                   "sha256": r["sha256"],
+                   "rule": hook_settings.read_rule(r["path"]),
+                   "denyEdit": hook_settings.edit_deny_rule(r["path"])}
+                  for r in reads],
+        # why `run` would refuse this launch before the vendor starts, or
+        # None; `argv` is then what it would have been without the reads
+        "refused": refused,
         # this adapter's own half, shown rather than interpreted
         "settings": settings,
         "hooks": sorted(settings.get("hooks") or {}),
