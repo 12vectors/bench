@@ -87,10 +87,41 @@ LIFTS = {
 }
 
 
+def _imports_pagesource(tree: ast.AST) -> bool:
+    """`from tests import pagesource [as x]`, `import tests.pagesource`
+    and `from tests.pagesource import page [as x]` all count: how a module
+    names the helper must not take it out of the count."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module == "tests.pagesource":
+                return True
+            if node.module == "tests" and any(a.name == "pagesource" for a in node.names):
+                return True
+        elif isinstance(node, ast.Import):
+            if any(a.name == "tests.pagesource" for a in node.names):
+                return True
+    return False
+
+
 def readers(tests: Path = TESTS) -> list[Path]:
-    """Test modules that read the page through pagesource."""
+    """Test modules that read the page through pagesource, however they
+    import it."""
     return sorted(p for p in tests.glob("test_*.py") if p.name not in NOT_READERS
-                  and re.search(r"\bpagesource\.(page|shell)\(", p.read_text("utf-8")))
+                  and _imports_pagesource(ast.parse(p.read_text("utf-8"))))
+
+
+def _shell_aliases(text: str) -> set[str]:
+    """Names a module binds to the shell's path: `pagesource.SHELL` itself,
+    `from tests.pagesource import SHELL [as X]` and `X = pagesource.SHELL`."""
+    names = {r"pagesource\.SHELL"}
+    for node in ast.walk(ast.parse(text)):
+        if isinstance(node, ast.ImportFrom) and node.module == "tests.pagesource":
+            names |= {re.escape(a.asname or a.name) for a in node.names
+                      if a.name == "SHELL"}
+        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Attribute) \
+                and node.value.attr == "SHELL":
+            names |= {re.escape(t.id) for t in node.targets if isinstance(t, ast.Name)}
+    return names
 
 
 def lifts(path: Path) -> int:
@@ -109,14 +140,21 @@ def inventory(tests: Path = TESTS) -> dict:
 
 def direct_reads(tests: Path = TESTS) -> list[str]:
     """Test code that names board.html as a path instead of asking
-    pagesource (string mentions in messages and comments are fine)."""
+    pagesource (string mentions in messages and comments are fine), or
+    reads the shell file itself through `pagesource.SHELL` or a name bound
+    to it — which would miss every module under `web/`. Using SHELL as a
+    path (its `.parent`, say) is fine."""
     found = []
     for path in sorted(tests.glob("test_*.py")):
         if path.name in NOT_READERS:
             continue
-        for n, line in enumerate(path.read_text("utf-8").splitlines(), 1):
+        text = path.read_text("utf-8")
+        shell = "|".join(sorted(_shell_aliases(text)))
+        reads_shell = re.compile(rf"\b({shell})\b\s*\)?\s*\.\s*(read_text|read_bytes|open)\("
+                                 rf"|\bopen\(\s*({shell})\b")
+        for n, line in enumerate(text.splitlines(), 1):
             if re.search(r'"board\.html"\s*\)?\s*(\.read_|$)', line) or \
-                    re.search(r'/\s*"board\.html"', line):
+                    re.search(r'/\s*"board\.html"', line) or reads_shell.search(line):
                 found.append(f"{path.name}:{n}: {line.strip()}")
     return found
 
@@ -151,6 +189,45 @@ class ThePageIsReadThroughPagesource(unittest.TestCase):
 
     def test_the_page_readers_are_found(self):
         self.assertGreaterEqual(len(readers()), 50, "too few page readers: vacuous")
+
+    def fixture(self, files: dict) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="bench-readers-")).resolve()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for name, text in files.items():
+            (tmp / name).write_text(text, "utf-8")
+        return tmp
+
+    def test_every_import_form_is_a_reader(self):
+        lift = "import re\nre.search('x', TEXT)\n"
+        tmp = self.fixture({
+            "test_a.py": "from tests import pagesource\nTEXT = pagesource.page()\n" + lift,
+            "test_b.py": "from tests.pagesource import page\nTEXT = page()\n" + lift,
+            "test_c.py": "from tests.pagesource import page as p\nTEXT = p()\n" + lift,
+            "test_d.py": "import tests.pagesource\nTEXT = tests.pagesource.shell()\n" + lift,
+            "test_e.py": "from tests import pagesource as ps\nTEXT = ps.page()\n" + lift,
+            "test_none.py": "TEXT = 'not the page'\n" + lift,
+        })
+        self.assertEqual([p.name for p in readers(tmp)],
+                         ["test_a.py", "test_b.py", "test_c.py", "test_d.py",
+                          "test_e.py"])
+        self.assertEqual(set(inventory(tmp)), {"test_a.py", "test_b.py", "test_c.py",
+                                               "test_d.py", "test_e.py"})
+
+    def test_reading_the_shell_file_directly_is_caught(self):
+        tmp = self.fixture({
+            "test_a.py": "from tests import pagesource\nT = pagesource.SHELL.read_text()\n",
+            "test_b.py": "from tests.pagesource import SHELL\nT = SHELL.read_text('utf-8')\n",
+            "test_c.py": "from tests.pagesource import SHELL as S\nT = open(S).read()\n",
+            "test_d.py": "from tests import pagesource\nB = pagesource.SHELL\n"
+                         "T = B.read_bytes()\n",
+            "test_e.py": "import tests.pagesource\nT = tests.pagesource.SHELL.read_text()\n",
+            # a path use of SHELL is not a read of the page
+            "test_ok.py": "from tests import pagesource\nB = pagesource.SHELL\n"
+                          "P = B.parent\nT = pagesource.page()\n",
+        })
+        self.assertEqual(sorted({line.split(":")[0] for line in direct_reads(tmp)}),
+                         ["test_a.py", "test_b.py", "test_c.py", "test_d.py",
+                          "test_e.py"])
 
 
 class RegexLiftsOnlyShrink(unittest.TestCase):

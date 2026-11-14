@@ -1,7 +1,8 @@
 """One way for a test to read the board page's source (WP02).
 
-The page is one file today, `manager/core/board.html`, and 55 test
-modules read it to lift a rule, a constant or a function out of it with
+The page is one file today, `manager/core/board.html`, and over fifty
+test modules (`readers()` in tests/test_pagesource.py names them) read
+it to lift a rule, a constant or a function out of it with
 a regular expression. The frontend is about to be split into a shell and
 modules under `manager/core/web/`. If every one of those tests named the
 file it reads, every move of a function between files would break tests
