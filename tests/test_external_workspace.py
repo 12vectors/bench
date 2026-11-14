@@ -812,6 +812,25 @@ class BoardIdentity(unittest.TestCase):
         self.assertIn("does not exist", result.stderr)
         self.assertFalse(self._answers(port), "nothing was served")
 
+    def test_start_sh_prints_each_real_layout_problem_as_its_own_bullet(self):
+        """Two roots that do not exist are two reasons from the real
+        config.problems(), and each is a bullet of its own (task 60)."""
+        port = free_port()
+        result = subprocess.run(
+            ["bash", str(self.tool / "start.sh"), "--no-open"],
+            env=self.env(BOARD_PORT=port,
+                         BOARD_APP_ROOT=str(self.tmp / "no-app"),
+                         BOARD_WORK_ROOT=str(self.tmp / "no-work")),
+            capture_output=True, text=True, timeout=120)
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        bullets = [line for line in result.stderr.splitlines()
+                   if line.startswith("  - ")]
+        self.assertGreaterEqual(len(bullets), 2, result.stderr)
+        self.assertTrue(any("no-app" in b for b in bullets), result.stderr)
+        self.assertTrue(any("no-work" in b for b in bullets), result.stderr)
+        self.assertFalse(self._answers(port), "nothing was served")
+
     def test_a_board_on_the_same_state_but_another_application_is_foreign(self):
         """Two operators can share one work state and manage different
         applications. Neither may reopen — or, through stop.sh, kill —
@@ -900,6 +919,119 @@ class BoardIdentity(unittest.TestCase):
                                 capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("already running", result.stdout)
+
+
+STUB_CONFIG = """\
+import json, os
+def problems():
+    with open(os.environ["STUB_PROBLEMS"], encoding="utf-8") as f:
+        return json.load(f)
+"""
+
+STUB_BOARD = """\
+import os, sys
+with open(os.environ["STUB_SERVED"], "w", encoding="utf-8") as f:
+    f.write("\\n".join(sys.argv[1:]))
+"""
+
+
+class StartupProblemsReport(unittest.TestCase):
+    """start.sh's refusal, with config.problems() stubbed so the reasons are
+    exactly the ones a test chose (task 60). A disposable tool tree: start.sh
+    copied in beside a stub installer, a stub config and a stub board that
+    records being started instead of serving anything."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="bench-start-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.tool = self.tmp / "tool"
+        core = self.tool / "manager" / "core"
+        core.mkdir(parents=True)
+        (self.tool / "manager" / "local").mkdir()
+        shutil.copy(BENCH / "start.sh", self.tool / "start.sh")
+        (self.tool / "install.py").write_text("", encoding="utf-8")
+        (core / "config.py").write_text(STUB_CONFIG, encoding="utf-8")
+        (core / "board.py").write_text(STUB_BOARD, encoding="utf-8")
+        self.env_file = self.tool / "manager" / "local" / ".env"
+        self.problems = self.tmp / "problems.json"
+        self.served = self.tmp / "served"
+
+    def start(self, problems: list[str], port: int) -> subprocess.CompletedProcess:
+        self.problems.write_text(json.dumps(problems), encoding="utf-8")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("BOARD_")}
+        env.update({"STUB_PROBLEMS": str(self.problems),
+                    "STUB_SERVED": str(self.served),
+                    "BOARD_PORT_WAIT": "0"})
+        self.env_file.write_text(f"BOARD_PORT={port}\n", encoding="utf-8")
+        return subprocess.run(["bash", str(self.tool / "start.sh"), "--no-open"],
+                              env=env, cwd=self.tmp, capture_output=True,
+                              text=True, timeout=60)
+
+    def bullets(self, stderr: str) -> list[str]:
+        return [line[4:] for line in stderr.splitlines() if line.startswith("  - ")]
+
+    def test_two_reasons_print_two_bullets_in_order(self):
+        reasons = ["BOARD_WORK_ROOT is not a directory: /x/work",
+                   "BOARD_APP_ROOT is not a git checkout: /x/app"]
+        result = self.start(reasons, free_port())
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(self.bullets(result.stderr), reasons)
+        self.assertFalse(self.served.exists(), "no board was started")
+
+    def test_reasons_with_shell_characters_are_printed_not_run(self):
+        canary = self.tmp / "ran"
+        reasons = [f"root has spaces  and  $(touch {canary}) inside",
+                   f"quotes ' \" and `touch {canary}`; touch {canary} && echo x",
+                   "printf directives %s %d %%, a backslash \\n, a glob * ?",
+                   "-leading dash | pipe > redirect < in & background"]
+        result = self.start(reasons, free_port())
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(self.bullets(result.stderr), reasons)
+        self.assertFalse(canary.exists(), "nothing in a reason was executed")
+
+    def test_a_reason_spanning_lines_stays_one_bullet(self):
+        result = self.start(["first line\nsecond line", "next"], free_port())
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("  - first line\n    second line\n  - next\n",
+                      result.stderr)
+
+    def test_one_reason_is_one_bullet(self):
+        result = self.start(["the only problem"], free_port())
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(self.bullets(result.stderr), ["the only problem"])
+        self.assertIn("cannot serve", result.stderr)
+
+    def test_no_reasons_starts_the_board_without_error_bullets(self):
+        port = free_port()
+        result = self.start([], port)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.bullets(result.stderr), [])
+        self.assertNotIn("cannot serve", result.stderr)
+        self.assertEqual(self.served.read_text(encoding="utf-8").split("\n"),
+                         ["--port", str(port), "--no-open"])
+
+    def test_refuses_before_walking_off_a_held_port(self):
+        """With the port held, a start that got past the refusal would hop
+        to another port and rewrite BOARD_PORT. A refused one does neither."""
+        holder = socket.socket()
+        holder.bind(("127.0.0.1", 0))
+        holder.listen(1)
+        self.addCleanup(holder.close)
+        port = holder.getsockname()[1]
+
+        result = self.start(["one", "two"], port)
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(self.bullets(result.stderr), ["one", "two"])
+        self.assertNotIn("using ", result.stdout)
+        self.assertEqual(self.env_file.read_text(encoding="utf-8"),
+                         f"BOARD_PORT={port}\n")
+        self.assertFalse(self.served.exists(), "no board was started")
 
 
 if __name__ == "__main__":

@@ -51,9 +51,13 @@ except Exception:
 RESOLVE
 }
 
-# Every reason the configured layout cannot be served. Empty is fine, and
-# so is "config is not importable here" — that is a stripped tree, not a
-# broken layout.
+# Every reason the configured layout cannot be served, already formatted as
+# one bullet each. Empty is fine, and so is "config is not importable here" —
+# that is a stripped tree, not a broken layout. The bullets are made here,
+# where the reasons are still a list, rather than by splitting a shell string
+# on lines or whitespace: a reason's text reaches the terminal byte for byte
+# and is never evaluated, and a reason spanning lines stays one bullet with
+# its continuation lines indented under it.
 layout_problems() {
   python3 - "$CORE" <<'RESOLVE'
 import sys
@@ -63,7 +67,7 @@ try:
 except Exception:
     raise SystemExit(0)
 for problem in config.problems():
-    print(problem)
+    print("  - " + "\n    ".join(str(problem).splitlines() or [""]))
 RESOLVE
 }
 
@@ -86,7 +90,7 @@ echo
 problems="$(layout_problems)"
 if [ -n "$problems" ]; then
   echo "This board cannot serve the layout it is configured with:" >&2
-  printf '  - %s\n' "$problems" >&2
+  printf '%s\n' "$problems" >&2
   echo >&2
   echo "Settings live in $ENV_FILE." >&2
   exit 2
