@@ -18,6 +18,8 @@ standard library's `ast` and `re` — nothing here imports a core module:
    that may only shrink.
 9. Every attribute a test assigns, `setattr`s or patches on a core module
    still exists in that module, so a patch cannot silently go inert.
+10. Stdlib leaves (`gitproc`, task 109) import no core module and nothing
+   outside the standard library, anywhere in the file.
 
 Checks 7 and 8 of the plan (frontend import direction, offline assets)
 and the infrastructure/provider purity checks need modules and assets that
@@ -1030,7 +1032,43 @@ def governance_problems(core: Path = CORE, tests: Path = TESTS) -> list[str]:
     problems += [f"route {p}" for p in _route_problems(found["routes"])]
     problems += composition_problems(found["facts"], blocks["current"])
     problems += standalone_problems(core)
+    problems += leaf_problems(core)
     problems += [f"inert patch target: {p}" for p in found["inert"]]
+    return problems
+
+
+# Stdlib leaves (check 10): modules that import nothing from core and
+# nothing outside the standard library, anywhere in the file. Each joins
+# the list in the package that builds it (WP03a: gitproc).
+STDLIB_LEAVES = ("gitproc",)
+
+
+def leaf_problems(core: Path) -> list[str]:
+    modules = set(core_modules(core))
+    problems = []
+    for leaf in STDLIB_LEAVES:
+        path = core / f"{leaf}.py"
+        if not path.exists():
+            problems.append(f"stdlib leaf {leaf}.py is missing")
+            continue
+        for node in ast.walk(_parse(path)):
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    problems.append(f"{leaf}.py:{node.lineno}: relative import")
+                    continue
+                names = [node.module or ""]
+            else:
+                continue
+            for name in names:
+                root = name.split(".")[0]
+                if root in modules:
+                    problems.append(f"{leaf}.py:{node.lineno}: stdlib leaf "
+                                    f"imports core module {root}")
+                elif root != "__future__" and root not in sys.stdlib_module_names:
+                    problems.append(f"{leaf}.py:{node.lineno}: stdlib leaf "
+                                    f"imports non-stdlib {root}")
     return problems
 
 
@@ -1084,7 +1122,7 @@ class DocumentIsTheSource(unittest.TestCase):
         """AGENTS.md's one-line map is a summary for people; it may not
         drift from the block that is the source."""
         text = (REPO / "AGENTS.md").read_text(encoding="utf-8")
-        line = next(l for l in text.splitlines() if l.startswith("config < "))
+        line = next(l for l in text.splitlines() if l.startswith("gitproc < config < "))
         tiers = [set(t.replace("/", " ").split()) for t in line.split(" < ")]
         self.assertEqual(tiers, [set(l) for l in self.blocks["current"]["layers"]])
 
@@ -1142,6 +1180,9 @@ class TreeIsGoverned(unittest.TestCase):
         self.assertEqual(ratchet("dynamic-patch-targets",
                                  self.found["dynamic-patch-targets"],
                                  DYNAMIC_PATCH_TARGETS), [])
+
+    def test_stdlib_leaves_are_pure(self):
+        self.assertEqual(leaf_problems(CORE), [])
 
     def test_the_whole_tree_has_no_problem(self):
         self.assertEqual(governance_problems(), [])
@@ -1279,6 +1320,13 @@ class ScratchCopyCatchesViolations(unittest.TestCase):
         self.edit("adapters/claude/emit.py", suffix="\nimport config\n")
         self.assertIn("adapters/claude/emit.py", "\n".join(
             standalone_problems(self.core)))
+
+    def test_a_stdlib_leaf_importing_core_or_a_third_party_fails(self):
+        self.edit("gitproc.py", suffix=(
+            "\n\ndef _wp03_probe():\n    import config\n    import yaml\n"))
+        text = "\n".join(governance_problems(self.core, self.tests))
+        self.assertIn("stdlib leaf imports core module config", text)
+        self.assertIn("stdlib leaf imports non-stdlib yaml", text)
 
     def test_new_provider_vocabulary_fails(self):
         self.edit("templates.py", suffix='\nWP01 = "gh pr view"\n')

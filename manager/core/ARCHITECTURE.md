@@ -38,39 +38,46 @@ the top level. `composition` modules are imported by nothing outside
 composition.
 
 ```architecture current
-L0  config
-L1  state reports templates
-L2  taskfiles
-L3  plans profiles
-L4  reviews
-L5  verify
-L6  progress
-L7  acceptance
-L8  gates
-L9  required
-L10 doctor
-L11 commands drive events sync
-L12 github
-L13 delivery
-L14 agentsettings
-L15 settings
-L16 setupguide
-L17 agents
-L18 setuptasks
-L19 readiness
-L20 previews
-L21 phases
-L22 refine
-L23 httpd watch
-L24 board
+L0  gitproc
+L1  config
+L2  state reports templates
+L3  taskfiles
+L4  plans profiles
+L5  reviews
+L6  verify
+L7  progress
+L8  acceptance
+L9  gates
+L10 required
+L11 doctor
+L12 commands drive events sync
+L13 github
+L14 delivery
+L15 agentsettings
+L16 settings
+L17 setupguide
+L18 agents
+L19 setuptasks
+L20 readiness
+L21 previews
+L22 phases
+L23 refine
+L24 httpd watch
+L25 board
 composition: board httpd watch
 ```
 
 This is the order `AGENTS.md` states, with two facts made explicit:
 `github` imports `drive`, so the old `events / github / drive / sync`
 tier is split with `github` above it; and `commands`, which the old map
-omitted, sits with the other leaf services on `L11`. All 175 distinct
+omitted, sits with the other leaf services on `L12`. All 176 distinct
 top-level core-to-core import edges obey it.
+
+`gitproc` (task 109, WP03a) is the first stdlib leaf: the hardened git
+subprocess layer, moved verbatim out of `config`. It imports no core
+module and only the standard library, which `tests/test_architecture.py`
+holds it to. `config.git_argv`, `git_env` and `git_run` remain real
+functions that call it, so patches on `config` keep intercepting.
 
 ### Where the code does not obey it
 
@@ -81,11 +88,11 @@ violations:
 
 | Importer (layer) | Imports (layer), from inside | Why it matters |
 | --- | --- | --- |
-| `drive` (L11) | `previews` (L20), in `_watch`, `_preview_ended`, `_remember`, `_scrub_log` | a leaf service calls back into a surface |
-| `plans` (L3) | `agents` (L17), in `_resolve_ref` | for `_fresh_branch_point`; WP06 moves it to a lower git module |
-| `settings` (L15) | `agents` (L17), in `frozen_runs` | reads the run registry |
-| `setupguide` (L16) | `readiness`, `previews`, `setuptasks` (L18–L20), in six functions | the guide composes the three modules that are built on it |
-| `setuptasks` (L18) | `previews` (L20), in `gaps` | the same cycle, the other way |
+| `drive` (L12) | `previews` (L21), in `_watch`, `_preview_ended`, `_remember`, `_scrub_log` | a leaf service calls back into a surface |
+| `plans` (L4) | `agents` (L18), in `_resolve_ref` | for `_fresh_branch_point`; WP06 moves it to a lower git module |
+| `settings` (L16) | `agents` (L18), in `frozen_runs` | reads the run registry |
+| `setupguide` (L17) | `readiness`, `previews`, `setuptasks` (L19–L21), in six functions | the guide composes the three modules that are built on it |
+| `setuptasks` (L19) | `previews` (L21), in `gaps` | the same cycle, the other way |
 
 The other fourteen are deferred *downward* imports (`readiness → verify`,
 `setuptasks → agents`, `board → previews` …) that could be top-level;
@@ -137,7 +144,7 @@ L28 httpd
 L29 board
 composition: board httpd routes
 retired: github
-new: gitproc records redact gitrepo githost gatepolicy evidence resultidentity staleness changes completion stacks routes
+new: records redact gitrepo githost gatepolicy evidence resultidentity staleness changes completion stacks routes
 ```
 
 The plan wrote same-layer orderings as `gitrepo → githost`; with the
@@ -154,7 +161,8 @@ One owner per question; `AGENTS.md` describes each module in full.
 
 | Layer group | Modules | Owns |
 | --- | --- | --- |
-| settings | `config` | paths, roots and layout problems, settings and their provenance, prompt/adapter/driver resolution, the hardened git read |
+| stdlib leaves | `gitproc` | the hardened git subprocess: which verbs are reads, the argv and environment a read runs with, the one `subprocess.run` |
+| settings | `config` | paths, roots and layout problems, settings and their provenance, prompt/adapter/driver resolution, the patchable git wrappers over `gitproc` |
 | shared state | `state`, `reports`, `templates` | registries and the SSE fan-out; the report clip; the four launch prompt contracts |
 | work state | `taskfiles` | the only code touching `tasks/` |
 | policy | `plans`, `profiles`, `reviews` | which branch, what a run may do and read, the pinned review checkout |
@@ -224,6 +232,9 @@ core module:
    module — `mod.X = …`, `setattr`, `mock.patch`, `mock.patch.object`,
    the `self.patch(X=…)` helper and literal loops over names — exists in
    that module. One computed target is counted rather than read.
+10. Stdlib leaves are pure: `gitproc` imports no core module, at the top
+   level or inside a function, and nothing outside the standard library
+   (task 109). `records` and `redact` join the check when they exist.
 
 An exception's identity is file, enclosing function and what it reaches,
 never a line number, so moving code does not churn it; each entry keeps
@@ -237,7 +248,7 @@ inventory for comparison and writes nothing.
 
 **Deferred**, because what they check does not exist yet — each is
 written by the package that builds its subject, not now against
-nothing: purity of `gitproc`, `records`, `redact` and `providers/*`
+nothing: purity of `records`, `redact` and `providers/*`
 (WP03, WP08); route *classes* beyond the doors that exist (WP04);
 frontend import direction and offline assets (checks 7 and 8; WP14–15).
 
