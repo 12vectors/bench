@@ -178,6 +178,62 @@ Standalone programs — `adapters/*/` and the `bench-verify` and
 `bench-progress` shims — run as separate processes and import no core
 module. The adapters' contract is `adapters/README.md`.
 
+## Records: who writes what, under which lock
+
+Every record and card a core module replaces goes through `records`
+(task 110): a unique temporary file in the same directory, then
+`os.replace`, so a reader sees the old file or the new one and two
+writers never share a scratch file. `durable=True` adds the file and
+directory flush. `verify.py` keeps its own writers until WP12. One
+module owns each family and its read-modify-write lock; `records` owns
+neither.
+
+| Family | Owner | Lock | Durable |
+| --- | --- | --- | --- |
+| task cards (move, claim, PR line, sections, discussion) | `taskfiles` (`github` and `agents` for the PR line and a released claim) | `taskfiles.WRITE_LOCK` | no |
+| Bench review verdicts, overrides | `gates` | `gates._LOCK` | yes |
+| GitHub review observation | `gates` | `gates._LOCK` | no |
+| execution plans | `plans` | the launch's own sequence | yes |
+| run manifests | `profiles` | the launch's own sequence | yes |
+| review checkout ownership | `reviews` | the launch's own sequence | no |
+| delivered record, completion recovery record | `github` | the card's completion claim | yes |
+| PR snapshot | `github` | the PR poll | no |
+| progress records | `progress` | `progress._LOCK` | no |
+| required-check batches, review-entry record | `required` | `required._LOCK`, `_ON_REVIEW_LOCK` | no |
+| refinement jobs | `refine` | the refine registry | no |
+| drive record, scrubbed drive log | `drive` | the one drive | no |
+| preview configuration and records, scrubbed logs | `previews` | `previews.LOCK` | no |
+| session identity | `state` | per session | no |
+| setup decisions (portable) | `setupguide` | `setupguide.LOCK`, interprocess | yes |
+| setup journal (machine-local) | `setupguide` | `setupguide.LOCK`, interprocess | no |
+| execution policy document | `settings` | `settings._APPLY_LOCK` (single writer) | yes |
+| agent keys in `.env`, local prompt templates | `agentsettings` | `agentsettings._APPLY_LOCK` (single writer) | no |
+
+**Durable writers** — the call sites passing `durable=True`, held equal
+to the code by `tests/test_records_adoption.py`:
+
+```records durable
+gates.override
+gates.record_verdict
+github._record_delivered
+github._remember
+plans.record
+profiles.record
+settings.apply
+setupguide._write_decisions
+```
+
+Revision comparison is not compare-and-swap between processes. The setup
+decisions have two writing processes — the board and
+`board.py --setup-guide` — so their lock is a `records.InterprocessLock`
+on a machine-local lock file, held across the read, the comparison and
+the write. The policy document and the agent settings have one writing
+process, the board, and a lock held across the same three steps makes it
+one writer. What stays in place on purpose (append-only histories and
+journals, run and command logs, exclusive creates of new cards, the
+doctor's disposable fixtures, a launch's pinned context) is a reviewed
+list in the same test, which may only shrink.
+
 ## Representative flows
 
 - **Start work.** `httpd` → `agents.start_agent` → `plans` (preflight,

@@ -47,11 +47,13 @@ Depends on config, profiles and templates.
 from __future__ import annotations
 
 import difflib
+import functools
 import hashlib
 import json
 import os
 import re
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -531,6 +533,22 @@ def _replace(path: Path, text: str | None) -> None:
     records.write_text(path, text)
 
 
+# The board is the one writer of the agent keys and the local templates,
+# and this lock makes it one writer: the revision comparison and the write
+# happen under it, so two applies opened at the same revision cannot both
+# pass the comparison (task 110). Nothing else in the board writes them.
+_APPLY_LOCK = threading.Lock()
+
+
+def _serialized(fn):
+    @functools.wraps(fn)
+    def held(*args, **kwargs):
+        with _APPLY_LOCK:
+            return fn(*args, **kwargs)
+    return held
+
+
+@_serialized
 def apply(payload: dict, *, actor: str | None = None) -> dict:
     agents, prompts = _draft(payload)
     base = str(payload.get("revision") or "")

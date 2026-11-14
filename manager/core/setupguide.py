@@ -56,7 +56,6 @@ import os
 import re
 import secrets
 import shutil
-import threading
 import time
 from pathlib import Path
 
@@ -124,7 +123,15 @@ REASON_CAP = 500
 JOURNAL_CAP = 200
 REQUEST_RE = re.compile(r"^[A-Za-z0-9._:-]{8,80}$")
 
-LOCK = threading.RLock()
+# Every read-modify-write of the setup decisions holds this lock across the
+# read, the revision comparison and the write. The board and
+# `board.py --setup-guide` are two processes writing one file, and a
+# revision comparison alone is not compare-and-swap between processes, so
+# the lock is interprocess: reentrant within the board, and an exclusive
+# flock on a machine-local lock file against the CLI (task 110). Two
+# installs sharing one work root on one machine are not serialized by it;
+# between machines, the work state's git history is the serialization.
+LOCK = records.InterprocessLock(lambda: local_dir() / "decisions.lock")
 
 
 class Refused(Exception):
@@ -942,7 +949,7 @@ def _write_decisions(doc: dict, what: str) -> bool:
     doc["_doc"] = ("Written by bench's setup guide. Portable: decisions, "
                    "reasons and setup-card links only — no paths, no "
                    "credentials, no runtime evidence.")
-    _write_json(path, doc)
+    _write_json(path, doc, durable=True)
     if not config.COMMIT_MOVES:
         return False
     return taskfiles.commit_work_file(

@@ -328,6 +328,17 @@ class Interprocess(Base):
         with self.assertRaises(RuntimeError):
             lock.release()
 
+    def test_the_local_half_touches_no_file(self):
+        lock = records.InterprocessLock(self.tmp / "never" / "x.lock")
+        with lock.local:
+            with lock:                  # nests, then takes the file lock
+                pass
+            self.assertTrue((self.tmp / "never" / "x.lock").exists())
+        other = records.InterprocessLock(self.tmp / "absent.lock")
+        with other.local:
+            pass
+        self.assertFalse((self.tmp / "absent.lock").exists())
+
     def test_another_process_holding_it_excludes_this_one(self):
         where = self.tmp / "x.lock"
         holder = subprocess.Popen([sys.executable, "-c", HOLDER, str(CORE),

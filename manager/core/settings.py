@@ -56,10 +56,12 @@ record on disk and this never touches it.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -1932,6 +1934,19 @@ def _pending_acceptance(after_gate: dict) -> list[dict]:
     return out
 
 
+# The policy document's single writer owner inside the board.
+_APPLY_LOCK = threading.Lock()
+
+
+def _serialized(fn):
+    @functools.wraps(fn)
+    def held(*args, **kwargs):
+        with _APPLY_LOCK:
+            return fn(*args, **kwargs)
+    return held
+
+
+@_serialized
 def apply(payload: dict, *, actor: str | None = None) -> dict:
     """Write the draft, once, atomically, and only over the revision the
     editor was shown.
@@ -1950,6 +1965,10 @@ def apply(payload: dict, *, actor: str | None = None) -> dict:
 
     Nothing else happens. This starts no agent, moves no card, merges
     nothing, reruns no check and restarts nothing.
+
+    Steps 3 to 5 run under `_APPLY_LOCK`: the board is this document's
+    one writer, and a revision comparison is only a guard while nothing
+    else can write between it and the replace (task 110).
     """
     found = read_draft(payload)
     path = document_target()
@@ -1985,7 +2004,7 @@ def apply(payload: dict, *, actor: str | None = None) -> dict:
 
     raw = json.dumps(merged, indent=2, sort_keys=False) + "\n"
     try:
-        records.write_text(path, raw)
+        records.write_text(path, raw, durable=True)
     except OSError as exc:
         raise OSError(
             f"the document could not be written ({exc}). The previous "

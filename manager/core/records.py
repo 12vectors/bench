@@ -186,6 +186,14 @@ class InterprocessLock:
         self._fd: int | None = None
         self._owner: int | None = None
 
+    @property
+    def local(self) -> threading.RLock:
+        """The in-process half alone: excludes this process's writers and
+        touches no file. For a reader that must not write anything — the
+        record it reads is replaced atomically, so another process can
+        never show it a torn one."""
+        return self._local
+
     def path(self) -> Path:
         return Path(self._where() if callable(self._where) else self._where)
 

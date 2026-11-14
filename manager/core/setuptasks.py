@@ -751,7 +751,9 @@ def _plan(payload: dict) -> dict:
 
 
 def preview(payload: dict) -> dict:
-    with setupguide.LOCK:
+    # in-process only: a preview writes nothing, not even a lock file;
+    # create re-checks the digest and revision under the full lock
+    with setupguide.LOCK.local:
         found = _plan(payload)
     return dict(found, revision=setupguide.revision())
 
