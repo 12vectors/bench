@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 from tests.test_integration_gates import CARD, GateCase, card, git  # noqa: E402
 
@@ -703,7 +704,7 @@ class SettingsOffersItOptIn(SignoffCase):
         self.assertEqual(entry["reviewForm"], "list")
 
     def test_the_editor_writes_signoff_only_when_ticked(self):
-        source = (config.CORE / "board.html").read_text(encoding="utf-8")
+        source = pagesource.page()
         write = source[source.index("function writeField("):]
         write = write[:write.index("\nfunction ")]
         self.assertIn("if (value) gate.signoff = 'criteria'; "

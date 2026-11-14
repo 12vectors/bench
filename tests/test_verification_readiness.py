@@ -31,6 +31,7 @@ import stat
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 from tests.test_setup_guide import Project, by_id, snapshot
 
@@ -557,7 +558,7 @@ class TheSurfaces(unittest.TestCase):
         self.assertIn('elif path == "/api/setup/verification":', src)
 
     def test_the_page_writes_only_through_apply_and_arms_it(self):
-        html = (REPO / "manager" / "core" / "board.html").read_text()
+        html = pagesource.page()
         panel = html[html.index("function setupReadiness"):
                      html.index("function wireReadiness")]
         self.assertIn("c.readiness === 'ready'", panel)

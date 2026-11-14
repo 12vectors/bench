@@ -29,6 +29,7 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -406,8 +407,7 @@ class TheToastCanBeRead(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = (REPO / "manager" / "core" / "board.html").read_text(
-            encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_the_toast_is_bounded_and_wraps(self):
         self.assertIn("max-width:min(620px, calc(100vw - 48px))", self.html)

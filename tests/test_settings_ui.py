@@ -34,9 +34,9 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
-BOARD = REPO / "manager" / "core" / "board.html"
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import profiles  # noqa: E402
@@ -57,7 +57,7 @@ def without_comments(text: str) -> str:
 class Source(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
         cls.code = without_comments(cls.html)
 
     def body(self, name: str) -> str:

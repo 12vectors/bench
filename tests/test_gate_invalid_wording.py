@@ -24,6 +24,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -33,7 +34,6 @@ import profiles  # noqa: E402
 
 from tests.test_integration_gates import CARD, PASSES, GateCase  # noqa: E402
 
-BOARD = REPO / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
 
 PARTS = (
@@ -70,7 +70,7 @@ const wireAction = () => {};
 
 
 def harness() -> str:
-    page = BOARD.read_text(encoding="utf-8")
+    page = pagesource.page()
     parts = []
     for pattern in PARTS:
         found = re.search(pattern, page, re.S)

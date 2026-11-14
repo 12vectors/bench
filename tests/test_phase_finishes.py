@@ -18,6 +18,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -538,8 +539,7 @@ class TheSheetSaysSo(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = (REPO / "manager" / "core" / "board.html").read_text(
-            encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_the_sheet_counts_the_cards_that_would_go_with_it(self):
         self.assertIn("const swept = task.isPhase ? mergedIn(task).size : 0;",

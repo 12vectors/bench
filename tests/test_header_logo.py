@@ -20,9 +20,9 @@ from __future__ import annotations
 import re
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
-BOARD = REPO / "manager" / "core" / "board.html"
 
 # What the page was already allowed to fetch before the logo landed. The list
 # is the point: a logo that needed a font would have to grow it.
@@ -40,7 +40,7 @@ STATE_TOKENS = ("var(--accent)", "var(--calm)", "var(--alarm)", "var(--idle)")
 class Fixture(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def mark(self) -> str:
         """The inline wordmark, markup and all."""

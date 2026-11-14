@@ -20,6 +20,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -27,7 +28,6 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 import config  # noqa: E402
 import taskfiles  # noqa: E402
 
-BOARD = REPO / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
 
 
@@ -322,7 +322,7 @@ class TheChipOnAMemberCard(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def chip_block(self) -> str:
         start = self.html.index("if (task.phase) {")
@@ -387,7 +387,7 @@ class TheNameOnTheChip(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        html = BOARD.read_text(encoding="utf-8")
+        html = pagesource.page()
         match = re.search(r"^function phaseLabel\(phase\) \{\n.*?\n\}\n", html,
                           re.M | re.S)
         assert match, "board.html lost its phaseLabel()"
@@ -428,7 +428,7 @@ class TheNameOnTheChip(unittest.TestCase):
     def test_the_page_still_parses(self):
         """board.html has no runner, so a stray brace in its inline script
         would reach the browser silently. Parsing costs nothing here."""
-        html = BOARD.read_text(encoding="utf-8")
+        html = pagesource.page()
         scripts = re.findall(r"<script[^>]*>(.*?)</script>", html, re.S)
         self.assertTrue(scripts, "board.html has no inline script")
         for index, script in enumerate(scripts):

@@ -11,9 +11,10 @@ and it never computes a percentage.
 import re
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
-HTML = (REPO / "manager" / "core" / "board.html").read_text(encoding="utf-8")
+HTML = pagesource.page()
 
 
 def lift(name: str) -> str:

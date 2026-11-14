@@ -60,6 +60,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -1508,8 +1509,7 @@ class ThePageReadsTheDecision(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = (REPO / "manager" / "core" / "board.html").read_text(
-            encoding="utf-8")
+        cls.html = pagesource.page()
         # The gate's own code, so an invariant about it is asserted
         # against it rather than against the whole page — where a
         # perfectly good line of the verification panel would satisfy or

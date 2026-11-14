@@ -30,6 +30,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -37,8 +38,6 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 import config  # noqa: E402
 import events  # noqa: E402
 import state  # noqa: E402
-
-BOARD = REPO / "manager" / "core" / "board.html"
 
 TASK = "45-a-past-agent-session-is-not-you.md"
 
@@ -267,7 +266,7 @@ class ReplayedChip(unittest.TestCase):
         cls.node = shutil.which("node")
         if not cls.node:
             raise unittest.SkipTest("node not available — chip behaviour unrun")
-        html = BOARD.read_text(encoding="utf-8")
+        html = pagesource.page()
         out = []
         for pattern in PARTS:
             m = re.search(pattern, html, re.S)

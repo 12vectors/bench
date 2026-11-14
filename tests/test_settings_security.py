@@ -37,6 +37,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 CORE = REPO / "manager" / "core"
@@ -517,7 +518,7 @@ class DocumentTextIsRenderedInert(unittest.TestCase):
         """The page escapes everything it draws, and these are the
         renderers that draw document-derived text. A template that
         interpolated a string field without `esc()` is the injection."""
-        html = (CORE / "board.html").read_text(encoding="utf-8")
+        html = pagesource.page()
         checked = 0
         for name in ("settingsVerification", "settingsAcceptance",
                      "settingsAccess", "settingsInstallation",
@@ -550,7 +551,7 @@ class DocumentTextIsRenderedInert(unittest.TestCase):
         """`sline` is where most settings text is drawn now, so each text
         field it takes is escaped by it — and `chips` and `after`, the two
         it takes as markup, are built by callers out of escaped parts."""
-        html = (CORE / "board.html").read_text(encoding="utf-8")
+        html = pagesource.page()
         start = html.index("function sline(")
         body = html[start:html.index("\n}\n", start)]
         for field in ("o.label", "o.sub", "o.title", "o.value", "o.help",
@@ -561,7 +562,7 @@ class DocumentTextIsRenderedInert(unittest.TestCase):
         self.assertIn("esc(summary)", html[start:html.index("\n}\n", start)])
 
     def test_the_escaper_covers_the_characters_that_make_markup(self):
-        html = (CORE / "board.html").read_text(encoding="utf-8")
+        html = pagesource.page()
         start = html.index("const esc = ")
         body = html[start:start + 200]
         for char in ("&", "<", ">", '"'):

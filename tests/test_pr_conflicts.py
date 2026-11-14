@@ -7,6 +7,7 @@ chip never flaps. The snapshot's `conflicts` key must reach the UI."""
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -80,8 +81,7 @@ class SnapshotReachesTheUI(unittest.TestCase):
             github.PR_STATE.pop("x.md", None)
 
     def test_the_card_wears_an_alarm_coloured_chip(self):
-        html = (REPO / "manager" / "core" / "board.html").read_text(
-            encoding="utf-8")
+        html = pagesource.page()
         self.assertIn("prState.conflicts", html)
         self.assertIn("label: 'conflicts', glyph: '✕', cls: 'bad'", html)
 

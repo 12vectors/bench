@@ -26,6 +26,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -33,7 +34,6 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 import config  # noqa: E402
 import taskfiles  # noqa: E402
 
-BOARD = REPO / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
 
 # The rules a lane is drawn by, lifted from the page as written.
@@ -55,7 +55,7 @@ PARTS = (
 
 
 def harness() -> str:
-    html = BOARD.read_text(encoding="utf-8")
+    html = pagesource.page()
     out = []
     for pattern in PARTS:
         match = re.search(pattern, html, re.S)
@@ -392,7 +392,7 @@ class Wiring(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def body(self, pattern: str) -> str:
         match = re.search(pattern, self.html, re.S)
@@ -487,7 +487,7 @@ class Wiring(unittest.TestCase):
 @unittest.skipUnless(NODE, "node is needed to parse the page")
 class ThePageStillParses(unittest.TestCase):
     def test_the_inline_script_parses(self):
-        html = BOARD.read_text(encoding="utf-8")
+        html = pagesource.page()
         scripts = re.findall(r"<script[^>]*>(.*?)</script>", html, re.S)
         self.assertTrue(scripts, "board.html has no inline script")
         with tempfile.TemporaryDirectory() as tmp:

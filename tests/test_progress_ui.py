@@ -22,8 +22,8 @@ import subprocess
 import time
 import unittest
 from pathlib import Path
+from tests import pagesource
 
-BOARD = Path(__file__).resolve().parents[1] / "manager" / "core" / "board.html"
 CARD = "73-progress.md"
 
 PARTS = (
@@ -44,7 +44,7 @@ PARTS = (
 
 
 def _harness() -> str:
-    html = BOARD.read_text(encoding="utf-8")
+    html = pagesource.page()
     out = []
     for pattern in PARTS:
         found = re.search(pattern, html, re.S)
@@ -266,7 +266,7 @@ class ProgressPlacement(unittest.TestCase):
     """Where it is drawn, read from the page as written."""
 
     def setUp(self):
-        self.html = BOARD.read_text(encoding="utf-8")
+        self.html = pagesource.page()
 
     def test_card_focus_and_sessions_all_carry_it(self):
         self.assertIn("liveLine = progressWell(task, agent) + liveLine;", self.html)

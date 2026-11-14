@@ -22,6 +22,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -34,7 +35,6 @@ import state  # noqa: E402
 from tests.test_phase_runs import (ONE, PHASE, PHASE_BRANCH, PhaseCase,  # noqa: E402
                                    card, git, wait_for)
 
-BOARD = REPO / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
 
 ALONE = "77-alone.md"
@@ -293,7 +293,7 @@ class TheCardSaysWhichStateItIsIn(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
         parts = []
         for pattern in cls.PARTS:
             match = re.search(pattern, cls.html, re.S)

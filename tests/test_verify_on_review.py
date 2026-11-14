@@ -27,6 +27,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from tests import pagesource
 from unittest import mock
 
 from tests.test_integration_gates import CARD, wait_for  # noqa: E402
@@ -418,8 +419,7 @@ class InSettings(OnReviewCase):
         self.assertEqual(before, after)
 
     def test_the_page_draws_the_row(self):
-        page = (ROOT / "manager" / "core" / "board.html").read_text(
-            encoding="utf-8")
+        page = pagesource.page()
         self.assertIn("onReviewLine(a.onReview, states)", page)
         self.assertIn("Turn it off:", page)
 
