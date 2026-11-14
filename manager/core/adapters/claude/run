@@ -19,6 +19,12 @@
 #                            absent = exactly the pre-profile behaviour.
 #            AGENT_CONTEXT   optional; the pinned read-only inputs as JSON
 #                            (name, path, sha256) — paths, never content.
+#            AGENT_GUIDANCE  optional; the workflow briefs the prompt names
+#                            outside the checkout, same shape. Each entry of
+#                            both becomes one exact Read(//path) grant (and an
+#                            Edit(//path) deny); an entry that cannot be
+#                            granted exactly refuses the launch with exit 65
+#                            before the vendor starts (hook_settings.py).
 #            AGENT_CWD       working directory (already set as cwd by the board)
 #            BOARD_*         passthrough for the event bridge
 #   stdout:  captured by the board as the job log; the closing report's

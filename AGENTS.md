@@ -1584,6 +1584,23 @@ to edit them, to read what sits next to them, or to publish their
 contents — and no diagnostic ever quotes one: refusals name paths,
 revisions and hashes, never bytes.
 
+**Approved means actually readable.** A headless run has nobody to answer
+a permission prompt, so a file the vendor will not let it read is not
+approved in any sense that matters. The pinned copies (`AGENT_CONTEXT`)
+and, in an external layout, the workflow briefs the prompt names outside
+the checkout (`AGENT_GUIDANCE`, by canonical path and approved hash) are
+each rendered by the claude adapter as one exact file read —
+`Read(//<absolute path>)` — with an edit of the same path denied. Nothing
+broader: no wildcard, no directory, no blanket read, no bypass. An entry
+that cannot be granted exactly — malformed, not canonical, a link, not a
+regular file, or no longer the approved content — refuses the launch
+before the vendor starts rather than being dropped or widened, so a brief
+edited after the pin fails closed. The source a selection was copied from
+is never granted because the selection names it. That is generated
+permission text, and the doctor's `context-reads` row says so; whether the
+installed CLI honours it is the opt-in, billable
+`develop/claude-access-smoke.py` (see `core/adapters/README.md`).
+
 What the copy guarantees is worth stating narrowly, because the obvious
 phrasing claims more: an edit to the source cannot change what a run was
 given. The bundle is written read-only, but a run with a shell could

@@ -42,6 +42,11 @@ allows. Absent, every rule below is byte for byte what it was before
 profiles existed, which is what keeps a board with no profile document
 and a custom adapter working unchanged.
 
+AGENT_CONTEXT and AGENT_GUIDANCE, when set, are the approved read-only
+inputs and the outside workflow briefs: each becomes one exact
+`Read(//path)` grant, validated first (see "approved read-only inputs"
+below). Absent, nothing about the document changes.
+
 Absolute path to emit.py, so the hooks work from any worktree regardless
 of what that checkout contains.
 """

@@ -22,7 +22,8 @@ An adapter is a directory with two executables, and may declare one file
 - env in: `AGENT_PROMPT` (the full prompt), `AGENT_MODE` (the launch
   intent, below), `AGENT_COMMANDS` (the project's allowed command
   prefixes, below), `AGENT_MODEL` (optional, below), `AGENT_PROFILE` and
-  `AGENT_CONTEXT` (optional, below), `AGENT_CWD`, and
+  `AGENT_CONTEXT` (optional, below), `AGENT_GUIDANCE` (optional,
+  below), `AGENT_CWD`, and
   the `BOARD_*` passthrough (`BOARD_AGENT_ID`, `BOARD_TASK`,
   `BOARD_PORT`) which your event bridge must forward with every event.
 - stdout is captured by the board as the job log. The prompts instruct the
@@ -159,8 +160,60 @@ rather than taking a run id on trust.
 
 `AGENT_CONTEXT` is the read-only inputs bench pinned for the run — `[{"name",
 "path", "source", "sha256", "access": "read-only"}]`, paths and hashes
-only, never content. The prompt already names them; an adapter that can
-grant reads narrowly may also use the list.
+only, never content. `path` is the pinned copy, never the original the
+selection named: approving an input approves its copy, not its source.
+
+### Approved workflow briefs (`AGENT_GUIDANCE`) — optional
+
+The workflow briefs the prompt makes mandatory reading but that live
+**outside** the checkout — the work root's `AGENTS.md` and the install's
+`manager/local/AGENTS.md`, in an external layout — arrive in the same
+shape as `AGENT_CONTEXT`, by **canonical** path (the path the prompt
+names) and the hash bench approved: `[{"name": "workflow-brief-1",
+"path", "sha256", "access": "read-only", "kind": "workflow-brief",
+"approvedAt": "launch" | "pinned-context"}]`. Where the run's pinned
+context also holds a copy of a brief, its `sha256` is the *pinned*
+content, so an adapter that re-hashes the original proves it is the very
+file and content that was approved. Absent (every vendored board, where
+the brief is inside the checkout) means nothing to grant.
+
+### Turning approved inputs into actual reads
+
+A headless run has nobody at a permission prompt, so an approved file the
+vendor will not let the run read is not approved in any sense that
+matters. An adapter that can grant reads narrowly renders **one exact
+file grant per entry** of `AGENT_CONTEXT` and `AGENT_GUIDANCE`, for every
+intent that has a read tool, and nothing broader: no wildcard, no
+directory, no "add this directory" flag, no blanket read, no permission
+bypass. The claude adapter (`approved_reads` in `claude/hook_settings.py`):
+
+- renders `Read(//<absolute path>)` — in Claude Code's rule syntax `//`
+  is filesystem-root absolute; a single leading slash is relative to the
+  settings source and would grant a different (or no) file;
+- adds `Edit(//<absolute path>)` as a deny-rule, so a read grant can
+  never be read as licence to change the document;
+- validates every entry *before* any rule is made, and refuses the whole
+  launch (exit 65, before the vendor starts) rather than dropping or
+  widening one: malformed JSON or entry, no `read-only` access, a path
+  that is not absolute, not canonical (`.`/`..`, doubled or trailing
+  slash, a link anywhere along it), or carries a character outside
+  `[A-Za-z0-9._@+=,:~/-]` — which excludes every pattern character, the
+  rule delimiters, whitespace and control characters — a path that is
+  not a regular file, and content whose SHA-256 is not the approved one.
+  A brief edited after approval therefore fails closed;
+- with neither variable present, renders byte for byte the document it
+  always did.
+
+The grant is **permission text**, which is a different fact from the
+vendor honouring it. `describe` reports it under `reads` (and why `run`
+would refuse, under `refused`); the doctor's `context-reads` row checks
+the text, at the *generated* level, and says so. Whether the installed
+CLI actually lets a run read the approved files, refuses an unapproved
+neighbour and refuses a write is answered only by a real launch —
+`develop/claude-access-smoke.py --approve-real-claude`, opt-in and
+billable, at a disposable fixture, reading its verdict off the tool
+results and the disk rather than off the model's summary. None of this is
+an OS sandbox: `filesystem-sandbox` stays unsupported.
 
 ### The progress channel (`AGENT_PROGRESS` / `BOARD_PROGRESS_TOKEN`) — optional
 
@@ -243,7 +296,7 @@ learning anything about your vendor's rule syntax**. Two declarations:
   own directory as its working directory, so you name your own
   interpreter and core never guesses at one. Given a launch's environment
   (`AGENT_MODE`, `AGENT_PROMPT`, `AGENT_COMMANDS`, `AGENT_PROFILE`,
-  `AGENT_CONTEXT`, `AGENT_MODEL`, `AGENT_CWD`) it prints **one JSON
+  `AGENT_CONTEXT`, `AGENT_GUIDANCE`, `AGENT_MODEL`, `AGENT_CWD`) it prints **one JSON
   object** and launches nothing — no vendor binary, no model, no file
   written. The keys core reads:
 
@@ -257,6 +310,12 @@ learning anything about your vendor's rule syntax**. Two declarations:
       noShell   whether your vendor's shell is withheld — no command of
                 any kind can be launched (required true for `refine`)
       context   the pinned inputs as delivered: paths and hashes
+      reads     optional: the exact read grants generated for
+                `AGENT_CONTEXT` and `AGENT_GUIDANCE` — `name`, `path`,
+                `kind`, `sha256` and the `rule` text. Absent = this adapter
+                does not grant reads narrowly, and the doctor says so
+      refused   optional: why `run` would refuse this launch before the
+                vendor starts, or null
 
   Anything else is yours and is shown rather than interpreted. There is
   no `contextContents` key and there must never be one: an approved
