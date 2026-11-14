@@ -3912,6 +3912,39 @@ an `Origin`/`Sec-Fetch-Site` check for the browsers that send them. A
 loopback client that is not a browser sends the header and is allowed,
 which is correct: it already has the operator's own filesystem access.
 
+**Every other write passes the same door, minus the header.** Each route
+is declared once in `manager/core/routes.py` with a request class, and
+the server applies that class's door before the route's handler runs —
+so a route cannot skip it by forgetting to ask:
+
+| class | routes | what a request must show |
+| --- | --- | --- |
+| `read` | every GET | nothing; reading changes nothing |
+| `browser-mutation` | every person-operated POST | a JSON object body within a size cap; `Sec-Fetch-Site` same-origin or none when sent; an `Origin`, when sent, that is this board on the port it actually serves or exactly one of `BOARD_ALLOWED_ORIGINS`; `Origin: null` refused; and no run named by a request that says it is a browser's |
+| `policy-mutation` | the 25 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
+| `run-authenticated` | `/api/progress`, `/api/verify/details` | the same door, then the run's own token |
+| `event-ingest` | `/api/events` | the same door; a run the event names is a display link |
+
+The body is checked before anything happens: a missing, negative or
+non-numeric `Content-Length`, a chunked body, a body over the cap (1 MiB;
+16 KiB for a progress report), JSON that does not parse and JSON that is
+not an object are each refused with nothing changed. "This board" is the
+port the board serves on, not `BOARD_PORT`, so a board started with
+`--port` accepts its own page. A shim, a hook bridge or `curl` states no
+`Origin` and no `Sec-Fetch-Site`, which is how a trusted local caller is
+told from a stated foreign one; a run's claim to be a run is the run
+token's to prove, never the route's class. `OPTIONS` is never answered.
+
+`BOARD_ALLOWED_ORIGINS` (empty by default) lists the exact
+`scheme://host[:port]` origins besides loopback whose writes are
+accepted — a local proxy in front of the board, say. No wildcard, path or
+near match is taken. **An origin check is not authentication:** it keeps
+other pages in your browser from writing, and it admits no peer that the
+proxy in front of the board does not already admit. `Host`, `Forwarded`
+and `X-Forwarded-*` decide nothing. A board reached through a proxy whose
+origin is not listed reads fine and refuses every write, naming the
+origin it saw; loopback always works as the way back.
+
 Check registration is not a file-write or shell endpoint either. A
 compound command, a pipeline, a redirection, a substitution, a relative
 executable, a path climbing out, the application checkout as an execution
