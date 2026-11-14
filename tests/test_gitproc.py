@@ -349,6 +349,7 @@ class TheProtectionsHold(unittest.TestCase):
         (self.repo / "code.txt").write_text("one\n", encoding="utf-8")
         git(self.repo, "add", "code.txt")
         git(self.repo, "commit", "-q", "-m", "one")
+        (self.repo / ".git" / "info").mkdir(exist_ok=True)
 
     def helper(self, name: str, body: str) -> str:
         path = self.tmp / name
