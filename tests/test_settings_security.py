@@ -62,7 +62,12 @@ class Board:
     """One disposable board: the candidate's own manager/core, serving an
     application and a work state made here, on a loopback port."""
 
-    def __init__(self, case: unittest.TestCase, doc=START):
+    def __init__(self, case: unittest.TestCase, doc=START, *, env=None,
+                 configured_port: int | None = None):
+        """`env` adds settings to the board's environment; a
+        `configured_port` makes BOARD_PORT name a different port from the
+        one the board is started on with `--port`, as a board that hopped
+        or was started by hand does."""
         self.dir = Path(tempfile.mkdtemp(prefix="bench-settings-api-"))
         case.addCleanup(self._clean)
         self.tool = self.dir / "tool"
@@ -96,10 +101,12 @@ class Board:
         self.env.update({
             "BOARD_APP_ROOT": str(self.app), "BOARD_WORK_ROOT": str(self.work),
             "BOARD_WORKTREES": str(self.dir / "worktrees"),
-            "BOARD_PORT": str(self.port), "BOARD_PR_POLL_INTERVAL": "3600",
+            "BOARD_PORT": str(configured_port or self.port),
+            "BOARD_PR_POLL_INTERVAL": "3600",
             "BOARD_PHASE_INTERVAL": "3600", "BOARD_SYNC": "0",
             "BOARD_COMMIT_MOVES": "0", "BOARD_WATCH_INTERVAL": "3600",
             "BOARD_GH_BIN": str(self.dir / "no-gh")})
+        self.env.update(env or {})
         self.log = open(self.dir / "board.log", "wb")
         self.proc = subprocess.Popen(
             [sys.executable, str(self.tool / "manager" / "core" / "board.py"),

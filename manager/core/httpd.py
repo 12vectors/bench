@@ -207,8 +207,9 @@ class Handler(BaseHTTPRequestHandler):
             raise BodyRefused(411, "length-required",
                               "a request body must state its Content-Length; "
                               "this one is chunked. Nothing was changed.")
-        raw = (self.headers.get("Content-Length") or "").strip()
-        if not raw:
+        stated = self.headers.get("Content-Length")
+        raw = (stated or "").strip()
+        if stated is None:
             length = 0
         elif not raw.isdigit():
             raise BodyRefused(400, "bad-length",
