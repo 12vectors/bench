@@ -30,7 +30,8 @@ beforeEach(() => {
   delete process.env.BOARD_PORT
   delete process.env.BOARD_AGENT_ID
   delete process.env.BOARD_TASK
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "bench-opencode-"))
+  delete process.env.BOARD_RUN_TOKEN
+  dir =fs.mkdtempSync(path.join(os.tmpdir(), "bench-opencode-"))
 })
 
 afterEach(() => {
@@ -63,6 +64,30 @@ test("posts to the port BOARD_PORT names, on loopback, with the agent forwarded"
   assert.equal(posts[2].body.kind, "read")
   assert.equal(posts[2].body.file, "src/a.py")
   assert.equal(posts[2].body.summary, "read: src/a.py")
+})
+
+test("forwards the run's own token beside the agent it proves (WP05)", async () => {
+  process.env.BOARD_PORT = "4567"
+  process.env.BOARD_AGENT_ID = "wren"
+  process.env.BOARD_RUN_TOKEN = "run-capability-xyz"
+  const hooks = await BenchBoard({ directory: dir })
+  await hooks["tool.execute.after"]({ tool: "read", sessionID: "s1" }, { title: "a" })
+  assert.ok(posts.length >= 1)
+  for (const p of posts) assert.equal(p.body.token, "run-capability-xyz")
+})
+
+test("sends no token where there is no agent to prove, or no token to send", async () => {
+  process.env.BOARD_PORT = "4567"
+  process.env.BOARD_RUN_TOKEN = "run-capability-xyz"
+  let hooks = await BenchBoard({ directory: dir })
+  await hooks["tool.execute.after"]({ tool: "read", sessionID: "s1" }, { title: "a" })
+  for (const p of posts) assert.equal("token" in p.body, false)
+  posts.length = 0
+  delete process.env.BOARD_RUN_TOKEN
+  process.env.BOARD_AGENT_ID = "wren"
+  hooks = await BenchBoard({ directory: dir })
+  await hooks["tool.execute.after"]({ tool: "read", sessionID: "s2" }, { title: "a" })
+  for (const p of posts) assert.equal("token" in p.body, false)
 })
 
 test("falls back to the install's local .env, then to the pinned port", async () => {

@@ -66,6 +66,7 @@ import time
 from pathlib import Path
 
 import agentsettings
+import callers
 import config
 import doctor
 import gates
@@ -499,6 +500,12 @@ CATALOGUE = (
      "browser origins besides this board's own loopback page whose writes "
      "it accepts, such as a local proxy's — exact scheme://host[:port] "
      "values; an origin check is not authentication"),
+    ("BOARD_RUN_IDENTITY", "installation", "restart",
+     "whether a request naming a run without that run's token is only "
+     "counted (report) or refused (enforce); report is not a security pass"),
+    ("BOARD_HOST_CHECK", "installation", "restart",
+     "whether a request naming a Host this board does not answer to is "
+     "only counted (report) or refused (enforce); loopback always works"),
 )
 
 APPLIES_AT = {
@@ -652,6 +659,9 @@ def installation() -> dict:
                         "artifact has no commit of its own, and bench will "
                         "not invent one"),
         "mode": mode, "modeWhy": mode_why,
+        # who has been calling (WP05): the two caller-check modes and the
+        # Host and Origin values seen, bounded and sanitized
+        "callers": callers.observations(),
         "layout": config.layout(),
         "roots": [
             {"name": "the tool", "path": str(config.TM_ROOT),

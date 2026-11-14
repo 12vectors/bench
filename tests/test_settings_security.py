@@ -63,11 +63,13 @@ class Board:
     application and a work state made here, on a loopback port."""
 
     def __init__(self, case: unittest.TestCase, doc=START, *, env=None,
-                 configured_port: int | None = None):
+                 configured_port: int | None = None, prepare=None):
         """`env` adds settings to the board's environment; a
         `configured_port` makes BOARD_PORT name a different port from the
         one the board is started on with `--port`, as a board that hopped
-        or was started by hand does."""
+        or was started by hand does. `prepare(board)` runs once the roots
+        exist and before the board starts — to leave state it reads at
+        boot."""
         self.dir = Path(tempfile.mkdtemp(prefix="bench-settings-api-"))
         case.addCleanup(self._clean)
         self.tool = self.dir / "tool"
@@ -107,6 +109,8 @@ class Board:
             "BOARD_COMMIT_MOVES": "0", "BOARD_WATCH_INTERVAL": "3600",
             "BOARD_GH_BIN": str(self.dir / "no-gh")})
         self.env.update(env or {})
+        if prepare is not None:
+            prepare(self)
         self.log = open(self.dir / "board.log", "wb")
         self.proc = subprocess.Popen(
             [sys.executable, str(self.tool / "manager" / "core" / "board.py"),

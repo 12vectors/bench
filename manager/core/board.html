@@ -8192,6 +8192,7 @@ function settingsInstallation(page) {
       ? (i.sync.status.notes || []).map(n =>
           `<p class="bad">${esc(n.summary || '')}</p>`).join('') : '') +
     `</section>` +
+    settingsCallers(i.callers) +
     `<section class="panel"><div class="phead">` +
     `<h2 class="s-ptitle">Settings and their sources</h2>` +
     `<span class="r">read-only here</span></div>` +
@@ -8216,6 +8217,65 @@ function settingsInstallation(page) {
     sref('Operations this page does not perform',
       `<div class="skv">` + i.separateOperations.map(o =>
         `<dt>${esc(o.what)}</dt><dd>${esc(o.where)}</dd>`).join('') + `</div>`);
+}
+
+/* Who calls this board (WP05): the two caller checks, each `report` or
+   `enforce`, and the Host and Origin values seen since the board started.
+   The backend sends them bounded and sanitized; they are still escaped
+   here, because a header is what a peer chose to send. `report` is drawn
+   as an observation in the warning register, never as a pass. */
+function settingsCallers(c) {
+  if (!c) return '';
+  const n = c.counts || {};
+  const modeBadge = m => m === 'enforce'
+    ? `<span class="sbadge ok">enforced</span>`
+    : `<span class="sbadge warn">report only — not a security pass</span>`;
+  const when = t => t ? new Date(t * 1000).toLocaleTimeString() : '';
+  const seen = (list, what) => list.length
+    ? `<div class="skv">` + list.map(e =>
+        `<dt><code>${esc(e.value)}</code></dt><dd>` +
+        `<span class="sbadge ${e.allowed ? 'ok' : 'bad'}">` +
+        `${e.allowed ? 'allowed' : 'not allowed'}</span> ` +
+        `${esc(String(e.count))}× · last ${esc(when(e.last))}` +
+        (e.why ? `<span class="why">${esc(e.why)}</span>` : '') +
+        `</dd>`).join('') + `</div>`
+    : `<p class="snote">No ${what} seen since the board started.</p>`;
+  const fwd = Object.entries(c.forwardedHeaders || {});
+  return `<section class="panel" id="s-callers"><div class="phead">` +
+    `<h2 class="s-ptitle">Who calls this board</h2>` +
+    `<span class="r">since ${esc(when(c.since))}</span></div>` +
+    `<p class="snote">Two checks at the board's door, each <code>report</code> ` +
+    `(counts what it would refuse, refuses nothing) or <code>enforce</code>. ` +
+    `Nothing switches one to the other by itself; it is an edit to ` +
+    `<code>manager/local/.env</code> and a restart. Neither check ` +
+    `authenticates a person or grants a peer anything.</p>` +
+    `<div class="skv">` +
+    `<dt>run identity</dt><dd>${modeBadge(c.runIdentity.mode)}` +
+    `<span class="why">a request naming a run on ` +
+    `${esc(c.runIdentity.routes.join(', '))} must carry that run's own token · ` +
+    `${esc(String(n.claimsProved || 0))} proved · ` +
+    `${esc(String(n.claimsUnproven || 0))} unproven · ` +
+    `${esc(String(n.claimsRefused || 0))} refused · ` +
+    `${esc(String(n.eventsUnlinked || 0))} events left unlinked</span>` +
+    (c.runIdentity.problem ? `<span class="why bad">${esc(c.runIdentity.problem)}</span>` : '') +
+    `</dd>` +
+    `<dt>Host check</dt><dd>${modeBadge(c.hostCheck.mode)}` +
+    `<span class="why">answers to ${esc(c.hostCheck.allowed.join(', '))} · ` +
+    `${esc(String(n.hostUnlisted || 0))} requests named another Host · ` +
+    `${esc(String(n.hostRefused || 0))} refused</span>` +
+    (c.hostCheck.problem ? `<span class="why bad">${esc(c.hostCheck.problem)}</span>` : '') +
+    `</dd></div>` +
+    `<h3 class="s-ptitle">Hosts seen</h3>` + seen(c.hosts || [], 'Host values') +
+    (c.dropped && c.dropped.host ? `<p class="snote">${esc(String(c.dropped.host))} ` +
+      `older Host values not kept (at most ${esc(String(c.cap))}).</p>` : '') +
+    `<h3 class="s-ptitle">Origins seen</h3>` + seen(c.origins || [], 'Origin values') +
+    (c.dropped && c.dropped.origin ? `<p class="snote">${esc(String(c.dropped.origin))} ` +
+      `older Origin values not kept (at most ${esc(String(c.cap))}).</p>` : '') +
+    `<p class="snote">Proxy headers seen: ` +
+    (fwd.length ? fwd.map(([k, v]) => `<code>${esc(k)}</code> ${esc(String(v))}×`).join(', ')
+                : 'none') +
+    ` — names only. Their values are never read to decide anything.</p>` +
+    `</section>`;
 }
 
 /* ── one draft: the contextual editors and the advanced one ────────────── */
@@ -11272,7 +11332,10 @@ function progressSection(agent, meta, task) {
       ` · ${counts.accepted || 0} update${counts.accepted === 1 ? '' : 's'} received` +
       (counts.coalesced ? ` · ${counts.coalesced} coalesced` : '') +
       (counts.duplicates ? ` · ${counts.duplicates} duplicate${counts.duplicates === 1 ? '' : 's'} ignored` : '') +
-      (counts.rejected ? ` · ${counts.rejected} refused (last: ${esc((p.lastRejection || {}).why || '')})` : '')
+      (counts.rejected ? ` · ${counts.rejected} refused (last: ${esc((p.lastRejection || {}).why || '')})` : '') +
+      // requests that named this run without its token (WP05)
+      Object.entries(p.unproven || {}).map(([where, n]) =>
+        ` · ${esc(String(n))} unproven claim${n === 1 ? '' : 's'} on /api/${esc(where)}`).join('')
     : '';
   const history = (p && p.history) || [];
   const verifies = task ? (S.state.boardEvents || []).filter(be =>

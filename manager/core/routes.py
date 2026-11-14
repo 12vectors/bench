@@ -73,7 +73,8 @@ CLASSES = {
         "the run's own token, checked by the handler"),
     "event-ingest": (
         "a hook bridge's event: the browser-mutation door; a run it names "
-        "is a display link, proved by WP05"),
+        "is proved by that run's token (callers.claim), and linked only "
+        "when proved where BOARD_RUN_IDENTITY enforces"),
 }
 
 # Every POST body is a JSON object of at most this many bytes, unless its

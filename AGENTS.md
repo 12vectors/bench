@@ -3930,7 +3930,7 @@ so a route cannot skip it by forgetting to ask:
 | `browser-mutation` | every person-operated POST | a JSON object body within a size cap; `Sec-Fetch-Site` same-origin or none when sent; an `Origin`, when sent, that is this board on the port it actually serves or exactly one of `BOARD_ALLOWED_ORIGINS`; `Origin: null` refused; and no run named by a request that says it is a browser's |
 | `policy-mutation` | the 25 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
 | `run-authenticated` | `/api/progress`, `/api/verify/details` | the same door, then the run's own token |
-| `event-ingest` | `/api/events` | the same door; a run the event names is a display link |
+| `event-ingest` | `/api/events` | the same door; a run the event names is proved by that run's token (next section) |
 
 The body is checked before anything happens: a missing, negative or
 non-numeric `Content-Length`, a chunked body, a body over the cap (1 MiB;
@@ -3951,6 +3951,66 @@ proxy in front of the board does not already admit. `Host`, `Forwarded`
 and `X-Forwarded-*` decide nothing. A board reached through a proxy whose
 origin is not listed reads fine and refuses every write, naming the
 origin it saw; loopback always works as the way back.
+
+### Callers: run identity and Host, reported before enforced
+
+Two more checks sit at the same door (`callers.py`), and each ships in
+two explicit modes: `report`, the default, counts and shows what it would
+refuse and refuses nothing; `enforce` refuses. **Report is an
+observation, not a security pass.** Nothing moves a board from one to the
+other by itself — no timer, no update and no merge of the source. It is
+an operator's edit to `manager/local/.env` and a restart, and Settings →
+Installation shows which mode is in force. A value that is neither word
+reads `report` and is named there, so a typo never looks like
+enforcement.
+
+- **`BOARD_RUN_IDENTITY` — a request naming a run.** `/api/verify` with
+  an `agent` asks under that run's frozen manifest, and `/api/events`
+  with one links a session to that run. Each must carry the run's own
+  `BOARD_RUN_TOKEN` as `token` — the capability `progress` issues at
+  launch and keeps only the hash of, compared in constant time. The
+  `bench-verify` shim always sent it; both event bridges now forward it
+  as an optional field. An unproven claim — no token, a wrong one, a run
+  this board never launched, or one launched without a capability — is
+  counted on that run's channel health (Focus: *unproven claims*) and
+  narrated once in the ticker. Enforced, an unproven verification is
+  refused (`run-unproven`, nothing run), and an unproven event is
+  recorded as a session with no run link: no agent, no task. A token is
+  removed from an event before anything is recorded, so it reaches no
+  session log, no task file and no page. A card refinement is launched
+  with no capability, so under enforcement its events are recorded
+  unlinked.
+- **`BOARD_HOST_CHECK` — the `Host` a request names.** Allowed:
+  `127.0.0.1`, `localhost` and `[::1]` on the port this board serves, and
+  the host of each `BOARD_ALLOWED_ORIGINS` entry on its port (or with the
+  port omitted, where the origin's port is its scheme's default). The
+  comparison is exact: the host case-folded, IPv6 in brackets, no
+  trailing-dot or other normalization, an unbracketed IPv6 address or a
+  missing `Host` not a host. Enforced, any other `Host` is answered
+  `421` and nothing is read or changed — loopback on the served port
+  always works as the way back.
+
+Settings → Installation lists the distinct `Host` and `Origin` values
+seen since the board started (at most 24 of each, printable ASCII,
+clipped to 160 characters), whether each is allowed and why, how often,
+and the *names* of any `Forwarded`/`X-Forwarded-*` headers that arrived —
+never their values, and never any other header. That is the inventory to
+configure a proxy from before enforcing: read what the proxy actually
+forwards, list its origin, then switch. Neither check authenticates a
+person, and tailnet membership authorizes nothing: an approved-device
+boundary in front of the board stays exactly where it is.
+
+### Reference files render inert
+
+`/files/plans/…` and `/files/reference/…` serve what people and agents
+wrote. Every file goes out with `X-Content-Type-Options: nosniff`, so it
+is never read as a type it was not served as (an unknown suffix is
+`application/octet-stream`). `.html` and `.svg` also carry
+`Content-Security-Policy: sandbox; script-src 'none'; …`: they render
+— markup, styles and images — in an opaque origin with no script, form or
+plugin, so a script inside one cannot call this board's API. A reference
+document that needs script will not run it. A PDF is not sandboxed, since
+Chromium's viewer is a plugin the sandbox would refuse.
 
 Check registration is not a file-write or shell endpoint either. A
 compound command, a pipeline, a redirection, a substitution, a relative
