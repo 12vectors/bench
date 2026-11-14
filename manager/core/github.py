@@ -1293,7 +1293,7 @@ def completion_facts(filename: str, stage: str) -> dict:
         "publication": ("pr-merge" if on_origin
                         else "push" if rname else "none"),
         "ticketSync": bool(config.SYNC),
-        "ticketsSeparate": not config._one_repository(),
+        "ticketsSeparate": not config.app_shares_state_repository(),
         "pr": task.get("pr") or "",
         "stacked": False, "refusal": "",
         "recovery": recovery_public(filename),
@@ -1709,7 +1709,7 @@ def _catch_up_base(filename: str) -> None:
     with uncommitted changes is left exactly as it is.
     """
     base, rname = config.APP_BASE, remote()
-    if not rname or config.SYNC and config._one_repository():
+    if not rname or config.SYNC and config.app_shares_state_repository():
         return                      # the sync beat owns this checkout
     _run(["git", "fetch", rname, base], timeout=120)
     current = _run(["git", "branch", "--show-current"]).stdout.strip()

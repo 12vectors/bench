@@ -704,11 +704,26 @@ def state_git_remotes() -> list[str]:
     return _remotes_of(state_repo())
 
 
-def _one_repository() -> bool:
-    """Are the two identities the same repository? Vendored they are, and
-    then one remote setting governs both — a project that configured
-    `BOARD_GIT_REMOTE` before any of this existed must not find its board
-    syncing somewhere else."""
+def app_shares_state_repository() -> bool:
+    """Is application git the same repository as work-state git?
+
+    Compares two identities: `app_repo()` — the checkout code is written,
+    branched and merged in — and `state_repo()` — the repository the
+    board's own bookkeeping commits and syncs through. Both are compared
+    as *resolved* paths (links followed, the state side being git's own
+    top level), so two spellings of one checkout read as one repository
+    and two separate checkouts never do.
+
+    True for a vendored or self-hosted install, where tasks/ lives inside
+    the application. False when the work state has a repository of its
+    own, and False when it has none at all — there is then no state git
+    for the application to share.
+
+    Callers outside this module depend on the answer: one remote setting
+    governs both identities only when it is True, `BOARD_SYNC` advances
+    the application's base only when it is True, and otherwise nothing
+    but the board's own catch-up does. A read only — it runs no git
+    command beyond the cached top-level lookup `state_repo()` makes."""
     state = state_repo()
     try:
         return state is not None and state.resolve() == REPO.resolve()
@@ -723,7 +738,7 @@ def state_git_remote() -> str | None:
     nowhere else, so bookkeeping can never be published to the
     application's remote."""
     configured = STATE_GIT_REMOTE
-    if not configured and _one_repository():
+    if not configured and app_shares_state_repository():
         configured = GIT_REMOTE
     return _resolve_remote(configured, state_git_remotes())
 
@@ -732,7 +747,7 @@ def state_remote_setting() -> str:
     """Which setting a reader should go and fix when sync cannot resolve
     its remote — named rather than guessed, since two settings can supply
     the answer and only one of them applies to any given layout."""
-    if STATE_GIT_REMOTE or (EXTERNAL and not _one_repository()):
+    if STATE_GIT_REMOTE or (EXTERNAL and not app_shares_state_repository()):
         return "BOARD_STATE_GIT_REMOTE"
     return "BOARD_GIT_REMOTE"
 
@@ -766,7 +781,7 @@ def app_merge_on_origin() -> bool:
         return True
     if APP_MERGE in ("local", "checkout"):
         return False
-    return SYNC and _one_repository()
+    return SYNC and app_shares_state_repository()
 
 
 def gh_available() -> bool:
