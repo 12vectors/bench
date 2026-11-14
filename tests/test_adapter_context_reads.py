@@ -14,8 +14,10 @@ adapter and a stub vendor binary. Whether the installed CLI *honours*
 the rules is a separate, opt-in question: `develop/claude-access-smoke.py`.
 """
 
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -454,6 +456,97 @@ class CoreContract(unittest.TestCase):
         reads = hook_settings.approved_reads(json.dumps(context),
                                              json.dumps(guidance))
         self.assertNotIn(str(source), [r["path"] for r in reads])
+
+
+FAKE_VENDOR = r'''#!/usr/bin/env python3
+"""A stand-in for the CLI that applies the generated rules the way the
+card says the vendor does: Read needs an exact Read(//path) allow, an
+Edit(//path) deny refuses a write, and nothing else is offered."""
+import json, re, sys
+args = sys.argv[1:]
+prompt = args[args.index("-p") + 1]
+perms = json.loads(args[args.index("--settings") + 1]).get("permissions", {})
+allow, deny = perms.get("allow", []), perms.get("deny", [])
+withheld = args[args.index("--disallowedTools") + 1:] if "--disallowedTools" in args else []
+n = 0
+def call(name, inp, ok, body):
+    global n
+    n += 1
+    print(json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": f"t{n}", "name": name, "input": inp}]}}))
+    print(json.dumps({"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": f"t{n}", "is_error": not ok,
+         "content": body}]}}))
+for path in re.findall(r"Read tool on (\S+?)\.\n", prompt):
+    if f"Read(/{path})" in allow:
+        call("Read", {"file_path": path}, True, open(path).read())
+    else:
+        call("Read", {"file_path": path}, False, "Permission to read denied")
+for path in re.findall(r"Write tool to overwrite (\S+) ", prompt):
+    if "Write" in withheld or f"Edit(/{path})" in deny:
+        call("Write", {"file_path": path}, False, "Permission denied")
+    else:
+        open(path, "w").write("changed")
+        call("Write", {"file_path": path}, True, "written")
+if "git commit" in prompt:
+    call("Bash", {"command": "git commit --allow-empty -m probe"},
+         any(r.startswith("Bash(git commit") for r in allow), "denied")
+'''
+
+
+class SmokeHarnessPlumbing(unittest.TestCase):
+    """The opt-in real-vendor probe, exercised end to end against a stand-in
+    vendor so its fixture, its wrapper and its verdicts are tested without
+    spending anything. The billable run itself is never part of the suite."""
+
+    def setUp(self):
+        self.smoke = _load("claude_access_smoke",
+                           REPO / "develop" / "claude-access-smoke.py")
+        self.tmp = Path(os.path.realpath(tempfile.mkdtemp(prefix="bench-126s-")))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_without_approval_nothing_is_launched(self):
+        with contextlib.redirect_stdout(io.StringIO()) as said:
+            self.assertEqual(self.smoke.main([]), 2)
+        self.assertIn("Nothing launched", said.getvalue())
+
+    def test_the_verdicts_are_read_off_tool_results_and_disk(self):
+        vendor = self.tmp / "fake-claude"
+        vendor.write_text(FAKE_VENDOR, encoding="utf-8")
+        vendor.chmod(0o755)
+        out = self.tmp / "out"
+        saved = {k: os.environ.pop(k) for k in list(os.environ)
+                 if k in LEAKY}
+        self.addCleanup(os.environ.update, saved)
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = self.smoke.main(["--approve-real-claude", "--vendor",
+                                    str(vendor), "--out", str(out)])
+        report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+        self.addCleanup(shutil.rmtree, report["fixture"], True)
+        rows = {(p["mode"], r["check"]): r["outcome"]
+                for p in report["probes"] for r in p["rows"]}
+        self.assertEqual(code, 0, rows)
+        self.assertEqual(set(rows.values()), {"passed"})
+        self.assertEqual(len(rows), 8)
+        self.assertTrue(report["source"]["head"])
+        work = report["probes"][0]
+        self.assertIn("--permission-mode", work["adapterArgv"])
+        self.assertNotIn("--output-format", work["adapterArgv"])
+
+    def test_a_vendor_that_ignored_the_rules_is_caught(self):
+        lines = [json.dumps({"message": {"content": [
+            {"type": "tool_use", "id": "a", "name": "Read",
+             "input": {"file_path": "/x/unapproved.md"}}]}}),
+                 json.dumps({"message": {"content": [
+                     {"type": "tool_result", "tool_use_id": "a",
+                      "content": "token: NEIGHBOUR-1"}]}})]
+        fx = self.smoke.build_fixture(self.tmp)
+        fx["tokens"]["neighbour"] = "NEIGHBOUR-1"
+        rows = self.smoke.judge_work({"lines": lines}, fx,
+                                     {"input": _sha(fx["files"]["input"])})
+        outcome = {r["check"]: r["outcome"] for r in rows}
+        self.assertEqual(outcome["unapproved neighbour read is refused"], "failed")
+        self.assertEqual(outcome["approved input read succeeds"], "failed")
 
 
 class DoctorReadsTheGrants(unittest.TestCase):
