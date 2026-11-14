@@ -827,12 +827,15 @@ DYNAMIC_PATCH_TARGETS: dict[str, tuple[int, int]] = {
 }
 
 # GitHub vocabulary per core module outside github.py (WP08 moves it).
+# `redact`'s four are GitHub's credential *shapes* (task 111 moved them
+# out of `settings` and `agentsettings`, two each): what a token looks
+# like, not provider behaviour, so WP08 leaves them where they are.
 PROVIDER_VOCABULARY: dict[str, int] = {
-    "agents": 2, "agentsettings": 2, "board": 3, "config": 10,
+    "agents": 2, "board": 3, "config": 10,
     "delivery": 22, "doctor": 3, "gates": 25, "httpd": 13, "phases": 4,
-    "plans": 6, "profiles": 17, "readiness": 9, "reviews": 18,
-    "settings": 41, "setupguide": 16, "templates": 1, "verify": 1,
-    "watch": 2,
+    "plans": 6, "profiles": 17, "readiness": 9, "redact": 4,
+    "reviews": 18, "settings": 39, "setupguide": 16, "templates": 1,
+    "verify": 1, "watch": 2,
 }
 
 # Every route and the door its branch calls, as httpd.py stands. `read`
