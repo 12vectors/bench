@@ -495,6 +495,10 @@ CATALOGUE = (
      "how often open pull requests are polled"),
     ("BOARD_FETCH_TIMEOUT", "installation", "restart",
      "how long a branch-point fetch may take before a launch gives up"),
+    ("BOARD_ALLOWED_ORIGINS", "installation", "restart",
+     "browser origins besides this board's own loopback page whose writes "
+     "it accepts, such as a local proxy's — exact scheme://host[:port] "
+     "values; an origin check is not authentication"),
 )
 
 APPLIES_AT = {

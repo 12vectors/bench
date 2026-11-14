@@ -53,24 +53,80 @@ from routes import (doctor_payload, gates_payload, page_bytes,  # noqa: F401
 # sends the header and is allowed, which is correct: it already has the
 # operator's own filesystem access and could edit the file directly.
 
+#
+# Since WP04 every POST passes a door, chosen by its route's class rather
+# than by whether its handler remembered to call one. The policy door is
+# the browser-mutation door plus the custom header; the run and event
+# doors are the same door, because a bridge or a shim states no origin and
+# a page on another origin has no business with either.
+#
+# Two things about the origin, because they used to be wrong:
+#
+# - "this board" is the port it actually serves on, not BOARD_PORT. A
+#   board started with `--port`, or one that hopped, refused its own page.
+# - `Origin: null` is refused. It is what a sandboxed frame, a `data:`
+#   page or a file sends, and none of those is this board's page.
+#
+# Beyond loopback, an origin is accepted only when it is *exactly* one of
+# BOARD_ALLOWED_ORIGINS (a local proxy's, say). This is protection from
+# other pages in the operator's browser, not authentication: Host,
+# Forwarded and X-Forwarded-* are never read to decide anything, and
+# listing an origin admits no peer the proxy does not already admit.
+
 SETTINGS_HEADER = "X-Bench-Settings"
 SETTINGS_TOKEN = "1"
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]", "::1")
+_LOOPBACK = ("127.0.0.1", "localhost", "::1")
 
 
-def origin_problem(headers, port: int, token: bool = True) -> str | None:
-    """Why this request may not change policy, or None.
+def _origin_refusal(origin: str, port: int, allowed) -> str | None:
+    """Why a stated Origin is not this board's page, or None."""
+    if origin.lower() == "null" or not origin:
+        return (f"this request states Origin: {origin or '(empty)'}, which a "
+                f"sandboxed frame, a data: page or a file sends — not this "
+                f"board's page")
+    try:
+        parts = urlparse(origin)
+        stated_port = parts.port
+    except ValueError:
+        return f"this request states Origin: {origin}, which is not an origin"
+    scheme = (parts.scheme or "").lower()
+    host = (parts.hostname or "").lower()
+    if parts.path or parts.query or parts.params or parts.fragment \
+            or parts.username is not None:
+        return f"this request states Origin: {origin}, which is not an origin"
+    effective = stated_port or (443 if scheme == "https" else 80)
+    if (scheme, host, effective) in allowed:
+        return None
+    if host in _LOOPBACK:
+        if scheme == "http" and effective == port:
+            return None
+        return (f"this request states Origin: {origin}, which is a "
+                f"different board or server on this machine (this board "
+                f"serves http on port {port})")
+    return (f"this request states Origin: {origin}, which is not this board "
+            f"and is not in BOARD_ALLOWED_ORIGINS")
 
-    Read from headers only. Nothing in the body may make a request
-    trusted: that is what a forged post would fill in. `token=False` is
-    the card-write door, which asks everything but the custom header.
+
+def write_problem(headers, port: int, *, what: str = "a write",
+                  token: bool = False, allowed=None) -> str | None:
+    """Why this request may not reach a mutation's handler, or None.
+
+    Read from headers only, before the body is read: nothing in the body
+    may make a request trusted — that is what a forged post would fill in.
+    `port` is the port this board serves on; `allowed` defaults to
+    BOARD_ALLOWED_ORIGINS. A request that states no Origin and no
+    Sec-Fetch-Site — a shim, a bridge, `curl` — is not a browser, and is
+    held to the content type (and the custom header, where `token`) only.
     """
+    allowed = config.ALLOWED_ORIGINS if allowed is None else allowed
     ctype = (headers.get("Content-Type") or "").split(";")[0].strip().lower()
     if ctype != "application/json":
-        return (f"a policy change must be sent as application/json "
-                f"(this was {ctype or 'nothing'}). Nothing was changed.")
+        return (f"{what} must be sent as application/json "
+                f"(this was {ctype or 'nothing'}). A cross-origin form can "
+                f"only send form encodings. Nothing was changed.")
     if token and (headers.get(SETTINGS_HEADER) or "").strip() != SETTINGS_TOKEN:
-        return (f"a policy change must carry the {SETTINGS_HEADER}: "
+        return (f"{what} must carry the {SETTINGS_HEADER}: "
                 f"{SETTINGS_TOKEN} header. A cross-origin form cannot set it "
                 f"and a cross-origin fetch cannot send it without a "
                 f"preflight this board does not answer. Nothing was changed.")
@@ -78,40 +134,59 @@ def origin_problem(headers, port: int, token: bool = True) -> str | None:
     if site and site not in ("same-origin", "none"):
         return (f"this request states Sec-Fetch-Site: {site}, so it did not "
                 f"come from this board's own page. Nothing was changed.")
-    origin = (headers.get("Origin") or "").strip()
-    if origin and origin.lower() != "null":
-        parsed = urlparse(origin)
-        host = (parsed.hostname or "").lower()
-        if host not in ("127.0.0.1", "localhost", "::1"):
-            return (f"this request states Origin: {origin}, which is not this "
-                    f"board. Nothing was changed.")
-        if parsed.port and parsed.port != port:
-            return (f"this request states Origin: {origin}, which is a "
-                    f"different board on this machine. Nothing was changed.")
+    origin = headers.get("Origin")
+    if origin is not None:
+        refusal = _origin_refusal(origin.strip(), port, allowed)
+        if refusal:
+            return f"{refusal}. Nothing was changed."
     return None
 
 
-def card_write_problem(headers, port: int) -> str | None:
-    """Why this request may not write a card's discussion or ask for a
-    refinement, or None (task 84).
+def origin_problem(headers, port: int, token: bool = True,
+                   allowed=None) -> str | None:
+    """Why this request may not change policy, or None: the write door
+    plus the custom header (`token=False` drops the header)."""
+    return write_problem(headers, port, what="a policy change", token=token,
+                         allowed=allowed)
 
-    The policy door minus its custom header, which the card's own page has
-    never sent: a JSON content type — so a cross-origin form, which can
-    only send form encodings, is not parsed, and a cross-origin `fetch`
-    needs a preflight nothing here answers — and, from browsers that state
-    them, an origin that is this board's. A comment can start a
-    refinement, so it is held to more than the body's word."""
-    problem = origin_problem(headers, port, token=False)
-    return problem.replace("a policy change", "a card write") if problem else None
+
+def card_write_problem(headers, port: int, allowed=None) -> str | None:
+    """Why this request may not write a card's discussion or ask for a
+    refinement, or None (task 84) — the browser-mutation door, which every
+    person-operated write now passes."""
+    return write_problem(headers, port, what="a card write", allowed=allowed)
+
+
+def states_a_browser(headers) -> bool:
+    """Whether the request says it came from a browser. Every browser
+    states an Origin on a cross-origin POST, and the fetch-metadata ones a
+    Sec-Fetch-Site on every request; a shim or a bridge states neither."""
+    return headers.get("Origin") is not None \
+        or headers.get("Sec-Fetch-Site") is not None
 
 
 def door_problem(klass: str, headers, port: int) -> str | None:
     """Why a request of this class may not reach its handler, or None.
     Read from headers only, before the body is read."""
+    if klass == "read":
+        return None
     if klass == "policy-mutation":
         return origin_problem(headers, port)
-    if klass == "card-write":
-        return card_write_problem(headers, port)
+    return write_problem(headers, port)
+
+
+def claim_problem(klass: str, headers, body: dict) -> str | None:
+    """A browser request naming a run (WP04 §4.3 boundary). A run speaks
+    through its shim, which states no origin; a page never names a run. So
+    a request that says it is a browser's — whatever its origin — and
+    carries an `agent` is refused: no route class lets a page borrow a
+    run's frozen authority. Whether a shim's claim is *proved* is the run
+    token's business (WP05), not the route class's."""
+    if klass in ("browser-mutation", "policy-mutation") \
+            and states_a_browser(headers) and body.get("agent"):
+        return ("a browser request cannot speak for a run — a run asks "
+                "through its own shim, which states no origin. Nothing was "
+                "changed.")
     return None
 
 
@@ -181,7 +256,7 @@ class Handler(BaseHTTPRequestHandler):
         if route is None:
             self.send(404, b"not found", "text/plain")
             return
-        problem = door_problem(route.klass, self.headers, config.PORT)
+        problem = door_problem(route.klass, self.headers, self.served_port())
         if problem:
             self.reply(403, {"error": problem})
             return
@@ -190,6 +265,10 @@ class Handler(BaseHTTPRequestHandler):
         except BodyRefused as refused:
             self.reply(refused.status, {"error": refused.why,
                                         "code": refused.code})
+            return
+        problem = claim_problem(route.klass, self.headers, self.body)
+        if problem:
+            self.reply(403, {"error": problem, "code": "browser-claims-run"})
             return
         try:
             route.handler(self)

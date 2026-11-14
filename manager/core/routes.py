@@ -59,14 +59,21 @@ import verify
 # words are the same ones ARCHITECTURE.md and the route snapshot use.
 CLASSES = {
     "read": "a GET: reads, and changes nothing",
+    "browser-mutation": (
+        "a write a person makes from the board's page: JSON; Sec-Fetch-Site "
+        "same-origin or none when sent; an Origin, when sent, that is this "
+        "board on the port it serves or exactly one of "
+        "BOARD_ALLOWED_ORIGINS; Origin: null refused; and no run named by a "
+        "request that says it is a browser's"),
     "policy-mutation": (
         "changes or exercises the execution policy, or runs the project's "
-        "programs: JSON, the X-Bench-Settings header, and an origin that is "
-        "this board's when the request states one"),
-    "card-write": (
-        "writes a card's discussion or asks for a refinement: JSON, and an "
-        "origin that is this board's when the request states one"),
-    "open": "a POST nothing guards beyond its body checks",
+        "programs: browser-mutation plus the X-Bench-Settings header"),
+    "run-authenticated": (
+        "a run speaking through its shim: the browser-mutation door, then "
+        "the run's own token, checked by the handler"),
+    "event-ingest": (
+        "a hook bridge's event: the browser-mutation door; a run it names "
+        "is a display link, proved by WP05"),
 }
 
 # Every POST body is a JSON object of at most this many bytes, unless its
@@ -1394,31 +1401,35 @@ ROUTES = (
     Route("GET", "/api/stream", "read", get_stream),
     Route("GET", "/files/*", "read", get_files),
 
-    Route("POST", "/api/move", "open", post_move),
-    Route("POST", "/api/events", "open", post_events),
-    Route("POST", "/api/progress", "open", post_progress,
+    Route("POST", "/api/move", "browser-mutation", post_move),
+    Route("POST", "/api/events", "event-ingest", post_events),
+    Route("POST", "/api/progress", "run-authenticated", post_progress,
           max_body=progress.MAX_BODY),
-    Route("POST", "/api/agent/start", "open", post_agent_start),
-    Route("POST", "/api/agent/review", "open", post_agent_review),
-    Route("POST", "/api/agent/review-pr", "open", post_agent_review_pr),
-    Route("POST", "/api/agent/act-pr", "open", post_agent_act_pr),
-    Route("POST", "/api/phase/run", "open", post_phase_run),
-    Route("POST", "/api/phase/stop", "open", post_phase_stop),
-    Route("POST", "/api/phase/add", "open", post_phase_add),
-    Route("POST", "/api/plan/replan", "open", post_plan_replan),
-    Route("POST", "/api/pr/open", "open", post_pr_open),
-    Route("POST", "/api/pr/copilot", "open", post_pr_copilot),
-    Route("POST", "/api/task/complete", "open", post_task_complete),
-    Route("POST", "/api/task/complete/forget", "open", post_task_complete_forget),
-    Route("POST", "/api/archive", "open", post_archive),
-    Route("POST", "/api/unarchive", "open", post_unarchive),
-    Route("POST", "/api/command/run", "open", post_command_run),
-    Route("POST", "/api/drive/start", "open", post_drive_start),
-    Route("POST", "/api/drive/stop", "open", post_drive_stop),
-    Route("POST", "/api/verify", "open", post_verify),
-    Route("POST", "/api/verify/details", "open", post_verify_details),
-    Route("POST", "/api/doctor/run", "open", post_doctor_run),
-    Route("POST", "/api/gates/override", "open", post_gates_override),
+    Route("POST", "/api/agent/start", "browser-mutation", post_agent_start),
+    Route("POST", "/api/agent/review", "browser-mutation", post_agent_review),
+    Route("POST", "/api/agent/review-pr", "browser-mutation", post_agent_review_pr),
+    Route("POST", "/api/agent/act-pr", "browser-mutation", post_agent_act_pr),
+    Route("POST", "/api/phase/run", "browser-mutation", post_phase_run),
+    Route("POST", "/api/phase/stop", "browser-mutation", post_phase_stop),
+    Route("POST", "/api/phase/add", "browser-mutation", post_phase_add),
+    Route("POST", "/api/plan/replan", "browser-mutation", post_plan_replan),
+    Route("POST", "/api/pr/open", "browser-mutation", post_pr_open),
+    Route("POST", "/api/pr/copilot", "browser-mutation", post_pr_copilot),
+    Route("POST", "/api/task/complete", "browser-mutation", post_task_complete),
+    Route("POST", "/api/task/complete/forget", "browser-mutation", post_task_complete_forget),
+    Route("POST", "/api/archive", "browser-mutation", post_archive),
+    Route("POST", "/api/unarchive", "browser-mutation", post_unarchive),
+    Route("POST", "/api/command/run", "browser-mutation", post_command_run),
+    Route("POST", "/api/drive/start", "browser-mutation", post_drive_start),
+    Route("POST", "/api/drive/stop", "browser-mutation", post_drive_stop),
+    # A person's ↻ and a run's shim share this route, so its class is the
+    # person's: the door refuses a stated foreign origin whatever the body
+    # says, and refuses any browser request that names a run. A shim's
+    # `agent` is not proved by the class — that is the run token (WP05).
+    Route("POST", "/api/verify", "browser-mutation", post_verify),
+    Route("POST", "/api/verify/details", "run-authenticated", post_verify_details),
+    Route("POST", "/api/doctor/run", "browser-mutation", post_doctor_run),
+    Route("POST", "/api/gates/override", "browser-mutation", post_gates_override),
     Route("POST", "/api/setup/decide", "policy-mutation", post_setup),
     Route("POST", "/api/setup/task", "policy-mutation", post_setup),
     Route("POST", "/api/setup/cards/preview", "policy-mutation", post_setup_cards),
@@ -1449,23 +1460,23 @@ ROUTES = (
           post_settings_agents),
     Route("POST", "/api/settings/agents/apply", "policy-mutation",
           post_settings_agents),
-    Route("POST", "/api/card/comment", "card-write", post_card_comment),
-    Route("POST", "/api/card/refine", "card-write", post_card_refine),
-    Route("POST", "/api/card/refine/apply", "card-write", post_card_refine_decision),
-    Route("POST", "/api/card/refine/discard", "card-write", post_card_refine_decision),
-    Route("POST", "/api/card/refine/cancel", "card-write", post_card_refine_decision),
-    Route("POST", "/api/card/acceptance/track", "open", post_card_acceptance),
-    Route("POST", "/api/card/acceptance/decide", "open", post_card_acceptance),
-    Route("POST", "/api/card/finding", "open", post_card_acceptance),
-    Route("POST", "/api/verify/cancel", "open", post_verify_cancel),
+    Route("POST", "/api/card/comment", "browser-mutation", post_card_comment),
+    Route("POST", "/api/card/refine", "browser-mutation", post_card_refine),
+    Route("POST", "/api/card/refine/apply", "browser-mutation", post_card_refine_decision),
+    Route("POST", "/api/card/refine/discard", "browser-mutation", post_card_refine_decision),
+    Route("POST", "/api/card/refine/cancel", "browser-mutation", post_card_refine_decision),
+    Route("POST", "/api/card/acceptance/track", "browser-mutation", post_card_acceptance),
+    Route("POST", "/api/card/acceptance/decide", "browser-mutation", post_card_acceptance),
+    Route("POST", "/api/card/finding", "browser-mutation", post_card_acceptance),
+    Route("POST", "/api/verify/cancel", "browser-mutation", post_verify_cancel),
     Route("POST", "/api/verify/required", "policy-mutation", post_verify_required),
     Route("POST", "/api/verify/required/cancel", "policy-mutation",
           post_verify_required),
-    Route("POST", "/api/card/delivery/check-remote", "open",
+    Route("POST", "/api/card/delivery/check-remote", "browser-mutation",
           post_card_delivery_check_remote),
-    Route("POST", "/api/card/delivery/launch-check", "open",
+    Route("POST", "/api/card/delivery/launch-check", "browser-mutation",
           post_card_delivery_launch_check),
-    Route("POST", "/api/agent/stop", "open", post_agent_stop),
+    Route("POST", "/api/agent/stop", "browser-mutation", post_agent_stop),
 )
 
 

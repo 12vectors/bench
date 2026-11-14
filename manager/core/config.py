@@ -38,6 +38,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import gitproc
 
@@ -322,6 +323,52 @@ PROJECT = setting("BOARD_TITLE", "").strip() or REPO.name
 # Pinned so the board is always at the same bookmarkable URL. Sits in the
 # ephemeral-safe 10000–30000 range, clear of the other local dev servers.
 PORT = int(setting("BOARD_PORT", "26071"))
+
+
+def parse_origins(raw: str) -> tuple[frozenset, list[str]]:
+    """`BOARD_ALLOWED_ORIGINS` read: the exact browser origins, beyond this
+    board's own loopback page, whose writes the board accepts — and why
+    any entry was not taken.
+
+    Each entry is one `scheme://host[:port]`, compared exactly (scheme and
+    host case-folded, a default port made explicit). Nothing that could
+    match more than one origin is taken: no wildcard, no path, no query, no
+    userinfo, no scheme but http or https. An entry that is not taken is
+    trusted for nothing, and named rather than dropped silently.
+    """
+    allowed, problems = set(), []
+    for entry in (part.strip() for part in raw.split(",")):
+        if not entry:
+            continue
+        try:
+            parts = urlsplit(entry)
+            port = parts.port
+        except ValueError:
+            problems.append(f"{entry!r} is not an origin")
+            continue
+        scheme = (parts.scheme or "").lower()
+        host = (parts.hostname or "").lower()
+        if scheme not in ("http", "https"):
+            problems.append(f"{entry!r}: an origin is http:// or https://")
+        elif not host or "*" in entry:
+            problems.append(f"{entry!r}: an origin names one host, exactly")
+        elif parts.path not in ("", "/") or parts.query or parts.fragment \
+                or parts.username is not None or parts.password is not None:
+            problems.append(f"{entry!r}: an origin is scheme://host[:port] "
+                            f"and nothing else")
+        else:
+            allowed.add((scheme, host,
+                         port or (443 if scheme == "https" else 80)))
+    return frozenset(allowed), problems
+
+
+# Browser origins allowed to make a write besides this board's own page on
+# loopback — a local proxy's, say. Empty by default. An origin check
+# protects against other pages in the operator's browser; it is not
+# authentication, and listing an origin here grants no peer anything the
+# proxy in front of it does not already admit.
+ALLOWED_ORIGINS, ALLOWED_ORIGIN_PROBLEMS = parse_origins(
+    setting("BOARD_ALLOWED_ORIGINS", ""))
 
 # Which agent adapter runs headless jobs. Resolution ladder: local wins.
 # The *startup* reading; a launch asks `agent_choice()`, which reads the

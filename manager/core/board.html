@@ -5284,7 +5284,9 @@ async function startDrive(task) {
 }
 
 async function parkDrive() {
-  const res = await fetch('/api/drive/stop', { method: 'POST' });
+  const res = await fetch('/api/drive/stop', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  });
   const data = await res.json();
   toast(res.ok ? 'Parked' : (data.error || 'could not park'), !res.ok);
   loadState();
@@ -10317,7 +10319,9 @@ async function archiveCard(file, from) {
 }
 
 async function unarchiveLast() {
-  const res = await fetch('/api/unarchive', { method: 'POST' });
+  const res = await fetch('/api/unarchive', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  });
   const data = await res.json();
   toast(res.ok ? `${data.file} brought back to ${data.to}/` : (data.error || 'nothing to bring back'), !res.ok);
   await loadState();
