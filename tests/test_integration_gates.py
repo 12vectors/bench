@@ -123,6 +123,34 @@ def wait_for(pred, timeout: float = 30.0) -> bool:
     return False
 
 
+def running_and_recorded() -> bool:
+    """A verification is truly under way: its child process exists and its
+    `running` record is readable on disk. `verify.RUNNING` alone is not
+    enough — a run is reserved there before its first record is written,
+    and a gate read in that gap finds no evidence at all."""
+    for ident, record in list(verify.RUNNING.items()):
+        if record.get("proc") is None:
+            continue
+        stored = verify.read(ident)
+        if stored and stored.get("outcome") == "running":
+            return True
+    return False
+
+
+def stop_and_join(thread, timeout: float = 20.0) -> None:
+    """Cancel every verification this board runs until the request thread
+    has ended, so a run reserved after one cancel is not left behind for
+    the fixture's teardown."""
+    deadline = time.time() + timeout
+    while thread.is_alive() and time.time() < deadline:
+        for ident in list(verify.RUNNING):
+            try:
+                verify.cancel(ident)
+            except ValueError:
+                pass
+        thread.join(timeout=0.2)
+
+
 class GateCase(unittest.TestCase):
     """A disposable tool install, work root and application checkout, with
     config pointed at all of it. Nothing outside the temporary directory is
@@ -951,8 +979,10 @@ class AnOverrideIsNeverAPass(GateCase):
         self.assertEqual(self.decide()["decision"], "overridden")
         asking = threading.Thread(target=self.ask, daemon=True)
         asking.start()
-        self.assertTrue(wait_for(lambda: bool(verify.RUNNING)))
         try:
+            self.assertTrue(wait_for(running_and_recorded),
+                            "the check's child process and its persisted "
+                            "running record never both appeared")
             found = self.decide()
             self.assertFalse(gates.passable(found),
                              "an override does not widen over a check that "
@@ -962,9 +992,51 @@ class AnOverrideIsNeverAPass(GateCase):
                             "the running check is reported as what it is")
             self.assertIsNone(found["overrides"]["applied"])
         finally:
-            for ident in list(verify.RUNNING):
-                verify.cancel(ident)
-            asking.join(timeout=20)
+            stop_and_join(asking)
+        self.assertFalse(asking.is_alive(), "the request thread ended")
+
+    def test_a_slow_first_record_does_not_race_the_running_check(self):
+        """Regression for a CI failure of the test above: a run is reserved
+        in `verify.RUNNING` before its first `running` record is written,
+        so a reading taken in between found no evidence at all and read the
+        override as passable. Hold that first write back on purpose and
+        show the wait does not return until the record is readable — and
+        that the gate then holds the merge."""
+        import threading
+        self.gated(check="unit", body=HANGS, overrides={"allow": True},
+                   review="bench")
+        self.manifest()
+        gates.override(CARD, "acceptance", actor="istos",
+                       reason="no reviewer until Monday, and the suite hangs")
+        held, release = threading.Event(), threading.Event()
+        real_store = verify._store
+
+        def slow_first_running_store(record):
+            if record.get("outcome") == "running" and not held.is_set():
+                held.set()
+                release.wait(timeout=30)
+            return real_store(record)
+
+        verify._store = slow_first_running_store
+        asking = threading.Thread(target=self.ask, daemon=True)
+        asking.start()
+        try:
+            self.assertTrue(held.wait(timeout=30),
+                            "the first running record was never written")
+            self.assertTrue(verify.RUNNING, "the run is reserved already")
+            self.assertFalse(running_and_recorded(),
+                             "nothing is readable while the write is held")
+            release.set()
+            self.assertTrue(wait_for(running_and_recorded))
+            found = self.decide()
+            self.assertFalse(gates.passable(found))
+            self.assertTrue(found["pending"])
+            self.assertIsNone(found["overrides"]["applied"])
+        finally:
+            release.set()
+            verify._store = real_store
+            stop_and_join(asking)
+        self.assertFalse(asking.is_alive(), "the request thread ended")
 
     def test_an_override_needs_a_reason_and_a_person(self):
         self.gated(overrides={"allow": True})
