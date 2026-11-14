@@ -220,8 +220,6 @@
   .chiprow .chip2,.cardtools .chip2{flex:0 1 auto;min-width:0;max-width:100%}
   .chip2 .clab{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .chip2 .cpos,.chip2 .carr{flex:none}
-  .chip2 .actlbl{min-width:0;max-width:100%;grid-template-columns:minmax(0,max-content)}
-  .chip2 .actlbl>span{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis}
   a.chip2:hover,button.chip2:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
   .chip2.ok{color:var(--calm);border-color:color-mix(in oklab, var(--calm) 45%, transparent)}
   .chip2.accent{color:var(--accent);border-color:color-mix(in oklab, var(--accent) 55%, transparent)}
@@ -316,6 +314,10 @@
   button.armed .actlbl .l-rest,button.busy .actlbl .l-rest{visibility:hidden}
   button.armed .actlbl .l-arm{visibility:visible}
   button.busy .actlbl .l-busy{visibility:visible}
+  /* in a chip (a project command, archive) the label ellipsizes like any
+     chip text rather than widening the chip past its card (task 72) */
+  .chip2 .actlbl{min-width:0;max-width:100%;grid-template-columns:minmax(0,max-content)}
+  .chip2 .actlbl>span{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis}
   /* armed = alarm, and the disarm window drains visibly along the bottom */
   .lacts button.armed,.hoveracts button.armed,button.chip2.armed{color:var(--alarm);border-color:var(--alarm)}
   button.armed::after{
