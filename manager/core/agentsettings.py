@@ -57,6 +57,7 @@ from pathlib import Path
 
 import config
 import profiles
+import records
 import templates
 
 VERSION = 1
@@ -527,14 +528,7 @@ def _replace(path: Path, text: str | None) -> None:
         except FileNotFoundError:
             pass
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + f".bench-{os.getpid()}.tmp")
-    try:
-        temp.write_text(text, encoding="utf-8")
-        os.replace(temp, path)
-    finally:
-        if temp.exists():
-            temp.unlink()
+    records.write_text(path, text)
 
 
 def apply(payload: dict, *, actor: str | None = None) -> dict:

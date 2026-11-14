@@ -62,6 +62,7 @@ from pathlib import Path
 
 import config
 import profiles
+import records
 import settings
 import taskfiles
 
@@ -711,16 +712,8 @@ def _journal() -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _write_json(path: Path, doc: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
-    try:
-        tmp.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n",
-                       encoding="utf-8")
-        os.replace(tmp, path)
-    finally:
-        if tmp.exists():
-            tmp.unlink()
+def _write_json(path: Path, doc: dict, *, durable: bool = False) -> None:
+    records.write_json(path, doc, newline=True, durable=durable)
 
 
 def _journal_put(request: str, entry: dict) -> None:

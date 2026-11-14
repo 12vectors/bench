@@ -72,6 +72,7 @@ from pathlib import Path
 
 import config
 import profiles
+import records
 import state
 import verify
 
@@ -245,10 +246,7 @@ def _store(record: dict) -> None:
     if path is None:
         return
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(record), encoding="utf-8")
-        tmp.replace(path)
+        records.write_json(path, record, indent=None, sort_keys=False)
     except OSError:
         pass
 

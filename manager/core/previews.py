@@ -72,6 +72,7 @@ from pathlib import Path
 
 import config
 import drive
+import records
 import settings
 import setupguide
 import state as board_state
@@ -944,15 +945,7 @@ def _card(payload: dict) -> tuple[str, str]:
 # ── records (machine-local) ────────────────────────────────────────────
 
 def _write_json(path: Path, doc: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{_secrets.token_hex(4)}.tmp")
-    try:
-        tmp.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n",
-                       encoding="utf-8")
-        os.replace(tmp, path)
-    finally:
-        if tmp.exists():
-            tmp.unlink()
+    records.write_json(path, doc, newline=True)
 
 
 def _read_json(path: Path) -> dict | None:
@@ -1071,16 +1064,7 @@ def configure(payload: dict) -> dict:
             raise Refused("acknowledge each call-out before saving: "
                           + ", ".join(missing), 409, acknowledge=missing,
                           warnings=found["warnings"])
-        path = config_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        text = json.dumps(draft, indent=2, sort_keys=True) + "\n"
-        tmp = path.with_name(f".{path.name}.{_secrets.token_hex(4)}.tmp")
-        try:
-            tmp.write_text(text, encoding="utf-8")
-            os.replace(tmp, path)
-        finally:
-            if tmp.exists():
-                tmp.unlink()
+        records.write_json(config_path(), draft, newline=True)
     return {"ok": True, "revision": revision(), "path": CONFIG_REL,
             "acknowledged": sorted(acked & {w["code"] for w in found["warnings"]}),
             "ran": "nothing"}

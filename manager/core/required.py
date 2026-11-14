@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -49,6 +48,7 @@ from pathlib import Path
 import config
 import gates
 import profiles
+import records
 import state
 import taskfiles
 import verify
@@ -178,12 +178,7 @@ def _path(filename: str) -> Path:
 
 
 def _store(batch: dict) -> dict:
-    path = _path(batch["task"])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".batch-")
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(batch, fh, indent=2, sort_keys=True)
-    os.replace(tmp, path)
+    records.write_json(_path(batch["task"]), batch)
     return batch
 
 
@@ -529,17 +524,9 @@ def entered(filename: str) -> list[str]:
 
 
 def _write_entered(filename: str, heads: list[str]) -> None:
-    path = _entered_path(filename)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".entered-")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump({"v": VERSION, "task": filename,
-                       "heads": heads[-ON_REVIEW_KEEP:]}, fh, indent=2)
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
+    records.write_json(_entered_path(filename),
+                       {"v": VERSION, "task": filename,
+                        "heads": heads[-ON_REVIEW_KEEP:]}, sort_keys=False)
 
 
 def _mark_entered(filename: str, head: str) -> None:

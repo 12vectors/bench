@@ -38,6 +38,7 @@ import time
 from pathlib import Path
 
 import config
+import records
 import state
 
 # Every read-modify-write of a card's text in this module takes this lock,
@@ -1161,13 +1162,7 @@ def _atomic_write(path: Path, text: str) -> None:
     """Replace a card in one step: a reader sees the old file or the new
     one, never half of either. The temporary name does not end in `.md`,
     so the stage watcher never mistakes it for a card."""
-    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.bench-tmp")
-    try:
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, path)
-    finally:
-        if tmp.exists():
-            tmp.unlink()
+    records.write_text(path, text, mkdir=False)
 
 
 def now_iso() -> str:

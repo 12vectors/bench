@@ -32,7 +32,6 @@ applying — while a comment may always be saved.
 from __future__ import annotations
 
 import json
-import os
 import re
 import secrets
 import threading
@@ -44,6 +43,7 @@ import agents
 import config
 import phases
 import profiles
+import records
 import state
 import taskfiles
 
@@ -81,11 +81,7 @@ def _path(job_id: str) -> Path:
 
 
 def _save(job: dict) -> None:
-    config.REFINE_DIR.mkdir(parents=True, exist_ok=True)
-    path = _path(job["id"])
-    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
-    tmp.write_text(json.dumps(job, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    records.write_json(_path(job["id"]), job)
 
 
 def _load() -> None:

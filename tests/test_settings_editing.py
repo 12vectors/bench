@@ -367,7 +367,7 @@ class ApplyWritesOnceAtomically(unittest.TestCase):
         self.assertEqual(before, fx.raw(), "a failed write changed the file")
         # and no temporary file is left lying beside it
         self.assertEqual([], [p.name for p in fx.dir.iterdir()
-                              if ".tmp" in p.name])
+                              if p.name.endswith((".tmp", "-tmp"))])
 
     def test_a_board_with_no_document_yet_writes_one(self):
         fx = Fixture(self, doc=None)

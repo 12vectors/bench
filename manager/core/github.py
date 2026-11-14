@@ -32,6 +32,7 @@ import config
 import drive as drive_mod
 import gates
 import plans
+import records
 import reports
 import reviews
 import state
@@ -652,11 +653,7 @@ def _persist_snapshot(filename: str, entry: dict) -> None:
                    "observed": entry.get("ts") or time.time()})
     path = _snapshot_path(filename)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        scratch = path.with_suffix(".json.tmp")
-        scratch.write_text(json.dumps(stored, indent=2, sort_keys=True),
-                           encoding="utf-8")
-        scratch.replace(path)
+        records.write_json(path, stored)
     except OSError:
         pass
 
@@ -996,13 +993,8 @@ def recovery(filename: str) -> dict | None:
 def _remember(filename: str, record: dict) -> None:
     """Write the record whole or not at all: a temporary file, then
     `os.replace`, so a board killed mid-write leaves the previous one."""
-    _recovery_dir().mkdir(parents=True, exist_ok=True)
     stored = dict(record, task=filename, at=time.time())
-    path = _recovery_path(filename)
-    scratch = path.with_suffix(".json.tmp")
-    scratch.write_text(json.dumps(stored, indent=2, sort_keys=True),
-                       encoding="utf-8")
-    scratch.replace(path)
+    records.write_json(_recovery_path(filename), stored)
 
 
 def forget_recovery(filename: str) -> bool:

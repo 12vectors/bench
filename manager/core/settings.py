@@ -68,6 +68,7 @@ import config
 import doctor
 import gates
 import profiles
+import records
 import required
 import sync
 import taskfiles
@@ -1983,16 +1984,9 @@ def apply(payload: dict, *, actor: str | None = None) -> dict:
             preserved.append(key)
 
     raw = json.dumps(merged, indent=2, sort_keys=False) + "\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + f".bench-{os.getpid()}.tmp")
     try:
-        temp.write_text(raw, encoding="utf-8")
-        os.replace(temp, path)
+        records.write_text(path, raw)
     except OSError as exc:
-        try:
-            temp.unlink()
-        except OSError:
-            pass
         raise OSError(
             f"the document could not be written ({exc}). The previous "
             f"settings are intact: nothing was changed.") from exc
