@@ -194,7 +194,7 @@ def _write_pr_line(filename: str, url: str) -> None:
         text = STATUS_RE.sub(lambda m: f"{m.group(0)}\n**PR:** {url}", text, count=1)
     else:
         text = f"**PR:** {url}\n\n" + text
-    path.write_text(text, encoding="utf-8")
+    records.write_text(path, text, mkdir=False)
     commit_edit(filename, stage, "PR opened")
 
 
@@ -695,14 +695,11 @@ def _record_delivered(filename: str, commit: str | None, target: str,
                       how: str) -> None:
     if not commit:
         return
-    path = _snapshot_path(filename, "delivered")
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"v": 1, "task": filename,
-                                    "commit": commit, "target": target,
-                                    "how": how, "at": time.time()},
-                                   indent=2, sort_keys=True),
-                        encoding="utf-8")
+        records.write_json(_snapshot_path(filename, "delivered"),
+                           {"v": 1, "task": filename, "commit": commit,
+                            "target": target, "how": how, "at": time.time()},
+                           durable=True)
     except OSError:
         pass
 
@@ -994,7 +991,7 @@ def _remember(filename: str, record: dict) -> None:
     """Write the record whole or not at all: a temporary file, then
     `os.replace`, so a board killed mid-write leaves the previous one."""
     stored = dict(record, task=filename, at=time.time())
-    records.write_json(_recovery_path(filename), stored)
+    records.write_json(_recovery_path(filename), stored, durable=True)
 
 
 def forget_recovery(filename: str) -> bool:

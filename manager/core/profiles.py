@@ -119,6 +119,7 @@ import time
 from pathlib import Path
 
 import config
+import records
 
 # The schema a document declares itself in, and the resolver that reads
 # it. Both travel in every manifest: a profile recorded by one revision of
@@ -2699,14 +2700,12 @@ def record(agent_id: str, found: dict) -> dict:
     """Freeze this run's policy and inputs. Machine-local, for plans'
     reason: it holds this machine's paths, and no part of it belongs in a
     repository anybody else pulls."""
-    config.MANIFESTS_DIR.mkdir(parents=True, exist_ok=True)
     stored = dict(found)
     stored["agent"] = agent_id
     stored["recorded"] = time.time()
     stored.pop("blockers", None)
-    manifest_path(agent_id).write_text(
-        json.dumps(stored, indent=2, sort_keys=True, default=str),
-        encoding="utf-8")
+    records.write_json(manifest_path(agent_id), stored, default=str,
+                       durable=True)
     return stored
 
 

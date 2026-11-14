@@ -95,6 +95,7 @@ from pathlib import Path
 import config
 import plans
 import profiles
+import records
 import state
 
 VERSION = 1
@@ -455,10 +456,7 @@ def _store(record: dict) -> dict:
     global _EPOCH
     with state.LOCK:
         _EPOCH += 1
-    config.REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
-    record_path(record["agent"]).write_text(
-        json.dumps(record, indent=2, sort_keys=True, default=str),
-        encoding="utf-8")
+    records.write_json(record_path(record["agent"]), record, default=str)
     return record
 
 

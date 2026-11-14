@@ -50,6 +50,7 @@ import gates
 import plans
 import profiles
 import progress
+import records
 import reports
 import reviews
 import state
@@ -677,7 +678,7 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
         # to what it said before the claim, committed the same way the
         # claim was.
         if card_path.read_text(encoding="utf-8") != unclaimed:
-            card_path.write_text(unclaimed, encoding="utf-8")
+            records.write_text(card_path, unclaimed, mkdir=False)
             commit_edit(filename, stage, "claim released: launch refused")
         raise
 

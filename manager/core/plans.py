@@ -79,6 +79,7 @@ import time
 from pathlib import Path
 
 import config
+import records
 import taskfiles
 
 # Where a recorded plan lives, and what the file is called. One per card,
@@ -362,13 +363,11 @@ def record(plan: dict) -> dict:
     What reaches shared history is the portable half (`portable`), and the
     two are kept apart here rather than at each reader.
     """
-    config.PLANS_DIR.mkdir(parents=True, exist_ok=True)
     stored = dict(plan)
     stored["v"] = PLAN_VERSION
     stored["recorded"] = time.time()
     stored.pop("blockers", None)
-    plan_path(plan["task"]).write_text(
-        json.dumps(stored, indent=2, sort_keys=True), encoding="utf-8")
+    records.write_json(plan_path(plan["task"]), stored, durable=True)
     return stored
 
 

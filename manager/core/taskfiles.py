@@ -508,7 +508,7 @@ def set_assignee(filename: str, stage: str, name: str) -> None:
                    if ASSIGNEE_RE.search(text) else _set_assignee(text, name))
         if updated == text:
             return
-        path.write_text(updated, encoding="utf-8")
+        _atomic_write(path, updated)
     commit_edit(filename, stage, f"claimed by {name}")
 
 
@@ -606,7 +606,7 @@ def _relocate(filename: str, src: Path, dst: Path, text: str, target: str,
     _refuse_escape(src, dst)
     state.expect_move(filename, target, actor, quiet=quiet)
     dst.parent.mkdir(parents=True, exist_ok=True)
-    src.write_text(text, encoding="utf-8")
+    _atomic_write(src, text)
     shutil.move(str(src), str(dst))
     if config.COMMIT_MOVES and commit:
         _commit_move(filename, target, src, dst,
@@ -698,7 +698,7 @@ def append_to_section(filename: str, stage: str, heading: str, line: str,
         else:
             text = text.rstrip("\n") + f"\n\n## {heading}\n\n{line}\n"
         try:
-            path.write_text(text, encoding="utf-8")
+            _atomic_write(path, text)
         except OSError:
             return False
     commit_edit(filename, stage, what)

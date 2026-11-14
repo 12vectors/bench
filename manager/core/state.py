@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 import config
+import records
 
 LOCK = threading.Lock()
 CLIENTS: set[queue.Queue] = set()          # one queue per open SSE connection
@@ -80,8 +81,7 @@ def persist_identity(sid: str, identity: dict) -> None:
     if path is None:
         return
     try:
-        config.SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(identity), encoding="utf-8")
+        records.write_json(path, identity, indent=None, sort_keys=False)
     except OSError:
         pass
 

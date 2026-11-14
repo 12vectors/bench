@@ -99,6 +99,7 @@ from pathlib import Path
 import acceptance
 import config
 import profiles
+import records
 import state
 import taskfiles
 import verify
@@ -450,10 +451,11 @@ def _read_json(path: Path, fallback):
     return data if isinstance(data, type(fallback)) else fallback
 
 
-def _write_json(path: Path, payload) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str),
-                    encoding="utf-8")
+def _write_json(path: Path, payload, *, durable: bool = False) -> None:
+    """Whole or not at all; `durable` for the records that attest or
+    authorize (verdicts, overrides). Always under `_LOCK`, which owns
+    every read-modify-write of this directory."""
+    records.write_json(path, payload, default=str, durable=durable)
 
 
 # ── application git, read once per pass ────────────────────────────────
@@ -668,7 +670,7 @@ def record_verdict(filename: str, *, verdict: str, head: str | None,
     with _LOCK:
         found = _read_json(path, [])
         found.append(record)
-        _write_json(path, found[-50:])
+        _write_json(path, found[-50:], durable=True)
     _bump()
     return record
 
@@ -1952,7 +1954,7 @@ def override(filename: str, scope: str, *, actor: str, reason: str,
             return {"override": record, "decision": evaluate(filename, scope),
                     "duplicate": True}
         found.append(record)
-        _write_json(path, found[-50:])
+        _write_json(path, found[-50:], durable=True)
     _bump()
     state.record_board_event({
         "kind": "agent", "actor": "you", "file": filename,

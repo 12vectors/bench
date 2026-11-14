@@ -45,6 +45,7 @@ import time
 from pathlib import Path
 
 import config
+import records
 import state
 
 DRIVE: dict | None = None      # the current (or last) drive
@@ -66,12 +67,11 @@ OWNER_ENV = "BENCH_PREVIEW_OWNER"
 def _persist() -> None:
     """The drive outlives the board (it is its own process group), so its
     identity lives on disk; a restarted board re-adopts it via adopt()."""
-    import json
     try:
         if DRIVE and DRIVE["status"] in ("starting", "up"):
-            STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            STATE_FILE.write_text(json.dumps(
-                {k: DRIVE.get(k) for k in PERSISTED if k in DRIVE}))
+            records.write_json(STATE_FILE, {k: DRIVE.get(k) for k in PERSISTED
+                                            if k in DRIVE},
+                               indent=None, sort_keys=False)
         else:
             STATE_FILE.unlink(missing_ok=True)
     except OSError:
@@ -467,7 +467,7 @@ def _scrub_log(drive: dict) -> None:
         text = path.read_text(encoding="utf-8", errors="replace")
         clean = previews.scrub(text, drive.get("secrets"))
         if clean != text:
-            path.write_text(clean, encoding="utf-8")
+            records.write_text(path, clean, mkdir=False)
     except OSError:
         pass
 

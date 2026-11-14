@@ -1207,7 +1207,7 @@ def _scrub_file(path: Path, values) -> None:
         text = path.read_text(encoding="utf-8", errors="replace")
         clean = scrub(text, values)
         if clean != text:
-            path.write_text(clean, encoding="utf-8")
+            records.write_text(path, clean, mkdir=False)
     except OSError:
         pass
 
