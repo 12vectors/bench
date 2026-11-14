@@ -1040,7 +1040,7 @@ def governance_problems(core: Path = CORE, tests: Path = TESTS) -> list[str]:
 # Stdlib leaves (check 10): modules that import nothing from core and
 # nothing outside the standard library, anywhere in the file. Each joins
 # the list in the package that builds it (WP03a: gitproc).
-STDLIB_LEAVES = ("gitproc",)
+STDLIB_LEAVES = ("gitproc", "records")
 
 
 def leaf_problems(core: Path) -> list[str]:
@@ -1122,7 +1122,7 @@ class DocumentIsTheSource(unittest.TestCase):
         """AGENTS.md's one-line map is a summary for people; it may not
         drift from the block that is the source."""
         text = (REPO / "AGENTS.md").read_text(encoding="utf-8")
-        line = next(l for l in text.splitlines() if l.startswith("gitproc < config < "))
+        line = next(l for l in text.splitlines() if l.startswith("gitproc / records < config < "))
         tiers = [set(t.replace("/", " ").split()) for t in line.split(" < ")]
         self.assertEqual(tiers, [set(l) for l in self.blocks["current"]["layers"]])
 

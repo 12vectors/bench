@@ -59,12 +59,17 @@ names reached across modules — live in
 `tests/test_architecture.py`:
 
 ```
-gitproc < config < state / reports / templates < taskfiles < plans / profiles < reviews < verify < progress < acceptance < gates < required < doctor < commands / drive / events / sync < github < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < watch / httpd < board
+gitproc / records < config < state / reports / templates < taskfiles < plans / profiles < reviews < verify < progress < acceptance < gates < required < doctor < commands / drive / events / sync < github < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < watch / httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
   `--no-textconv --no-ext-diff` switches, the hardened environment and
   the one subprocess call. Stdlib only; imports no core module
+- `records.py` — how a record reaches the disk whole: a unique temporary
+  file in the same directory and `os.replace`, `durable=True` adding the
+  file and directory flush, tolerant reads, and the interprocess lock a
+  record family with more than one writing process holds. Stdlib only;
+  takes paths as arguments and knows no record family
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution;
   `git_argv`, `git_env` and `git_run` as patchable wrappers over `gitproc`
 - `state.py` — shared registries, event log persistence, SSE fan-out

@@ -38,7 +38,7 @@ the top level. `composition` modules are imported by nothing outside
 composition.
 
 ```architecture current
-L0  gitproc
+L0  gitproc records
 L1  config
 L2  state reports templates
 L3  taskfiles
@@ -144,7 +144,7 @@ L28 httpd
 L29 board
 composition: board httpd routes
 retired: github
-new: records redact gitrepo githost gatepolicy evidence resultidentity staleness changes completion stacks routes
+new: redact gitrepo githost gatepolicy evidence resultidentity staleness changes completion stacks routes
 ```
 
 The plan wrote same-layer orderings as `gitrepo → githost`; with the
@@ -234,7 +234,8 @@ core module:
    that module. One computed target is counted rather than read.
 10. Stdlib leaves are pure: `gitproc` imports no core module, at the top
    level or inside a function, and nothing outside the standard library
-   (task 109). `records` and `redact` join the check when they exist.
+   (task 109) and `records` (task 110). `redact` joins the check when it
+   exists.
 
 An exception's identity is file, enclosing function and what it reaches,
 never a line number, so moving code does not churn it; each entry keeps
@@ -248,7 +249,7 @@ inventory for comparison and writes nothing.
 
 **Deferred**, because what they check does not exist yet — each is
 written by the package that builds its subject, not now against
-nothing: purity of `records`, `redact` and `providers/*`
+nothing: purity of `redact` and `providers/*`
 (WP03, WP08); route *classes* beyond the doors that exist (WP04);
 frontend import direction and offline assets (checks 7 and 8; WP14–15).
 
