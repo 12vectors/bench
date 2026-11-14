@@ -19,6 +19,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -71,9 +72,9 @@ elif args[:2] == ["pr", "merge"]:
                          "policy prohibits the merge.\\n")
         sys.exit(1)
     # what GitHub's merge leaves on the remote: the base holds the head
-    sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})
-    import fake_origin
-    fake_origin.merge_pr(fake_origin.origin_url(), "{BRANCH}")
+    sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})
+    from tests.product import fakehost
+    fakehost.merge_pr(fakehost.origin_url(), "{BRANCH}")
     print("Merged pull request #7")
 else:
     sys.exit(0)
@@ -595,7 +596,7 @@ class TheCardFace(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = (REPO / "manager" / "core" / "board.html").read_text(encoding="utf-8")
+        cls.html = pagesource.page()
         cls.httpd = (REPO / "manager" / "core" / "httpd.py").read_text(encoding="utf-8")
 
     def test_the_board_knows_who_it_is(self):

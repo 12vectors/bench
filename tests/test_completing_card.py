@@ -19,6 +19,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -28,7 +29,6 @@ import drive as drive_mod  # noqa: E402
 import github  # noqa: E402
 import state  # noqa: E402
 
-BOARD_HTML = REPO / "manager" / "core" / "board.html"
 FILENAME = "38-a-card-being-completed.md"
 STEM = FILENAME[:-3]
 BRANCH = f"task/{STEM}"
@@ -314,7 +314,7 @@ class TheCardFace(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD_HTML.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
         cls.card = re.search(r"function cardFor\(task\) \{.*?\n\}", cls.html, re.S).group(0)
 
     def test_the_card_renders_from_the_server_s_truth(self):

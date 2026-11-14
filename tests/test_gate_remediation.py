@@ -38,6 +38,7 @@ import sys
 import threading
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -597,9 +598,9 @@ if args[:2] == ["pr", "merge"]:
             sys.exit(1)
     (state / "merged").write_text(tip)
     # and the base on the remote now holds it, as GitHub's merge leaves it
-    sys.path.insert(0, {tests!r})
-    import fake_origin
-    fake_origin.merge_pr({bare!r}, {branch!r})
+    sys.path.insert(0, {root!r})
+    from tests.product import fakehost
+    fakehost.merge_pr({bare!r}, {branch!r})
     after = state / "advance-after-merge"
     if after.exists():
         subprocess.run(["git", "--git-dir", {bare!r}, "update-ref", ref,
@@ -762,7 +763,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
                                      state=str(self.gh_state),
                                      branch=f"task/{CARD[:-3]}",
                                      bare=str(bare),
-                                     tests=str(Path(__file__).resolve().parent)),
+                                     root=str(Path(__file__).resolve().parents[1])),
                      encoding="utf-8")
         gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
         self.patch(GIT_REMOTE="origin", APP_MERGE="origin", GH_BIN=str(gh))
@@ -998,8 +999,7 @@ class IntendedWritesAreNotAnOsBoundary(GateCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.page = (REPO / "manager" / "core" / "board.html").read_text(
-            encoding="utf-8")
+        cls.page = pagesource.page()
 
     def between(self, start: str, end: str) -> str:
         at = self.page.index(start)
@@ -1120,8 +1120,7 @@ class TheSheetSaysWhichScope(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.page = (REPO / "manager" / "core" / "board.html").read_text(
-            encoding="utf-8")
+        cls.page = pagesource.page()
 
     def between(self, start: str, end: str) -> str:
         at = self.page.index(start)

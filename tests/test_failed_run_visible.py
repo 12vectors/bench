@@ -25,6 +25,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -34,7 +35,6 @@ import config  # noqa: E402
 import state  # noqa: E402
 import watch  # noqa: E402
 
-BOARD = REPO / "manager" / "core" / "board.html"
 
 FILENAME = "11-a-run-that-dies.md"
 STEM = FILENAME[:-3]
@@ -336,7 +336,7 @@ class TheCardWearsIt(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def rule(self, selector: str) -> str:
         m = re.search(re.escape(selector) + r"\{([^}]*)\}", self.html)

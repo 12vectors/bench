@@ -18,15 +18,16 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
-BOARD = Path(__file__).resolve().parents[1] / "manager" / "core" / "board.html"
+BOARD = pagesource.SHELL
 sys.path.insert(0, str(BOARD.parent))
 
 
 class Source(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
         cls.card = re.search(r"function cardFor\(task\) \{.*?\n\}\n",
                              cls.html, re.S).group(0)
 

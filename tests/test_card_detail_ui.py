@@ -23,6 +23,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "manager" / "core"))
@@ -31,9 +32,8 @@ import acceptance  # noqa: E402
 import progress  # noqa: E402
 import taskfiles  # noqa: E402
 
-BOARD = ROOT / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
-HTML = BOARD.read_text(encoding="utf-8")
+HTML = pagesource.page()
 FILE = "90-x.md"
 HOSTILE = '<img src=x onerror=alert(1)>'
 

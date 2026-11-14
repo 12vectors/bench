@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 # the module, not the class: a class imported by name would be collected
 # here a second time and run as itself
@@ -39,7 +40,7 @@ import phases  # noqa: E402
 import taskfiles  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
-HTML = (REPO / "manager" / "core" / "board.html").read_text(encoding="utf-8")
+HTML = pagesource.page()
 NODE = shutil.which("node")
 
 

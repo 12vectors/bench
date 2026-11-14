@@ -24,6 +24,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -49,8 +50,8 @@ REFUSE = "#!/bin/sh\necho 'protected branch hook declined: main is protected' >&
 # what the GH_MODE says GitHub did.
 FAKE_GH = f'''#!/usr/bin/env python3
 import json, os, sys
-sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})
-import fake_origin
+sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})
+from tests.product import fakehost
 args = sys.argv[1:]
 with open(os.environ["GH_LOG"], "a") as fh:
     fh.write(json.dumps(args) + "\\n")
@@ -62,12 +63,12 @@ elif args[:2] == ["pr", "merge"] and "--help" not in args:
         sys.stderr.write("GraphQL: Required status check is expected (mergePullRequest)\\n")
         sys.exit(1)
     if mode == "lost-reply":
-        fake_origin.merge_pr(fake_origin.origin_url(), "{BRANCH}")
+        fakehost.merge_pr(fakehost.origin_url(), "{BRANCH}")
         sys.stderr.write("Post https://api.github.com/graphql: net/http: timeout\\n")
         sys.exit(1)
     if mode == "silent":
         sys.exit(0)           # says merged; the remote holds nothing new
-    fake_origin.merge_pr(fake_origin.origin_url(), "{BRANCH}")
+    fakehost.merge_pr(fakehost.origin_url(), "{BRANCH}")
 sys.exit(0)
 '''
 
@@ -511,9 +512,8 @@ class TheMergeOnOrigin(Delivery):
 
         self.assert_held(result, "unconfirmed")
         self.assertIn("GitHub reported the merge", self.said())
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        import fake_origin
-        fake_origin.merge_pr(str(self.origin), BRANCH)   # it lands later
+        from tests.product import fakehost
+        fakehost.merge_pr(str(self.origin), BRANCH)   # it lands later
         asked = self.gh_merges()
 
         result = self.complete()
@@ -639,7 +639,7 @@ class TheSheetSource(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = (REPO / "manager" / "core" / "board.html").read_text(encoding="utf-8")
+        cls.html = pagesource.page()
         start = cls.html.index("function completeSheet")
         cls.sheet = cls.html[start:cls.html.index("\nfunction phaseSheet")]
 

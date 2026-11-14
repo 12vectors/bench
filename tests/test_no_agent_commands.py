@@ -25,6 +25,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 CORE = REPO / "manager" / "core"
@@ -35,7 +36,6 @@ import config  # noqa: E402
 
 from tests.test_phase_runs import PhaseCase, card, git  # noqa: E402
 
-BOARD = CORE / "board.html"
 NODE = shutil.which("node")
 ALONE = "77-alone.md"
 PR_URL = "https://github.com/acme/widget/pull/7"
@@ -112,7 +112,7 @@ class TheStatePayloadSaysWhichItIs(unittest.TestCase):
         self.assertTrue(self.flag("python3 -m unittest"))
 
     def test_the_page_does_not_read_the_raw_setting(self):
-        html = BOARD.read_text(encoding="utf-8")
+        html = pagesource.page()
         self.assertNotIn("state.agentCommands", html)
         self.assertIn("hasAgentCommands", html)
 
@@ -124,7 +124,7 @@ class TheHeaderChip(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
         match = re.search(r"function renderAgentCommands\(\) \{.*?\n\}",
                           cls.html, re.S)
         if match is None:

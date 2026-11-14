@@ -35,6 +35,7 @@ import unittest
 from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from tests import pagesource
 
 from tests.test_integration_gates import CARD, wait_for  # noqa: E402
 from tests.test_result_identity import SECRET, IdentityCase  # noqa: E402
@@ -754,7 +755,7 @@ class TheShim(unittest.TestCase):
         self.assertIn("--again", result.stdout)
 
     def test_the_page_reruns_with_again(self):
-        html = (Path(config.CORE) / "board.html").read_text(encoding="utf-8")
+        html = pagesource.page()
         start = html.index("async function rerunCheck")
         self.assertIn("again: true", html[start:start + 600])
 

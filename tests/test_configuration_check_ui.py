@@ -22,10 +22,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 CORE = REPO / "manager" / "core"
-HTML = (CORE / "board.html").read_text(encoding="utf-8")
+HTML = pagesource.page()
 sys.path.insert(0, str(CORE))
 
 import config  # noqa: E402

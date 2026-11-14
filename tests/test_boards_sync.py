@@ -20,6 +20,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -688,7 +689,7 @@ class TheSyncChip(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = (REPO / "manager" / "core" / "board.html").read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_a_server_toast_reaches_the_person(self):
         self.assertIn("msg.type === 'toast'", self.html)

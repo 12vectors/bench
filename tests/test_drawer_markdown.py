@@ -25,12 +25,12 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 ROOT = Path(__file__).resolve().parents[1]
-BOARD = ROOT / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
 
-HTML = BOARD.read_text(encoding="utf-8")
+HTML = pagesource.page()
 
 
 def lift(pattern: str, what: str) -> str:

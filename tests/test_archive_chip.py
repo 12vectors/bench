@@ -20,6 +20,7 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 CORE = REPO / "manager" / "core"
@@ -28,12 +29,11 @@ sys.path.insert(0, str(CORE))
 import config  # noqa: E402
 import taskfiles  # noqa: E402
 
-BOARD = CORE / "board.html"
 TRAY_GLYPH = "⌸"
 
 
 def html() -> str:
-    return BOARD.read_text(encoding="utf-8")
+    return pagesource.page()
 
 
 class OneAuthorityForTheRule(unittest.TestCase):

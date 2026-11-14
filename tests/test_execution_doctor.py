@@ -37,6 +37,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 CORE = REPO / "manager" / "core"
@@ -1060,7 +1061,7 @@ class ThePage(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = (CORE / "board.html").read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_the_inspector_is_discoverable_from_the_header(self):
         self.assertIn('id="doctorchip"', self.html)

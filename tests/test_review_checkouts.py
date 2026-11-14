@@ -46,6 +46,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -60,7 +61,6 @@ import state  # noqa: E402
 import templates  # noqa: E402
 import verify  # noqa: E402
 
-BOARD = REPO / "manager" / "core" / "board.html"
 
 CARD = "69-provision-pinned-review-checkouts.md"
 STEM = CARD[:-3]
@@ -1275,7 +1275,7 @@ class ThePageSaysWhereAReviewRan(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_the_review_glyph_is_its_own_and_takes_nobody_elses(self):
         """Colour means state here and a glyph means one thing: `⌸` is the

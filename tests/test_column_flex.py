@@ -13,8 +13,7 @@ from __future__ import annotations
 import re
 import unittest
 from pathlib import Path
-
-BOARD = Path(__file__).resolve().parents[1] / "manager" / "core" / "board.html"
+from tests import pagesource
 
 COLUMNS = 5  # backlog → to-do → in-progress → review → done
 
@@ -22,7 +21,7 @@ COLUMNS = 5  # backlog → to-do → in-progress → review → done
 class ColumnFlexTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
         m = re.search(r"\.kcol\{([^}]*)\}", cls.html)
         assert m, "board.html lost its .kcol rule"
         cls.kcol = m.group(1)

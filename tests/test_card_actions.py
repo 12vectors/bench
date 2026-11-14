@@ -14,8 +14,8 @@ from __future__ import annotations
 import re
 import unittest
 from pathlib import Path
+from tests import pagesource
 
-BOARD = Path(__file__).resolve().parents[1] / "manager" / "core" / "board.html"
 
 
 class StableGeometryTests(unittest.TestCase):
@@ -23,7 +23,7 @@ class StableGeometryTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def rule(self, selector: str) -> str:
         m = re.search(re.escape(selector) + r"\{([^}]*)\}", self.html)
@@ -80,7 +80,7 @@ class ArmedWindowTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def arm_ms(self) -> int:
         m = re.search(r"const ARM_MS = (\d+)", self.html)
@@ -117,7 +117,7 @@ class BusyStateTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_fire_locks_before_the_request_leaves(self):
         """lockAction (disable + busy class) is the first thing fireAction
@@ -164,7 +164,7 @@ class OneSlotBuilderTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_hover_actions_and_command_chips_share_the_machine(self):
         self.assertEqual(len(re.findall(r"(?<!function )wireAction\(btn,", self.html)), 11,

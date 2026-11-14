@@ -41,6 +41,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from tests import pagesource
 
 from tests.test_setup_guide import (HEADERS, Project, by_id, free_port, git,
                                     snapshot)
@@ -641,12 +642,9 @@ class Reconnect(unittest.TestCase):
         self.assertTrue(alive(pid))
 
 
-PAGE = Path(__file__).resolve().parents[1] / "manager" / "core" / "board.html"
-
-
 class ThePageKeepsTheActsApart(unittest.TestCase):
     def setUp(self):
-        self.html = PAGE.read_text(encoding="utf-8")
+        self.html = pagesource.page()
 
     def test_five_separate_controls_and_the_two_that_run_code_are_armed(self):
         for act in ("validate", "configure", "prepare", "cancel", "start",

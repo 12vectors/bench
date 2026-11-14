@@ -19,6 +19,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -27,7 +28,6 @@ import config  # noqa: E402
 import state  # noqa: E402
 import taskfiles  # noqa: E402
 
-BOARD = REPO / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
 
 
@@ -380,7 +380,7 @@ class TheActionOnTheCard(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def offer(self) -> str:
         match = re.search(r"function joinablePhases\(task\) \{.*?\n\}", self.html, re.S)
