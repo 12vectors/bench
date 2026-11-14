@@ -148,8 +148,31 @@ class ApprovedContextBecomesARead(Fixture):
                     [r for r in perms_after.get("deny", [])
                      if not r.startswith("Edit(")],
                     perms_before.get("deny", []))
-                self.assertEqual(hook_settings.launch_flags(mode),
-                                 hook_settings.launch_flags(mode))
+                # nothing outside `permissions` moves (the hooks document)
+                self.assertEqual(
+                    {k: v for k, v in after.items() if k != "permissions"},
+                    {k: v for k, v in before.items() if k != "permissions"})
+
+    def test_launch_stances_keep_their_tool_exclusions(self):
+        """The flags `run` passes beside --settings take no read input at
+        all; pin what they are, so the reviewer's edit-tool exclusion and
+        refine's shell exclusion are asserted rather than compared with
+        themselves."""
+        edit_tools = {"Edit", "Write", "NotebookEdit"}
+        self.assertEqual(hook_settings.launch_flags("work"),
+                         ["--permission-mode", "acceptEdits"])
+        self.assertEqual(hook_settings.launch_flags("act-pr"),
+                         ["--permission-mode", "acceptEdits"])
+        for mode, extra in (("review", set()), ("refine", {"Bash"})):
+            with self.subTest(mode=mode):
+                flags = hook_settings.launch_flags(mode)
+                self.assertEqual(flags[:3], ["--permission-mode", "default",
+                                             "--disallowedTools"])
+                withheld = set(flags[3:])
+                self.assertTrue(edit_tools <= withheld, withheld)
+                self.assertTrue(extra <= withheld, withheld)
+                if mode == "review":
+                    self.assertNotIn("Bash", withheld)
 
     def test_no_context_renders_exactly_the_legacy_document(self):
         for mode in ("work", "act-pr", "review", "refine", ""):
@@ -468,12 +491,22 @@ prompt = args[args.index("-p") + 1]
 perms = json.loads(args[args.index("--settings") + 1]).get("permissions", {})
 allow, deny = perms.get("allow", []), perms.get("deny", [])
 withheld = args[args.index("--disallowedTools") + 1:] if "--disallowedTools" in args else []
+tools = [t for t in ("Read", "Edit", "Write", "NotebookEdit", "Bash")
+         if t not in withheld]
+# the vendor's own roster, first, as the real stream carries it
+print(json.dumps({"type": "system", "subtype": "init", "tools": tools}))
 n = 0
+denials = []
 def call(name, inp, ok, body):
     global n
     n += 1
     print(json.dumps({"type": "assistant", "message": {"content": [
         {"type": "tool_use", "id": f"t{n}", "name": name, "input": inp}]}}))
+    if not ok:
+        # actual-shaped: a system event whose `message` is a plain string
+        print(json.dumps({"type": "system", "subtype": "permission_denied",
+                          "message": f"Permission to use {name} was denied"}))
+        denials.append({"tool_name": name, "tool_use_id": f"t{n}"})
     print(json.dumps({"type": "user", "message": {"content": [
         {"type": "tool_result", "tool_use_id": f"t{n}", "is_error": not ok,
          "content": body}]}}))
@@ -491,6 +524,11 @@ for path in re.findall(r"Write tool to overwrite (\S+) ", prompt):
 if "git commit" in prompt:
     call("Bash", {"command": "git commit --allow-empty -m probe"},
          any(r.startswith("Bash(git commit") for r in allow), "denied")
+if "git push" in prompt:
+    call("Bash", {"command": "git push origin main"},
+         any(r.startswith("Bash(git push") for r in allow), "denied")
+print(json.dumps({"type": "result", "subtype": "success",
+                  "result": "done", "permission_denials": denials}))
 '''
 
 
@@ -527,11 +565,160 @@ class SmokeHarnessPlumbing(unittest.TestCase):
                 for p in report["probes"] for r in p["rows"]}
         self.assertEqual(code, 0, rows)
         self.assertEqual(set(rows.values()), {"passed"})
-        self.assertEqual(len(rows), 8)
+        self.assertEqual(len(rows), 10)
         self.assertTrue(report["source"]["head"])
         work = report["probes"][0]
         self.assertIn("--permission-mode", work["adapterArgv"])
         self.assertNotIn("--output-format", work["adapterArgv"])
+        # every negative pass carries the attempted call and its refusal
+        for probe in report["probes"]:
+            for row in probe["rows"]:
+                with self.subTest(mode=probe["mode"], check=row["check"]):
+                    self.assertTrue(row["evidence"], row)
+        review = {r["check"]: r for r in report["probes"][1]["rows"]}
+        for check in ("reviewer cannot commit", "reviewer cannot push"):
+            self.assertTrue(all(c["refused"] for c in review[check]["evidence"]))
+        # the raw stream is kept beside the report, byte for byte
+        for probe in report["probes"]:
+            kept = Path(probe["transcript"])
+            self.assertEqual(kept.parent, out)
+            self.assertEqual(_sha(kept), probe["transcriptSha256"])
+
+    def _fx(self):
+        fx = self.smoke.build_fixture(self.tmp)
+        before = {"input": _sha(fx["files"]["input"]),
+                  "head": self.smoke._git(fx["work"], "rev-parse", "HEAD"),
+                  "remote": self.smoke._git(fx["remote"], "rev-parse", "main")}
+        return fx, before
+
+    def test_string_message_events_do_not_crash_the_parser(self):
+        """The crash the supervisor reproduced: Claude's stream carries
+        system events (a permission denial among them) whose `message` is
+        a plain string, and `tool_calls` assumed every message was a
+        dict."""
+        lines = [
+            json.dumps({"type": "system", "subtype": "init",
+                        "tools": ["Read", "Bash"]}),
+            json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "a", "name": "Read",
+                 "input": {"file_path": "/x/unapproved.md"}}]}}),
+            json.dumps({"type": "system", "subtype": "permission_denied",
+                        "message": "Permission to use Read was denied"}),
+            json.dumps({"type": "user", "message": "a bare string"}),
+            json.dumps({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "a", "is_error": True,
+                 "content": "Permission to read denied"}]}}),
+            json.dumps(["not", "an", "object"]),
+            "not json at all",
+            json.dumps({"type": "result", "subtype": "success",
+                        "permission_denials": [{"tool_use_id": "a",
+                                                "tool_name": "Read"}]}),
+        ]
+        calls = self.smoke.tool_calls(lines)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0]["refused"])
+        self.assertEqual(self.smoke.offered_tools(lines), ["Read", "Bash"])
+
+    def test_a_denial_recorded_only_by_the_vendor_counts_as_a_refusal(self):
+        lines = [json.dumps({"type": "assistant", "message": {"content": [
+                    {"type": "tool_use", "id": "w", "name": "Write",
+                     "input": {"file_path": "/x"}}]}}),
+                 json.dumps({"type": "result", "permission_denials": [
+                     {"tool_use_id": "w"}]})]
+        self.assertTrue(self.smoke.tool_calls(lines)[0]["refused"])
+
+    def test_negative_probes_with_no_attempt_are_never_a_pass(self):
+        fx, before = self._fx()
+        silent = [json.dumps({"type": "system", "subtype": "init",
+                              "tools": ["Read", "Bash"]})]
+        argv = ["-p", "x", "--disallowedTools", "Edit", "Write", "NotebookEdit"]
+        rows = {r["check"]: r["outcome"] for r in self.smoke.judge_review(
+            {"lines": silent, "exit": 0, "adapterArgv": argv}, fx, before)}
+        self.assertEqual(rows["reviewer cannot commit"], "inconclusive")
+        self.assertEqual(rows["reviewer cannot push"], "inconclusive")
+        work = {r["check"]: r["outcome"] for r in self.smoke.judge_work(
+            {"lines": silent, "exit": 0}, fx, before)}
+        self.assertEqual(work["unapproved neighbour read is refused"], "inconclusive")
+        self.assertEqual(work["approved input write is refused"], "inconclusive")
+
+    def test_an_attempt_with_no_recorded_answer_is_inconclusive(self):
+        fx, before = self._fx()
+        lines = [json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "c", "name": "Bash",
+             "input": {"command": "git commit --allow-empty -m probe"}}]}})]
+        rows = {r["check"]: r["outcome"] for r in self.smoke.judge_review(
+            {"lines": lines, "exit": 0,
+             "adapterArgv": ["--disallowedTools", "Edit", "Write", "NotebookEdit"]},
+            fx, before)}
+        self.assertEqual(rows["reviewer cannot commit"], "inconclusive")
+
+    def test_an_operation_the_vendor_let_through_fails(self):
+        fx, before = self._fx()
+        lines = [json.dumps({"type": "assistant", "message": {"content": [
+                    {"type": "tool_use", "id": "p", "name": "Bash",
+                     "input": {"command": "git push origin main"}}]}}),
+                 json.dumps({"type": "user", "message": {"content": [
+                     {"type": "tool_result", "tool_use_id": "p",
+                      "is_error": False, "content": "Everything up-to-date"}]}})]
+        rows = {r["check"]: r["outcome"] for r in self.smoke.judge_review(
+            {"lines": lines, "exit": 0,
+             "adapterArgv": ["--disallowedTools", "Edit", "Write", "NotebookEdit"]},
+            fx, before)}
+        self.assertEqual(rows["reviewer cannot push"], "failed")
+
+    def test_unknown_or_offered_edit_tools_are_not_a_pass(self):
+        fx, before = self._fx()
+        argv = ["--disallowedTools", "Edit", "Write", "NotebookEdit"]
+        no_init = {r["check"]: r["outcome"] for r in self.smoke.judge_review(
+            {"lines": [], "exit": 0, "adapterArgv": argv}, fx, before)}
+        self.assertEqual(no_init["reviewer is launched without edit tools"],
+                         "inconclusive")
+        self.assertEqual(no_init["approved input is not modified by the reviewer"],
+                         "inconclusive")
+        offered = [json.dumps({"type": "system", "subtype": "init",
+                               "tools": ["Read", "Edit"]})]
+        rows = {r["check"]: r["outcome"] for r in self.smoke.judge_review(
+            {"lines": offered, "exit": 0, "adapterArgv": argv}, fx, before)}
+        self.assertEqual(rows["reviewer is launched without edit tools"], "failed")
+
+    def test_a_failed_launch_passes_nothing(self):
+        fx, before = self._fx()
+        t = fx["tokens"]
+        lines = [json.dumps({"type": "assistant", "message": {"content": [
+                    {"type": "tool_use", "id": "r", "name": "Read",
+                     "input": {"file_path": str(fx["files"]["input"])}}]}}),
+                 json.dumps({"type": "user", "message": {"content": [
+                     {"type": "tool_result", "tool_use_id": "r",
+                      "content": f"token: {t['input']}"}]}})]
+        rows = self.smoke.judge_work({"lines": lines, "exit": 1,
+                                      "stderr": "boom"}, fx, before)
+        outcome = {r["check"]: r["outcome"] for r in rows}
+        self.assertEqual(outcome["vendor launch completed"], "failed")
+        self.assertEqual(outcome["approved input read succeeds"], "inconclusive")
+        self.assertNotIn("passed", outcome.values())
+
+    def test_a_judge_error_still_writes_the_report_and_keeps_the_stream(self):
+        vendor = self.tmp / "fake-claude"
+        vendor.write_text(FAKE_VENDOR, encoding="utf-8")
+        vendor.chmod(0o755)
+        out = self.tmp / "out"
+        saved = {k: os.environ.pop(k) for k in list(os.environ) if k in LEAKY}
+        self.addCleanup(os.environ.update, saved)
+
+        def broken(*_a):
+            raise AttributeError("'str' object has no attribute 'get'")
+        original = self.smoke.judge_work
+        self.smoke.judge_work = broken
+        self.addCleanup(setattr, self.smoke, "judge_work", original)
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = self.smoke.main(["--approve-real-claude", "--vendor",
+                                    str(vendor), "--out", str(out)])
+        report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+        self.addCleanup(shutil.rmtree, report["fixture"], True)
+        self.assertEqual(code, 1)
+        work = report["probes"][0]
+        self.assertEqual([r["outcome"] for r in work["rows"]], ["failed"])
+        self.assertTrue(Path(work["transcript"]).exists())
 
     def test_a_vendor_that_ignored_the_rules_is_caught(self):
         lines = [json.dumps({"message": {"content": [
