@@ -160,8 +160,15 @@ rather than taking a run id on trust.
 
 `AGENT_CONTEXT` is the read-only inputs bench pinned for the run — `[{"name",
 "path", "source", "sha256", "access": "read-only"}]`, paths and hashes
-only, never content. `path` is the pinned copy, never the original the
-selection named: approving an input approves its copy, not its source.
+only, never content. At a launch every input has been pinned, so `path`
+is the pinned copy and never the original the selection named: approving
+an input approves its copy, not its source. The exception is the
+doctor, which resolves a profile without pinning it: in its readings
+(`describe`, the stub conformance run and the separately authorised
+`--real-agent` probe) an input that resolved but has no copy carries its
+resolved source path and that path's hash, so what those readings
+describe or grant is the source selection itself. A card's launch always
+pins first and never takes that path.
 
 ### Approved workflow briefs (`AGENT_GUIDANCE`) — optional
 

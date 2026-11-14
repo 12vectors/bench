@@ -1200,7 +1200,6 @@ def _stub_rows(adapter: dict, seam: dict, intent: str,
             "AGENT_PROFILE": json.dumps(profiles.adapter_policy(found)),
             "AGENT_CONTEXT": json.dumps(profiles.adapter_context(found)),
             "AGENT_GUIDANCE": json.dumps(profiles.adapter_guidance(found)),
-        "AGENT_GUIDANCE": json.dumps(profiles.adapter_guidance(found)),
             "AGENT_CWD": str(cwd),
         })
         # The model this intent resolved, exactly as `_launch` would hand
