@@ -723,8 +723,79 @@ def replan(filename: str, stage: str) -> dict:
     """
     fresh = require(preflight(filename, stage, ignore_recorded=True))
     previous = recorded(filename)
+    # A replan that changes the review target is a retarget too: a review
+    # of the change against the old target is not a review of it against
+    # the new one, whether or not the head moved (task 119). The history
+    # is carried, never reset by a replan.
+    carried = list((previous or {}).get("retargets") or [])
+    if previous and previous.get("prBase") \
+            and previous["prBase"] != fresh.get("prBase"):
+        carried.append(_retarget_entry(
+            previous["prBase"], fresh["prBase"],
+            _ref_commit(f"refs/heads/{fresh['branch']}"), "replan"))
+    if carried:
+        fresh["retargets"] = carried[-RETARGET_HISTORY:]
     stored = record(fresh)
     return {"plan": stored, "previous": portable(previous) if previous else None}
+
+
+# ── retargeting: the review target changes, the work does not ──────────
+#
+# A retarget changes what a card's change request targets — the proposed
+# diff and the integration target — even when the head stays where it was
+# (§3.4 of the plan). So it is recorded as an event on the plan, with the
+# head it happened at, and `gates` reads the newest one: a review verdict
+# or a formal approval given before it is about the change against the old
+# target, and is never carried over to the new one. Check evidence keeps
+# its own identity rules; nothing here touches it.
+
+RETARGET_HISTORY = 20
+
+
+def _retarget_entry(old: str, new: str, head: str, how: str) -> dict:
+    return {"from": old, "to": new, "head": head or None, "how": how,
+            "at": time.time(),
+            "atIso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+
+
+def retarget(filename: str, new: str, *, old: str, head: str, how: str,
+             task: dict | None = None) -> dict:
+    """Record that this card's work now targets `new`, which it did not.
+
+    Written only by a person's confirmed stack action (`stackactions`),
+    after the host — where there is one — was read back targeting `new`:
+    the plan follows what was observed, never what was hoped. `how` says
+    which: `host` (bench made the edit and read it back), `adopted` (the
+    host already targeted `new`) or `plan-only` (no change request
+    exists). The start of the work is unchanged — it was cut from where it
+    was cut from — and so is everything else on record."""
+    saved = recorded(filename)
+    if saved:
+        stored = dict(saved)
+    else:
+        shape = declared(task) if task else {}
+        stored = {"task": filename,
+                  "branch": f"{config.TASK_BRANCH_PREFIX}{filename[:-3]}",
+                  "startBranch": shape.get("startBranch") or old,
+                  "startRef": None, "startCommit": "",
+                  "source": shape.get("source")
+                  or "adopted from the branch that already existed",
+                  "appBase": config.APP_BASE, "appRemote": app_remote(),
+                  "provenance": "adopted"}
+    stored["prBase"] = new
+    stored["prSource"] = (f"retargeted from {old} onto {new} by a person's "
+                          f"confirmed stack action ({how})")
+    stored["retargets"] = (list(stored.get("retargets") or [])
+                           + [_retarget_entry(old, new, head, how)]
+                           )[-RETARGET_HISTORY:]
+    return record(stored)
+
+
+def latest_retarget(filename: str) -> dict | None:
+    """The newest retarget recorded for this card's work, or None."""
+    found = [r for r in (recorded(filename) or {}).get("retargets") or []
+             if isinstance(r, dict) and r.get("at")]
+    return max(found, key=lambda r: float(r["at"])) if found else None
 
 
 def phase_branch_point(filename: str) -> tuple[str | None, str | None]:

@@ -21,7 +21,10 @@ file, runs a check or makes a worktree — **Check the remote** is the one
 explicit action that refreshes the remote-tracking refs it reads.
 
 **No mutation.** Nothing here rebases, force-pushes, retargets or merges a
-child into its parent. An edge's `next` names what a person does, and who.
+child into its parent. An edge's `next` names what a person does, and who,
+and a reading's `actions` names the explicit, confirmed stack actions
+(task 119) a person may take — `stackactions` performs them, after
+checking every identity again; nothing here does.
 
 **Three targets, named apart.** The *selected base* is the branch the
 work was cut from (and the commit); the *review target* is the branch its
@@ -63,12 +66,14 @@ EDGES = {
                          "not rebase", "you"),
     "parent-landed": ("Parent landed", "neutral",
                       "retarget this card onto where its parent landed "
-                      "(⌖ replan), then its change request", "you"),
+                      "(Retarget, in the Stack block)", "you"),
     "parent-landed-differently": (
         "Parent landed differently", "alarm",
         "the parent was merged without its commits (a squash or rebase "
         "merge): bring the target into this branch first, then retarget",
         "you"),
+    "retargeted": ("Retargeted onto its parent's landing", "neutral", None,
+                   None),
     "parent-closed": ("Parent closed", "alarm",
                       "decide which base this work belongs on, then "
                       "⌖ replan", "you"),
@@ -100,7 +105,7 @@ EDGES = {
 
 # The states in which the parent's work is no longer what this card waits
 # on: it landed (one way or another), or it is not there to wait for.
-LANDED = ("parent-landed", "parent-landed-differently")
+LANDED = ("parent-landed", "parent-landed-differently", "retargeted")
 
 
 # ── local reads, once per pass ─────────────────────────────────────────
@@ -245,19 +250,28 @@ def _edge(task: dict, parent: dict | None, plan: dict | None,
     pplan = plans.recorded(parent["file"])
     mine = changes.pr_snapshot(task["file"]) or {}
     target, _ = _review_target(task, plan)
-    if mine.get("baseMismatch") and not mine.get("merged") \
+    # A snapshot taken before a retarget was recorded can still name the
+    # host's base as a mismatch with the *old* plan; once the plan targets
+    # that base there is nothing left to disagree about.
+    if mine.get("baseMismatch") and mine["baseMismatch"] != target \
+            and not mine.get("merged") \
             and str(mine.get("prState") or "").upper() != "CLOSED":
         return "target-changed-on-host", (
             f"Its change request targets {mine['baseMismatch']} on the "
             f"host; its plan says {mine.get('wantBase') or target}.")
     landed = _delivered(parent, pplan, ctx)
+    ptarget = _review_target(parent, pplan)[0] if landed else ""
+    if landed and target == ptarget and target != pbranch and (
+            landed == "merged"
+            or _contains(ctx, _tip(ctx, ptarget), _tip(ctx, _work_branch(task)))):
+        return "retargeted", (
+            f"{who} has landed in {ptarget}, and this card now targets "
+            f"{ptarget} too.")
     if landed == "differently":
-        ptarget, _ = _review_target(parent, pplan)
         return "parent-landed-differently", (
             f"{who} was merged into {ptarget} without its own commits, so "
             f"{pbranch} is not in {ptarget}.")
     if landed == "merged":
-        ptarget, _ = _review_target(parent, pplan)
         if target == pbranch:
             return "parent-landed", (
                 f"{who} has landed in {ptarget}; this card still targets "
@@ -399,6 +413,7 @@ def reading(task: dict, by_file: dict, ctx: dict) -> dict | None:
         label, tone, nxt, who = EDGES[word]
         out["edge"] = {"state": word, "label": label, "tone": tone,
                        "sentence": sentence, "next": nxt, "who": who}
+    out["actions"] = _actions(task, parent, out, ctx)
     for kid in kids:
         kplan = plans.recorded(kid["file"])
         kword, ksentence = _edge(kid, task, kplan, by_file, ctx)
@@ -407,6 +422,70 @@ def reading(task: dict, by_file: dict, ctx: dict) -> dict | None:
             tone=EDGES[kword][1] if kword else "neutral", sentence=ksentence))
     out["chip"] = _chip(out)
     return out
+
+
+def _actions(task: dict, parent: dict | None, found: dict,
+             ctx: dict) -> list[dict]:
+    """The explicit stack actions this card's reading offers (task 119):
+    which ones are worth a person's look, from the same local reads as the
+    edge. Offering one decides nothing — each is confirmed against the
+    identities its sheet shows and checked again when it runs
+    (`stackactions`). Only an ordinary card stacked on a card: a phase
+    member's relation to its phase is the phase runner's, and a phase
+    card is not maintained here."""
+    if found["mapping"] != "card" or not parent or task.get("isPhase") \
+            or task.get("stage") == "done":
+        return []
+    word = (found.get("edge") or {}).get("state")
+    target = found["targets"]["reviewTarget"]["branch"]
+    out = []
+    if word in ("parent-landed", "parent-landed-differently",
+                "target-changed-on-host"):
+        pplan = plans.recorded(parent["file"])
+        if _delivered(parent, pplan, ctx):
+            onto = _review_target(parent, pplan)[0]
+            if onto and onto != target:
+                out.append({"action": "retarget", "target": onto,
+                            "label": f"Retarget onto {onto}"})
+    if word == "parent-moved":
+        out.append({"action": "update", "target": _work_branch(parent),
+                    "label": f"Update from {_work_branch(parent)}"})
+    landing = found["targets"]["landingTarget"]["branch"]
+    mine = ctx["heads"].get(_work_branch(task)) or ""
+    held = ctx["tracked"].get(landing) or ""
+    if mine and held and _contains(ctx, mine, held):
+        out.append({"action": "cleanup", "target": landing,
+                    "label": "Finish: clean up"})
+    return out
+
+
+# ── what the confirmed actions read (stackactions) ─────────────────────
+
+
+def work_branch(task: dict) -> str:
+    """The branch a card's work lives on: `task/<stem>`, `phase/<stem>`."""
+    return _work_branch(task)
+
+
+def review_target(task: dict, plan: dict | None) -> str:
+    """What the card's change request targets, from the recorded plan
+    first — never a remote lookup."""
+    return _review_target(task, plan)[0]
+
+
+def tip(ctx: dict, branch: str | None) -> str:
+    """A branch's tip: the local branch, else the last fetch's copy."""
+    return _tip(ctx, branch)
+
+
+def contains(ctx: dict, commit: str, tip_: str) -> bool | None:
+    """Is `commit` in `tip_`? None when git cannot say."""
+    return _contains(ctx, commit, tip_)
+
+
+def delivered(task: dict, ctx: dict) -> str | None:
+    """How the card's work landed (`merged`, `differently`), or None."""
+    return _delivered(task, plans.recorded(task["file"]), ctx)
 
 
 def _chip(found: dict) -> str | None:

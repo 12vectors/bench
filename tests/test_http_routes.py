@@ -258,7 +258,7 @@ class EveryMutationRefusesAHostilePage(unittest.TestCase):
         classes = set(self.routes.values())
         self.assertLessEqual(classes, {"browser-mutation", "policy-mutation",
                                        "run-authenticated", "event-ingest"})
-        self.assertEqual(61, len(self.routes))
+        self.assertEqual(63, len(self.routes))
         self.assertEqual(25, sum(1 for k in self.routes.values()
                                  if k == "policy-mutation"))
 

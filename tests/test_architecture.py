@@ -711,7 +711,7 @@ PRIVATE_REACHES: dict[str, tuple[int, int]] = {
     "acceptance.py::track.change -> taskfiles._is_fence": (1, 592),
     "agentsettings.py::rows -> config._SUFFIX": (1, 194),
     # moved with merge & clean up out of github.py by WP07 (task 115)
-    "completion.py::_complete -> drive._alive": (1, 211),
+    "completion.py::_park_drive -> drive._alive": (1, 491),
     "delivery.py::_context -> gates._tips": (1, 243),
     "delivery.py::_fingerprint -> gates._EPOCH": (1, 1008),
     # `verify._EPOCH` (delivery, gates) is `evidence.epoch()`, and
@@ -866,6 +866,8 @@ ROUTES: dict[str, str] = {
     "POST /api/card/delivery/check-remote": "browser-mutation",
     "POST /api/card/delivery/launch-check": "browser-mutation",
     "POST /api/card/finding": "browser-mutation",
+    "POST /api/card/stack/action": "browser-mutation",
+    "POST /api/card/stack/preview": "browser-mutation",
     "POST /api/card/refine": "browser-mutation",
     "POST /api/card/refine/apply": "browser-mutation",
     "POST /api/card/refine/cancel": "browser-mutation",

@@ -57,7 +57,7 @@ L15 commands drive events sync
 L16 changes
 L17 completion
 L18 stacks
-L19 delivery
+L19 delivery stackactions
 L20 agentsettings
 L21 settings
 L22 setupguide
@@ -100,6 +100,17 @@ itself (parent, children, loops) is derived once by
 `taskfiles.weave_stacks`, beside `weave_phases`, so a loop reaches
 `plan drift` and preflight refuses it without `plans` reaching up.
 `delivery` and `routes` read it; it reads nothing above itself.
+
+`stackactions` (task 119, WP10b) sits beside `delivery`, directly above
+`stacks`, and neither imports the other: it performs the three explicit,
+confirmed stack actions a reading offers — **Retarget onto <target>**
+(through `githost.retarget_change`, only on `available`, else the
+manual step), **Update from <parent>** (an additive merge in the child's
+worktree) and **Finish: clean up** (through
+`completion.finish_delivered`, after `completion.remote_holds`). It
+records a retarget with `plans.retarget`, writes the card's
+`**PR base:**` through `taskfiles.set_pr_base` and tells `gates` to
+re-read (`gates.invalidate`). Only `routes` imports it.
 
 `gatepolicy` (task 120, WP11) sits directly above `profiles`, beside
 `reviews`, where the target table puts it: reading and validating the
@@ -211,7 +222,7 @@ L14 events drive sync commands
 L15 changes
 L16 completion
 L17 stacks
-L18 delivery
+L18 delivery stackactions
 L19 agentsettings
 L20 settings
 L21 setupguide
@@ -254,6 +265,7 @@ One owner per question; `AGENTS.md` describes each module in full.
 | decisions | `gates`, `required`, `doctor` | may this merge happen; run missing required checks; readiness diagnosis |
 | services | `commands`, `drive`, `events`, `sync`, `github`, `completion` | local chores; the one live drive; normalized events; ticket sync; opening and polling PRs; merge-and-clean-up (merge, publish, recover, clean up, sweep) |
 | reading | `stacks`, `delivery` | the derived stack reading (edge states, path positions, the three targets), local reads only; one status per card, owning no policy |
+| stack maintenance | `stackactions` | the three confirmed stack actions — retarget, update from parent, clean up after proven delivery — each bound to the identities its sheet showed |
 | surfaces | `agentsettings`, `settings`, `setupguide`, `setuptasks`, `readiness`, `previews` | configuration pages and the setup guide's areas |
 | runs | `agents`, `phases`, `refine` | headless launches; the phase beat; refinement jobs |
 | composition | `watch`, `routes`, `httpd`, `board` | the disk poller; every route with its request class and handler; the socket, the class doors and the body checks; startup wiring |
@@ -482,5 +494,5 @@ function-imports 20
 private-reaches 49
 dynamic-patch-targets 3
 provider-vocabulary 182
-routes 91
+routes 93
 ```

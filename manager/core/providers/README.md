@@ -70,6 +70,8 @@ never raising (a failure to start is 128; a timeout is 1 with
 | `request_external_review(ctx, number)` | mutation | `{ok, detail}` |
 | `agent_verbs(intent)` | pure | `{provider, allow, publish, fragments}` |
 | `probe_stacking(ctx, active=False)` | read, local, never the network | per stacking capability (`branch-stack`, `retarget`, `native-stack`, `parent-merge-effect`, `parent-delete-effect`) `{state, reason, source}`, plus `matrix`, the revision of the provider's written evidence matrix (task 118). Passive runs no process; `active` may read the CLI's help text. A host behaviour that cannot be observed locally is always `unknown` |
+| `retarget_change(ctx, number, base)` | mutation, **not conditional** | `{ok, detail, returncode}` — change an open change request's base. Called only when `stacking(active=True)["retarget"]` reads `available` at the moment of the click; core reads the change before and after and believes only that (task 119) |
+| `manual_retarget(number, base, url=None)` | pure | the exact manual step a person takes on the host when bench may not make the edit itself |
 | `WORDS` | data | the words a sentence about the host uses |
 
 Normalized values use words core already has: change state `open` /
@@ -94,8 +96,12 @@ provider in force (an unrecognized remote reads every row unavailable).
 Each row's `source` says what kind of knowledge it is — `installed-cli`,
 `local`, `documentation` or `git` — matching the columns of
 `providers/github/STACKING.md`, the dated evidence matrix that explains
-it. No code path mutates a host on this reading; WP10b's actions will
-ask for `available` exactly as `require` does.
+it. One mutation reads it, and only actively at the moment of a person's
+confirmed click: **Retarget onto <target>** (`stackactions`, task 119)
+calls `githost.retarget_change`, which refuses anything but `available`
+for `retarget` exactly as `require` does — `unknown` or `unavailable`
+makes no provider mutation call at all and the action names
+`manual_retarget`'s step instead. Every other row stays a reading.
 
 ## What reaches a coding agent
 

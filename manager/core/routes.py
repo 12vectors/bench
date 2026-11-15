@@ -50,6 +50,7 @@ import reviews
 import settings
 import setupguide
 import setuptasks
+import stackactions
 import stacks
 import state
 import sync
@@ -1360,6 +1361,26 @@ def post_card_delivery_check_remote(req) -> None:
                         phases.public_state())})
 
 
+def post_card_stack_preview(req) -> None:
+    # The confirmation sheet for one stack action (task 119): the
+    # identities it is bound to, what it would do, what stops it and,
+    # for a retarget bench may not make, the exact manual step. Writes
+    # nothing; a retarget's sheet reads the CLI's own help text.
+    payload = req.body
+    req.reply(200, {"stack": stackactions.preview(
+        payload["file"], payload.get("action") or "")})
+
+
+def post_card_stack_action(req) -> None:
+    # A person's confirmed stack action, bound to the identities the
+    # sheet showed (`expected`) and refused, naming what moved, when
+    # any differs. Nothing calls this but the click.
+    payload = req.body
+    found = stackactions.run(payload["file"], payload.get("action") or "",
+                             payload.get("expected") or {})
+    req.reply(200, {"result": found})
+
+
 def post_card_delivery_launch_check(req) -> None:
     # The launch's own preflight, asked explicitly and fresh.
     # It claims nothing and starts nothing; the launch asks
@@ -1491,6 +1512,10 @@ ROUTES = (
           post_card_delivery_check_remote),
     Route("POST", "/api/card/delivery/launch-check", "browser-mutation",
           post_card_delivery_launch_check),
+    Route("POST", "/api/card/stack/preview", "browser-mutation",
+          post_card_stack_preview),
+    Route("POST", "/api/card/stack/action", "browser-mutation",
+          post_card_stack_action),
     Route("POST", "/api/agent/stop", "browser-mutation", post_agent_stop),
 )
 

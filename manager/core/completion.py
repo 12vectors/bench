@@ -205,13 +205,7 @@ def _complete(filename: str, stage: str) -> dict:
     brought = _brought(task, branch) if task.get("isPhase") else []
 
     # 1. the app must not keep running code that is about to be merged away
-    d = drive_mod.DRIVE
-    if d and d.get("task") == filename and d.get("status") in ("starting", "up"):
-        drive_mod.stop()
-        for _ in range(40):
-            if not drive_mod._alive(d):
-                break
-            time.sleep(0.5)
+    _park_drive(filename)
 
     merged = False
     swept: list[dict] = []
@@ -485,6 +479,48 @@ def _remote_holds(rname: str, target: str, commit: str) -> tuple:
     if _contains(commit, tip):
         return True, tip, ""
     return False, tip, f"{rname}/{target} is at {tip[:12]}, which does not contain it"
+
+
+def _park_drive(filename: str) -> None:
+    """The app must not keep running code whose workspace is about to go:
+    park the drive when it is this card's, and wait for it to stop."""
+    d = drive_mod.DRIVE
+    if d and d.get("task") == filename and d.get("status") in ("starting", "up"):
+        drive_mod.stop()
+        for _ in range(40):
+            if not drive_mod._alive(d):
+                break
+            time.sleep(0.5)
+
+
+def remote_holds(rname: str, target: str, commit: str) -> tuple:
+    """`(answer, the remote's tip, why not)` — does `target` on the
+    application remote contain `commit`, read off the remote itself. The
+    answer is None when the remote could not be read, which is not a no."""
+    return _remote_holds(rname, target, commit)
+
+
+def finish_delivered(filename: str, stage: str, branch: str, head: str,
+                     landing: str) -> dict:
+    """Clean up a stacked card whose work the application base on the
+    remote already holds (task 119: **Finish: clean up**), and move it to
+    `done/`. Nothing is merged: the caller proved delivery with
+    `remote_holds` and holds the card's completing claim. The workspace is
+    cleared under `_clean_up`'s rules — uncommitted work keeps the
+    worktree and its branch, and a branch that moved past `head` keeps the
+    card where it is."""
+    _park_drive(filename)
+    cleanup, unmerged = _clean_up(filename, branch, head, head, True)
+    if unmerged:
+        return {"moved": False, "cleanup": cleanup,
+                "why": (f"{branch} has moved on to {unmerged['tip'][:12]}, "
+                        f"which is not delivered")}
+    changes.forget_pr(filename)
+    move_task(filename, stage, "done", actor="you")
+    _record_delivered(filename, head, landing, "stack")
+    forget_recovery(filename)
+    state.broadcast({"type": "board"})
+    return {"moved": True, "cleanup": cleanup}
 
 
 def _publish(filename: str, target: str, commit: str, on_origin: bool) -> dict:

@@ -59,7 +59,7 @@ names reached across modules — live in
 `tests/test_architecture.py`:
 
 ```
-gitproc / records / redact < config < githost < state / reports / templates / gitrepo < taskfiles < plans / profiles < gatepolicy / reviews < evidence / resultidentity < staleness < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < githost < state / reports / templates / gitrepo < taskfiles < plans / profiles < gatepolicy / reviews < evidence / resultidentity < staleness < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -192,6 +192,14 @@ gitproc / records / redact < config < githost < state / reports / templates / gi
   local refs, the recorded plans, the PR snapshots and the delivered
   records only. The graph itself is `taskfiles.weave_stacks`; a read
   fetches, writes and runs nothing (see "Stacked cards")
+- `stackactions.py` — the three explicit stack actions (task 119), each
+  a person's confirmed click bound to the identities its sheet showed:
+  **Retarget onto <target>** (on the host only where `retarget` reads
+  `available`, otherwise the exact manual step), **Update from
+  <parent>** (an additive merge in the child's worktree) and **Finish:
+  clean up** (after the remote application base is seen to hold the
+  work). Beside `delivery`; only `routes` imports it (see "Maintaining a
+  stack: three confirmed actions")
 - `delivery.py` — one delivery status per card, computed server-side
   from the authorities above: what is happening, the one next action and
   who holds it, and the merge requirements that apply at the current

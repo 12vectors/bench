@@ -496,6 +496,29 @@ def merge_change(ctx: dict, number: str, expect_head: str | None,
             "returncode": result.returncode}
 
 
+def retarget_change(ctx: dict, number: str, base: str) -> dict:
+    """`gh pr edit <n> --base <base>` (task 119, WP10b).
+
+    Not conditional: the installed `gh pr edit` offers no head or base
+    condition (STACKING.md, C8), so this is *not* a compare-and-set. Core
+    reads the change request immediately before and after and believes
+    only what it reads back; the exit status here is reported, never read
+    as the retarget having happened."""
+    result = _pr(ctx, "edit", number, "--base", base, timeout=60)
+    return {"ok": result.returncode == 0,
+            "detail": (result.stderr.strip() or result.stdout.strip())[:240],
+            "returncode": result.returncode}
+
+
+def manual_retarget(number: str, base: str, url: str | None = None) -> str:
+    """The exact step a person takes on GitHub when bench may not make the
+    edit itself — the supported manual remedy, in GitHub's own words."""
+    where = f"pull request #{number}" + (f" ({url})" if url else "")
+    return (f"on GitHub, open {where}, choose Edit beside its title and "
+            f"change the base branch to {base} — or run "
+            f"`gh pr edit {number} --base {base}` yourself")
+
+
 def request_external_review(ctx: dict, number: str) -> dict:
     """Ask Copilot to review the pull request."""
     result = ctx["run"]([ctx.get("cli") or "gh", "api", "-X", "POST",

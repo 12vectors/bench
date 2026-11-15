@@ -617,6 +617,33 @@ def set_assignee(filename: str, stage: str, name: str) -> None:
     commit_edit(filename, stage, f"claimed by {name}")
 
 
+def _set_pr_base(text: str, branch: str) -> str:
+    """The card's `**PR base:**` line set to `branch`: replaced where it
+    is, else placed right under `**Base branch:**` (or Status)."""
+    line = f"**PR base:** {branch}"
+    if PR_BASE_RE.search(text):
+        return PR_BASE_RE.sub(lambda _m: line, text, count=1)
+    if BASE_BRANCH_RE.search(text):
+        return BASE_BRANCH_RE.sub(lambda m: f"{m.group(0)}\n{line}", text, count=1)
+    if STATUS_RE.search(text):
+        return STATUS_RE.sub(lambda m: f"{m.group(0)}\n{line}", text, count=1)
+    return TITLE_RE.sub(lambda m: f"{m.group(0)}\n\n{line}", text, count=1)
+
+
+def set_pr_base(filename: str, stage: str, branch: str) -> dict:
+    """Write what a card's change request now targets into its header —
+    a confirmed stack retarget (task 119), so the card's structured input
+    says what its recorded plan says and the next launch reads no drift.
+    Refused for a value that is not a branch name. Committed like every
+    other board edit."""
+    problem = ref_problem(branch)
+    if problem:
+        raise ValueError(f"cannot set the PR base to {branch!r}: {problem}")
+    return edit_card(filename, stage,
+                     lambda text: (_set_pr_base(text, branch), {}),
+                     f"PR base → {branch}")
+
+
 def _commit(filename: str, message: str, spec: list[str], failure: str) -> bool:
     """One commit touching only this task file's paths.
 

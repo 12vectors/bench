@@ -96,6 +96,16 @@ def request_external_review(ctx: dict, number: str) -> dict:
     return {"ok": False, "detail": _WHY}
 
 
+def retarget_change(ctx: dict, number: str, base: str) -> dict:
+    return {"ok": False, "detail": _WHY, "returncode": 2}
+
+
+def manual_retarget(number: str, base: str, url: str | None = None) -> str:
+    return (f"there is no hosting provider here, so there is no change "
+            f"request to retarget on a host — point whatever review you use "
+            f"at {base} yourself")
+
+
 # No host to read a change from or post a verdict to. These templates are
 # not launched on a `none` board (there is no change request to act on or
 # review), but a preview renders them, so every placeholder has words.

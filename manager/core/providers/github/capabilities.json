@@ -10,7 +10,7 @@
                 "change_status",
                 "review_records", "head_refs", "open_change",
                 "merge_change", "request_external_review", "agent_verbs",
-                "probe_stacking"],
+                "probe_stacking", "retarget_change", "manual_retarget"],
   "stacking": "STACKING.md",
   "setup": "Install the GitHub CLI (gh) and run `gh auth login` for the account that opens and merges this board's pull requests."
 }

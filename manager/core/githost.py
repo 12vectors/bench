@@ -220,8 +220,9 @@ def stacking(active: bool = False) -> dict:
     """What the provider in force can say about stacked change requests
     (task 118, WP10a): per capability `{state, reason, source}`, and the
     `matrix` revision of the provider's written `STACKING.md` it was read
-    against. A discovery reading, consumed by nothing that mutates: no
-    action is built on it until WP10b, and `unknown` authorizes nothing.
+    against. One mutation reads it — `retarget_change`, at the moment a
+    person confirms a retarget (task 119) — and `unknown` authorizes
+    nothing.
     Passive by default; `active=True` lets the provider read its CLI's own
     help text. Never the network."""
     info = provider()
@@ -363,6 +364,37 @@ def merge_change(number: str, expect_head: str | None,
                     f"on {expect_head[:12]}: "
                     f"{_CONDITIONAL.get('reason') or 'merge-conditional is not available'}")
     return module().merge_change(ctx(), number, expect_head, timeout)
+
+
+def retarget_state() -> dict:
+    """Whether a change request's base may be changed on the host *now*:
+    the `retarget` stacking row, read actively (a local `--help` read,
+    never the network). Asked at the moment a person confirms a retarget,
+    and by the confirmation sheet that names the step it would take."""
+    return dict(stacking(active=True).get("retarget") or
+                {"state": "unknown", "reason": "the provider did not say"})
+
+
+def retarget_change(number: str, base: str) -> dict:
+    """Change the base of change `number` to `base` (task 119, WP10b).
+
+    Only on `available`, read actively here: `unknown` and `unavailable`
+    raise `Refused` before any provider mutation is called. The edit is
+    not conditional on any head (STACKING.md C8) — the caller reads the
+    change before and after and believes only what it reads back."""
+    found = retarget_state()
+    if found.get("state") != "available":
+        raise Refused(f"cannot change the base of {words()['change']} "
+                      f"#{number} here: the {name()} provider's 'retarget' is "
+                      f"{found.get('state') or 'unknown'} — "
+                      f"{found.get('reason') or 'nothing said why'}")
+    return module().retarget_change(ctx(), number, base)
+
+
+def manual_retarget(number: str, base: str, url: str | None = None) -> str:
+    """The exact manual step for retargeting change `number` onto `base`
+    when bench may not make the edit itself."""
+    return module().manual_retarget(number, base, url)
 
 
 def request_external_review(number: str) -> dict:

@@ -9,6 +9,6 @@
                 "change_status",
                 "review_records", "head_refs", "open_change",
                 "merge_change", "request_external_review", "agent_verbs",
-                "probe_stacking"],
+                "probe_stacking", "retarget_change", "manual_retarget"],
   "setup": "Nothing to install. Branches are pushed and merged with git alone; no change request is opened, observed or merged on a host."
 }
