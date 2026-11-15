@@ -685,7 +685,6 @@ FUNCTION_IMPORTS: dict[str, tuple[int, int]] = {
     "drive.py::_remember -> previews": (1, 454),             # up
     "drive.py::_scrub_log -> previews": (1, 464),            # up
     "drive.py::_watch -> previews": (1, 327),                # up
-    "plans.py::_resolve_ref -> agents": (1, 714),            # up
     "previews.py::discover -> setuptasks": (1, 676),         # down
     "readiness.py::_card_records -> verify": (1, 456),       # down
     "readiness.py::_evidence -> verify": (1, 761),           # down
@@ -717,15 +716,9 @@ PRIVATE_REACHES: dict[str, tuple[int, int]] = {
     "delivery.py::_fingerprint -> verify._EPOCH": (1, 1008),
     "delivery.py::_merged_covers -> gates._contained": (1, 421),
     "delivery.py::_optional -> verify._offered": (1, 403),
-    "delivery.py::_remote_tips -> config._app_git": (1, 219),
     "doctor.py::_harness_finding -> profiles._SOURCE_WORDS": (1, 446),
-    "gates.py::_contained -> config._app_git": (1, 532),
-    "gates.py::_tips -> config._app_git": (1, 470),
     "gates.py::board -> verify._EPOCH": (1, 2007),
     "github.py::_complete -> drive._alive": (1, 829),
-    "phases.py::_freshen -> agents._fresh_branch_point": (1, 446),
-    "phases.py::_start -> agents._fresh_branch_point": (1, 733),
-    "plans.py::_resolve_ref -> agents._fresh_branch_point": (1, 741),
     "readiness.py::check_states -> settings._checks_of": (1, 483),
     "readiness.py::review -> settings._checks_of": (1, 802),
     "readiness.py::review -> setupguide._actor": (1, 847),
@@ -740,7 +733,6 @@ PRIVATE_REACHES: dict[str, tuple[int, int]] = {
     "refine.py::_reap -> agents._why": (1, 600),
     "refine.py::apply -> taskfiles._one_line": (1, 690),
     "refine.py::discard -> taskfiles._one_line": (1, 754),
-    "required.py::_checkout_of -> config._app_git": (1, 234),
     "required.py::_live -> verify._KEYS": (1, 933),
     "required.py::_live -> verify._key": (1, 931),
     "settings.py::_record_change -> profiles._tool_relative": (1, 2048),

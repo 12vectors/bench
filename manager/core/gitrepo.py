@@ -98,24 +98,11 @@ def app_git(*args: str, timeout: float | None = 30) -> subprocess.CompletedProce
 # ── reads ──────────────────────────────────────────────────────────────
 
 
-def ref_commit(ref: str, repo: Path | str | None = None) -> str:
-    """The commit `ref` names in the application (or `repo`), or ""."""
-    out = git(repo if repo is not None else app(), "rev-parse", "--verify",
-              "--quiet", ref, timeout=None)
-    return out.stdout.strip() if out.returncode == 0 else ""
-
-
 def branch_exists(branch: str) -> bool:
     """Does `branch` resolve in the application checkout? Asked by name,
     as the drive, the local commands and acting on a PR always asked."""
     return git(app(), "rev-parse", "--verify", "--quiet", branch,
                timeout=None).returncode == 0
-
-
-def remotes(repo: Path | str | None = None) -> list[str]:
-    """The remotes a checkout has, in git's order; [] when it cannot say."""
-    out = git(repo if repo is not None else app(), "remote", timeout=10)
-    return out.stdout.split() if out.returncode == 0 else []
 
 
 def branch_for(stem: str) -> str:

@@ -45,12 +45,18 @@ class FreshBranchPoint(unittest.TestCase):
         subprocess.check_call(
             ["git", "clone", "-q", str(self.upstream), str(self.local)],
             stderr=subprocess.DEVNULL)
-        self._saved = config.REPO, config.FETCH_TIMEOUT
-        config.REPO = self.local
-        config.FETCH_TIMEOUT = 5.0
+        # The settings this decision reads are pinned here, so the case
+        # does not depend on whatever BOARD_* the caller's environment set.
+        # A cleanup rather than tearDown: cleanups run last-in first-out
+        # after tearDown, so a test's own addCleanup of one of these runs
+        # first and this one puts the caller's values back afterwards.
+        for name, value in (("REPO", self.local), ("FETCH_TIMEOUT", 5.0),
+                            ("APP_BASE", "main"), ("GIT_REMOTE", ""),
+                            ("EXTERNAL", False)):
+            self.addCleanup(setattr, config, name, getattr(config, name))
+            setattr(config, name, value)
 
     def tearDown(self):
-        config.REPO, config.FETCH_TIMEOUT = self._saved
         self._tmp.cleanup()
 
     def _hang_remote(self, name: str) -> None:

@@ -59,7 +59,7 @@ names reached across modules — live in
 `tests/test_architecture.py`:
 
 ```
-gitproc / records / redact < config < state / reports / templates < taskfiles < plans / profiles < reviews < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < github < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < state / reports / templates / gitrepo < taskfiles < plans / profiles < reviews < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < github < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -83,6 +83,13 @@ gitproc / records / redact < config < state / reports / templates < taskfiles < 
 - `templates.py` — the four launch prompt templates: what each may and
   must contain, which text a launch actually used (name, source, hash),
   and the contract check asked before a save and before every launch
+- `gitrepo.py` — local git on the two repositories, each named rather
+  than reached for by path: application git (`app()`) and work-state git
+  (`state()`, card 62's `app_shares_state_repository()` deciding whether
+  they are one). A never-raising `git`, the worktree primitives, one
+  `ensure_worktree` for every "recreate it from its branch", and
+  `fresh_branch_point` — the default branch point, below `plans` and
+  `agents` so neither reaches up for it. Imports `config` only
 - `taskfiles.py` — reading and moving task files; the only code touching tasks/
 - `plans.py` — one card's execution plan: which application branch its work
   starts from, which branch its PR targets, what selected each, and the

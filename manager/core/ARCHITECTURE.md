@@ -40,7 +40,7 @@ composition.
 ```architecture current
 L0  gitproc records redact
 L1  config
-L2  state reports templates
+L2  state reports templates gitrepo
 L3  taskfiles
 L4  plans profiles
 L5  reviews
@@ -95,14 +95,14 @@ every pattern of all five.
 ### Where the code does not obey it
 
 The order holds at the top level only because some imports are
-deferred into functions. The test lists all **26 function-level core
-imports**; thirteen of them point *up* the table and are the real
-violations:
+deferred into functions. The test lists all **25 function-level core
+imports**; twelve of them point *up* the table and are the real
+violations (a thirteenth, `plans → agents` in `_resolve_ref`, went with
+task 114, when the branch points moved to `gitrepo` and `plans`):
 
 | Importer (layer) | Imports (layer), from inside | Why it matters |
 | --- | --- | --- |
 | `drive` (L12) | `previews` (L21), in `_watch`, `_preview_ended`, `_remember`, `_scrub_log` | a leaf service calls back into a surface |
-| `plans` (L4) | `agents` (L18), in `_resolve_ref` | for `_fresh_branch_point`; WP06 moves it to a lower git module |
 | `settings` (L16) | `agents` (L18), in `frozen_runs` | reads the run registry |
 | `setupguide` (L17) | `readiness`, `previews`, `setuptasks` (L19–L21), in six functions | the guide composes the three modules that are built on it |
 | `setuptasks` (L19) | `previews` (L21), in `gaps` | the same cycle, the other way |
@@ -113,10 +113,12 @@ they are counted so the list can only shrink. (There were fourteen:
 `previews.scrub → verify` went with task 111, when `previews` began
 asking `redact` instead.)
 
-**68 private reaches** — `module._name` used from another module — are
-listed the same way. The clusters, which the later packages remove:
-`config._app_git` (gates, delivery, required → a public git read),
-`agents._fresh_branch_point` (phases, plans), `gates._tips` /
+**61 private reaches** — `module._name` used from another module — are
+listed the same way. (Seven went with task 114: `config._app_git` from
+gates, delivery and required is `gitrepo.app_git`, and
+`agents._fresh_branch_point` from phases and plans is
+`gitrepo.fresh_branch_point`.) The clusters, which the later packages
+remove: `gates._tips` /
 `gates._EPOCH` / `verify._EPOCH` / `verify._KEYS` (delivery, required),
 `refine` driving `agents._launch` and friends, and `readiness` and
 `setuptasks` reaching 27 times into `setupguide`'s private helpers.
@@ -159,7 +161,7 @@ L28 httpd
 L29 board
 composition: board httpd routes
 retired: github
-new: gitrepo githost gatepolicy evidence resultidentity staleness changes completion stacks
+new: githost gatepolicy evidence resultidentity staleness changes completion stacks
 ```
 
 The plan wrote same-layer orderings as `gitrepo → githost`; with the
@@ -249,6 +251,73 @@ journals, run and command logs, exclusive creates of new cards, the
 doctor's disposable fixtures, a launch's pinned context) is a reviewed
 list in the same test, which may only shrink.
 
+## Git: who runs it, and how (task 114, WP06)
+
+Every git process core starts goes through `gitproc.run`, by way of
+`config.git_run` (or `github._run`, which builds the same argv and
+environment through `config.git_argv` and `config.git_env`). So a read
+verb is hardened wherever it is asked from; a mutation inherits the
+environment unchanged. `gitrepo` names the two repositories and holds the
+operations more than one module needs. The rest of this section is the
+inventory the card asked for: each wrapper, which repository it means,
+and its timeout, exception and message contract. Distinct wording is
+kept on purpose and held by `tests/test_gitrepo.py`.
+
+**Shared primitives (`gitrepo`, L2).**
+
+| Function | Repository | Timeout | On failure to run |
+| --- | --- | --- | --- |
+| `git(repo, …)` | named by the caller | 30 s default; `None` waits | never raises: 128 and the exception's text, or `timed_out` when given |
+| `app_git(…)` | application | 30 s | never raises: 128 and the exception's text (what `config._app_git` was; gates, delivery and required call it) |
+| `branch_exists` | application | none (as the drive, commands and act-pr always ran it) | false |
+| `branch_for`, `dirty`, `worktree_mismatch` | application / a worktree | as `config`'s | `config`'s bodies, offered here as the door (below) |
+| `fetch_branch` | application | the caller's (`plans`: `BOARD_FETCH_TIMEOUT`) | False |
+| `worktree_add`, `worktree_remove`, `branch_delete` | application | none by default; `phases` passes 60 s | the result, never raising; the caller words it |
+| `ensure_worktree` | application | as `worktree_add` | `problem`: `mismatch`, `no-branch`, `add-failed`; each caller keeps its sentence |
+| `fresh_branch_point` | application | none for reads; `BOARD_FETCH_TIMEOUT` for the fetch | a timeout or failed fetch is a note and HEAD; an `OSError` propagates, as it did from `agents` |
+
+**Module wrappers, kept with their contracts.**
+
+| Wrapper | Repository | Timeout | Contract |
+| --- | --- | --- | --- |
+| `plans._git` | application, or `cwd` | 30 s | via `gitrepo.git`; a timeout reads exactly `timed out` |
+| `phases._git` | application, or a phase worktree | 60 s | via `gitrepo.git`; a timeout reads exactly `timed out` |
+| `reviews._git`, `reviews._git_in` | application; a pinned review checkout | 30 s | never raises: 128 and the exception's text |
+| `delivery._git_bounded` | application | the caller's | `None` on any failure to run |
+| `github._run` | application (`cwd`, default the application) | 60 s default | **raises** what `subprocess.run` raises; callers catch. Moves with WP07 |
+| `sync._git` | work state | 30 s | never raises: 128 `no work-state repository`, `timed out`, or the exception's text |
+| `taskfiles._git` | work state | 30 s | 128 `no work-state repository`; otherwise **raises** |
+| `config.git_root`, `_remotes_of`, `gh_repo`, `_git_at` | named | 10 s | `None` / `[]` |
+| `config.dirty_files` | a worktree | 30 s | a placeholder line, never `[]`, when status cannot be read |
+| `config.branch_for` | application | 30 s | `task/<stem>` when git cannot answer |
+| inline reads in `acceptance`, `profiles`, `settings`, `previews`, `required`, `agents.diff` | named | 10 s (`required`: 30 s) | each catches what it catches; unchanged by this card |
+| `verify._git` | named | 30 s | 128 and the exception's text. **Deferred to WP12**: no edit to `verify.py` outside its train |
+
+`config.branch_for`, `config.dirty_files` and `config.worktree_mismatch`
+keep their bodies in `config` because `verify.py` calls them; `gitrepo`
+offers them under the same names, and every other caller in the modules
+this card touched asks `gitrepo`. A delegation from `config` up to
+`gitrepo` would be an upward import, so the bodies move with WP12/WP13.
+
+**Raw invocations.** A list beginning `"git"` handed straight to
+`subprocess` skips `gitproc` and its read hardening. Task 114 routed the
+six bypass sites (`agents` ×9 calls, `drive`, `commands`, `plans`) and
+the one `["git", "-C", …]` literal in `github`. What remains is a
+reviewed list in `tests/test_gitrepo.py` that may only shrink (`gitproc`
+itself, whose one raw call reads the filter drivers it switches off, is
+the layer and is not scanned): the
+doctor's disposable fixtures (`doctor._fixture_repo`,
+`doctor._fixture_commits`),
+which run git on repositories the doctor itself creates. Literals in
+tests and docs are not invocations and are not scanned. `verify.py` has
+no raw invocation today; its own wrapper is counted with the direct
+`config.git_*` callers below rather than routed, until WP12.
+
+**Direct `config.git_*` callers** outside `config`, `gitproc` and
+`gitrepo` are counted per module in the same test, and the count may
+only fall — including `verify`'s one, which is the documented temporary
+exception.
+
 ## Representative flows
 
 - **Start work.** `httpd` → `agents.start_agent` → `plans` (preflight,
@@ -326,8 +395,8 @@ nothing: purity of `providers/*`
 
 ```architecture counts
 top-level-exceptions 0
-function-imports 26
-private-reaches 68
+function-imports 25
+private-reaches 61
 dynamic-patch-targets 1
 provider-vocabulary 196
 routes 91

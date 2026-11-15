@@ -1437,8 +1437,8 @@ def _clear_member(member: dict, merged: str | None = None) -> str:
                 f"since the phase merged it")
     try:
         if worktree.exists():
-            dirty = _run(["git", "-C", str(worktree), "status",
-                          "--porcelain"]).stdout.split("\n")
+            dirty = _run(["git", "status", "--porcelain"],
+                         cwd=worktree).stdout.split("\n")
             dirty = [line for line in dirty if line.strip()]
             if dirty:
                 return (f"{stem}: worktree kept — {len(dirty)} uncommitted "
