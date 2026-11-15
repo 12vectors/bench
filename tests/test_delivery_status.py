@@ -582,6 +582,18 @@ class TheCopyMatrix(DeliveryCase):
         self.place("done")
         self.expect("delivered", None)
 
+    def test_a_stacked_card_waits_for_its_parent(self):
+        """Task 117: an ungated card stacked on another card's work branch
+        reads `waiting-for-parent` until that card has landed, and its
+        sentence names the parent and where the card lands."""
+        wt = self.worktree()
+        self.commit_in(wt)
+        self.place("review", "72-the-parent.md", "72 — The parent")
+        self.place("review", base_branch="task/72-the-parent")
+        found = self.expect("waiting-for-parent", None)
+        self.assertIn("Waiting for #72 to land", found["status"]["sentence"])
+        self.assertIn("lands in main", found["status"]["sentence"])
+
     def test_signoff_needed_where_a_rule_asks_for_one(self):
         """Design §8.3 (card 103): checks and review met, `signoff:
         criteria` on the rule, and criteria nobody tracked — the status is
