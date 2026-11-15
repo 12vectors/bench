@@ -10786,7 +10786,18 @@ function spark(events, meta) {
   return `<div class="spark" title="events over the session">${bars}</div>`;
 }
 
+// A fold's 'toggle' event is queued, not fired, when it opens or closes,
+// so a repaint landing first would redraw it from a stale S.openFolds and
+// the reader's click would be lost. Read the folds as drawn before
+// replacing them: the DOM's open state is the newest answer.
+function keepFolds(sel) {
+  document.querySelectorAll(`${sel} details.fold[data-key]`).forEach(d => {
+    if (d.open) S.openFolds.add(d.dataset.key); else S.openFolds.delete(d.dataset.key);
+  });
+}
+
 function renderTimeline(sid, meta, events) {
+  keepFolds('#ftl');
   const active = FILTERS.find(([key]) => key === S.filter);
   const kinds = active ? active[2] : null;
   const boardEvents = (S.state.boardEvents || [])
@@ -10977,6 +10988,7 @@ function reviewRows(found) {
 }
 
 function renderFocus() {
+  keepFolds('#cgrid');
   const sid = pickFocusSid();
   if (sid) loadSession(sid);
   const meta = sessionMeta(sid);
