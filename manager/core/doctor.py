@@ -73,6 +73,7 @@ import uuid
 from pathlib import Path
 
 import config
+import evidence
 import gatepolicy
 import githost
 import profiles
@@ -243,12 +244,12 @@ def _finding(mode: str, name: str, outcome: str, about: str, detail: str, *,
 # never leaves this machine. What it must never carry is a *value* — a
 # token, a password, an environment variable's content — and the one place
 # bytes bench did not write get in is a log or a subprocess's output. So
-# everything that reaches a finding goes through `verify.scrub`, which is
+# everything that reaches a finding goes through `evidence.scrub`, which is
 # the same scrubber the evidence log uses, and nothing here ever reads an
 # environment value in the first place.
 
 def _redact(text: str) -> str:
-    return verify.scrub(str(text or ""))
+    return evidence.scrub(str(text or ""))
 
 
 def redaction() -> dict:

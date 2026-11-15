@@ -98,13 +98,14 @@ from pathlib import Path
 
 import acceptance
 import config
+import evidence
 import gatepolicy
 import gitrepo
 import profiles
 import records
+import staleness
 import state
 import taskfiles
-import verify
 
 # One decision word per answer, and the word carries the meaning rather
 # than the colour — the law the verification outcomes are written under.
@@ -580,7 +581,7 @@ def candidate(filename: str, scope: str, *, task: dict | None = None,
     if pr and pr.get("head"):
         commits.append(("pr", pr["head"]))
     mine = ([r for r in records if r.get("task") == filename]
-            if records is not None else verify.for_task(filename))
+            if records is not None else evidence.for_task(filename))
     for record in mine:
         at = (record.get("source") or {}).get("commit")
         if at:
@@ -825,7 +826,7 @@ def gate_policy() -> dict:
 # holds. Declared equivalents (#104): a record of another name answers
 # only when the check declares it in `accepts` *and* the two definitions
 # agree in every dimension *and* the record ran in this check's root
-# class (`verify.equivalence`) — then it goes through exactly the same
+# class (`staleness.equivalence`) — then it goes through exactly the same
 # head, coverage, denial, partition and precedence filters as a record of
 # the check's own name. There is no second route.
 
@@ -834,7 +835,7 @@ def _accepted_equivalents(check: dict) -> dict:
     """Other checks whose records may answer this requirement, by name,
     with their definitions as the policy declares them now — the
     operator's `accepts` on the check. A declaration alone is never
-    enough (`verify.equivalence`)."""
+    enough (`staleness.equivalence`)."""
     return dict(check.get("acceptedChecks") or {})
 
 
@@ -842,11 +843,11 @@ def _partition(record: dict, drift: dict | None) -> str:
     """`current`, `outdated` or `legacy` (design §6.1 step 4).
 
     A record with no result identity is legacy, and is read with
-    `verify.outcome_now`'s rules, unchanged: a stale pass says why it is
+    `staleness.outcome_now`'s rules, unchanged: a stale pass says why it is
     stale and is never a pass. A record with one is *current* when every
     dimension of its definition — the check, coverage, programs,
     preparation, inputs, environment and runner — still holds
-    (`verify.identity_drift`), and *outdated* when any has moved. Its
+    (`staleness.identity_drift`), and *outdated* when any has moved. Its
     source is not part of this answer: the commit filter has already
     chosen the records about this head. An identity that cannot be read
     is outdated, never current — unknown never decides a gate."""
@@ -862,7 +863,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
     """One required check → met, pending or unmet, and why.
 
     The rule, in full: a record satisfies when it is for this check, when
-    `verify.outcome_now` *still* reads `passed` (so a pass whose binding
+    `staleness.outcome_now` *still* reads `passed` (so a pass whose binding
     has gone reads `stale` here, as it does everywhere), when the source
     it ran against was bound, when that source was clean, and when its
     commit is the commit about to be merged.
@@ -909,12 +910,12 @@ def _check_requirement(filename: str, check: dict, head: dict,
     decide nothing, so a failure under a command since replaced is not
     today's failure; if nothing else decides, the newest outdated record's
     own changed dimension is the reason. A record with no identity is
-    *legacy* and read with `verify.outcome_now`'s rules, unchanged. An
+    *legacy* and read with `staleness.outcome_now`'s rules, unchanged. An
     unrelated policy edit moves none of the dimensions, so it stales
     nothing that carries one (design R1).
 
     **Declared equivalents** (#104, design §5). A record filed under a name
-    the check `accepts` is weighed only when `verify.equivalence` finds the
+    the check `accepts` is weighed only when `staleness.equivalence` finds the
     two definitions the same in every dimension and the record ran in this
     check's root class; it is then one more record in the walk above —
     the same head filter, the same coverage, the same denial rule, the
@@ -948,7 +949,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
             return True
         if other not in accepts or record.get("outcome") == "denied":
             return False
-        found = verify.equivalence(record, check, accepts)
+        found = staleness.equivalence(record, check, accepts)
         considered.append({
             "evidence": record.get("id"), "check": other,
             "commit": (record.get("source") or {}).get("commit"),
@@ -984,7 +985,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
     elsewhere: list[dict] = []
     denied: list[dict] = []
     for record in mine:
-        reading = verify.outcome_now(record)
+        reading = staleness.outcome_now(record)
         source = record.get("source") or {}
         found = {
             "evidence": record.get("id"),
@@ -1020,15 +1021,15 @@ def _check_requirement(filename: str, check: dict, head: dict,
         seen.append(found)
         if found["outcome"] == "denied":
             denied.append(found)
-        elif found["commit"] == at or (found["outcome"] in verify.LIVE
+        elif found["commit"] == at or (found["outcome"] in evidence.LIVE
                                        and not found["commit"]):
             # A request still preparing has not bound its source yet. It
             # may well be about this head, so it is not hidden as history.
             found["relevant"] = True
             # Asked only of the records about this head: whether the check
             # each ran is still the check as declared now (#97).
-            if found["outcome"] not in verify.LIVE:
-                drift = verify.identity_drift(record)
+            if found["outcome"] not in evidence.LIVE:
+                drift = staleness.identity_drift(record)
                 found["partition"] = _partition(record, drift)
                 if drift and drift["reasons"]:
                     found["driftReason"] = drift["reasons"][0]
@@ -1064,7 +1065,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
     # 3. Precedence, among the relevant records only. A rerun in flight is
     # newer than anything on record, so even an earlier pass at this head
     # decides nothing until it answers.
-    running = next((f for f in deciding if f["outcome"] in verify.LIVE), None)
+    running = next((f for f in deciding if f["outcome"] in evidence.LIVE), None)
     if running is not None:
         return {**row, "state": "pending", "reason": running["outcome"],
                 "why": (f"'{label}' is {running['outcome']} "
@@ -1117,7 +1118,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
                 "staleReason": stale["reason"],
                 "why": (f"'{label}' passed on {here}, and it no longer holds: "
                         f"{stale['why'] or REASONS['stale']}{via(stale)}"),
-                "remedy": verify.STALE_REMEDIES.get(stale["reason"],
+                "remedy": evidence.STALE_REMEDIES.get(stale["reason"],
                                                     REMEDIES["stale"])
                 if stale["partition"] != "legacy" else REMEDIES["stale"],
                 "evidence": stale["evidence"], "commit": stale["commit"],
@@ -1132,7 +1133,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
             # result, which is a step still ahead — like a cancellation —
             # rather than a fault the check found.
             reason = "restarted"
-        said = verify.OUTCOMES.get(blocker["outcome"]) or REASONS.get(reason, reason)
+        said = evidence.OUTCOMES.get(blocker["outcome"]) or REASONS.get(reason, reason)
         after = deciding[deciding.index(blocker) + 1:]
         older = next((r for r in after if r["outcome"] == "passed"
                       and covers(r["scope"])), None)
@@ -1179,7 +1180,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
                         f"changed since: "
                         f"{newest.get('driftWhy') or newest['why'] or REASONS['stale']}"
                         f"{via(newest)}"),
-                "remedy": verify.STALE_REMEDIES.get(moved, REMEDIES["stale"]),
+                "remedy": evidence.STALE_REMEDIES.get(moved, REMEDIES["stale"]),
                 "evidence": newest["evidence"], "commit": newest["commit"],
                 **cited(newest)}
     ran = sorted(set(narrow))
@@ -1192,7 +1193,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
                 "commit": None}
     refused = next((c for c in considered
                     if not c["equivalent"] and c["commit"] == at
-                    and c["outcome"] not in verify.LIVE), None)
+                    and c["outcome"] not in evidence.LIVE), None)
     if refused is not None:
         # A declared equivalent ran here and is not the same check. Said,
         # with the one dimension that stops it, so "it ran, why does it
@@ -1233,7 +1234,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
         # Only refusals on record: nothing ran, and the refusal is the reason.
         best = denied[0]
         return {**row, "state": "unmet", "reason": "denied",
-                "why": f"'{label}': {best['why'] or verify.OUTCOMES['denied']}",
+                "why": f"'{label}': {best['why'] or evidence.OUTCOMES['denied']}",
                 "remedy": REMEDIES["denied"],
                 "evidence": best["evidence"], "commit": best["commit"]}
     return {**row, "state": "unmet", "reason": "not-run",
@@ -1625,7 +1626,7 @@ def _evaluate(filename: str, scope: str, *, task: dict | None = None,
         return found
 
     mine = ([r for r in records if r.get("task") == filename]
-            if records is not None else verify.for_task(filename))
+            if records is not None else evidence.for_task(filename))
     rows = [_check_requirement(filename, check, head, mine)
             for check in entry["checks"]]
     # One row per configured review word. The ordinary form is one word
@@ -2013,7 +2014,7 @@ def board(collected: dict) -> dict:
     files = frozenset(task["file"] for task in tasks)
     with _LOCK:
         epoch = _EPOCH
-    stamp = (epoch, policy["revision"], int(time.time() / _TTL), verify._EPOCH)
+    stamp = (epoch, policy["revision"], int(time.time() / _TTL), evidence.epoch())
     if _BOARD is not None and _BOARD[0] == stamp and _BOARD[1] == files:
         return _BOARD[2]
     tips = _tips()
@@ -2021,7 +2022,7 @@ def board(collected: dict) -> dict:
     # the whole board, rather than one of each per card: this runs on
     # every state load, and a per-card subprocess is what makes a payload
     # expensive enough that somebody caches a *decision* instead.
-    records = verify.all_evidence()
+    records = evidence.all_evidence()
     found: dict = {}
     for task in tasks:
         scope = scope_for(task)
@@ -2091,7 +2092,7 @@ def seams() -> dict:
         "decisions": dict(DECISIONS),
         "reasons": dict(REASONS),
         "evaluates": ("gatepolicy.gate_policy() for the requirements, "
-                      "verify.for_task()/outcome_now() for the evidence, "
+                      "evidence.for_task()/outcome_now() for the evidence, "
                       "and application git for the commit. It parses no "
                       "policy document itself"),
         "enforced_at": {

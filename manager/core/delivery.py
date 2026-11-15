@@ -66,6 +66,7 @@ import time
 import acceptance
 import completion as completion_mod   # `completion` names a reading here
 import config
+import evidence
 import gatepolicy
 import gates
 import githost
@@ -254,7 +255,7 @@ def _context(phase_state: dict | None = None) -> dict:
         "tips": gates._tips(),
         "remoteTips": _remote_tips(),
         "policy": policy,
-        "records": verify.all_evidence(),
+        "records": evidence.all_evidence(),
         "agents": agents,
         "completing": completing,
         "phases": {k: dict(v) for k, v in (phase_state or {}).items()},
@@ -411,7 +412,7 @@ def _reviews(task: dict, candidate: dict, verdict_now: dict | None) -> dict:
 def _optional(policy_doc: dict, required: set[str], mine: list[dict]) -> int:
     """Checks this card may ask for, or has records of, that no gate
     requires — counted apart, never in a headline (design §7)."""
-    offered = set(verify._offered(policy_doc)) if policy_doc else set()
+    offered = set(verify.offered_checks(policy_doc)) if policy_doc else set()
     ran = {r.get("check") for r in mine if r.get("check")}
     return len((offered | ran) - required)
 
@@ -1043,7 +1044,7 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
         snaps.append((task["file"], snap.get("head"), snap.get("merged"),
                       snap.get("prState"), snap.get("observed")))
     parts = {
-        "epochs": [_EPOCH, gates._EPOCH, verify._EPOCH],
+        "epochs": [_EPOCH, gates._EPOCH, evidence.epoch()],
         "policy": ctx["policy"].get("revision"),
         "tips": sorted(ctx["tips"].items()),
         "remoteTips": sorted(ctx["remoteTips"].items()),
@@ -1259,7 +1260,7 @@ def seams() -> dict:
                   "completion.delivered_record", "plans.recorded",
                   "plans.declared", "gates.candidate", "gates.evaluate",
                   "acceptance.summary", "phases.public_state (passed in)",
-                  "verify.all_evidence"],
+                  "evidence.all_evidence"],
         "never": ["fetches on a read", "calls GitHub", "runs a check",
                   "launches an agent", "writes a record on a read",
                   "authorises a mutation"],

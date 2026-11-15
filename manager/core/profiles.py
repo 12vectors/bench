@@ -1171,7 +1171,7 @@ def _tokens_problem(name: str, what: str, tokens: list) -> str | None:
 
 # Names bench takes out of a check's environment, or sets itself, so a
 # declaration naming one would bind something the check never receives.
-# `verify.child_env` builds the environment from these same lists.
+# `resultidentity.child_env` builds the environment from these same lists.
 VERIFY_ENV_STRIPPED = ("BOARD_PORT", "BOARD_AGENT_ID", "BOARD_TASK",
                        "BOARD_APP_ROOT", "BOARD_WORK_ROOT", "BOARD_TASKS_DIR",
                        "BOARD_WORKTREES_DIR", "GIT_DIR", "GIT_WORK_TREE",
@@ -3136,8 +3136,8 @@ def seams() -> dict:
                          "profiles.DIAGNOSTICS names"),
             "a gate": ("`gates.py` — it reads the requirements "
                        "`gatepolicy.gate_policy()` returns, the evidence "
-                       "`verify.for_task()` returns, and insists on a "
-                       "`passed` that `verify.outcome_now()` still calls "
+                       "`evidence.for_task()` returns, and insists on a "
+                       "`passed` that `staleness.outcome_now()` still calls"
                        "`passed` against the exact commit it is about to "
                        "let through. It declares 'verified-outputs', and it has "
                        "no second parser either: every refusal it reports about "

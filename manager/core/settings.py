@@ -69,6 +69,7 @@ import agentsettings
 import callers
 import config
 import doctor
+import evidence
 import gatepolicy
 import githost
 import gates
@@ -78,7 +79,6 @@ import redact
 import required
 import sync
 import taskfiles
-import verify
 
 VERSION = 1
 
@@ -370,7 +370,7 @@ def secret_key(name: str) -> bool:
 def scrub(text: str) -> str:
     """Anything credential-shaped out of text on its way to a reader.
 
-    The same job `verify.log_text` does for a check's output, applied to
+    The same job `evidence.log_text` does for a check's output, applied to
     the one other place bytes bench did not write get through: a value
     read out of a settings file. The shapes are `redact`'s; the marker
     is this page's own.
@@ -949,8 +949,8 @@ def verification(doc: dict | None = None) -> dict:
         # they are passed through rather than relabelled here.
         "problems": [{"code": code, "why": why, "field": FIELD_OF.get(code)}
                      for code, why in [*step_trouble, *check_trouble]],
-        "outcomes": dict(verify.OUTCOMES),
-        "reasons": dict(verify.REASONS),
+        "outcomes": dict(evidence.OUTCOMES),
+        "reasons": dict(evidence.REASONS),
         "preparationIsNotVerification": (
             "A preparation step gets a disposable environment ready — "
             "approved dependencies, a test database. A preparation step that "
@@ -1940,7 +1940,7 @@ def _evidence_count(names: list[str]) -> int:
         return 0
     for group in collected.get("stages", []):
         for task in group.get("tasks", []):
-            for record in verify.for_task(task["file"]):
+            for record in evidence.for_task(task["file"]):
                 if record.get("check") in names \
                         and record.get("outcome") == "passed":
                     total += 1

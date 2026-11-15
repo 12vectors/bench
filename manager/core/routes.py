@@ -34,6 +34,7 @@ import delivery
 import doctor
 import drive
 import events
+import evidence
 import gatepolicy
 import gates
 import changes
@@ -513,12 +514,12 @@ def get_evidence(req) -> None:
         manifest = None
     req.reply(200, {
         "rollup": verify.rollup(name, manifest),
-        "evidence": [verify.public(r) for r in verify.for_task(name)],
+        "evidence": [verify.public(r) for r in evidence.for_task(name)],
         # requests answered by an existing record, each naming the
         # evidence it returned and who asked — not evidence itself
         "reuses": [verify.public_reuse(r)
-                   for r in verify.reuses_for_task(name)[:20]],
-        "outcomes": verify.OUTCOMES,
+                   for r in evidence.reuses_for_task(name)[:20]],
+        "outcomes": evidence.OUTCOMES,
     })
 
 
@@ -536,15 +537,15 @@ def get_review(req) -> None:
     name = _q(req, "file")
     stage = _q(req, "stage") or (taskfiles.find_stage_of(name) or "")
     records = reviews.for_task(name)
-    evidence = [verify.public(r) for r in verify.for_task(name)
-                if (r.get("root") or {}).get("policy") == "review"]
+    pinned = [verify.public(r) for r in evidence.for_task(name)
+              if (r.get("root") or {}).get("policy") == "review"]
     req.reply(200, {
         "reviews": [reviews.public(r) for r in records],
         # what the PR currently proposes, as the board last read
         # it — the fact every `stale` above is measured against
         "head": reviews.observed(name),
-        "evidence": evidence,
-        "outcomes": verify.OUTCOMES,
+        "evidence": pinned,
+        "outcomes": evidence.OUTCOMES,
         "authorities": reviews.AUTHORITIES,
         "targets": reviews.TARGETS,
         "stage": stage,
@@ -574,7 +575,7 @@ def get_evidence_log(req) -> None:
     # held content; this is the one place bytes bench did not
     # write reach a reader.
     try:
-        req.reply(200, verify.log_text(_q(req, "id")))
+        req.reply(200, evidence.log_text(_q(req, "id")))
     except (ValueError, OSError) as exc:
         req.reply(404, {"error": str(exc)})
 

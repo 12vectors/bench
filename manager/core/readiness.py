@@ -56,11 +56,13 @@ import time
 from pathlib import Path
 
 import config
+import evidence
 import gatepolicy
 import profiles
 import settings
 import setupguide
 import setuptasks
+import staleness
 import taskfiles
 
 Refused = setupguide.Refused
@@ -454,8 +456,7 @@ def reviews() -> dict:
 def _card_records(name: str) -> list[dict]:
     """Every card-bound evidence record of one check, newest first. The
     doctor's fixture runs are about bench, not about this project."""
-    import verify
-    return [r for r in verify.all_evidence()
+    return [r for r in evidence.all_evidence()
             if r.get("check") == name and str(r.get("task") or "").endswith(".md")]
 
 
@@ -479,7 +480,6 @@ def _assignee_of_gap() -> str | None:
 
 
 def check_states(doc: dict | None = None) -> list[dict]:
-    import verify
     doc = profiles.document() if doc is None else doc
     defined = settings._checks_of(doc)
     recorded = reviews()
@@ -493,7 +493,7 @@ def check_states(doc: dict | None = None) -> list[dict]:
         check = defined[name]
         records = [r for r in _card_records(name)
                    if r.get("checkId") == check.get("checkId")]
-        latest = verify.outcome_now(records[0]) if records else None
+        latest = staleness.outcome_now(records[0]) if records else None
         run = latest["outcome"] if latest else "not-run"
         review = recorded.get(name) if isinstance(recorded.get(name), dict) else None
         review_stale = None
@@ -521,7 +521,7 @@ def check_states(doc: dict | None = None) -> list[dict]:
             "readinessWhy": READINESS[word] if not review_stale else
             f"{READINESS[word]}: {review_stale}",
             "run": run, "runWhy": (latest or {}).get("why"),
-            "evidence": [{"id": r.get("id"), "outcome": verify.outcome_now(r)["outcome"],
+            "evidence": [{"id": r.get("id"), "outcome": staleness.outcome_now(r)["outcome"],
                           "task": r.get("task"),
                           "commit": ((r.get("source") or {}).get("commit") or "")[:12],
                           "ended": r.get("ended")} for r in records[:6]],
@@ -759,10 +759,9 @@ def register(payload: dict) -> dict:
 # ── review: a person's record, bound to the check's identity ──────────
 
 def _evidence(evidence_id: str, name: str, check_id: str, label: str) -> dict:
-    import verify
-    if not verify.is_evidence_id(evidence_id):
+    if not evidence.is_evidence_id(evidence_id):
         raise Refused(f"the {label} evidence id {evidence_id!r} is not one")
-    record = verify.read(evidence_id)
+    record = evidence.read(evidence_id)
     if record is None:
         raise Refused(f"no evidence record {evidence_id} on this board", 404)
     if record.get("check") != name:
@@ -787,7 +786,6 @@ def review(payload: dict) -> dict:
 
     It changes no gate and no acceptance. It is what *readiness* rests on.
     """
-    import verify
     payload = payload if isinstance(payload, dict) else {}
     request, _ = setupguide._check_request(dict(payload, area="verification"))
     with setupguide.LOCK:
@@ -811,7 +809,7 @@ def review(payload: dict) -> dict:
                           "characters): a review with no note is not a review")
         passed = _evidence(str(payload.get("passEvidence") or ""), name,
                            check["checkId"], "passing")
-        reading = verify.outcome_now(passed)
+        reading = staleness.outcome_now(passed)
         if reading["outcome"] != "passed":
             raise Refused(f"evidence {passed['id']} reads "
                           f"{reading['outcome']}, not passed"

@@ -46,6 +46,7 @@ import time
 from pathlib import Path
 
 import config
+import evidence
 import gatepolicy
 import gates
 import gitrepo
@@ -63,7 +64,7 @@ VERSION = 1
 INTENT = "work"
 
 # Each item's state, in the words a row shows. The outcomes a request can
-# end in are verify's own words (`verify.OUTCOMES`); these are the batch's.
+# end in are verify's own words (`evidence.OUTCOMES`); these are the batch's.
 ITEM_STATES = {
     "request": "will be requested",
     "queued": "waiting its turn in this batch",
@@ -285,7 +286,7 @@ def _classify(row: dict, offered: dict) -> dict:
     """One requirement row, as a batch item."""
     reason = row.get("reason") or ""
     if row["state"] == "pending":
-        reason = row.get("reason") if row.get("reason") in verify.LIVE \
+        reason = row.get("reason") if row.get("reason") in evidence.LIVE \
             else "running"
     cls = gates.severity(reason if row["state"] != "met" else "passed")
     item = {"check": row.get("check"), "scope": row.get("scope"),
@@ -917,14 +918,11 @@ def recover() -> list[dict]:
 def _live(filename: str, item: dict) -> dict:
     """The verification in flight for one item, from verify's registry —
     so the page can say *preparing* apart from *running*."""
-    key = verify._key(filename, item["check"], item.get("scope"))
-    with state.LOCK:
-        evidence = verify._KEYS.get(key)
-        record = verify.RUNNING.get(evidence) if evidence else None
-        outcome = (record or {}).get("outcome")
-        agent = (record or {}).get("agent")
-    return {"evidence": evidence if record else None, "outcome": outcome,
-            "agent": agent}
+    record = verify.reserved(filename, item["check"], item.get("scope"))
+    if record is None:
+        return {"evidence": None, "outcome": None, "agent": None}
+    return {"evidence": record.get("id"), "outcome": record.get("outcome"),
+            "agent": record.get("agent")}
 
 
 PUBLIC_ITEM = ("check", "scope", "name", "coverage", "state", "reason",
@@ -949,7 +947,7 @@ def public(batch: dict | None) -> dict | None:
             live = _live(batch["task"], item)
             shown["live"] = live["outcome"] or "starting"
             shown["evidence"] = shown.get("evidence") or live["evidence"]
-        shown["words"] = (verify.OUTCOMES.get(item.get("state"))
+        shown["words"] = (evidence.OUTCOMES.get(item.get("state"))
                           or ITEM_STATES.get(item.get("state"))
                           or item.get("state"))
         items.append(shown)

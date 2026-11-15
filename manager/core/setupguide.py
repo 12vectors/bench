@@ -14,7 +14,7 @@ asks:
   installed adapters of `config.adapters_installed`;
 - the checks and merge rules of `settings.verification` and
   `gatepolicy.gate_policy`, and what they found of `verify`'s own records,
-  read through `verify.outcome_now`, which only ever disagrees in the
+  read through `staleness.outcome_now`, which only ever disagrees in the
   safe direction.
 
 What this module owns is the part nobody else did: six **areas**, each
@@ -60,11 +60,13 @@ import time
 from pathlib import Path
 
 import config
+import evidence
 import gatepolicy
 import githost
 import profiles
 import records
 import settings
+import staleness
 import taskfiles
 
 KIND = "bench-setup-state"
@@ -434,15 +436,14 @@ def _newest_outcomes(names: set[str]) -> dict[str, str]:
     """Per registered check, what its newest card-bound record reads now.
     The doctor's own fixture runs are not about this project, so only
     records filed under a card count."""
-    import verify
     found: dict[str, str] = {}
-    for record in verify.all_evidence():          # newest first
+    for record in evidence.all_evidence():          # newest first
         name = record.get("check")
         task = record.get("task") or ""
         if name not in names or name in found or not str(task).endswith(".md"):
             continue
         try:
-            found[name] = verify.outcome_now(record).get("outcome") or "error"
+            found[name] = staleness.outcome_now(record).get("outcome") or "error"
         except Exception:
             found[name] = "error"
     return found

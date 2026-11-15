@@ -71,8 +71,10 @@ import time
 from pathlib import Path
 
 import config
+import evidence
 import profiles
 import records
+import staleness
 import state
 import verify
 
@@ -364,7 +366,7 @@ def _text(name: str, value, cap: int) -> str:
         raise Refused(400, "marker", f"'{name}' holds a line that reads as a "
                                      f"closing-report marker; a progress update "
                                      f"is never the run's ending")
-    return verify.scrub(value)
+    return evidence.scrub(value)
 
 
 def _refs(raw, task: str) -> tuple[list[dict], list[str]]:
@@ -386,8 +388,8 @@ def _refs(raw, task: str) -> tuple[list[dict], list[str]]:
         value = str(value or "").strip()
         if kind == "commit" and _SHA_RE.match(value.lower()):
             out.append({"kind": "commit", "id": value.lower()})
-        elif kind == "evidence" and verify.is_evidence_id(value):
-            record = verify.read(value)
+        elif kind == "evidence" and evidence.is_evidence_id(value):
+            record = evidence.read(value)
             if record is None or record.get("task") != task:
                 dropped.append(f"evidence {value} is not a record for this card")
                 continue
@@ -772,10 +774,10 @@ def reminder(agent_id: str | None, now: float | None = None) -> str | None:
 def _evidence(ref: dict) -> dict:
     """A reference to an evidence record, resolved against the record as it
     reads *now*. The agent's words are never an input here."""
-    record = verify.read(ref["id"])
+    record = evidence.read(ref["id"])
     if record is None:
         return {**ref, "found": False}
-    now = verify.outcome_now(record)
+    now = staleness.outcome_now(record)
     source = record.get("source") or {}
     return {**ref, "found": True, "check": record.get("check"),
             "scope": record.get("scope"), "outcome": now.get("outcome"),

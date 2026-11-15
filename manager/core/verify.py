@@ -78,7 +78,6 @@ the whole-policy `policy-changed`, and it is never rewritten.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import os
 import re
@@ -91,117 +90,49 @@ import time
 from pathlib import Path
 
 import config
+import evidence
 import profiles
+import resultidentity
 import reviews
+import staleness
 import state
 import taskfiles
 
 VERSION = 1
 
-# ── the outcome vocabulary ─────────────────────────────────────────────
-#
-# Closed, and every word means one thing a reader would do differently
-# about. `failed` is reserved for a check that really ran and really said
-# no: a wrapper that could not start, a timeout and a cancellation are not
-# test failures and are never recorded as any.
-
-OUTCOMES = {
-    "running": "bench is running it now",
-    "preparing": "bench is running this check's preparation steps",
-    "passed": "the check ran and exited zero",
-    "failed": "the check ran and exited non-zero — the project's own verdict",
-    "denied": "it was refused before anything ran",
-    "prepare-failed": "a required preparation step failed, so the check did "
-                      "not run",
-    "not-run": "declared for this run and never asked for",
-    "cancelled": "stopped on purpose, by a person or by the run ending",
-    "stale": "it passed, and what it was about has changed since",
-    "error": "bench could not get an answer — the executable, the timeout or "
-             "this board stopping",
+# Names that left this module with task 121 (WP12), and where they live
+# now. Nothing is re-exported — a moved name leaves nothing behind, so a
+# patch of the old name cannot go quietly inert — but reading one says
+# where it went rather than only that it is missing.
+MOVED = {
+    **{name: "evidence" for name in (
+        "OUTCOMES", "LIVE", "REASONS", "STALE_REMEDIES", "SOURCE_REASONS",
+        "is_evidence_id", "path_of", "log_path_of", "read", "all_evidence",
+        "for_task", "for_agent", "scrub", "log_text", "reuse_dir",
+        "read_reuse", "reuses_for_task", "_store", "_slug", "_EPOCH",
+        "_ID_OK", "_SECRET_PATTERNS")},
+    **{name: "resultidentity" for name in (
+        "RUNNER_REVISION", "source_identity", "program_identity",
+        "child_env", "env_key_path", "env_identity", "ENV_KEY_BYTES",
+        "IDENTITY_VERSION", "IDENTITY_DIMENSIONS", "coverage_id",
+        "prepare_definition", "inputs_id", "result_id", "comparable",
+        "root_class", "PROGRAM_WHY", "_digest", "_git", "_search_path",
+        "_env_key", "_key_id", "_identity", "_HASHED")},
+    **{name: "staleness" for name in (
+        "freshness", "outcome_now", "identity_drift", "equivalence",
+        "accepted_now", "EQUIVALENCE_WHY", "_FRESH", "_FRESH_TTL",
+        "_DRIFT")},
 }
 
-# Outcomes that are still moving. Everything else is what the record says
-# for good, subject only to `freshness()`.
-LIVE = ("running", "preparing")
 
-# Why, in one slug, so a consumer branches on data rather than on prose.
-REASONS = {
-    "exit-zero": "the check exited 0",
-    "exit-nonzero": "the check exited non-zero",
-    "signal": "the check was killed by a signal",
-    "timeout": "the check was still running when its timeout expired",
-    "no-executable": "the check's executable could not be run",
-    "runner-error": "bench itself failed while running the check",
-    "unknown-check": "no check of that name is available to this run",
-    "unknown-scope": "no scope of that name is declared on that check",
-    "root-unavailable": "the execution root this check needs does not exist",
-    "root-foreign": "the directory the root names is a checkout of something "
-                    "else",
-    "profile-blocked": "the run's own execution profile does not resolve",
-    "no-profile": "there is no recorded profile for the run that asked",
-    "prepare-exit": "a required preparation step exited non-zero",
-    "prepare-error": "a required preparation step could not be run",
-    "cancelled-by-request": "a person cancelled it",
-    "cancelled-with-run": "the run that asked for it was stopped",
-    "board-restart": "this board stopped while it was running",
-    "never-asked": "nothing asked for it",
-    "source-changed": "the source it ran against has changed since",
-    "policy-changed": "the policy or the check's definition has changed since",
-    "program-changed": ("the program the check or a preparation step ran has "
-                        "changed at its path since, or was never identified"),
-    "runner-changed": "bench's own runner has changed since it ran",
-    "head-changed": "the pull request's head has moved on since, so the "
-                    "result is about an earlier revision",
-    "pr-ended": "the pull request has been merged or closed since, so the "
-                "result is historical rather than current",
-    # The dimensions of a result identity (design §4.1), each its own slug
-    # because each is a different thing to go and look at. Legacy records
-    # — written before result identities — never produce these; they keep
-    # `policy-changed` and `context-changed`.
-    "check-changed": "the check's own definition has changed since it ran",
-    "scope-changed": "the scope it ran under now runs different arguments",
-    "prepare-changed": "a preparation step it needed has changed since",
-    "input-changed": "an input the check declares has changed since",
-    "env-changed": "the environment the check was given has changed since",
-    "identity-unknown": "the record's result identity cannot be read, so it "
-                        "cannot be shown to hold",
-    "input-unavailable": "a required input the check declares could not be "
-                         "read, so nothing was run",
-    "env-key-unusable": "the machine-local key that binds declared "
-                        "environment values cannot be used",
-}
+def __getattr__(name: str):
+    """A moved name fails loudly, naming its owner."""
+    if name in MOVED:
+        raise AttributeError(
+            f"verify.{name} moved to {MOVED[name]} with task 121 (WP12); "
+            f"read or patch it there — nothing is left under the old name")
+    raise AttributeError(f"module 'verify' has no attribute {name!r}")
 
-# What to do about each way a result stops holding, said once so the gate,
-# the evidence sheet and an agent's diagnostics name the same remedy. The
-# legacy reasons keep the sentence they always had at the gate.
-STALE_REMEDIES = {
-    "check-changed": ("Run the check again: its command, root, time limit or "
-                      "declared inputs or environment changed since it "
-                      "passed."),
-    "scope-changed": ("Run the check again over the scope as it is now "
-                      "declared."),
-    "prepare-changed": ("Run the check again: a preparation step it needs "
-                        "runs something different now."),
-    "program-changed": ("Run the check again: a program it invoked was "
-                        "replaced at the same path."),
-    "input-changed": ("Run the check again with the input as it is now — "
-                      "or, if the change is unintended, put the input back."),
-    "env-changed": ("Run the check again in the environment as it is now. "
-                    "Declared values are bound by a keyed hash on this "
-                    "machine, so a replaced or lost key also needs one "
-                    "fresh run."),
-    "runner-changed": "Bench was updated since this ran — run checks again.",
-    "identity-unknown": ("Run the check again: this record's identity cannot "
-                         "be read, and an unknown identity never counts as a "
-                         "pass."),
-    "source-changed": "Commit, then run checks against the code as it is.",
-}
-
-# The source half of a freshness reading. Everything else a new record can
-# report is a change to what the check *is* — its definition, programs,
-# inputs or environment — which is what makes a record outdated rather
-# than merely about other code.
-SOURCE_REASONS = ("source-changed", "head-changed", "pr-ended")
 
 # Which outcome a check's own exit status means. Separate from everything
 # above on purpose: this is the *only* place an exit code becomes a
@@ -248,22 +179,11 @@ def slots() -> threading.BoundedSemaphore:
             _SLOTS_FOR = config.VERIFY_PARALLEL
         return _SLOTS
 
-# ── and the cost of answering about it ─────────────────────────────────
-#
-# Asking whether a pass is still fresh means reading the checkout it ran
-# in: a handful of git commands and a hash per untracked file. That is the
-# right price for a question somebody asked, and the wrong price to pay
-# per card on every state payload — and the board's own reading rides
-# every SSE nudge.
-#
-# So the answer is memoised, and `_EPOCH` is what makes the memo safe: a
-# terminal record never changes, so the only things that can move an
-# answer are the source and the policy, which is exactly what the TTL is
-# for; and any *new* record bumps the epoch, so a cached board reading can
-# never outlive a verification that has since ended.
-_EPOCH = 0
-_FRESH_TTL = 10.0
-_FRESH: dict[str, tuple[float, dict]] = {}
+
+# The board's own reading rides every SSE nudge, so it is memoised —
+# keyed on the evidence epoch (`evidence.epoch()`), a time bucket of
+# `staleness.FRESH_TTL` and the policy revision. Cleared, with every
+# other owner's memo, by `forget_cached`.
 _BOARD: tuple[tuple, frozenset, dict] | None = None
 
 
@@ -271,239 +191,18 @@ def _key(task: str, check: str, scope: str | None) -> str:
     return f"{task}\x00{check}\x00{scope or ''}"
 
 
-# ── identities and paths ───────────────────────────────────────────────
-
-_ID_OK = re.compile(r"^[A-Za-z0-9._:@-]{1,160}$")
-
-
-def is_evidence_id(value) -> bool:
-    """Whether a value has the shape of an evidence id — the one question
-    another module may ask before handing an id to `read()`. Shape only:
-    it says nothing about whether such a record exists."""
-    return isinstance(value, str) and bool(_ID_OK.match(value))
-
-
-def _slug(evidence_id: str) -> str:
-    """One evidence id as one filename. The ids carry `:` and `@`, which
-    are legal in a POSIX name and awkward everywhere else."""
-    return re.sub(r"[^A-Za-z0-9._-]", "-", evidence_id)
-
-
-def path_of(evidence_id: str) -> Path:
-    return config.EVIDENCE_DIR / f"{_slug(evidence_id)}.json"
-
-
-def log_path_of(evidence_id: str) -> Path:
-    return config.EVIDENCE_DIR / "logs" / f"{_slug(evidence_id)}.log"
-
-
-def _digest(*parts: str) -> str:
-    return hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
-
-
-# ── what the source actually was ───────────────────────────────────────
-#
-# A commit is not enough. The normal case for a work run is a checkout
-# with uncommitted edits in it — that is what the run has been doing — so
-# a binding that named only HEAD would call a pass fresh after the agent
-# changed every file under it. Everything uncommitted goes into the
-# identity: the tracked diff, and the content of the untracked files.
-
-# Beyond this, there is too much uncommitted work to bind honestly, and
-# the identity says so rather than pretending. An evidence record whose
-# source could not be bound is never reusable as a pass.
-_MAX_BIND_FILES = 200
-_MAX_BIND_BYTES = 4 * 1024 * 1024
-
-
-def _git(root: Path | str, *args: str, timeout: float = 30) -> subprocess.CompletedProcess:
-    try:
-        return config.git_run(root, *args, timeout=timeout)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return subprocess.CompletedProcess(args, 128, "", str(exc))
-
-
-def source_identity(root: Path) -> dict:
-    """What the code in `root` was, at the moment it was asked.
-
-    `commit` and `branch` are the portable half — the thing a PR body or a
-    teammate can act on. `sourceId` is the whole truth: a digest over the
-    commit, the tracked diff against it, and every untracked file's
-    content. Two verifications with the same `sourceId` ran against the
-    same code; a different one is a different question.
-    """
-    found: dict = {"commit": None, "branch": None, "dirty": [], "bound": False,
-                   "sourceId": None, "why": None}
-    head = _git(root, "rev-parse", "HEAD")
-    if head.returncode != 0:
-        found["why"] = (f"{root} is not a git checkout bench can read, so the "
-                        f"source cannot be identified")
-        found["sourceId"] = f"src:unbound@{_digest(str(root), str(time.time()))[:12]}"
-        return found
-    found["commit"] = head.stdout.strip()
-    branch = _git(root, "rev-parse", "--abbrev-ref", "HEAD")
-    found["branch"] = branch.stdout.strip() if branch.returncode == 0 else None
-    found["dirty"] = config.dirty_files(root)
-
-    parts = [found["commit"]]
-    diff = _git(root, "diff", "HEAD")
-    if diff.returncode != 0:
-        found["why"] = "the tracked diff could not be read"
-        found["sourceId"] = f"src:unbound@{_digest(found['commit'], str(time.time()))[:12]}"
-        return found
-    parts.append(_digest(diff.stdout))
-    untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
-    names = [n for n in untracked.stdout.split("\0") if n]
-    if len(names) > _MAX_BIND_FILES:
-        found["why"] = (f"{len(names)} untracked files in {root}, over the "
-                        f"{_MAX_BIND_FILES} bench will hash — the source "
-                        f"cannot be bound, so this evidence is never reusable")
-        found["sourceId"] = f"src:unbound@{_digest(*parts, str(time.time()))[:12]}"
-        return found
-    total = 0
-    for name in sorted(names):
-        try:
-            data = (Path(root) / name).read_bytes()
-        except OSError:
-            parts += [name, "unreadable"]
-            continue
-        total += len(data)
-        if total > _MAX_BIND_BYTES:
-            found["why"] = (f"more than {_MAX_BIND_BYTES} bytes of untracked "
-                            f"work in {root} — the source cannot be bound, so "
-                            f"this evidence is never reusable")
-            found["sourceId"] = f"src:unbound@{_digest(*parts, str(time.time()))[:12]}"
-            return found
-        parts += [name, hashlib.sha256(data).hexdigest()]
-    found["bound"] = True
-    found["sourceId"] = f"src:{_digest(*parts)[:16]}"
-    return found
-
-
-# ── what the program actually was ──────────────────────────────────────
-#
-# A path and an argument list name a program; they do not pin one. An
-# operator-local executable replaced at the same path is a different check
-# with the same name, so the bytes are part of what a pass is about.
-#
-# Three kinds of file are bound, each because the verdict comes from it:
-# the **executable** as it resolves (on the child's PATH, symlinks
-# followed), the **interpreter** a script's `#!` line names — one level,
-# no further — and every **argument** that is an absolute path to a file
-# outside the execution root, which is how `python3 /opt/ci/check.py`
-# hands an interpreter its real program. A file *inside* the root is the
-# source identity's to bind, and is not repeated here.
-#
-# What it does not bind, said where it is bound: the libraries, modules
-# and services those programs load in turn. That closure is unbounded,
-# and claiming it would be the sandbox nothing here provides.
-
-PROGRAM_WHY = ("the executable, the interpreter its #! line names and any "
-               "absolute file argument outside the root are hashed, so a "
-               "file replaced at the same path is a different program. This "
-               "pins what was invoked; it is not a sandbox, and it does not "
-               "bind the libraries, modules or services those programs load")
-
-# The runner itself is part of what a verdict is about: how an exit status
-# became an outcome is this module's code. Hashed once, at import — the
-# code actually running, whatever the file on disk has become since.
-try:
-    RUNNER_REVISION = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-except OSError:                       # pragma: no cover — we were imported
-    RUNNER_REVISION = None
-
-_HASHED: dict[tuple, str] = {}
-
-
-def _hash_file(path: Path) -> str:
-    """One file's sha256, memoised on everything a replacement changes —
-    the inode, the size, and both times, including the ctime nobody can
-    set — so asking twice costs a stat rather than a read."""
-    info = path.stat()
-    key = (str(path), info.st_dev, info.st_ino, info.st_size,
-           info.st_mtime_ns, info.st_ctime_ns)
-    found = _HASHED.get(key)
-    if found is None:
-        found = hashlib.sha256(path.read_bytes()).hexdigest()
-        if len(_HASHED) > 500:
-            _HASHED.clear()
-        _HASHED[key] = found
-    return found
-
-
-def _shebang(path: Path, search_path: str | None) -> str | None:
-    """The interpreter a script's first line names, resolved — `env`
-    indirection included, since that is how most scripts name one."""
-    try:
-        with path.open("rb") as handle:
-            first = handle.readline(512)
-    except OSError:
-        return None
-    if not first.startswith(b"#!"):
-        return None
-    words = first[2:].decode("utf-8", "replace").split()
-    if not words:
-        return None
-    if Path(words[0]).name == "env":
-        names = [w for w in words[1:] if not w.startswith("-")]
-        return shutil.which(names[0], path=search_path) if names else words[0]
-    return words[0]
-
-
-def program_identity(argv: list[str], root: Path | str,
-                     search_path: str | None) -> dict:
-    """What `argv` would execute, as content. `programId` digests every
-    bound file; an identity that could not be established is `bound:
-    False` and is never reusable as proof that a program is unchanged."""
-    found: dict = {"programId": None, "bound": False, "files": [],
-                   "why": PROGRAM_WHY}
-    if not argv:
-        found["why"] = "there is no program to identify"
-        return found
-    exe = argv[0]
-    resolved = exe if "/" in exe else shutil.which(exe, path=search_path)
-    if not resolved:
-        found["why"] = (f"{exe} does not resolve on the check's PATH, so the "
-                        f"program it would run cannot be identified")
-        return found
-    wanted = [("executable", Path(resolved))]
-    interpreter = _shebang(Path(resolved), search_path)
-    if interpreter:
-        wanted.append(("interpreter", Path(interpreter)))
-    inside = Path(str(root)).resolve()
-    for token in argv[1:]:
-        if not token.startswith("/"):
-            continue
-        candidate = Path(token)
-        try:
-            real = candidate.resolve()
-        except OSError:
-            continue
-        if real.is_file() and not real.is_relative_to(inside):
-            wanted.append(("argument", candidate))
-    parts: list[str] = []
-    for role, path in wanted:
-        try:
-            real = path.resolve(strict=True)
-            digest = _hash_file(real)
-        except (OSError, RuntimeError) as exc:
-            found["why"] = (f"the {role} {path} could not be read "
-                            f"({getattr(exc, 'strerror', None) or exc}), so the "
-                            f"program cannot be identified")
-            found["files"] = []
-            return found
-        found["files"].append({"role": role, "path": str(real),
-                               "sha256": digest})
-        parts += [role, str(real), digest]
-    found["bound"] = True
-    found["programId"] = f"prog:{_digest(*parts)[:16]}"
-    return found
-
-
-def _search_path() -> str | None:
-    """The PATH a check's executable is resolved on — the child's, which
-    `child_env` copies from the board's own environment."""
-    return config.child_env().get("PATH")
+def reserved(task: str, check: str, scope: str | None) -> dict | None:
+    """The run reserved for this card, check and scope right now, as a
+    copy without its process handle — or None. Read under the lock the
+    reservation is made under, so a caller never sees a half-made one.
+    The one public way to ask the registry (`required` asks it)."""
+    with state.LOCK:
+        evidence_id = _KEYS.get(_key(task, check, scope))
+        record = RUNNING.get(evidence_id) if evidence_id else None
+        if record is None:
+            return None
+        return {k: v for k, v in record.items()
+                if k not in ("proc", "cancelling")}
 
 
 # ── the environment a check is given ───────────────────────────────────
@@ -517,347 +216,14 @@ def _isolated_home(root: Path) -> Path:
     the person's own `HOME`, and never another card's. A card has one run
     at a time, so one card's home is one run's.
     """
-    return config.VERIFY_DIR / "home" / _digest(str(Path(root).resolve()))[:16]
+    return (config.VERIFY_DIR / "home"
+            / resultidentity.digest(str(Path(root).resolve()))[:16])
 
 
-def child_env(root: Path, home: Path, tmp: Path, evidence_id: str,
-              check: str) -> tuple[dict, list[str]]:
-    """The environment the check runs in, and the names taken out of it.
-
-    Built rather than inherited. Four things leave: **publication
-    credentials**, by name, because a test suite has no business being
-    able to push or publish and the only reliable way to say so is for the
-    token not to be there; the **launch environment** (`AGENT_*`), because
-    a check has no business reading the prompt or the resolved policy; the
-    board's **own address** (`BOARD_PORT`, `BOARD_AGENT_ID`), so a check
-    cannot turn round and ask bench for another verification; and the
-    **resolved layout** (`BOARD_APP_ROOT` and the rest), which is the same
-    rule applied to the same kind of fact — which application this board
-    manages and where its tickets live is bookkeeping, not configuration
-    for the suite under test.
-
-    That last one is not hypothetical. A check runs *in* the root bench
-    gave it and is told so (`BENCH_VERIFY_ROOT`), so it needs none of
-    them; a project whose own code reads the board's roots at import —
-    bench itself, as it happens — would otherwise resolve the operator's
-    application while being verified against a checkout of its own.
-
-    Three things arrive: `HOME`, `TMPDIR` and the cache variables, pointed
-    into directories made for this, and `BENCH_VERIFY*`, so a check that
-    wants to know it is being verified can ask.
-    """
-    removed: list[str] = []
-    env: dict[str, str] = {}
-    denied = set(config.verify_env_deny())
-    for name, value in config.child_env().items():
-        if name in denied \
-                or name.startswith(profiles.VERIFY_ENV_STRIPPED_PREFIXES) \
-                or name in profiles.VERIFY_ENV_STRIPPED:
-            removed.append(name)
-            continue
-        env[name] = value
-    cache = home / ".cache"
-    env.update({
-        "HOME": str(home),
-        "TMPDIR": str(tmp), "TEMP": str(tmp), "TMP": str(tmp),
-        "XDG_CACHE_HOME": str(cache),
-        "XDG_CONFIG_HOME": str(home / ".config"),
-        "XDG_DATA_HOME": str(home / ".local" / "share"),
-        "XDG_STATE_HOME": str(home / ".local" / "state"),
-        "PIP_CACHE_DIR": str(cache / "pip"),
-        "NPM_CONFIG_CACHE": str(cache / "npm"),
-        "YARN_CACHE_FOLDER": str(cache / "yarn"),
-        "CARGO_HOME": str(home / ".cargo"),
-        "GOCACHE": str(cache / "go-build"),
-        "GOMODCACHE": str(home / "go" / "pkg" / "mod"),
-        "BENCH_VERIFY": evidence_id,
-        "BENCH_VERIFY_CHECK": check,
-        "BENCH_VERIFY_ROOT": str(root),
-        "PWD": str(root),
-    })
-    return env, sorted(set(removed))
 
 
-# ── declared environment values, bound by a keyed hash ─────────────────
-#
-# A check that declares `"env": ["DATABASE_URL"]` has its verdict bound to
-# that variable's value. The value is never stored: what is recorded is an
-# HMAC-SHA256 of it under a key that exists only on this machine
-# (`state/verify/env.key`, 0600). So the record proves "the same value as
-# when it passed" to this board and to nobody else, and a stolen record
-# cannot be dictionary-attacked without the key.
-#
-# The key is made by the runner, at the moment a check that declares
-# `env` is about to run — never by reading. A freshness question that
-# finds no key does not make one: it answers that the binding cannot be
-# shown to hold, which is the conservative direction. A lost or replaced
-# key therefore costs exactly one fresh run of each check that declared
-# environment variables, and nothing else.
-
-ENV_KEY_BYTES = 32
-_UNSET = "\x00unset"
 
 
-def env_key_path() -> Path:
-    return config.VERIFY_DIR / "env.key"
-
-
-def _read_env_key() -> bytes | None:
-    """The key, if one is here and fit to use. Unreadable, the wrong size,
-    or readable by anyone but this user, and it is not used."""
-    path = env_key_path()
-    try:
-        info = path.stat()
-        if info.st_mode & 0o077:
-            return None
-        data = path.read_bytes()
-    except OSError:
-        return None
-    return data if len(data) == ENV_KEY_BYTES else None
-
-
-def _env_key(create: bool) -> bytes | None:
-    """The key, made here only when `create` — which only the runner
-    passes. Raises when one exists that bench will not use, so the runner
-    refuses rather than quietly replacing a key an operator may care
-    about."""
-    found = _read_env_key()
-    if found is not None or not create:
-        return found
-    path = env_key_path()
-    if path.exists():
-        raise ValueError(
-            f"{path} exists and bench will not use it — it must be exactly "
-            f"{ENV_KEY_BYTES} bytes and readable by this user only. Remove "
-            f"it to have bench make a new one; every check that declares "
-            f"environment variables then needs one fresh run")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        return _read_env_key()
-    with os.fdopen(fd, "wb") as handle:
-        handle.write(os.urandom(ENV_KEY_BYTES))
-    return _read_env_key()
-
-
-def _key_id(key: bytes) -> str:
-    """Which key bound a record, without saying anything about it."""
-    return "key:" + hmac.new(key, b"bench:verify:env-key-id",
-                             hashlib.sha256).hexdigest()[:12]
-
-
-def _env_value_hash(key: bytes, name: str, value: str | None) -> str:
-    message = f"{name}\x00{_UNSET if value is None else value}".encode(
-        "utf-8", "surrogateescape")
-    return hmac.new(key, message, hashlib.sha256).hexdigest()
-
-
-def env_identity(env: dict, declared: list[str], key: bytes | None) -> dict:
-    """What the environment a check was given *was*, as far as bench binds
-    it: the names of every variable passed (never their values), and a
-    keyed hash of each declared variable's value — or of its absence.
-
-    That is all. Bench does not claim the whole runtime environment is
-    equal: an undeclared value, a library on disk and a service on the
-    network are outside it, and the documentation says so."""
-    names = sorted(env)
-    bound = []
-    for name in declared:
-        value = env.get(name)
-        bound.append({"name": name, "set": value is not None,
-                      "hmac": _env_value_hash(key, name, value) if key else None})
-    found = {"passed": names, "declared": bound,
-             "keyId": _key_id(key) if (key and declared) else None}
-    found["envId"] = "env:" + _digest(
-        "env/1", json.dumps(names),
-        json.dumps([[b["name"], b["hmac"]] for b in bound]))[:16]
-    return found
-
-
-# ── the result identity (design §4.1) ──────────────────────────────────
-#
-# Everything a verdict *depends on*, kept apart from everything that only
-# says how the run came about. A pass holds while every dimension below
-# holds; it is never invalidated by provenance — which policy revision was
-# in force, which unrelated context was approved for some other card, who
-# asked, under which model, from which temporary path.
-
-IDENTITY_VERSION = 1
-IDENTITY_DIMENSIONS = ("source", "check", "coverage", "program", "prepare",
-                       "inputs", "rootClass", "env", "runner")
-
-
-def coverage_id(scope: str | None, scope_args: list[str]) -> str:
-    return "cov:" + _digest("coverage/1", scope or "", json.dumps(scope_args))[:16]
-
-
-def prepare_definition(steps: list[dict]) -> str:
-    """The preparation a check needs, as substance: each step's argument
-    list, whether it needs the network and whether it is required. Not its
-    name — renaming a step changes nothing it does."""
-    return "prep:" + _digest("prepare/1", json.dumps(
-        [[s.get("executable"), list(s.get("argv") or []), bool(s.get("network")),
-          bool(s.get("required", True))] for s in steps]))[:16]
-
-
-def inputs_id(inputs: list[dict]) -> str:
-    return "inputs:" + _digest("inputs/1", json.dumps(
-        [[i.get("name"), i.get("contextId")] for i in inputs]))[:16]
-
-
-def result_id(identity: dict) -> str:
-    """One digest over every dimension — equal only when all of them are."""
-    return "result:" + _digest("result/1", *(
-        json.dumps(identity.get(d), sort_keys=True)
-        for d in IDENTITY_DIMENSIONS))[:16]
-
-
-def _identity(record: dict, source: dict, program: dict, steps: list[dict],
-              programs: list[dict], inputs: list[dict], klass: str,
-              env_id: str) -> dict:
-    """The result identity, from its parts. One function, so the identity
-    a run records and the identity a request *would* have (`_prospective`,
-    which decides reuse) can never be computed two different ways."""
-    return {
-        "v": IDENTITY_VERSION,
-        "source": source.get("sourceId") if source.get("bound") else None,
-        "check": record.get("checkSubstance"),
-        "coverage": coverage_id(record.get("scope"), record.get("scopeArgs") or []),
-        "program": program.get("programId") if program.get("bound") else None,
-        "prepare": {"definition": prepare_definition(steps),
-                    "programs": [p.get("programId") if p.get("bound") else None
-                                 for p in programs]},
-        "inputs": inputs_id(inputs),
-        "rootClass": klass,
-        "env": env_id,
-        "runner": RUNNER_REVISION,
-    }
-
-
-# ── declared equivalence (design §5, card 104) ─────────────────────────
-#
-# A record of another check answers this one only when three things hold
-# together, and never when any one of them holds alone: the operator
-# declared it (`"accepts"` on this check, read from the policy in force
-# now), the two definitions agree in every substantive dimension
-# (`profiles.check_differences` — the name is the only thing allowed to
-# differ, and the declared root only by name within its class), and the
-# record itself ran in the root class this check would run in, with a
-# result identity to show it. Everything else a pass depends on — the
-# source, the programs and interpreters, the input contents, the declared
-# environment's values and the runner — is the record's own result
-# identity, judged exactly as it is for a record of this check's own name.
-
-EQUIVALENCE_WHY = {
-    "not-accepted": "a different check, which this check does not declare "
-                    "that it accepts — names never make two checks the same",
-    "legacy-record": "recorded before result identities existed, so it "
-                     "cannot be shown to be the same check",
-    "root-class": "it did not run in the kind of checkout this check runs in",
-}
-
-
-def accepted_now(check: dict) -> dict:
-    """The checks `check` accepts in the policy as it reads *now*, by name,
-    with their current definitions — never what a frozen manifest said.
-    Empty when the document does not declare `check`, or accepts nothing:
-    a declaration removed since a run was launched is removed."""
-    try:
-        doc = profiles.document()
-        steps, _ = profiles.document_steps(doc)
-        declared, _ = profiles.document_checks(doc, steps)
-    except (OSError, ValueError):
-        return {}
-    current = declared.get(check.get("name"))
-    if current is None:
-        return {}
-    return {name: declared[name] for name in current.get("accepts") or []
-            if name in declared}
-
-
-def equivalence(record: dict, check: dict, accepted: dict) -> dict:
-    """Whether `record` — evidence filed under some check's name — may
-    answer a requirement for `check`, and if not, which dimension stops it.
-
-    `accepted` is what `check` accepts now, by name, with each current
-    definition (`accepted_now`, or the gate policy's `acceptedChecks`). A
-    record of `check`'s own name is trivially its own; this function is
-    about the other names, and it fails closed at every step."""
-    name = record.get("check")
-    mine = check.get("name")
-    if name == mine:
-        return {"equivalent": True, "dimension": None, "why": None}
-
-    def refuse(dimension: str, why: str) -> dict:
-        return {"equivalent": False, "dimension": dimension, "why": why}
-
-    other = accepted.get(name)
-    if other is None:
-        return refuse("not-accepted",
-                      f"'{name}' is {EQUIVALENCE_WHY['not-accepted']} "
-                      f"('{mine}')")
-    differs = profiles.check_differences(check, other,
-                                         record.get("scope") or None)
-    if differs:
-        return refuse(*differs[0])
-    if record.get("outcome") in LIVE:
-        # Still running: its identity is not written yet, and the two
-        # definitions agree, so it is the newer answer in flight.
-        return {"equivalent": True, "dimension": None, "why": None}
-    identity = record.get("identity") if isinstance(record.get("identity"),
-                                                   dict) else {}
-    if not record.get("resultId") or not identity:
-        return refuse("legacy-record",
-                      f"the '{name}' record was "
-                      f"{EQUIVALENCE_WHY['legacy-record']} as '{mine}'")
-    want = ("worktree" if profiles.root_class_of(str(check.get("root")))
-            == "worktree" else "fresh")
-    klass = identity.get("rootClass")
-    if klass != want:
-        if klass == "worktree":
-            why = (f"'{name}' ran in the working checkout, which can hold "
-                   f"files a fresh checkout does not, and '{mine}' runs in a "
-                   f"pinned one")
-        elif want == "fresh":
-            why = (f"'{name}' ran in a pinned checkout that already held files "
-                   f"beyond its commit, so it was not a clean pinned checkout "
-                   f"of that commit")
-        else:
-            why = (f"'{name}' ran in a fresh pinned checkout and '{mine}' runs "
-                   f"in the card's working checkout — different root classes "
-                   f"are distinct assurance")
-        return refuse("root-class", why)
-    return {"equivalent": True, "dimension": None, "why": None}
-
-
-def comparable(identity: dict) -> dict:
-    """A result identity without its `check` dimension — the substance
-    digest, which carries the check's declared root by name. Two records
-    of different names are compared on everything else here, and on their
-    definitions by `equivalence`, which compares the root by its class."""
-    return {k: v for k, v in (identity or {}).items() if k != "check"}
-
-
-def root_class(policy: str, root: Path) -> str:
-    """`worktree`, `fresh` or `reused` — what the checkout could have held
-    that the source identity does not see.
-
-    A card's worktree can hold ignored state (caches, `node_modules`, a
-    virtualenv) the source identity deliberately does not hash. A `source`
-    or `review` checkout is only called `fresh` when the runner genuinely
-    found it so as the check began — no ignored, untracked or modified
-    file in it — because bench reuses a `source` checkout of the same
-    commit, and a review's pinned checkout outlives one check. One that
-    already held such state is `reused`, which is said rather than
-    papered over."""
-    if policy not in ("source", "review"):
-        return "worktree"
-    status = _git(root, "status", "--porcelain", "--ignored",
-                  "--untracked-files=all")
-    if status.returncode != 0:
-        return "reused"
-    return "fresh" if not status.stdout.strip() else "reused"
 
 
 def _resolve_inputs(check: dict) -> tuple[list[dict], str | None]:
@@ -945,7 +311,7 @@ def _run_process(argv: list[str], root: Path, env: dict, log,
         log.flush()
         return {"rc": None, "started": started, "ended": time.time(),
                 "outcome": "cancelled", "reason": early,
-                "why": REASONS[early]}
+                "why": evidence.REASONS[early]}
     log.write(f"\n$ {shlex.join(argv)}\n".encode("utf-8"))
     log.flush()
     try:
@@ -988,7 +354,7 @@ def _run_process(argv: list[str], root: Path, env: dict, log,
         # cancellation must not do. The word itself is the fallback.
         return {"rc": rc, "started": started, "ended": ended,
                 "outcome": "cancelled", "reason": cancelled,
-                "why": REASONS.get(cancelled, cancelled)}
+                "why": evidence.REASONS.get(cancelled, cancelled)}
     if timed_out:
         log.write(f"bench: killed after {timeout:.0f}s\n".encode("utf-8"))
         log.flush()
@@ -1018,111 +384,6 @@ def _kill(proc: subprocess.Popen) -> None:
             continue
 
 
-# ── the evidence record ────────────────────────────────────────────────
-
-
-def _store(record: dict) -> dict:
-    """Write the record, every time it changes. Twice at least — once when
-    the request is accepted and once when it ends — because an evidence
-    file that only appeared at the end would be missing in exactly the
-    case a reader most needs it: while it is running, and after a crash."""
-    global _EPOCH
-    with state.LOCK:
-        _EPOCH += 1
-    config.EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
-    stored = {k: v for k, v in record.items() if k not in ("proc", "cancelling")}
-    path_of(record["id"]).write_text(
-        json.dumps(stored, indent=2, sort_keys=True, default=str),
-        encoding="utf-8")
-    return stored
-
-
-def read(evidence_id: str) -> dict | None:
-    """One stored record. Reading is reading: nothing is re-run, nothing is
-    re-resolved, and opening a detail panel costs one file read."""
-    if not _ID_OK.match(evidence_id or ""):
-        return None
-    try:
-        data = json.loads(path_of(evidence_id).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def all_evidence() -> list[dict]:
-    """Every record this board holds, newest first."""
-    found = []
-    if not config.EVIDENCE_DIR.is_dir():
-        return found
-    for path in config.EVIDENCE_DIR.glob("*.json"):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(data, dict) and data.get("id"):
-            found.append(data)
-    found.sort(key=lambda r: r.get("requested") or 0, reverse=True)
-    return found
-
-
-def for_task(filename: str) -> list[dict]:
-    return [r for r in all_evidence() if r.get("task") == filename]
-
-
-def for_agent(agent_id: str) -> list[dict]:
-    return [r for r in all_evidence() if r.get("agent") == agent_id]
-
-
-# ── secrets never reach a log a reader opens ───────────────────────────
-#
-# A check's own output is the project's, and a project's test suite prints
-# what it likes. The record names paths, revisions and hashes and never
-# content; the log is the one place bytes bench did not write get through,
-# so it is scrubbed on the way out rather than trusted on the way in.
-
-_SECRET_PATTERNS = (
-    re.compile(r"(?i)\b(gh[pousr]_[A-Za-z0-9]{10,})"),
-    re.compile(r"\b(sk-[A-Za-z0-9_-]{16,})"),
-    re.compile(r"\b(AKIA[0-9A-Z]{12,})"),
-    re.compile(r"\b(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})"),
-    re.compile(r"(?i)\b(bearer\s+)([A-Za-z0-9._~+/-]{16,}=*)"),
-    re.compile(r"(?i)\b([a-z_]*(?:secret|password|passwd|token|api[_-]?key|"
-               r"credential)[a-z_]*)\s*[=:]\s*(\S{6,})"),
-)
-
-
-def scrub(text: str) -> str:
-    """The log as a reader may see it, with anything shaped like a
-    credential replaced by a marker. Not a proof — no pattern set is —
-    but the difference between a token printed by an unlucky test and a
-    token in a panel somebody screenshots."""
-    out = text
-    for pattern in _SECRET_PATTERNS:
-        def _mask(match: re.Match) -> str:
-            groups = match.groups()
-            if len(groups) == 1:
-                return "«redacted»"
-            return f"{groups[0]}«redacted»"
-        out = pattern.sub(_mask, out)
-    return out
-
-
-def log_text(evidence_id: str, cap: int = 200_000) -> dict:
-    """One verification's output, scrubbed and clipped to its tail — which
-    is where a failing check says what failed."""
-    record = read(evidence_id)
-    if record is None:
-        raise ValueError(f"no evidence {evidence_id}")
-    path = Path(record.get("log") or log_path_of(evidence_id))
-    try:
-        raw = path.read_text(encoding="utf-8", errors="replace")
-    except OSError as exc:
-        return {"id": evidence_id, "text": "", "bytes": 0,
-                "why": f"the log could not be read: {exc}"}
-    clipped = len(raw.encode("utf-8", "replace")) > cap
-    return {"id": evidence_id, "text": scrub(raw[-cap:]),
-            "bytes": len(raw), "clipped": clipped,
-            "scrubbed": True, "why": None}
 
 
 # ── what a restricted run may read of its own failure ──────────────────
@@ -1183,7 +444,7 @@ def _clean_line(text: str) -> str:
     once more (a secret an escape sequence split is whole again now), and
     clipped to DIAG_LINE_CHARS with the clipped count said."""
     text = _UNSAFE.sub("", _ANSI.sub("", text.replace("\t", " ")))
-    text = scrub(text)
+    text = evidence.scrub(text)
     if len(text) > DIAG_LINE_CHARS:
         cut = len(text) - DIAG_LINE_CHARS
         text = text[:DIAG_LINE_CHARS] + f" … ({cut} more characters)"
@@ -1197,7 +458,7 @@ def _bench_words(value) -> str | None:
         return None
     # One line, always: a line break in a reason would print as a line of
     # its own, outside the `│ ` prefix that marks text bench did not write.
-    flat = " ".join(scrub(value).splitlines())
+    flat = " ".join(evidence.scrub(value).splitlines())
     return _UNSAFE.sub("", _ANSI.sub("", flat))[:1000]
 
 
@@ -1269,7 +530,7 @@ def diagnostic(evidence_id, *, agent: str, task: str | None = None) -> dict:
     count stated. Where there is no excerpt, `unavailable` says why. It
     writes nothing: the record, its log and its verdict are as they were.
     """
-    if not is_evidence_id(evidence_id):
+    if not evidence.is_evidence_id(evidence_id):
         raise DiagnosticRefused(400, "invalid-id",
                                 "that is not an evidence id — ask with the id "
                                 "bench-verify printed (ev:verification@…)")
@@ -1283,7 +544,7 @@ def diagnostic(evidence_id, *, agent: str, task: str | None = None) -> dict:
     if task and task != own:
         raise DiagnosticRefused(403, "other-card",
                                 "a run reads the diagnostics of its own card only")
-    record = read(evidence_id)
+    record = evidence.read(evidence_id)
     if record is None:
         raise DiagnosticRefused(404, "unknown-evidence",
                                 f"there is no evidence {evidence_id} on this board")
@@ -1293,7 +554,7 @@ def diagnostic(evidence_id, *, agent: str, task: str | None = None) -> dict:
     offered = {c.get("name") for c in available(frozen)}
     asked = record.get("agent") == agent or any(
         r.get("agent") == agent and r.get("reused") == evidence_id
-        for r in reuses_for_task(own))
+        for r in evidence.reuses_for_task(own))
     if record.get("check") not in offered and not asked:
         raise DiagnosticRefused(403, "check-not-offered",
                                 f"the check {record.get('check')!r} is neither "
@@ -1325,14 +586,14 @@ def _diagnose(record: dict) -> dict:
     if record.get("outcome") == "denied":
         out["unavailable"] = {"code": "not-run", "why": UNAVAILABLE["not-run"]}
         return out
-    text, missing, read_clipped = _read_tail(log_path_of(evidence_id))
+    text, missing, read_clipped = _read_tail(evidence.log_path_of(evidence_id))
     if missing:
         out["unavailable"] = {"code": missing, "why": UNAVAILABLE[missing]}
         return out
     out["fullLog"]["available"] = True
     # scrub before anything is counted or cut, so a secret straddling the
     # boundary of the excerpt is masked whole rather than half
-    lines = scrub(text).split("\n")
+    lines = evidence.scrub(text).split("\n")
     if lines and lines[-1] == "":
         lines.pop()
     if not read_clipped and lines[:1] == [f"bench verification {evidence_id}"]:
@@ -1348,7 +609,7 @@ def _diagnose(record: dict) -> dict:
         f"$ {s.get('command')}" for s in record.get("prepare") or []}
     if not any(line.strip() and line not in ours
                and not line.startswith("bench: ") for line in lines):
-        code = "running" if record.get("outcome") in LIVE else "empty"
+        code = "running" if record.get("outcome") in evidence.LIVE else "empty"
         out["unavailable"] = {"code": code, "why": UNAVAILABLE[code]}
         return out
     kept: list[str] = []
@@ -1368,7 +629,7 @@ def _diagnose(record: dict) -> dict:
                      "start and its end; the excerpt is from the end")
     if read_clipped:
         notes.append(f"only the last {DIAG_READ_CAP} bytes of the log were read")
-    if record.get("outcome") in LIVE:
+    if record.get("outcome") in evidence.LIVE:
         notes.append("the check is still running; this is its output so far")
     out["excerpt"] = {
         "lines": kept, "truncated": omitted > 0 or read_clipped
@@ -1441,7 +702,7 @@ def _refuse(request: dict, reason: str, why: str) -> dict:
         "rc": None, "started": None, "ended": time.time(),
         "duration": 0.0, "prepare": record.get("prepare") or [],
     })
-    stored = _store(record)
+    stored = evidence.store(record)
     state.record_board_event({
         "kind": "verify", "actor": "board", "file": record.get("task") or "",
         "summary": (f"verification of {record.get('check')} on "
@@ -1609,12 +870,12 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
     env_key = None
     if found.get("env"):
         try:
-            env_key = _env_key(create=True)
+            env_key = resultidentity.env_key(create=True)
         except (ValueError, OSError) as exc:
             return _refuse(shell, "env-key-unusable", str(exc))
         if env_key is None:
             return _refuse(shell, "env-key-unusable",
-                           f"{env_key_path()} could not be made or read, so the "
+                           f"{resultidentity.env_key_path()} could not be made or read, so the "
                            f"declared environment cannot be bound and nothing "
                            f"was run")
 
@@ -1677,7 +938,7 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
     shell["outcome"] = "running"
     shell["reason"] = None
     shell["why"] = "bench is running it"
-    _store(shell)
+    evidence.store(shell)
     state.record_board_event({
         "kind": "verify", "actor": "board", "file": task,
         "summary": f"verifying {check} on {task} — {shell['command']}"})
@@ -1732,15 +993,15 @@ def _request_shell(check: str, task: str, scope: str | None, intent: str,
     when = time.time()
     request_id = (manifest or {}).get("requestId") \
         or profiles.request_id(intent, task or "unknown.md", when)
-    evidence = profiles.evidence_id(
+    evidence_id = profiles.evidence_id(
         "verification", request_id, f"{check}:{scope or ''}:{when:.6f}")
     context = [i.get("contextId") for i in (manifest or {}).get("context") or []
                if i.get("contextId")]
     return {
         "v": VERSION,
-        "id": evidence,
+        "id": evidence_id,
         "runner": {"module": "verify", "version": VERSION,
-                   "revision": RUNNER_REVISION},
+                   "revision": resultidentity.RUNNER_REVISION},
         "task": task, "stage": stage, "agent": agent, "actor": actor,
         "intent": intent, "check": check, "scope": scope,
         "requested": when,
@@ -1758,7 +1019,7 @@ def _request_shell(check: str, task: str, scope: str | None, intent: str,
         # evidence is machine-local, like the manifest and the plan: it
         # names this disk's paths, and nothing here is ever committed
         "location": "local",
-        "log": str(log_path_of(evidence)),
+        "log": str(evidence.log_path_of(evidence_id)),
         "prepare": [],
         "argv": [], "command": None, "scopeArgs": [],
         "root": None, "source": None, "env": None,
@@ -1800,16 +1061,13 @@ REUSE_WHY = ("an equal, current result was already on record for this "
              "provenance; this record names who asked this time")
 
 
-def reuse_dir() -> Path:
-    return config.EVIDENCE_DIR / "reuse"
-
 
 def _clean_source_id(commit: str) -> str:
     """The `sourceId` `source_identity` gives a checkout of `commit` with
     nothing uncommitted in it — what a fresh `source` checkout bench has
     not made yet would read as. Computed rather than checked out, because
     deciding reuse must not cost a checkout."""
-    return f"src:{_digest(commit, _digest(''))[:16]}"
+    return f"src:{resultidentity.digest(commit, resultidentity.digest(''))[:16]}"
 
 
 def _prospective(shell: dict, check: dict, task: str, manifest: dict,
@@ -1825,7 +1083,7 @@ def _prospective(shell: dict, check: dict, task: str, manifest: dict,
     if policy == "source":
         stem = task[:-3]
         branch = config.branch_for(stem)
-        head = _git(config.app_repo(), "rev-parse", "--verify",
+        head = resultidentity.git(config.app_repo(), "rev-parse", "--verify",
                     f"{branch}^{{commit}}")
         if head.returncode != 0:
             return None
@@ -1834,8 +1092,8 @@ def _prospective(shell: dict, check: dict, task: str, manifest: dict,
         if root.is_dir():
             if config.worktree_mismatch(root):
                 return None
-            source = source_identity(root)
-            klass = root_class("source", root)
+            source = resultidentity.source_identity(root)
+            klass = resultidentity.root_class("source", root)
         else:
             source = {"commit": sha, "bound": True, "dirty": [],
                       "sourceId": _clean_source_id(sha)}
@@ -1847,23 +1105,23 @@ def _prospective(shell: dict, check: dict, task: str, manifest: dict,
             root, _, _ = _execution_root(check, task, manifest)
         except ValueError:
             return None
-        source = source_identity(root)
-        klass = root_class(policy, root)
+        source = resultidentity.source_identity(root)
+        klass = resultidentity.root_class(policy, root)
     if not source.get("bound") or source.get("dirty") or not source.get("commit"):
         return None
-    env, _ = child_env(root, Path("/nonexistent"), Path("/nonexistent"), "",
+    env, _ = resultidentity.child_env(root, Path("/nonexistent"), Path("/nonexistent"), "",
                        check["name"])
     if check.get("inputs"):
         env["BENCH_VERIFY_INPUTS"] = "/nonexistent"
-    env_id = env_identity(env, list(check.get("env") or []), env_key)["envId"]
+    env_id = resultidentity.env_identity(env, list(check.get("env") or []), env_key)["envId"]
     search = env.get("PATH")
-    program = program_identity(shell["argv"], root, search)
+    program = resultidentity.program_identity(shell["argv"], root, search)
     steps = [*(shell.get("profilePrepare") or []), *check["prepare"]]
-    programs = [program_identity([s["executable"], *s["argv"]], root, search)
+    programs = [resultidentity.program_identity([s["executable"], *s["argv"]], root, search)
                 for s in steps]
-    identity = _identity(shell, source, program, steps, programs, inputs,
+    identity = resultidentity.identity(shell, source, program, steps, programs, inputs,
                          klass, env_id)
-    return {"identity": identity, "resultId": result_id(identity),
+    return {"identity": identity, "resultId": resultidentity.result_id(identity),
             "commit": source["commit"]}
 
 
@@ -1904,7 +1162,7 @@ def _reusable(shell: dict, check: dict, task: str, manifest: dict,
     # what this check accepts in the policy *now*, and only a record whose
     # definition agrees in every dimension (`equivalence`). A run of an
     # accepted check in flight is newer than anything on record too.
-    accepted = accepted_now(check)
+    accepted = staleness.accepted_now(check)
     names = (shell["check"], *accepted)
     reserved = [(task, n) for n in names]
 
@@ -1920,7 +1178,7 @@ def _reusable(shell: dict, check: dict, task: str, manifest: dict,
         if live():
             return None
         generation = generations()
-    records = for_task(task)
+    records = evidence.for_task(task)
     with state.LOCK:
         if live() or generations() != generation:
             return None
@@ -1932,10 +1190,10 @@ def _reusable(shell: dict, check: dict, task: str, manifest: dict,
                 or record.get("outcome") == "denied":
             continue
         if record.get("check") != shell["check"] and \
-                not equivalence(record, check, accepted)["equivalent"]:
+                not staleness.equivalence(record, check, accepted)["equivalent"]:
             continue
         commit = (record.get("source") or {}).get("commit")
-        if record.get("outcome") in LIVE:
+        if record.get("outcome") in evidence.LIVE:
             # A run in flight is newer than anything on record, and one
             # still preparing has not bound its source: either may be
             # about this commit, so nothing older is returned past it.
@@ -1962,15 +1220,15 @@ def _reusable(shell: dict, check: dict, task: str, manifest: dict,
         if record.get("check") == shell["check"]:
             if record["resultId"] != planned["resultId"]:
                 return None
-        elif comparable(record.get("identity") or {}) != \
-                comparable(planned["identity"]) or \
-                result_id(record.get("identity") or {}) != record["resultId"]:
+        elif resultidentity.comparable(record.get("identity") or {}) != \
+                resultidentity.comparable(planned["identity"]) or \
+                resultidentity.result_id(record.get("identity") or {}) != record["resultId"]:
             # A declared equivalent whose definition agreed: every other
             # dimension of its identity — source, coverage, programs,
             # preparation, inputs, root class, environment, runner — must
             # equal the one this request would record.
             return None
-        if outcome_now(record).get("outcome") != "passed":
+        if staleness.outcome_now(record).get("outcome") != "passed":
             return None
 
         def unchanged() -> bool:
@@ -1994,7 +1252,7 @@ def _record_reuse(shell: dict, original: dict, planned: dict,
     reservations are made under, in the same hold as the write — says a
     run of this check has been reserved since the decision was read."""
     when = time.time()
-    reuse_id = "reuse:" + _digest("reuse/1", shell["requestId"],
+    reuse_id = "reuse:" + resultidentity.digest("reuse/1", shell["requestId"],
                                   shell["check"], shell.get("scope") or "",
                                   original["id"], f"{when:.6f}")[:16]
     reuse = {
@@ -2009,7 +1267,7 @@ def _record_reuse(shell: dict, original: dict, planned: dict,
         "policyRevision": shell.get("policyRevision"),
         "reviewId": shell.get("reviewId"),
         "runner": {"module": "verify", "version": VERSION,
-                   "revision": RUNNER_REVISION},
+                   "revision": resultidentity.RUNNER_REVISION},
         # who the evidence was run for, as the evidence itself says it —
         # copied for the reader, never written back
         "original": {k: original.get(k) for k in (
@@ -2029,13 +1287,10 @@ def _record_reuse(shell: dict, original: dict, planned: dict,
                         f"nothing and returned that record. The evidence "
                         f"keeps its own name, requester, checkout and "
                         f"provenance; this record names who asked this time")
-    reuse_dir().mkdir(parents=True, exist_ok=True)
     with state.LOCK:
         if not unchanged():
             return None
-        (reuse_dir() / f"{_slug(reuse_id)}.json").write_text(
-            json.dumps(reuse, indent=2, sort_keys=True, default=str),
-            encoding="utf-8")
+        evidence.store_reuse(reuse)
     who = original.get("agent") or original.get("actor") or "an earlier request"
     state.record_board_event({
         "kind": "verify", "actor": "board", "file": shell.get("task") or "",
@@ -2071,32 +1326,6 @@ def public_reuse(reuse: dict | None) -> dict | None:
     return out
 
 
-def read_reuse(reuse_id: str) -> dict | None:
-    if not _ID_OK.match(reuse_id or ""):
-        return None
-    try:
-        data = json.loads((reuse_dir() / f"{_slug(reuse_id)}.json")
-                          .read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def reuses_for_task(filename: str) -> list[dict]:
-    """Every reuse record for one card, newest first. Not evidence: the
-    gate never reads these, and `all_evidence` never lists them."""
-    found = []
-    if not reuse_dir().is_dir():
-        return found
-    for path in reuse_dir().glob("*.json"):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(data, dict) and data.get("task") == filename:
-            found.append(data)
-    found.sort(key=lambda r: r.get("requested") or 0, reverse=True)
-    return found
 
 
 def _execution_root(check: dict, task: str,
@@ -2134,7 +1363,7 @@ def _execution_root(check: dict, task: str,
 
     # source: a checkout of one commit, made here and owned here.
     branch = config.branch_for(stem)
-    commit = _git(config.app_repo(), "rev-parse", "--verify", f"{branch}^{{commit}}")
+    commit = resultidentity.git(config.app_repo(), "rev-parse", "--verify", f"{branch}^{{commit}}")
     if commit.returncode != 0:
         raise ValueError(
             f"the check '{check['name']}' runs against this card's source and "
@@ -2148,7 +1377,7 @@ def _execution_root(check: dict, task: str,
             raise ValueError(mismatch)
         return root, True, f"reusing bench's checkout of {branch} at {sha[:12]}"
     root.parent.mkdir(parents=True, exist_ok=True)
-    added = _git(config.app_repo(), "worktree", "add", "--detach",
+    added = resultidentity.git(config.app_repo(), "worktree", "add", "--detach",
                  str(root), sha, timeout=120)
     if added.returncode != 0:
         raise ValueError(
@@ -2190,7 +1419,7 @@ def _review_root(check: dict, task: str,
             f"check '{check['name']}' has nothing to run against — nothing "
             f"was re-checked-out in its place")
     pinned = str((record.get("head") or {}).get("commit") or "")
-    head = _git(root, "rev-parse", "HEAD")
+    head = resultidentity.git(root, "rev-parse", "HEAD")
     at = head.stdout.strip() if head.returncode == 0 else ""
     if pinned and at != pinned:
         raise ValueError(
@@ -2209,15 +1438,15 @@ def _execute(record: dict, check: dict, root: Path, owned: bool, *,
     """Preparation, then the check, then the evidence. One slot at a time
     so two verifications do not fight over the machine."""
     home = _isolated_home(root)
-    tmp = config.VERIFY_DIR / "tmp" / _slug(record["id"])
-    for directory in (home, tmp, log_path_of(record["id"]).parent):
+    tmp = config.VERIFY_DIR / "tmp" / evidence.slug(record["id"])
+    for directory in (home, tmp, evidence.log_path_of(record["id"]).parent):
         directory.mkdir(parents=True, exist_ok=True)
-    env, removed = child_env(root, home, tmp, record["id"], check["name"])
+    env, removed = resultidentity.child_env(root, home, tmp, record["id"], check["name"])
     inputs = list(inputs or [])
     delivered = _deliver_inputs(inputs, tmp)
     if check.get("inputs"):
         env["BENCH_VERIFY_INPUTS"] = str(delivered)
-    bound_env = env_identity(env, list(check.get("env") or []), env_key)
+    bound_env = resultidentity.env_identity(env, list(check.get("env") or []), env_key)
     record["env"] = {
         "removed": removed, "home": str(home), "tmp": str(tmp),
         "passed": bound_env["passed"], "declared": bound_env["declared"],
@@ -2231,13 +1460,13 @@ def _execute(record: dict, check: dict, root: Path, owned: bool, *,
                 "this machine; nothing else about the environment is"),
     }
     record["inputs"] = inputs
-    record["source"] = source_identity(root)
+    record["source"] = resultidentity.source_identity(root)
     # The bytes behind the argument list, read before the process starts:
     # a file replaced at the same path afterwards is a different program,
     # and `freshness` compares this to say so.
-    record["program"] = program_identity(record["argv"], root, env.get("PATH"))
+    record["program"] = resultidentity.program_identity(record["argv"], root, env.get("PATH"))
     steps = [*(record.get("profilePrepare") or []), *check["prepare"]]
-    programs = [program_identity([s["executable"], *s["argv"]], root,
+    programs = [resultidentity.program_identity([s["executable"], *s["argv"]], root,
                                  env.get("PATH")) for s in steps]
     # the preparation as it was defined when this ran, so a later reading
     # can name the step that moved and re-identify its program
@@ -2245,11 +1474,11 @@ def _execute(record: dict, check: dict, root: Path, owned: bool, *,
         {"name": s.get("name"), "executable": s.get("executable"),
          "argv": list(s.get("argv") or []), "network": bool(s.get("network")),
          "required": bool(s.get("required", True))} for s in steps]
-    identity = _identity(record, record["source"], record["program"], steps,
-                         programs, inputs, root_class(check["root"], root),
+    identity = resultidentity.identity(record, record["source"], record["program"], steps,
+                         programs, inputs, resultidentity.root_class(check["root"], root),
                          bound_env["envId"])
     record["identity"] = identity
-    record["resultId"] = result_id(identity)
+    record["resultId"] = resultidentity.result_id(identity)
     # How the run came about, kept for ever and never an invalidator: the
     # policy in force, the context the launch was pinned (whether or not
     # this check declared it), who asked and where it ran.
@@ -2269,7 +1498,7 @@ def _execute(record: dict, check: dict, root: Path, owned: bool, *,
         "why": ("how this run came about. None of it decides whether the "
                 "result still holds — the result identity does"),
     }
-    _store(record)
+    evidence.store(record)
 
     waited = time.time()
     slot = slots()
@@ -2284,14 +1513,14 @@ def _execute(record: dict, check: dict, root: Path, owned: bool, *,
     if time.time() - waited > 1:
         record["queued"] = time.time() - waited
     try:
-        with log_path_of(record["id"]).open("wb") as log:
+        with evidence.log_path_of(record["id"]).open("wb") as log:
             log.write(_log_header(record, check, root).encode("utf-8"))
             outcome = _prepare(record, check, root, env, log,
                                programs=programs)
             if outcome is None:
                 with state.LOCK:
                     record["outcome"] = "running"
-                _store(record)
+                evidence.store(record)
                 outcome = _run_process(record["argv"], root, env, log,
                                        check["timeout"], record, "check")
         return _finish(record, outcome, owned, root)
@@ -2338,11 +1567,11 @@ def _prepare(record: dict, check: dict, root: Path, env: dict,
     known = list(programs or [])
     with state.LOCK:
         record["outcome"] = "preparing"
-    _store(record)
+    evidence.store(record)
     for index, step in enumerate(steps):
         argv = [step["executable"], *step["argv"]]
         program = known[index] if index < len(known) \
-            else program_identity(argv, root, env.get("PATH"))
+            else resultidentity.program_identity(argv, root, env.get("PATH"))
         log.write(f"\nbench: preparing — {step['name']}".encode("utf-8"))
         if step["network"]:
             log.write(b" (declared as needing the network; bench enforces no "
@@ -2364,7 +1593,7 @@ def _prepare(record: dict, check: dict, root: Path, env: dict,
             "program": program,
         }
         record["prepare"].append(entry)
-        _store(record)
+        evidence.store(record)
         if result["outcome"] == "passed":
             continue
         if result["outcome"] == "cancelled":
@@ -2386,7 +1615,7 @@ def _prepare(record: dict, check: dict, root: Path, env: dict,
 def _finish(record: dict, outcome: dict, owned: bool, root: Path) -> dict:
     """The record, closed. Written before the asking run is told anything,
     which is the order that makes it evidence rather than a claim."""
-    log = log_path_of(record["id"])
+    log = evidence.log_path_of(record["id"])
     try:
         size = log.stat().st_size
     except OSError:
@@ -2407,7 +1636,7 @@ def _finish(record: dict, outcome: dict, owned: bool, root: Path) -> dict:
             "logBytes": size, "logTruncated": truncated,
         })
     _cleanup(record, owned, root)
-    stored = _store(record)
+    stored = evidence.store(record)
     state.record_board_event({
         "kind": "verify", "actor": "board", "file": record["task"],
         "summary": line(stored)})
@@ -2451,7 +1680,7 @@ def _owned_tmp(record: dict) -> Path | None:
     if not isinstance(named, str) or not named or not evidence_id:
         return None
     base = config.VERIFY_DIR / "tmp"
-    expected = base / _slug(str(evidence_id))
+    expected = base / evidence.slug(str(evidence_id))
     candidate = Path(named)
     if not candidate.is_absolute() or candidate != expected:
         return None
@@ -2498,7 +1727,7 @@ def _release_root(described: dict, root: Path) -> None:
             f"{'' if len(dirty) == 1 else 's'} in bench's own checkout at "
             f"{root}, so it was kept rather than removed")
         return
-    removed = _git(config.app_repo(), "worktree", "remove", str(root), timeout=60)
+    removed = resultidentity.git(config.app_repo(), "worktree", "remove", str(root), timeout=60)
     if removed.returncode != 0:
         described["kept"] = (
             f"git would not remove bench's checkout at {root}: "
@@ -2518,10 +1747,10 @@ def cancel(evidence_id: str, reason: str = "cancelled-by-request") -> dict:
     with state.LOCK:
         record = RUNNING.get(evidence_id)
         if record is None:
-            stored = read(evidence_id)
+            stored = evidence.read(evidence_id)
             if stored is None:
                 raise ValueError(f"no verification {evidence_id}")
-            if stored.get("outcome") in LIVE:
+            if stored.get("outcome") in evidence.LIVE:
                 raise ValueError(
                     f"{evidence_id} is recorded as running but this board does "
                     f"not own it — it was left behind by an earlier board")
@@ -2566,8 +1795,8 @@ def recover() -> list[dict]:
     thundering herd.
     """
     closed = []
-    for record in all_evidence():
-        if record.get("outcome") not in LIVE:
+    for record in evidence.all_evidence():
+        if record.get("outcome") not in evidence.LIVE:
             continue
         with state.LOCK:
             if record["id"] in RUNNING:
@@ -2579,7 +1808,7 @@ def recover() -> list[dict]:
             "ended": record.get("ended") or time.time(),
             "duration": record.get("duration") or 0.0,
         })
-        closed.append(_store(record))
+        closed.append(evidence.store(record))
     if closed:
         state.record_board_event({
             "kind": "verify", "actor": "board", "file": "",
@@ -2590,483 +1819,6 @@ def recover() -> list[dict]:
     return closed
 
 
-# ── is this evidence still about anything? ─────────────────────────────
-
-
-def freshness(record: dict) -> dict:
-    """What has changed since this verification ran.
-
-    The question a pass only answers while its binding holds. Three
-    bindings, and each is a different way for a pass to stop meaning
-    anything: the **source** (the commit plus everything uncommitted), the
-    **policy** (the resolved profile, which carries the check's own
-    definition), and the **context** (the inputs the run was pinned).
-    Compared, never resolved: this function moves nothing and re-runs
-    nothing.
-    """
-    changed: list[str] = []
-    # The same findings as slugs, in the same order, so a consumer branches
-    # on data rather than on the prose beside it — the law `REASONS` was
-    # written under, applied to the one place that had grown a string
-    # match instead.
-    reasons: list[str] = []
-
-    def moved(slug: str, text: str) -> None:
-        reasons.append(slug)
-        changed.append(text)
-
-    if not record:
-        return {"fresh": True, "changed": [], "reasons": [], "stale": False}
-    source = record.get("source") or {}
-    where = record.get("root") or {}
-    root = Path(where.get("path") or "")
-    if not source.get("bound"):
-        moved("source-changed",
-              source.get("why") or
-              "the source this ran against was never bound, so the "
-              "result cannot be reused")
-    elif where.get("policy") == "review":
-        # A `review` check ran in a checkout bench pinned to one commit —
-        # the head a pull request proposed — and then removed when the
-        # review ended, on purpose. So the checkout being gone says
-        # nothing, exactly as it says nothing for a `source` check. The
-        # binding is the reviewed head, and the question is whether the
-        # pull request still proposes it: a push that lands after the
-        # check makes this evidence history rather than the new head's
-        # pass. Read from what the PR poll last saw, so asking costs no
-        # call to GitHub (`reviews.observe`).
-        now = reviews.observed(record.get("task") or "") or {}
-        current = str(now.get("commit") or "")
-        if current and current != source.get("commit"):
-            moved("head-changed",
-                  f"the pull request's head has moved on — this ran against "
-                  f"{str(source.get('commit') or '')[:12]} and the PR is now "
-                  f"at {current[:12]}, so it says nothing about the code "
-                  f"there now")
-        elif str(now.get("state") or "").upper() in ("MERGED", "CLOSED"):
-            moved("pr-ended",
-                  f"the pull request has been "
-                  f"{str(now.get('state')).lower()} since this ran, so it is "
-                  f"a historical record of what was proposed rather than a "
-                  f"current result")
-    elif where.get("policy") == "source":
-        # A `source` check ran in a *detached checkout of one commit* that
-        # bench made and then removed on purpose, so the checkout being
-        # gone says nothing — asking after it would make every read-only
-        # verification stale the moment it finished. The commit is the
-        # binding, and the question is whether the card's branch still
-        # points at it.
-        task = record.get("task") or ""
-        branch = config.branch_for(task[:-3]) if task.endswith(".md") else ""
-        now = _git(config.app_repo(), "rev-parse", "--verify",
-                   f"{branch}^{{commit}}") if branch else None
-        if now is None or now.returncode != 0:
-            moved("source-changed",
-                  f"the branch this ran against ({branch or 'unknown'}) no "
-                  f"longer exists, so what it covered cannot be checked")
-        elif now.stdout.strip() != source.get("commit"):
-            moved("source-changed",
-                  f"the branch has moved on — it ran against "
-                  f"{str(source.get('commit') or '')[:12]} and {branch} is "
-                  f"now at {now.stdout.strip()[:12]}")
-    elif not root.is_dir():
-        moved("source-changed",
-              f"the checkout it ran in ({root}) is gone, so what it ran "
-              f"against can no longer be checked")
-    else:
-        now = source_identity(root)
-        if now.get("sourceId") != source.get("sourceId"):
-            if now.get("commit") != source.get("commit"):
-                moved("source-changed",
-                      f"the source has moved on — it ran against "
-                      f"{str(source.get('commit') or '')[:12]} and the "
-                      f"checkout is now at "
-                      f"{str(now.get('commit') or '')[:12]}")
-            else:
-                moved("source-changed",
-                      "tracked or untracked files in the checkout have "
-                      "changed since it ran, so it did not run against this "
-                      "code")
-    if record.get("resultId"):
-        # A record with a result identity is judged by what it depends on
-        # and nothing else (design §4.1). The policy revision it was run
-        # under is provenance: reported, never a reason.
-        provenance = _identity_moved(record, moved, root)
-        return {"fresh": not changed, "changed": changed, "reasons": reasons,
-                "stale": bool(changed) and record.get("outcome") == "passed",
-                "rules": "identity", "provenance": provenance}
-    # — legacy: a record written before result identities existed. Read
-    # with the rules it was written under, unchanged and never upgraded,
-    # including `policy-changed` (design §14.3). —
-    #
-    # The program and the runner: what was invoked, and the code that read
-    # its exit status. Both fail closed — a record that names no identity
-    # cannot say the program is unchanged, so it is not reused as a pass.
-    runner = (record.get("runner") or {}).get("revision")
-    if not runner or runner != RUNNER_REVISION:
-        moved("runner-changed",
-              "bench's own runner has changed since this ran"
-              if runner else
-              "this was recorded by a runner that named no revision of "
-              "itself, so it cannot be shown to be the runner here now")
-    program = record.get("program")
-    search = _search_path()
-    if not program or not program.get("bound"):
-        moved("program-changed",
-              (program or {}).get("why") if program and not program.get("bound")
-              else "the record names no program identity, so the executable "
-                   "it ran cannot be shown to be unchanged")
-    elif program_identity(list(record.get("argv") or []), root,
-                          search).get("programId") != program.get("programId"):
-        moved("program-changed",
-              "the check's executable, its interpreter or a file it was "
-              "handed has changed since it ran — a program replaced at the "
-              "same path is a different check")
-    for step in record.get("prepare") or []:
-        if step.get("outcome") != "prepared":
-            continue
-        frozen = step.get("program")
-        try:
-            argv = shlex.split(str(step.get("command") or ""))
-        except ValueError:
-            argv = []
-        if not frozen or not frozen.get("bound") or \
-                program_identity(argv, root, search).get("programId") \
-                != frozen.get("programId"):
-            moved("program-changed",
-                  f"the preparation step '{step.get('name')}' runs a program "
-                  f"that has changed, or was never identified, since it ran")
-            break
-    frozen_policy = record.get("policyRevision")
-    frozen_context = record.get("contextIds")
-    if frozen_policy or frozen_context:
-        intent = record.get("intent") or "work"
-        task = record.get("task") or ""
-        try:
-            # Asked the way the launch asked it: a review's policy was
-            # resolved with the checkout it was pinned and no worktree, so
-            # re-resolving it with the other roots would report bench's own
-            # question as "the policy changed".
-            current = profiles.resolve(
-                intent,
-                worktree=(config.WORKTREES / task[:-3])
-                if task.endswith(".md") and intent != "review" else None,
-                review=(where.get("path") if where.get("policy") == "review"
-                        else None))
-        except ValueError:
-            current = None
-        if (current is not None and frozen_policy
-                and current["revision"] != frozen_policy):
-            moved("policy-changed",
-                  "the execution policy — which carries the check's own "
-                  "definition — has changed since it ran")
-        # The third binding, and the one that was named here before it was
-        # compared: a context identity is `name@<content hash>`, so an
-        # edited approved input is a different identity rather than the
-        # same one with new bytes. A pass recorded under inputs the run
-        # was *given* is not a pass under different ones — and the policy
-        # revision cannot stand in for it, because that digests which
-        # files were selected and not what is in them.
-        if current is not None and frozen_context:
-            now = {i.get("contextId") for i in current.get("context") or []
-                   if i.get("contextId")}
-            gone = [i for i in frozen_context if i not in now]
-            if gone:
-                moved("context-changed",
-                      f"{len(gone)} approved input"
-                      f"{'' if len(gone) == 1 else 's'} this ran with "
-                      f"{'has' if len(gone) == 1 else 'have'} changed or gone "
-                      f"since — it did not run with the inputs in force now")
-    return {"fresh": not changed, "changed": changed, "reasons": reasons,
-            "stale": bool(changed) and record.get("outcome") == "passed",
-            "rules": "legacy"}
-
-
-def _current_definition(record: dict) -> tuple[dict | None, list[dict],
-                                                dict | None, str | None]:
-    """The check as the policy declares it *now*, the asking intent's own
-    preparation now, the resolution they came from, and why there is no
-    answer when there is none.
-
-    Read for identity, not for permission: a check a policy no longer
-    offers to this intent is still the same definition if the document
-    still declares it, and whether it may be *run* is `request`'s question,
-    asked afresh every time (design §4.3)."""
-    intent = record.get("intent") or "work"
-    task = record.get("task") or ""
-    where = record.get("root") or {}
-    try:
-        current = profiles.resolve(
-            intent,
-            worktree=(config.WORKTREES / task[:-3])
-            if task.endswith(".md") and intent != "review" else None,
-            review=(where.get("path") if where.get("policy") == "review"
-                    else None))
-    except ValueError as exc:
-        return None, [], None, (f"the policy cannot be resolved now ({exc}), "
-                                f"so the check's definition cannot be shown "
-                                f"unchanged")
-    name = record.get("check")
-    check = next((c for c in current.get("verify") or []
-                  if c.get("name") == name), None)
-    if check is None:
-        doc = profiles.document()
-        steps, _ = profiles.document_steps(doc)
-        declared, _ = profiles.document_checks(doc, steps)
-        check = declared.get(name)
-    if check is None:
-        return None, [], current, (
-            f"the check '{name}' is no longer declared by the policy as it "
-            f"reads now, so what it would run cannot be shown to be what ran")
-    return check, list(current.get("prepare") or []), current, None
-
-
-def _env_now(record: dict) -> dict:
-    """The environment a check like this one would be given now — built by
-    the same function that built it, with placeholder paths, and nothing
-    made on disk. Only names, and the values of declared variables, are
-    ever compared."""
-    where = Path((record.get("root") or {}).get("path") or ".")
-    env, _ = child_env(where, Path("/nonexistent"), Path("/nonexistent"),
-                       str(record.get("id") or ""), str(record.get("check") or ""))
-    if record.get("inputs"):
-        env["BENCH_VERIFY_INPUTS"] = "/nonexistent"
-    return env
-
-
-def _identity_moved(record: dict, moved, root: Path) -> dict:
-    """Every dimension of a record's result identity, compared with what
-    it would be now — each that moved said by its own slug, naming the
-    input, the variable, the step or the scope. Returns the provenance
-    reading, which is reported and never a reason.
-
-    Fails closed throughout: a dimension that cannot be re-read is a
-    dimension that cannot be shown to hold."""
-    identity = record.get("identity")
-    if (not isinstance(identity, dict)
-            or any(d not in identity for d in IDENTITY_DIMENSIONS)
-            or result_id(identity) != record.get("resultId")):
-        moved("identity-unknown",
-              "this record's result identity is incomplete or does not match "
-              "its own digest, so it cannot be shown to hold — "
-              + STALE_REMEDIES["identity-unknown"])
-        return {"policyRevision": record.get("policyRevision"),
-                "policyChanged": None}
-    name = record.get("check")
-    if identity.get("runner") != RUNNER_REVISION or \
-            (record.get("runner") or {}).get("revision") != identity.get("runner"):
-        moved("runner-changed", "bench's own runner has changed since this "
-                                "ran — " + STALE_REMEDIES["runner-changed"])
-
-    check, intent_prepare, current, why = _current_definition(record)
-    frozen_policy = record.get("policyRevision")
-    provenance = {
-        "policyRevision": frozen_policy,
-        "policyNow": (current or {}).get("revision"),
-        "policyChanged": bool(current and frozen_policy
-                              and current.get("revision") != frozen_policy),
-        "contextIds": list(record.get("contextIds") or []),
-    }
-    if provenance["policyChanged"]:
-        provenance["note"] = (
-            "the execution policy has changed since this ran. That is "
-            "provenance, not a reason: nothing this check declares it depends "
-            "on moved with it, so the result still holds")
-
-    if check is None:
-        moved("check-changed", f"{why} — {STALE_REMEDIES['check-changed']}")
-    else:
-        if check.get("checkSubstance") != identity.get("check"):
-            moved("check-changed",
-                  f"'{name}''s command, root, time limit, declared inputs or "
-                  f"declared environment changed since it ran — "
-                  f"{STALE_REMEDIES['check-changed']}")
-        scope = record.get("scope")
-        if scope:
-            args = (check.get("scopes") or {}).get(scope)
-            if args is None:
-                moved("scope-changed",
-                      f"the scope '{scope}' is no longer declared on "
-                      f"'{name}' — {STALE_REMEDIES['scope-changed']}")
-            elif coverage_id(scope, list(args)) != identity.get("coverage"):
-                moved("scope-changed",
-                      f"the scope '{scope}' now runs different arguments — "
-                      f"{STALE_REMEDIES['scope-changed']}")
-        steps_now = [*intent_prepare, *(check.get("prepare") or [])]
-        if prepare_definition(steps_now) != \
-                (identity.get("prepare") or {}).get("definition"):
-            was = [s.get("name") for s in record.get("prepareSteps") or []]
-            now = [s.get("name") for s in steps_now]
-            named = sorted(set(was) ^ set(now)) or now or was
-            moved("prepare-changed",
-                  f"the preparation {', '.join(repr(n) for n in named)} "
-                  f"changed since it passed — what it runs, its network use "
-                  f"or whether it is required — "
-                  f"{STALE_REMEDIES['prepare-changed']}")
-
-    search = _search_path()
-    frozen_program = identity.get("program")
-    now_program = program_identity(list(record.get("argv") or []), root,
-                                   search)
-    if not frozen_program or \
-            (record.get("program") or {}).get("programId") != frozen_program:
-        moved("program-changed",
-              "the record names no program identity, so the executable this "
-              "check ran cannot be shown to be unchanged — "
-              + STALE_REMEDIES["program-changed"])
-    elif now_program.get("programId") != frozen_program:
-        moved("program-changed",
-              f"the check's executable {(record.get('argv') or ['?'])[0]}, "
-              f"its interpreter or a file it was handed changed since it ran "
-              f"— {STALE_REMEDIES['program-changed']}")
-    frozen_steps = record.get("prepareSteps") or []
-    frozen_programs = (identity.get("prepare") or {}).get("programs") or []
-    for index, step in enumerate(frozen_steps):
-        was = frozen_programs[index] if index < len(frozen_programs) else None
-        argv = [step.get("executable"), *(step.get("argv") or [])]
-        now = program_identity([a for a in argv if a], root, search)
-        if not was or now.get("programId") != was:
-            moved("program-changed",
-                  f"the preparation step '{step.get('name')}' runs a program "
-                  f"that has changed, or was never identified, since it ran — "
-                  f"{STALE_REMEDIES['program-changed']}")
-            break
-
-    for item in record.get("inputs") or []:
-        now = profiles.check_input(item)
-        then = item.get("contextId")
-        here = now.get("contextId") if now.get("status") == "resolved" else None
-        if here == then:
-            continue
-        if then and not here:
-            what = "is no longer there to be read"
-        elif here and not then:
-            what = "is there now, and was absent when it ran"
-        else:
-            what = "changed since it passed"
-        moved("input-changed", f"the input '{item.get('name')}' {what} — "
-                               f"{STALE_REMEDIES['input-changed']}")
-
-    env_then = record.get("env") or {}
-    declared = [d.get("name") for d in env_then.get("declared") or []]
-    key = _env_key(create=False) if declared else None
-    env_now = _env_now(record)
-    if declared and key is None:
-        moved("env-changed",
-              "the machine-local key that bound its declared environment "
-              f"({', '.join(declared)}) is gone or unusable, so the values "
-              "cannot be shown to be the same — "
-              + STALE_REMEDIES["env-changed"])
-    elif declared and _key_id(key) != env_then.get("keyId"):
-        moved("env-changed",
-              "the machine-local key that bound its declared environment has "
-              "been replaced since it ran, so the values cannot be compared — "
-              + STALE_REMEDIES["env-changed"])
-    else:
-        bound = env_identity(env_now, declared, key)
-        if bound["envId"] != identity.get("env"):
-            added = sorted(set(bound["passed"]) - set(env_then.get("passed") or []))
-            gone = sorted(set(env_then.get("passed") or []) - set(bound["passed"]))
-            values = [b["name"] for b, a in zip(bound["declared"],
-                                                env_then.get("declared") or [])
-                      if b.get("hmac") != a.get("hmac")]
-            if values:
-                what = (f"the environment variable"
-                        f"{'' if len(values) == 1 else 's'} "
-                        f"{', '.join(values)} changed since it passed")
-            elif added or gone:
-                what = ("the set of environment variables a check is given "
-                        "changed since it ran ("
-                        + "; ".join(p for p in (
-                            f"now also {', '.join(added)}" if added else "",
-                            f"no longer {', '.join(gone)}" if gone else "")
-                            if p) + ")")
-            else:
-                what = "the environment the check is given changed since it ran"
-            moved("env-changed", f"{what} — {STALE_REMEDIES['env-changed']}")
-    return provenance
-
-
-def outcome_now(record: dict) -> dict:
-    """The outcome a reader should be shown: what was recorded, unless its
-    binding has gone, in which case `stale`.
-
-    This is the one function that may disagree with the stored `outcome`,
-    and it may only ever disagree in the safe direction: a `passed` whose
-    source or policy moved becomes `stale`, and nothing ever becomes
-    `passed` here.
-
-    Memoised for `_FRESH_TTL`, because the question costs git. Only a
-    `passed` can change reading at all, so only a `passed` is asked —
-    everything else is already the record's own last word, and no amount
-    of re-reading turns a failure into anything else.
-    """
-    if record.get("outcome") != "passed":
-        return {"outcome": record.get("outcome"), "reason": record.get("reason"),
-                "why": record.get("why"),
-                "freshness": {"fresh": True, "changed": [], "reasons": []},
-                "recorded": record.get("outcome")}
-    key = record.get("id") or ""
-    cached = _FRESH.get(key)
-    if cached and time.time() - cached[0] < _FRESH_TTL:
-        return cached[1]
-    found = _outcome_now(record)
-    if key:
-        if len(_FRESH) > 500:        # a memo, not a store
-            _FRESH.clear()
-        _FRESH[key] = (time.time(), found)
-    return found
-
-
-_DRIFT: dict[str, tuple[float, dict]] = {}
-
-
-def identity_drift(record: dict) -> dict | None:
-    """Which dimensions of a record's *definition* — everything in its
-    result identity but the source — have moved since it ran: the check,
-    its coverage, programs, preparation, inputs, environment or runner.
-
-    None for a legacy record, which has no identity to compare. The gate
-    reads this to tell a record about this commit under the check as it is
-    now (`current`) from one under a definition that has since changed
-    (`outdated`, design §6.1 step 4), whatever its outcome — a failure
-    under an old command is not today's failure. Memoised as `outcome_now`
-    is, and for the same reason."""
-    if not record or not record.get("resultId"):
-        return None
-    if record.get("outcome") == "passed":
-        fresh = outcome_now(record)["freshness"]
-    else:
-        key = record.get("id") or ""
-        cached = _DRIFT.get(key)
-        if cached and time.time() - cached[0] < _FRESH_TTL:
-            fresh = cached[1]
-        else:
-            fresh = freshness(record)
-            if key:
-                if len(_DRIFT) > 500:
-                    _DRIFT.clear()
-                _DRIFT[key] = (time.time(), fresh)
-    pairs = [(r, c) for r, c in zip(fresh.get("reasons") or [],
-                                    fresh.get("changed") or [])
-             if r not in SOURCE_REASONS]
-    return {"reasons": [r for r, _ in pairs], "changed": [c for _, c in pairs]}
-
-
-def _outcome_now(record: dict) -> dict:
-    fresh = freshness(record)
-    if fresh["stale"]:
-        # The first finding's own slug, rather than a guess from its
-        # wording: "the head moved" and "the policy moved" are different
-        # things to do next, and a reader branching on the reason must
-        # not have them collapse.
-        return {"outcome": "stale",
-                "reason": (fresh.get("reasons") or ["source-changed"])[0],
-                "why": fresh["changed"][0], "freshness": fresh,
-                "recorded": record.get("outcome")}
-    return {"outcome": record.get("outcome"), "reason": record.get("reason"),
-            "why": record.get("why"), "freshness": fresh,
-            "recorded": record.get("outcome")}
 
 
 # ── what the board shows ───────────────────────────────────────────────
@@ -3109,7 +1861,7 @@ def public(record: dict | None) -> dict | None:
         out["env"] = {**out["env"], "declared": [
             {"name": d.get("name"), "set": d.get("set")}
             for d in out["env"]["declared"]]}
-    out["live"] = record.get("outcome") in LIVE
+    out["live"] = record.get("outcome") in evidence.LIVE
     return out
 
 
@@ -3123,12 +1875,12 @@ def rollup(filename: str, manifest: dict | None = None) -> dict:
     board must not render as a green card, and the absence of a record is
     the only thing that can tell you.
     """
-    records = for_task(filename)
+    records = evidence.for_task(filename)
     rows = []
     seen: set[str] = set()
     for record in records:
         name = record.get("check")
-        reading = outcome_now(record)
+        reading = staleness.outcome_now(record)
         rows.append({
             "check": name, "scope": record.get("scope"),
             "evidence": record["id"], "outcome": reading["outcome"],
@@ -3143,7 +1895,7 @@ def rollup(filename: str, manifest: dict | None = None) -> dict:
             "agent": record.get("agent"), "actor": record.get("actor"),
             "intent": record.get("intent"),
             "prepare": record.get("prepare") or [],
-            "live": record.get("outcome") in LIVE,
+            "live": record.get("outcome") in evidence.LIVE,
             "location": record.get("location") or "local",
             "logBytes": record.get("logBytes"),
         })
@@ -3191,22 +1943,21 @@ def board(collected: dict) -> dict:
     # One file read, so an edited policy is seen on the next reading
     # rather than after the bucket turns over.
     doc = profiles.document()
-    with state.LOCK:
-        epoch = _EPOCH
     # The key carries a time bucket as well as the epoch, because a pass
     # can go stale without anything being stored — the source moved under
     # it. Epoch alone would hold a `passed` chip on a card whose code has
     # changed for as long as nothing else was verified.
-    stamp = (epoch, int(time.time() / _FRESH_TTL), doc["revision"])
+    stamp = (evidence.epoch(), int(time.time() / staleness.FRESH_TTL),
+             doc["revision"])
     if _BOARD is not None and _BOARD[0] == stamp and _BOARD[1] == files:
         return _BOARD[2]
 
     worst = ("failed", "prepare-failed", "error", "denied", "stale",
              "cancelled", "running", "preparing", "not-run", "passed")
-    offered = _offered(doc) if files else ()
+    offered = offered_checks(doc) if files else ()
     found: dict = {}
     by_task: dict[str, list[dict]] = {}
-    for record in all_evidence():
+    for record in evidence.all_evidence():
         task = record.get("task") or ""
         if task not in files:
             continue
@@ -3222,7 +1973,7 @@ def board(collected: dict) -> dict:
         for record in records:              # all_evidence() is newest first
             latest.setdefault(record.get("check") or "", record)
         records = list(latest.values())
-        readings = [outcome_now(r) for r in records]
+        readings = [staleness.outcome_now(r) for r in records]
         outcomes = [r["outcome"] for r in readings]
         # A check the card may ask for and nothing has: the sheet's
         # `not-run` row, counted by name so a check run ten times is one.
@@ -3236,7 +1987,7 @@ def board(collected: dict) -> dict:
             "passed": outcomes.count("passed"),
             "failed": outcomes.count("failed"),
             "notRun": len(unasked),
-            "live": any(r.get("outcome") in LIVE for r in records),
+            "live": any(r.get("outcome") in evidence.LIVE for r in records),
             "latest": max([(r.get("ended") or r.get("requested") or 0)
                            for r in records], default=None),
             "location": "local",
@@ -3248,7 +1999,7 @@ def board(collected: dict) -> dict:
 _OFFERED: tuple | None = None
 
 
-def _offered(doc: dict) -> tuple[str, ...]:
+def offered_checks(doc: dict) -> tuple[str, ...]:
     """The names a person's request from the evidence sheet may ask for
     right now — the `work` reading `/api/evidence` resolves fresh, through
     the same resolver, once per policy revision and time bucket rather than
@@ -3257,7 +2008,7 @@ def _offered(doc: dict) -> tuple[str, ...]:
     nothing, because `request()` would refuse every name. Resolving writes
     nothing: no pin, no checkout, no fetch."""
     global _OFFERED
-    key = (doc["revision"], int(time.time() / _FRESH_TTL))
+    key = (doc["revision"], int(time.time() / staleness.FRESH_TTL))
     if _OFFERED is not None and _OFFERED[0] == key:
         return _OFFERED[1]
     names: tuple[str, ...] = ()
@@ -3276,10 +2027,15 @@ def _offered(doc: dict) -> tuple[str, ...]:
 def forget_cached() -> None:
     """Drop the memoised readings. Nothing on the serving path calls it —
     the epoch and the TTL do that work — but a test, and anything that
-    changes a root under the board's feet, needs the door."""
+    changes a root under the board's feet, needs the door.
+
+    Every owner's memo, not only this module's: the freshness and drift
+    readings (`staleness`), the program-file hashes (`resultidentity`),
+    and the board reading and offered names here. A memo left behind in a
+    module the readings moved to would answer with what it read before."""
     global _BOARD, _OFFERED
-    _FRESH.clear()
-    _DRIFT.clear()
+    staleness.forget()
+    resultidentity.forget()
     _BOARD = None
     _OFFERED = None
 
