@@ -677,88 +677,31 @@ def patch_targets(core: Path, tests: Path) -> tuple[list[str], dict[str, tuple[i
 # Top-level imports against the current layer table: none at review.
 TOP_LEVEL_EXCEPTIONS: dict[str, tuple[int, int]] = {}
 
-# Deferred core imports. "up" marks the thirteen that hide an upward
-# dependency against the current layers; the rest are deferred downward
-# imports that could be top-level, and are listed so they stay counted.
-FUNCTION_IMPORTS: dict[str, tuple[int, int]] = {
-    "board.py::main -> previews": (1, 163),                  # down
-    "board.py::main -> setupguide": (1, 100),                # down
-    "drive.py::_preview_ended -> previews": (1, 435),        # up
-    "drive.py::_remember -> previews": (1, 454),             # up
-    "drive.py::_scrub_log -> previews": (1, 464),            # up
-    "drive.py::_watch -> previews": (1, 327),                # up
-    "previews.py::discover -> setuptasks": (1, 676),         # down
-    # readiness' four and setupguide's one deferred `verify` went with
-    # WP12 (task 121): they read records and freshness, which `evidence`
-    # and `staleness` own, and import them at the top level
-    "settings.py::frozen_runs -> agents": (1, 798),          # up
-    "setupguide.py::_actor -> acceptance": (1, 937),         # down
-    "setupguide.py::_application_preview -> previews": (1, 861),  # up
-    "setupguide.py::_preview -> previews": (1, 524),         # up
-    "setupguide.py::_proposals -> setuptasks": (1, 872),     # up
-    "setupguide.py::_readiness -> readiness": (1, 850),      # up
-    "setupguide.py::_verification -> readiness": (1, 464),   # up
-    "setupguide.py::cli -> readiness": (1, 1206),            # up
-    "setuptasks.py::_failed_run -> state": (1, 444),         # down
-    "setuptasks.py::gaps -> previews": (1, 325),             # up
-    "setuptasks.py::start -> agents": (1, 937),              # down
-    "setuptasks.py::start -> plans": (1, 938),               # down
-    "setuptasks.py::start -> templates": (1, 939),           # down
-}
+# Deferred core imports: none since WP13 (task 122). The twenty at WP12's
+# end — thirteen hiding an upward dependency, seven deferred downward
+# imports — went by public ownership, not by aliases or by moving a
+# module to look compliant:
+#   - setupguide's six upward imports: its shared helpers moved down into
+#     `setupbase`, the file inspection into `appinspect`, and setupguide
+#     now sits above readiness, previews and setuptasks, which it composes;
+#   - setuptasks → previews: previews reads the application through
+#     `appinspect` instead of `setuptasks`, so setuptasks sits above it;
+#   - drive → previews ×4: `drive.scrub` owns a drive log's scrubbing; the
+#     drive's end hook is wired by `board.wire` (composition);
+#   - settings → agents: the run registry is `state.AGENTS`;
+#   - board's two and setuptasks' four were downward and are top-level.
+# An empty baseline is the rule, not a count: any function-level core
+# import anywhere is "new" and fails.
+FUNCTION_IMPORTS: dict[str, tuple[int, int]] = {}
 
-PRIVATE_REACHES: dict[str, tuple[int, int]] = {
-    "acceptance.py::_legacy_ticks -> taskfiles._is_fence": (1, 141),
-    "acceptance.py::track.change -> taskfiles._is_fence": (1, 592),
-    "agentsettings.py::rows -> config._SUFFIX": (1, 194),
-    # moved with merge & clean up out of github.py by WP07 (task 115)
-    "completion.py::_park_drive -> drive._alive": (1, 491),
-    "delivery.py::_context -> gates._tips": (1, 243),
-    "delivery.py::_fingerprint -> gates._EPOCH": (1, 1008),
-    # `verify._EPOCH` (delivery, gates) is `evidence.epoch()`, and
-    # `verify._offered` is `verify.offered_checks` (WP12, task 121)
-    "delivery.py::_merged_covers -> gates._contained": (1, 421),
-    "readiness.py::check_states -> settings._checks_of": (1, 483),
-    "readiness.py::review -> settings._checks_of": (1, 802),
-    "readiness.py::review -> setupguide._actor": (1, 847),
-    "readiness.py::review -> setupguide._check_request": (1, 791),
-    "readiness.py::review -> setupguide._guard_revision": (1, 800),
-    "readiness.py::review -> setupguide._journal_put": (2, 873),
-    "readiness.py::review -> setupguide._replayed": (1, 793),
-    "readiness.py::review -> setupguide._write_decisions": (1, 877),
-    "refine.py::_launch -> agents._launch": (1, 510),
-    "refine.py::_launch -> agents._pick_name": (1, 512),
-    "refine.py::_reap -> agents._finish": (1, 592),
-    "refine.py::_reap -> agents._why": (1, 600),
-    "refine.py::apply -> taskfiles._one_line": (1, 690),
-    "refine.py::discard -> taskfiles._one_line": (1, 754),
-    # `required._live` asks `verify.reserved` rather than reading
-    # `verify._KEYS` through `verify._key` (WP12, task 121)
-    "setupguide.py::create_task -> taskfiles._refuse_escape": (1, 1156),
-    "setuptasks.py::_cards -> taskfiles._depends_on": (1, 439),
-    "setuptasks.py::_cards -> taskfiles._first": (1, 434),
-    "setuptasks.py::_fingerprint -> setupguide._digest": (1, 500),
-    "setuptasks.py::_plan -> setupguide._next_number": (1, 689),
-    "setuptasks.py::_plan -> setupguide._slug": (1, 711),
-    "setuptasks.py::_write_and_commit -> setupguide._write_json": (1, 858),
-    "setuptasks.py::_write_and_commit -> taskfiles._commit": (1, 865),
-    "setuptasks.py::create -> setupguide._actor": (1, 816),
-    "setuptasks.py::create -> setupguide._guard_integrity": (1, 779),
-    "setuptasks.py::create -> setupguide._guard_revision": (1, 786),
-    "setuptasks.py::create -> setupguide._journal_put": (2, 793),
-    "setuptasks.py::create -> setupguide._replayed": (1, 775),
-    "setuptasks.py::create -> taskfiles._refuse_escape": (1, 801),
-    "setuptasks.py::decide -> setupguide._actor": (1, 906),
-    "setuptasks.py::decide -> setupguide._clean_reason": (1, 905),
-    "setuptasks.py::decide -> setupguide._guard_integrity": (1, 893),
-    "setuptasks.py::decide -> setupguide._guard_revision": (1, 895),
-    "setuptasks.py::decide -> setupguide._journal_put": (2, 912),
-    "setuptasks.py::decide -> setupguide._replayed": (1, 889),
-    "setuptasks.py::decide -> setupguide._write_decisions": (1, 915),
-    "setuptasks.py::gaps -> setupguide._newest_outcomes": (1, 260),
-    "setuptasks.py::start -> agents._preflight_profile": (1, 979),
-    "setuptasks.py::start -> agents._validate": (1, 976),
-    "setuptasks.py::start -> setupguide._agent": (1, 969),
-}
+# Cross-module private reaches: none since WP13 (task 122). Each of the
+# forty-nine became a public name on its owner (`taskfiles.is_fence`,
+# `one_line`, `refuse_escape`, `depends_on`, `first_match`,
+# `commit_paths`; `agents.launch`, `pick_name`, `finish`, `died_on`,
+# `validate_launch`, `preflight_profile`; `gates.branch_tips`,
+# `contained`, `epoch()`; `settings.checks_of`; `drive.alive`;
+# `config.PURPOSE_SUFFIX`) or moved with its helpers into `setupbase`.
+PRIVATE_REACHES: dict[str, tuple[int, int]] = {}
 
 # Patch calls whose module the scan cannot read (a loop over computed
 # pairs). `mock.patch.object` refuses a missing attribute itself unless
@@ -814,7 +757,11 @@ PROVIDER_VOCABULARY: dict[str, int] = {
     "agents": 2, "changes": 24, "completion": 13, "config": 10,
     "delivery": 10, "doctor": 3, "gatepolicy": 13, "gates": 23,
     "githost": 2, "plans": 1, "profiles": 4, "readiness": 9, "redact": 4,
-    "reviews": 8, "routes": 5, "settings": 36, "setupguide": 15,
+    "reviews": 8, "routes": 5, "settings": 36, "setupguide": 13,
+    # WP13 (task 122): two of setupguide's fifteen are the
+    # `.github/copilot-instructions.md` instruction file's name, which
+    # moved with the inspection to `appinspect`; the total is unchanged
+    "appinspect": 2,
     # WP12 (task 121): verify's one — the `gh[pousr]_` token shape in its
     # own credential table — went when the evidence log began asking
     # `redact`, whose four already count it
@@ -1020,10 +967,26 @@ def governance_problems(core: Path = CORE, tests: Path = TESTS) -> list[str]:
     problems += [f"route handler checks its own door: {p}"
                  for p in handlers_calling_doors(core / "routes.py")]
     problems += composition_problems(found["facts"], blocks["current"])
+    problems += eager_problems(found["facts"])
     problems += standalone_problems(core)
     problems += leaf_problems(core)
     problems += [f"inert patch target: {p}" for p in found["inert"]]
     return problems
+
+
+# Eager startup (check 11, WP13 / task 122): `board.py` imports every core
+# module at its top level, so a running board executes the code that was
+# on disk when it started, and a module added later without being wired
+# in is a failure rather than a lazy load on some first request.
+EAGER = "board"
+
+
+def eager_problems(facts) -> list[str]:
+    if EAGER not in facts:
+        return [f"{EAGER}.py is missing"]
+    loaded = {t for _q, t, _l, deferred in facts[EAGER].imports if not deferred}
+    return [f"{EAGER}.py does not import core module {name} at its top level"
+            for name in sorted(set(facts) - loaded - {EAGER})]
 
 
 # Stdlib leaves (check 10): modules that import nothing from core and
@@ -1173,6 +1136,10 @@ class TreeIsGoverned(unittest.TestCase):
     def test_stdlib_leaves_are_pure(self):
         self.assertEqual(leaf_problems(CORE), [])
 
+    def test_board_imports_every_core_module_at_startup(self):
+        self.assertGreater(len(self.found["facts"]), 40, "too few modules: vacuous")
+        self.assertEqual(eager_problems(self.found["facts"]), [])
+
     def test_the_whole_tree_has_no_problem(self):
         self.assertEqual(governance_problems(), [])
 
@@ -1234,55 +1201,56 @@ class ScratchCopyCatchesViolations(unittest.TestCase):
         self.assertIn("'templates.py::<module> -> config._never_public'", text)
         self.assertIn("'templates.py::<module> -> config._also_private'", text)
 
-    def test_a_second_occurrence_in_the_same_place_fails(self):
-        some = next(iter(FUNCTION_IMPORTS), None)
-        self.assertIsNotNone(some, "the baseline has function-level imports")
-        module, rest = some.split(".py::", 1)
-        func, target = rest.split(" -> ")
-        # add the same import again inside the same function
-        path = self.core / f"{module}.py"
-        tree = _parse(path)
-        node = next(n for n in ast.walk(tree)
-                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and n.name == func.split(".")[-1])
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-        body = node.body[0]
-        indent = " " * body.col_offset
-        lines.insert(body.lineno - 1, f"{indent}import {target}\n")
-        path.write_text("".join(lines), encoding="utf-8")
-        self.assertIn(f"function-imports: {some!r} grew", "\n".join(
+    def test_a_downward_function_level_import_fails_too(self):
+        """WP13 (task 122): the baseline is empty, so a deferred import
+        fails whichever way it points — a lazy import of a *lower* module
+        is still code a running board did not load at startup."""
+        self.assertEqual(FUNCTION_IMPORTS, {})
+        self.edit("setuptasks.py", suffix=(
+            "\n\ndef _wp13_probe():\n    import state\n    return state\n"))
+        self.assertIn("function-imports: new, not in the reviewed baseline: "
+                      "'setuptasks.py::_wp13_probe -> state'", "\n".join(
+                          governance_problems(self.core, self.tests)))
+
+    def test_a_lazy_import_inside_a_method_or_a_nested_function_fails(self):
+        self.edit("drive.py", suffix=(
+            "\n\nclass _WP13:\n    def probe(self):\n        def inner():\n"
+            "            from previews import record_last\n"
+            "            return record_last\n        return inner\n"))
+        self.assertIn("'drive.py::_WP13.probe.inner -> previews'", "\n".join(
             governance_problems(self.core, self.tests)))
 
+    def test_a_second_occurrence_in_the_same_place_fails(self):
+        """A reviewed exception that occurs twice is not the reviewed one:
+        the count is part of the identity's baseline."""
+        baseline = {"templates.py::_probe -> agents": (1, 1)}
+        found = {"templates.py::_probe -> agents": (2, 1)}
+        self.assertIn("function-imports: 'templates.py::_probe -> agents' "
+                      "grew from 1 to 2",
+                      "\n".join(ratchet("function-imports", found, baseline)))
+
     def test_inserting_lines_changes_no_identity(self):
+        probe = ("\n\ndef _wp01_probe():\n    import agents\n"
+                 "    return agents._launch_probe\n")
+        self.edit("templates.py", suffix=probe)
+        before = inventory(self.core, self.tests)
         shifted = "# wp01: shifted\n" * 25
-        for module in {k.split(".py::")[0] for k in FUNCTION_IMPORTS} | \
-                {k.split(".py::")[0] for k in PRIVATE_REACHES}:
-            self.edit(f"{module}.py", prefix=shifted)
+        self.edit("templates.py", prefix=shifted)
         self.edit("httpd.py", prefix=shifted)
-        self.assertEqual(governance_problems(self.core, self.tests), [])
         moved = inventory(self.core, self.tests)
-        before = inventory(CORE, TESTS)
         for key in ("function-imports", "private-reaches"):
+            self.assertTrue(before[key], f"the probe left no {key} to move")
+            self.assertEqual(set(moved[key]), set(before[key]))
             for identity, (count, line) in moved[key].items():
-                self.assertEqual(count, BASELINES[key][identity][0])
+                self.assertEqual(count, before[key][identity][0])
                 self.assertEqual(line, before[key][identity][1] + 25)
 
     def test_a_removed_exception_must_leave_the_baseline(self):
-        some = next(k for k in PRIVATE_REACHES if PRIVATE_REACHES[k][0] == 1)
-        module = some.split(".py::")[0]
-        reached = some.rsplit(" -> ", 1)[1]
-        path = self.core / f"{module}.py"
-        text = path.read_text(encoding="utf-8")
-        target_mod, attr = reached.split(".", 1)
-        # rename the private attribute at its one use so the reach is gone
-        pattern = re.compile(rf"\b(\w+)\.{re.escape(attr)}\b")
-        new, n = pattern.subn(lambda m: m.group(0).replace(attr, "public_probe"),
-                              text, count=1)
-        self.assertEqual(n, 1)
-        path.write_text(new, encoding="utf-8")
-        self.assertIn(f"private-reaches: gone — delete it from the baseline "
-                      f"and lower the count: {some!r}",
-                      "\n".join(governance_problems(self.core, self.tests)))
+        baseline = {"refine.py::_launch -> agents._launch": (1, 510)}
+        self.assertIn("private-reaches: gone — delete it from the baseline "
+                      "and lower the count: "
+                      "'refine.py::_launch -> agents._launch'",
+                      "\n".join(ratchet("private-reaches", {}, baseline)))
 
     ANCHOR = '    Route("POST", "/api/agent/stop",'
 
@@ -1330,6 +1298,14 @@ class ScratchCopyCatchesViolations(unittest.TestCase):
         self.edit("adapters/claude/emit.py", suffix="\nimport config\n")
         self.assertIn("adapters/claude/emit.py", "\n".join(
             standalone_problems(self.core)))
+
+    def test_a_core_module_board_does_not_load_fails(self):
+        (self.core / "wp13probe.py").write_text('"""probe"""\n', encoding="utf-8")
+        self.assertIn("board.py does not import core module wp13probe",
+                      "\n".join(governance_problems(self.core, self.tests)))
+        self.edit("board.py", prefix="import wp13probe  # noqa: F401\n")
+        self.assertNotIn("wp13probe at its top level", "\n".join(
+            governance_problems(self.core, self.tests)))
 
     def test_a_stdlib_leaf_importing_core_or_a_third_party_fails(self):
         self.edit("gitproc.py", suffix=(

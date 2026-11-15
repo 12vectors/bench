@@ -60,16 +60,15 @@ L18 stacks
 L19 delivery stackactions
 L20 agentsettings
 L21 settings
-L22 setupguide
-L23 agents
+L22 setupbase appinspect
+L23 agents previews readiness
 L24 setuptasks
-L25 readiness
-L26 previews
-L27 phases
-L28 refine
-L29 routes watch
-L30 httpd
-L31 board
+L25 setupguide
+L26 phases
+L27 refine
+L28 routes watch
+L29 httpd
+L30 board
 composition: board httpd routes watch
 ```
 
@@ -225,10 +224,10 @@ L17 stacks
 L18 delivery stackactions
 L19 agentsettings
 L20 settings
-L21 setupguide
-L22 agents
+L21 setupbase appinspect
+L22 agents readiness previews
 L23 setuptasks
-L24 readiness previews
+L24 setupguide
 L25 phases
 L26 refine
 L27 watch routes
@@ -491,8 +490,8 @@ standard library, no core module and no other provider.
 
 ```architecture counts
 top-level-exceptions 0
-function-imports 20
-private-reaches 49
+function-imports 0
+private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 182
 routes 93

@@ -53,13 +53,15 @@ Module map for `manager/core/`, lowest layer first: a module imports
 only modules to its left, at least at the top level. The authoritative
 layer table, the convention (`A → B` means A imports B, so B is lower),
 the proposed target layers and the reviewed, shrink-only list of
-today's exceptions — deferred imports that point up the table, private
-names reached across modules — live in
+exceptions live in
 [`manager/core/ARCHITECTURE.md`](manager/core/ARCHITECTURE.md), held by
-`tests/test_architecture.py`:
+`tests/test_architecture.py`. Since task 122 (WP13) that list is empty:
+no core module imports another from inside a function, none reaches a
+private name of another, and `board.py` imports every core module at
+startup:
 
 ```
-gitproc / records / redact < config < githost < state / reports / templates / gitrepo < taskfiles < plans / profiles < gatepolicy / reviews < evidence / resultidentity < staleness < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < githost < state / reports / templates / gitrepo < taskfiles < plans / profiles < gatepolicy / reviews < evidence / resultidentity < staleness < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
