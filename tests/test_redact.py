@@ -176,13 +176,14 @@ class TheUnionMasksEveryOldPattern(unittest.TestCase):
         self.assertEqual(redact.scrub(url, M), f"https://{M}@github.com/o/r.git")
 
     def test_the_copies_of_living_tables_match_their_source(self):
-        """verify.py and bootstrap.py still hold their own tables (WP12,
-        and a script that runs before an install). If either changes, the
-        union here has to be reconsidered, so the copies must not drift."""
-        verify_src = (CORE / "verify.py").read_text("utf-8")
-        start = verify_src.index("_SECRET_PATTERNS = (")
-        block = verify_src[start:verify_src.index("\n)\n", start)]
-        self.assertEqual(_literals(block), [p for p, _ in VERIFY])
+        """bootstrap.py still holds its own table (a script that runs
+        before an install). If it changes, the union here has to be
+        reconsidered, so the copy must not drift. verify.py's table went
+        with the verify train (task 121): the evidence log is scrubbed by
+        this table now, and `VERIFY` above is the record of what it held."""
+        for name in ("verify.py", "evidence.py"):
+            self.assertFalse(re.search(r"_SECRET_PATTERNS\s*=",
+                                       (CORE / name).read_text("utf-8")), name)
         boot_src = (REPO / "bootstrap.py").read_text("utf-8")
         start = boot_src.index("SECRET_PATTERNS = [")
         block = boot_src[start:boot_src.index("\n]\n", start)]
@@ -287,6 +288,23 @@ class EachCallerKeepsItsMarker(unittest.TestCase):
         # a shape only settings knew used to fall to its bullets; the
         # preview's log now says its own word for it
         self.assertEqual(previews.scrub("xoxb-" + D), "«redacted»")
+
+    def test_the_evidence_log_masks_with_its_own_word(self):
+        """Task 121: `evidence.scrub` delegates to this table with
+        `«redacted»`. It masks strictly more than verify's copy did, and a
+        key=value keeps its separator, which the old table dropped."""
+        import evidence
+        self.assertEqual(evidence.scrub("t=ghp_" + A), "t=«redacted»")
+        self.assertEqual(evidence.scrub("password=hunter22"),
+                         "password=«redacted»")
+        self.assertEqual(evidence.scrub("Bearer " + A), "Bearer «redacted»")
+        # a shape only settings or bootstrap knew
+        self.assertEqual(evidence.scrub("xoxb-" + D), "«redacted»")
+        for pattern, group in VERIFY:
+            for sample in SAMPLES:
+                if re.search(pattern, sample):
+                    self.assertNotIn(re.search(pattern, sample).group(group),
+                                     evidence.scrub(sample), sample)
 
     def test_previews_refuses_any_credential_shape_as_a_literal_env_value(self):
         source = (CORE / "previews.py").read_text("utf-8")

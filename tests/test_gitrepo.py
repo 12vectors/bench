@@ -94,8 +94,9 @@ RAW_GIT: dict[str, int] = {
 DASH_C_ALLOWED = {"gitproc.py", "doctor.py"}
 
 # Direct `config.git_run` / `git_argv` / `git_env` references per module,
-# outside config, gitproc and gitrepo. Reviewed; may only shrink. `verify`
-# keeps its own wrapper until WP12 — the documented temporary exception.
+# outside config, gitproc and gitrepo. Reviewed; may only shrink. `verify`'s
+# one went with WP12 (task 121): the runner's git is `resultidentity.git`,
+# which asks `gitproc` itself so it sits inside the runner revision.
 # `completion`'s two are `completion._run`, the one git seam WP07 gave it
 # when merge & clean up moved out of `github` (the same body as
 # `changes._run`, whose two stay with the PR opening and polling).
@@ -104,7 +105,7 @@ DIRECT_GIT: dict[str, int] = {
     # remote-url read that left `config.gh_repo`, an exempt module, with it
     "acceptance": 1, "agents": 1, "changes": 2, "completion": 2,
     "delivery": 1, "githost": 1, "previews": 1, "profiles": 1, "required": 1, "reviews": 2,
-    "settings": 1, "sync": 1, "taskfiles": 1, "verify": 1,
+    "settings": 1, "sync": 1, "taskfiles": 1,
 }
 DIRECT_GIT_EXEMPT = {"config", "gitproc", "gitrepo"}
 
@@ -206,8 +207,10 @@ class RawGitIsARatchet(unittest.TestCase):
             if count:
                 found[module] = count
         self.assertEqual(found, DIRECT_GIT)
-        self.assertIn("verify", found, "verify.py keeps its wrapper until "
-                      "WP12; if it is gone, delete it here and say so")
+        # WP12 (task 121) took verify's wrapper: the runner's git is
+        # `resultidentity.git`, through `gitproc` itself
+        for module in ("verify", "evidence", "resultidentity", "staleness"):
+            self.assertNotIn(module, found)
 
     def test_the_scanner_tells_an_invocation_from_a_mention(self):
         """Literals in tests and docs are not invocations."""

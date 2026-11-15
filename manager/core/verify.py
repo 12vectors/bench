@@ -92,6 +92,7 @@ from pathlib import Path
 import config
 import evidence
 import profiles
+import records
 import resultidentity
 import reviews
 import staleness
@@ -1660,7 +1661,9 @@ def _clip_log(path: Path) -> bool:
             f"log, which is over the {config.VERIFY_LOG_CAP}-byte cap "
             f"(BOARD_VERIFY_LOG_CAP) …\n\n" + raw[-half:])
     try:
-        path.write_text(kept, encoding="utf-8")
+        # atomically, so a diagnostic reading the tail meanwhile sees the
+        # whole log or the clipped one, never half of either (task 121)
+        records.write_text(path, kept)
     except OSError:
         return False
     return True

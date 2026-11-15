@@ -203,8 +203,11 @@ def store(record: dict) -> dict:
     with state.LOCK:
         _EPOCH += 1
     stored = {k: v for k, v in record.items() if k not in ("proc", "cancelling")}
-    records.write_json(path_of(record["id"]), stored, default=str,
-                       durable=stored.get("outcome") not in LIVE)
+    if stored.get("outcome") in LIVE:
+        records.write_json(path_of(record["id"]), stored, default=str)
+    else:
+        records.write_json(path_of(record["id"]), stored, default=str,
+                           durable=True)
     return stored
 
 

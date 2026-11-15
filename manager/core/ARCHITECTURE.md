@@ -45,31 +45,51 @@ L3  state reports templates gitrepo
 L4  taskfiles
 L5  plans profiles
 L6  gatepolicy reviews
-L7  verify
-L8  progress
-L9  acceptance callers
-L10 gates
-L11 required
-L12 doctor
-L13 commands drive events sync
-L14 changes
-L15 completion
-L16 stacks
-L17 delivery
-L18 agentsettings
-L19 settings
-L20 setupguide
-L21 agents
-L22 setuptasks
-L23 readiness
-L24 previews
-L25 phases
-L26 refine
-L27 routes watch
-L28 httpd
-L29 board
+L7  evidence resultidentity
+L8  staleness
+L9  verify
+L10 progress
+L11 acceptance callers
+L12 gates
+L13 required
+L14 doctor
+L15 commands drive events sync
+L16 changes
+L17 completion
+L18 stacks
+L19 delivery
+L20 agentsettings
+L21 settings
+L22 setupguide
+L23 agents
+L24 setuptasks
+L25 readiness
+L26 previews
+L27 phases
+L28 refine
+L29 routes watch
+L30 httpd
+L31 board
 composition: board httpd routes watch
 ```
+
+`evidence`, `resultidentity` and `staleness` (task 121, WP12 — the verify
+train) sit between `reviews` and `verify`, where the target table puts
+them. `evidence` is the record: where it lives, how it is stored (through
+`records`, durably once final) and read, the reuse records, the outcome
+vocabulary and the evidence epoch (`evidence.epoch()`, which `gates` and
+`delivery` key their memos on). It imports `config`, `records`, `redact`
+and `state`. `resultidentity` is what a verdict is about — every identity
+dimension and the one owner of the runner revision, a digest over
+`RUNNER_FILES`; it imports `config`, `gitproc` and `profiles`, and its git
+goes to `gitproc` directly so the code that reads a source identity is
+inside that revision. `staleness` is whether a stored pass still holds,
+and declared equivalence; it imports both, `profiles` and `reviews`.
+`verify` keeps the runner: the request, the reservation registry and
+reuse selection (together, under one lock), the execution, cancellation,
+recovery and the board's reading. Consumers ask each owner directly;
+nothing is re-exported, and reading a moved name on `verify` raises,
+naming its owner.
 
 `stacks` (task 117, WP09) sits directly above `completion` and below
 `delivery`, where the target table puts it: the derived stack reading —
@@ -206,7 +226,7 @@ L28 httpd
 L29 board
 composition: board httpd routes
 retired:
-new: evidence resultidentity staleness
+new:
 ```
 
 The plan wrote same-layer orderings as `gitrepo → githost`; with the
@@ -280,6 +300,7 @@ to the code by `tests/test_records_adoption.py`:
 ```records durable
 completion._record_delivered
 completion._remember
+evidence.store
 gates.override
 gates.record_verdict
 plans.record
@@ -451,9 +472,9 @@ standard library, no core module and no other provider.
 
 ```architecture counts
 top-level-exceptions 0
-function-imports 25
-private-reaches 54
-dynamic-patch-targets 1
-provider-vocabulary 183
+function-imports 20
+private-reaches 49
+dynamic-patch-targets 2
+provider-vocabulary 182
 routes 91
 ```

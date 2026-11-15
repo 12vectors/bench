@@ -311,7 +311,7 @@ def program_identity(argv: list[str], root: Path | str,
     for role, path in wanted:
         try:
             real = path.resolve(strict=True)
-            digest = _hash_file(real)
+            sha = _hash_file(real)
         except (OSError, RuntimeError) as exc:
             found["why"] = (f"the {role} {path} could not be read "
                             f"({getattr(exc, 'strerror', None) or exc}), so the "
@@ -319,8 +319,8 @@ def program_identity(argv: list[str], root: Path | str,
             found["files"] = []
             return found
         found["files"].append({"role": role, "path": str(real),
-                               "sha256": digest})
-        parts += [role, str(real), digest]
+                               "sha256": sha})
+        parts += [role, str(real), sha]
     found["bound"] = True
     found["programId"] = f"prog:{digest(*parts)[:16]}"
     return found

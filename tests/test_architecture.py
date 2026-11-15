@@ -688,14 +688,12 @@ FUNCTION_IMPORTS: dict[str, tuple[int, int]] = {
     "drive.py::_scrub_log -> previews": (1, 464),            # up
     "drive.py::_watch -> previews": (1, 327),                # up
     "previews.py::discover -> setuptasks": (1, 676),         # down
-    "readiness.py::_card_records -> verify": (1, 456),       # down
-    "readiness.py::_evidence -> verify": (1, 761),           # down
-    "readiness.py::check_states -> verify": (1, 481),        # down
-    "readiness.py::review -> verify": (1, 789),              # down
+    # readiness' four and setupguide's one deferred `verify` went with
+    # WP12 (task 121): they read records and freshness, which `evidence`
+    # and `staleness` own, and import them at the top level
     "settings.py::frozen_runs -> agents": (1, 798),          # up
     "setupguide.py::_actor -> acceptance": (1, 937),         # down
     "setupguide.py::_application_preview -> previews": (1, 861),  # up
-    "setupguide.py::_newest_outcomes -> verify": (1, 427),   # down
     "setupguide.py::_preview -> previews": (1, 524),         # up
     "setupguide.py::_proposals -> setuptasks": (1, 872),     # up
     "setupguide.py::_readiness -> readiness": (1, 850),      # up
@@ -716,10 +714,9 @@ PRIVATE_REACHES: dict[str, tuple[int, int]] = {
     "completion.py::_complete -> drive._alive": (1, 211),
     "delivery.py::_context -> gates._tips": (1, 243),
     "delivery.py::_fingerprint -> gates._EPOCH": (1, 1008),
-    "delivery.py::_fingerprint -> verify._EPOCH": (1, 1008),
+    # `verify._EPOCH` (delivery, gates) is `evidence.epoch()`, and
+    # `verify._offered` is `verify.offered_checks` (WP12, task 121)
     "delivery.py::_merged_covers -> gates._contained": (1, 421),
-    "delivery.py::_optional -> verify._offered": (1, 403),
-    "gates.py::board -> verify._EPOCH": (1, 2007),
     "readiness.py::check_states -> settings._checks_of": (1, 483),
     "readiness.py::review -> settings._checks_of": (1, 802),
     "readiness.py::review -> setupguide._actor": (1, 847),
@@ -734,8 +731,8 @@ PRIVATE_REACHES: dict[str, tuple[int, int]] = {
     "refine.py::_reap -> agents._why": (1, 600),
     "refine.py::apply -> taskfiles._one_line": (1, 690),
     "refine.py::discard -> taskfiles._one_line": (1, 754),
-    "required.py::_live -> verify._KEYS": (1, 933),
-    "required.py::_live -> verify._key": (1, 931),
+    # `required._live` asks `verify.reserved` rather than reading
+    # `verify._KEYS` through `verify._key` (WP12, task 121)
     "setupguide.py::create_task -> taskfiles._refuse_escape": (1, 1156),
     "setuptasks.py::_cards -> taskfiles._depends_on": (1, 439),
     "setuptasks.py::_cards -> taskfiles._first": (1, 434),
@@ -770,6 +767,13 @@ PRIVATE_REACHES: dict[str, tuple[int, int]] = {
 DYNAMIC_PATCH_TARGETS: dict[str, tuple[int, int]] = {
     "test_verify_on_review.py::NoRetryNoFollowOn.guarded -> <module>.<computed>":
         (1, 443),
+    # WP12 (task 121): the reuse race's two seams now live in two owners
+    # (`evidence.store`, `staleness.outcome_now`), so the loop names the
+    # module too. `mock.patch.object` refuses a missing attribute, which is
+    # how this test caught the old `verify._store` target loudly.
+    "test_check_reuse.py::NewestRelevantAnswerDecides."
+    "test_a_rerun_reserved_after_the_read_but_before_the_reuse_wins -> "
+    "<module>.<computed>": (1, 465),
 }
 
 # GitHub vocabulary per core module outside github.py (WP08 moves it).
@@ -807,7 +811,9 @@ PROVIDER_VOCABULARY: dict[str, int] = {
     "delivery": 10, "doctor": 3, "gatepolicy": 13, "gates": 23,
     "githost": 2, "plans": 1, "profiles": 4, "readiness": 9, "redact": 4,
     "reviews": 8, "routes": 5, "settings": 36, "setupguide": 15,
-    "verify": 1,
+    # WP12 (task 121): verify's one — the `gh[pousr]_` token shape in its
+    # own credential table — went when the evidence log began asking
+    # `redact`, whose four already count it
 }
 
 # Every route and its request class, as routes.py declares it (WP04).

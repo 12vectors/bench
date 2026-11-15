@@ -234,16 +234,22 @@ IN_PLACE = {
     ("setuptasks", "create"): "exclusive creates (O_EXCL) of new cards",
     ("profiles", "pin"): "a launch's read-only pinned copy, written before the "
                          "model starts and hashed after landing",
+    ("verify", "_execute"): "the check's own log stream (open 'wb')",
+    ("verify", "_deliver_inputs"): "read-only input copies in the "
+                                   "verification's own fresh temporary directory",
+    ("resultidentity", "env_key"): "an exclusive create (O_EXCL, 0600) of the "
+                                   "machine-local key, never replaced",
 }
 
 
 def in_place_writes() -> set[tuple[str, str]]:
     """Every `write_text`, `write_bytes`, `json.dump(` and `open(… 'w'/'a')`
-    in core outside verify.py and records.py, by module and enclosing
-    function."""
+    in core outside records.py, by module and enclosing function. verify.py
+    was exempt until the verify train (task 121) moved its records into
+    `evidence`, which writes them through `records`."""
     found = set()
     for path in sorted(CORE.glob("*.py")):
-        if path.stem in ("verify", "records"):
+        if path.stem == "records":
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         stack: list[str] = []
@@ -330,6 +336,7 @@ class DurableWritersAreListed(unittest.TestCase):
         self.assertLessEqual({"gates.record_verdict", "gates.override",
                               "completion._remember",
                               "completion._record_delivered", "plans.record",
+                              "evidence.store",
                               "profiles.record", "setupguide._write_decisions",
                               "settings.apply"}, durable_call_sites())
 

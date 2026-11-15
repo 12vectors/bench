@@ -460,9 +460,9 @@ class NewestRelevantAnswerDecides(ReuseCase):
                 self.assertTrue(reached.wait(30))
             return answer
 
-        for name, fake in (("_store", paused),
-                           ("outcome_now", judge_then_race)):
-            patcher = mock.patch.object(verify, name, fake)
+        for owner, name, fake in ((evidence, "store", paused),
+                                  (staleness, "outcome_now", judge_then_race)):
+            patcher = mock.patch.object(owner, name, fake)
             patcher.start()
             self.addCleanup(patcher.stop)
         self.fresh()
