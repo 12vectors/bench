@@ -442,6 +442,14 @@ def _reader(core: str) -> None:
     import gates
     import taskfiles
     import verify
+    # Where a stored record is read and judged depends on the core: task
+    # 121 (WP12) moved both out of `verify` into `evidence` and
+    # `staleness`. Ask whichever owner this core has, never both.
+    try:
+        import evidence as store
+        import staleness as judged
+    except ImportError:
+        store = judged = verify
     try:
         import delivery
     except ImportError:
@@ -473,9 +481,9 @@ def _reader(core: str) -> None:
                 if r.get("acceptedFrom"):
                     row["acceptedFrom"] = (r["acceptedFrom"] or {}).get("evidence")
                 if cited_id and r.get("state") == "met":
-                    record = verify.read(cited_id) if hasattr(verify, "read") else None
+                    record = store.read(cited_id) if hasattr(store, "read") else None
                     if record:
-                        now = verify.outcome_now(record)
+                        now = judged.outcome_now(record)
                         prov = ((now.get("freshness") or {}).get("provenance") or {})
                         row["identity"] = bool(record.get("resultId"))
                         row["policyChanged"] = bool(prov.get("policyChanged"))
@@ -533,8 +541,36 @@ def explain_relaxation(before: dict | None, after: dict, head: str | None) -> st
     return None
 
 
-def compare(before: dict, after: dict) -> dict:
-    changes, unaccounted = [], 0
+# What `--expect` may name: a transition whose whole effect is known in
+# advance, so every changed reading must be that effect and nothing else.
+EXPECTATIONS = {
+    # Task 121 (WP12): the runner revision is now a digest over a declared
+    # set of files. Every recorded pass reads `stale / runner-changed` once
+    # under the new resolver, and nothing else about any reading moves.
+    "runner-changed": "every recorded pass reads stale / runner-changed once",
+}
+
+
+def expected_change(br: dict | None, ar: dict | None, expect: str) -> bool:
+    """Whether one requirement's change is exactly the named transition's
+    effect. Only a stricter reading can be: a relaxation never is."""
+    if expect == "runner-changed":
+        return (br is not None and ar is not None
+                and ar.get("state") != "met"
+                and ar.get("reason") == "stale"
+                and ar.get("staleReason") == "runner-changed")
+    return False
+
+
+def compare(before: dict, after: dict, expect: str | None = None) -> dict:
+    """Every changed reading explained. With `expect`, also every changed
+    requirement checked against that transition's known effect: one that
+    is not it is *unexpected*, and the comparison fails — a promotion
+    preview that proves only the intended difference, on copied records."""
+    if expect is not None and expect not in EXPECTATIONS:
+        raise ValueError(f"--expect names no known transition: {expect!r} "
+                         f"(known: {', '.join(sorted(EXPECTATIONS))})")
+    changes, unaccounted, unexpected = [], 0, 0
     files = sorted(set(before["cards"]) | set(after["cards"]))
     for name in files:
         b, a = before["cards"].get(name), after["cards"].get(name)
@@ -542,7 +578,11 @@ def compare(before: dict, after: dict) -> dict:
             continue
         item = {"card": name, "before": summarise(b), "after": summarise(a),
                 "explanations": [], "accounted": True}
+        if expect is not None:
+            item["expected"] = True
         if b is None or a is None or "error" in (b or {}) or "error" in (a or {}):
+            if expect is not None:
+                item["expected"] = False
             item["accounted"] = DECISION_RANK.get((a or {}).get("decision"), 3) >= \
                 DECISION_RANK.get((b or {}).get("decision"), 3) and "error" not in (a or {})
             item["explanations"].append(
@@ -554,6 +594,8 @@ def compare(before: dict, after: dict) -> dict:
             for key in sorted(set(brows) | set(arows), key=str):
                 br, ar = brows.get(key), arows.get(key)
                 label = f"{key[1]} ({key[0]}{', ' + key[2] if key[2] else ''})"
+                if expect is not None and (ar is None or br is None):
+                    item["expected"] = False
                 if ar is None:
                     if br and br.get("state") != "met":
                         item["accounted"] = False
@@ -565,8 +607,15 @@ def compare(before: dict, after: dict) -> dict:
                         f"{label}: a requirement only the after reading has "
                         f"({ar.get('state')}) — stricter, not a relaxation")
                     continue
-                if br.get("state") == ar.get("state") and br.get("reason") == ar.get("reason"):
+                if br.get("state") == ar.get("state") and br.get("reason") == ar.get("reason") \
+                        and br.get("staleReason") == ar.get("staleReason"):
                     continue
+                if expect is not None:
+                    if expected_change(br, ar, expect):
+                        item["explanations"].append(
+                            f"{label}: {expect} — {EXPECTATIONS[expect]} (expected)")
+                        continue
+                    item["expected"] = False
                 if br.get("state") != "met" and ar.get("state") == "met":
                     why = explain_relaxation(br, ar, head)
                     if why:
@@ -595,9 +644,14 @@ def compare(before: dict, after: dict) -> dict:
                     f"requirement-level explanation — unaccounted")
             if not item["explanations"]:
                 item["explanations"].append("only presentation fields differ")
+        if expect is not None and not item["expected"]:
+            item["explanations"].append(
+                f"a change that is not the expected {expect} transition — unexpected")
         unaccounted += 0 if item["accounted"] else 1
+        unexpected += 1 if expect is not None and not item["expected"] else 0
         changes.append(item)
     return {"kind": "bench-gate-comparison", "v": V,
+            "expect": expect, "unexpected": unexpected,
             "before": {"core": before.get("core"), "revision": before.get("coreRevision"),
                        "policyRevision": before.get("policyRevision")},
             "after": {"core": after.get("core"), "revision": after.get("coreRevision"),
@@ -626,13 +680,18 @@ def markdown(report: dict) -> str:
            f"- snapshot digest: `{(report.get('snapshot') or {}).get('digest')}`",
            f"- cards read: {report['cards']}; changed readings: {report['changed']}; "
            f"unaccounted relaxations: {report['unaccounted']}", ""]
+    if report.get("expect"):
+        out[-1:] = [f"- expected transition: `{report['expect']}` — "
+                    f"{EXPECTATIONS[report['expect']]}; changes that are not "
+                    f"it: {report['unexpected']}", ""]
     if (report.get("snapshot") or {}).get("envKey") is False:
         out += ["The HMAC key was not copied, so a check that declares `env` reads "
                 "`env-changed` under both resolvers.", ""]
     for c in report["changes"]:
         b, a = c["before"] or {}, c["after"] or {}
         out.append(f"## {c['card']} — {b.get('decision')} → {a.get('decision')}"
-                   f"{'' if c['accounted'] else ' (UNACCOUNTED)'}")
+                   f"{'' if c['accounted'] else ' (UNACCOUNTED)'}"
+                   f"{' (UNEXPECTED)' if c.get('expected') is False else ''}")
         out += [f"- {e}" for e in c["explanations"]]
         out.append("")
     if not report["changes"]:
@@ -671,6 +730,11 @@ def main(argv: list[str]) -> int:
     a.add_argument("--before-core", type=Path, required=True)
     a.add_argument("--after-core", type=Path, default=CANDIDATE_CORE)
     a.add_argument("--out", type=Path, required=True)
+    for parser in (c, a):
+        parser.add_argument(
+            "--expect", choices=sorted(EXPECTATIONS),
+            help="a known transition: every changed requirement must be its "
+                 "effect, and anything else fails the comparison")
     args = p.parse_args(argv)
     try:
         if args.cmd == "snapshot":
@@ -684,20 +748,20 @@ def main(argv: list[str]) -> int:
             write(args.out, read(args.snapshot.resolve(), args.core.resolve()))
             return 0
         if args.cmd == "compare":
-            report = compare(load(args.before), load(args.after))
+            report = compare(load(args.before), load(args.after), args.expect)
         else:
             args.out.mkdir(parents=True, exist_ok=True)
             before = read(args.snapshot.resolve(), args.before_core.resolve())
             write(args.out / "before.json", before)
             after = read(args.snapshot.resolve(), args.after_core.resolve())
             write(args.out / "after.json", after)
-            report = compare(before, after)
+            report = compare(before, after, args.expect)
             args.out = args.out / "report.json"
         if args.out:
             write(args.out, report)
             args.out.with_suffix(".md").write_text(markdown(report), encoding="utf-8")
         sys.stdout.write(markdown(report))
-        return 1 if report["unaccounted"] else 0
+        return 1 if report["unaccounted"] or report.get("unexpected") else 0
     except SnapshotMoved as exc:
         print(f"gate-compare: {exc}", file=sys.stderr)
         return 3

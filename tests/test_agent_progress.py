@@ -48,6 +48,7 @@ import events  # noqa: E402
 import httpd  # noqa: E402
 import progress  # noqa: E402
 import state  # noqa: E402
+import evidence  # noqa: E402
 import verify  # noqa: E402
 
 import hook_settings  # noqa: E402
@@ -297,15 +298,15 @@ class Validation(Base):
                          "agent-reported")
 
     def test_a_missing_evidence_record_reads_not_found_never_passed(self):
-        evidence = self.evidence("ev-gone", CARD, "passed")
-        self.send(self.token, doing="x", refs=[{"evidence": evidence}])
-        verify.path_of(evidence).unlink()
+        gone = self.evidence("ev-gone", CARD, "passed")
+        self.send(self.token, doing="x", refs=[{"evidence": gone}])
+        evidence.path_of(gone).unlink()
         ref = progress.public("run-1")["current"]["refs"][0]
         self.assertFalse(ref["found"])
         self.assertNotIn("outcome", ref)
 
     def evidence(self, evidence_id, task, outcome):
-        path = verify.path_of(evidence_id)
+        path = evidence.path_of(evidence_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({
             "v": 1, "id": evidence_id, "task": task, "check": "unit",
@@ -471,9 +472,9 @@ class RefusalNotices(Base):
         self.assertEqual(len(notices()), 3)
 
     def test_evidence_ids_are_validated_through_verifys_public_boundary(self):
-        self.assertTrue(verify.is_evidence_id("ev:verification@4cfab7d84ca9"))
-        self.assertFalse(verify.is_evidence_id("../etc/passwd"))
-        self.assertFalse(verify.is_evidence_id(None))
+        self.assertTrue(evidence.is_evidence_id("ev:verification@4cfab7d84ca9"))
+        self.assertFalse(evidence.is_evidence_id("../etc/passwd"))
+        self.assertFalse(evidence.is_evidence_id(None))
         self.assertNotIn("verify._ID_OK", (CORE / "progress.py").read_text())
 
 

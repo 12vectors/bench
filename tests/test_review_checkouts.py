@@ -59,6 +59,8 @@ import profiles  # noqa: E402
 import reviews  # noqa: E402
 import state  # noqa: E402
 import templates  # noqa: E402
+import evidence  # noqa: E402
+import staleness  # noqa: E402
 import verify  # noqa: E402
 
 
@@ -860,7 +862,7 @@ class AHeadThatMovedIsNotCurrent(ReviewCase):
         self.proposes(self.proposed_commit("a later head\n"))
         reviews.resolve_head(CARD, self.card_now())
         verify.forget_cached()
-        reading = verify.outcome_now(verify.read(found["id"]))
+        reading = staleness.outcome_now(evidence.read(found["id"]))
 
         self.assertEqual(reading["outcome"], "stale")
         self.assertEqual(reading["reason"], "head-changed")
@@ -876,7 +878,7 @@ class AHeadThatMovedIsNotCurrent(ReviewCase):
         self.proposes(status="MERGED", merged="2026-11-04T00:00:00Z")
         reviews.resolve_head(CARD, self.card_now())
         verify.forget_cached()
-        reading = verify.outcome_now(verify.read(found["id"]))
+        reading = staleness.outcome_now(evidence.read(found["id"]))
 
         self.assertEqual(reading["outcome"], "stale")
         self.assertEqual(reading["reason"], "pr-ended")
@@ -1230,9 +1232,9 @@ class WhatTheBoardSays(ReviewCase):
         self.proposes()
         self.review()
 
-        evidence = [r for r in verify.for_task(CARD)
-                    if (r.get("root") or {}).get("policy") == "review"]
-        self.assertEqual(evidence, [], "no check ran, so there is no evidence")
+        pinned = [r for r in evidence.for_task(CARD)
+                  if (r.get("root") or {}).get("policy") == "review"]
+        self.assertEqual(pinned, [], "no check ran, so there is no evidence")
         rollup = verify.rollup(CARD, profiles.manifest("review", CARD, "review"))
         self.assertFalse(rollup["verified"])
         self.assertFalse(any(row["outcome"] == "passed"

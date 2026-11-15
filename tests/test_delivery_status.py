@@ -52,6 +52,8 @@ import phases  # noqa: E402
 import plans  # noqa: E402
 import state  # noqa: E402
 import taskfiles  # noqa: E402
+import evidence  # noqa: E402
+import resultidentity  # noqa: E402
 import verify  # noqa: E402
 
 STATUS = {"backlog": "Backlog", "to-do": "To Do", "in-progress": "In Progress",
@@ -136,7 +138,7 @@ class DeliveryCase(GateCase):
                 live = [ident for ident, record in verify.RUNNING.items()
                         if record.get("proc") is not None]
             for ident in live:
-                record = verify.read(ident) or {}
+                record = evidence.read(ident) or {}
                 if (record.get("outcome") == "running"
                         and (record.get("source") or {}).get("commit") == head):
                     return True
@@ -224,8 +226,8 @@ class TheCopyMatrix(DeliveryCase):
 
     def test_f07_review_check_missing(self):
         head = self.passed_at_head()
-        for record in verify.for_task(CARD):
-            verify.path_of(record["id"]).unlink()
+        for record in evidence.for_task(CARD):
+            evidence.path_of(record["id"]).unlink()
         verify.forget_cached()
         self.place("review", pr=PR_URL)
         found = self.expect("checks-needed", "run-required-checks")
@@ -1137,7 +1139,7 @@ class ReadingRunsNoRepositoryHelper(DeliveryCase):
         # The uncommitted edit is still seen for what it is: the source
         # identity names it, so the pass bound to the clean commit no
         # longer reads as this checkout's.
-        identity = verify.source_identity(wt)
+        identity = resultidentity.source_identity(wt)
         self.assertEqual(self.marked(), [])
         self.assertIn("code.txt", " ".join(identity["dirty"]))
         self.assertTrue(found["status"]["word"])

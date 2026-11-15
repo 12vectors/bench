@@ -78,6 +78,7 @@ import phases  # noqa: E402
 import profiles  # noqa: E402
 import state  # noqa: E402
 import taskfiles  # noqa: E402
+import evidence  # noqa: E402
 import verify  # noqa: E402
 
 from tests.test_phase_runs import (ONE, PHASE, PHASE_BRANCH, TWO,  # noqa: E402
@@ -135,7 +136,7 @@ def running_and_recorded() -> bool:
     for ident, record in list(verify.RUNNING.items()):
         if record.get("proc") is None:
             continue
-        stored = verify.read(ident)
+        stored = evidence.read(ident)
         if stored and stored.get("outcome") == "running":
             return True
     return False
@@ -901,7 +902,7 @@ class AnOverrideIsNeverAPass(GateCase):
         self.assertEqual(found["overriddenGates"], ["unit"])
         # and it forged nothing: the evidence is exactly as absent as it
         # was before anybody clicked
-        self.assertEqual(verify.for_task(CARD), [])
+        self.assertEqual(evidence.for_task(CARD), [])
         self.assertEqual(found["requirements"][0]["reason"], "not-run")
 
     def test_a_second_click_does_not_record_a_second_override(self):
@@ -1015,7 +1016,7 @@ class AnOverrideIsNeverAPass(GateCase):
         gates.override(CARD, "acceptance", actor="istos",
                        reason="no reviewer until Monday, and the suite hangs")
         held, release = threading.Event(), threading.Event()
-        real_store = verify._store
+        real_store = evidence.store
 
         def slow_first_running_store(record):
             if record.get("outcome") == "running" and not held.is_set():
@@ -1023,7 +1024,7 @@ class AnOverrideIsNeverAPass(GateCase):
                 release.wait(timeout=30)
             return real_store(record)
 
-        verify._store = slow_first_running_store
+        evidence.store = slow_first_running_store
         asking = threading.Thread(target=self.ask, daemon=True)
         asking.start()
         try:
@@ -1040,7 +1041,7 @@ class AnOverrideIsNeverAPass(GateCase):
             self.assertIsNone(found["overrides"]["applied"])
         finally:
             release.set()
-            verify._store = real_store
+            evidence.store = real_store
             stop_and_join(asking)
         self.assertFalse(asking.is_alive(), "the request thread ended")
 
@@ -1431,7 +1432,7 @@ class AGatedPhase(PhaseCase):
         self.advance()                       # merge 32, open the phase PR
         self.assertEqual(self.stage_of(PHASE), "review")
         for member in (ONE, TWO):
-            rows = [r for r in verify.for_task(member)
+            rows = [r for r in evidence.for_task(member)
                     if r["outcome"] == "passed"]
             self.assertTrue(rows, f"{member} really did pass its check")
         found = gates.evaluate(PHASE, "integration")

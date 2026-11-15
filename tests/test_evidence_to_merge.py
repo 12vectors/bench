@@ -49,6 +49,8 @@ import completion  # noqa: E402
 import changes  # noqa: E402
 import httpd  # noqa: E402
 import taskfiles  # noqa: E402
+import evidence  # noqa: E402
+import staleness  # noqa: E402
 import verify  # noqa: E402
 
 REASON = "the check runner is down, demo at 5"
@@ -305,7 +307,7 @@ class AnOverrideIsBoundToItsHeadAndRule(OverrideCase):
         found = self.decide()
         self.assertEqual(found["requirements"][0]["state"], "overridden")
         self.assertEqual(found["requirements"][0]["reason"], "not-run")
-        self.assertEqual(verify.for_task(CARD), [])
+        self.assertEqual(evidence.for_task(CARD), [])
         self.assertNotEqual(found["decision"], "allowed")
 
 
@@ -399,8 +401,8 @@ class Precedence(unittest.TestCase):
                     "why": None, "freshness": {"reasons": []},
                     "recorded": rec.get("outcome")}
 
-        self.addCleanup(setattr, verify, "outcome_now", verify.outcome_now)
-        verify.outcome_now = outcome_now
+        self.addCleanup(setattr, staleness, "outcome_now", staleness.outcome_now)
+        staleness.outcome_now = outcome_now
 
     def decide(self, records, *, head: str | None = H, scope=None,
                check: str = "unit") -> dict:
@@ -551,9 +553,9 @@ class TheEquivalentBranchIsHeldToTheSameFilters(Precedence):
 
     def setUp(self):
         super().setUp()
-        self.addCleanup(setattr, verify, "identity_drift",
-                        verify.identity_drift)
-        verify.identity_drift = lambda rec: (
+        self.addCleanup(setattr, staleness, "identity_drift",
+                        staleness.identity_drift)
+        staleness.identity_drift = lambda rec: (
             {"reasons": [], "changed": []} if rec.get("resultId") else None)
 
     def decide(self, records, *, head: str | None = H, scope=None,
@@ -659,10 +661,10 @@ class TheSafer36Shape(GateCase):
     def make_legacy(self) -> None:
         """B's pass as a record written before result identities: the
         same file, without the fields #97 added."""
-        for record in verify.for_task(CARD):
+        for record in evidence.for_task(CARD):
             if record.get("outcome") != "passed":
                 continue
-            path = verify.path_of(record["id"])
+            path = evidence.path_of(record["id"])
             data = json.loads(path.read_text(encoding="utf-8"))
             for key in ("resultId", "identity", "provenance", "inputs",
                         "prepareSteps", "checkSubstance"):
@@ -676,15 +678,15 @@ class TheSafer36Shape(GateCase):
         """E1 / R1 inverted at the gate: B's pass carries a result identity,
         and nothing it depends on moved — the gate is met with zero
         reruns, and the record still names the policy it ran under."""
-        before = next(r for r in verify.for_task(CARD)
+        before = next(r for r in evidence.for_task(CARD)
                       if r.get("outcome") == "passed")
         self.add_the_next_cards_context()
         found = self.decide()
         self.assertEqual(found["decision"], "allowed")
-        record = verify.read(before["id"])
+        record = evidence.read(before["id"])
         self.assertEqual(record["provenance"]["policyRevision"],
                          before["policyRevision"])
-        reading = verify.outcome_now(record)
+        reading = staleness.outcome_now(record)
         self.assertEqual(reading["outcome"], "passed")
         self.assertTrue(reading["freshness"]["provenance"]["policyChanged"])
 

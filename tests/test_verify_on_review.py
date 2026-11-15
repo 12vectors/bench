@@ -43,6 +43,7 @@ import required  # noqa: E402
 import settings  # noqa: E402
 import state  # noqa: E402
 import sync  # noqa: E402
+import evidence  # noqa: E402
 import verify  # noqa: E402
 import watch  # noqa: E402
 
@@ -177,7 +178,7 @@ class ALocalPersonsMove(OnReviewCase):
         self.assertEqual(batch["intent"], "work")
         self.assertEqual(batch["head"], self.head)
         self.assertEqual(batch["state"], "finished")
-        record = verify.read(self.item(batch, "missing")["evidence"])
+        record = evidence.read(self.item(batch, "missing")["evidence"])
         self.assertIsNone(record["agent"])
         self.assertEqual(record["source"]["commit"], self.head)
         self.assertTrue(any("BOARD_VERIFY_ON_REVIEW" in s

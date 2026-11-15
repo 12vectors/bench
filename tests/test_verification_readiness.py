@@ -45,6 +45,7 @@ import readiness  # noqa: E402
 import settings  # noqa: E402
 import setupguide  # noqa: E402
 import setuptasks  # noqa: E402
+import evidence  # noqa: E402
 import verify  # noqa: E402
 
 from tests.test_integration_gates import CARD, GateCase, git  # noqa: E402
@@ -334,7 +335,7 @@ class ReviewRestsOnCurrentEvidence(ReadinessCase):
         passed = self.run_at("fine\n")
         record = dict(passed, outcome="cancelled", id=None)
         record["id"] = passed["id"].replace(passed["id"][-4:], "beef")
-        verify._store(record)
+        evidence.store(record)
         err = self.refused(passEvidence=passed["id"], failEvidence=record["id"])
         self.assertEqual("not-failed", err.extra["code"])
         self.assertIn("reached no verdict", str(err))

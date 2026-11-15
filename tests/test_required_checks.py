@@ -47,6 +47,7 @@ import profiles  # noqa: E402
 import required  # noqa: E402
 import state  # noqa: E402
 import templates  # noqa: E402
+import evidence  # noqa: E402
 import verify  # noqa: E402
 
 # A check that counts its own executions in a file named for it, and whose
@@ -157,7 +158,7 @@ class BatchCase(GateCase):
                     if r.get("check") == name
                     and r.get("outcome") == "running"
                     and r.get("proc") is not None]
-        return any((verify.read(eid) or {}).get("outcome") == "running"
+        return any((evidence.read(eid) or {}).get("outcome") == "running"
                    for eid in live)
 
     def hang_in_background(self, name: str) -> threading.Thread:
@@ -227,7 +228,7 @@ class OnlyMissingRequired(BatchCase):
         reserved but unpublished, the plan honestly reads `request`, and
         `running_published` says no. Released, it says yes and the plan
         reads `joined`. No sleeps: every step waits on a cause."""
-        real = verify._store
+        real = evidence.store
         held, release = threading.Event(), threading.Event()
 
         def delayed(record):
@@ -239,7 +240,7 @@ class OnlyMissingRequired(BatchCase):
             return real(record)
 
         self.addCleanup(release.set)
-        with mock.patch.object(verify, "_store", delayed):
+        with mock.patch.object(evidence, "store", delayed):
             thread = threading.Thread(target=self.person, args=("slow",),
                                       daemon=True)
             thread.start()
@@ -293,7 +294,7 @@ class OnlyMissingRequired(BatchCase):
 
     def test_requests_are_a_persons_work_reading(self):
         batch = self.run_batch()
-        record = verify.read(self.item(batch, "missing")["evidence"])
+        record = evidence.read(self.item(batch, "missing")["evidence"])
         self.assertEqual(record["actor"], "you")
         self.assertIsNone(record["agent"])
         self.assertEqual(record["intent"], "work")
@@ -433,7 +434,7 @@ class RevalidatedBetweenRequests(BatchCase):
         self.assertEqual(second["id"], first["id"])
         required.cancel(CARD)
         self.assertTrue(wait_for(lambda: CARD not in required.ACTIVE, 20))
-        self.assertEqual(len([r for r in verify.for_task(CARD)
+        self.assertEqual(len([r for r in evidence.for_task(CARD)
                               if r.get("check") == "one"]), 1,
                          "one request, not two")
 
@@ -502,7 +503,7 @@ class TheDoor(BatchCase):
                 self.assertEqual(answer["code"], code)
                 self.assertEqual(self.runs("unit"), 0, "nothing ran")
                 self.assertIsNone(required.latest(CARD), "nothing recorded")
-                self.assertFalse(verify.for_task(CARD))
+                self.assertFalse(evidence.for_task(CARD))
                 self.assertNotIn(CARD, required.ACTIVE)
 
 
@@ -602,9 +603,9 @@ class InterruptionIsExplicit(BatchCase):
         running = list(verify.RUNNING)
         required.cancel(CARD)
         self.assertTrue(wait_for(lambda: CARD not in required.ACTIVE, 20))
-        for evidence in running:
-            record = verify.read(evidence)
-            verify._store(dict(record, outcome="running", reason=None,
+        for evidence_id in running:
+            record = evidence.read(evidence_id)
+            evidence.store(dict(record, outcome="running", reason=None,
                                ended=None))
         required._path(CARD).write_text(json.dumps(snapshot), encoding="utf-8")
         verify.recover()
@@ -666,7 +667,7 @@ class StopBeforeARunExists(BatchCase):
         self.assertEqual(self.runs("unit"), 0, "the check never ran")
         self.assertEqual(self.runs("two"), 0)
         self.assertFalse(self.prep_marks.exists(), "no preparation ran")
-        self.assertEqual(verify.for_task(CARD), [], "no evidence was written")
+        self.assertEqual(evidence.for_task(CARD), [], "no evidence was written")
         self.assertEqual(batch["state"], "stopped")
         self.assertEqual(batch["stop"], "cancelled")
         unit = self.item(batch, "unit")
@@ -815,11 +816,12 @@ class CleanupRemovesOnlyItsOwnTemp(BatchCase):
                         "the working directory was never touched")
 
     def test_unproven_paths_are_never_chosen(self):
+        slug = globals()["evidence"].slug     # the module; a local shadows it
         evidence = "verification@abc"
         outside = self.tmp / "outside"
         outside.mkdir()
         (outside / "keep.txt").write_text("x", encoding="utf-8")
-        link = self.base / verify._slug("verification@link")
+        link = self.base / slug("verification@link")
         link.symlink_to(outside, target_is_directory=True)
         for label, record in (
                 ("no env", {"id": evidence}),
@@ -832,7 +834,7 @@ class CleanupRemovesOnlyItsOwnTemp(BatchCase):
                 ("outside", {"id": evidence, "env": {"tmp": str(outside)}}),
                 ("the base", {"id": evidence, "env": {"tmp": str(self.base)}}),
                 ("climbing", {"id": evidence, "env": {"tmp": str(
-                    self.base / verify._slug(evidence) / "..")}}),
+                    self.base / slug(evidence) / "..")}}),
                 ("another id's", {"id": evidence, "env": {"tmp": str(
                     self.base / "verification-other")}}),
                 ("no id", {"env": {"tmp": str(self.base / "x")}}),

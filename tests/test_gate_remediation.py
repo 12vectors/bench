@@ -46,6 +46,9 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 import gatepolicy  # noqa: E402
 import gates  # noqa: E402
 import profiles  # noqa: E402
+import evidence  # noqa: E402
+import resultidentity  # noqa: E402
+import staleness  # noqa: E402
 import verify  # noqa: E402
 
 from tests.test_integration_gates import (CARD, PASSES, GateCase,  # noqa: E402
@@ -246,7 +249,7 @@ class ScopeIsPartOfTheRequirement(GateCase):
             # not that reservation: the gate reads persisted evidence.
             self.assertTrue(wait_for(lambda: any(
                 record.get("proc") is not None
-                and (verify.read(ident) or {}).get("outcome") == "running"
+                and (evidence.read(ident) or {}).get("outcome") == "running"
                 for ident, record in list(verify.RUNNING.items()))))
             found = self.decide()
             self.assertEqual(found["decision"], "pending", found["summary"])
@@ -280,14 +283,14 @@ class ScopeIsPartOfTheRequirement(GateCase):
         self.flag("fail")
         failed = self.ask(again=True)
         for record in (passed, failed):
-            stored = verify.read(record["id"])
+            stored = evidence.read(record["id"])
             stored["requested"] = 1_000.0
             stored["started"] = 1_000.0
             stored["ended"] = 1_001.0
-            verify.path_of(record["id"]).write_text(json.dumps(stored),
+            evidence.path_of(record["id"]).write_text(json.dumps(stored),
                                                     encoding="utf-8")
         verify.forget_cached()
-        records = verify.for_task(CARD)
+        records = evidence.for_task(CARD)
         for order in (records, list(reversed(records))):
             found = gates.evaluate(CARD, "acceptance", records=order)
             self.assertEqual(found["decision"], "blocked")
@@ -381,8 +384,8 @@ class TheProgramIsPartOfTheEvidence(GateCase):
         row = found["unmet"][0]
         self.assertEqual(row["reason"], "stale")
         self.assertIn("executable", row["why"])
-        record = verify.for_task(CARD)[0]
-        self.assertEqual(verify.outcome_now(record)["reason"], "program-changed")
+        record = evidence.for_task(CARD)[0]
+        self.assertEqual(staleness.outcome_now(record)["reason"], "program-changed")
 
     def test_an_executable_that_has_gone_invalidates_it(self):
         self.passed_once(self.gated())
@@ -430,10 +433,10 @@ class TheProgramIsPartOfTheEvidence(GateCase):
 
     def test_the_runner_revision_is_recorded_and_compared(self):
         found = self.passed_once(self.gated())
-        self.assertEqual(found["runner"]["revision"], verify.RUNNER_REVISION)
-        stored = verify.read(found["id"])
+        self.assertEqual(found["runner"]["revision"], resultidentity.RUNNER_REVISION)
+        stored = evidence.read(found["id"])
         stored["runner"]["revision"] = "an-earlier-runner"
-        verify.path_of(found["id"]).write_text(json.dumps(stored),
+        evidence.path_of(found["id"]).write_text(json.dumps(stored),
                                                encoding="utf-8")
         result = self.reread()
         self.assertEqual(result["decision"], "blocked")
@@ -443,16 +446,16 @@ class TheProgramIsPartOfTheEvidence(GateCase):
         """Evidence written before programs were bound names no bytes, so
         it cannot say the program is unchanged — and is not reused."""
         found = self.passed_once(self.gated())
-        stored = verify.read(found["id"])
+        stored = evidence.read(found["id"])
         stored.pop("program")
-        verify.path_of(found["id"]).write_text(json.dumps(stored),
+        evidence.path_of(found["id"]).write_text(json.dumps(stored),
                                                encoding="utf-8")
         result = self.reread()
         self.assertEqual(result["decision"], "blocked")
         self.assertEqual(result["unmet"][0]["reason"], "stale")
 
     def test_an_executable_bench_cannot_resolve_is_unbound(self):
-        identity = verify.program_identity(["no-such-program-anywhere"],
+        identity = resultidentity.program_identity(["no-such-program-anywhere"],
                                            self.tmp, "/nonexistent")
         self.assertFalse(identity["bound"])
         self.assertIsNone(identity["programId"])
