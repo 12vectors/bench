@@ -193,6 +193,11 @@ class RelevanceReviews(unittest.TestCase):
                              "Activity draws a second copy of the review")
             # by keyboard: focus the link and press Enter
             b.eval(f"document.querySelector('{link}').focus()")
+            # a live redraw between the focus and the key press keeps the
+            # link focused (it has no id; this case once failed that way)
+            b.eval("renderDrawer()")
+            self.assertTrue(b.eval(f"document.activeElement === document.querySelector('{link}')"),
+                            "a redraw dropped focus from the Activity link: " + self.focused())
             b.key("Enter")
             self.assertTrue(b.wait(f"!document.querySelector('#dsec-reviews').hidden"
                                    f" && document.querySelector('{REL}[data-keep=\"{self.rid}\"]').open", 5),

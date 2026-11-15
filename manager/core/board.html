@@ -7750,6 +7750,23 @@ async function settingsApply() {
    under. Per document, deliberately: a different card is different
    content, so it has no mark of its own and opens at the top — which is
    the behaviour showDetail() asks for outright and this must not fight. */
+/* A selector a redraw can find a focused control again by, when it has no
+   id of its own: a fold's summary by its fold's id; otherwise the control's
+   tag and every data-* attribute, inside its nearest ancestor that has an
+   id. Null when nothing names it — then the redraw cannot keep it. */
+function drawerFocusKey(el, root) {
+  if (!el || el === root || !root.contains(el) || el.id) return null;
+  const parent = el.parentElement;
+  if (el.tagName === 'SUMMARY' && parent && parent.tagName === 'DETAILS' && parent.id)
+    return `#${CSS.escape(parent.id)} > summary`;
+  const names = Object.keys(el.dataset || {});
+  if (!names.length) return null;
+  const host = parent && parent.closest('[id]');
+  const scope = host && root.contains(host) ? `#${CSS.escape(host.id)} ` : '';
+  return scope + el.tagName.toLowerCase() + names.map(n =>
+    `[data-${n.replace(/[A-Z]/g, c => '-' + c.toLowerCase())}="${CSS.escape(el.dataset[n])}"]`).join('');
+}
+
 function drawerKey() {
   if (S.fileView) return 'v:drawer:file:' + S.fileView.dir + '/' + S.fileView.name;
   // per section too: each of a card's sections keeps its own reading place
@@ -7803,20 +7820,11 @@ function renderDrawer() {
   // is found again by its slot, so a live update never drops it
   const dslot = active && body.contains(active) && active.dataset
     ? active.dataset.dslot : null;
-  // a focused review action (Comment, Update card from this review) has no
-  // id either: it is found again by its review and its act. Without this a
-  // redraw landing just after a Tab onto one dropped focus to the body.
-  const rvbox = active && body.contains(active) && active.dataset && active.dataset.rvact
-    ? active.closest('.rvcompose[data-review]') : null;
-  const rvfocus = rvbox
-    ? `.rvcompose[data-review="${CSS.escape(rvbox.dataset.review)}"] ` +
-      `[data-rvact="${CSS.escape(active.dataset.rvact)}"]`
-    : null;
-  // a focused fold's summary — where opening a review from Activity puts
-  // focus — is found again by its fold's id, for the same reason
-  const sumOf = active && active.tagName === 'SUMMARY' && body.contains(active)
-    && active.parentElement && active.parentElement.tagName === 'DETAILS'
-    && active.parentElement.id ? active.parentElement.id : null;
+  // any other focused control is found again by what names it — a review's
+  // Comment button, an Activity link to a review, a fold's summary — so a
+  // redraw landing between a focus and a key press never drops it to the
+  // body (task 123: the 390px keyboard case caught exactly that)
+  const refocus = typing || dslot ? null : drawerFocusKey(active, body);
   const tab = drawerTab(t);
   // what the reader is looking at, so a live redraw that adds a record
   // above it (Activity is newest first) moves the page, not the reader
@@ -7858,14 +7866,10 @@ function renderDrawer() {
     const again = body.querySelector(`[data-dslot="${dslot}"]`);
     if (again && !again.closest('[hidden]')) again.focus({ preventScroll: true });
   }
-  if (rvfocus && !typing) {
-    const again = body.querySelector(rvfocus);
-    if (again && !again.closest('[hidden]')) again.focus({ preventScroll: true });
-  }
-  if (sumOf && !typing) {
-    const fold = document.getElementById(sumOf);
-    const again = fold && fold.querySelector(':scope > summary');
-    if (again && !again.closest('[hidden]')) again.focus({ preventScroll: true });
+  if (refocus) {
+    const again = body.querySelector(refocus);
+    if (again && !again.closest('[hidden]') && document.activeElement !== again)
+      again.focus({ preventScroll: true });
   }
   if (typing) {
     const again = document.getElementById(typing.id);

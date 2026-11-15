@@ -54,9 +54,15 @@ browser, what the backend tests cannot:
    by a `data:` url of the same bytes, each checked against the hash
    SOURCES.txt records for that url. So the baseline makes no request at
    all, and differs from the old page only in where identical bytes come
-   from. Every probe verdict and every Plex drawing must be identical
-   under the baseline and the candidate, and a screenshot of the board
-   under each must match.
+   from. Every probe verdict and every drawing must be identical under the
+   baseline and the candidate. The matched view is a full-viewport type
+   specimen over the frozen page — every face, its scripts and the page's
+   own symbols — shot under the candidate, the baseline and the candidate
+   again: the two candidate shots must agree (else the comparison proves
+   nothing) and the baseline must equal them. The live board is shot
+   under both too and kept for a person, with whether the two matched;
+   it is not the assertion, because it was seen to move between shots on
+   its own.
 """
 
 import base64
@@ -224,6 +230,25 @@ FREEZE_JS = """(() => {
   return true;
 })()"""
 
+# A full-viewport type specimen over the frozen page: static, so two shots
+# of it differ only if the faces drawing it do. %s is the rows, as JSON.
+SPECIMEN_JS = """(() => {
+  const rows = %s;
+  const d = document.createElement('div');
+  d.id = 'bench-font-specimen';
+  d.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#fff;' +
+    'color:#000;padding:12px;overflow:hidden;font-size:17px;line-height:1.3';
+  for (const r of rows) {
+    const p = document.createElement('p');
+    p.style.cssText = `margin:0 0 6px;font-family:"${r.family}",monospace;` +
+      `font-style:${r.style};font-weight:${r.weight};word-break:break-all`;
+    p.textContent = r.text;
+    d.appendChild(p);
+  }
+  document.body.appendChild(d);
+  return true;
+})()"""
+
 SETTLE_JS = """(async () => {
   for (let i = 0; i < 20; i++) {
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -383,49 +408,85 @@ class TheBoardsOwnFonts(unittest.TestCase):
         b = self.b
         candidate = self.probe()
         shots = S["shots"]
-        self.assertTrue(b.eval(FREEZE_JS))
-        self.assertTrue(b.eval(SETTLE_JS))
-        c1 = b.screenshot(shots / "fonts-candidate-board.png")
-        # swap the bundled stylesheet for the old one, from the same bytes
         css = baseline_css()
-        swapped = b.eval(
-            "(() => { const l = document.querySelector('link[href$=\"/fonts/plex.css\"]');"
-            " if (!l) return false; const s = document.createElement('style');"
-            f" s.id = 'bench-baseline-fonts'; s.textContent = {json.dumps(css)};"
-            " window.__benchPlexLink = l; l.replaceWith(s); return true; })()")
-        self.assertTrue(swapped)
-        self.assertTrue(b.eval(SETTLE_JS))
-        self.assertEqual(b.eval("[...document.styleSheets].filter(s => s.href && "
-                                "s.href.includes('/fonts/')).length"), 0)
+        settle = lambda: self.assertTrue(b.eval(SETTLE_JS))  # noqa: E731
+        show = lambda on: b.eval(  # noqa: E731
+            f"document.getElementById('bench-font-specimen').hidden = {str(not on).lower()}")
+
+        def to_baseline():
+            # the bundled stylesheet out, the old one (same bytes) in its place
+            self.assertTrue(b.eval(
+                "(() => { const l = document.querySelector('link[href$=\"/fonts/plex.css\"]');"
+                " if (!l) return false; const s = document.createElement('style');"
+                f" s.id = 'bench-baseline-fonts'; s.textContent = {json.dumps(css)};"
+                " window.__benchPlexLink = l; l.replaceWith(s); return true; })()"))
+            settle()
+            self.assertEqual(b.eval("[...document.styleSheets].filter(s => s.href && "
+                                    "s.href.includes('/fonts/')).length"), 0)
+
+        def to_candidate():
+            b.eval("document.getElementById('bench-baseline-fonts')"
+                   ".replaceWith(window.__benchPlexLink)")
+            settle()
+
+        self.assertTrue(b.eval(FREEZE_JS))
+        b.eval(SPECIMEN_JS % json.dumps(self.specimen()))
+        show(False)
+        settle()
+        board_c = b.screenshot(shots / "fonts-candidate-board.png")
+        show(True)
+        settle()
+        spec_c1 = b.screenshot(shots / "fonts-candidate-specimen.png")
+
+        to_baseline()
         baseline = self.probe()
-        base = b.screenshot(shots / "fonts-baseline-board.png")
-        b.eval("document.getElementById('bench-baseline-fonts')"
-               ".replaceWith(window.__benchPlexLink)")
-        self.assertTrue(b.eval(SETTLE_JS))
-        c2 = b.screenshot(shots / "fonts-candidate-board-again.png")
-        S["required"] += [c1, base]
+        spec_b = b.screenshot(shots / "fonts-baseline-specimen.png")
+        show(False)
+        settle()
+        board_b = b.screenshot(shots / "fonts-baseline-board.png")
+        show(True)
+
+        to_candidate()
+        spec_c2 = b.screenshot(shots / "fonts-candidate-specimen-again.png")
+        S["required"] += [spec_c1, spec_b, board_c, board_b]
         self.assertEqual(self.foreign(), [], "the baseline fetched from off the board")
 
         differ = sorted(k for k in candidate
                         if candidate[k].get("v") != baseline[k].get("v")
                         or candidate[k].get("h") != baseline[k].get("h"))
+        digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()  # noqa: E731
+        c1h, bh, c2h = digest(spec_c1), digest(spec_b), digest(spec_c2)
+        S["metrics"]["fontScreens"] = {
+            "probed": len(candidate), "probesDiffering": len(differ),
+            "specimen": {"candidate": c1h, "baseline": bh, "candidateAgain": c2h,
+                         "matched": bh == c1h == c2h},
+            # the live board is recorded for a person to compare; it is not
+            # the assertion, because it can move between shots on its own
+            "board": {"candidate": digest(board_c), "baseline": digest(board_b),
+                      "matched": digest(board_c) == digest(board_b)}}
         if differ:
             self.fail(f"{len(differ)} of {len(candidate)} probes differ, e.g. " +
                       "; ".join(f"{k} candidate={candidate[k]} baseline={baseline[k]}"
                                 for k in differ[:3]))
-        digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()  # noqa: E731
-        c1h, bh, c2h = digest(c1), digest(base), digest(c2)
-        S["metrics"]["fontScreens"] = {
-            "candidate": c1h, "baseline": bh, "candidateAgain": c2h,
-            "probed": len(candidate),
-            "matched": bh == c1h == c2h,
-            "pageMovedBetweenShots": c1h != c2h}
         if c1h != c2h:
-            self.fail("the frozen page changed between the two candidate shots, so the "
+            self.fail("the specimen changed between the two candidate shots, so the "
                       "comparison proves nothing")
         if bh != c1h:
-            self.fail("the board under the linked stylesheet's faces does not match the "
-                      "board under the bundle")
+            self.fail("the specimen under the linked stylesheet's faces does not match "
+                      "the specimen under the bundle")
+
+    def specimen(self) -> list:
+        """Rows of the type specimen: every face, its scripts, and the page's
+        own non-ASCII characters, in that face."""
+        page = "".join(chr(int(h, 16)) for k in ("declared", "monoOnly", "system")
+                       for h in self.inventory[k])
+        rows = []
+        for (family, style, weight), rules in sorted(self.faces.items()):
+            scripts = "".join(NAMED.get(r["subset"], "") for r in rules)
+            rows.append({"family": family, "style": style, "weight": weight,
+                         "text": f"{family} {style} {weight} — Aa Gg Qq 0123 ₴ № "
+                                 f"{scripts} ŞşĂă ЖжҐґ {page}"})
+        return rows
 
 
 if __name__ == "__main__":
