@@ -230,7 +230,7 @@ def probe_stacking(ctx: dict, active: bool = False) -> dict:
         if found.returncode != 0 and not text.strip():
             out["retarget"] = {"state": "unknown", "source": "installed-cli",
                                "reason": f"`{cli} pr edit --help` gave no answer"}
-        elif re.search(r"(^|\s)--base\b", text):
+        elif re.search(r"(?:^|\s)--base(?![\w-])", text):
             out["retarget"] = {
                 "state": "available", "source": "installed-cli",
                 "reason": f"`{cli} pr edit --help` offers --base"}
