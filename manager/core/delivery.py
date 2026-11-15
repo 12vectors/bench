@@ -19,7 +19,7 @@ nothing here is a second reading of any of them:
 | --- | --- |
 | stage, assignee, PR line, phase membership | `taskfiles` (the collected card) |
 | an agent running; the last run failed | `state.AGENTS`, the failure `agents` records |
-| completion in flight; merged but not published | `state.COMPLETING`, `github.recovery()` |
+| completion in flight; merged but not published | `state.COMPLETING`, `completion.recovery()` |
 | recorded plan; stacked target | `plans.recorded()`, `plans.declared()` |
 | which commit the merge would take, and its state | `gates.candidate()`, `gates.head_for()` |
 | requirements at that commit | `gates.evaluate()` |
@@ -28,7 +28,7 @@ nothing here is a second reading of any of them:
 | a phase run | the phase runner's last pass, handed in by the caller |
 
 **Mutations never read this result.** `agents.start_agent`,
-`verify.request`, `gates.override` and `github._complete` keep their own
+`verify.request`, `gates.override` and `completion._complete` keep their own
 checks and run them again at the moment they act. A cached reading here
 is presentation, never authorisation.
 
@@ -64,6 +64,7 @@ import threading
 import time
 
 import acceptance
+import completion as completion_mod   # `completion` names a reading here
 import config
 import gates
 import github
@@ -299,7 +300,7 @@ def _target(task: dict, plan: dict | None) -> str:
 def _completion(task: dict, plan: dict | None, target: str,
                 pr: dict | None, ctx: dict) -> dict:
     """What merge & clean up would do, from the same facts
-    `github.completion_facts` reads — minus anything that would reach a
+    `completion.completion_facts` reads — minus anything that would reach a
     remote. A target this checkout cannot see locally is said to be
     unconfirmed rather than looked up."""
     app_base = (plan or {}).get("appBase") or config.APP_BASE
@@ -429,7 +430,7 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
     filename, stage = task["file"], task["stage"]
     plan = plans.recorded(filename)
     pr = github.pr_snapshot(filename)
-    recovery = github.recovery_public(filename)
+    recovery = completion_mod.recovery_public(filename)
     scope = gates.scope_for(task)
     member = bool(task.get("phase")) and not task.get("isPhase")
     if member:
@@ -438,7 +439,7 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
     candidate = gates.candidate(
         filename, scope, task=task, tips=ctx["tips"], records=mine, pr=pr,
         completion=recovery, remote_tips=ctx["remoteTips"], plan=plan,
-        delivery_record=github.delivered_record(filename))
+        delivery_record=completion_mod.delivered_record(filename))
     alive, failure = _runs(task, ctx)
     target = _target(task, plan)
     completion = _completion(task, plan, target, pr, ctx)
@@ -1020,7 +1021,7 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
         "batches": sorted((k, (v or {}).get("done"), (v or {}).get("total"))
                           for k, v in (ctx.get("batches") or {}).items()),
         "workChecks": sorted(ctx.get("workChecks") or ()),
-        "recoveries": github.recoveries(),
+        "recoveries": completion_mod.recoveries(),
         "phases": sorted((k, v.get("running"), v.get("halted"))
                          for k, v in ctx["phases"].items()),
         "snapshots": snaps,
@@ -1029,7 +1030,7 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
         # every card's reading, so both are part of its identity.
         "plans": [(t["file"], _file_stamp(plans.plan_path(t["file"])))
                   for t in tasks],
-        "delivered": [(t["file"], github.delivered_record(t["file"]))
+        "delivered": [(t["file"], completion_mod.delivered_record(t["file"]))
                       for t in tasks],
         "records": len(ctx["records"]),
         "worktrees": sorted(p.name for p in config.WORKTREES.iterdir())
@@ -1200,8 +1201,8 @@ def seams() -> dict:
     tests, in the one place a reader looks for it."""
     return {
         "reads": ["taskfiles", "state.AGENTS", "state.COMPLETING",
-                  "github.recovery_public", "github.pr_snapshot",
-                  "github.delivered_record", "plans.recorded",
+                  "completion.recovery_public", "github.pr_snapshot",
+                  "completion.delivered_record", "plans.recorded",
                   "plans.declared", "gates.candidate", "gates.evaluate",
                   "acceptance.summary", "phases.public_state (passed in)",
                   "verify.all_evidence"],

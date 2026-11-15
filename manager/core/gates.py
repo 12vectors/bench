@@ -74,7 +74,7 @@ the mutation re-reads it immediately before the irreversible step:
 - `phases._member_state` holds a member out of `ready` while its gate is
   unmet, and `phases._merge_member` asks again with the branch tip in
   hand before the merge runs.
-- `github._complete` asks before it parks the drive, and again
+- `completion._complete` asks before it parks the drive, and again
   immediately before the merge — so a push that lands in between is a
   refusal rather than a stale-evidence window.
 - And because reading twice is not atomic, the commit the second read
@@ -2093,7 +2093,7 @@ def seams() -> dict:
                                        "`ready`, and phases._merge_member "
                                        "calls require() again with the tip in "
                                        "hand"),
-            "an acceptance": ("github._complete calls require() before it "
+            "an acceptance": ("completion._complete calls require() before it "
                               "parks the drive and again immediately before "
                               "the merge"),
         },

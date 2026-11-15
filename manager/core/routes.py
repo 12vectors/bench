@@ -28,6 +28,7 @@ import acceptance
 import agents
 import agentsettings
 import commands
+import completion
 import config
 import delivery
 import doctor
@@ -336,7 +337,7 @@ def state_payload() -> dict:
         # into what, and why the remote does not hold it. A directory
         # listing, empty on a board where nothing failed, and it survives
         # a restart — the card wears it until a retry finishes the work
-        "unpublished": github.recoveries(),
+        "unpublished": completion.recoveries(),
         "checks": config.checks(),
         # who this board is, so a card can tell "yours" from "someone
         # else's". Empty outside team mode: nothing claims anything there.
@@ -426,7 +427,7 @@ def get_task_completion(req) -> None:
     try:
         if not name.endswith(".md") or "/" in name or not stage:
             raise ValueError(f"no card {name!r} on this board")
-        req.reply(200, github.completion_facts(name, stage))
+        req.reply(200, completion.completion_facts(name, stage))
     except (ValueError, OSError) as exc:
         req.reply(409, {"error": str(exc)})
 
@@ -850,7 +851,7 @@ def post_task_complete(req) -> None:
     # guard: a phase whose member is still working would take
     # its branch to main without that member's work in it
     phases.assert_not_working(payload["file"], "merge it")
-    req.reply(200, github.complete_task(payload["file"], payload["from"]))
+    req.reply(200, completion.complete_task(payload["file"], payload["from"]))
 
 
 def post_task_complete_forget(req) -> None:
@@ -860,7 +861,7 @@ def post_task_complete_forget(req) -> None:
     payload = req.body
     name = str(payload["file"])
     if (not name.endswith(".md") or "/" in name or "\\" in name
-            or not github.forget_recovery(name)):
+            or not completion.forget_recovery(name)):
         raise ValueError(f"{name} has no unfinished completion")
     state.record_board_event({
         "kind": "agent", "actor": "you", "file": name,

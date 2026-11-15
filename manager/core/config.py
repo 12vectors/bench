@@ -67,7 +67,7 @@ REFINE_DIR = STATE / "refine"                      # card-refinement jobs and th
 PROGRESS_DIR: Path | None = None
 # Merges whose publication is unfinished. None means "beside the recorded
 # plans" (`STATE / "completions"`): a record that finishes a plan's work
-# lives wherever that plan does — see `github._recovery_dir`.
+# lives wherever that plan does — see `completion._recovery_dir`.
 COMPLETIONS_DIR: Path | None = None
 
 # Ordered — this is the column order on the board.

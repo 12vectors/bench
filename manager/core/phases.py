@@ -278,7 +278,7 @@ def _member_state(task: dict, branch: str,
         # Green means the checks are not against it: red halts, running
         # waits, and a member with no checks at all advances — a project
         # without CI must not deadlock every phase it runs.
-        ci = (github.PR_STATE.get(task["file"]) or {}).get("ci")
+        ci = (github.pr_state(task["file"]) or {}).get("ci")
         if ci == "fail":
             return "halt", "its CI is red", None
         if ci == "running":
