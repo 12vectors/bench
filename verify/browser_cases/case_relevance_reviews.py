@@ -144,9 +144,16 @@ class RelevanceReviews(unittest.TestCase):
         Wait for it: a test that focused something else in that frame had
         its focus taken back by the tab — the cause of this case's once-seen
         390px keyboard failure, where Tab then started from the tab button."""
-        self.assertTrue(S["browser"].wait(
+        b = S["browser"]
+        self.assertTrue(b.wait(
             f"document.activeElement === document.getElementById('dtab-{key}')", 5),
             f"the {key} tab never took focus: " + self.focused())
+        # A mouse click focuses the tab at once; the handler's own focus
+        # comes a frame later. Two frames on, it has run.
+        b.eval("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))")
+        self.assertTrue(b.eval(
+            f"document.activeElement === document.getElementById('dtab-{key}')"),
+            f"the {key} tab lost focus: " + self.focused())
 
     def no_sideways_scroll(self, where: str):
         over = S["browser"].eval(f"{DRAWER}.scrollWidth - {DRAWER}.clientWidth")
