@@ -321,7 +321,7 @@ plans.record
 plans.restore
 profiles.record
 settings.apply
-setupguide._write_decisions
+setupbase.write_decisions
 ```
 
 Revision comparison is not compare-and-swap between processes. The setup

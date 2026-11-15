@@ -43,6 +43,7 @@ import gates  # noqa: E402
 import profiles  # noqa: E402
 import readiness  # noqa: E402
 import settings  # noqa: E402
+import setupbase  # noqa: E402
 import setupguide  # noqa: E402
 import setuptasks  # noqa: E402
 import evidence  # noqa: E402
@@ -256,14 +257,14 @@ class ReadinessCase(GateCase):
         payload.setdefault("check", "unit")
         payload.setdefault("note", "read the program and both runs")
         payload.setdefault("request", "review-0001")
-        payload.setdefault("expected", setupguide.revision())
+        payload.setdefault("expected", setupbase.revision())
         return readiness.review(payload)
 
-    def refused(self, **payload) -> setupguide.Refused:
-        before = setupguide.revision()
-        with self.assertRaises(setupguide.Refused) as caught:
+    def refused(self, **payload) -> setupbase.Refused:
+        before = setupbase.revision()
+        with self.assertRaises(setupbase.Refused) as caught:
             self.review(**payload)
-        self.assertEqual(before, setupguide.revision(), "a refusal wrote")
+        self.assertEqual(before, setupbase.revision(), "a refusal wrote")
         return caught.exception
 
     def state_of(self, name: str = "unit") -> dict:
@@ -298,7 +299,7 @@ class ReviewRestsOnCurrentEvidence(ReadinessCase):
         self.assertEqual("ready", found["readiness"])
         self.assertEqual(readiness.bootstrap()["ready"], ["unit"])
         # binding: the check's and program's identities, the commits
-        entry = setupguide.read_decisions()["doc"]["verification"]["checks"]["unit"]
+        entry = setupbase.read_decisions()["doc"]["verification"]["checks"]["unit"]
         self.assertEqual(profiles.document_checks(
             profiles.document(), {})[0]["unit"]["checkId"], entry["checkId"])
         self.assertTrue(entry["programId"].startswith("prog:"))

@@ -43,17 +43,17 @@ from test_setup_guide import Project  # noqa: E402
 WRITER = """
 import json, os, sys, time
 sys.path.insert(0, sys.argv[1])
-import config, setupguide
+import config, setupbase, setupguide
 if os.environ.get("CONTROL_OLD_LOCK"):
     import threading
-    setupguide.LOCK = threading.RLock()     # what it was before task 110
-real = setupguide._guard_revision
+    setupbase.LOCK = threading.RLock()      # what it was before task 110
+real = setupbase.guard_revision
 def paused(payload, read):
     real(payload, read)                     # the revision check passed …
     open(os.environ["MARK"], "w").close()   # … say so, and wait
     while not os.path.exists(os.environ["GO"]):
         time.sleep(0.02)
-setupguide._guard_revision = paused
+setupbase.guard_revision = paused
 area = os.environ["AREA"]
 try:
     R = {"ok": setupguide.decide({"area": area, "decision": "defer",
@@ -337,7 +337,7 @@ class DurableWritersAreListed(unittest.TestCase):
                               "completion._remember",
                               "completion._record_delivered", "plans.record",
                               "evidence.store",
-                              "profiles.record", "setupguide._write_decisions",
+                              "profiles.record", "setupbase.write_decisions",
                               "settings.apply"}, durable_call_sites())
 
 
