@@ -65,8 +65,12 @@ class Source(unittest.TestCase):
         return self.html[start:self.html.index("\n}\n", start)]
 
     def css(self) -> str:
-        return self.html[self.html.index("/* ── settings ──"):
-                         self.html.index("/* ── phases: a swimlane each ── */")]
+        # the stylesheet's own banner, indented as rules are: the script
+        # carries a banner of the same name at column 0, and since task
+        # 123 the stylesheet (web/board.css) follows the script in the page
+        start = self.html.index("\n  /* ── settings ──")
+        return self.html[start:self.html.index("/* ── phases: a swimlane each ── */",
+                                               start)]
 
     def declarations(self) -> list[str]:
         """Every CSS declaration in the settings block, so a failure names

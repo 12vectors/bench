@@ -105,10 +105,13 @@ class ServedTitle(unittest.TestCase):
         self.assertIn("&lt;script&gt;", title)
 
     def test_nothing_else_in_the_page_is_disturbed(self):
-        """Only the title element is rewritten; the rest is the file."""
-        page = _probe("httpd.page_bytes().decode('utf-8')",
-                      {"BOARD_TITLE": "payments"})
-        source = pagesource.page()
+        """Only the title element is rewritten, and the build id written
+        where the page names its assets (task 123); the rest is the file —
+        the shell, since the stylesheet is served as an asset of its own."""
+        page, build = _probe("[httpd.page_bytes().decode('utf-8'), "
+                             "__import__('assets').current_build()]",
+                             {"BOARD_TITLE": "payments"})
+        source = pagesource.shell().replace("__BUILD__", build)
         strip = lambda s: re.sub(r"<title>.*?</title>", "", s, count=1,
                                  flags=re.DOTALL)
         self.assertEqual(strip(page), strip(source))
