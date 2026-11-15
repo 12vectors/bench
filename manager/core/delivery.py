@@ -1106,8 +1106,10 @@ def board(collected: dict, phase_state: dict | None = None,
     tasks = [task for stage in collected.get("stages", [])
              for task in stage["tasks"]]
     ctx = _context(phase_state)
+    # an edge is about two cards, so with no reading handed in it is taken
+    # over the whole board — a caller may pass a subset of its cards
     ctx["stacks"] = (stack_state if stack_state is not None
-                     else stacks.board(collected))
+                     else stacks.board(taskfiles.collect()))
     key = (_fingerprint(collected, ctx, tasks), int(time.time() / _TTL))
     with _LOCK:
         cached = _BOARD

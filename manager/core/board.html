@@ -1160,6 +1160,24 @@
   #drawer dl.dfacts dt{color:var(--dim)}
   #drawer dl.dfacts dd{margin:0;color:var(--text);overflow-wrap:anywhere}
   #drawer dl.dfacts dd.unknown{color:var(--dim);font-style:italic}
+  /* the Overview's Stack block (task 117): the server's words, wrapped,
+     never wider than the drawer */
+  #drawer .stack{margin:14px 0 6px;min-width:0}
+  #drawer .stack .stkpos{font-size:11px;color:var(--dim);font-weight:400}
+  #drawer .stkedge{margin:4px 0 8px;font-size:12.5px;overflow-wrap:anywhere}
+  #drawer .stkedge[data-tone="alarm"]{color:var(--alarm)}
+  #drawer .stknext{color:var(--dim)}
+  #drawer .stklist{list-style:none;margin:0 0 8px;padding:0;display:grid;gap:4px}
+  #drawer .stkrow{display:flex;flex-wrap:wrap;gap:2px 10px;align-items:baseline;
+    padding:4px 8px;border:1px solid var(--border-soft);border-radius:6px;min-width:0;
+    font-size:12.5px}
+  #drawer .stkrow.here{border-color:var(--accent)}
+  #drawer .stkrow .stkwho{flex:0 0 auto}
+  #drawer .stkrow .stktitle{flex:1 1 12em;min-width:0;overflow-wrap:anywhere}
+  #drawer .stkrow .stkmeta{flex:1 1 100%;min-width:0;color:var(--dim);
+    overflow-wrap:anywhere}
+  #drawer .stkrow .stkstate{flex:0 0 auto}
+  #drawer .stkrow .stkstate[data-tone="alarm"]{color:var(--alarm)}
   #drawer .dlink{background:none;border:0;padding:0;color:var(--accent);
     text-decoration:underline;cursor:pointer;font:inherit}
   #drawer .acount{font-size:13px}
@@ -2397,6 +2415,61 @@ function planChipHtml(p) {
   }
   return `<span class="clab">${esc(p.startBranch)}</span><span class="carr">→</span>` +
     `<span class="clab">${esc(p.prBase)}</span>`;
+}
+
+/* A stacked card's chip, explained in the server's words: its edge, then
+   the three targets apart. */
+function stackChipTitle(s) {
+  const t = s.targets || {};
+  const bits = [];
+  if (s.edge) bits.push(`${s.edge.label}: ${s.edge.sentence}`);
+  if (t.selectedBase) bits.push(`Cut from ${t.selectedBase.branch}`);
+  if (t.reviewTarget) bits.push(`Its change request targets ${t.reviewTarget.branch}`);
+  if (t.landingTarget) bits.push(t.landingTarget.sentence.replace(/\.$/, ''));
+  return bits.join('. ') + '.';
+}
+
+/* The Overview's Stack block: the card's path from the bottom of its
+   stack, each card with its change request and its edge's state, then
+   the cards stacked on this one, the three targets named apart, and what
+   to do next and who holds it. Every word is the server's (`/api/state`
+   `stacks`); nothing here counts or compares. */
+function stackBlock(t) {
+  const s = (S.state.stacks || {})[t.file];
+  if (!s) return '';
+  const who = c => c.number ? `#${c.number}` : c.file;
+  const pr = c => c.pr ? ` · <a href="${esc(c.pr)}" target="_blank" rel="noopener">PR ↗</a>` : '';
+  const edge = s.edge;
+  const row = (c, state, here) =>
+    `<li class="stkrow${here ? ' here' : ''}">` +
+    `<span class="stkwho mono">${esc(who(c))}</span>` +
+    `<span class="stktitle">${esc(c.title || c.file)}</span>` +
+    `<span class="stkmeta"><span class="mono">${esc(c.branch)}</span>${pr(c)}</span>` +
+    (state ? `<span class="stkstate" data-state="${esc(state.state)}" data-tone="${esc(state.tone)}">${esc(state.label)}</span>` : '') +
+    `</li>`;
+  const chain = (s.chain || []).map((c, i, all) =>
+    row(c, i === all.length - 1 ? edge : null, i === all.length - 1)).join('');
+  const kids = (s.children || []).map(c =>
+    row(c, c.state ? { state: c.state, tone: c.tone, label: c.label } : null, false)).join('');
+  const tg = s.targets || {};
+  const pos = s.position ? (s.position.kind === 'chain'
+    ? `${s.position.label} along this stack`
+    : `${s.position.label} on its path — the stack branches, so there is no single order`) : '';
+  return `<section class="stack" aria-label="Stack">` +
+    `<h3>Stack${pos ? ` <span class="mono stkpos">${esc(pos)}</span>` : ''}</h3>` +
+    (edge ? `<p class="stkedge" data-state="${esc(edge.state)}" data-tone="${esc(edge.tone)}"` +
+            `${edge.tone === 'alarm' ? ' role="alert"' : ''}><b>${esc(edge.label)}.</b> ${esc(edge.sentence)}` +
+            (edge.next ? ` <span class="stknext">Next (${esc(edge.who)}): ${esc(edge.next)}.</span>` : '') +
+            `</p>` : '') +
+    (chain && (s.chain || []).length > 1 ? `<ol class="stklist" aria-label="Path from the bottom of the stack">${chain}</ol>` : '') +
+    (kids ? `<p class="dnote">Stacked on this card:</p><ul class="stklist">${kids}</ul>` : '') +
+    `<dl class="dfacts">` +
+    (tg.selectedBase ? `<dt>Selected base</dt><dd><span class="mono">${esc(tg.selectedBase.branch)}</span>` +
+      (tg.selectedBase.commit ? ` at <span class="mono">${esc(tg.selectedBase.commit.slice(0, 12))}</span>` : '') +
+      ` · ${esc(tg.selectedBase.source || '')}</dd>` : '') +
+    (tg.reviewTarget ? `<dt>Review target</dt><dd><span class="mono">${esc(tg.reviewTarget.branch)}</span> · ${esc(tg.reviewTarget.source || '')}</dd>` : '') +
+    (tg.landingTarget ? `<dt>Landing target</dt><dd>${esc(tg.landingTarget.sentence)}</dd>` : '') +
+    `</dl></section>`;
 }
 
 function planChipTitle(p) {
@@ -3710,7 +3783,7 @@ const FACE_WORDS = new Set([
   'returned', 'cannot-assess', 'rules-invalid', 'check-failed', 'cannot-run-check',
   'changes-requested', 'checks-running', 'checks-needed', 'review-needed',
   'signoff-needed', 'ready-to-merge', 'ready-overridden', 'merged-elsewhere',
-  'waiting-for-phase',
+  'waiting-for-phase', 'waiting-for-parent',
 ]);
 // the words whose cause is a requirement on the current commit, so the ◫
 // evidence earns the face beside them; a stale or historical row never does
@@ -4830,9 +4903,19 @@ function cardFor(task) {
   // the row, opening the preflight itself. A board of ordinary cards on
   // the default has no such chip anywhere.
   const planned = (S.state.plans || {})[task.file];
-  if (planned) {
+  // A stacked card's chip says where it sits instead — the server's own
+  // words (`on #56 · 2/3`, `step 2` where the stack branches), so the
+  // page counts nothing (task 117). Plan drift still wins: a launch is
+  // going to refuse until it is settled.
+  const stack = (S.state.stacks || {})[task.file];
+  const drift = planned && (planned.drift || []).length;
+  if (stack && stack.chip && !drift) {
+    chips.push({ label: stack.chip, pre: '⌖', plan: true,
+      cls: stack.edge && stack.edge.tone === 'alarm' ? 'bad' : '',
+      title: stackChipTitle(stack) });
+  } else if (planned) {
     chips.push({ label: planChipLabel(planned), html: planChipHtml(planned), pre: '⌖',
-      cls: (planned.drift || []).length ? 'bad' : '', plan: true,
+      cls: drift ? 'bad' : '', plan: true,
       title: planChipTitle(planned) });
   }
   // what a launch on this card would be allowed to do, and which files it
@@ -9285,7 +9368,7 @@ function overviewHtml(t, acc, failBlock, signals, plan, members) {
       ((acc.relevance || []).length > 1 ? ` · ${acc.relevance.length} on record` : '') : '') +
     `</dl>` +
     (last ? `<p class="dnote">A reviewer's verdict is about the revision it names. GitHub's formal approval and Bench's own verdict are separate facts, in Signals below.</p>` : '') +
-    signals + members +
+    stackBlock(t) + signals + members +
     `<h3>Tools</h3><div id="drawertools"><p class="dnote">This card has no tools in its current stage.</p></div>` +
     (plan ? `<details class="rpt"${S.accOpen[t.file + ':plan'] ? ' open' : ''} data-keep="plan">` +
             `<summary>Branch and plan</summary><div style="padding:6px 10px">${plan}</div></details>` : '');
