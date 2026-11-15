@@ -69,6 +69,7 @@ import agentsettings
 import callers
 import config
 import doctor
+import githost
 import gates
 import profiles
 import records
@@ -454,6 +455,11 @@ CATALOGUE = (
      "how often the pull beat runs"),
     ("BOARD_GH_BIN", "installation", "restart",
      "the gh binary PR operations use"),
+    ("BOARD_GIT_PROVIDER", "installation", "restart",
+     "which hosting provider change requests go through: github or none"),
+    ("BOARD_GITHUB_HOSTS", "installation", "restart",
+     "GitHub Enterprise hosts the github provider recognises besides "
+     "github.com"),
     ("BOARD_AGENT_ADAPTER", "agents", "next-launch",
      "which coding-agent harness headless jobs run through by default"),
     ("BOARD_AGENT_ADAPTER_WORK", "agents", "next-launch",
@@ -622,6 +628,20 @@ def _env_example() -> str:
 # ── the installation itself ────────────────────────────────────────────
 
 
+def _provider_reading() -> dict:
+    """The hosting provider in force, as `githost` reads it passively: no
+    probe process and no network, so `merge-conditional` reads `unknown`
+    until a merge asks. A remote the provider does not recognise carries
+    the diagnostic in `problem`, and nothing is run against it."""
+    info = githost.provider()
+    return {"name": info["name"], "configured": info["configured"],
+            "source": info["source"], "label": info["label"],
+            "remote": info["detected"].get("kind"),
+            "why": info["detected"].get("reason"),
+            "problem": info["problem"],
+            "capabilities": githost.capabilities()}
+
+
 def installation() -> dict:
     """What build is running, from where, in which layout.
 
@@ -680,8 +700,12 @@ def installation() -> dict:
                 "remote": config.git_remote(),
                 "remoteSetting": config.GIT_REMOTE or None,
                 "mergeOnOrigin": config.app_merge_on_origin(),
-                "ghAvailable": config.gh_available(),
-                "ghRepo": config.gh_repo(),
+                "ghAvailable": githost.available(),
+                "ghRepo": githost.slug(),
+                # Which hosting provider is in force, what it makes of the
+                # remote, and — for a remote it does not recognise — why
+                # nothing is run against it (task 116). Passive: no probe.
+                "provider": _provider_reading(),
                 "what": "branch, worktree, commit code, push, open, review "
                         "and merge a code pull request",
             },
@@ -1026,7 +1050,7 @@ def acceptance(doc: dict | None = None) -> dict:
     """
     policy = profiles.gate_policy(doc)
     public = profiles.gate_policy_public(policy)
-    gh = config.gh_available()
+    gh = githost.available()
     modes = []
     for word, why in profiles.REVIEW_POLICIES.items():
         available, unavailable_why = True, None
@@ -1155,7 +1179,7 @@ def acceptance(doc: dict | None = None) -> dict:
             "no card and starts no automation — the mutation each gate "
             "guards is still a person's click or the phase runner's own "
             "beat."),
-        "gh": {"available": gh, "repo": config.gh_repo()},
+        "gh": {"available": gh, "repo": githost.slug()},
         # BOARD_VERIFY_ON_REVIEW (task 105): what it runs, what it costs,
         # how to turn it off, and where its value came from — the catalogue
         # row, so provenance has one reader
@@ -1257,7 +1281,7 @@ def ci(doc: dict | None = None) -> dict:
         "limits": list(CI_LIMITS),
         "bench": {"configured": bool(_checks_of(doc)), "gated": gated},
         "ci": {"polled": True, "interval": config.PR_POLL_INTERVAL,
-               "ghAvailable": config.gh_available(),
+               "ghAvailable": githost.available(),
                "what": ("reviews, check runs and GitHub's mergeable state for "
                         "open pull requests of review-stage cards, folded "
                         "into one verdict: any changes-requested review or "
@@ -1509,10 +1533,21 @@ def recommendations(doc: dict | None = None) -> list[dict]:
                    "page can configure",
             section="access", state="unsupported"))
 
+    host_problem = githost.problem()
+    if host_problem:
+        out.append(_rec(
+            "hosting-provider-unrecognized", "high",
+            "The hosting provider does not act on this application's remote",
+            host_problem,
+            supply="a remote on a host the provider recognises, "
+                   "BOARD_GITHUB_HOSTS naming a GitHub Enterprise host, or "
+                   "BOARD_GIT_PROVIDER=none in manager/local/.env",
+            section="installation", state="blocked"))
+
     for scope, entry in sorted(policy["scopes"].items()):
         if any(word in ("github", "separate-reviewer")
                for word in entry.get("reviews") or []) \
-                and not config.gh_available():
+                and not githost.available():
             out.append(_rec(
                 f"review-unsatisfiable-{scope}", "high",
                 f"The {scope} gate asks for a formal GitHub review and this "

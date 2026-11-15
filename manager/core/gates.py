@@ -710,6 +710,12 @@ def needs_github_reviews() -> bool:
                for word in entry.get("reviews") or [])
 
 
+# Core's review words → the words the review record has always persisted.
+_PERSISTED_REVIEW = {"approved": "APPROVED",
+                     "changes-requested": "CHANGES_REQUESTED",
+                     "commented": "COMMENTED", "dismissed": "DISMISSED"}
+
+
 def observe_reviews(filename: str, *, reviews: list[dict], author: str | None,
                     head: str | None, authority: str = "api") -> dict:
     """What GitHub says the formal review state is, bound to commits.
@@ -736,19 +742,21 @@ def observe_reviews(filename: str, *, reviews: list[dict], author: str | None,
     for entry in reviews or []:
         if not isinstance(entry, dict):
             continue
-        login = str(((entry.get("user") or {}).get("login")
-                     if isinstance(entry.get("user"), dict)
-                     else entry.get("author") or "")).strip()
-        word = str(entry.get("state") or "").strip().upper()
+        # Normalized at the edge (`githost.review_records`): `reviewer`,
+        # a state in core's words, and the commit. The record keeps the
+        # words it has always persisted (APPROVED, CHANGES_REQUESTED, …),
+        # so `.reviews.json` written before and after read the same.
+        login = str(entry.get("reviewer") or "").strip()
+        state = str(entry.get("state") or "").strip()
+        word = _PERSISTED_REVIEW.get(state, state.upper())
         seen.append({
             "id": str(entry.get("id") or ""),
             "login": login,
             "state": word,
-            # The commit the review was of. GitHub gives it on the REST
-            # review object; without it a review binds to nothing and is
-            # reported that way rather than assumed current.
-            "commit": str(entry.get("commit_id") or "") or None,
-            "submitted": str(entry.get("submitted_at") or "") or None,
+            # The commit the review was of; without it a review binds to
+            # nothing and is reported that way rather than assumed current.
+            "commit": str(entry.get("commit") or "") or None,
+            "submitted": str(entry.get("submitted") or "") or None,
             "self": bool(login) and login.lower() == author_login,
         })
     formal = [r for r in seen if r["state"] in ("APPROVED", "CHANGES_REQUESTED")]

@@ -67,6 +67,7 @@ import acceptance
 import completion as completion_mod   # `completion` names a reading here
 import config
 import gates
+import githost
 import github
 import gitrepo
 import plans
@@ -251,7 +252,7 @@ def _context(phase_state: dict | None = None) -> dict:
         "phases": {k: dict(v) for k, v in (phase_state or {}).items()},
         "me": taskfiles.actor_name() if config.COMMIT_MOVES else "",
         "remote": config.app_remote(),
-        "gh": config.gh_available(),
+        "gh": githost.available(),
         "onOrigin": config.app_merge_on_origin(),
         "now": time.time(),
         # which checks a person's work reading may ask for — the reading

@@ -601,6 +601,15 @@ def adapters_installed() -> list[dict]:
 # GitHub plumbing: the gh CLI (stub-able for tests) and the git remote PRs
 # go to. Empty remote = auto-detect the first remote; no remote = no PRs.
 GH_BIN = setting("BOARD_GH_BIN", "gh")
+# Which hosting provider change requests go through (`githost`, task 116):
+# `github` (the default, today's behaviour) or `none`, git alone. Read at
+# start-up like its neighbours.
+GIT_PROVIDER = setting("BOARD_GIT_PROVIDER", "github").strip().lower() or "github"
+# GitHub Enterprise hosts the github provider recognises besides
+# github.com, comma-separated. A remote on any other host is reported and
+# never acted on.
+GITHUB_HOSTS = [h.strip() for h in setting("BOARD_GITHUB_HOSTS", "").split(",")
+                if h.strip()]
 GIT_REMOTE = setting("BOARD_GIT_REMOTE", "")
 PR_POLL_INTERVAL = float(setting("BOARD_PR_POLL_INTERVAL", "60"))
 
@@ -769,14 +778,6 @@ def state_remote_setting() -> str:
 # today's answer exactly (see `app_merge_on_origin`).
 APP_MERGE = setting("BOARD_APP_MERGE", "").strip().lower()
 
-# `owner/name` is only a thing for a real git host; a local path remote
-# (every test's bare upstream) is not one, and must not be turned into a
-# bogus `--repo` argument.
-_SLUG_RE = re.compile(
-    r"^(?:[a-z][a-z0-9+.\-]*://[^/]+/|[^/\s]+@[^/:\s]+:)"
-    r"([^/\s]+/[^/\s]+?)(?:\.git)?/?$", re.IGNORECASE)
-
-
 def app_merge_on_origin() -> bool:
     """Whether a card's branch is merged into the application's base *on
     origin* (`gh pr merge`) rather than in this checkout.
@@ -796,37 +797,9 @@ def app_merge_on_origin() -> bool:
         return False
     return SYNC and app_shares_state_repository()
 
-
-def gh_available() -> bool:
-    """Is the GitHub CLI on the path? Asked by `github` before it reaches
-    for it and by `plans` when it answers whether a run can actually
-    deliver a PR — one reading, so the preflight and the attempt can never
-    disagree about what this machine can do."""
-    return shutil.which(GH_BIN) is not None
-
-
-def gh_repo() -> str | None:
-    """`owner/name` for the application's configured remote, so every gh
-    command can be told which repository it acts on.
-
-    gh infers that from the checkout's remotes, and with more than one the
-    inference can land on a different repository than the one this board
-    rides — a `fork`, a `backup`, an upstream somebody added. Naming it
-    removes the guess. None when the url is not a recognisable
-    owner/name on a host (a local bare remote, as every test uses), and
-    then gh is left to infer exactly as it did before.
-    """
-    rname = git_remote()
-    if not rname:
-        return None
-    try:
-        result = git_run(REPO, "remote", "get-url", rname, timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    match = _SLUG_RE.match(result.stdout.strip())
-    return match.group(1) if match else None
+# Whether change requests can be opened here, and which repository a host
+# command names, are `githost`'s questions (task 116, WP08): the provider
+# recognises its own remote shapes, and core no longer parses one.
 
 
 # ── branches and worktrees of the application ──────────────────────────

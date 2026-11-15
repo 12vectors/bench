@@ -93,6 +93,7 @@ import time
 from pathlib import Path
 
 import config
+import githost
 import plans
 import profiles
 import records
@@ -149,30 +150,12 @@ def _git(*args: str, timeout: float = 30) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(args, 128, "", str(exc))
 
 
-def _gh(*args: str, timeout: float = 60) -> subprocess.CompletedProcess:
-    """`gh pr <verb> …` against **this board's** application repository.
-
-    `--repo` for `github._gh_pr`'s reason: gh otherwise infers the
-    repository from a checkout that may have several remotes, and a review
-    must not resolve its head from a fork somebody added.
-    """
-    slug = config.gh_repo()
-    head = [config.GH_BIN, "pr", args[0]]
-    if slug:
-        head += ["--repo", slug]
-    try:
-        return subprocess.run(head + list(args[1:]), cwd=str(config.app_repo()),
-                              capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return subprocess.CompletedProcess(args, 128, "", str(exc))
-
-
 def pr_number(url: str | None) -> str | None:
     """The pull request's number, out of the url the card carries. None
     when the line is not a PR url — a card with prose where its `**PR:**`
-    should be is a card nothing can be resolved for."""
-    match = re.search(r"/pull/(\d+)", str(url or ""))
-    return match.group(1) if match else None
+    should be is a card nothing can be resolved for. The url's shape is
+    the provider's (`githost.change_ref`)."""
+    return githost.change_ref(url)
 
 
 # ── what the PR poll saw ───────────────────────────────────────────────
@@ -227,6 +210,7 @@ def identity(filename: str, task: dict | None = None, *,
     task = task or {}
     stem = filename[:-3] if filename.endswith(".md") else filename
     url = str(task.get("pr") or "").strip() or None
+    slug = githost.slug()
     found: dict = {
         "v": VERSION,
         "task": filename,
@@ -234,9 +218,9 @@ def identity(filename: str, task: dict | None = None, *,
         "number": pr_number(url),
         "branch": config.branch_for(stem),
         "target": "integration" if task.get("isPhase") else "member",
-        "repository": {"slug": config.gh_repo(),
+        "repository": {"slug": slug,
                        "remote": config.git_remote(),
-                       "authority": "github" if config.gh_repo() else "local"},
+                       "authority": githost.name() if slug else "local"},
         "base": {"ref": None, "commit": None, "authority": None},
         "head": {"ref": None, "commit": None, "authority": None},
         "state": None, "merged": False, "closed": False, "historical": False,
@@ -281,58 +265,53 @@ def identity(filename: str, task: dict | None = None, *,
     return found
 
 
-# What a pull request has to say about itself. One call, and the fields are
-# named rather than globbed: a gh too old to know one of them fails the
-# whole read, and then the local fallback below says so out loud instead of
-# a half-filled identity pretending to be GitHub's answer.
-PR_FIELDS = ("number,state,url,baseRefName,baseRefOid,headRefName,"
-             "headRefOid,mergedAt,isCrossRepository")
-
-
 def _from_github(found: dict) -> None:
-    if not config.gh_available():
+    """The pull request's own answer, through the provider in force
+    (`githost.change_identity`). The authority word is the provider's
+    name — `github`, exactly as the records have always said."""
+    words = githost.words()
+    cli, host = words["cli"], githost.name()
+    if not githost.available():
+        reason = githost.capabilities()["identity"]["reason"]
         found["notes"].append(
-            "gh is not installed, so the pull request's own head could not "
-            "be read")
+            f"gh is not installed, so the pull request's own head could not "
+            f"be read" if reason == "gh is not installed" else
+            f"{reason}, so the pull request's own head could not be read")
         return
-    result = _gh("view", found["number"], "--json", PR_FIELDS)
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip().splitlines()
-        found["notes"].append(
-            f"gh could not read PR #{found['number']}"
-            + (f": {detail[-1][:140]}" if detail else ""))
+    data = githost.change_identity(found["number"])
+    if not data.get("ok"):
+        if data.get("error") == "unparsed":
+            found["notes"].append(f"{cli}'s answer about PR #{found['number']} "
+                                  f"did not parse as JSON")
+        elif data.get("error") == "unreadable":
+            detail = data.get("detail") or ""
+            found["notes"].append(
+                f"{cli} could not read PR #{found['number']}"
+                + (f": {detail}" if detail else ""))
         return
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        found["notes"].append(f"gh's answer about PR #{found['number']} did "
-                              f"not parse as JSON")
-        return
-    if not isinstance(data, dict):
-        return
-    head = str(data.get("headRefOid") or "").strip().lower()
+    head = str(data.get("headCommit") or "").strip().lower()
     status = str(data.get("state") or "").strip().upper()
     found["state"] = status or None
-    found["merged"] = status == "MERGED" or bool(data.get("mergedAt"))
+    found["merged"] = status == "MERGED" or bool(data.get("merged"))
     found["closed"] = status == "CLOSED"
     found["historical"] = found["merged"] or found["closed"]
-    found["crossRepository"] = bool(data.get("isCrossRepository"))
-    found["base"]["ref"] = str(data.get("baseRefName") or "") or None
-    base_oid = str(data.get("baseRefOid") or "").strip().lower()
+    found["crossRepository"] = bool(data.get("crossRepository"))
+    found["base"]["ref"] = str(data.get("base") or "") or None
+    base_oid = str(data.get("baseCommit") or "").strip().lower()
     if _SHA.match(base_oid):
         found["base"]["commit"] = base_oid
-        found["base"]["authority"] = "github"
+        found["base"]["authority"] = host
     if _SHA.match(head):
         found["head"].update({
-            "ref": str(data.get("headRefName") or "") or None,
-            "commit": head, "authority": "github"})
+            "ref": str(data.get("head") or "") or None,
+            "commit": head, "authority": host})
     else:
         found["notes"].append(
-            f"gh named no head commit for PR #{found['number']}")
+            f"{cli} named no head commit for PR #{found['number']}")
     if found["crossRepository"]:
         found["notes"].append(
             "the PR's head is on a fork, so bench fetches it as "
-            f"refs/pull/{found['number']}/head rather than as a branch")
+            f"{githost.head_refs(found['number'], None)[0]} rather than as a branch")
 
 
 def _from_this_checkout(found: dict) -> None:
@@ -376,9 +355,7 @@ def _bring_it_here(found: dict) -> None:
             "this checkout has no remote, so the reviewed commit cannot be "
             "fetched")
         return
-    refs = [f"refs/pull/{found['number']}/head"]
-    if found["head"].get("ref"):
-        refs.append(found["head"]["ref"])
+    refs = githost.head_refs(found["number"], found["head"].get("ref"))
     for ref in refs:
         result = _git("fetch", "--quiet", remote, ref,
                       timeout=config.REVIEW_FETCH_TIMEOUT)

@@ -79,6 +79,7 @@ import time
 from pathlib import Path
 
 import config
+import githost
 import gitrepo
 import records
 import taskfiles
@@ -241,8 +242,18 @@ def capabilities() -> dict:
     the card discover it at the move into `review/`.
     """
     remote = app_remote()
-    gh = config.gh_available()
-    return {"remote": remote, "gh": gh, "pr": bool(remote) and gh}
+    # The provider in force answers (`githost`): the `gh` key keeps its
+    # name, because recorded plans carry it, and now reads "can the host
+    # open a change here at all" — false for BOARD_GIT_PROVIDER=none and
+    # for a remote the provider does not recognise, as well as for a
+    # missing CLI. An old record with no `provider` field reads as github.
+    gh = githost.available()
+    found = {"remote": remote, "gh": gh, "pr": bool(remote) and gh,
+             "provider": githost.name()}
+    if not gh:
+        found["hostProblem"] = githost.problem() or \
+            githost.capabilities()["open"]["reason"]
+    return found
 
 
 def _delivery(plan: dict) -> None:
@@ -252,8 +263,13 @@ def _delivery(plan: dict) -> None:
         plan["delivery"] = "pr"
         return
     plan["delivery"] = "local-only"
-    missing = ("no git remote is configured" if not caps["remote"]
-               else f"{config.GH_BIN} is not installed")
+    if not caps["remote"]:
+        missing = "no git remote is configured"
+    elif caps.get("provider", "github") == "github" and \
+            caps.get("hostProblem") in (None, "gh is not installed"):
+        missing = f"{config.GH_BIN} is not installed"
+    else:
+        missing = caps.get("hostProblem") or "the hosting provider cannot open one"
     asked = plan["prSource"] != "the application default"
     plan["notes"].append(
         (f"local-only: {missing}, so the PR into {plan['prBase']} this card "

@@ -69,6 +69,7 @@ import agents  # noqa: E402
 import config  # noqa: E402
 import doctor  # noqa: E402
 import gates  # noqa: E402
+import githost  # noqa: E402
 import completion  # noqa: E402
 import github  # noqa: E402
 import httpd  # noqa: E402
@@ -314,7 +315,9 @@ class GateCase(unittest.TestCase):
         each with the commit it was given for, which is the field that
         makes a formal approval bindable at all."""
         return gates.observe_reviews(
-            filename, reviews=entries, author=author, head=head)
+            filename,
+            reviews=githost.load("github").normalize_reviews(entries),
+            author=author, head=head)
 
 
 # ── the policy is read once, where every other policy value is ─────────

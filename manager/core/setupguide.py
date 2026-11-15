@@ -60,6 +60,7 @@ import time
 from pathlib import Path
 
 import config
+import githost
 import profiles
 import records
 import settings
@@ -620,7 +621,7 @@ def _preview() -> dict:
 
 def _delivery() -> dict:
     remote = config.app_remote()
-    gh = config.gh_available()
+    gh = githost.available()
     doc = profiles.document()
     policy = profiles.gate_policy(doc)
     reviews = sorted({e["review"] for e in policy["scopes"].values()})

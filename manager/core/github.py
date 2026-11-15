@@ -36,6 +36,7 @@ from pathlib import Path
 
 import config
 import gates
+import githost
 import plans
 import records
 import reports
@@ -77,30 +78,6 @@ def _run(cmd: list[str], cwd: Path | None = None, timeout: int = 60) -> subproce
                           capture_output=True, text=True, timeout=timeout)
 
 
-def _gh_pr(*args: str, timeout: int = 60) -> subprocess.CompletedProcess:
-    """`gh pr <verb> …` against **this board's** application repository.
-
-    gh otherwise infers the repository from the checkout's remotes, and
-    with more than one — a fork, a backup, an upstream somebody added —
-    that inference can act on a different repository than the one the
-    board rides. `--repo` removes the guess, and goes right after the
-    verb so the command still reads `gh pr create …`. A remote whose url
-    is not an owner/name on a host (every test's local bare upstream)
-    leaves gh to infer exactly as it did before."""
-    slug = config.gh_repo()
-    head = [config.GH_BIN, "pr", args[0]]
-    if slug:
-        head += ["--repo", slug]
-    return _run(head + list(args[1:]), timeout=timeout)
-
-
-def _api_repo() -> str:
-    """The owner/repo for a `gh api` path. gh has no --repo there, so the
-    slug goes into the path; `{owner}/{repo}` is gh's own placeholder
-    expansion, the behaviour when there is nothing better to name."""
-    return config.gh_repo() or "{owner}/{repo}"
-
-
 def remote() -> str | None:
     """Where this board's work goes. Resolved in config, which sync asks
     too — the two halves of team mode must never name different remotes."""
@@ -108,9 +85,11 @@ def remote() -> str | None:
 
 
 def gh_available() -> bool:
-    """One reading, in config, so what preflight promises and what this
-    module then attempts can never disagree about `gh`."""
-    return config.gh_available()
+    """Can change requests be read and opened here? `githost` answers —
+    false for `BOARD_GIT_PROVIDER=none`, for a remote the provider does
+    not recognise, and when its CLI is not installed — so what preflight
+    promises and what this module attempts can never disagree."""
+    return githost.available()
 
 
 def _branch_exists(branch: str) -> bool:
@@ -264,11 +243,17 @@ def _open_pr(filename: str) -> str:
     if task.get("pr"):
         raise _Quiet(f"{filename} already has a PR: {task['pr']}")
 
+    if githost.name() == "none":
+        # The explicit opt-out: git alone. Nothing to open, and nothing
+        # worth the ticker on the automatic path either.
+        raise _Quiet(f"no {githost.words()['change']} for {filename}: "
+                     f"BOARD_GIT_PROVIDER is none, so this board opens no "
+                     f"change request")
     rname = remote()
     if rname is None or not gh_available():
         raise ValueError(f"no PR for {filename}: " +
                          ("no git remote configured" if rname is None
-                          else "gh is not installed"))
+                          else githost.capabilities()["open"]["reason"]))
 
     base = _pr_base(task)
     gone = plans.target_problem(filename, base)
@@ -308,16 +293,15 @@ def _open_pr(filename: str) -> str:
         raise ValueError(f"push failed for {branch}: {push.stderr.strip()[:140]}")
 
     body = _pr_body(filename, task)
-    result = _gh_pr("create", "--head", branch, "--base", base,
-                    "--title", task["title"], "--body", body, timeout=120)
-    if result.returncode != 0:
+    result = githost.open_change(branch, base, task["title"], body)
+    if not result.get("ok"):
         # The rare double-fire: two attempts crossed and GitHub already has
         # the PR. Adopt it — one PR still exists, and the card learns its
         # url. Anything else is a real failure.
-        adopted = _existing_pr(branch) if _already_exists(result) else ""
+        adopted = _existing_pr(branch) if result.get("exists") else ""
         if not adopted:
             raise ValueError(f"PR creation failed for {branch}: "
-                             f"{result.stderr.strip()[:140]}")
+                             f"{str(result.get('detail') or '')[:140]}")
         _write_pr_line(filename, adopted)
         plans.remember_target(filename, branch, base)
         state.record_board_event({
@@ -326,7 +310,7 @@ def _open_pr(filename: str) -> str:
         state.broadcast({"type": "board"})
         _poll_pr(filename, adopted)
         return adopted
-    url = next((l.strip() for l in result.stdout.splitlines() if "/pull/" in l), result.stdout.strip())
+    url = result["url"]
     _write_pr_line(filename, url)
     # Work that reached GitHub without a plan gets one now, so the target
     # stops moving: the merge at the end reads this, not the setting.
@@ -339,27 +323,11 @@ def _open_pr(filename: str) -> str:
     return url
 
 
-def _already_exists(result: subprocess.CompletedProcess) -> bool:
-    return "already exists" in (result.stderr + result.stdout).lower()
-
-
 def _existing_pr_info(branch: str) -> dict | None:
     """The PR GitHub already has for this branch: its url and the branch it
     targets. `None` when there is none, or when gh cannot say — a reading
     this cannot make is never read as agreement."""
-    if not gh_available():
-        return None
-    found = _gh_pr("view", branch, "--json", "url,baseRefName", timeout=60)
-    if found.returncode != 0:
-        return None
-    try:
-        data = json.loads(found.stdout)
-    except json.JSONDecodeError:
-        return None
-    url = str(data.get("url") or "")
-    if "/pull/" not in url:
-        return None
-    return {"url": url, "base": str(data.get("baseRefName") or "")}
+    return githost.find_change(branch)
 
 
 def _existing_pr(branch: str) -> str:
@@ -379,13 +347,22 @@ def merge_pr(number: str, *condition: str,
     """Ask the host to merge pull request `number` with a merge commit.
     `condition` is passed through — `--match-head-commit <sha>` when a gate
     validated one. Whether the merge was *delivered* is completion's to
-    read off the remote afterwards, never this exit status."""
-    return _gh_pr("merge", number, "--merge", *condition, timeout=timeout)
+    read off the remote afterwards, never this exit status.
+
+    The provider builds the command (`githost.merge_change`); the answer
+    comes back as the process result completion has always read."""
+    expect = None
+    if list(condition[:1]) == ["--match-head-commit"] and len(condition) >= 2:
+        expect = condition[1]
+    found = githost.merge_change(number, expect, timeout=timeout)
+    return subprocess.CompletedProcess(
+        [], int(found.get("returncode", 0 if found.get("ok") else 1)),
+        "", "" if found.get("ok") else str(found.get("detail") or ""))
 
 
 def merge_is_conditional() -> bool:
     """Can this host's merge be made conditional on the head it is told?"""
-    return _gh_merge_is_conditional()
+    return githost.merge_is_conditional()
 
 
 def _agent_report(filename: str) -> str:
@@ -416,11 +393,9 @@ def request_copilot(filename: str) -> str:
     if not url:
         raise ValueError(f"{filename} has no PR yet")
     number = url.rstrip("/").rsplit("/", 1)[-1]
-    result = _run([config.GH_BIN, "api", "-X", "POST",
-                   f"repos/{_api_repo()}/pulls/{number}/requested_reviewers",
-                   "-f", "reviewers[]=copilot-pull-request-reviewer[bot]"], timeout=60)
-    if result.returncode != 0:
-        raise ValueError(f"Copilot said no: {result.stderr.strip()[:160]}")
+    result = githost.request_external_review(number)
+    if not result.get("ok"):
+        raise ValueError(f"Copilot said no: {str(result.get('detail') or '')[:160]}")
     entry = PR_STATE.setdefault(filename, {"verdict": "pending", "ci": None,
                                            "url": url, "detail": "", "ts": 0})
     entry["copilot"] = "asked"
@@ -431,38 +406,24 @@ def request_copilot(filename: str) -> str:
     return url
 
 
-def _check_state(check: dict) -> str:
-    """One check-run or status-context → pass | fail | running."""
-    conclusion = (check.get("conclusion") or check.get("state") or "").upper()
-    status = (check.get("status") or "").upper()
-    if conclusion in ("FAILURE", "TIMED_OUT", "CANCELLED", "ERROR", "STARTUP_FAILURE"):
-        return "fail"
-    if conclusion in ("SUCCESS", "NEUTRAL", "SKIPPED"):
-        return "pass"
-    if status in ("IN_PROGRESS", "QUEUED", "PENDING", "WAITING", "REQUESTED"):
-        return "running"
-    return "running"
-
-
-def _is_copilot(login) -> bool:
-    return "copilot" in str(login or "").lower()
-
-
 def _conflict_state(data: dict, prev: dict) -> bool | None:
-    """GitHub computes mergeability lazily: UNKNOWN means "not computed
+    """Hosts compute mergeability lazily: `unknown` means "not computed
     yet", never "fine" — keep the previous reading so the chip does not
-    flap while GitHub thinks."""
-    mergeable = str(data.get("mergeable") or "").upper()
-    if mergeable == "CONFLICTING":
+    flap while the host thinks."""
+    mergeable = str(data.get("mergeable") or "")
+    if mergeable == "no":
         return True
-    if mergeable == "MERGEABLE":
+    if mergeable == "yes":
         return False
     return prev.get("conflicts")
 
 
 def _fold(data: dict, prev: dict, base: str | None = None) -> dict:
-    """One gh pr-view payload + the previous snapshot → the new snapshot.
-    Pure fold: fetching, events and broadcasts stay in _poll_pr.
+    """One normalized change status (`githost.change_status`) + the
+    previous snapshot → the new snapshot. Pure fold: fetching, events and
+    broadcasts stay in _poll_pr. The provider mapped its native values to
+    core's words at the edge; the verdict is computed here, as it always
+    was.
 
     `base` is the card's own recorded PR target. The PR's actual
     `baseRefName` is folded against it, so a PR that is open against
@@ -472,33 +433,30 @@ def _fold(data: dict, prev: dict, base: str | None = None) -> dict:
     could name a target of their own.
     """
     reviews = data.get("reviews") or []
-    checks = data.get("statusCheckRollup") or []
-    changes = any(r.get("state") == "CHANGES_REQUESTED" for r in reviews)
-    approved = any(r.get("state") == "APPROVED" for r in reviews)
+    changes = any(r.get("state") == "changes-requested" for r in reviews)
+    approved = any(r.get("state") == "approved" for r in reviews)
 
-    # Copilot: asked is a pending entry in reviewRequests; done is a review
-    # authored by the copilot bot — the request entry disappears once it lands.
-    cop_reviews = [r for r in reviews
-                   if _is_copilot((r.get("author") or {}).get("login"))]
-    cop_requested = any(
-        _is_copilot(rr.get("login") or rr.get("slug") or rr.get("name"))
-        for rr in (data.get("reviewRequests") or []))
+    # The external reviewer (Copilot): asked is a pending review request;
+    # done is a review it authored — the request disappears once it lands.
+    cop_reviews = [r for r in reviews if r.get("external")]
+    cop_requested = bool(data.get("externalRequested"))
     if cop_reviews:
-        copilot = {"APPROVED": "approved", "CHANGES_REQUESTED": "changes"}.get(
+        copilot = {"approved": "approved", "changes-requested": "changes"}.get(
             cop_reviews[-1].get("state"), "commented")
     elif cop_requested:
         copilot = "asked"
     else:
         copilot = "asked" if prev.get("copilot") == "asked" else None
 
-    states = [_check_state(c) for c in checks]
+    states = [s for s in (data.get("checks") or [])
+              if s in ("pass", "fail", "running")]
     ci = ("fail" if "fail" in states
           else "running" if "running" in states
           else "pass" if states else None)
 
     conflicts = _conflict_state(data, prev)
     want = base or config.APP_BASE
-    actual = str(data.get("baseRefName") or "") or None
+    actual = str(data.get("base") or "") or None
     mismatch = actual if (actual and actual != want) else None
 
     # A conflict is changes-needed-by-you, not a CI failure: it beats any
@@ -512,7 +470,9 @@ def _fold(data: dict, prev: dict, base: str | None = None) -> dict:
     # recorded review whether it still speaks for the pull request
     # (`reviews.freshness`), read off the poll that was already happening
     # rather than from a call per card.
-    head = str(data.get("headRefOid") or "") or None
+    head = str(data.get("head") or "") or None
+    # Persisted vocabulary: the snapshot and `reviews.observe` have always
+    # carried the state upper-cased (OPEN, MERGED, CLOSED).
     status = str(data.get("state") or "").upper() or None
     detail_bits = []
     if reviews:
@@ -535,7 +495,7 @@ def _fold(data: dict, prev: dict, base: str | None = None) -> dict:
                        else None),
             "conflicts": conflicts, "base": actual, "wantBase": want,
             "baseMismatch": mismatch, "head": head, "prState": status,
-            "merged": status == "MERGED" or bool(data.get("mergedAt")),
+            "merged": status == "MERGED" or bool(data.get("merged")),
             "detail": " · ".join(detail_bits)}
 
 
@@ -553,30 +513,17 @@ def _review_objects(number: str) -> list[dict] | None:
     review state (`gates.needs_github_reviews`), so a board that gates
     nothing, or gates on bench's own verdict, pays exactly what it paid
     before this existed.
+
+    The provider reads them and normalizes each to `{id, reviewer,
+    state, commit, submitted}` (`githost.review_records`).
     """
-    result = _run([config.GH_BIN, "api", "--paginate",
-                   f"repos/{_api_repo()}/pulls/{number}/reviews"], timeout=60)
-    if result.returncode != 0:
-        return None
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, list) else None
+    return githost.review_records(number)
 
 
 def _poll_pr(filename: str, url: str) -> None:
     number = url.rstrip("/").rsplit("/", 1)[-1]
-    result = _gh_pr("view", number,
-                    "--json",
-                    "reviews,reviewRequests,statusCheckRollup,state,mergeable"
-                    ",baseRefName,headRefOid,mergedAt,author",
-                    timeout=60)
-    if result.returncode != 0:
-        return
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError:
+    data = githost.change_status(number)
+    if data is None:
         return
     prev = PR_STATE.get(filename, {})
     entry = _fold(data, prev, plans.pr_base(filename))
@@ -601,8 +548,7 @@ def _poll_pr(filename: str, url: str) -> None:
         if objects is not None:
             gates.observe_reviews(
                 filename, reviews=objects,
-                author=str((data.get("author") or {}).get("login") or "")
-                or None,
+                author=data.get("author") or None,
                 head=entry.get("head"))
     if prev.get("baseMismatch") != entry["baseMismatch"] and entry["baseMismatch"]:
         state.record_board_event({
@@ -722,12 +668,6 @@ def public_state() -> dict:
 
 def open_pr_async(filename: str) -> None:
     threading.Thread(target=maybe_open_pr, args=(filename,), daemon=True).start()
-
-
-def _gh_merge_is_conditional() -> bool:
-    """Can this gh make a merge conditional on the head it is told?"""
-    found = _run([config.GH_BIN, "pr", "merge", "--help"], timeout=30)
-    return "--match-head-commit" in (found.stdout + found.stderr)
 
 
 def task_branches() -> list[str]:
