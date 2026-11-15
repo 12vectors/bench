@@ -1583,10 +1583,11 @@ its parent lands). Each edge has a state in the server's words:
 | state | what it means | next, and who |
 | --- | --- | --- |
 | `on-parent` | the child contains its parent's tip | nothing |
-| `parent-moved` | the parent has commits the child does not contain | you: bring them in additively — bench will not rebase |
+| `parent-moved` | the parent has commits the child does not contain | you: **Update from <parent>** (additive) — bench will not rebase |
 | `parent-rewritten` | the parent no longer contains the commit the child was cut from | you: settle it by hand |
-| `parent-landed` | the parent was delivered; the child may still target its branch | you: ⌖ replan onto where it landed |
+| `parent-landed` | the parent was delivered; the child may still target its branch | you: **Retarget onto <target>** |
 | `parent-landed-differently` | the host says merged, and the parent's tip is not in its target (a squash or rebase merge) | you: bring the target in first, then retarget |
+| `retargeted` | the parent landed and the child now targets where it landed | nothing |
 | `parent-closed` / `parent-gone` | closed unmerged, or the branch is gone with no delivery record | you: decide the base, then ⌖ replan |
 | `parent-retargeted` | the parent's change request targets another branch than its plan | you: settle the parent's target first |
 | `target-changed-on-host` | the child's own change request targets another branch than its plan | you: ⌖ replan, or change it back |
@@ -1629,6 +1630,72 @@ ignores the new keys.
   and the hosting provider says no open change request does
   (`changes_targeting`). An open change, a dependant card, or a provider
   that cannot answer keeps the branch, and the ticker says which.
+
+### Maintaining a stack: three confirmed actions
+
+The reading offers, and a person acts (task 119). A stacked card's
+**Stack** block carries a button for each action its edge makes worth a
+look — and only on an ordinary card stacked on a card: a phase member's
+relation to its phase is the phase runner's, and a phase card lands as a
+whole. A button opens the action's **sheet** (`POST
+/api/card/stack/preview`): the identities it is bound to — this card's
+head, the parent's tip, what it targets now and would target, the
+target's tip, the change request — what it does, what stops it and, for
+a retarget bench may not make, the exact manual step. Opening it changes
+nothing. Confirming is a second, armed click (`POST
+/api/card/stack/action` with the identities the sheet showed); the server
+reads everything again and refuses, naming what moved, when any of it
+differs. Every action is refused while an agent works on the card, while
+it is being merged and cleaned up, and while its worktree is dirty, on
+another branch or not this repository's. Nothing calls an action but the
+click: no beat, no move and no read.
+
+- **Retarget onto <target>** — once the parent has landed, the card's
+  change request targets where it landed. Where there is a change request
+  and the provider's `retarget` reads `available` at that moment (the
+  installed CLI's own `--help`, read locally), bench changes the base on
+  the host and reads the change back; the recorded plan and the card's
+  `**PR base:**` follow what was read back, never what was hoped. The
+  edit is **not** conditional on the head (STACKING.md, C8): bench reads
+  the head and base immediately before and after, refuses drift that was
+  already there rather than "correcting" someone else's edit, and a host
+  that did not take the edit, or could not be read back, records nothing
+  and says so — nothing is undone on the host. `unavailable` or
+  `unknown` makes **no** provider mutation call at all: the sheet names
+  the manual step (on GitHub, Edit → base, or `gh pr edit <n> --base
+  <target>` by hand), and once the host is seen targeting the new branch
+  the same action *adopts* it, with no edit. A card with no change
+  request yet changes its plan alone. A parent that landed by squash or
+  rebase needs its target brought into this branch first; bench will not
+  rebase.
+- **Update from <parent>** — an additive merge of the parent's tip into
+  the card's own worktree (recreated from its branch when it was cleaned
+  up). A conflict is aborted, the conflicting files named, and the branch
+  left exactly as it was. The new head is published with a plain push
+  only when the parent's tip is already on the remote, so a child never
+  publishes its parent's work for it. Nothing is reset or force-pushed.
+- **Finish: clean up** — for a card whose head the application base on
+  the remote already holds, read off the remote itself rather than the
+  last fetch: the workspace is cleared under merge & clean up's rules
+  (uncommitted work keeps the worktree and its branch, a branch something
+  still targets is kept on the remote), the card moves to `done/` and a
+  delivered record is written. Nothing is merged.
+
+**A retarget is a new review context.** It changes the change's diff and
+integration even when the head did not move, so it is recorded on the
+plan (`retargets`: from, to, the head, when, how) and the merge rules
+stop counting a Bench verdict or a formal approval given before it
+(`verdict-before-retarget`, `approval-before-retarget`, both *needed*).
+A **⌖ replan** that changes the target records one too. Check evidence
+keeps its own identity rules: a pass whose declared identity still holds
+is still a pass. An update from the parent is a new head, and everything
+about the old head is history under the existing rule.
+
+Nothing here restacks, rebases, force-pushes or merges a child into its
+parent, and nothing relies on what a host does by itself when a parent
+merges or its branch is deleted: those cells of the evidence matrix are
+still *not observed*, and the reading reports whatever the host did
+(`target-changed-on-host`, `parent-closed`) rather than assuming it.
 
 ## Execution profiles and approved context
 

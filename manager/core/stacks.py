@@ -57,8 +57,9 @@ V = 1
 EDGES = {
     "on-parent": ("On its parent", "neutral", None, None),
     "parent-moved": ("Parent moved on", "neutral",
-                     "bring the parent's new commits in (act on the PR, or "
-                     "an additive merge by hand) — bench will not rebase",
+                     "bring the parent's new commits in (Update from the "
+                     "parent, in the Stack block — an additive merge) — "
+                     "bench will not rebase",
                      "you"),
     "parent-rewritten": ("Parent rewritten", "alarm",
                          "settle it by hand — the parent no longer contains "
