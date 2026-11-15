@@ -174,7 +174,9 @@ gitproc / records / redact < config < githost < state / reports / templates / gi
 - `commands.py` — local commands: a project's chores run against a
   task's worktree
 - `events.py` — ingests NORMALIZED events (the adapter contract), session registry
-- `drive.py` — runs the project driver, tracks the one live drive
+- `drive.py` — runs the project driver, tracks the one live drive; owns
+  scrubbing a drive's log (`scrub`), and calls what composition
+  registered with `on_ended` when a drive's outcome changes
 - `sync.py` — origin/main as the shared board: push on move, pull on a beat
 - `changes.py` — the change-request lifecycle (task 116 renamed it from
   `github.py`): opening or adopting a PR, the external-review request,
@@ -217,15 +219,16 @@ gitproc / records / redact < config < githost < state / reports / templates / gi
   modules above and nowhere else: it names the states so nothing reads as
   a pass, compares two resolutions so a change can be previewed, and
   writes one file. No second parser, by construction
-- `setupguide.py` — the project setup guide: six areas read from the
-  authorities above, eight status words and no percentage, and the only
-  two writes it owns — a person's decision about an area and a proposed
-  setup card — held to a revision and a request identity
-- `agents.py` — headless work/review jobs, launched through the adapter
-- `setuptasks.py` — setup cards from discovered gaps: what inspecting
-  the application's files found absent, previewed exactly, created
-  idempotently by stable gap identity, and started only through the
-  normal start-work path (so it sits right of `agents`, which it calls)
+- `setupbase.py` — what every setup surface stands on (task 122): the
+  portable setup decisions record and the machine-local journal, request
+  identity, the revision and integrity guards every setup mutation is
+  held to, the actor, and the coding agent's area reading
+- `appinspect.py` — what the application's files hold that bears on
+  setup, read file by file and running nothing: present, absent or
+  `unknown`. Imports `config` only
+- `agents.py` — headless work/review jobs, launched through the adapter;
+  its public launch primitive (`launch`, `pick_name`, `finish`) is what
+  `refine` rides
 - `readiness.py` — verification readiness: candidate checks discovered
   from scripts, CI and docs without running them, registration and
   merge-rule drafts handed to Settings' own validate, preview and apply,
@@ -238,6 +241,16 @@ gitproc / records / redact < config < githost < state / reports / templates / gi
   explicit acts. A started preview is a drive (`drive.py` takes its launch
   spec), bound to its source, ready only when its check answers, and
   stopped and re-adopted only when it is provably bench's own group
+- `setuptasks.py` — setup cards from discovered gaps: what inspecting
+  the application's files found absent, previewed exactly, created
+  idempotently by stable gap identity, and started only through the
+  normal start-work path (so it sits right of `agents`, which it calls,
+  and of `previews`, whose configuration says a preview gap is covered)
+- `setupguide.py` — the project setup guide: six areas read from the
+  authorities above, eight status words and no percentage, and the only
+  two writes it owns — a person's decision about an area and a proposed
+  setup card — held to a revision and a request identity. It composes
+  `readiness`, `previews` and `setuptasks`, so it sits right of all three
 - `phases.py` — a phase run: its own branch, its cards merged into it one
   at a time. A beat, not an agent; it holds no registry of where a phase is
 - `refine.py` — refining a card on the board: comments, the one
@@ -252,7 +265,11 @@ gitproc / records / redact < config < githost < state / reports / templates / gi
 - `httpd.py` — the socket: finds a request's route, applies the door its
   class names and checks the body before any handler runs; the SSE
   stream and serving the page
-- `board.py` — argparse + startup wiring only
+- `board.py` — argparse + startup wiring only: it imports every core
+  module at the top and loads the selected hosting provider before it
+  serves, so a running board executes the code that was on disk when it
+  started, and `wire` is the one place a lower module is told about a
+  higher one (`drive.on_ended` ← `previews.record_last`)
 
 ## Agent adapters
 

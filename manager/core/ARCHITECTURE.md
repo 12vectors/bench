@@ -163,39 +163,52 @@ marker passed in, so each caller keeps the words its readers see
 exists and keeps its copy; `tests/test_redact.py` holds the union to
 every pattern of all five.
 
-### Where the code does not obey it
+### Where the code did not obey it, and how it does now (task 122)
 
-The order holds at the top level only because some imports are
-deferred into functions. The test lists all **25 function-level core
-imports**; twelve of them point *up* the table and are the real
-violations (a thirteenth, `plans → agents` in `_resolve_ref`, went with
-task 114, when the branch points moved to `gitrepo` and `plans`):
+Until WP13 the order held at the top level only because some imports
+were deferred into functions, and some modules reached private names of
+others. Both lists are **empty** now, and a non-empty one fails the test:
+any function-level core import — upward *or* downward — and any
+`module._name` used from another module is "new, not in the reviewed
+baseline". Each was removed by giving the name a public owner, never by
+an alias, a wholesale re-export, or a module moved to look compliant.
 
-| Importer (layer) | Imports (layer), from inside | Why it matters |
-| --- | --- | --- |
-| `drive` (L12) | `previews` (L22), in `_watch`, `_preview_ended`, `_remember`, `_scrub_log` | a leaf service calls back into a surface |
-| `settings` (L17) | `agents` (L19), in `frozen_runs` | reads the run registry |
-| `setupguide` (L18) | `readiness`, `previews`, `setuptasks` (L20–L22), in six functions | the guide composes the three modules that are built on it |
-| `setuptasks` (L20) | `previews` (L22), in `gaps` | the same cycle, the other way |
+| What it was | What it is now |
+| --- | --- |
+| `setupguide` importing `readiness`, `previews` and `setuptasks` from six functions, while `readiness` and `setuptasks` reached 27 times into `setupguide`'s private helpers | the shared helpers — the decisions record, the journal, request identity, the revision and integrity guards, the actor, the agent area — moved verbatim into **`setupbase`** (L22) under public names; `setupguide` moved *up* to L25, above the three surfaces it composes, and imports them at the top. The plan's note that `setupguide` would stay below them was a design to validate: the guide's areas (`_verification`, `_preview`) and its one reading (`state`) are built from those surfaces, so below them it could only have reached up |
+| `setuptasks.gaps` importing `previews` while `previews.discover` imported `setuptasks` | the read-only inspection of the application (`inspect` and its file lists) moved verbatim into **`appinspect`** (L22, `config` only); `previews` and `readiness` read it there, so `setuptasks` sits above `previews` and imports it at the top |
+| `drive` importing `previews` in four functions | scrubbing a drive's log is the drive's (`drive.scrub`, with the `«secret»` and `«redacted»` markers a preview's reader always saw), because the secret values and the log are the drive record's. What a preview keeps once it ends (`previews.record_last`) is registered with `drive.on_ended` by **`board.wire`** — the one piece of composition wiring, explicit and idempotent |
+| `settings.frozen_runs` importing `agents` | it reads the run registry where it lives, `state.AGENTS`, producing the same rows |
+| `board` (×2) and `setuptasks` (×4) deferring downward imports | top-level imports |
+| `taskfiles._is_fence`, `_one_line`, `_refuse_escape`, `_depends_on`, `_first`, `_commit` | `is_fence`, `one_line`, `refuse_escape`, `depends_on`, `first_match`, `commit_paths` |
+| `agents._launch`, `_pick_name`, `_finish`, `_why` (refine), `_validate`, `_preflight_profile` (setuptasks) | `launch`, `pick_name`, `finish`, `died_on` — the launch primitive `refine` rides — and `validate_launch`, `preflight_profile` |
+| `gates._tips`, `_contained`, `_EPOCH` (delivery) | `gates.branch_tips`, `contained`, `epoch()` |
+| `settings._checks_of`, `drive._alive`, `config._SUFFIX` | `settings.checks_of`, `drive.alive`, `config.PURPOSE_SUFFIX` |
 
-The other thirteen are deferred *downward* imports (`readiness → verify`,
-`setuptasks → agents`, `board → previews` …) that could be top-level;
-they are counted so the list can only shrink. (There were fourteen:
-`previews.scrub → verify` went with task 111, when `previews` began
-asking `redact` instead.)
+**Eager startup.** `board.py` imports every core module at its top level
+— check 11 fails a core module it does not — and loads the selected
+hosting provider (`board.load_provider`, which reads the provider's code
+and its declared functions and asks no network, `gh` or remote) before
+it serves. A running board therefore executes the code that was on disk
+when it started; a core update takes effect on restart, all of it at
+once. `tests/test_eager_startup.py` holds the running process to that:
+every core module and the provider are in memory after startup, and the
+imports, the provider load and the wiring start no thread, run no
+process and open no connection.
 
-**54 private reaches** — `module._name` used from another module — are
-listed the same way. (Seven went with task 114: `config._app_git` from
-gates, delivery and required is `gitrepo.app_git`, and
-`agents._fresh_branch_point` from phases and plans is
-`gitrepo.fresh_branch_point`. Seven more went with task 120, when the
-three `profiles` names settings, doctor and agentsettings reached for
-became public: `profiles.digest`, `profiles.tool_relative` and
-`profiles.SOURCE_WORDS`.) The clusters, which the later packages
-remove: `gates._tips` /
-`gates._EPOCH` / `verify._EPOCH` / `verify._KEYS` (delivery, required),
-`refine` driving `agents._launch` and friends, and `readiness` and
-`setuptasks` reaching 27 times into `setupguide`'s private helpers.
+**What still remains, and why.** `config.git_argv`, `git_env` and
+`git_run` (over `gitproc`) and `config.branch_for`, `dirty_files` and
+`worktree_mismatch` (whose bodies `gitrepo` offers under the same names)
+stay in `config`. They are not exceptions to the layer order — nothing
+there imports upward — but they are the bridge the plan meant WP13 to
+remove, and it is not removed here: `verify.py` calls the three readers
+(and `staleness` and `resultidentity` call two of them), and moving them
+means editing `verify.py`, which only the WP12 delivery unit may do and
+whose runner revision (`resultidentity.RUNNER_FILES`) would change with
+it. `config.git_run` is also the seam the suite patches to intercept
+git. Removing the bridge is coordinated with the next change to the
+verify train; until then a running board loads it at startup like
+everything else.
 
 ## Proposed layers
 
@@ -245,9 +258,12 @@ convention above those become separate layers, lower first (so
 done by tasks 115 (WP07) and 116 (WP08), so `githost` and `changes` are
 no longer `new`. (The current table places `githost` lower than this
 target, directly above `config`; see "Current layers".)
-Note that `setupguide` stays *below* `setuptasks`, `readiness` and
-`previews` in the target too: the upward imports above are removed by
-moving the shared helpers down, not by reordering the table.
+The target placed `setupguide` *below* `setuptasks`, `readiness` and
+`previews`, expecting the upward imports to go by moving the shared
+helpers down. They did move down — into `setupbase` and `appinspect`,
+both `new` in this table until WP13 built them — but validating the
+design showed the guide itself composes those three surfaces, so it
+sits above them in both tables now (task 122).
 
 ## Ownership
 
@@ -265,7 +281,8 @@ One owner per question; `AGENTS.md` describes each module in full.
 | services | `commands`, `drive`, `events`, `sync`, `github`, `completion` | local chores; the one live drive; normalized events; ticket sync; opening and polling PRs; merge-and-clean-up (merge, publish, recover, clean up, sweep) |
 | reading | `stacks`, `delivery` | the derived stack reading (edge states, path positions, the three targets), local reads only; one status per card, owning no policy |
 | stack maintenance | `stackactions` | the three confirmed stack actions — retarget, update from parent, clean up after proven delivery — each bound to the identities its sheet showed |
-| surfaces | `agentsettings`, `settings`, `setupguide`, `setuptasks`, `readiness`, `previews` | configuration pages and the setup guide's areas |
+| setup base | `setupbase`, `appinspect` | the setup decisions record, its journal, request identity and revision guards, and the agent area; the read-only inspection of the application's files |
+| surfaces | `agentsettings`, `settings`, `setupguide`, `setuptasks`, `readiness`, `previews` | configuration pages and the setup guide's areas (`setupguide` composes the other three) |
 | runs | `agents`, `phases`, `refine` | headless launches; the phase beat; refinement jobs |
 | composition | `watch`, `routes`, `httpd`, `board` | the disk poller; every route with its request class and handler; the socket, the class doors and the body checks; startup wiring |
 
@@ -303,8 +320,8 @@ neither.
 | drive record, scrubbed drive log | `drive` | the one drive | no |
 | preview configuration and records, scrubbed logs | `previews` | `previews.LOCK` | no |
 | session identity | `state` | per session | no |
-| setup decisions (portable) | `setupguide` | `setupguide.LOCK`, interprocess | yes |
-| setup journal (machine-local) | `setupguide` | `setupguide.LOCK`, interprocess | no |
+| setup decisions (portable) | `setupbase` (`setupguide`, `setuptasks`, `readiness` decide) | `setupbase.LOCK`, interprocess | yes |
+| setup journal (machine-local) | `setupbase` | `setupbase.LOCK`, interprocess | no |
 | execution policy document | `settings` | `settings._APPLY_LOCK` (single writer) | yes |
 | agent keys in `.env`, local prompt templates | `agentsettings` | `agentsettings._APPLY_LOCK` (single writer) | no |
 
@@ -439,9 +456,13 @@ WP12 (task 121).
 
 `update.sh` replaces `manager/core/` wholesale (this file included) and
 the top-level files in `release-manifest`; `manager/local/`, the work
-state and the task template are never touched. Python modules are read
-once at board start, so a code update takes effect on restart; prompt
-templates and agent settings are read fresh per launch.
+state and the task template are never touched. Python modules — every
+core module and the selected provider, eagerly since task 122 — are read
+once at board start, so a code update takes effect on restart and never
+half-way through a running board; prompt templates and agent settings
+are read fresh per launch. (Separate processes the board starts — the
+adapters, the `bench-verify` and `bench-progress` shims — read their own
+code when they start, as they always did.)
 
 ## Governance
 
@@ -451,9 +472,9 @@ core module:
 1. Top-level imports respect the current layers (exceptions: a reviewed
    list, empty today).
 2. Function-level core imports are on a reviewed list that may only
-   shrink.
+   shrink — empty since task 122, so any one fails, downward too.
 3. Cross-module private reaches are on a reviewed list that may only
-   shrink.
+   shrink — empty since task 122.
 4. Every route in `routes.py`'s `ROUTES` table, and its request class,
    matches a snapshot, and no handler calls a door itself: the
    dispatcher in `httpd.py` applies the class's door before any handler
@@ -470,6 +491,9 @@ core module:
 10. Stdlib leaves are pure: `gitproc` imports no core module, at the top
    level or inside a function, and nothing outside the standard library
    (task 109), `records` (task 110) and `redact` (task 111).
+11. `board.py` imports every core module at its top level (task 122), so
+   a module added later without being loaded at startup fails rather
+   than being imported lazily on some first request.
 
 An exception's identity is file, enclosing function and what it reaches,
 never a line number, so moving code does not churn it; each entry keeps
