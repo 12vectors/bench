@@ -268,6 +268,16 @@ def find_change(branch: str) -> dict | None:
     return module().find_change(ctx(), branch)
 
 
+def changes_targeting(base: str) -> list[dict] | None:
+    """The open changes whose base is `base`, `[{url, head}]`; `[]` when
+    there are none; None when nothing can be asked here. `none` observes
+    no change request and answers `[]`; a provider that is unavailable
+    cannot answer, and None is never read as "none"."""
+    if name() != "none" and not available():
+        return None
+    return module().changes_targeting(ctx(), base)
+
+
 def change_status(number: str) -> dict | None:
     """The normalized status of change `number`, or None."""
     if not available():

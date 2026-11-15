@@ -48,6 +48,7 @@ import reviews
 import settings
 import setupguide
 import setuptasks
+import stacks
 import state
 import sync
 import taskfiles
@@ -248,6 +249,10 @@ def state_payload() -> dict:
             key=lambda m: m.get("last") or m.get("started") or 0, reverse=True)
         board_events = list(state.BOARD_EVENTS[-80:])
     collected = taskfiles.collect()
+    # which card each card's work is stacked on, what is stacked on it and
+    # the state of each edge (task 117) — local reads only, read once and
+    # handed to the delivery reading rather than derived twice
+    stacked = stacks.board(collected)
     return {
         "board": collected,
         "project": config.PROJECT,
@@ -260,6 +265,11 @@ def state_payload() -> dict:
         # from the card's own headers, its phase, and the plan recorded
         # when its run began. Empty on a board of ordinary cards.
         "plans": plans.board(collected),
+        # per stacked card: its parent card, the cards stacked on it, its
+        # place on its path, its selected base, review target and landing
+        # target, and its edge's state in the server's words. Empty on a
+        # board where no card is stacked on another
+        "stacks": stacked,
         "appBase": config.APP_BASE,
         "sessions": sessions,
         "agents": agents.list_public(),
@@ -309,7 +319,8 @@ def state_payload() -> dict:
         # candidate commit's state and the required-only counts. Memoised
         # by a fingerprint of every input it reads — never authority; the
         # whole reading is `/api/card/delivery`, always recomputed.
-        "delivery": delivery.board(collected, phases.public_state()),
+        "delivery": delivery.board(collected, phases.public_state(),
+                                   stacked),
         # per card, a batch of required checks in flight on this board:
         # how many it set out to request, how many have an answer, the one
         # running now. The whole record is `/api/verify/required`.

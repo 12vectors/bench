@@ -73,6 +73,7 @@ import gitrepo
 import plans
 import profiles
 import required
+import stacks
 import state
 import taskfiles
 import verify
@@ -100,6 +101,7 @@ WORDS = {
     "ready-to-start": ("Ready to start", "neutral"),
     "in-progress": ("In progress", "neutral"),
     "waiting-for-phase": ("Waiting for phase", "neutral"),
+    "waiting-for-parent": ("Waiting for parent", "neutral"),
     "merged-elsewhere": ("Merged on GitHub", "neutral"),
     "cannot-assess": ("Can't assess", "alarm"),
     "rules-invalid": ("Merge rules invalid", "alarm"),
@@ -139,6 +141,11 @@ ROWS = (
     (14, "review, a required check is needed", ("checks-needed",)),
     (15, "review, the required review is not met", ("review-needed",)),
     (16, "review, sign-off pending", ("signoff-needed",)),
+    # read before 18 and 19: a stacked card whose own requirements are met
+    # (or not configured) still cannot land before the card it is stacked
+    # on has (task 117)
+    (21, "review, stacked on a card whose work has not landed",
+     ("waiting-for-parent",)),
     (18, "review, every requirement met or overridden",
      ("ready-to-merge", "ready-overridden")),
     (19, "review, an ungated board", ("review",)),
@@ -501,7 +508,7 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
         open_findings=open_findings, on_board=on_board,
         others_hold=others_hold, holder=holder, member=member,
         merged_elsewhere=merged_elsewhere, gated=gated,
-        verdict_now=verdict_now)
+        verdict_now=verdict_now, waiting=stacks.waiting(_stack(task, ctx)))
 
     if pr and pr.get("merged") and not merged_elsewhere \
             and candidate["state"] == "present" and not member:
@@ -566,7 +573,7 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
 def _decide(*, task, ctx, candidate, decision, requirements, alive,
             failure, recovery, pr, completion, open_findings, on_board,
             others_hold, holder, member, merged_elsewhere, gated,
-            verdict_now=None):
+            verdict_now=None, waiting=None):
     """The precedence (design §3.3), first row that applies wins. Returns
     (word, sentence, primary, others)."""
     stage = task["stage"]
@@ -823,6 +830,33 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
                 f"{row['plain'][1:]}.",
                 action("confirm-criteria", label), [])
 
+    # 21 (read before 18 and 19). Stacked on a card whose work has not
+    # landed: whatever this card's own requirements say, it lands after
+    # its parent does. The edge's own words come with it when it is not
+    # simply sitting on its parent.
+    if waiting and (decision is None or decision.get("decision") in (
+            "allowed", "overridden", "ungated")):
+        parent = waiting["parent"]
+        who = f"#{parent['number']}" if parent.get("number") else parent["file"]
+        lead = (f"Requirements met for {here}. "
+                if decision and decision.get("decision") != "ungated"
+                else "No merge requirements are configured. That is not a "
+                     "pass. ")
+        edge = waiting.get("edge") or {}
+        said = (f" {edge.get('sentence')}"
+                if edge.get("state") not in (None, "on-parent") else "")
+        sentence = (f"{lead}Waiting for {who} to land: this card's change "
+                    f"request targets {waiting['target']}, and it lands in "
+                    f"{waiting['landing']} after its parent does.{said}")
+        if not has_pr and candidate["state"] == "present" and ctx["remote"]:
+            return ("waiting-for-parent", sentence,
+                    action("open-pr", "↑ open PR"), [])
+        rest = [review_pr] if review_pr else []
+        if pr_url:
+            return ("waiting-for-parent", sentence,
+                    action("open-pr-url", "Open the PR", url=pr_url), rest)
+        return ("waiting-for-parent", sentence, None, rest)
+
     # 18. met or overridden
     if decision and decision.get("decision") in ("allowed", "overridden"):
         overridden = decision["decision"] == "overridden"
@@ -1026,6 +1060,9 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
         "phases": sorted((k, v.get("running"), v.get("halted"))
                          for k, v in ctx["phases"].items()),
         "snapshots": snaps,
+        # each stacked card's edge reads its parent's tip, records and
+        # snapshot, so the stack reading is part of every card's identity
+        "stacks": ctx.get("stacks") or {},
         # The recorded plan (a ⌖ replan rewrites it) and the delivered
         # record (a finished merge & clean up writes it) are both read by
         # every card's reading, so both are part of its identity.
@@ -1058,14 +1095,19 @@ def compact(found: dict) -> dict:
     return out
 
 
-def board(collected: dict, phase_state: dict | None = None) -> dict:
+def board(collected: dict, phase_state: dict | None = None,
+          stack_state: dict | None = None) -> dict:
     """The compact reading for every card, for `/api/state`. Memoised by a
     fingerprint of every input and a time bucket — the cache is never
-    authority, and a mutation never reads it."""
+    authority, and a mutation never reads it. `stack_state` is the stack
+    reading `/api/state` already took (`stacks.board`); read here when the
+    caller has none."""
     global _BOARD
     tasks = [task for stage in collected.get("stages", [])
              for task in stage["tasks"]]
     ctx = _context(phase_state)
+    ctx["stacks"] = (stack_state if stack_state is not None
+                     else stacks.board(collected))
     key = (_fingerprint(collected, ctx, tasks), int(time.time() / _TTL))
     with _LOCK:
         cached = _BOARD
@@ -1096,6 +1138,14 @@ def for_card(filename: str, stage: str | None = None,
     """The full reading for one card, always recomputed."""
     task = _find(filename, stage)
     return compute(task, _context(phase_state), full=True)
+
+
+def _stack(task: dict, ctx: dict) -> dict | None:
+    """This card's stack reading, taken once per pass for the whole board
+    (`stacks.board`) and kept in `ctx`."""
+    if ctx.get("stacks") is None:
+        ctx["stacks"] = stacks.board(taskfiles.collect())
+    return ctx["stacks"].get(task["file"])
 
 
 def _find(filename: str, stage: str | None) -> dict:

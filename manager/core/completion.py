@@ -36,6 +36,7 @@ import config
 import drive as drive_mod
 import gates
 import changes
+import githost
 import plans
 import records
 import state
@@ -301,7 +302,8 @@ def _complete(filename: str, stage: str) -> dict:
         # exactly what it does not cover. Nor is a commit made after the
         # gate read the head: the branch holding it is kept.
         cleanup, unmerged = _clean_up(filename, branch, pinned, merged_tip,
-                                      on_origin)
+                                      on_origin,
+                                      landed=[m["file"] for m in brought])
         if not unmerged:
             # a branch with unmerged commits still has a PR worth watching
             changes.forget_pr(filename)
@@ -574,7 +576,8 @@ def _held_sentence(filename: str, stage: str, publication: dict,
 
 
 def _clean_up(filename: str, branch: str, pinned: str | None, merged: str,
-              on_origin: bool) -> tuple[dict, dict | None]:
+              on_origin: bool, landed: list[str] | tuple = ()
+              ) -> tuple[dict, dict | None]:
     """The card's own workspace, after its merge is published. Returns what
     became of each part — never "removed" for something git kept — and the
     unmerged tip when the branch moved past the commit the gate read."""
@@ -641,7 +644,8 @@ def _clean_up(filename: str, branch: str, pinned: str | None, merged: str,
         plans.forget(filename)        # a retry after the branch already went
     rname = changes.remote()
     if rname:
-        if _delete_remote_branch(rname, branch, merged, filename):
+        if _delete_remote_branch(rname, branch, merged, filename,
+                                 landed=landed):
             out["remoteBranch"] = "gone"
         else:
             out["remoteBranch"] = "kept"
@@ -766,16 +770,49 @@ def _pinned_head(decision: dict, branch: str) -> str | None:
     return commit
 
 
+def _still_targeted(branch: str, filename: str,
+                    landed: list[str] | tuple = ()) -> str | None:
+    """Why `branch` must stay on the remote, or None: an open change
+    request targets it, or a card on this board still aims its work at it,
+    or the hosting provider could not say (task 117). Deleting the base of
+    an open change is something a host may answer by closing or
+    retargeting the dependant — what GitHub does is not assumed here — so
+    the branch is kept, and the reason is said."""
+    # The members a phase merged target its branch and are delivered with
+    # it: they go to done/ in the same ending, so they hold nothing back.
+    waiting = [f for f in plans.dependants(branch, skip=filename)
+               if f not in landed]
+    if waiting:
+        return (f"{', '.join(waiting)} still "
+                f"{'targets' if len(waiting) == 1 else 'target'} it")
+    found = githost.changes_targeting(branch)
+    if found is None:
+        return (f"whether an open {githost.words()['change']} targets it "
+                f"could not be established ({changes.host_unavailable()})")
+    if found:
+        return (f"an open {githost.words()['change']} targets it "
+                f"({', '.join(c['url'] for c in found[:3])})")
+    return None
+
+
 def _delete_remote_branch(rname: str, branch: str, merged: str,
-                          filename: str) -> bool:
+                          filename: str, landed: list[str] | tuple = ()
+                          ) -> bool:
     """Delete `branch` on the remote only while it holds nothing but what
     was merged — read with `ls-remote`, then deleted with a lease on that
     exact value, so a push landing in between makes git refuse rather than
-    bench delete a commit nobody merged. Returns whether it was deleted."""
+    bench delete a commit nobody merged — and only while nothing targets
+    it (`_still_targeted`). Returns whether it was deleted."""
     listed = _run(["git", "ls-remote", rname, f"refs/heads/{branch}"], timeout=60)
     words = listed.stdout.split() if listed.returncode == 0 else None
     if words == []:
         return True                      # nothing there to delete
+    targeted = _still_targeted(branch, filename, landed)
+    if targeted:
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": f"{branch} kept on {rname} — {targeted}"})
+        return False
     tip = words[0] if words else ""
     if not tip or not (tip == merged or _contains(tip, merged)):
         state.record_board_event({
@@ -839,7 +876,14 @@ def _clear_member(member: dict, merged: str | None = None) -> str:
             if rname and merged:
                 _delete_remote_branch(rname, branch, merged, member["file"])
             elif rname:
-                _run(["git", "push", rname, "--delete", branch], timeout=60)
+                targeted = _still_targeted(branch, member["file"])
+                if targeted:
+                    state.record_board_event({
+                        "kind": "agent", "actor": "board",
+                        "file": member["file"],
+                        "summary": f"{branch} kept on {rname} — {targeted}"})
+                else:
+                    _run(["git", "push", rname, "--delete", branch], timeout=60)
     except (subprocess.SubprocessError, OSError) as exc:
         return f"{stem}: workspace kept — {str(exc)[:120]}"
     changes.forget_pr(member["file"])

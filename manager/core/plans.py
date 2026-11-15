@@ -87,7 +87,16 @@ import taskfiles
 # Where a recorded plan lives, and what the file is called. One per card,
 # replaced on a replan — the plan is a property of the card's current work,
 # not a history of every plan it ever had (the ticker keeps that).
-PLAN_VERSION = 1
+#
+# Version 2 (task 117, WP09) adds two keys and changes none: `stack` — the
+# parent card this work is stacked on (`card`), the branch it was cut from
+# (`branch`) and that branch's tip when it was cut (`tip`), or None — and
+# `landing`, where the work must end up for `done/` (the application base
+# the plan was made under). A version-1 record is read unchanged, and its
+# stack reading is derived from the card instead (`stacks`); nothing here
+# checks the version field, so a reader that predates version 2 ignores
+# the new keys.
+PLAN_VERSION = 2
 
 
 def plan_path(filename: str) -> Path:
@@ -679,7 +688,23 @@ def preflight(filename: str, stage: str, *, fetch: bool = True,
     if plan["blockers"]:
         return plan
     _resume(plan, card, ignore_recorded=ignore_recorded)
+    _stacked(plan, card)
     return plan
+
+
+def _stacked(plan: dict, card: dict) -> None:
+    """The version-2 keys: which card this work is stacked on, and where it
+    lands. Read from the board's one stack derivation
+    (`taskfiles.weave_stacks`) — a card whose base names no card on the
+    board has no parent card, exactly as before — and from the commit the
+    branch was actually cut from, which `_resume` may have read back out
+    of a recorded plan."""
+    found = card.get("stack") or {}
+    parent = found.get("parent") if found.get("mapping") == "card" else None
+    plan["stack"] = ({"card": parent, "branch": plan["startBranch"],
+                      "tip": plan.get("startCommit") or ""}
+                     if parent else None)
+    plan["landing"] = plan.get("appBase") or config.APP_BASE
 
 
 def replan(filename: str, stage: str) -> dict:
@@ -858,6 +883,50 @@ def remember_target(filename: str, branch: str, base: str) -> dict:
     stored.setdefault("appRemote", app_remote())
     stored["provenance"] = saved.get("provenance") or "adopted"
     return record(stored)
+
+
+def owner_of(branch: str) -> str | None:
+    """The card on the board whose work lives on `branch` — `task/<stem>`
+    for an ordinary card, `phase/<stem>` for a phase card — or None for a
+    branch no card owns. A local read of the stage directories."""
+    for prefix, phase in ((config.TASK_BRANCH_PREFIX, False),
+                          (config.PHASE_BRANCH_PREFIX, True)):
+        if not branch.startswith(prefix):
+            continue
+        stem = branch[len(prefix):]
+        stage = taskfiles.find_stage_of(f"{stem}.md")
+        if stage is None:
+            return None
+        task = taskfiles.read_task(config.TASKS / stage / f"{stem}.md", stage)
+        return task["file"] if bool(task.get("isPhase")) == phase else None
+    return None
+
+
+def dependants(branch: str, *, skip: str | None = None) -> list[str]:
+    """The cards on this board whose work still targets `branch` — the
+    review target of their recorded plan, or of their headers when none is
+    recorded — and is not delivered (`done/`). Local: the cards and the
+    recorded plans, nothing asked of a remote. Cleanup reads it before it
+    deletes a branch, beside what the hosting provider says (task 117)."""
+    found = []
+    for group in taskfiles.collect()["stages"]:
+        if group["slug"] == "done":
+            continue
+        for task in group["tasks"]:
+            if task["file"] == skip:
+                continue
+            saved = recorded(task["file"]) or {}
+            target = saved.get("prBase") or declared(task)["prBase"]
+            if target == branch:
+                found.append(task["file"])
+    return found
+
+
+def remote_branch_commit(remote: str, branch: str) -> str:
+    """The commit the remote has for `branch`, asked of the remote itself
+    (`git ls-remote`), or "" — for the mutations that must know, never for
+    a reading."""
+    return _remote_branch_commit(remote, branch)
 
 
 def target_problem(filename: str, base: str) -> str | None:

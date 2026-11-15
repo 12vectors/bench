@@ -6,7 +6,8 @@
   "operations": ["open", "observe", "identity", "review-records", "merge",
                  "merge-conditional", "external-review"],
   "functions": ["detect", "probe", "change_ref", "is_change_url",
-                "find_change", "change_identity", "change_status",
+                "find_change", "changes_targeting", "change_identity",
+                "change_status",
                 "review_records", "head_refs", "open_change",
                 "merge_change", "request_external_review", "agent_verbs"],
   "setup": "Install the GitHub CLI (gh) and run `gh auth login` for the account that opens and merges this board's pull requests."

@@ -326,6 +326,110 @@ def weave_phases(stages: list[dict]) -> None:
                                "index": index, "total": len(members)}
 
 
+STACK_MAPPINGS = ("default", "integration", "card", "external", "missing",
+                  "ambiguous")
+
+
+def _stack_name(task: dict) -> str:
+    return f"#{task['number']}" if task.get("number") else task["file"]
+
+
+def weave_stacks(stages: list[dict]) -> None:
+    """Resolve every card's **Base branch:** against the board: which card,
+    if any, its work is stacked on, which cards are stacked on it, and
+    whether the chain loops (task 117, WP09).
+
+    The one derivation of the stack graph. Nothing is stored twice and no
+    header is added: a child's parent is the card whose work branch the
+    child's base names (`task/<stem>` for an ordinary card, `phase/<stem>`
+    for a phase card), and the children are read back from that. Each card
+    gains `stack`:
+
+    - `mapping` — `default` (the application base), `integration` (a phase
+      member: its phase branch, with the phase's own semantics), `card` (a
+      parent card on this board), `external` (a branch no card owns),
+      `missing` (shaped like a card's branch, and no card has that name) or
+      `ambiguous` (more than one reading, so none is chosen);
+    - `base`, `parent` (a filename) and `why` (for missing and ambiguous);
+    - `children` — filenames, in board order;
+    - `cycle` — the filenames of the loop this card is on, else empty. A
+      loop has no bottom to start from, so it is `plan drift`, and a launch
+      refuses on it like any other drift.
+
+    Pure: it reads the parsed cards and nothing else — no git, no record.
+    """
+    tasks = [task for stage in stages for task in stage["tasks"]]
+    by_stem: dict[str, list[dict]] = {}
+    for task in tasks:
+        by_stem.setdefault(task["file"][:-3], []).append(task)
+        task["stack"] = {"mapping": "default", "base": None, "parent": None,
+                         "why": None, "children": [], "cycle": []}
+    for task in tasks:
+        here = task["stack"]
+        if task.get("phase") and not task.get("isPhase"):
+            here.update(mapping="integration",
+                        base=config.PHASE_BRANCH_PREFIX + task["phase"]["file"][:-3])
+            continue
+        base = task.get("baseBranch")
+        if not base or base == config.APP_BASE:
+            continue
+        here["base"] = base
+        if base.startswith(config.TASK_BRANCH_PREFIX):
+            stem, phase = base[len(config.TASK_BRANCH_PREFIX):], False
+        elif base.startswith(config.PHASE_BRANCH_PREFIX):
+            stem, phase = base[len(config.PHASE_BRANCH_PREFIX):], True
+        else:
+            here["mapping"] = "external"
+            continue
+        found = by_stem.get(stem) or []
+        if not found:
+            here.update(mapping="missing",
+                        why=(f"{base} is shaped like the work branch of "
+                             f"{stem}.md, and no card on the board has that "
+                             f"name"))
+        elif len(found) > 1:
+            where = ", ".join(sorted(f"{t['stage']}/" for t in found))
+            here.update(mapping="ambiguous",
+                        why=(f"{stem}.md is in more than one stage ({where}), "
+                             f"so which card {base} belongs to is not one "
+                             f"answer"))
+        elif found[0]["isPhase"] != phase:
+            owner = found[0]
+            mine = (config.PHASE_BRANCH_PREFIX if owner["isPhase"]
+                    else config.TASK_BRANCH_PREFIX) + stem
+            here.update(mapping="ambiguous",
+                        why=(f"{base} names {owner['file']}, whose work lives "
+                             f"on {mine} — the base and the card disagree"))
+        else:
+            here.update(mapping="card", parent=found[0]["file"])
+            found[0]["stack"]["children"].append(task["file"])
+
+    by_file = {task["file"]: task for task in tasks}
+    parent_of = {t["file"]: t["stack"]["parent"] for t in tasks
+                 if t["stack"]["parent"]}
+    for start in parent_of:
+        path: list[str] = []
+        seen: dict[str, int] = {}
+        node = start
+        while node in parent_of and node not in seen:
+            seen[node] = len(path)
+            path.append(node)
+            node = parent_of[node]
+        if node not in seen:
+            continue
+        loop = path[seen[node]:]
+        if by_file[loop[0]]["stack"]["cycle"]:
+            continue
+        names = " → ".join(_stack_name(by_file[f]) for f in loop + loop[:1])
+        for member in loop:
+            card = by_file[member]
+            card["stack"]["cycle"] = list(loop)
+            card["planDrift"].append(
+                f"**Base branch:** {card['stack']['base']} makes a loop of "
+                f"stacked cards ({names}) — a stack needs a bottom to start "
+                f"from; change one card's base")
+
+
 def collect() -> dict:
     stages = []
     for slug, label in config.STAGES:
@@ -337,6 +441,7 @@ def collect() -> dict:
         tasks.sort(key=lambda t: (int(t["number"]) if t["number"] else 9999, t["file"]))
         stages.append({"slug": slug, "label": label, "tasks": tasks})
     weave_phases(stages)
+    weave_stacks(stages)
 
     extras = {}
     for slug in ("plans", "reference"):

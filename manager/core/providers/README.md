@@ -60,6 +60,7 @@ never raising (a failure to start is 128; a timeout is 1 with
 | `probe(ctx, active=False)` | read, local, never the network | per capability `{state: available \| unavailable \| unknown, reason}` |
 | `change_ref(url)` / `is_change_url(url)` | pure | the change number, or None / whether a url is one |
 | `find_change(ctx, branch)` | read | `{url, base}` or None |
+| `changes_targeting(ctx, base)` | read | `[{url, head}]` for the open changes whose base is `base`, `[]` for none, None when it cannot say. Cleanup keeps a branch while the answer is not `[]` (task 117); `none` answers `[]`, since it observes no change request |
 | `change_identity(ctx, number)` | read | `{ok, state, merged, base, baseCommit, head, headCommit, crossRepository}` |
 | `change_status(ctx, number)` | read | the normalized status below, or None |
 | `review_records(ctx, number)` | read | `[{id, reviewer, state, commit, submitted}]`, or None |

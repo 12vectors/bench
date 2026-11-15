@@ -5,7 +5,8 @@
   "cli": null,
   "operations": [],
   "functions": ["detect", "probe", "change_ref", "is_change_url",
-                "find_change", "change_identity", "change_status",
+                "find_change", "changes_targeting", "change_identity",
+                "change_status",
                 "review_records", "head_refs", "open_change",
                 "merge_change", "request_external_review", "agent_verbs"],
   "setup": "Nothing to install. Branches are pushed and merged with git alone; no change request is opened, observed or merged on a host."

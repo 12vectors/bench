@@ -54,21 +54,32 @@ L12 doctor
 L13 commands drive events sync
 L14 changes
 L15 completion
-L16 delivery
-L17 agentsettings
-L18 settings
-L19 setupguide
-L20 agents
-L21 setuptasks
-L22 readiness
-L23 previews
-L24 phases
-L25 refine
-L26 routes watch
-L27 httpd
-L28 board
+L16 stacks
+L17 delivery
+L18 agentsettings
+L19 settings
+L20 setupguide
+L21 agents
+L22 setuptasks
+L23 readiness
+L24 previews
+L25 phases
+L26 refine
+L27 routes watch
+L28 httpd
+L29 board
 composition: board httpd routes watch
 ```
+
+`stacks` (task 117, WP09) sits directly above `completion` and below
+`delivery`, where the target table puts it: the derived stack reading —
+each edge's state, a card's place on its path and its three targets —
+read from the recorded plans (`plans`), the PR snapshots (`changes`) and
+the delivered records (`completion`), with local git only. The graph
+itself (parent, children, loops) is derived once by
+`taskfiles.weave_stacks`, beside `weave_phases`, so a loop reaches
+`plan drift` and preflight refuses it without `plans` reaching up.
+`delivery` and `routes` read it; it reads nothing above itself.
 
 `githost` (task 116, WP08) sits directly above `config`: which hosting
 provider is in force, what it can do here, and refusing by name. It
@@ -181,7 +192,7 @@ L28 httpd
 L29 board
 composition: board httpd routes
 retired:
-new: gatepolicy evidence resultidentity staleness stacks
+new: gatepolicy evidence resultidentity staleness
 ```
 
 The plan wrote same-layer orderings as `gitrepo → githost`; with the
@@ -209,7 +220,7 @@ One owner per question; `AGENTS.md` describes each module in full.
 | evidence | `verify`, `progress`, `acceptance`, `callers` | the check runner and its records; a run's own claims; criterion decisions and findings; whether a request's claim to be a run is proved, and the Host and Origin a request names (report or enforce) |
 | decisions | `gates`, `required`, `doctor` | may this merge happen; run missing required checks; readiness diagnosis |
 | services | `commands`, `drive`, `events`, `sync`, `github`, `completion` | local chores; the one live drive; normalized events; ticket sync; opening and polling PRs; merge-and-clean-up (merge, publish, recover, clean up, sweep) |
-| reading | `delivery` | one status per card, owning no policy |
+| reading | `stacks`, `delivery` | the derived stack reading (edge states, path positions, the three targets), local reads only; one status per card, owning no policy |
 | surfaces | `agentsettings`, `settings`, `setupguide`, `setuptasks`, `readiness`, `previews` | configuration pages and the setup guide's areas |
 | runs | `agents`, `phases`, `refine` | headless launches; the phase beat; refinement jobs |
 | composition | `watch`, `routes`, `httpd`, `board` | the disk poller; every route with its request class and handler; the socket, the class doors and the body checks; startup wiring |

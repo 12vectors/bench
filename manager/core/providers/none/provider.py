@@ -49,6 +49,12 @@ def find_change(ctx: dict, branch: str) -> dict | None:
     return None
 
 
+def changes_targeting(ctx: dict, base: str) -> list[dict] | None:
+    # This board opens and observes no change request, so none targets
+    # anything it knows of; the cards' own plans are asked beside this.
+    return []
+
+
 def change_identity(ctx: dict, number: str) -> dict:
     return {"ok": False, "error": "unsupported", "detail": _WHY}
 

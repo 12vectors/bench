@@ -297,6 +297,12 @@ def _open_pr(filename: str) -> str:
             raise ValueError(f"won't open a PR for {filename}: {base} is {ahead} "
                              f"commits ahead of {rname} — push {base} first, then "
                              f"move the card again")
+    elif _another_cards(filename, task, base):
+        # Stacked on another card's work branch (task 117). That branch is
+        # its own card's to publish — through that card's change request —
+        # so it is never pushed from here, and neither is a child carrying
+        # commits of it the remote has not seen.
+        _parent_published(filename, branch, base, rname)
     elif _branch_exists(base):
         # A phase branch is the board's own: publish it so the member's PR
         # has a base on the remote to be opened against. When only the
@@ -338,6 +344,55 @@ def _open_pr(filename: str) -> str:
     state.broadcast({"type": "board"})
     _poll_pr(filename, url)  # first CI/review snapshot without waiting a cycle
     return url
+
+
+def _another_cards(filename: str, task: dict, base: str) -> str | None:
+    """The card that owns `base`, when it is not this card and `base` is
+    not this card's own phase branch — a phase member's PR keeps its phase
+    branch published exactly as before. None for the application base and
+    for a branch no card owns."""
+    if base == config.APP_BASE:
+        return None
+    phase = task.get("phase") if not task.get("isPhase") else None
+    if phase and base == config.PHASE_BRANCH_PREFIX + phase["file"][:-3]:
+        return None
+    owner = plans.owner_of(base)
+    return owner if owner and owner != filename else None
+
+
+def _parent_published(filename: str, branch: str, base: str,
+                      rname: str) -> None:
+    """Refuse, before anything is pushed, to open a change request whose
+    base belongs to another card unless that card's branch is on the remote
+    and this branch carries none of its commits the remote lacks. Pushing
+    this branch would otherwise publish the parent's unpublished work under
+    this card's name."""
+    owner = plans.owner_of(base) or base
+    fetched = _run(["git", "fetch", rname, base], timeout=120)
+    published = ""
+    if fetched.returncode == 0:
+        found = _run(["git", "rev-parse", "--verify", "--quiet",
+                      f"refs/remotes/{rname}/{base}"])
+        published = found.stdout.strip() if found.returncode == 0 else ""
+    if not published:
+        raise ValueError(
+            f"won't open a PR for {filename}: its base {base} is {owner}'s "
+            f"work branch and is not on {rname} — bench does not publish "
+            f"another card's branch. Publish {owner} first (its own PR), "
+            f"then move this card again")
+    if not _branch_exists(base):
+        return
+    shared = _run(["git", "merge-base", branch, base]).stdout.strip()
+    if not shared:
+        return
+    ahead = _run(["git", "rev-list", "--count",
+                  f"{rname}/{base}..{shared}"]).stdout.strip()
+    if ahead.isdigit() and int(ahead) > 0:
+        raise ValueError(
+            f"won't open a PR for {filename}: it carries {ahead} commit"
+            f"{'' if ahead == '1' else 's'} of {owner}'s {base} that {rname} "
+            f"does not have, and pushing it would publish them — publish "
+            f"{owner}'s branch first, then move this card again")
 
 
 def _existing_pr_info(branch: str) -> dict | None:

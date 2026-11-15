@@ -185,6 +185,24 @@ def find_change(ctx: dict, branch: str) -> dict | None:
     return {"url": url, "base": str(data.get("baseRefName") or "")}
 
 
+def changes_targeting(ctx: dict, base: str) -> list[dict] | None:
+    """The open pull requests whose base is `base`: `[{url, head}]`, `[]`
+    for none, None when gh could not answer — which cleanup reads as "keep
+    the branch" (task 117)."""
+    data = _json(_pr(ctx, "list", "--base", base, "--state", "open",
+                     "--json", "url,headRefName"))
+    if not isinstance(data, list):
+        return None
+    found = []
+    for item in data:
+        if not isinstance(item, dict):
+            return None
+        url = str(item.get("url") or "")
+        if is_change_url(url):
+            found.append({"url": url, "head": str(item.get("headRefName") or "")})
+    return found
+
+
 _STATE = {"OPEN": "open", "MERGED": "merged", "CLOSED": "closed"}
 
 # Named rather than globbed: a gh too old to know one of them fails the

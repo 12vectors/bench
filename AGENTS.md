@@ -59,7 +59,7 @@ names reached across modules — live in
 `tests/test_architecture.py`:
 
 ```
-gitproc / records / redact < config < githost < state / reports / templates / gitrepo < taskfiles < plans / profiles < reviews < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < githost < state / reports / templates / gitrepo < taskfiles < plans / profiles < reviews < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -162,6 +162,14 @@ gitproc / records / redact < config < githost < state / reports / templates / gi
   recovery record a retry finishes from, the card's cleanup and a
   phase's sweep, and the delivered record (it imports `drive`, to park a
   drive before merging, and `changes`, which is why it sits above both)
+- `stacks.py` — the derived stack reading (task 117): for a card whose
+  `**Base branch:**` names another card's work branch, its parent, the
+  cards stacked on it, its place on its path (`2/3` along a chain, `step
+  2` where the stack branches), its selected base, review target and
+  landing target, and each edge's state in the server's words — from
+  local refs, the recorded plans, the PR snapshots and the delivered
+  records only. The graph itself is `taskfiles.weave_stacks`; a read
+  fetches, writes and runs nothing (see "Stacked cards")
 - `delivery.py` — one delivery status per card, computed server-side
   from the authorities above: what is happening, the one next action and
   who holds it, and the merge requirements that apply at the current
@@ -1923,6 +1931,7 @@ holds this table to the module's own list.
 | `ready-to-start` | Ready to start | neutral | 8 |
 | `in-progress` | In progress | neutral | 8 |
 | `waiting-for-phase` | Waiting for phase | neutral | 9 |
+| `waiting-for-parent` | Waiting for parent | neutral | 21 (read before 18–19) |
 | `merged-elsewhere` | Merged on GitHub | neutral | 17 (read before 10–16) |
 | `cannot-assess` | Can't assess | alarm | 6, 10 |
 | `rules-invalid` | Merge rules invalid | alarm | 11 |
