@@ -94,9 +94,18 @@ class _Install:
             "# design\n", encoding="utf-8")
         self._saved: dict = {}
 
+    def patch(self, **values) -> None:
+        for attr, value in values.items():
+            self._saved.setdefault(attr, getattr(config, attr))
+            setattr(config, attr, value)
+
+    def restore(self, **saved) -> None:
+        for attr, value in saved.items():
+            setattr(config, attr, value)
+
     def __enter__(self) -> "_Install":
         state = self.local / "state"
-        values = dict(
+        self.patch(
             TM_ROOT=self.tool, LOCAL=self.local, CORE=FAKE_CORE,
             REPO=self.app, TASKS=self.work / "tasks",
             WORKTREES=self.root / "worktrees",
@@ -109,15 +118,11 @@ class _Install:
             # environment this suite runs in says (an in-process setting
             # wins over it, and the locked environment is emptied)
             ADAPTER="golden", _ENV_LOCKED={})
-        for attr, value in values.items():
-            self._saved[attr] = getattr(config, attr)
-            setattr(config, attr, value)
         gates.forget_cached()
         return self
 
     def __exit__(self, *exc) -> None:
-        for attr, value in self._saved.items():
-            setattr(config, attr, value)
+        self.restore(**self._saved)
         gates.forget_cached()
         self._tmp.cleanup()
 

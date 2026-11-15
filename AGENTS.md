@@ -59,7 +59,7 @@ names reached across modules — live in
 `tests/test_architecture.py`:
 
 ```
-gitproc / records / redact < config < githost < state / reports / templates / gitrepo < taskfiles < plans / profiles < reviews < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < githost < state / reports / templates / gitrepo < taskfiles < plans / profiles < gatepolicy / reviews < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -107,6 +107,12 @@ gitproc / records / redact < config < githost < state / reports / templates / gi
   in that checkout and which files it is guaranteed to have read. One
   profile per launch intent, the approved context it pins read-only, and
   the manifest recording what each run actually rode
+- `gatepolicy.py` — the merge rules as written: reading and validating
+  the policy document's `"gates"` block (each scope's checks, review and
+  sign-off policy, the override path), its public form, and the lines a
+  committing run is told the rules require. It reads the document and
+  the check definitions through `profiles` and evaluates nothing —
+  `gates` does (task 120)
 - `reviews.py` — the checkout a PR review runs in: the pull request's
   repository, base and head resolved before anything is created, a
   detached worktree of that exact head owned by the run, and whether the
@@ -3676,7 +3682,7 @@ should I configure next?**
 
 It owns no policy. Every value in it comes from the authority that
 already answers for that question — `profiles.resolve()` for what a run
-may do and read, `profiles.gate_policy()` for what a merge must have,
+may do and read, `gatepolicy.gate_policy()` for what a merge must have,
 `verify`'s own records for what the project's checks found,
 `gates.evaluate()` for whether a merge may happen, `config` for the roots
 and each setting's provenance. There is deliberately no second reader of
@@ -4135,7 +4141,7 @@ same reading in a terminal, for a person or their coding agent. It is
 not a second configuration store and owns no setting: every fact in it is
 asked of the module that already answers for it (`config` for the layout,
 the remotes, `gh` and the driver; `config.agent_choice` for the harness
-and model; `settings.verification` and `profiles.gate_policy` for checks
+and model; `settings.verification` and `gatepolicy.gate_policy` for checks
 and merge rules; `verify.outcome_now` for what a check last found), so the
 guide cannot disagree with a launch.
 

@@ -44,7 +44,7 @@ L2  githost
 L3  state reports templates gitrepo
 L4  taskfiles
 L5  plans profiles
-L6  reviews
+L6  gatepolicy reviews
 L7  verify
 L8  progress
 L9  acceptance callers
@@ -80,6 +80,17 @@ itself (parent, children, loops) is derived once by
 `taskfiles.weave_stacks`, beside `weave_phases`, so a loop reaches
 `plan drift` and preflight refuses it without `plans` reaching up.
 `delivery` and `routes` read it; it reads nothing above itself.
+
+`gatepolicy` (task 120, WP11) sits directly above `profiles`, beside
+`reviews`, where the target table puts it: reading and validating the
+document's `"gates"` block, moved out of `profiles` verbatim. It imports
+`profiles` only — the document, the checks a requirement names, the
+diagnostic codes, `Trouble` and `digest` — and owns no evaluation
+(`gates` does). `profiles` keeps the scope vocabulary (`GATE_SCOPES`)
+and its one shallow read of the block (`verified-outputs`), and is
+handed the merge rules' prompt lines by every launch
+(`gatepolicy.required_lines`) rather than reaching up for them. Every
+persisted identity it computes is pinned by `tests/test_policy_golden.py`.
 
 `githost` (task 116, WP08) sits directly above `config`: which hosting
 provider is in force, what it can do here, and refusing by name. It
@@ -144,11 +155,14 @@ they are counted so the list can only shrink. (There were fourteen:
 `previews.scrub → verify` went with task 111, when `previews` began
 asking `redact` instead.)
 
-**61 private reaches** — `module._name` used from another module — are
+**54 private reaches** — `module._name` used from another module — are
 listed the same way. (Seven went with task 114: `config._app_git` from
 gates, delivery and required is `gitrepo.app_git`, and
 `agents._fresh_branch_point` from phases and plans is
-`gitrepo.fresh_branch_point`.) The clusters, which the later packages
+`gitrepo.fresh_branch_point`. Seven more went with task 120, when the
+three `profiles` names settings, doctor and agentsettings reached for
+became public: `profiles.digest`, `profiles.tool_relative` and
+`profiles.SOURCE_WORDS`.) The clusters, which the later packages
 remove: `gates._tips` /
 `gates._EPOCH` / `verify._EPOCH` / `verify._KEYS` (delivery, required),
 `refine` driving `agents._launch` and friends, and `readiness` and
@@ -192,7 +206,7 @@ L28 httpd
 L29 board
 composition: board httpd routes
 retired:
-new: gatepolicy evidence resultidentity staleness
+new: evidence resultidentity staleness
 ```
 
 The plan wrote same-layer orderings as `gitrepo → githost`; with the
@@ -438,7 +452,7 @@ standard library, no core module and no other provider.
 ```architecture counts
 top-level-exceptions 0
 function-imports 25
-private-reaches 61
+private-reaches 54
 dynamic-patch-targets 1
 provider-vocabulary 183
 routes 91

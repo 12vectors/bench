@@ -711,7 +711,6 @@ FUNCTION_IMPORTS: dict[str, tuple[int, int]] = {
 PRIVATE_REACHES: dict[str, tuple[int, int]] = {
     "acceptance.py::_legacy_ticks -> taskfiles._is_fence": (1, 141),
     "acceptance.py::track.change -> taskfiles._is_fence": (1, 592),
-    "agentsettings.py::_setting_row -> profiles._SOURCE_WORDS": (1, 148),
     "agentsettings.py::rows -> config._SUFFIX": (1, 194),
     # moved with merge & clean up out of github.py by WP07 (task 115)
     "completion.py::_complete -> drive._alive": (1, 211),
@@ -720,7 +719,6 @@ PRIVATE_REACHES: dict[str, tuple[int, int]] = {
     "delivery.py::_fingerprint -> verify._EPOCH": (1, 1008),
     "delivery.py::_merged_covers -> gates._contained": (1, 421),
     "delivery.py::_optional -> verify._offered": (1, 403),
-    "doctor.py::_harness_finding -> profiles._SOURCE_WORDS": (1, 446),
     "gates.py::board -> verify._EPOCH": (1, 2007),
     "readiness.py::check_states -> settings._checks_of": (1, 483),
     "readiness.py::review -> settings._checks_of": (1, 802),
@@ -738,11 +736,6 @@ PRIVATE_REACHES: dict[str, tuple[int, int]] = {
     "refine.py::discard -> taskfiles._one_line": (1, 754),
     "required.py::_live -> verify._KEYS": (1, 933),
     "required.py::_live -> verify._key": (1, 931),
-    "settings.py::_record_change -> profiles._tool_relative": (1, 2048),
-    "settings.py::apply -> profiles._tool_relative": (1, 2006),
-    "settings.py::draft -> profiles._tool_relative": (1, 1669),
-    "settings.py::revision_of -> profiles._digest": (1, 1643),
-    "settings.py::validate -> profiles._digest": (1, 1750),
     "setupguide.py::create_task -> taskfiles._refuse_escape": (1, 1156),
     "setuptasks.py::_cards -> taskfiles._depends_on": (1, 439),
     "setuptasks.py::_cards -> taskfiles._first": (1, 434),
@@ -805,10 +798,14 @@ DYNAMIC_PATCH_TARGETS: dict[str, tuple[int, int]] = {
 # pull-request url became a neutral sample. `gates`, `profiles` and
 # `settings` keep the `github` / `separate-reviewer` policy words, which
 # are persisted and are not renamed (plan §1.3).
+#
+# WP11 (task 120) moved the merge-rule policy out of `profiles` verbatim:
+# thirteen of its seventeen went with it to `gatepolicy` (the review
+# policy words and their sentences), and the total is unchanged.
 PROVIDER_VOCABULARY: dict[str, int] = {
     "agents": 2, "changes": 24, "completion": 13, "config": 10,
-    "delivery": 10, "doctor": 3, "gates": 23, "githost": 2,
-    "plans": 1, "profiles": 17, "readiness": 9, "redact": 4,
+    "delivery": 10, "doctor": 3, "gatepolicy": 13, "gates": 23,
+    "githost": 2, "plans": 1, "profiles": 4, "readiness": 9, "redact": 4,
     "reviews": 8, "routes": 5, "settings": 36, "setupguide": 15,
     "verify": 1,
 }
