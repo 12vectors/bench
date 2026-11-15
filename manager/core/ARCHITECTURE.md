@@ -319,6 +319,7 @@ evidence.store
 gates.override
 gates.record_verdict
 plans.record
+plans.restore
 profiles.record
 settings.apply
 setupguide._write_decisions
