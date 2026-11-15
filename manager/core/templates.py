@@ -286,7 +286,12 @@ def render(name: str, text: str, fields: dict[str, str]) -> str:
     if problems(name, text):
         raise ValueError(problems(name, text)[0]["why"])
     allowed = set(_spec(name)["fields"])
-    return text.format(**{k: str(v) for k, v in fields.items() if k in allowed})
+    # The hosting provider's fragments (task 116), for a caller that did
+    # not pass them: the provider in force supplies the words a launch
+    # would, formatted with the card's branch.
+    filled = dict(githost.fragments(name, str(fields.get("branch") or "")))
+    filled.update(fields)
+    return text.format(**{k: str(v) for k, v in filled.items() if k in allowed})
 
 
 def describe(name: str) -> dict:

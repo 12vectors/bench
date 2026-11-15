@@ -359,8 +359,10 @@ def fragments(template: str, branch: str) -> dict[str, str]:
     with `branch` — every placeholder the template may carry gets words,
     so a provider that says nothing renders as empty text rather than as
     a launch that dies on a missing field."""
-    source = load("none") if provider()["problem"] else module()
-    parts = (source.agent_verbs("work").get("fragments") or {}).get(template) or {}
+    # By name only: rendering a template (a Settings preview included)
+    # starts no process, so the remote is not read here. What a launch may
+    # actually run is `agent_verbs`, which does read it.
+    parts = (module().agent_verbs("work").get("fragments") or {}).get(template) or {}
     out = {}
     for key in FRAGMENT_FIELDS.get(template, ()):
         text = str(parts.get(key) or "")

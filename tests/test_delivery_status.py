@@ -899,9 +899,9 @@ class ReviewsAreReadApart(DeliveryCase):
         self.assertEqual(folded["verdict"], "red")
         self.assertEqual(folded["review"], "approved")
         self.assertIsNone(changes._fold(normal({"reviews": []}), {})["review"])
-        changes = changes._fold(
+        asked = changes._fold(
             normal({"reviews": [{"state": "CHANGES_REQUESTED"}]}), {})
-        self.assertEqual(changes["review"], "changes")
+        self.assertEqual(asked["review"], "changes")
 
 
 class CountsAreRequiredOnly(DeliveryCase):

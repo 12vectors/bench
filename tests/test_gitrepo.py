@@ -100,8 +100,10 @@ DASH_C_ALLOWED = {"gitproc.py", "doctor.py"}
 # when merge & clean up moved out of `github` (the same body as
 # `changes._run`, whose two stay with the PR opening and polling).
 DIRECT_GIT: dict[str, int] = {
-    "acceptance": 1, "agents": 1, "completion": 2, "delivery": 1, "github": 2,
-    "previews": 1, "profiles": 1, "required": 1, "reviews": 2,
+    # `changes` is `github` renamed (task 116); `githost`'s one is the
+    # remote-url read that left `config.gh_repo`, an exempt module, with it
+    "acceptance": 1, "agents": 1, "changes": 2, "completion": 2,
+    "delivery": 1, "githost": 1, "previews": 1, "profiles": 1, "required": 1, "reviews": 2,
     "settings": 1, "sync": 1, "taskfiles": 1, "verify": 1,
 }
 DIRECT_GIT_EXEMPT = {"config", "gitproc", "gitrepo"}
