@@ -879,8 +879,8 @@ def document_from(raw: str, path: Path) -> dict:
            "prepare": data.get("prepare") or [],
            "verify": data.get("verify") or [],
            # The gate requirements, kept as written rather than
-           # defaulted: `gatepolicy.gate_policy` has to tell "no gate block" from
-           # "a gate block that is not an object", and the second is a
+           # defaulted: `gatepolicy.gate_policy` has to tell "no gate
+           # block" from "a gate block that is not an object", and the second is a
            # refusal rather than an absence.
            "gates": data.get("gates")}
     if version != PROFILE_VERSION:
@@ -2454,9 +2454,9 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
         configured.append("isolated-environment")
     # A gate is a property of the board rather than of this intent, so it
     # is read shallowly from the same document and never re-validated
-    # here: `gatepolicy.gate_policy()` is the one authority on whether a gate block
-    # holds together, and a resolution of `work` must not grow a second
-    # opinion about it. What this adds is the honest guarantee word —
+    # here: `gatepolicy.gate_policy()` is the one authority on whether a
+    # gate block holds together, and a resolution of `work` must not grow
+    # a second opinion about it. What this adds is the honest guarantee word —
     # `verified-outputs` is enforced on a board that gates something, and
     # absent on one that gates nothing.
     if _gates_something(doc):
@@ -3135,9 +3135,10 @@ def seams() -> dict:
                          "not grow one: every code it reports is one "
                          "profiles.DIAGNOSTICS names"),
             "a gate": ("`gates.py` — it reads the requirements "
-                       "`gatepolicy.gate_policy()` returns, the evidence `verify.for_task()` returns, and "
-                       "insists on a `passed` that `verify.outcome_now()` still "
-                       "calls `passed` against the exact commit it is about to "
+                       "`gatepolicy.gate_policy()` returns, the evidence "
+                       "`verify.for_task()` returns, and insists on a "
+                       "`passed` that `verify.outcome_now()` still calls "
+                       "`passed` against the exact commit it is about to "
                        "let through. It declares 'verified-outputs', and it has "
                        "no second parser either: every refusal it reports about "
                        "a policy is a diagnostic this module named"),
