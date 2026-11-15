@@ -1,1 +1,0 @@
-tests.test_agent_settings tests.test_delivery_status tests.test_prompt_report_contract tests.test_required_checks tests.test_gitrepo tests.test_prompt_one_turn tests.test_hosting_providers tests.test_architecture tests.test_settings_sources tests.test_adapter_permissions tests.test_completion_module tests.test_local_ownership tests.test_signoff_and_review_lists
