@@ -272,8 +272,8 @@ kept on purpose and held by `tests/test_gitrepo.py`.
 | `branch_exists` | application | none (as the drive, commands and act-pr always ran it) | false |
 | `branch_for`, `dirty`, `worktree_mismatch` | application / a worktree | as `config`'s | `config`'s bodies, offered here as the door (below) |
 | `fetch_branch` | application | the caller's (`plans`: `BOARD_FETCH_TIMEOUT`) | False |
-| `worktree_add`, `worktree_remove`, `branch_delete` | application | none by default; `phases` passes 60 s | the result, never raising; the caller words it |
-| `ensure_worktree` | application | as `worktree_add` | `problem`: `mismatch`, `no-branch`, `add-failed`; each caller keeps its sentence |
+| `worktree_add`, `worktree_remove`, `branch_delete` | application | none by default; `phases` passes 60 s | the result, never raising; the caller words it. A timeout reads as the exception's text unless `timed_out` is given; `phases` passes `"timed out"` to `worktree_add`, as its `_git` always read (`could not cut <branch>: timed out`) |
+| `ensure_worktree` | application | as `worktree_add` | `problem`: `mismatch`, `no-branch`, `add-failed`; each caller keeps its sentence. `timed_out` passes through to `worktree_add`: `phases` gives `"timed out"`, so its halt reads `could not put a worktree on <branch>: timed out`; the drive, local commands and acting on a PR give none, unchanged |
 | `fresh_branch_point` | application | none for reads; `BOARD_FETCH_TIMEOUT` for the fetch | a timeout or failed fetch is a note and HEAD; an `OSError` propagates, as it did from `agents` |
 
 **Module wrappers, kept with their contracts.**
@@ -295,8 +295,11 @@ kept on purpose and held by `tests/test_gitrepo.py`.
 
 `config.branch_for`, `config.dirty_files` and `config.worktree_mismatch`
 keep their bodies in `config` because `verify.py` calls them; `gitrepo`
-offers them under the same names, and every other caller in the modules
-this card touched asks `gitrepo`. A delegation from `config` up to
+offers them under the same names, and the callers this card routed —
+`agents`, `drive`, `commands`, `plans` and `phases` — ask `gitrepo`.
+Two other direct readers stay on `config` for now: `github` (its
+`branch_for` and `dirty_files` calls, with the rest of its git wrappers
+in a later package) and `verify` (WP12). A delegation from `config` up to
 `gitrepo` would be an upward import, so the bodies move with WP12/WP13.
 
 **Raw invocations.** A list beginning `"git"` handed straight to

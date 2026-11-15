@@ -386,7 +386,8 @@ def _worktree(phase: dict) -> Path:
     branch = agents.phase_branch(phase["file"])
     # No separate branch check: git's own refusal is the halt's reason.
     made = gitrepo.ensure_worktree(phase["file"][:-3], branch,
-                                   check_branch=False, timeout=60)
+                                   check_branch=False, timeout=60,
+                                   timed_out="timed out")
     if made["problem"] == "mismatch":
         raise _Halt(made["detail"])
     if made["problem"]:
@@ -730,7 +731,7 @@ def _start(phase: dict, filename: str) -> dict:
         worktree = config.WORKTREES / filename[:-3]
         config.WORKTREES.mkdir(parents=True, exist_ok=True)
         result = gitrepo.worktree_add(worktree, branch, new=True, start=point,
-                                      timeout=60)
+                                      timeout=60, timed_out="timed out")
         if result.returncode != 0:
             raise ValueError(f"could not cut {branch}: {result.stderr.strip()[:200]}")
         _push_phase(phase)

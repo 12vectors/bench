@@ -411,14 +411,14 @@ def _foreign_worktree(path: Path) -> str | None:
     Two readings, and the first is config's. Whether a directory is a
     checkout at all, and whether it is a checkout of *this* application,
     is the repository-identity question every other consumer of a worktree
-    asks (`config.worktree_mismatch`, task 56) — asked here too, so the
+    asks (`gitrepo.worktree_mismatch`, task 56) — asked here too, so the
     refusal reads the same wherever it comes from, and so a preflight
     cannot pass something a driver or a local command would refuse. What
     the list below adds is the narrower case identity cannot see: a
     directory that genuinely belongs to this repository but is not one of
     its worktrees.
     """
-    mismatch = config.worktree_mismatch(path)
+    mismatch = gitrepo.worktree_mismatch(path)
     if mismatch:
         return mismatch
     listed = _git("worktree", "list", "--porcelain").stdout

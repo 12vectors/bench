@@ -299,6 +299,42 @@ class WrappersKeepTheirWording(unittest.TestCase):
                 with self.failing(OSError("no git here")):
                     self.assertEqual(wrapper("status").stderr, "no git here")
 
+    def test_worktree_adds_pass_timed_out_through(self):
+        with self.failing(self.timeout()):
+            self.assertEqual(gitrepo.worktree_add(self.tmp / "w", "b").stderr,
+                             str(self.timeout()))
+            for new, start in ((False, None), (True, None), (True, "main")):
+                done = gitrepo.worktree_add(self.tmp / "w", "b", new=new,
+                                            start=start, timed_out="timed out")
+                self.assertEqual((done.returncode, done.stderr), (128, "timed out"))
+        with mock.patch.object(config, "WORKTREES", self.tmp), \
+                mock.patch.object(gitrepo, "worktree_mismatch", lambda p: None), \
+                self.failing(self.timeout()):
+            made = gitrepo.ensure_worktree("x", "b", check_branch=False,
+                                           timed_out="timed out")
+        self.assertEqual((made["problem"], made["detail"]), ("add-failed", "timed out"))
+
+    def test_phase_runner_worktree_adds_say_timed_out(self):
+        """Both of the phase runner's worktree adds — the halt written into
+        the phase log and the refusal to cut the branch — read exactly
+        "timed out", as `phases._git` always did, and never an argument
+        list naming this machine's paths."""
+        phase = {"file": "53-a-phase.md"}
+        with mock.patch.object(config, "WORKTREES", self.tmp), \
+                mock.patch.object(gitrepo, "worktree_mismatch", lambda p: None), \
+                self.failing(self.timeout()):
+            with self.assertRaises(phases._Halt) as halted:
+                phases._worktree(phase)
+            with mock.patch.object(phases, "_branch_exists", lambda b: False), \
+                    mock.patch.object(gitrepo, "fresh_branch_point",
+                                      lambda: ("main", None)), \
+                    self.assertRaises(ValueError) as refused:
+                phases._start(phase, phase["file"])
+        self.assertEqual(str(halted.exception),
+                         "could not put a worktree on phase/53-a-phase: timed out")
+        self.assertEqual(str(refused.exception),
+                         "could not cut phase/53-a-phase: timed out")
+
     def test_reviews_carries_the_exception_text(self):
         with self.failing(self.timeout()):
             self.assertIn("timed out after", reviews._git("status").stderr)

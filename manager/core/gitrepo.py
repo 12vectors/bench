@@ -136,21 +136,25 @@ def fetch_branch(remote: str, branch: str, *, timeout: float) -> bool:
 
 
 def worktree_add(path: Path | str, branch: str, *, new: bool = False,
-                 start: str | None = None,
-                 timeout: float | None = None) -> subprocess.CompletedProcess:
+                 start: str | None = None, timeout: float | None = None,
+                 timed_out: str | None = None) -> subprocess.CompletedProcess:
     """Put a worktree of the application at `path`.
 
     `new=False` attaches it to the existing `branch`; `new=True` cuts
     `branch` there — from `start` (without tracking it) when given, else
     from the application's HEAD. The argument lists are exactly the ones
     the launch, the phase runner, the drive and the local commands always
-    ran."""
+    ran. `timed_out` is `git`'s: the fixed text a timeout reads as, so the
+    phase runner keeps its "timed out" rather than an argument list naming
+    this machine's paths."""
     if not new:
-        return git(app(), "worktree", "add", str(path), branch, timeout=timeout)
+        return git(app(), "worktree", "add", str(path), branch,
+                   timeout=timeout, timed_out=timed_out)
     if start:
         return git(app(), "worktree", "add", "--no-track", "-b", branch,
-                   str(path), start, timeout=timeout)
-    return git(app(), "worktree", "add", "-b", branch, str(path), timeout=timeout)
+                   str(path), start, timeout=timeout, timed_out=timed_out)
+    return git(app(), "worktree", "add", "-b", branch, str(path),
+               timeout=timeout, timed_out=timed_out)
 
 
 def worktree_remove(path: Path | str, *,
@@ -167,7 +171,8 @@ def branch_delete(branch: str, *, force: bool = True,
 
 
 def ensure_worktree(stem: str, branch: str, *, check_branch: bool = True,
-                    timeout: float | None = None) -> dict:
+                    timeout: float | None = None,
+                    timed_out: str | None = None) -> dict:
     """The card's worktree, recreated from its branch when it was cleaned up.
 
     One body for what the drive, the local commands, acting on a PR and
@@ -180,7 +185,8 @@ def ensure_worktree(stem: str, branch: str, *, check_branch: bool = True,
       `worktree_mismatch`'s sentence, shown as it stands;
     - `"no-branch"` — no worktree and no `branch` to make one from (asked
       only when `check_branch`; the phase runner lets git refuse instead);
-    - `"add-failed"` — git would not add it; `detail` is its stderr.
+    - `"add-failed"` — git would not add it; `detail` is its stderr
+      (`timed_out`, when given, if the add timed out — as for `git`).
     """
     path = config.WORKTREES / stem
     found = {"path": path, "created": False, "problem": None, "detail": ""}
@@ -192,7 +198,7 @@ def ensure_worktree(stem: str, branch: str, *, check_branch: bool = True,
     if check_branch and not branch_exists(branch):
         return {**found, "problem": "no-branch"}
     config.WORKTREES.mkdir(parents=True, exist_ok=True)
-    result = worktree_add(path, branch, timeout=timeout)
+    result = worktree_add(path, branch, timeout=timeout, timed_out=timed_out)
     if result.returncode != 0:
         return {**found, "problem": "add-failed", "detail": result.stderr.strip()}
     return {**found, "created": True}
