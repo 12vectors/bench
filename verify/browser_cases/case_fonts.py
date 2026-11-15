@@ -29,7 +29,13 @@ browser, what the backend tests cannot:
    `A`; `A` is `plex` in all six faces (positive); a family that does not
    exist is `fallback` (negative font control); `中`, outside every
    declared range, is never `plex` (negative codepoint control); and an
-   unassigned codepoint is `tofu`.
+   unassigned codepoint (U+0379) is rejected — `tofu` where the browser
+   draws one shared missing-glyph box, `unproven` where, as in the
+   Playwright Chromium this was first run on, it draws each missing
+   codepoint differently but identically in every stack. It is never
+   `plex` or `fallback`. The same limit applies to the page's symbols: a
+   symbol every stack draws identically is reported `unproven`, because
+   this method cannot tell a system font's glyph from a missing one.
 
    Every declared `@font-face` rule is sampled — the start, middle and end
    of each range segment, letters, digits, punctuation and symbols only —
@@ -204,6 +210,20 @@ window.__benchFontProbe = async (faces) => {
 true;
 """
 
+# Holds the page still for the matched screenshots: its redraw entry points
+# become no-ops, its timers are cleared and animation is off — for the
+# candidate and the baseline alike, so all that differs is the faces.
+FREEZE_JS = """(() => {
+  for (const f of ['scheduleRender', 'render', 'loadState', 'renderChip', 'toast', 'fetchSetup'])
+    if (typeof window[f] === 'function') window[f] = () => {};
+  const last = setTimeout(() => {}, 0);
+  for (let i = 1; i <= last; i++) { clearTimeout(i); clearInterval(i); }
+  const s = document.createElement('style');
+  s.textContent = '*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}';
+  document.head.appendChild(s);
+  return true;
+})()"""
+
 SETTLE_JS = """(async () => {
   for (let i = 0; i < 20; i++) {
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -294,7 +314,14 @@ class TheBoardsOwnFonts(unittest.TestCase):
             want(a["v"] == "plex" and a.get("pair") == "monospace/serif",
                  f"{short} positive control 'A' gave {a}")
             want(cjk["v"] != "plex", f"{short} negative control 中 gave {cjk}")
-            want(tofu["v"] == "tofu", f"{short} tofu control U+0379 gave {tofu}")
+            # A missing glyph must never pass. Where the browser draws one
+            # shared box it is `tofu`; this Chromium draws each unassigned
+            # codepoint differently but alike in every stack, which the
+            # identical-fallback rule rejects as `unproven`. Either is a
+            # rejection; `plex` or `fallback` would be a false pass.
+            want(tofu["v"] in ("tofu", "unproven", "blank"),
+                 f"{short} missing-glyph control U+0379 gave {tofu}")
+            report.setdefault("missingGlyphControl", {})[short] = tofu["v"]
             for r in rules:
                 verdicts = {cp: got[k(cp)]["v"] for cp in samples(r["segments"])}
                 proven = [cp for cp, v in verdicts.items() if v == "plex"]
@@ -314,6 +341,7 @@ class TheBoardsOwnFonts(unittest.TestCase):
             "rules": len(report["rules"]),
             "sampledNotPlex": len(report["unproven"]),
             "sampledPlex": sum(r["plex"] for r in report["rules"]),
+            "missingGlyphControl": report.get("missingGlyphControl", {}),
             "problems": problems}
         out = S["shots"] / "font-coverage.json"
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -355,6 +383,8 @@ class TheBoardsOwnFonts(unittest.TestCase):
         b = self.b
         candidate = self.probe()
         shots = S["shots"]
+        self.assertTrue(b.eval(FREEZE_JS))
+        self.assertTrue(b.eval(SETTLE_JS))
         c1 = b.screenshot(shots / "fonts-candidate-board.png")
         # swap the bundled stylesheet for the old one, from the same bytes
         css = baseline_css()
@@ -388,11 +418,14 @@ class TheBoardsOwnFonts(unittest.TestCase):
         S["metrics"]["fontScreens"] = {
             "candidate": c1h, "baseline": bh, "candidateAgain": c2h,
             "probed": len(candidate),
-            "matched": bh in (c1h, c2h),
+            "matched": bh == c1h == c2h,
             "pageMovedBetweenShots": c1h != c2h}
-        self.assertIn(bh, (c1h, c2h),
-                      "the board under the linked stylesheet's faces does not match the "
-                      "board under the bundle (and the page did not move between shots)")
+        if c1h != c2h:
+            self.fail("the frozen page changed between the two candidate shots, so the "
+                      "comparison proves nothing")
+        if bh != c1h:
+            self.fail("the board under the linked stylesheet's faces does not match the "
+                      "board under the bundle")
 
 
 if __name__ == "__main__":
