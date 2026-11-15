@@ -31,7 +31,10 @@ What this holds:
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import time
+import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -466,6 +469,55 @@ class ReviewFollowsTheTarget(GateCase):
                          ("task/70-parent", "main", "replan"))
 
 
+# ── the page: the sheet is the server's words, and manual means no button ─
+
+
+class ThePageSheet(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.node = shutil.which("node")
+        if not cls.node:
+            raise unittest.SkipTest("node not available — the sheet is unchecked")
+
+    def render(self, preview: dict, armed: bool = False) -> str:
+        from tests.test_agents_settings_ui import lift
+        body = ("const esc = s => String(s ?? '').replace(/[&<>\"]/g, c => "
+                "({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));\n"
+                + lift("stackSheet") + "\n"
+                + "process.stdout.write(JSON.stringify(stackSheet({file: '57-x.md'}, "
+                + json.dumps({"action": preview.get("action"), "armed": armed,
+                              "preview": preview}) + ")));")
+        out = subprocess.run([self.node, "-e", body], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)
+
+    def test_manual_names_the_step_and_offers_no_confirm(self):
+        html = self.render({"action": "retarget", "mode": "manual",
+                            "label": "Retarget onto main", "blockers": [],
+                            "manual": "run `gh pr edit 2 --base main` yourself",
+                            "identities": {"childHead": "a" * 40, "change": "2",
+                                           "target": "task/56-p",
+                                           "newTarget": "main"}})
+        self.assertIn("Manual step.", html)
+        self.assertIn("gh pr edit 2 --base main", html)
+        self.assertNotIn("data-stack-confirm", html)
+        self.assertIn("aaaaaaaaaaaa", html)
+        self.assertNotIn("a" * 13, html)
+
+    def test_a_refusal_offers_no_confirm(self):
+        html = self.render({"action": "update", "mode": "merge",
+                            "blockers": ["an agent is working on 57-x.md"],
+                            "identities": {}})
+        self.assertIn("Refused.", html)
+        self.assertNotIn("data-stack-confirm", html)
+
+    def test_confirm_arms_before_it_fires(self):
+        shown = {"action": "update", "mode": "merge", "label": "Update from p",
+                 "blockers": [], "identities": {}}
+        self.assertIn(">Update from p</button>", self.render(shown))
+        self.assertIn("Click again to confirm", self.render(shown, armed=True))
+
+
 if __name__ == "__main__":
-    import unittest
     unittest.main()
