@@ -2110,7 +2110,7 @@ def seams() -> dict:
                                   "reviewer found, bound to the head "
                                   "reviews.py pinned, whatever GitHub "
                                   "accepted"),
-            "the formal review state": ("github._poll_pr feeds "
+            "the formal review state": ("changes._poll_pr feeds "
                                         "observe_reviews with GitHub's own "
                                         "review objects, which carry the "
                                         "commit each review was of"),

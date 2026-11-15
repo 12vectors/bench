@@ -57,7 +57,7 @@ from pathlib import Path
 import agents
 import config
 import gates
-import github
+import changes
 import gitrepo
 import state
 import taskfiles
@@ -278,7 +278,7 @@ def _member_state(task: dict, branch: str,
         # Green means the checks are not against it: red halts, running
         # waits, and a member with no checks at all advances — a project
         # without CI must not deadlock every phase it runs.
-        ci = (github.pr_state(task["file"]) or {}).get("ci")
+        ci = (changes.pr_state(task["file"]) or {}).get("ci")
         if ci == "fail":
             return "halt", "its CI is red", None
         if ci == "running":
@@ -430,7 +430,7 @@ def _merge_into_phase(phase: dict, branch: str, what: str,
 def _push_phase(phase: dict) -> None:
     """Publish the phase branch. Best effort: a phase runs perfectly well
     with no remote, and a member's PR simply does not open without one."""
-    rname = github.remote()
+    rname = changes.remote()
     if not rname:
         return
     _git("push", "-u", rname, agents.phase_branch(phase["file"]), timeout=180)
@@ -571,7 +571,7 @@ def _finish(phase: dict) -> None:
         taskfiles.move_task(phase["file"], phase["stage"], "review", actor="phase")
     _say(phase["file"], f"{phase['file']}: every card merged — "
                         f"{agents.phase_branch(phase['file'])} is ready for review")
-    github.maybe_open_pr(phase["file"])
+    changes.maybe_open_pr(phase["file"])
 
 
 def _halt(phase: dict, member: dict | None, reason: str) -> None:

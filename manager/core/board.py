@@ -41,7 +41,7 @@ import config
 import doctor
 import drive
 import events
-import github
+import changes
 import httpd
 import phases
 import progress
@@ -148,8 +148,8 @@ def main() -> None:
     # seen, so its last update must stop reading as "doing now".
     progress.load()
     threading.Thread(target=watch.watcher, daemon=True).start()
-    threading.Thread(target=github.poller, daemon=True).start()
-    threading.Thread(target=github.reconcile, daemon=True).start()
+    threading.Thread(target=changes.poller, daemon=True).start()
+    threading.Thread(target=changes.reconcile, daemon=True).start()
     threading.Thread(target=phases.beat, daemon=True).start()
     if config.SYNC:
         # Team mode: board commits publish themselves and a beat pulls what

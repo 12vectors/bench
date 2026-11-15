@@ -58,16 +58,50 @@ import stat
 import sys
 from pathlib import Path
 
-# Universal git/gh prefixes per intent; project commands are appended.
-MODE_PREFIXES = {
+# Universal git prefixes per intent; the hosting provider's verbs follow
+# them, then the project's commands.
+GIT_PREFIXES = {
     "work": ["git add", "git commit", "git status", "git diff"],
     "act-pr": ["git add", "git commit", "git status", "git diff",
-               "git fetch", "git merge",
-               "git push", "gh pr view", "gh pr diff", "gh api"],
-    "review": ["git status", "git diff", "git log", "git show",
-               "gh pr view", "gh pr diff", "gh pr review", "gh pr comment"],
+               "git fetch", "git merge", "git push"],
+    "review": ["git status", "git diff", "git log", "git show"],
     "refine": [],
 }
+# The hosting provider's verbs arrive in AGENT_HOST (task 116): one JSON
+# object per launch, `{"provider", "allow": [prefixes], "publish":
+# [prefixes]}`, built by bench from the provider in force. A board too old
+# to send it gets GitHub's, which is what this adapter always carried; a
+# value that does not parse grants no host verb at all (a narrowing) and
+# still denies GitHub's publication verbs where `publish` is denied.
+DEFAULT_HOST_ALLOW = {
+    "work": [],
+    "act-pr": ["gh pr view", "gh pr diff", "gh api"],
+    "review": ["gh pr view", "gh pr diff", "gh pr review", "gh pr comment"],
+    "refine": [],
+}
+DEFAULT_HOST_PUBLISH = ["gh pr create", "gh pr merge", "gh pr close",
+                        "gh release", "gh api --method POST", "gh api -X POST"]
+# What an older reader of this module saw: git, then GitHub's verbs.
+MODE_PREFIXES = {mode: GIT_PREFIXES[mode] + DEFAULT_HOST_ALLOW[mode]
+                 for mode in GIT_PREFIXES}
+
+
+def host_verbs(mode: str, raw: str | None = None) -> dict:
+    """AGENT_HOST for this launch, as `{allow, publish}` prefix lists."""
+    raw = os.environ.get("AGENT_HOST") if raw is None else raw
+    if raw is None:
+        return {"allow": list(DEFAULT_HOST_ALLOW.get(mode, [])),
+                "publish": list(DEFAULT_HOST_PUBLISH)}
+    try:
+        found = json.loads(raw)
+    except (TypeError, ValueError):
+        found = None
+    if not isinstance(found, dict):
+        return {"allow": [], "publish": list(DEFAULT_HOST_PUBLISH)}
+    def prefixes(key):
+        return [str(p).strip() for p in found.get(key) or []
+                if isinstance(p, str) and str(p).strip()]
+    return {"allow": prefixes("allow"), "publish": prefixes("publish")}
 # The vendor's own tool names an intent is launched without. Spelled here
 # once so `run` and `describe.py` cannot disagree. A name the installed CLI
 # does not have is refused outright and kills the launch (task 10), so
@@ -102,8 +136,8 @@ DENY_CAPABILITY_PREFIXES = {
     "push": ["git push"],
     "force-push": ["git push --force", "git push -f"],
     "rebase": ["git rebase"],
-    "publish": ["gh pr create", "gh pr merge", "gh pr close", "gh release",
-                "gh api --method POST", "gh api -X POST"],
+    # the hosting provider's publication verbs (AGENT_HOST's `publish`)
+    "publish": [],
     "reshape-lifecycle": ["git worktree", "git reset", "git checkout",
                           "git switch", "git branch", "git update-ref",
                           "git remote"],
@@ -186,7 +220,9 @@ def allow_rules(mode: str, commands: list[str],
     """
     if mode == "refine":
         return []
-    prefixes = list(MODE_PREFIXES.get(mode, []))
+    prefixes = list(GIT_PREFIXES.get(mode, []))
+    if mode in GIT_PREFIXES:
+        prefixes += [p for p in host_verbs(mode)["allow"] if p not in prefixes]
     if profile:
         prefixes += [c for c in profile_prefixes(profile) if c not in prefixes]
     elif mode in MODES_WITH_PROJECT_COMMANDS:
@@ -206,7 +242,10 @@ def deny_rules(mode: str, profile: dict | None = None) -> list[str]:
     """
     prefixes = list(MODE_DENY_PREFIXES.get(mode, []))
     for word in (profile or {}).get("deny") or []:
-        for prefix in DENY_CAPABILITY_PREFIXES.get(str(word), []):
+        named = DENY_CAPABILITY_PREFIXES.get(str(word), [])
+        if word == "publish":
+            named = host_verbs(mode)["publish"]
+        for prefix in named:
             if prefix not in prefixes:
                 prefixes.append(prefix)
     rules = []

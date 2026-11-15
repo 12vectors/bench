@@ -40,7 +40,8 @@ sys.path.insert(0, str(BENCH / "manager" / "core"))
 
 import agents  # noqa: E402
 import config  # noqa: E402
-import github  # noqa: E402
+import githost  # noqa: E402
+import changes  # noqa: E402
 import plans  # noqa: E402
 import state  # noqa: E402
 import taskfiles  # noqa: E402
@@ -169,7 +170,7 @@ class ExternalPlanCase(Workspace):
         """
         record = self.run_agent(name=name)
         self.assertEqual(self.stage_of(name), "review")
-        github.maybe_open_pr(name)
+        changes.maybe_open_pr(name)
         return record
 
     def branches(self) -> list[str]:
@@ -260,8 +261,8 @@ class ThePRGoesToTheApplicationsRepository(ExternalPlanCase):
             "https://github.com/acme/widget.git")
         git(self.work, "remote", "add", "origin",
             "https://github.com/acme/board.git")
-        self.assertEqual(config.gh_repo(), "acme/widget")
-        github._gh_pr("view", "some-branch", "--json", "url,baseRefName")
+        self.assertEqual(githost.slug(), "acme/widget")
+        githost.find_change("some-branch")
         views = [c for c in self.gh_calls() if c[:2] == ["pr", "view"]]
         self.assertTrue(views)
         self.assertIn("--repo", views[-1])
@@ -279,7 +280,7 @@ class ThePRGoesToTheApplicationsRepository(ExternalPlanCase):
         os.environ["GH_BASE"] = "main"
 
         with self.assertRaises(ValueError) as caught:
-            github.open_pr_now(CARD_FILE)
+            changes.open_pr_now(CARD_FILE)
 
         said = str(caught.exception)
         self.assertIn("already has a PR into main", said)

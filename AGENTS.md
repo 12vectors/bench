@@ -59,7 +59,7 @@ names reached across modules — live in
 `tests/test_architecture.py`:
 
 ```
-gitproc / records / redact < config < state / reports / templates / gitrepo < taskfiles < plans / profiles < reviews < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < github < completion < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < githost < state / reports / templates / gitrepo < taskfiles < plans / profiles < reviews < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < delivery < agentsettings < settings < setupguide < agents < setuptasks < readiness < previews < phases < refine < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -77,6 +77,14 @@ gitproc / records / redact < config < state / reports / templates / gitrepo < ta
   Stdlib only; `verify.py` adopts it with the verify train (WP12)
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution;
   `git_argv`, `git_env` and `git_run` as patchable wrappers over `gitproc`
+- `githost.py` — the hosting provider in force (`BOARD_GIT_PROVIDER`:
+  `github`, the default, or `none`), what it can do here and refusing by
+  name; it loads `providers/<name>/provider.py` by path and dispatches
+  every change-request operation, returning normalized values. The `gh`
+  argument lists, GitHub url and payload shapes live in
+  `providers/github/` and nowhere else; a remote the provider does not
+  recognise is reported and never acted on. Contract:
+  `manager/core/providers/README.md`. Imports `config` only
 - `state.py` — shared registries, event log persistence, SSE fan-out
 - `reports.py` — what the record keeps of an agent's closing report: one
   cap, one clip, for the task file and the PR body alike
@@ -144,13 +152,16 @@ gitproc / records / redact < config < state / reports / templates / gitrepo < ta
 - `events.py` — ingests NORMALIZED events (the adapter contract), session registry
 - `drive.py` — runs the project driver, tracks the one live drive
 - `sync.py` — origin/main as the shared board: push on move, pull on a beat
-- `github.py` — PR opening, Copilot requests, review/CI polling, and
-  the owner accessors the layer above asks about a card's PR through
+- `changes.py` — the change-request lifecycle (task 116 renamed it from
+  `github.py`): opening or adopting a PR, the external-review request,
+  the poll and its fold into one verdict, the persisted observation, and
+  the owner accessors the layer above asks about a card's PR through. It
+  speaks no host shape: it asks `githost`
 - `completion.py` — merge & clean up: the merge (locally, or on origin
-  through `github`), its publication confirmed on the remote, the
+  through `changes`), its publication confirmed on the remote, the
   recovery record a retry finishes from, the card's cleanup and a
   phase's sweep, and the delivered record (it imports `drive`, to park a
-  drive before merging, and `github`, which is why it sits above both)
+  drive before merging, and `changes`, which is why it sits above both)
 - `delivery.py` — one delivery status per card, computed server-side
   from the authorities above: what is happening, the one next action and
   who holds it, and the merge requirements that apply at the current

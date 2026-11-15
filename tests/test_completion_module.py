@@ -9,7 +9,7 @@ which now patch `completion`:
 - a recovery record and a delivered record written by a board from before
   the move are read, and the unfinished completion is finished, by the new
   module — same paths, same shapes;
-- `completion` holds no copy of `github.PR_STATE`: it asks through the
+- `completion` holds no copy of `changes.PR_STATE`: it asks through the
   owner's accessors, which hand back the live entry;
 - the names moved and left nothing behind in `github`, and the seams that
   name the enforcement point (`gates.seams()`, `delivery.seams()`) name
@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -38,7 +39,8 @@ import config  # noqa: E402
 import completion  # noqa: E402
 import delivery  # noqa: E402
 import gates  # noqa: E402
-import github  # noqa: E402
+import githost  # noqa: E402
+import changes  # noqa: E402
 from tests.test_completion_publication import (  # noqa: E402
     BRANCH, FILENAME, STEM, Delivery, git)
 
@@ -59,7 +61,7 @@ class TheNamesMoved(unittest.TestCase):
         for name in MOVED:
             with self.subTest(name=name):
                 self.assertTrue(callable(getattr(completion, name, None)))
-                self.assertFalse(hasattr(github, name),
+                self.assertFalse(hasattr(changes, name),
                                  f"github.{name} was left behind")
 
     def test_the_pr_side_stays_with_github(self):
@@ -67,29 +69,29 @@ class TheNamesMoved(unittest.TestCase):
                      "pr_snapshot", "public_state", "task_branches",
                      "request_copilot", "branch_of", "remote", "gh_available"):
             with self.subTest(name=name):
-                self.assertTrue(callable(getattr(github, name, None)))
+                self.assertTrue(callable(getattr(changes, name, None)))
                 self.assertFalse(hasattr(completion, name))
 
 
 class NoRegistryIsCopied(unittest.TestCase):
 
     def setUp(self):
-        github.PR_STATE.clear()
-        self.addCleanup(github.PR_STATE.clear)
+        changes.PR_STATE.clear()
+        self.addCleanup(changes.PR_STATE.clear)
 
     def test_pr_state_hands_back_the_live_entry(self):
         entry = {"verdict": "green", "ci": "pass", "url": "u"}
-        github.PR_STATE["x.md"] = entry
-        self.assertIs(github.pr_state("x.md"), entry)
+        changes.PR_STATE["x.md"] = entry
+        self.assertIs(changes.pr_state("x.md"), entry)
         entry["ci"] = "fail"            # the poll updating in place
-        self.assertEqual(github.pr_state("x.md")["ci"], "fail")
-        self.assertIsNone(github.pr_state("y.md"))
+        self.assertEqual(changes.pr_state("x.md")["ci"], "fail")
+        self.assertIsNone(changes.pr_state("y.md"))
 
     def test_forget_pr_empties_the_owners_registry(self):
-        github.PR_STATE["x.md"] = {"verdict": "green"}
-        github.forget_pr("x.md")
-        github.forget_pr("never-there.md")      # not an error
-        self.assertEqual(github.PR_STATE, {})
+        changes.PR_STATE["x.md"] = {"verdict": "green"}
+        changes.forget_pr("x.md")
+        changes.forget_pr("never-there.md")      # not an error
+        self.assertEqual(changes.PR_STATE, {})
 
     def test_completion_and_phases_never_name_the_registry(self):
         for module in ("completion", "phases", "delivery"):
@@ -109,10 +111,10 @@ class SeamsNameWhatExists(unittest.TestCase):
         said = gates.seams()["enforced_at"]["an acceptance"]
         self.assertTrue(said.startswith("completion._complete "), said)
         self.assertTrue(callable(completion._complete))
-        self.assertNotIn("github._complete", repr(gates.seams()))
+        self.assertNotIn("changes._complete", repr(gates.seams()))
 
     def test_every_dotted_read_of_delivery_resolves(self):
-        modules = {"completion": completion, "github": github, "gates": gates}
+        modules = {"completion": completion, "changes": changes, "gates": gates}
         checked = 0
         for read in delivery.seams()["reads"]:
             name, _, attr = read.partition(".")
@@ -146,35 +148,43 @@ class TheExactHeadPinIsUnchanged(unittest.TestCase):
 
 
 class TheHostMergeArgvIsUnchanged(unittest.TestCase):
-    """`completion` asks `github.merge_pr`; the argv is the one `_gh_pr`
-    built for `_merge_on_origin` before the move."""
+    """`completion` asks `changes.merge_pr`; the argv is the one `_gh_pr`
+    built for `_merge_on_origin` before the move — now built by the
+    GitHub provider behind `githost` (task 116)."""
 
     def setUp(self):
         self.calls = []
-        self.addCleanup(setattr, github, "_run", github._run)
+        for name in ("run", "slug", "available", "can"):
+            self.addCleanup(setattr, githost, name, getattr(githost, name))
         self.addCleanup(setattr, config, "GH_BIN", config.GH_BIN)
-        self.addCleanup(setattr, config, "gh_repo", config.gh_repo)
+        self.addCleanup(githost._CONDITIONAL.clear)
         config.GH_BIN = "gh"
+        githost.available = lambda: True
+        real_can = githost.can
+        githost.can = lambda cap, active=False: True if cap == "merge" \
+            else real_can(cap, active)
 
-        def run(cmd, cwd=None, timeout=60):
+        def run(cmd, timeout=60):
             self.calls.append((list(cmd), timeout))
             return subprocess.CompletedProcess(cmd, 0, "--match-head-commit", "")
-        github._run = run
+        githost.run = run
 
     def test_with_a_repository_slug_and_a_condition(self):
-        config.gh_repo = lambda: "acme/widget"
-        github.merge_pr("7", "--match-head-commit", "abc", timeout=180)
+        githost.slug = lambda: "acme/widget"
+        githost._CONDITIONAL.update({"state": "available", "cli": "gh",
+                                     "at": time.monotonic()})
+        changes.merge_pr("7", "--match-head-commit", "abc", timeout=180)
         self.assertEqual(self.calls, [(["gh", "pr", "merge", "--repo",
                                         "acme/widget", "7", "--merge",
                                         "--match-head-commit", "abc"], 180)])
 
     def test_without_a_slug_gh_infers_as_before(self):
-        config.gh_repo = lambda: None
-        github.merge_pr("7")
+        githost.slug = lambda: None
+        changes.merge_pr("7")
         self.assertEqual(self.calls, [(["gh", "pr", "merge", "7", "--merge"], 180)])
 
     def test_whether_it_can_be_conditional_is_githubs_probe(self):
-        self.assertTrue(github.merge_is_conditional())
+        self.assertTrue(changes.merge_is_conditional())
         self.assertEqual(self.calls[0][0], ["gh", "pr", "merge", "--help"])
 
 

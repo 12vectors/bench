@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import agents  # noqa: E402
 import config  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import phases  # noqa: E402
 import plans  # noqa: E402
 import state  # noqa: E402
@@ -185,7 +185,7 @@ class PhaseCase(unittest.TestCase):
                    FETCH_TIMEOUT=10.0, REVIEW_FETCH_TIMEOUT=30.0)
 
         for registry in (state.AGENTS, state.BOARD_EVENTS, state.EXPECTED_MOVES,
-                         github.PR_STATE, phases.SNAPSHOTS):
+                         changes.PR_STATE, phases.SNAPSHOTS):
             registry.clear()
             self.addCleanup(registry.clear)
 
@@ -511,7 +511,7 @@ class HaltNeverSkip(PhaseCase):
 
     def test_red_ci_halts_the_phase(self):
         self.start()
-        github.PR_STATE[ONE] = {"verdict": "red", "ci": "fail", "url": PR_URL}
+        changes.PR_STATE[ONE] = {"verdict": "red", "ci": "fail", "url": PR_URL}
 
         self.advance()
 
@@ -521,7 +521,7 @@ class HaltNeverSkip(PhaseCase):
 
     def test_checks_still_running_is_a_wait_not_a_halt(self):
         self.start()
-        github.PR_STATE[ONE] = {"verdict": "pending", "ci": "running", "url": PR_URL}
+        changes.PR_STATE[ONE] = {"verdict": "pending", "ci": "running", "url": PR_URL}
 
         snapshot = self.advance()
 
@@ -798,7 +798,7 @@ class ThePhasePR(PhaseCase):
         the merge this whole design refuses to make."""
         self.start()
 
-        github.maybe_open_pr(ONE)
+        changes.maybe_open_pr(ONE)
 
         create = [c for c in self.gh_calls() if c[:2] == ["pr", "create"]]
         self.assertEqual(create[0][create[0].index("--base") + 1], PHASE_BRANCH)
@@ -817,19 +817,19 @@ class ThePhasePR(PhaseCase):
         git(self.repo, "push", "-q", "origin", f"main:refs/heads/{PHASE_BRANCH}")
 
         self.assertFalse(self.branch_exists(PHASE_BRANCH), "no local phase branch")
-        self.assertEqual(github._pr_base({"phase": {"file": PHASE}}), PHASE_BRANCH)
+        self.assertEqual(changes._pr_base({"phase": {"file": PHASE}}), PHASE_BRANCH)
 
 
 class TheCardsBranchIsFound(PhaseCase):
     def test_a_phase_card_wears_its_own_branch(self):
         self.start()
-        self.assertEqual(github.branch_of(PHASE), PHASE_BRANCH)
-        self.assertEqual(github.branch_of(ONE), f"task/{ONE[:-3]}")
-        self.assertIn(PHASE[:-3], github.task_branches())
-        self.assertIn(ONE[:-3], github.task_branches())
+        self.assertEqual(changes.branch_of(PHASE), PHASE_BRANCH)
+        self.assertEqual(changes.branch_of(ONE), f"task/{ONE[:-3]}")
+        self.assertIn(PHASE[:-3], changes.task_branches())
+        self.assertIn(ONE[:-3], changes.task_branches())
 
     def test_a_card_with_no_branch_at_all_names_the_task_branch(self):
-        self.assertEqual(github.branch_of(PHASE), f"task/{PHASE[:-3]}")
+        self.assertEqual(changes.branch_of(PHASE), f"task/{PHASE[:-3]}")
 
 
 class TheBranchPointOfAMember(PhaseCase):

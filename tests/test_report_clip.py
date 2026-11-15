@@ -32,7 +32,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import agents  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import reports  # noqa: E402
 import state  # noqa: E402
 
@@ -261,7 +261,7 @@ class OneClipForBothConsumers(unittest.TestCase):
             with state.LOCK:
                 state.AGENTS[record["id"]] = record
             try:
-                self.assertEqual(github._agent_report("42-x.md"),
+                self.assertEqual(changes._agent_report("42-x.md"),
                                  agents._report_of(record))
             finally:
                 with state.LOCK:

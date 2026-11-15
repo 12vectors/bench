@@ -41,7 +41,10 @@ from pathlib import Path
 import config
 
 PROVIDERS = Path(__file__).resolve().parent / "providers"
-NAMES = ("github", "none")
+# The providers this release ships: the directories under core's own
+# `providers/`. Never a local directory — there is no override (§9.2).
+NAMES = tuple(sorted(p.name for p in PROVIDERS.iterdir()
+                     if (p / "provider.py").is_file()))
 CAPABILITIES = ("open", "observe", "identity", "review-records", "merge",
                 "merge-conditional", "external-review")
 _LOADED: dict[str, object] = {}
@@ -89,9 +92,12 @@ def load(name: str):
 # ── selection ──────────────────────────────────────────────────────────
 
 
+DEFAULT = "github"
+
+
 def configured() -> str:
-    """`BOARD_GIT_PROVIDER` as written."""
-    return config.GIT_PROVIDER
+    """`BOARD_GIT_PROVIDER` as written, the default when it is empty."""
+    return config.GIT_PROVIDER or DEFAULT
 
 
 def name() -> str:
@@ -121,8 +127,8 @@ def remote_url() -> str | None:
 
 
 def _base_ctx() -> dict:
-    return {"run": run, "cli": config.GH_BIN if name() == "github" else None,
-            "slug": None, "hosts": list(config.GITHUB_HOSTS)}
+    return {"run": run, "cli": config.GH_BIN if name() == DEFAULT else None,
+            "slug": None, "hosts": list(config.PROVIDER_HOSTS)}
 
 
 def detection() -> dict:
@@ -153,7 +159,7 @@ def provider() -> dict:
                    f"{module().WORDS['cli']} against it. Set BOARD_GIT_PROVIDER=none "
                    f"to work this application with git alone")
     return {"name": name(), "configured": chosen,
-            "source": "setting" if chosen != "github" else "default",
+            "source": "setting" if config.GIT_PROVIDER else "default",
             "label": declared(name()).get("label") or name(),
             "detected": found, "acts": name() != "none" and problem is None
             and found.get("kind") != "none",
@@ -209,6 +215,16 @@ def capabilities(active: bool = False) -> dict:
 def can(capability: str, active: bool = False) -> bool:
     """Is the capability available? `unknown` is not."""
     return capabilities(active).get(capability, {}).get("state") == "available"
+
+
+def missing_cli() -> str:
+    """The sentence for a provider whose CLI is not on the PATH."""
+    return f"{cli()} is not installed"
+
+
+def cli() -> str:
+    """The binary the provider in force runs, as configured."""
+    return _base_ctx()["cli"] or words()["cli"]
 
 
 def available() -> bool:
@@ -289,7 +305,7 @@ def merge_is_conditional() -> bool:
     import time
     found = capabilities(active=True).get("merge-conditional") or {}
     _CONDITIONAL.update({"state": found.get("state"), "reason": found.get("reason"),
-                         "at": time.monotonic(), "cli": config.GH_BIN})
+                         "at": time.monotonic(), "cli": cli()})
     return found.get("state") == "available"
 
 
@@ -302,7 +318,7 @@ def merge_change(number: str, expect_head: str | None,
     import time
     require("merge", f"merge {words()['change']} #{number}", active=False)
     if expect_head:
-        fresh = (_CONDITIONAL.get("cli") == config.GH_BIN and
+        fresh = (_CONDITIONAL.get("cli") == cli() and
                  time.monotonic() - float(_CONDITIONAL.get("at") or 0) < _CONDITIONAL_TTL)
         if not (fresh and _CONDITIONAL.get("state") == "available"):
             if not merge_is_conditional():
@@ -319,8 +335,37 @@ def request_external_review(number: str) -> dict:
 
 
 def agent_verbs(intent: str) -> dict:
-    """The host's command prefixes and prompt fragment for one launch
-    intent. A provider that does not act here grants nothing."""
-    if not provider()["acts"] and provider()["problem"]:
-        return load("none").agent_verbs(intent) | {"provider": name()}
-    return module().agent_verbs(intent)
+    """The host's command prefixes for one launch intent — `allow` and the
+    `publish` verbs a profile that denies publication takes away. A
+    provider that does not act on this remote grants nothing. What an
+    adapter is handed as AGENT_HOST; prompt fragments are `fragments()`."""
+    if provider()["problem"]:
+        found = load("none").agent_verbs(intent)
+    else:
+        found = module().agent_verbs(intent)
+    return {"provider": name(), "allow": list(found.get("allow") or []),
+            "publish": list(found.get("publish") or [])}
+
+
+# The placeholders a template may carry for the host, by template.
+FRAGMENT_FIELDS = {
+    "act-pr.md": ("host_read", "host_mergeable"),
+    "review-pr.md": ("host_name", "host_cli", "host_diff", "host_post"),
+}
+
+
+def fragments(template: str, branch: str) -> dict[str, str]:
+    """The provider's prompt fragments for one template, each formatted
+    with `branch` — every placeholder the template may carry gets words,
+    so a provider that says nothing renders as empty text rather than as
+    a launch that dies on a missing field."""
+    source = load("none") if provider()["problem"] else module()
+    parts = (source.agent_verbs("work").get("fragments") or {}).get(template) or {}
+    out = {}
+    for key in FRAGMENT_FIELDS.get(template, ()):
+        text = str(parts.get(key) or "")
+        try:
+            out[key] = text.format(branch=branch)
+        except (KeyError, IndexError, ValueError):
+            out[key] = text
+    return out

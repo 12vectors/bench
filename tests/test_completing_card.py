@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 import config  # noqa: E402
 import drive as drive_mod  # noqa: E402
 import completion  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import state  # noqa: E402
 
 FILENAME = "38-a-card-being-completed.md"

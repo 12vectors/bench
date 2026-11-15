@@ -242,18 +242,23 @@ def capabilities() -> dict:
     the card discover it at the move into `review/`.
     """
     remote = app_remote()
-    # The provider in force answers (`githost`): the `gh` key keeps its
+    # The provider in force answers (`githost`). The CLI key keeps its old
     # name, because recorded plans carry it, and now reads "can the host
     # open a change here at all" — false for BOARD_GIT_PROVIDER=none and
     # for a remote the provider does not recognise, as well as for a
-    # missing CLI. An old record with no `provider` field reads as github.
-    gh = githost.available()
-    found = {"remote": remote, "gh": gh, "pr": bool(remote) and gh,
+    # missing CLI. An old record with no `provider` field reads as the
+    # default provider.
+    host = githost.available()
+    found = {"remote": remote, CLI_KEY: host, "pr": bool(remote) and host,
              "provider": githost.name()}
-    if not gh:
+    if not host:
         found["hostProblem"] = githost.problem() or \
             githost.capabilities()["open"]["reason"]
     return found
+
+
+# The persisted key a plan's capabilities name the hosting CLI by.
+CLI_KEY = "gh"
 
 
 def _delivery(plan: dict) -> None:
@@ -263,13 +268,11 @@ def _delivery(plan: dict) -> None:
         plan["delivery"] = "pr"
         return
     plan["delivery"] = "local-only"
-    if not caps["remote"]:
-        missing = "no git remote is configured"
-    elif caps.get("provider", "github") == "github" and \
-            caps.get("hostProblem") in (None, "gh is not installed"):
-        missing = f"{config.GH_BIN} is not installed"
-    else:
-        missing = caps.get("hostProblem") or "the hosting provider cannot open one"
+    # The provider's own reason (`<cli> is not installed` for a missing
+    # CLI, exactly the words this note always used); a record from before
+    # task 116 carries none and was only ever missing the CLI.
+    missing = ("no git remote is configured" if not caps["remote"]
+               else caps.get("hostProblem") or githost.missing_cli())
     asked = plan["prSource"] != "the application default"
     plan["notes"].append(
         (f"local-only: {missing}, so the PR into {plan['prBase']} this card "

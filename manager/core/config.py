@@ -602,14 +602,14 @@ def adapters_installed() -> list[dict]:
 # go to. Empty remote = auto-detect the first remote; no remote = no PRs.
 GH_BIN = setting("BOARD_GH_BIN", "gh")
 # Which hosting provider change requests go through (`githost`, task 116):
-# `github` (the default, today's behaviour) or `none`, git alone. Read at
-# start-up like its neighbours.
-GIT_PROVIDER = setting("BOARD_GIT_PROVIDER", "github").strip().lower() or "github"
-# GitHub Enterprise hosts the github provider recognises besides
-# github.com, comma-separated. A remote on any other host is reported and
-# never acted on.
-GITHUB_HOSTS = [h.strip() for h in setting("BOARD_GITHUB_HOSTS", "").split(",")
-                if h.strip()]
+# the default provider (today's behaviour) when empty, or `none`, git
+# alone. Read at start-up like its neighbours; `githost` names the default.
+GIT_PROVIDER = setting("BOARD_GIT_PROVIDER", "").strip().lower()
+# Enterprise hosts the default provider recognises besides its public
+# one, comma-separated (`BOARD_GITHUB_HOSTS`). A remote on any other host
+# is reported and never acted on.
+PROVIDER_HOSTS = [h.strip() for h in setting("BOARD_GITHUB_HOSTS", "").split(",")
+                  if h.strip()]
 GIT_REMOTE = setting("BOARD_GIT_REMOTE", "")
 PR_POLL_INTERVAL = float(setting("BOARD_PR_POLL_INTERVAL", "60"))
 

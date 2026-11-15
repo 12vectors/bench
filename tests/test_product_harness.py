@@ -25,7 +25,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import config  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 
 BRANCH = "task/108-x"
 
@@ -223,17 +223,19 @@ class BenchTalksToTheFakeHost(HostCase):
             self.addCleanup(setattr, config, name, old)
 
     def test_existing_pr_info_and_the_conditional_merge_probe(self):
-        self.assertTrue(github._gh_merge_is_conditional())
+        self.assertTrue(changes.merge_is_conditional())
         url = self.host.create(BRANCH, "main")
-        self.assertEqual(github._existing_pr_info(BRANCH),
+        self.assertEqual(changes._existing_pr_info(BRANCH),
                          {"url": url, "base": "main"})
 
     def test_the_review_listing_bench_reads(self):
+        """Normalized at the edge: core's state word, the commit each
+        review was of, and the reviewer (task 116)."""
         self.host.create(BRANCH, "main")
         self.host.add_review("1", "APPROVED", "rev", commit=self.tip)
-        listed = github._review_objects("1")
-        self.assertEqual([(r["state"], r["commit_id"]) for r in listed],
-                         [("APPROVED", self.tip)])
+        listed = changes._review_objects("1")
+        self.assertEqual([(r["state"], r["commit"], r["reviewer"]) for r in listed],
+                         [("approved", self.tip, "rev")])
 
 
 class TheScratchDenies(unittest.TestCase):

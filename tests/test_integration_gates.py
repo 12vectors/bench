@@ -71,7 +71,7 @@ import doctor  # noqa: E402
 import gates  # noqa: E402
 import githost  # noqa: E402
 import completion  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import httpd  # noqa: E402
 import phases  # noqa: E402
 import profiles  # noqa: E402
@@ -208,7 +208,7 @@ class GateCase(unittest.TestCase):
 
         for registry in (state.AGENTS, state.BOARD_EVENTS,
                          state.EXPECTED_MOVES, verify.RUNNING, verify._KEYS,
-                         github.PR_STATE, gates.REVIEW_STATE,
+                         changes.PR_STATE, gates.REVIEW_STATE,
                          phases.SNAPSHOTS):
             registry.clear()
             self.addCleanup(registry.clear)
@@ -1191,7 +1191,7 @@ class TheBackendIsTheAuthority(GateCase):
                 verify.forget_cached()
                 gates.forget_cached()
 
-        self.addCleanup(setattr, github, "_assert_lands_in_the_base", original)
+        self.addCleanup(setattr, changes, "_assert_lands_in_the_base", original)
         completion._assert_lands_in_the_base = push_lands
 
         with self.assertRaises(ValueError) as caught:
@@ -1367,7 +1367,7 @@ class AGatedPhase(PhaseCase):
         agent exit, and no CI result at all."""
         self.gate()
         self.start()
-        self.assertEqual(github.PR_STATE.get(ONE, {}).get("ci"), None)
+        self.assertEqual(changes.PR_STATE.get(ONE, {}).get("ci"), None)
         self.advance()
         self.assertIn("halted", " ".join(self.log()))
 

@@ -35,7 +35,7 @@ import doctor
 import drive
 import events
 import gates
-import github
+import changes
 import phases
 import plans
 import profiles
@@ -263,7 +263,7 @@ def state_payload() -> dict:
         "appBase": config.APP_BASE,
         "sessions": sessions,
         "agents": agents.list_public(),
-        "prs": github.public_state(),
+        "prs": changes.public_state(),
         # what the last pass of the phase runner saw: per phase card in
         # in-progress/, its branch, whether a run is in force or halted (and
         # why, and where), and each member's state — the header chip and the
@@ -327,7 +327,7 @@ def state_payload() -> dict:
         # card's own records, never from its column. Empty on a board that
         # tracks nothing; the whole reading is `/api/card/acceptance`.
         "acceptance": acceptance.board(collected),
-        "branches": github.task_branches(),
+        "branches": changes.task_branches(),
         "commands": config.commands(),
         "commandRuns": commands.public(),
         # cards this board is midway through merging and cleaning up: the
@@ -836,12 +836,12 @@ def post_plan_replan(req) -> None:
 
 def post_pr_open(req) -> None:
     payload = req.body
-    req.reply(200, {"url": github.open_pr_now(payload["file"])})
+    req.reply(200, {"url": changes.open_pr_now(payload["file"])})
 
 
 def post_pr_copilot(req) -> None:
     payload = req.body
-    url = github.request_copilot(payload["file"])
+    url = changes.request_copilot(payload["file"])
     req.reply(200, {"url": url})
 
 

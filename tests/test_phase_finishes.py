@@ -25,7 +25,7 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import config  # noqa: E402
 import completion  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import state  # noqa: E402
 import taskfiles  # noqa: E402
 import watch  # noqa: E402
@@ -120,11 +120,11 @@ class AFinishedPhase(PhaseEnding):
 
     def test_a_members_pr_state_is_dropped_with_its_branch(self):
         self.run_phase()
-        github.PR_STATE[ONE] = {"verdict": "green", "ci": "pass", "url": "u"}
+        changes.PR_STATE[ONE] = {"verdict": "green", "ci": "pass", "url": "u"}
 
         self.complete()
 
-        self.assertNotIn(ONE, github.PR_STATE)
+        self.assertNotIn(ONE, changes.PR_STATE)
 
     # — one ending, said once —
 

@@ -73,6 +73,7 @@ import uuid
 from pathlib import Path
 
 import config
+import githost
 import profiles
 import verify
 
@@ -363,6 +364,28 @@ def inspect(worktree: Path | str | None = None) -> dict:
         code=("policy-unreadable" if doc["problem"] else None),
         remedy=(profiles.DIAGNOSTICS["policy-unreadable"][1]
                 if doc["problem"] else None)))
+
+    # — the hosting provider, and what it makes of the remote (task 116) —
+    # Passive: which provider, and whether it recognises the remote. No
+    # probe process and no network, so a conditional merge reads unknown
+    # here and is asked when a merge needs to know.
+    host = githost.provider()
+    findings.append(_finding(
+        "inspect", "hosting-provider",
+        "failed" if host["problem"] else
+        ("skipped" if host["name"] == "none" else "passed"),
+        "which hosting provider change requests go through, and whether it "
+        "recognises this application's remote",
+        host["problem"] or
+        (f"none — BOARD_GIT_PROVIDER is none, so no change request is opened, "
+         f"observed or merged on a host" if host["name"] == "none" else
+         f"{host['label']} · {host['detected'].get('reason')}"),
+        code=("provider-unrecognized" if host["problem"] else None),
+        remedy=("Point BOARD_GIT_REMOTE at a remote the provider recognises, "
+                "name a GitHub Enterprise host in BOARD_GITHUB_HOSTS, or set "
+                "BOARD_GIT_PROVIDER=none in manager/local/.env. Bench does not "
+                "run the provider's CLI against a host it does not speak to.")
+        if host["problem"] else None))
 
     # — the adapter, and what it will answer for —
     declared = sorted(adapter["capabilities"])
@@ -792,10 +815,10 @@ LIFECYCLE_COMMANDS = ("git worktree", "git reset", "git checkout",
                       "git switch", "git branch", "git update-ref",
                       "git remote")
 
-# What the read-only intent may never be rendered. `review` posting a
-# verdict is not publishing: `gh pr review` is its whole job.
-REVIEW_FORBIDDEN = ("git commit", "git push", "git add", "gh pr merge",
-                    "gh pr create")
+# What the read-only intent may never be rendered: git's writes, and the
+# hosting provider's publication verbs (`githost.agent_verbs`, task 116).
+# `review` posting a verdict is not publishing: that is its whole job.
+REVIEW_FORBIDDEN = ("git commit", "git push", "git add")
 
 
 def _conformance_seam(adapter: dict) -> dict:
@@ -863,6 +886,7 @@ def _describe(adapter: dict, seam: dict, intent: str,
         "AGENT_CONTEXT": json.dumps(profiles.adapter_context(found)),
         "AGENT_GUIDANCE": json.dumps(profiles.adapter_guidance(found)),
         "AGENT_CWD": str(found["cwd"]["path"] or ""),
+        "AGENT_HOST": json.dumps(githost.agent_verbs(intent)),
     })
     try:
         result = subprocess.run(argv, env=env, cwd=adapter["path"],
@@ -1050,7 +1074,10 @@ def _conformance_rows(adapter: dict, seam: dict, intent: str,
 
     # — publication, kept where it belongs —
     if intent == "review":
-        offending = [c for c in REVIEW_FORBIDDEN
+        forbidden = list(REVIEW_FORBIDDEN) + [
+            v for v in githost.agent_verbs("review")["publish"]
+            if v not in REVIEW_FORBIDDEN]
+        offending = [c for c in forbidden
                      if c in allow and c not in deny]
         rows.append(_finding(
             "conformance", "publication", "failed" if offending else "passed",
@@ -1201,6 +1228,7 @@ def _stub_rows(adapter: dict, seam: dict, intent: str,
             "AGENT_CONTEXT": json.dumps(profiles.adapter_context(found)),
             "AGENT_GUIDANCE": json.dumps(profiles.adapter_guidance(found)),
             "AGENT_CWD": str(cwd),
+            "AGENT_HOST": json.dumps(githost.agent_verbs(intent)),
         })
         # The model this intent resolved, exactly as `_launch` would hand
         # it over — a stub costs nothing, and the row then shows the model
@@ -1618,6 +1646,7 @@ def _real_agent_probe(adapter: dict, root: Path, probe: dict,
         "AGENT_CONTEXT": json.dumps(profiles.adapter_context(found)),
         "AGENT_GUIDANCE": json.dumps(profiles.adapter_guidance(found)),
         "AGENT_CWD": str(root),
+        "AGENT_HOST": json.dumps(githost.agent_verbs(intent)),
     })
     # The configured model, and nothing invented here: absent means the
     # vendor's own resolution, which is the account's own default.

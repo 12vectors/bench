@@ -53,7 +53,7 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import agents  # noqa: E402
 import config  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import httpd  # noqa: E402
 import profiles  # noqa: E402
 import reviews  # noqa: E402
@@ -248,7 +248,7 @@ class ReviewCase(unittest.TestCase):
                    VERIFY_LOG_CAP=4 * 1024 * 1024)
 
         for registry in (state.AGENTS, state.BOARD_EVENTS, state.EXPECTED_MOVES,
-                         github.PR_STATE, verify.RUNNING, verify._KEYS,
+                         changes.PR_STATE, verify.RUNNING, verify._KEYS,
                          reviews.OBSERVED):
             registry.clear()
             self.addCleanup(registry.clear)

@@ -36,7 +36,7 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import agents  # noqa: E402
 import config  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import httpd  # noqa: E402
 import phases  # noqa: E402
 import state  # noqa: E402
@@ -114,7 +114,7 @@ class PhaseCardCase(unittest.TestCase):
                    COMMIT_MOVES=False, SYNC=False)
 
         for registry in (state.AGENTS, state.BOARD_EVENTS, state.EXPECTED_MOVES,
-                         github.PR_STATE, phases.SNAPSHOTS):
+                         changes.PR_STATE, phases.SNAPSHOTS):
             registry.clear()
             self.addCleanup(registry.clear)
         self.addCleanup(setattr, state, "broadcast", state.broadcast)

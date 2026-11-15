@@ -78,5 +78,24 @@ def request_external_review(ctx: dict, number: str) -> dict:
     return {"ok": False, "detail": _WHY}
 
 
+# No host to read a change from or post a verdict to. These templates are
+# not launched on a `none` board (there is no change request to act on or
+# review), but a preview renders them, so every placeholder has words.
+FRAGMENTS = {
+    "act-pr.md": {
+        "host_read": "the reviews recorded on the card",
+        "host_mergeable": "merge `{branch}`'s base into it locally to find out",
+    },
+    "review-pr.md": {
+        "host_name": "the card",
+        "host_cli": "",
+        "host_diff": "`git diff` against the base",
+        "host_post": "There is no hosting provider to post a verdict to: "
+                     "your report is the verdict.",
+    },
+}
+
+
 def agent_verbs(intent: str) -> dict:
-    return {"provider": NAME, "allow": [], "publish": [], "fragment": {}}
+    return {"provider": NAME, "allow": [], "publish": [],
+            "fragments": {name: dict(parts) for name, parts in FRAGMENTS.items()}}

@@ -1,7 +1,15 @@
-"""GitHub plumbing: opening PRs from agent worktree branches, requesting
-Copilot reviews, and polling PR state for cards sitting in review/.
+"""Change requests: opening PRs from agent worktree branches, requesting
+an external review, and polling PR state for cards sitting in review/.
 
-Every git and gh command here runs in `config.REPO` — **the application**
+Task 116 (WP08) renamed this module from `github.py` and took every host
+shape out of it: the `gh` argument lists, url and payload shapes live in
+`providers/github/`, and this module asks `githost`, reading normalized
+values back. What stays here is the lifecycle — open or adopt, the poll,
+the fold into one verdict, the persisted observation — which is the same
+for any provider. With `BOARD_GIT_PROVIDER=none` nothing is opened or
+polled and no chip appears.
+
+Every git command here runs in `config.REPO` — **the application**
 — against the remote `config.git_remote()` names and the base branch
 `config.APP_BASE` names. Those are resolved independently of the work
 state's own remote and branch (task 56): a code PR must never target the
@@ -628,6 +636,10 @@ def _persist_snapshot(filename: str, entry: dict) -> None:
     delivery reading needs, and the time they were observed."""
     stored = {key: entry.get(key) for key in SNAPSHOT_KEYS}
     stored.update({"v": 1, "task": filename,
+                   # which hosting provider observed it (task 116); a
+                   # snapshot written before carries none and reads as the
+                   # default provider, `githost.DEFAULT`
+                   "provider": githost.name(),
                    "observed": entry.get("ts") or time.time()})
     path = _snapshot_path(filename)
     try:
@@ -653,7 +665,8 @@ def pr_snapshot(filename: str) -> dict | None:
     if not isinstance(data, dict):
         return None
     found = {key: data.get(key) for key in SNAPSHOT_KEYS}
-    found.update({"observed": data.get("observed"), "from": "disk"})
+    found.update({"observed": data.get("observed"), "from": "disk",
+                  "provider": str(data.get("provider") or githost.DEFAULT)})
     return found
 
 

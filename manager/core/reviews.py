@@ -165,7 +165,7 @@ def observe(filename: str, *, head: str | None = None, base: str | None = None,
             status: str | None = None, source: str = "poll") -> dict:
     """Record the pull request's current head, as somebody read it.
 
-    Called by the PR poll (`github._poll_pr`, every `BOARD_PR_POLL_INTERVAL`)
+    Called by the PR poll (`changes._poll_pr`, every `BOARD_PR_POLL_INTERVAL`)
     and by `resolve_head` below. One authority for "what is the head now",
     so the freshness of a review is answered from the beat that already
     runs rather than from a gh call per card per read.
@@ -371,7 +371,7 @@ def _bring_it_here(found: dict) -> None:
 def _base_of(found: dict, task: dict) -> None:
     """What the head is proposed *into*. GitHub's answer when there is
     one; otherwise the card's own recorded plan, which is the same answer
-    `github._pr_base` opens the PR against."""
+    `changes._pr_base` opens the PR against."""
     if not found["base"]["ref"]:
         found["base"]["ref"] = plans.pr_base(found["task"], task or None)
         found["base"]["authority"] = "plan"

@@ -40,34 +40,44 @@ composition.
 ```architecture current
 L0  gitproc records redact
 L1  config
-L2  state reports templates gitrepo
-L3  taskfiles
-L4  plans profiles
-L5  reviews
-L6  verify
-L7  progress
-L8  acceptance callers
-L9  gates
-L10 required
-L11 doctor
-L12 commands drive events sync
-L13 github
-L14 completion
-L15 delivery
-L16 agentsettings
-L17 settings
-L18 setupguide
-L19 agents
-L20 setuptasks
-L21 readiness
-L22 previews
-L23 phases
-L24 refine
-L25 routes watch
-L26 httpd
-L27 board
+L2  githost
+L3  state reports templates gitrepo
+L4  taskfiles
+L5  plans profiles
+L6  reviews
+L7  verify
+L8  progress
+L9  acceptance callers
+L10 gates
+L11 required
+L12 doctor
+L13 commands drive events sync
+L14 changes
+L15 completion
+L16 delivery
+L17 agentsettings
+L18 settings
+L19 setupguide
+L20 agents
+L21 setuptasks
+L22 readiness
+L23 previews
+L24 phases
+L25 refine
+L26 routes watch
+L27 httpd
+L28 board
 composition: board httpd routes watch
 ```
+
+`githost` (task 116, WP08) sits directly above `config`: which hosting
+provider is in force, what it can do here, and refusing by name. It
+imports `config` only, and loads a provider (`providers/github/`,
+`providers/none/`) by path; a provider imports nothing from core. It sits
+*below* `templates`, which asks it for the prompt fragments the PR
+templates carry — the one place the target table (where `githost` is
+above `gitrepo`) is reordered, because the provider's words reach a
+template before any repository is asked anything.
 
 This is the order `AGENTS.md` states, with two facts made explicit:
 `github` imported `drive`, so the old `events / github / drive / sync`
@@ -170,14 +180,17 @@ L27 watch routes
 L28 httpd
 L29 board
 composition: board httpd routes
-retired: github
-new: githost gatepolicy evidence resultidentity staleness changes stacks
+retired:
+new: gatepolicy evidence resultidentity staleness stacks
 ```
 
 The plan wrote same-layer orderings as `gitrepo → githost`; with the
 convention above those become separate layers, lower first (so
 `githost` imports `gitrepo`). `github.py` is split into `changes`,
-`completion` and a `providers/github/` adapter and leaves the table.
+`completion` and a `providers/github/` adapter and leaves the table —
+done by tasks 115 (WP07) and 116 (WP08), so `githost` and `changes` are
+no longer `new`. (The current table places `githost` lower than this
+target, directly above `config`; see "Current layers".)
 Note that `setupguide` stays *below* `setuptasks`, `readiness` and
 `previews` in the target too: the upward imports above are removed by
 moving the shared helpers down, not by reordering the table.
@@ -406,14 +419,16 @@ inventory for comparison and writes nothing.
 
 **Deferred**, because what they check does not exist yet — each is
 written by the package that builds its subject, not now against
-nothing: purity of `providers/*`
-(WP08); frontend import direction and offline assets (checks 7 and 8; WP14–15).
+nothing: frontend import direction and offline assets (checks 7 and 8;
+WP14–15). The purity of `providers/*` arrived with WP08 (task 116) and
+is held by `tests/test_hosting_providers.py`: a provider imports only the
+standard library, no core module and no other provider.
 
 ```architecture counts
 top-level-exceptions 0
 function-imports 25
 private-reaches 61
 dynamic-patch-targets 1
-provider-vocabulary 223
+provider-vocabulary 187
 routes 91
 ```

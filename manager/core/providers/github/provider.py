@@ -378,24 +378,36 @@ AGENT_ALLOW = {
 AGENT_PUBLISH = ["gh pr create", "gh pr merge", "gh pr close", "gh release",
                  "gh api --method POST", "gh api -X POST"]
 
-# What a prompt says about reaching the pull request. Core fills the
-# template's `{host_*}` placeholders from these.
+# What a prompt says about reaching the pull request, per template. Core
+# fills the template's `{host_*}` placeholders from these after formatting
+# each fragment with `branch` (so `{{owner}}` here reads `{owner}` in the
+# prompt). Byte for byte the text the templates carried before task 116.
 FRAGMENTS = {
-    "act-pr": {
-        "host_read": "read every review and line comment on the PR "
-                     "(`gh pr view`, `gh api`)",
+    "act-pr.md": {
+        "host_read": ("`gh pr view {branch} --json\n  reviews`, and the line "
+                      "comments via `gh api\n  "
+                      "repos/{{owner}}/{{repo}}/pulls/<number>/comments`"),
+        "host_mergeable": ("check `gh pr view {branch}\n  --json mergeable` — "
+                           "CONFLICTING means yes"),
     },
-    "review-pr": {
-        "host_read": "`gh pr view` and `gh pr diff`",
-        "host_post": "`gh pr review`",
+    "review-pr.md": {
+        "host_name": "GitHub",
+        "host_cli": "gh, ",
+        "host_diff": "`gh pr diff {branch}` (or by PR number)",
+        "host_post": (
+            "When you have a verdict, POST it to GitHub:\n"
+            "- approve:          gh pr review {branch} --approve --body "
+            "\"<your summary>\"\n"
+            "- request changes:  gh pr review {branch} --request-changes "
+            "--body \"<your findings>\""),
     },
 }
 
 
 def agent_verbs(intent: str) -> dict:
-    """The command prefixes and the prompt fragment one launch intent
-    gets from this host."""
+    """The command prefixes one launch intent gets from this host, and the
+    prompt fragments by template name."""
     return {"provider": NAME,
             "allow": list(AGENT_ALLOW.get(intent, [])),
             "publish": list(AGENT_PUBLISH),
-            "fragment": dict(FRAGMENTS.get(intent, {}))}
+            "fragments": {name: dict(parts) for name, parts in FRAGMENTS.items()}}

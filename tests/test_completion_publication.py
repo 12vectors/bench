@@ -32,7 +32,7 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 import config  # noqa: E402
 import drive as drive_mod  # noqa: E402
 import completion  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import state  # noqa: E402
 
 FILENAME = "63-a-card-to-deliver.md"
@@ -135,7 +135,7 @@ class Delivery(unittest.TestCase):
         self.work = git(self.worktree, "rev-parse", "HEAD").stdout.strip()
 
         for registry in (state.COMPLETING, state.BOARD_EVENTS,
-                         state.EXPECTED_MOVES, github.PR_STATE):
+                         state.EXPECTED_MOVES, changes.PR_STATE):
             registry.clear()
             self.addCleanup(registry.clear)
         self.addCleanup(setattr, drive_mod, "DRIVE", drive_mod.DRIVE)
@@ -278,7 +278,7 @@ class TheLocalMergeIsDeliveredOrHeld(Delivery):
         self.refuse_pushes()
         self.complete()
         state.BOARD_EVENTS.clear()
-        github.PR_STATE.clear()            # what a restart loses
+        changes.PR_STATE.clear()            # what a restart loses
 
         self.assertIn(FILENAME, completion.recoveries())
         import httpd

@@ -26,7 +26,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import config  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import state  # noqa: E402
 import sync  # noqa: E402
 import taskfiles  # noqa: E402
@@ -422,7 +422,7 @@ class TwoBoards(unittest.TestCase):
 
         self.assertEqual(config.git_remotes()[0], "backup",
                          "auto-detection alone would pick the wrong one here")
-        self.assertEqual(github.remote(), "fork")
+        self.assertEqual(changes.remote(), "fork")
 
         self.move(self.ada, "backlog", "to-do")
         self.assertEqual(sync.push_now(), "ok")

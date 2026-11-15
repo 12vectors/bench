@@ -14,7 +14,7 @@ Two habits end runs early, so neither is allowed here:
 - Do not promise to come back to something. There is no coming back — do
   it now, or say plainly in your report that it is not done.
 
-So post your verdict to GitHub during the turn, before the reply that
+So post your verdict to {host_name} during the turn, before the reply that
 ends it: a verdict you only described in your report never reached the
 PR.
 
@@ -29,7 +29,7 @@ The task content, for what the work was supposed to be:
 {review}
 
 Review the PR properly:
-- Read the diff: `gh pr diff {branch}` (or by PR number), or `git diff`
+- Read the diff: {host_diff}, or `git diff`
   against the base in the checkout you are in. Read all of it.
 - Read the surrounding code where the diff touches it — judge the change in
   context, not in isolation. The checkout you are in holds the proposed
@@ -56,7 +56,7 @@ person accepts one, on the card, where a merge rule asks for that.
 
 You are read-only on the working tree: make NO edits, NO commits, move
 nothing, and change the checked-out revision in nothing. You may and
-should run read-only commands (gh, git log, grep).
+should run read-only commands ({host_cli}git log, grep).
 
 {context}
 
@@ -64,9 +64,7 @@ should run read-only commands (gh, git log, grep).
 
 {progress}
 
-When you have a verdict, POST it to GitHub:
-- approve:          gh pr review {branch} --approve --body "<your summary>"
-- request changes:  gh pr review {branch} --request-changes --body "<your findings>"
+{host_post}
 
 Then end your reply with a report whose FIRST line is exactly
 PR REVIEW: <APPROVE | REQUEST CHANGES>

@@ -44,8 +44,9 @@ import agents  # noqa: E402
 import config  # noqa: E402
 import delivery  # noqa: E402
 import gates  # noqa: E402
+import githost  # noqa: E402
 import completion  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import httpd  # noqa: E402
 import phases  # noqa: E402
 import plans  # noqa: E402
@@ -108,7 +109,7 @@ class DeliveryCase(GateCase):
         entry = {"head": None, "prState": "OPEN", "merged": False,
                  "url": PR_URL, "ts": time.time()}
         entry.update(values)
-        github._persist_snapshot(filename, entry)
+        changes._persist_snapshot(filename, entry)
 
     def running_agent(self, name: str = "Wren") -> None:
         state.AGENTS["run-live"] = {"id": "run-live", "task": CARD,
@@ -455,7 +456,7 @@ class TheCopyMatrix(DeliveryCase):
         gates.record_verdict(CARD, verdict="APPROVE", head=head)
         self.place("review", pr=PR_URL)
         self.snapshot(head=head, ts=time.time() - 120)
-        github.PR_STATE.clear()
+        changes.PR_STATE.clear()
         state.AGENTS.clear()
         found = self.expect("ready-to-merge", "complete")
         self.assertEqual(found["source"]["pr"]["from"], "disk")
@@ -664,12 +665,12 @@ class ARestartForgetsNothingDurable(DeliveryCase):
     def test_a_merged_pr_survives_empty_memory_with_its_time(self):
         head = self.passed_at_head()
         self.place("review", pr=PR_URL)
-        github.PR_STATE[CARD] = {"head": head, "prState": "MERGED",
+        changes.PR_STATE[CARD] = {"head": head, "prState": "MERGED",
                                  "merged": True, "url": PR_URL,
                                  "ts": time.time() - 300}
-        github._persist_snapshot(CARD, github.PR_STATE[CARD])
+        changes._persist_snapshot(CARD, changes.PR_STATE[CARD])
         # the restart: every in-memory registry empty
-        github.PR_STATE.clear()
+        changes.PR_STATE.clear()
         state.AGENTS.clear()
         gates.REVIEW_STATE.clear()
         found = self.read()
@@ -680,13 +681,13 @@ class ARestartForgetsNothingDurable(DeliveryCase):
 
     def test_the_poll_persists_at_its_own_boundary(self):
         self.place("review", pr=PR_URL)
-        self.addCleanup(setattr, github, "_gh_pr", github._gh_pr)
+        self.addCleanup(setattr, githost, "change_status", githost.change_status)
         payload = {"state": "MERGED", "headRefOid": "c" * 40,
                    "mergedAt": "2026-11-11T10:00:00Z", "reviews": [],
                    "statusCheckRollup": [], "baseRefName": "main"}
-        github._gh_pr = lambda *a, **k: subprocess.CompletedProcess(
-            a, 0, json.dumps(payload), "")
-        github._poll_pr(CARD, PR_URL)
+        githost.change_status = lambda number: \
+            githost.load("github").normalize_status(payload)
+        changes._poll_pr(CARD, PR_URL)
         stored = json.loads((self.state / "gates" / f"{STEM}.pr.json")
                             .read_text())
         self.assertTrue(stored["merged"])
@@ -893,11 +894,13 @@ class ReviewsAreReadApart(DeliveryCase):
         payload = {"reviews": [{"state": "APPROVED", "author": {"login": "elena"}}],
                    "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "FAILURE"}],
                    "mergeable": "MERGEABLE", "baseRefName": "main"}
-        folded = github._fold(payload, {})
+        normal = githost.load("github").normalize_status
+        folded = changes._fold(normal(payload), {})
         self.assertEqual(folded["verdict"], "red")
         self.assertEqual(folded["review"], "approved")
-        self.assertIsNone(github._fold({"reviews": []}, {})["review"])
-        changes = github._fold({"reviews": [{"state": "CHANGES_REQUESTED"}]}, {})
+        self.assertIsNone(changes._fold(normal({"reviews": []}), {})["review"])
+        changes = changes._fold(
+            normal({"reviews": [{"state": "CHANGES_REQUESTED"}]}), {})
         self.assertEqual(changes["review"], "changes")
 
 

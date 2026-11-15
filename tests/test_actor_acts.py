@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 import agents  # noqa: E402
 import config  # noqa: E402
 import completion  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import state  # noqa: E402
 import sync  # noqa: E402
 import taskfiles  # noqa: E402
@@ -149,8 +149,8 @@ class Boards(unittest.TestCase):
         sync._NOTES.clear()
         self.addCleanup(sync._NOTES.clear)
         self.addCleanup(sync.ARRIVED.clear)
-        github.PR_STATE.pop(FILENAME, None)
-        self.addCleanup(github.PR_STATE.pop, FILENAME, None)
+        changes.PR_STATE.pop(FILENAME, None)
+        self.addCleanup(changes.PR_STATE.pop, FILENAME, None)
 
         self.broadcasts: list[dict] = []
         self.addCleanup(setattr, state, "broadcast", state.broadcast)
@@ -239,8 +239,8 @@ class RemoteMovesAreInert(Boards):
         self.elsewhere()              # the fixture's own pull is not evidence
         self.use(self.ada)
         self.opened: list[str] = []
-        self.addCleanup(setattr, github, "open_pr_async", github.open_pr_async)
-        github.open_pr_async = self.opened.append
+        self.addCleanup(setattr, changes, "open_pr_async", changes.open_pr_async)
+        changes.open_pr_async = self.opened.append
 
     def narrate(self, board: Path, action, *, fresh: bool = False) -> list[dict]:
         self.use(board)
@@ -322,7 +322,7 @@ class ThePRLineTravels(Boards):
         self.use(self.ada)
 
     def test_opening_a_pr_writes_and_commits_the_url(self):
-        github.maybe_open_pr(FILENAME)
+        changes.maybe_open_pr(FILENAME)
 
         self.assertIn(f"**PR:** {PR_URL}", self.text(self.ada))
         self.assertEqual(git(self.ada, "status", "--porcelain",
@@ -334,7 +334,7 @@ class ThePRLineTravels(Boards):
                         "sync's piggyback guard only publishes board commits")
 
     def test_the_url_reaches_the_other_board(self):
-        github.maybe_open_pr(FILENAME)
+        changes.maybe_open_pr(FILENAME)
         self.assertEqual(sync.push_now(), "ok")
 
         self.use(self.elena)
@@ -347,10 +347,10 @@ class ThePRLineTravels(Boards):
             "the replica's poller adopts the PR from the file, read-only")
 
     def test_a_second_attempt_is_a_no_op_not_a_second_pr(self):
-        github.maybe_open_pr(FILENAME)
+        changes.maybe_open_pr(FILENAME)
         state.BOARD_EVENTS.clear()
 
-        github.maybe_open_pr(FILENAME)
+        changes.maybe_open_pr(FILENAME)
 
         self.assertEqual(self.gh_verbs().count("pr create"), 1)
         self.assertEqual([s for s in self.summaries() if "failed" in s], [])
@@ -360,7 +360,7 @@ class ThePRLineTravels(Boards):
         holds the line — one PR still exists, and the card learns its url."""
         self.mode("exists")
 
-        github.maybe_open_pr(FILENAME)
+        changes.maybe_open_pr(FILENAME)
 
         self.assertIn(f"**PR:** {PR_URL}", self.text(self.ada))
         self.assertTrue(any("adopted it" in s for s in self.summaries()))
@@ -369,7 +369,7 @@ class ThePRLineTravels(Boards):
     def test_a_real_failure_is_still_a_failure(self):
         self.mode("create-fails")
 
-        github.maybe_open_pr(FILENAME)
+        changes.maybe_open_pr(FILENAME)
 
         self.assertNotIn("**PR:**", self.text(self.ada))
         self.assertTrue(any("PR creation failed" in s for s in self.summaries()))
@@ -378,7 +378,7 @@ class ThePRLineTravels(Boards):
         self.patch(SYNC=False, COMMIT_MOVES=False)
         head = git(self.ada, "rev-parse", "HEAD").stdout
 
-        github.maybe_open_pr(FILENAME)
+        changes.maybe_open_pr(FILENAME)
 
         self.assertIn(f"**PR:** {PR_URL}", self.text(self.ada))
         self.assertEqual(git(self.ada, "rev-parse", "HEAD").stdout, head,
@@ -397,27 +397,27 @@ class TheExplicitOpenPR(Boards):
     def test_it_opens_the_pr_and_returns_the_url(self):
         self.work_branch(self.ada)
 
-        self.assertEqual(github.open_pr_now(FILENAME), PR_URL)
+        self.assertEqual(changes.open_pr_now(FILENAME), PR_URL)
         self.assertIn(f"**PR:** {PR_URL}", self.text(self.ada))
 
     def test_it_says_why_when_there_is_nothing_to_open(self):
         with self.assertRaises(ValueError) as caught:
-            github.open_pr_now(FILENAME)
+            changes.open_pr_now(FILENAME)
         self.assertIn("no task/", str(caught.exception))
 
     def test_it_says_so_when_the_card_already_has_one(self):
         self.work_branch(self.ada)
-        github.open_pr_now(FILENAME)
+        changes.open_pr_now(FILENAME)
 
         with self.assertRaises(ValueError) as caught:
-            github.open_pr_now(FILENAME)
+            changes.open_pr_now(FILENAME)
         self.assertIn("already has a PR", str(caught.exception))
 
     def test_startup_reconcile_stands_down_in_team_mode(self):
         """Every replica would race to open the same PR at startup."""
         self.work_branch(self.ada)
 
-        github.reconcile()
+        changes.reconcile()
 
         self.assertEqual(self.gh_verbs(), [])
         self.assertNotIn("**PR:**", self.text(self.ada))
@@ -586,7 +586,7 @@ class TheLocalMergeIsUntouched(Boards):
         """The single-player behaviour the team-mode stand-down replaces."""
         self.place(self.ada, "review", card("Review"), commit=False)
 
-        github.reconcile()
+        changes.reconcile()
 
         self.assertIn(f"**PR:** {PR_URL}", self.text(self.ada))
 

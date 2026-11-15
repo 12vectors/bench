@@ -46,7 +46,7 @@ from tests.test_integration_gates import (CARD, FAILS, HANGS, PASSES,  # noqa: E
 
 import gates  # noqa: E402  (on sys.path once the case module is imported)
 import completion  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import httpd  # noqa: E402
 import taskfiles  # noqa: E402
 import verify  # noqa: E402
@@ -345,7 +345,7 @@ class TheMergeRevalidatesUnderAnOverride(OverrideCase):
                 verify.forget_cached()
                 gates.forget_cached()
 
-        self.addCleanup(setattr, github, "_assert_lands_in_the_base", original)
+        self.addCleanup(setattr, changes, "_assert_lands_in_the_base", original)
         completion._assert_lands_in_the_base = push_lands
         with self.assertRaises(ValueError):
             completion.complete_task(CARD, "review")
@@ -784,7 +784,7 @@ class TheMergeRevalidatesTheEvidence(GateCase):
                 verify.forget_cached()
                 gates.forget_cached()
 
-        self.addCleanup(setattr, github, "_assert_lands_in_the_base", original)
+        self.addCleanup(setattr, changes, "_assert_lands_in_the_base", original)
         completion._assert_lands_in_the_base = push_lands
         with self.assertRaises(ValueError):
             completion.complete_task(CARD, "review")

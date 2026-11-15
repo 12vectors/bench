@@ -47,6 +47,7 @@ from pathlib import Path
 import config
 import events
 import gates
+import githost
 import gitrepo
 import plans
 import profiles
@@ -303,6 +304,11 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str,
         "AGENT_MODE": mode,
         "AGENT_COMMANDS": config.AGENT_COMMANDS,
         "AGENT_CWD": str(cwd),
+        # The hosting provider's verbs for this intent (task 116): the
+        # adapter renders them beside its own git prefixes, so a GitHub
+        # board's permission document is byte for byte what it was, and a
+        # `none` board's carries no host verb at all.
+        "AGENT_HOST": json.dumps(githost.agent_verbs(mode)),
         "BOARD_AGENT_ID": agent_id,
         "BOARD_TASK": filename,
         "BOARD_PORT": str(state.serve_port),
@@ -1025,6 +1031,7 @@ def start_pr_review(filename: str, stage: str) -> dict:
             review=reviews.prompt_block(pinned),
             context=profiles.prompt_block(manifest),
             verification=profiles.verification_block(manifest),
+            **githost.fragments("review-pr.md", branch),
             **config.prompt_fields(filename, stage), **_progress_fields("review")))
         proc, log_file, model = _launch("review", prompt, Path(pinned["path"]),
                                         agent_id, filename, log_path, manifest)
@@ -1120,6 +1127,7 @@ def start_pr_fix(filename: str, stage: str) -> dict:
         base=plan["prBase"], remote=plan.get("appRemote") or "origin",
         plan=plans.brief(plan), context=profiles.prompt_block(manifest),
         verification=profiles.verification_block(manifest),
+        **githost.fragments("act-pr.md", branch),
         **config.prompt_fields(filename, stage), **_progress_fields("act-pr")))
     # act-pr is the one intent allowed to push: the PR must update.
     proc, log_file, model = _launch("act-pr", prompt, worktree, agent_id,

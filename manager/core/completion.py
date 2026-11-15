@@ -1,18 +1,18 @@
 """Merge & clean up: the merge, its publication, the recovery record, the
 card's cleanup and a phase's sweep — the four outcomes a completion is,
 each waiting on the one before (task 115, WP07; moved verbatim out of
-`github.py`).
+`github.py`, which task 116 renamed `changes.py`).
 
-The pull request itself — opening it, polling it, what GitHub last said
-about it — stays with `github`, which this module asks through its public
+The pull request itself — opening it, polling it, what the host last said
+about it — stays with `changes`, which this module asks through its public
 accessors (`remote`, `gh_available`, `branch_of`, `woven`, `pr_snapshot`,
 `pr_info`, `merge_pr`, `merge_is_conditional`, `forget_pr`) and never by
 reaching into its registry. So nothing here holds a copy of `PR_STATE`.
 
 Every git process this module starts goes through `_run`, its one
 module-level seam: tests that stand in for a push, a branch delete or a
-remote read patch `completion._run`. A host merge (`gh pr merge`) is
-`github`'s verb and runs through `github`'s own seam.
+remote read patch `completion._run`. A host merge is the hosting
+provider's verb (`changes.merge_pr` → `githost.merge_change`).
 
 The records it owns, both machine-local and both written durably, keep
 the paths they had before the move, so a record written by an older board
@@ -35,7 +35,7 @@ from pathlib import Path
 import config
 import drive as drive_mod
 import gates
-import github
+import changes
 import plans
 import records
 import state
@@ -43,7 +43,7 @@ from taskfiles import member_entry, move_task, move_together, read_task
 
 
 def _run(cmd: list[str], cwd: Path | None = None, timeout: int = 60) -> subprocess.CompletedProcess:
-    """The one git seam: the same argv and environment `github._run` builds
+    """The one git seam: the same argv and environment `changes._run` builds
     (`config.git_argv`/`git_env`, so a read verb is hardened and a merge,
     push or worktree removal runs exactly as written), in the application
     unless `cwd` says otherwise. Raises what `subprocess.run` raises."""
@@ -153,8 +153,8 @@ def _complete(filename: str, stage: str) -> dict:
     result says which of them happened.
     """
     stem = filename[:-3]
-    branch = github.branch_of(filename)   # a phase's own branch, or task/<stem>
-    task = github.woven(filename, stage)
+    branch = changes.branch_of(filename)   # a phase's own branch, or task/<stem>
+    task = changes.woven(filename, stage)
     # A completion that merged and then could not publish left a record. A
     # retry finishes *that* — the commit it merged, into the target it
     # merged into, the way it merged — or refuses when the situation has
@@ -266,7 +266,7 @@ def _complete(filename: str, stage: str) -> dict:
             _remember(filename, {
                 "branch": branch, "target": target,
                 "mode": "origin" if on_origin else "local",
-                "remote": github.remote() or "", "commit": merged_tip,
+                "remote": changes.remote() or "", "commit": merged_tip,
                 "publication": "pending", "detail": ""})
         merged = True
 
@@ -304,7 +304,7 @@ def _complete(filename: str, stage: str) -> dict:
                                       on_origin)
         if not unmerged:
             # a branch with unmerged commits still has a PR worth watching
-            github.forget_pr(filename)
+            changes.forget_pr(filename)
 
         # the merge is published, so the members' work is in the base too
         swept, held = _sweep(filename, task, brought, merged_tip)
@@ -449,7 +449,7 @@ def _merge_landed(pending: dict, on_origin: bool) -> bool:
         return False
     if not on_origin:
         return bool(_tip(commit)) and _contains(commit, target)
-    rname = github.remote()
+    rname = changes.remote()
     return bool(rname) and _remote_holds(rname, target, commit)[0] is True
 
 
@@ -496,7 +496,7 @@ def _publish(filename: str, target: str, commit: str, on_origin: bool) -> dict:
     commit is not. No remote at all is a local-only completion, said in
     those words rather than dressed as a publication.
     """
-    rname = github.remote()
+    rname = changes.remote()
     out = {"mode": "origin" if on_origin else "local", "remote": rname or "",
            "target": target, "commit": commit, "state": "", "detail": "",
            "remoteTip": "", "diverged": False}
@@ -639,7 +639,7 @@ def _clean_up(filename: str, branch: str, pinned: str | None, merged: str,
                 "summary": f"{branch} kept — git would not delete it ({why})"})
     else:
         plans.forget(filename)        # a retry after the branch already went
-    rname = github.remote()
+    rname = changes.remote()
     if rname:
         if _delete_remote_branch(rname, branch, merged, filename):
             out["remoteBranch"] = "gone"
@@ -656,13 +656,13 @@ def completion_facts(filename: str, stage: str) -> dict:
     `config.git_remote()` — so the sheet describes the completion that
     would run, not one inferred from ticket sync. Read-only: no fetch, no
     `gh` call, no write."""
-    task = github.woven(filename, stage)
+    task = changes.woven(filename, stage)
     target = plans.pr_base(filename, task)
     saved = plans.recorded(filename)
     on_origin = config.app_merge_on_origin()
-    rname = github.remote()
+    rname = changes.remote()
     facts = {
-        "file": filename, "branch": github.branch_of(filename),
+        "file": filename, "branch": changes.branch_of(filename),
         "mode": "origin" if on_origin else "local",
         "target": target,
         "appBase": (saved or {}).get("appBase") or config.APP_BASE,
@@ -685,7 +685,7 @@ def completion_facts(filename: str, stage: str) -> dict:
     if not refusal and on_origin and not facts["pr"] and not facts["recovery"]:
         refusal = (f"{filename} has no PR, and this board merges the "
                    f"application on origin — open one first (↑ open PR)")
-    if not refusal and on_origin and not github.gh_available():
+    if not refusal and on_origin and not changes.gh_available():
         refusal = ("gh is not installed, and this board merges the "
                    "application on origin (BOARD_APP_MERGE)")
     facts["refusal"] = refusal or ""
@@ -699,10 +699,10 @@ def _merged_elsewhere(filename: str, task: dict, branch: str) -> str | None:
     of the remote itself (`_remote_holds`, bounded): the snapshot is what
     makes the question worth one remote read, and the remote is what
     answers it."""
-    snap = github.pr_snapshot(filename)
+    snap = changes.pr_snapshot(filename)
     if not snap or not snap.get("merged"):
         return None
-    rname = github.remote()
+    rname = changes.remote()
     tip = _tip(branch) or str(snap.get("head") or "")
     if not rname or not tip:
         return None
@@ -835,14 +835,14 @@ def _clear_member(member: dict, merged: str | None = None) -> str:
             # card's own branch takes it: the base here has not caught up.
             _run(["git", "branch",
                   "-D" if config.app_merge_on_origin() else "-d", branch])
-            rname = github.remote()
+            rname = changes.remote()
             if rname and merged:
                 _delete_remote_branch(rname, branch, merged, member["file"])
             elif rname:
                 _run(["git", "push", rname, "--delete", branch], timeout=60)
     except (subprocess.SubprocessError, OSError) as exc:
         return f"{stem}: workspace kept — {str(exc)[:120]}"
-    github.forget_pr(member["file"])
+    changes.forget_pr(member["file"])
     plans.forget(member["file"])
     return ""
 
@@ -1004,7 +1004,7 @@ def _merge_on_origin(filename: str, stage: str, branch: str,
     reported as refused. Whether it was *delivered* is `_publish`'s to
     say afterwards, from the remote, not from gh's exit status.
     """
-    rname = github.remote()
+    rname = changes.remote()
     intended = commit or _tip(branch)
     target = plans.pr_base(filename)
 
@@ -1018,7 +1018,7 @@ def _merge_on_origin(filename: str, stage: str, branch: str,
             "summary": (f"{rname}/{target} already holds {intended[:12]} — the "
                         f"PR was merged already, so it is not merged again")})
         return
-    if commit and github.gh_available() and not github.merge_is_conditional():
+    if commit and changes.gh_available() and not changes.merge_is_conditional():
         raise ValueError(
             f"this board's gate validated {commit[:12]}, and the installed gh "
             f"cannot make the merge conditional on it — `gh pr merge --help` "
@@ -1030,7 +1030,7 @@ def _merge_on_origin(filename: str, stage: str, branch: str,
         raise ValueError(
             f"{filename} has no PR, and this board merges the application on "
             f"origin — open a PR for {branch} first (↑ open PR on the card)")
-    if not github.gh_available():
+    if not changes.gh_available():
         raise ValueError("gh is not installed — this board merges the "
                         "application on origin (BOARD_APP_MERGE)")
     number = url.rstrip("/").rsplit("/", 1)[-1]
@@ -1038,7 +1038,7 @@ def _merge_on_origin(filename: str, stage: str, branch: str,
     # worth checking is that the PR targets what this card planned. A
     # contradiction is reported, never resolved by retargeting.
     target = plans.pr_base(filename, task)
-    actual = (github.pr_info(branch) or {}).get("base")
+    actual = (changes.pr_info(branch) or {}).get("base")
     if actual and actual != target:
         raise ValueError(
             f"{filename}'s PR is open against {actual}, and the card's plan "
@@ -1046,7 +1046,7 @@ def _merge_on_origin(filename: str, stage: str, branch: str,
             f"(⌖ replan, or change the PR on GitHub) first")
     condition = ["--match-head-commit", commit] if commit else []
     try:
-        result = github.merge_pr(number, *condition, timeout=180)
+        result = changes.merge_pr(number, *condition, timeout=180)
     except subprocess.TimeoutExpired:
         result = subprocess.CompletedProcess([], 1, "", "gh timed out")
     if result.returncode != 0:
@@ -1079,7 +1079,7 @@ def _catch_up_base(filename: str) -> None:
     Best effort, and narrated honestly: a checkout on another branch or
     with uncommitted changes is left exactly as it is.
     """
-    base, rname = config.APP_BASE, github.remote()
+    base, rname = config.APP_BASE, changes.remote()
     if not rname or config.SYNC and config.app_shares_state_repository():
         return                      # the sync beat owns this checkout
     _run(["git", "fetch", rname, base], timeout=120)

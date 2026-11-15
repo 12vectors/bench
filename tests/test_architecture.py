@@ -14,7 +14,7 @@ standard library's `ast` and `re` — nothing here imports a core module:
 5. Standalone executables (the agent adapters and the two run shims)
    import no core module, and composition modules are imported only by
    composition.
-6. GitHub vocabulary in core outside `github.py` is on a per-module count
+6. GitHub vocabulary in core (outside `providers/`) is on a per-module count
    that may only shrink.
 9. Every attribute a test assigns, `setattr`s or patches on a core module
    still exists in that module, so a patch cannot silently go inert.
@@ -396,7 +396,9 @@ def composition_problems(facts, block) -> list[str]:
 # ── provider vocabulary ────────────────────────────────────────────────
 
 VOCABULARY = re.compile(r"\bgh\b|GH_|github|copilot", re.IGNORECASE)
-PROVIDER_MODULE = "github"
+# Since WP08 (task 116) the provider's code lives under `providers/`, which
+# is not a core module and is not counted; no core module is exempt.
+PROVIDER_MODULE = None
 
 
 def _docstrings(tree) -> set[int]:
@@ -788,13 +790,26 @@ DYNAMIC_PATCH_TARGETS: dict[str, tuple[int, int]] = {
 # and its refusals' sentences. WP08 moves the provider half behind
 # `githost`. The same move took four from `routes`, six from `delivery`
 # and one from `gates`, whose references now name `completion`.
+#
+# WP08 (task 116) moved every `gh` argument list, GitHub url and payload
+# shape into `providers/github/` (not a core module, not counted) and
+# renamed `github` to `changes`, which is no longer exempt: its 24 are the
+# persisted and page-facing `copilot` keys of the PR registry, the
+# `request_copilot` route handler and its sentence, and the `gh_available`
+# accessor completion asks — vocabulary, no host shape. `githost`'s two
+# are the default provider's name and `BOARD_GH_BIN`, the setting the
+# GitHub provider's CLI is configured by. `board`, `phases` and `watch`
+# named the module and now name `changes`; `reviews` fell from 18 to 8
+# and `completion` from 38 to 15 with the rename. `gates`, `profiles` and
+# `settings` keep the `github` / `separate-reviewer` policy words, which
+# are persisted and are not renamed (plan §1.3).
 PROVIDER_VOCABULARY: dict[str, int] = {
-    "agents": 2, "board": 3, "completion": 38, "config": 10,
-    "delivery": 16, "doctor": 3, "gates": 24, "phases": 4,
-    "plans": 6, "profiles": 17, "readiness": 9, "redact": 4,
-    "reviews": 18, "routes": 10, "settings": 39, "setupguide": 16,
+    "agents": 2, "changes": 24, "completion": 15, "config": 10,
+    "delivery": 11, "doctor": 3, "gates": 23, "githost": 2,
+    "plans": 1, "profiles": 17, "readiness": 9, "redact": 4,
+    "reviews": 8, "routes": 5, "settings": 36, "setupguide": 15,
     "templates": 1,
-    "verify": 1, "watch": 2,
+    "verify": 1,
 }
 
 # Every route and its request class, as routes.py declares it (WP04).
@@ -1321,10 +1336,10 @@ class ScratchCopyCatchesViolations(unittest.TestCase):
     def test_inert_patch_targets_fail_in_every_form(self):
         (self.tests / "test_wp01_probe.py").write_text(
             "from unittest import mock\n"
-            "import config\nimport verify as v\nimport github\nimport agents\n"
+            "import config\nimport verify as v\nimport changes\nimport agents\n"
             "config.NOT_A_SETTING = 1\n"
             "config.PORT = 1\n"                       # exists: fine
-            "setattr(github, '_gone', None)\n"
+            "setattr(changes, '_gone', None)\n"
             "mock.patch.object(v, '_nope')\n"
             "mock.patch('agents._missing')\n"
             "mock.patch.object(v, '_made', create=True)\n"   # creates: fine
@@ -1340,7 +1355,7 @@ class ScratchCopyCatchesViolations(unittest.TestCase):
         inert, dynamic, _ = patch_targets(self.core, self.tests)
         text = "\n".join(p for p in inert if p.startswith("test_wp01_probe.py"))
         for expected in ("assignment config.NOT_A_SETTING",
-                         "setattr github._gone", "patch.object verify._nope",
+                         "setattr changes._gone", "patch.object verify._nope",
                          "patch agents._missing", "patch(**) config.NO_SUCH_ROOT"):
             self.assertIn(expected, text)
         for fine in ("config.PORT", "verify._made", "config.REPO"):

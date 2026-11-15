@@ -23,7 +23,7 @@ nothing here is a second reading of any of them:
 | recorded plan; stacked target | `plans.recorded()`, `plans.declared()` |
 | which commit the merge would take, and its state | `gates.candidate()`, `gates.head_for()` |
 | requirements at that commit | `gates.evaluate()` |
-| the PR as last observed | `github.pr_snapshot()` (memory, or the persisted snapshot) |
+| the PR as last observed | `changes.pr_snapshot()` (memory, or the persisted snapshot) |
 | review findings | `acceptance.summary()` |
 | a phase run | the phase runner's last pass, handed in by the caller |
 
@@ -68,7 +68,7 @@ import completion as completion_mod   # `completion` names a reading here
 import config
 import gates
 import githost
-import github
+import changes
 import gitrepo
 import plans
 import profiles
@@ -430,7 +430,7 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
     ctx = ctx or _context()
     filename, stage = task["file"], task["stage"]
     plan = plans.recorded(filename)
-    pr = github.pr_snapshot(filename)
+    pr = changes.pr_snapshot(filename)
     recovery = completion_mod.recovery_public(filename)
     scope = gates.scope_for(task)
     member = bool(task.get("phase")) and not task.get("isPhase")
@@ -1004,7 +1004,7 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
     is a different key, not a stale answer."""
     snaps = []
     for task in tasks:
-        snap = github.pr_snapshot(task["file"]) or {}
+        snap = changes.pr_snapshot(task["file"]) or {}
         snaps.append((task["file"], snap.get("head"), snap.get("merged"),
                       snap.get("prState"), snap.get("observed")))
     parts = {
@@ -1202,7 +1202,7 @@ def seams() -> dict:
     tests, in the one place a reader looks for it."""
     return {
         "reads": ["taskfiles", "state.AGENTS", "state.COMPLETING",
-                  "completion.recovery_public", "github.pr_snapshot",
+                  "completion.recovery_public", "changes.pr_snapshot",
                   "completion.delivered_record", "plans.recorded",
                   "plans.declared", "gates.candidate", "gates.evaluate",
                   "acceptance.summary", "phases.public_state (passed in)",

@@ -98,7 +98,7 @@ DASH_C_ALLOWED = {"gitproc.py", "doctor.py"}
 # keeps its own wrapper until WP12 — the documented temporary exception.
 # `completion`'s two are `completion._run`, the one git seam WP07 gave it
 # when merge & clean up moved out of `github` (the same body as
-# `github._run`, whose two stay with the PR opening and polling).
+# `changes._run`, whose two stay with the PR opening and polling).
 DIRECT_GIT: dict[str, int] = {
     "acceptance": 1, "agents": 1, "completion": 2, "delivery": 1, "github": 2,
     "previews": 1, "profiles": 1, "required": 1, "reviews": 2,

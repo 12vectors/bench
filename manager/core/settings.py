@@ -215,7 +215,7 @@ KINDS = {
                  "and cannot bind it to a check identity"),
         "who": "your CI provider, on its own runners",
         "gateable": False,
-        "authority": "github.py's poll of the pull request's check runs",
+        "authority": "changes.py's poll of the pull request's check runs",
     },
     "review": {
         "label": "Review requirements",
@@ -458,8 +458,8 @@ CATALOGUE = (
     ("BOARD_GIT_PROVIDER", "installation", "restart",
      "which hosting provider change requests go through: github or none"),
     ("BOARD_GITHUB_HOSTS", "installation", "restart",
-     "GitHub Enterprise hosts the github provider recognises besides "
-     "github.com"),
+     "enterprise hosts the default hosting provider recognises besides its "
+     "public one"),
     ("BOARD_AGENT_ADAPTER", "agents", "next-launch",
      "which coding-agent harness headless jobs run through by default"),
     ("BOARD_AGENT_ADAPTER_WORK", "agents", "next-launch",

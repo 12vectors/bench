@@ -37,7 +37,7 @@ import agents  # noqa: E402
 import completion  # noqa: E402
 import config  # noqa: E402
 import gates  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import phases  # noqa: E402
 import required  # noqa: E402
 import settings  # noqa: E402
@@ -57,7 +57,7 @@ class OnReviewCase(BatchCase):
         self.addCleanup(required._ON_REVIEW_CLAIMED.clear)
         # opening a PR is the other reaction to entering review; it is not
         # what these cases are about, and there is no remote to open it on
-        opened = mock.patch.object(github, "open_pr_async")
+        opened = mock.patch.object(changes, "open_pr_async")
         self.opened = opened.start()
         self.addCleanup(opened.stop)
         self.patch(VERIFY_ON_REVIEW=False)
