@@ -69,6 +69,7 @@ never raising (a failure to start is 128; a timeout is 1 with
 | `merge_change(ctx, number, expect_head, timeout)` | mutation | `{ok, detail, returncode}` |
 | `request_external_review(ctx, number)` | mutation | `{ok, detail}` |
 | `agent_verbs(intent)` | pure | `{provider, allow, publish, fragments}` |
+| `probe_stacking(ctx, active=False)` | read, local, never the network | per stacking capability (`branch-stack`, `retarget`, `native-stack`, `parent-merge-effect`, `parent-delete-effect`) `{state, reason, source}`, plus `matrix`, the revision of the provider's written evidence matrix (task 118). Passive runs no process; `active` may read the CLI's help text. A host behaviour that cannot be observed locally is always `unknown` |
 | `WORDS` | data | the words a sentence about the host uses |
 
 Normalized values use words core already has: change state `open` /
@@ -85,6 +86,16 @@ made conditional on a head (`gh pr merge --help`) — reads `unknown` until
 a merge actively asks. **`unknown` never authorizes a mutation**:
 `githost.require` refuses anything but `available`, by name, with the
 reason.
+
+## Stacking: a discovery reading, not a capability to act on
+
+`githost.stacking(active=False)` reads `probe_stacking` through the
+provider in force (an unrecognized remote reads every row unavailable).
+Each row's `source` says what kind of knowledge it is — `installed-cli`,
+`local`, `documentation` or `git` — matching the columns of
+`providers/github/STACKING.md`, the dated evidence matrix that explains
+it. No code path mutates a host on this reading; WP10b's actions will
+ask for `available` exactly as `require` does.
 
 ## What reaches a coding agent
 

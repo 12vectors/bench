@@ -26,6 +26,7 @@ module existed (`tests/test_hosting_providers.py` holds them to goldens).
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 
@@ -136,6 +137,126 @@ def probe(ctx: dict, active: bool = False) -> dict:
             "state": "available" if offered else "unavailable",
             "reason": "" if offered else
             f"`{cli} pr merge --help` offers no --match-head-commit"}
+    return out
+
+
+# ── stacking capabilities (task 118, WP10a) ────────────────────────────
+#
+# The written matrix is `providers/github/STACKING.md`; this is the part
+# of it a machine can answer for itself, locally. `STACKING_MATRIX` names
+# the matrix revision these probes were written against, so a reading can
+# say which document explains it.
+
+STACKING_MATRIX = "2026-11-15.1"
+
+STACKING_CAPABILITIES = ("retarget", "native-stack", "parent-merge-effect",
+                         "parent-delete-effect", "branch-stack")
+
+# Extension repository names that advertise stacked pull requests. Their
+# presence is a fact about this machine, never a host capability: a
+# third-party tool's behaviour is not GitHub's, and bench has verified
+# none of them.
+STACK_EXTENSION_HINTS = ("stack", "stacked", "spr", "graphite")
+
+PROBE_TIMEOUT = 15
+
+
+def _extensions(ctx: dict) -> list[str] | None:
+    """The installed gh extensions, by directory name: a listing of gh's
+    extension directory and nothing else — no process, no network. None
+    when there is no directory to read (which is not "none installed")."""
+    where = ctx.get("extensions_dir")
+    if not where:
+        data = os.environ.get("GH_DATA_DIR") or os.path.join(
+            os.environ.get("XDG_DATA_HOME") or
+            os.path.join(os.path.expanduser("~"), ".local", "share"), "gh")
+        where = os.path.join(data, "extensions")
+    try:
+        return sorted(name for name in os.listdir(where)
+                      if not name.startswith("."))
+    except OSError:
+        return None
+
+
+def _unknown(reason: str, source: str = "documentation") -> dict:
+    return {"state": "unknown", "reason": reason, "source": source}
+
+
+def probe_stacking(ctx: dict, active: bool = False) -> dict:
+    """What this machine can say about stacking, per capability, plus the
+    matrix revision. Never the network; never a mutation.
+
+    Every answer carries `source`, because the matrix keeps four kinds of
+    knowledge apart and a reading must not blur them:
+
+    - `installed-cli` — read off the local `gh` (its `--help` text);
+    - `local` — read off this machine without a process (PATH, the
+      extension directory);
+    - `documentation` — what GitHub documents; never probed here, so it
+      reads `unknown` and names the matrix section;
+    - `git` — what plain git and an open-with-a-base already do.
+
+    Passive (the default) runs no process at all. `active=True` reads
+    `gh pr edit --help`, a local process bounded by `PROBE_TIMEOUT`.
+
+    `unknown` is an answer, not a licence: nothing may mutate a host on
+    it (githost's rule), and a host behaviour this cannot observe stays
+    `unknown` however much is probed.
+    """
+    cli = ctx.get("cli") or "gh"
+    present = shutil.which(cli) is not None
+    out: dict = {"matrix": STACKING_MATRIX}
+    # Branch-based stacking: a change request opened with another card's
+    # branch as its base. Plain git plus `open` — the permanent fallback.
+    if present:
+        out["branch-stack"] = {
+            "state": "available", "source": "git",
+            "reason": "a change request is opened with the parent's branch "
+                      "as its base; nothing beyond `gh pr create --base`"}
+    else:
+        out["branch-stack"] = {"state": "unavailable", "source": "local",
+                               "reason": f"{cli} is not installed"}
+    if not present:
+        out["retarget"] = {"state": "unavailable", "source": "local",
+                           "reason": f"{cli} is not installed"}
+    elif not active:
+        out["retarget"] = {
+            "state": "unknown", "source": "installed-cli",
+            "reason": f"not asked: `{cli} pr edit --help` is read only when "
+                      f"a retarget needs to know"}
+    else:
+        found = ctx["run"]([cli, "pr", "edit", "--help"], PROBE_TIMEOUT)
+        text = (found.stdout or "") + (found.stderr or "")
+        if found.returncode != 0 and not text.strip():
+            out["retarget"] = {"state": "unknown", "source": "installed-cli",
+                               "reason": f"`{cli} pr edit --help` gave no answer"}
+        elif re.search(r"(^|\s)--base\b", text):
+            out["retarget"] = {
+                "state": "available", "source": "installed-cli",
+                "reason": f"`{cli} pr edit --help` offers --base"}
+        else:
+            out["retarget"] = {
+                "state": "unavailable", "source": "installed-cli",
+                "reason": f"`{cli} pr edit --help` offers no --base"}
+    installed = _extensions(ctx)
+    hinted = [name for name in installed or []
+              if any(h in name.lower() for h in STACK_EXTENSION_HINTS)]
+    if hinted:
+        native = _unknown(
+            "a gh extension that advertises stacks is installed ("
+            + ", ".join(hinted) + "); its behaviour is a third party's, "
+            "unverified, and not a GitHub capability", source="local")
+    else:
+        native = _unknown("GitHub documents no native stack operation bench "
+                          "has verified; see STACKING.md, native stacks")
+    native["extensions"] = hinted
+    out["native-stack"] = native
+    out["parent-merge-effect"] = _unknown(
+        "what the host does to a child when its parent merges is not "
+        "observable locally; see STACKING.md, parent merge")
+    out["parent-delete-effect"] = _unknown(
+        "what the host does to a child when its base branch is deleted is "
+        "not observable locally; see STACKING.md, parent delete")
     return out
 
 

@@ -23,6 +23,26 @@ with `refused:` on stderr, so a test that grows a call nobody modelled
 fails instead of reaching GitHub, and so does a `gh api` call that would
 write (another method, or a body). Every call is logged (`calls()`).
 
+**Modes (task 118, WP10a).** What GitHub does to a stacked pull request
+is partly undocumented and wholly unverified by bench
+(`manager/core/providers/github/STACKING.md`). So each such behaviour is
+a *mode* of this host, and a test sets the one it is about rather than
+asserting what GitHub does:
+
+    host.set_mode("retarget", "supported" | "unsupported")
+    host.set_mode("on-merge-delete", "unchanged" | "retarget" | "close")
+    host.set_mode("on-base-delete", "unchanged" | "retarget" | "close")
+
+`retarget` decides whether `gh pr edit <n> --base <b>` exists (and what
+`gh pr edit --help` prints). `on-merge-delete` is what happens to the
+open pull requests based on a branch when that branch is deleted after
+its own pull request merged (`gh pr merge --delete-branch`, or
+`host.delete_branch(b, merged=True)`); `retarget` moves them onto the
+merged pull request's base. `on-base-delete` is the same question for a
+branch deleted with no merge, where `retarget` has nowhere to move them
+and so changes nothing. The defaults change nothing, so a test that sets
+no mode behaves exactly as it did before modes existed.
+
 A merge is a real merge, as on GitHub: a change made only on the base
 since the branch was cut is kept, and a conflict refuses the merge with
 the base, the branch and the pull request exactly as they were (`view`
@@ -126,6 +146,16 @@ def merge_pr(bare: str, head: str, base: str = "main") -> str:
     return _merge(bare, head, base)[0]
 
 
+# Each unverified host behaviour, its allowed outcomes, and the default
+# (the first) — which is the outcome that changes nothing.
+MODES = {
+    "retarget": ("supported", "unsupported"),
+    "on-merge-delete": ("unchanged", "retarget", "close"),
+    "on-base-delete": ("unchanged", "retarget", "close"),
+}
+DEFAULT_MODES = {name: values[0] for name, values in MODES.items()}
+
+
 class Refused(Exception):
     """What the fake host says no to, with the message gh would print."""
 
@@ -147,7 +177,7 @@ class FakeHost:
             if bare is None:
                 raise ValueError("a new fake host needs its bare repository")
             self._save({"bare": str(bare), "slug": slug, "login": login,
-                        "next": 1, "prs": {}})
+                        "next": 1, "prs": {}, "modes": dict(DEFAULT_MODES)})
 
     # ── storage ─────────────────────────────────────────────────────────
 
@@ -181,6 +211,23 @@ class FakeHost:
 
     def url(self, number: int) -> str:
         return f"https://github.com/{self._load()['slug']}/pull/{number}"
+
+    # ── modes ───────────────────────────────────────────────────────────
+
+    def mode(self, name: str) -> str:
+        if name not in MODES:
+            raise ValueError(f"the fake host has no mode {name!r}")
+        return (self._load().get("modes") or {}).get(name, DEFAULT_MODES[name])
+
+    def set_mode(self, name: str, value: str) -> None:
+        if name not in MODES:
+            raise ValueError(f"the fake host has no mode {name!r}")
+        if value not in MODES[name]:
+            raise ValueError(f"mode {name!r} is one of {', '.join(MODES[name])}, "
+                             f"not {value!r}")
+        data = self._load()
+        data.setdefault("modes", dict(DEFAULT_MODES))[name] = value
+        self._save(data)
 
     # ── the four operations ─────────────────────────────────────────────
 
@@ -268,6 +315,52 @@ class FakeHost:
             found.append({k: row.get(k) for k in fields} if fields else row)
         return found
 
+    def edit_base(self, selector: str, base: str) -> None:
+        """`gh pr edit <n> --base <b>`: retarget an open pull request, in
+        the `retarget` mode that offers it."""
+        if self.mode("retarget") != "supported":
+            raise Refused("unknown flag: --base")
+        data = self._load()
+        pr = self._find(data, selector)
+        if pr["state"] != "OPEN":
+            raise Refused(f"pull request #{pr['number']} is {pr['state'].lower()}; "
+                          f"its base cannot be changed")
+        if not self._tip(base):
+            raise Refused(f"base branch {base} is not on the remote")
+        pr["base"] = base
+        self._save(data)
+
+    def delete_branch(self, branch: str, merged: bool = False) -> list[int]:
+        """A branch deleted on the host, and what that does to the open
+        pull requests based on it — the mode's answer, not GitHub's.
+        `merged` says the branch's own pull request merged first, which is
+        when `retarget` has a base to move them onto. Returns the numbers
+        of the pull requests it changed."""
+        data = self._load()
+        tip = self._tip(branch)
+        if tip:
+            subprocess.run(["git", "--git-dir", data["bare"], "update-ref", "-d",
+                            f"refs/heads/{branch}", tip], capture_output=True)
+        effect = self.mode("on-merge-delete" if merged else "on-base-delete")
+        onto = None
+        if merged:
+            done = [p for p in data["prs"].values()
+                    if p["head"] == branch and p["state"] == "MERGED"]
+            onto = max(done, key=lambda p: p["number"])["base"] if done else None
+        changed = []
+        for pr in data["prs"].values():
+            if pr["state"] != "OPEN" or pr["base"] != branch:
+                continue
+            if effect == "close":
+                pr["state"] = "CLOSED"
+            elif effect == "retarget" and onto:
+                pr["base"] = onto
+            else:
+                continue
+            changed.append(pr["number"])
+        self._save(data)
+        return sorted(changed)
+
     def close(self, selector: str) -> None:
         """Close a pull request unmerged, as a person does on the host."""
         data = self._load()
@@ -321,6 +414,18 @@ FLAGS
 """
 
 
+EDIT_HELP = """Edit a pull request.
+
+USAGE
+  gh pr edit [<number> | <url> | <branch>] [flags]
+
+FLAGS
+{base}  -b, --body string             Set the new body
+  -t, --title string            Set the new title
+"""
+EDIT_BASE = "  -B, --base branch             Change the base branch for this pull request\n"
+
+
 def _flags(args: list[str], takes_value: set[str]) -> tuple[list[str], dict]:
     positional, flags, i = [], {}, 0
     while i < len(args):
@@ -372,7 +477,17 @@ def _dispatch(host: FakeHost, args: list[str]) -> int:
             print(MERGE_HELP)
             return 0
         if verb == "merge" and pos:
+            head = host.view(pos[0], ["headRefName"])["headRefName"]
             host.merge(pos[0], flags.get("--match-head-commit") or None)
+            if "--delete-branch" in flags or "-d" in flags:
+                host.delete_branch(head, merged=True)
+            return 0
+        if verb == "edit" and "--help" in flags:
+            supported = host.mode("retarget") == "supported"
+            print(EDIT_HELP.format(base=EDIT_BASE if supported else ""))
+            return 0
+        if verb == "edit" and pos and set(flags) - {"--repo"} == {"--base"}:
+            host.edit_base(pos[0], str(flags["--base"]))
             return 0
     if args[:1] == ["api"]:
         pos, flags = _flags(args[1:], {"-X", "--method"})

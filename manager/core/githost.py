@@ -212,6 +212,32 @@ def capabilities(active: bool = False) -> dict:
             for cap in CAPABILITIES}
 
 
+STACKING = ("retarget", "native-stack", "parent-merge-effect",
+            "parent-delete-effect", "branch-stack")
+
+
+def stacking(active: bool = False) -> dict:
+    """What the provider in force can say about stacked change requests
+    (task 118, WP10a): per capability `{state, reason, source}`, and the
+    `matrix` revision of the provider's written `STACKING.md` it was read
+    against. A discovery reading, consumed by nothing that mutates: no
+    action is built on it until WP10b, and `unknown` authorizes nothing.
+    Passive by default; `active=True` lets the provider read its CLI's own
+    help text. Never the network."""
+    info = provider()
+    if info["problem"]:
+        out = {cap: {"state": "unavailable", "reason": info["problem"],
+                     "source": "local"} for cap in STACKING}
+        out["matrix"] = None
+        return out
+    found = module().probe_stacking(ctx(), active)
+    out = {cap: dict(found.get(cap) or
+                     {"state": "unknown", "reason": "the provider did not say",
+                      "source": "local"}) for cap in STACKING}
+    out["matrix"] = found.get("matrix")
+    return out
+
+
 def can(capability: str, active: bool = False) -> bool:
     """Is the capability available? `unknown` is not."""
     return capabilities(active).get(capability, {}).get("state") == "available"

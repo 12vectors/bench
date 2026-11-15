@@ -37,6 +37,18 @@ def probe(ctx: dict, active: bool = False) -> dict:
                         "merge", "merge-conditional", "external-review")}
 
 
+STACKING_MATRIX = None
+
+
+def probe_stacking(ctx: dict, active: bool = False) -> dict:
+    # Branch-based stacking needs a change request to carry the base.
+    out = {cap: {"state": "unavailable", "reason": _WHY, "source": "local"}
+           for cap in ("retarget", "native-stack", "parent-merge-effect",
+                       "parent-delete-effect", "branch-stack")}
+    out["matrix"] = STACKING_MATRIX
+    return out
+
+
 def change_ref(url: str | None) -> str | None:
     return None
 
