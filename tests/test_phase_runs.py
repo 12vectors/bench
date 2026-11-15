@@ -90,6 +90,10 @@ elif args[:2] == ["pr", "view"]:
     print(json.dumps({{"reviews": [], "reviewRequests": [],
                       "statusCheckRollup": [], "state": "OPEN",
                       "mergeable": "MERGEABLE"}}))
+elif args[:2] == ["pr", "list"]:
+    # cleanup asks which open PRs target a branch it is about to delete
+    # (task 117); nothing does here
+    print("[]")
 elif args[:2] == ["pr", "merge"] and os.environ.get("GH_MERGE_HEAD"):
     # a merge that happened leaves the remote's base holding the head
     sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})

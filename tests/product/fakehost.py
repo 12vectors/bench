@@ -251,6 +251,29 @@ class FakeHost:
         self._save(data)
         return merged
 
+    def listing(self, base: str | None = None, state: str = "open",
+                fields: list[str] | None = None) -> list[dict]:
+        """`gh pr list --base B --state open --json …` (task 117): the pull
+        requests into `base`, newest first, in the open state only."""
+        if state != "open":
+            raise Refused(f"gh pr list --state {state} is not modelled")
+        data = self._load()
+        found = []
+        for pr in sorted(data["prs"].values(), key=lambda p: -p["number"]):
+            if pr["state"] != "OPEN" or (base and pr["base"] != base):
+                continue
+            row = {"url": self.url(pr["number"]), "number": pr["number"],
+                   "headRefName": pr["head"], "baseRefName": pr["base"],
+                   "state": pr["state"]}
+            found.append({k: row.get(k) for k in fields} if fields else row)
+        return found
+
+    def close(self, selector: str) -> None:
+        """Close a pull request unmerged, as a person does on the host."""
+        data = self._load()
+        self._find(data, selector)["state"] = "CLOSED"
+        self._save(data)
+
     def reviews(self, selector: str) -> list[dict]:
         """GitHub's REST listing: `GET repos/{o}/{r}/pulls/{n}/reviews`."""
         pr = self._find(self._load(), selector)
@@ -329,7 +352,14 @@ def _dispatch(host: FakeHost, args: list[str]) -> int:
     if args[:1] == ["pr"] and len(args) > 1:
         verb, rest = args[1], args[2:]
         pos, flags = _flags(rest, {"--repo", "--head", "--base", "--title",
-                                   "--body", "--json", "--match-head-commit"})
+                                   "--body", "--json", "--match-head-commit",
+                                   "--state"})
+        if verb == "list":
+            fields = [f for f in str(flags.get("--json", "")).split(",") if f]
+            print(json.dumps(host.listing(flags.get("--base") or None,
+                                          str(flags.get("--state", "open")),
+                                          fields or None)))
+            return 0
         if verb == "create":
             print(host.create(flags.get("--head", ""), flags.get("--base", "main"),
                               flags.get("--title", ""), flags.get("--body", "")))

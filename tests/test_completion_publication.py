@@ -59,6 +59,10 @@ with open(os.environ["GH_LOG"], "a") as fh:
 mode = os.environ.get("GH_MODE", "ok")
 if args[:2] == ["pr", "view"]:
     print(json.dumps({{"url": "{PR_URL}", "baseRefName": "main"}}))
+elif args[:2] == ["pr", "list"]:
+    # cleanup asks which open PRs target a branch before deleting it
+    # (task 117): none here, unless a test says otherwise
+    print(os.environ.get("GH_TARGETING", "[]"))
 elif args[:2] == ["pr", "merge"] and "--help" not in args:
     if mode == "refused":
         sys.stderr.write("GraphQL: Required status check is expected (mergePullRequest)\\n")
