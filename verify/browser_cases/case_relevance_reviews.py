@@ -199,7 +199,12 @@ class RelevanceReviews(unittest.TestCase):
                             "the link did not open the review in Reviews")
             self.assertTrue(b.wait(f"document.activeElement === document.querySelector("
                                    f"'{REL}[data-keep=\"{self.rid}\"] > summary')", 5),
-                            "focus did not land on the review")
+                            "focus did not land on the review: " + self.focused())
+            # a live redraw keeps it there (the review's summary has no id)
+            b.eval("renderDrawer()")
+            self.assertTrue(b.eval(f"document.activeElement === document.querySelector("
+                                   f"'{REL}[data-keep=\"{self.rid}\"] > summary')"),
+                            "a redraw dropped focus from the review: " + self.focused())
             groups = b.eval("[...document.querySelectorAll('#dsec-reviews .rvgroup > h3')]"
                             ".map(h => h.innerText)")
             self.assertEqual([g.split()[0] for g in groups], ["Relevance", "PR"])

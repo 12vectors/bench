@@ -7812,6 +7812,11 @@ function renderDrawer() {
     ? `.rvcompose[data-review="${CSS.escape(rvbox.dataset.review)}"] ` +
       `[data-rvact="${CSS.escape(active.dataset.rvact)}"]`
     : null;
+  // a focused fold's summary — where opening a review from Activity puts
+  // focus — is found again by its fold's id, for the same reason
+  const sumOf = active && active.tagName === 'SUMMARY' && body.contains(active)
+    && active.parentElement && active.parentElement.tagName === 'DETAILS'
+    && active.parentElement.id ? active.parentElement.id : null;
   const tab = drawerTab(t);
   // what the reader is looking at, so a live redraw that adds a record
   // above it (Activity is newest first) moves the page, not the reader
@@ -7855,6 +7860,11 @@ function renderDrawer() {
   }
   if (rvfocus && !typing) {
     const again = body.querySelector(rvfocus);
+    if (again && !again.closest('[hidden]')) again.focus({ preventScroll: true });
+  }
+  if (sumOf && !typing) {
+    const fold = document.getElementById(sumOf);
+    const again = fold && fold.querySelector(':scope > summary');
     if (again && !again.closest('[hidden]')) again.focus({ preventScroll: true });
   }
   if (typing) {

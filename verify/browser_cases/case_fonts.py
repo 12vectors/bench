@@ -277,20 +277,24 @@ class TheBoardsOwnFonts(unittest.TestCase):
 
     def test_2_the_probe_s_controls_hold_and_every_declared_range_draws_from_plex(self):
         got = self.probe()
+        problems = []
+
+        def want(ok, what):
+            if not ok:
+                problems.append(what)
+
         # controls
-        self.assertEqual(got[self.key("Bench Absent Face", "normal", "400", ord("A"))]["v"],
-                         "fallback", "negative font control: a family that does not exist")
+        absent = got[self.key("Bench Absent Face", "normal", "400", ord("A"))]
+        want(absent["v"] == "fallback", f"negative font control gave {absent}")
         report = {"rules": [], "unproven": [], "named": {}}
         for (family, style, weight), rules in sorted(self.faces.items()):
             k = lambda cp: self.key(family, style, weight, cp)  # noqa: E731
-            self.assertEqual(got[k(ord("A"))]["v"], "plex",
-                             f"positive control: 'A' in {family} {style} {weight}")
-            self.assertEqual(got[k(ord("A"))].get("pair"), "monospace/serif",
-                             "the first fallback pair must draw 'A' differently")
-            self.assertNotEqual(got[k(0x4E2D)]["v"], "plex",
-                                "negative codepoint control: 中 is outside every range")
-            self.assertEqual(got[k(0x0379)]["v"], "tofu",
-                             "tofu control: an unassigned codepoint is the missing-glyph box")
+            short = f"{family.split()[-1]} {style[0]}{weight}"
+            a, cjk, tofu = got[k(ord("A"))], got[k(0x4E2D)], got[k(0x0379)]
+            want(a["v"] == "plex" and a.get("pair") == "monospace/serif",
+                 f"{short} positive control 'A' gave {a}")
+            want(cjk["v"] != "plex", f"{short} negative control 中 gave {cjk}")
+            want(tofu["v"] == "tofu", f"{short} tofu control U+0379 gave {tofu}")
             for r in rules:
                 verdicts = {cp: got[k(cp)]["v"] for cp in samples(r["segments"])}
                 proven = [cp for cp, v in verdicts.items() if v == "plex"]
@@ -300,21 +304,23 @@ class TheBoardsOwnFonts(unittest.TestCase):
                 report["unproven"] += [f"{family} {style} {weight} {r['subset']} "
                                        f"U+{cp:04X} {v}" for cp, v in verdicts.items()
                                        if v != "plex"]
-                self.assertTrue(proven, f"{family} {style} {weight} {r['subset']}: no "
-                                        f"sampled codepoint drew from Plex: {verdicts}")
+                want(proven, f"{short} {r['subset']}: no sample from Plex "
+                             f"({sorted(set(verdicts.values()))})")
                 for ch in NAMED.get(r["subset"], ""):
-                    v = got[k(ord(ch))]["v"]
-                    report["named"][f"{family} {style} {weight} {ch}"] = v
-                    self.assertEqual(v, "plex", f"{ch} (U+{ord(ch):04X}) in {family} "
-                                                f"{style} {weight} {r['subset']}")
+                    v = got[k(ord(ch))]
+                    report["named"][f"{family} {style} {weight} {ch}"] = v["v"]
+                    want(v["v"] == "plex", f"{short} {r['subset']} U+{ord(ch):04X} gave {v}")
         S["metrics"]["fontCoverage"] = {
             "rules": len(report["rules"]),
             "sampledNotPlex": len(report["unproven"]),
-            "sampledPlex": sum(r["plex"] for r in report["rules"])}
+            "sampledPlex": sum(r["plex"] for r in report["rules"]),
+            "problems": problems}
         out = S["shots"] / "font-coverage.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps({"verdicts": got, "report": report}, indent=1,
                                   sort_keys=True), encoding="utf-8")
+        if problems:
+            self.fail(f"{len(problems)} problems: " + " | ".join(problems[:4]))
 
     def test_3_the_page_s_symbols_keep_their_source(self):
         got = self.probe()
@@ -373,7 +379,10 @@ class TheBoardsOwnFonts(unittest.TestCase):
         differ = sorted(k for k in candidate
                         if candidate[k].get("v") != baseline[k].get("v")
                         or candidate[k].get("h") != baseline[k].get("h"))
-        self.assertEqual(differ, [], "a glyph is drawn differently by the bundle")
+        if differ:
+            self.fail(f"{len(differ)} of {len(candidate)} probes differ, e.g. " +
+                      "; ".join(f"{k} candidate={candidate[k]} baseline={baseline[k]}"
+                                for k in differ[:3]))
         digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()  # noqa: E731
         c1h, bh, c2h = digest(c1), digest(base), digest(c2)
         S["metrics"]["fontScreens"] = {
