@@ -1527,6 +1527,79 @@ commits itself and sync fast-forwards `main`. One layout answers both with
 the same checkout, and asking through separate doors is what keeps
 filesystem layout from changing branch-selection semantics.
 
+### Stacked cards
+
+A card whose `**Base branch:**` names another card's work branch —
+`task/<stem>` for an ordinary card, `phase/<stem>` for a phase card — is
+**stacked** on that card, its **parent**. No header is added and nothing
+is stored twice: the graph is derived once per read
+(`taskfiles.weave_stacks`), beside phase membership, and runs one way, so
+it cannot disagree with itself. A parent may carry several children; a
+child has one parent. A loop of bases has no bottom to start from, so it
+is `plan drift` and the launch refuses. A base no card owns is an
+**external** base, a card-shaped name with no card is **missing**, and a
+name with two readings is **ambiguous** — each said, none guessed. A
+phase member's relation to its phase stays **integration**, with the
+phase's own semantics.
+
+`/api/state` carries `stacks` (task 117): per card with something to say,
+its parent, the cards stacked on it, its path from the bottom of the
+stack, its place on that path, and three targets named apart — the
+**selected base** (the branch and commit the work was cut from), the
+**review target** (what its change request targets) and the **landing
+target** (where it must end up for `done/`: the application base, after
+its parent lands). Each edge has a state in the server's words:
+
+| state | what it means | next, and who |
+| --- | --- | --- |
+| `on-parent` | the child contains its parent's tip | nothing |
+| `parent-moved` | the parent has commits the child does not contain | you: bring them in additively — bench will not rebase |
+| `parent-rewritten` | the parent no longer contains the commit the child was cut from | you: settle it by hand |
+| `parent-landed` | the parent was delivered; the child may still target its branch | you: ⌖ replan onto where it landed |
+| `parent-landed-differently` | the host says merged, and the parent's tip is not in its target (a squash or rebase merge) | you: bring the target in first, then retarget |
+| `parent-closed` / `parent-gone` | closed unmerged, or the branch is gone with no delivery record | you: decide the base, then ⌖ replan |
+| `parent-retargeted` | the parent's change request targets another branch than its plan | you: settle the parent's target first |
+| `target-changed-on-host` | the child's own change request targets another branch than its plan | you: ⌖ replan, or change it back |
+| `parent-not-started`, `not-started` | no work yet on one side | — |
+| `external-base`, `parent-missing`, `parent-ambiguous`, `cycle`, `integration` | the mapping itself, as above | fix the header where it says so |
+
+**A position is about a path.** Along a chain (every card in it carries
+at most one child) a card reads `2/3`; once the stack branches there is
+no single order, so a card reads `step 2` — its depth on its own path —
+and no count of the whole is invented. The ⌖ chip says it (`⌖ on #56 ·
+2/3`, `⌖ under #57 · 1/2`), and the Overview's **Stack** block lists the
+path with each card's change request and state, the cards stacked on
+this one, and the three targets. The page computes none of it.
+
+**Reading is free.** The reading uses this checkout's own refs and
+remote-tracking refs (the last fetch, never a new one), the recorded
+plans, the PR snapshots the poll persisted and the delivered records —
+no fetch, no hosting-provider call, no write, no check and no worktree.
+**Check the remote** is the explicit action that refreshes the refs it
+reads. Nothing here rebases, force-pushes, retargets or merges a child
+into its parent; a stacked card whose own requirements are met (or not
+configured) reads `waiting-for-parent` until its parent has landed.
+
+The recorded plan is version 2: it adds `stack` (the parent card, the
+branch and that branch's tip when the work was cut) and `landing`, and
+changes nothing else. A version-1 record is read unchanged and its stack
+reading is derived from the card; a reader that predates version 2
+ignores the new keys.
+
+**Two safety rules hold the stack's branches.**
+
+- **Opening a child publishes nothing of its parent.** A change request
+  whose base is another card's branch is opened only when that branch is
+  on the remote, and only when the child carries none of the parent's
+  commits the remote lacks; otherwise it is refused, naming the parent's
+  own publication as the remedy. A phase member's PR keeps publishing its
+  phase branch as before, and a base no card owns is unchanged.
+- **Cleanup keeps a branch something targets.** Merge & clean up deletes
+  a branch on the remote only when no card on the board still targets it
+  and the hosting provider says no open change request does
+  (`changes_targeting`). An open change, a dependant card, or a provider
+  that cannot answer keeps the branch, and the ticker says which.
+
 ## Execution profiles and approved context
 
 A plan says *which checkout* a run works in. A **profile** says what that
