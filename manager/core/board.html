@@ -7803,6 +7803,15 @@ function renderDrawer() {
   // is found again by its slot, so a live update never drops it
   const dslot = active && body.contains(active) && active.dataset
     ? active.dataset.dslot : null;
+  // a focused review action (Comment, Update card from this review) has no
+  // id either: it is found again by its review and its act. Without this a
+  // redraw landing just after a Tab onto one dropped focus to the body.
+  const rvbox = active && body.contains(active) && active.dataset && active.dataset.rvact
+    ? active.closest('.rvcompose[data-review]') : null;
+  const rvfocus = rvbox
+    ? `.rvcompose[data-review="${CSS.escape(rvbox.dataset.review)}"] ` +
+      `[data-rvact="${CSS.escape(active.dataset.rvact)}"]`
+    : null;
   const tab = drawerTab(t);
   // what the reader is looking at, so a live redraw that adds a record
   // above it (Activity is newest first) moves the page, not the reader
@@ -7842,6 +7851,10 @@ function renderDrawer() {
     b.addEventListener('click', () => verifySheet(t)));
   if (dslot && !typing) {
     const again = body.querySelector(`[data-dslot="${dslot}"]`);
+    if (again && !again.closest('[hidden]')) again.focus({ preventScroll: true });
+  }
+  if (rvfocus && !typing) {
+    const again = body.querySelector(rvfocus);
     if (again && !again.closest('[hidden]')) again.focus({ preventScroll: true });
   }
   if (typing) {

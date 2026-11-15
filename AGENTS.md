@@ -1011,7 +1011,17 @@ and colour that only ever means state: `--accent` (surf) an agent alive,
 HIGH, `--idle` (driftwood) done. The one looping animation ("breathe") means
 an agent is working; a blinking caret means output is still arriving. Night
 theme by default; the header button switches to Daylight. Tokens live at the
-top of `manager/board.html`.
+top of `manager/core/web/board.css`.
+
+The board serves both Plex families itself, from `manager/core/web/fonts/`:
+every subset the page once linked from Google Fonts (latin, latin-ext,
+cyrillic, cyrillic-ext, greek, vietnamese, and Mono's box-drawing set),
+the upstream files unmodified, with their licence and a provenance record
+(`SOURCES.txt`). So the page makes no request to anyone but the board.
+Symbols Plex does not have — `⌖ ◫ ⚖ ⟶` and the like — are drawn by a
+system font, as they always were; `tests/fixtures/page-symbols.json`
+lists them and `verify/browser_cases/case_fonts.py` checks which glyphs
+come from where.
 
 The board has five views (header switcher):
 

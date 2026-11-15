@@ -8,23 +8,19 @@ browser can show:
 - the page names the build `/api/state` reports, and its one stylesheet
   is that build's `board.css`, loaded and applied (a rule from it is in
   force on the header);
-- every request the page made is to the board's own origin, except the
-  Google Fonts stylesheet and font files the page has always linked —
-  which are listed in the metrics by name rather than hidden, because the
-  self-hosted font set is not bundled yet;
+- every request the page made is to the board's own origin — the Plex
+  fonts included, which are the board's own since the font set was
+  bundled (case_fonts.py proves what they draw);
 - the version chip is hidden while page, board and disk agree;
 - a screenshot of the booted board, for the matched-view comparison with
   the build before the stylesheet moved.
 """
 
-import re
 import unittest
 
 import benchverify as bv
 
 S = bv.SESSION
-
-GOOGLE_FONTS = re.compile(r"https://fonts\.(googleapis|gstatic)\.com/")
 
 
 def setUpModule():
@@ -50,24 +46,22 @@ class ThePageBootsFromItsSnapshot(unittest.TestCase):
         self.assertEqual(state["mode"], "snapshot")
         self.assertFalse(state["differs"])
         sheets = b.eval("[...document.styleSheets].map(s => s.href || '(inline)')")
-        own = [s for s in sheets if s and "/web/" in s]
-        self.assertEqual(own, [b.eval("location.origin") + f"/web/{build}/board.css"],
-                         sheets)
+        origin = b.eval("location.origin")
+        self.assertEqual(sheets, [f"{origin}/web/{build}/fonts/plex.css",
+                                  f"{origin}/web/{build}/board.css"])
         # a rule that lives only in web/board.css is in force
         self.assertEqual(b.eval("getComputedStyle(document.querySelector('header'))"
                                 ".paddingLeft"), "18px")
         self.assertTrue(b.eval("document.querySelector('#buildchip').hidden"))
         S["metrics"]["assetBuild"] = {"build": build, "sheets": sheets}
 
-    def test_2_nothing_is_fetched_off_the_board_but_the_linked_fonts(self):
+    def test_2_nothing_is_fetched_off_the_board(self):
         b = self.b
         urls = b.eval("performance.getEntriesByType('resource').map(e => e.name)")
         foreign = [u for u in urls if not u.startswith(b.eval("location.origin"))]
-        unexplained = [u for u in foreign if not GOOGLE_FONTS.match(u)]
         S["metrics"]["assetForeignRequests"] = foreign
-        self.assertEqual(unexplained, [],
-                         "the page fetched from somewhere other than the board "
-                         "and the fonts it has always linked")
+        self.assertEqual(foreign, [],
+                         "the page fetched from somewhere other than the board")
         shot = S["shots"] / "assets-booted-board.png"
         b.screenshot(shot)
         S["required"].append(shot)

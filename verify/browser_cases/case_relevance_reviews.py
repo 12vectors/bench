@@ -105,6 +105,14 @@ class RelevanceReviews(unittest.TestCase):
         self.assertEqual(code, 200)
         return [a for a in json.loads(body)["agents"] if a.get("task") == FILE]
 
+    def focused(self) -> str:
+        """What has focus, said so a failed focus assertion names it."""
+        return S["browser"].eval(
+            "(() => { const e = document.activeElement; if (!e) return 'nothing';"
+            " return `${e.tagName.toLowerCase()}${e.id ? '#' + e.id : ''}`"
+            " + ` ${JSON.stringify({...e.dataset})}`"
+            " + ` in drawer: ${!!e.closest('#drawerbody')}`; })()")
+
     def open_card(self, width=1280, height=900, dark=False):
         b = S["browser"]
         b.viewport(width, height)
@@ -329,9 +337,21 @@ class RelevanceReviews(unittest.TestCase):
             # Tab from the textarea reaches Comment, then Update card from this review
             b.eval(f"document.getElementById('rvbox-{self.rid}').focus()")
             b.key("Tab")
-            self.assertEqual(b.eval("document.activeElement.dataset.rvact"), "comment")
+            self.assertEqual(b.eval("document.activeElement.dataset.rvact"), "comment",
+                             self.focused())
+            # A live redraw rebuilds the drawer. It used to restore focus only
+            # to an element with an id or a delivery slot, so one landing
+            # right after this Tab dropped focus to the body: the once-seen
+            # failure here. Forcing the redraw makes that case deterministic.
+            b.eval("renderDrawer()")
+            self.assertEqual(b.eval("document.activeElement.dataset.rvact"), "comment",
+                             "a redraw dropped focus from Comment: " + self.focused())
             b.key("Tab")
-            self.assertEqual(b.eval("document.activeElement.dataset.rvact"), "refine")
+            self.assertEqual(b.eval("document.activeElement.dataset.rvact"), "refine",
+                             self.focused())
+            b.eval("renderDrawer()")
+            self.assertEqual(b.eval("document.activeElement.dataset.rvact"), "refine",
+                             "a redraw dropped focus from Update card: " + self.focused())
             names = b.eval(f"[...document.querySelectorAll('{REL} .rvcompose button')].map(e => e.innerText.trim())")
             self.assertIn("Comment", names)
             self.assertTrue(any("Update card from this review" in n for n in names))
