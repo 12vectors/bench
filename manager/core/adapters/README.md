@@ -95,6 +95,22 @@ prefix-pattern based, so the translation is mechanical:
   "allow"}}` in a generated config, wildcard rules, last match wins
   (`opencode/permission_config.py`)
 
+### The hosting provider's verbs (`AGENT_HOST`)
+
+Which host commands an intent may run is the **hosting provider's**
+knowledge (`core/providers/`, task 116), not the adapter's. Bench sets
+`AGENT_HOST` on every launch to one JSON object:
+`{"provider": "github", "allow": ["gh pr view", …], "publish": ["gh pr
+create", …]}`. Render `allow` as allow-rules after your own git prefixes
+(the same neutral prefix syntax as `AGENT_COMMANDS`) and, when the
+profile denies `publish`, render `publish` as deny-rules. With the GitHub
+provider both shipped adapters produce exactly the document they
+produced before this variable existed; with `BOARD_GIT_PROVIDER=none`
+both lists are empty and the run is granted no host verb. Absent (a
+board older than task 116) = GitHub's lists, which is what both adapters
+carried themselves; a value that does not parse grants no host verb and
+still denies GitHub's publication verbs.
+
 ### The model (`AGENT_MODEL`) — optional
 
 Absent = the vendor's own default: launch without any model argument and

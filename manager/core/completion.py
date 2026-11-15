@@ -686,8 +686,8 @@ def completion_facts(filename: str, stage: str) -> dict:
         refusal = (f"{filename} has no PR, and this board merges the "
                    f"application on origin — open one first (↑ open PR)")
     if not refusal and on_origin and not changes.gh_available():
-        refusal = ("gh is not installed, and this board merges the "
-                   "application on origin (BOARD_APP_MERGE)")
+        refusal = (f"{changes.host_unavailable()}, and this board merges the "
+                   f"application on origin (BOARD_APP_MERGE)")
     facts["refusal"] = refusal or ""
     return facts
 
@@ -1031,8 +1031,8 @@ def _merge_on_origin(filename: str, stage: str, branch: str,
             f"{filename} has no PR, and this board merges the application on "
             f"origin — open a PR for {branch} first (↑ open PR on the card)")
     if not changes.gh_available():
-        raise ValueError("gh is not installed — this board merges the "
-                        "application on origin (BOARD_APP_MERGE)")
+        raise ValueError(f"{changes.host_unavailable()} — this board merges "
+                         f"the application on origin (BOARD_APP_MERGE)")
     number = url.rstrip("/").rsplit("/", 1)[-1]
     # origin merges the PR into whatever the PR targets, so the one thing
     # worth checking is that the PR targets what this card planned. A

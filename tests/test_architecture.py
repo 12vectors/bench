@@ -800,13 +800,14 @@ DYNAMIC_PATCH_TARGETS: dict[str, tuple[int, int]] = {
 # are the default provider's name and `BOARD_GH_BIN`, the setting the
 # GitHub provider's CLI is configured by. `board`, `phases` and `watch`
 # named the module and now name `changes`; `reviews` fell from 18 to 8
-# and `completion` from 38 to 15 with the rename; `templates`' sample
+# and `completion` from 38 to 13 with the rename and the provider's own
+# reason in its refusals; `templates`' sample
 # pull-request url became a neutral sample. `gates`, `profiles` and
 # `settings` keep the `github` / `separate-reviewer` policy words, which
 # are persisted and are not renamed (plan §1.3).
 PROVIDER_VOCABULARY: dict[str, int] = {
-    "agents": 2, "changes": 24, "completion": 15, "config": 10,
-    "delivery": 11, "doctor": 3, "gates": 23, "githost": 2,
+    "agents": 2, "changes": 24, "completion": 13, "config": 10,
+    "delivery": 10, "doctor": 3, "gates": 23, "githost": 2,
     "plans": 1, "profiles": 17, "readiness": 9, "redact": 4,
     "reviews": 8, "routes": 5, "settings": 36, "setupguide": 15,
     "verify": 1,

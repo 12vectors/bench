@@ -100,6 +100,15 @@ def gh_available() -> bool:
     return githost.available()
 
 
+def host_unavailable() -> str:
+    """Why change requests cannot be opened or merged here, in the words a
+    refusal leads with: `gh is not installed` for a GitHub board without
+    its CLI (exactly the sentence it always was), the provider's own
+    reason otherwise — `none`, or a remote it does not recognise."""
+    return githost.problem() or githost.capabilities()["merge"]["reason"] \
+        or githost.missing_cli()
+
+
 def _branch_exists(branch: str) -> bool:
     return _run(["git", "rev-parse", "--verify", "--quiet", branch]).returncode == 0
 

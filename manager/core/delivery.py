@@ -317,8 +317,8 @@ def _completion(task: dict, plan: dict | None, target: str,
         refusal = ("this board merges on origin and the card has no PR — "
                    "open one first (↑ open PR)")
     elif ctx["onOrigin"] and not ctx["gh"]:
-        refusal = ("gh is not installed, and this board merges the "
-                   "application on origin (BOARD_APP_MERGE)")
+        refusal = (f"{changes.host_unavailable()}, and this board merges the "
+                   f"application on origin (BOARD_APP_MERGE)")
     return {"target": target, "appBase": app_base, "stacked": stacked,
             "targetSeen": seen, "refusal": refusal,
             "mode": "origin" if ctx["onOrigin"] else "local",

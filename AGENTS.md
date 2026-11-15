@@ -4523,6 +4523,35 @@ resolution commit, and refuses semantic ones, naming the collision for a
 human to settle. GitHub computes mergeability lazily, so an UNKNOWN
 reading keeps the chip's last state rather than flapping.
 
+### Which host: hosting providers
+
+Everything above goes through a **hosting provider** (task 116):
+`githost.py` picks the one in force and `providers/<name>/` holds what
+bench knows about that host — for GitHub, every `gh` argument list, url
+and payload shape. `changes.py` (formerly `github.py`) keeps the
+lifecycle and reads normalized values back, so the words on the board,
+the `**PR:**` line, the ticker sentences and the `github` /
+`separate-reviewer` review policies are exactly what they were.
+
+- **`BOARD_GIT_PROVIDER`** — `github` by default; `none` works the
+  application with git alone: no PR is opened, polled, reviewed on a host
+  or merged there, no PR chip appears, no launch is granted a `gh` verb,
+  and a plan reads `local-only` with that reason. Merge & clean up's
+  local merge is unaffected.
+- **An unrecognised remote is refused, not guessed at.** The GitHub
+  provider acts on a remote on `github.com` (or a host named in
+  `BOARD_GITHUB_HOSTS`) and on a local path remote; a remote on any other
+  host is reported in Settings and in the Configuration check, and `gh`
+  is never run against it.
+- **Unknown authorizes nothing.** Reading a status or opening a page runs
+  no probe and no fetch; whether a merge can be made conditional on a
+  head is asked only when a merge needs to know, and a capability that
+  reads `unknown` refuses the mutation by name.
+
+The contract is `manager/core/providers/README.md`; how the provider's
+verbs reach a coding agent (`AGENT_HOST`) is in
+`manager/core/adapters/README.md`.
+
 ### A review runs in the revision it is of
 
 A plan says which checkout a *work* run works in; a profile says what a
