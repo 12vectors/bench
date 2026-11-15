@@ -139,12 +139,19 @@ class RunnerRevisionHasOneOwner(unittest.TestCase):
 
     def test_the_old_names_fail_loudly(self):
         self.assertFalse(hasattr(verify, "RUNNER_REVISION"))
-        for name, owner in (("RUNNER_REVISION", "resultidentity"),
-                            ("_store", "evidence"), ("read", "evidence"),
-                            ("outcome_now", "staleness"),
-                            ("source_identity", "resultidentity"),
-                            ("_EPOCH", "evidence"), ("_FRESH", "staleness")):
+        self.assertEqual(verify.MOVED["RUNNER_REVISION"], "resultidentity")
+        self.assertEqual(verify.MOVED["_store"], "evidence")
+        self.assertEqual(verify.MOVED["outcome_now"], "staleness")
+        for name, owner in sorted(verify.MOVED.items()):
             with self.subTest(name=name):
+                # the new owner holds it (a private name under its public
+                # spelling where the move made it public)
+                public = name.lstrip("_")
+                owning = __import__(owner)
+                self.assertTrue(hasattr(owning, name) or hasattr(owning, public)
+                                or name in ("_SECRET_PATTERNS", "_identity",
+                                            "_ID_OK"),
+                                f"{owner} holds neither {name} nor {public}")
                 with self.assertRaisesRegex(AttributeError, owner):
                     getattr(verify, name)
                 with self.assertRaises(AttributeError):

@@ -147,10 +147,9 @@ looks like — the union of the tables `settings`, `agentsettings`,
 `previews` (through `verify`) and `bootstrap.py` kept apart — with the
 marker passed in, so each caller keeps the words its readers see
 (`settings` its `••••••••`, `previews` its `«redacted»`). `settings`,
-`agentsettings` and `previews` delegate to it. `verify.py` keeps its own
-table until the verify train (WP12), since any edit there changes every
-recorded pass's runner identity; `doctor` and `progress` reach that table
-through `verify.scrub` until then. `bootstrap.py` runs before an install
+`agentsettings` and `previews` delegate to it, and since the verify train
+(task 121, WP12) so does `evidence.scrub`, which `verify`, `doctor` and
+`progress` ask — verify's own copy is gone. `bootstrap.py` runs before an install
 exists and keeps its copy; `tests/test_redact.py` holds the union to
 every pattern of all five.
 
@@ -269,7 +268,8 @@ Every record and card a core module replaces goes through `records`
 (task 110): a unique temporary file in the same directory, then
 `os.replace`, so a reader sees the old file or the new one and two
 writers never share a scratch file. `durable=True` adds the file and
-directory flush. `verify.py` keeps its own writers until WP12. One
+directory flush. Since WP12 (task 121) that includes evidence: `evidence`
+writes each record atomically, durably once its outcome is final. One
 module owns each family and its read-modify-write lock; `records` owns
 neither.
 
@@ -283,6 +283,9 @@ neither.
 | review checkout ownership | `reviews` | the launch's own sequence | no |
 | delivered record, completion recovery record | `completion` | the card's completion claim | yes |
 | PR snapshot | `github` | the PR poll | no |
+| verification evidence | `evidence` (`verify` decides when) | the run's reservation, `state.LOCK` | yes, once final |
+| reuse records | `evidence` (`verify._record_reuse` decides) | `state.LOCK`, the same hold as the reuse decision | no |
+| a clipped check log | `verify` | the run's own end | no |
 | progress records | `progress` | `progress._LOCK` | no |
 | required-check batches, review-entry record | `required` | `required._LOCK`, `_ON_REVIEW_LOCK` | no |
 | refinement jobs | `refine` | the refine registry | no |
@@ -361,7 +364,7 @@ kept on purpose and held by `tests/test_gitrepo.py`.
 | `config.dirty_files` | a worktree | 30 s | a placeholder line, never `[]`, when status cannot be read |
 | `config.branch_for` | application | 30 s | `task/<stem>` when git cannot answer |
 | inline reads in `acceptance`, `profiles`, `settings`, `previews`, `required`, `agents.diff` | named | 10 s (`required`: 30 s) | each catches what it catches; unchanged by this card |
-| `verify._git` | named | 30 s | 128 and the exception's text. **Deferred to WP12**: no edit to `verify.py` outside its train |
+| `resultidentity.git` | named | 30 s | 128 and the exception's text. Was `verify._git`; since WP12 (task 121) it calls `gitproc.git_run` directly — the same argv and read environment as `config.git_run` — so the code that reads a source identity or a root class is inside the runner revision. `verify` and `staleness` use it too |
 
 `config.branch_for`, `config.dirty_files` and `config.worktree_mismatch`
 keep their bodies in `config` because `verify.py` calls them; `gitrepo`
@@ -370,8 +373,11 @@ offers them under the same names, and the callers this card routed —
 Two other direct readers stay on `config` for now: `github` and
 `completion` (`branch_for` through `github.branch_of`, and `completion`'s
 `dirty_files` call, with the rest of their git wrappers in a later
-package) and `verify` (WP12). A delegation from `config` up to
-`gitrepo` would be an upward import, so the bodies move with WP12/WP13.
+package) and the verify train (`resultidentity`, `staleness`, `verify`:
+`dirty_files`, `branch_for`, `worktree_mismatch`), whose effect on a
+verdict is re-derived when freshness is read
+(`resultidentity.BOUND_ELSEWHERE`). A delegation from `config` up to
+`gitrepo` would be an upward import, so the bodies move with WP13.
 
 **Raw invocations.** A list beginning `"git"` handed straight to
 `subprocess` skips `gitproc` and its read hardening. Task 114 routed the
@@ -383,14 +389,14 @@ the layer and is not scanned): the
 doctor's disposable fixtures (`doctor._fixture_repo`,
 `doctor._fixture_commits`),
 which run git on repositories the doctor itself creates. Literals in
-tests and docs are not invocations and are not scanned. `verify.py` has
-no raw invocation today; its own wrapper is counted with the direct
-`config.git_*` callers below rather than routed, until WP12.
+tests and docs are not invocations and are not scanned. The verify train
+has no raw invocation; since WP12 its one wrapper asks `gitproc` and is
+no longer a direct `config.git_*` caller.
 
 **Direct `config.git_*` callers** outside `config`, `gitproc` and
 `gitrepo` are counted per module in the same test, and the count may
-only fall — including `verify`'s one, which is the documented temporary
-exception.
+only fall. `verify`'s one, the documented temporary exception, went with
+WP12 (task 121).
 
 ## Representative flows
 
@@ -474,7 +480,7 @@ standard library, no core module and no other provider.
 top-level-exceptions 0
 function-imports 20
 private-reaches 49
-dynamic-patch-targets 2
+dynamic-patch-targets 3
 provider-vocabulary 182
 routes 91
 ```

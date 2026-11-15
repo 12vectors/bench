@@ -40,8 +40,14 @@ every change explained. This is that contract, as a program:
   the comparison exits 1.
 - **run** is the three in order, writing `before.json`, `after.json` and
   `report.json` / `report.md` into `--out`.
+- **--expect runner-changed** (on `compare` and `run`) names a transition
+  whose effect is known in advance — task 121's runner identity, under
+  which every recorded pass reads `stale / runner-changed` once. Every
+  changed requirement must be exactly that, or it is *unexpected* and the
+  comparison exits 1.
 
-Exit 0: every change accounted for. 1: an unaccounted relaxation. 2: it
+Exit 0: every change accounted for. 1: an unaccounted relaxation, or a
+change the named `--expect` transition does not explain. 2: it
 could not be judged (a bad argument, a resolver that would not load, a
 snapshot that does not validate). 3: the snapshot changed while it was
 read — which this program never does, so it means something else did.

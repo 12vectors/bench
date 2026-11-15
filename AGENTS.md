@@ -117,10 +117,26 @@ gitproc / records / redact < config < githost < state / reports / templates / gi
   repository, base and head resolved before anything is created, a
   detached worktree of that exact head owned by the run, and whether the
   review still speaks for the head the pull request proposes
+- `evidence.py` — the verification record: where it lives, how it is
+  stored (through `records`, durably once its outcome is final) and read
+  back, the reuse records, the outcome vocabulary every reader branches
+  on, and the evidence epoch a memo keys on (`epoch()`); a log is
+  scrubbed by `redact`'s table (task 121)
+- `resultidentity.py` — what a verdict is about: every dimension of a
+  result identity (source, check, coverage, programs, preparation,
+  inputs, root class, environment) and the one owner of the runner
+  revision, a digest over the declared `RUNNER_FILES`, with
+  `BOUND_ELSEWHERE` saying why every other dependency is outside it
+  (task 121)
+- `staleness.py` — whether a stored pass still holds (`freshness`,
+  `outcome_now`, `identity_drift`) and whether a record of another check
+  may answer for this one (declared equivalence) (task 121)
 - `verify.py` — the named checks bench runs itself, on a run's request:
   the argument list built here rather than composed by a model, the
-  environment the check is given, and the evidence it leaves — the
-  runner's own exit status, bound to the source it ran against
+  environment the check is given, the reservation registry and reuse
+  selection held under one lock, cancellation and recovery — and the
+  evidence it leaves, the runner's own exit status bound to the source it
+  ran against
 - `progress.py` — what a run *says* about its own work: the one
   run-scoped channel it reports through, each report validated whole at
   ingestion, ordered, de-duplicated and coalesced, closed by the run's
@@ -1990,6 +2006,19 @@ names — an unrelated policy change that is now provenance, an older
 commit's outcome that is now history, or an equivalence bench proved —
 or the comparison fails. It writes nothing it read from, asks GitHub
 nothing, and leaves out `.env`, secrets, logs and the HMAC key.
+
+**The runner-identity transition (task 121).** The `runner` dimension of
+every result identity is now a digest over the files in
+`resultidentity.RUNNER_FILES` — the runner, the identity, the record and
+its freshness, and the record and git leaves they stand on — rather than
+the hash of `verify.py` alone. Promoting that core changes the value
+once: every recorded pass reads `stale / runner-changed`, legacy records
+included, and each required check on an open card needs one fresh run.
+Nothing reruns by itself and nothing is rewritten; **Run required
+checks** is the recovery. A rollback costs the same invalidation in the
+other direction. `gate-compare run … --expect runner-changed` previews
+it on a copy and fails if anything other than that transition changes.
+See `verify/README.md`.
 
 ### Every status word
 

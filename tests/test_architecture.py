@@ -774,6 +774,10 @@ DYNAMIC_PATCH_TARGETS: dict[str, tuple[int, int]] = {
     "test_check_reuse.py::NewestRelevantAnswerDecides."
     "test_a_rerun_reserved_after_the_read_but_before_the_reuse_wins -> "
     "<module>.<computed>": (1, 465),
+    # and the proof that every name WP12 moved fails loudly on `verify`:
+    # it patches each one, expecting `mock.patch.object` to refuse
+    "test_runner_identity.py::RunnerRevisionHasOneOwner."
+    "test_the_old_names_fail_loudly -> verify.<computed>": (1, 158),
 }
 
 # GitHub vocabulary per core module outside github.py (WP08 moves it).

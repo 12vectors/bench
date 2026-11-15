@@ -421,6 +421,39 @@ python3 verify/gate-compare run --snapshot <dir> \
   commit's outcome is now history) or E7 (an equivalence bench proved) —
   or it is **unaccounted** and the program exits 1. Stricter readings are
   reported, not refused.
+- `--expect runner-changed` (on `run` and `compare`) names a transition
+  whose whole effect is known: every changed requirement must read
+  `stale / runner-changed`, and any other change — a relaxation, a
+  requirement appearing or going, any other stale reason — is
+  **unexpected** and the program exits 1.
+
+### The runner-identity transition (task 121)
+
+The runner dimension of every result identity is a digest over the
+files in `resultidentity.RUNNER_FILES` (before task 121 it was the hash
+of `verify.py` alone). Promoting the core that changed that definition
+changes the value **once**: every recorded pass then reads `stale /
+runner-changed`, legacy records included, and each required check on an
+open card needs one fresh run. Nothing reruns by itself and no record is
+rewritten — the old evidence stays readable, visibly stale, and **Run
+required checks** (or `bench-verify` from a run) is the recovery. A
+rollback to the previous core costs the same invalidation again, in the
+other direction: passes recorded under the new runner read
+`runner-changed` to the old one.
+
+Before promoting, preview it on a copy of the board:
+
+```bash
+python3 verify/gate-compare snapshot --tool <install> --work <work root> \
+    --app <application> --out <empty dir>
+python3 verify/gate-compare run --snapshot <dir> \
+    --before-core <install>/manager/core --expect runner-changed \
+    --out <report dir>
+```
+
+Exit 0 means every changed reading is the runner transition and nothing
+else; the report lists the cards that will need a fresh run. Prefer a
+quiet review column, and promote with no agent running.
 
 Its regression tests (`tests/test_gate_compare.py`) run on fixture boards
 only. A comparison over an operator's real inventory is a separate act by
