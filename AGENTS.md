@@ -1680,9 +1680,11 @@ click: no beat, no move and no read.
   (uncommitted work keeps the worktree and its branch, a branch something
   still targets is kept on the remote), the card moves to `done/` and a
   delivered record is written. Nothing is merged. A child with no commits
-  of its own — still at the commit it was cut from, or contained in its
-  parent's tip — is not offered it: there is no work of its own to have
-  delivered.
+  of its own — its head still the commit its work was cut from, or one
+  that commit already contained — is not offered it: there is no work of
+  its own to have delivered. That is read from the recorded cut, never
+  from where the parent is now, so a child whose work landed through its
+  parent's branch is still finished.
 
 **A retarget is a new review context.** It changes the change's diff and
 integration even when the head did not move, so it is recorded on the

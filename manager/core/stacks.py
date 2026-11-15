@@ -454,8 +454,7 @@ def _actions(task: dict, parent: dict | None, found: dict,
     landing = found["targets"]["landingTarget"]["branch"]
     mine = ctx["heads"].get(_work_branch(task)) or ""
     held = ctx["tracked"].get(landing) or ""
-    ours = own_work(ctx, {"childHead": mine,
-                          "parentTip": _tip(ctx, _work_branch(parent))}, found)
+    ours = own_work(ctx, {"childHead": mine}, found)
     if mine and held and ours is not False and _contains(ctx, mine, held):
         out.append({"action": "cleanup", "target": landing,
                     "label": "Finish: clean up"})
@@ -487,21 +486,23 @@ def contains(ctx: dict, commit: str, tip_: str) -> bool | None:
 
 
 def own_work(ctx: dict, ids: dict, found: dict | None) -> bool | None:
-    """Has the child commits of its own beyond its parent's? False when its
-    head is still the commit its work was cut from, or is contained in the
-    parent's tip — a child that never started, which Finish: clean up must
-    not record as delivered (task 119). None when that cannot be told."""
+    """Has the child commits of its own? Judged from where its work was cut
+    (the recorded `stack.tip`, else `startCommit`), never from where the
+    parent is now: False when its head is that commit or one it already
+    contained — a child that never started, which Finish: clean up must
+    not record as delivered (task 119). A child whose own commits were
+    merged into its parent's branch is contained in the parent's tip and
+    still has work of its own. None when the cut commit is not recorded
+    or git cannot say."""
     head = ids.get("childHead") or ""
-    if not head:
-        return None
     cut = ((((found or {}).get("targets") or {}).get("selectedBase") or {})
            .get("commit") or "")
-    if cut and cut == head:
+    if not head or not cut:
+        return None
+    if cut == head:
         return False
-    ptip = ids.get("parentTip") or ""
-    if ptip and _contains(ctx, head, ptip):
-        return False
-    return True if (ptip or cut) else None
+    inside = _contains(ctx, head, cut)
+    return None if inside is None else not inside
 
 
 def delivered(task: dict, ctx: dict) -> str | None:

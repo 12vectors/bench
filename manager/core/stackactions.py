@@ -302,7 +302,7 @@ def _cleanup_preview(out: dict, reading: dict, ctx: dict, head: str) -> None:
     if stacks.own_work(ctx, out["identities"], reading) is False:
         out["blockers"].append(
             f"{out['identities']['childBranch']} has no commits of its own "
-            f"beyond its parent's — finishing it would record a delivery of "
+            f"beyond the commit its work was cut from — finishing it would record a delivery of "
             f"work it never did; start its work, or move the card by hand")
         return
     remote = config.app_remote()

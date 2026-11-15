@@ -451,6 +451,30 @@ class FinishCleanUp(ActionCase):
         self.assertFalse((config.GATES_DIR / f"{CHILD[:-3]}.delivered.json")
                          .exists())
 
+    def test_a_child_delivered_through_its_parent_is_finished(self):
+        # the stack's own route: the child's work lands in its parent's
+        # branch, then the parent lands — the child's head is in the
+        # parent's tip and it still has work of its own
+        _, ctip = self.parent_and_child()
+        git(self.repo, "checkout", "-q", P_BRANCH)
+        git(self.repo, "merge", "-q", "--no-ff", "-m", "merge 57", C_BRANCH)
+        git(self.repo, "push", "-q", "origin", P_BRANCH)
+        git(self.repo, "checkout", "-q", "main")
+        ptip = sha(self.repo, P_BRANCH)
+        git(self.repo, "merge", "-q", "--no-ff", "-m", "merge 56", P_BRANCH)
+        git(self.repo, "push", "-q", "origin", "main")
+        self.delivered(PARENT, ptip)
+        self.assertIn("cleanup", [a["action"] for a in
+                                  self.stacked()[CHILD]["actions"]])
+        shown = stackactions.preview(CHILD, "cleanup")
+        self.assertEqual(shown["blockers"], [])
+        result = self.confirm("cleanup")
+        self.assertTrue(result["ok"], result)
+        self.assertTrue((self.tasks / "done" / CHILD).is_file())
+        record = json.loads((config.GATES_DIR / f"{CHILD[:-3]}.delivered.json")
+                            .read_text(encoding="utf-8"))
+        self.assertEqual(record["commit"], ctip)
+
 
 # ── review context follows the target ──────────────────────────────────
 
