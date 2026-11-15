@@ -7823,7 +7823,7 @@ function renderDrawer() {
   // any other focused control is found again by what names it — a review's
   // Comment button, an Activity link to a review, a fold's summary — so a
   // redraw landing between a focus and a key press never drops it to the
-  // body (task 123: the 390px keyboard case caught exactly that)
+  // body, which it used to for every control without an id
   const refocus = typing || dslot ? null : drawerFocusKey(active, body);
   const tab = drawerTab(t);
   // what the reader is looking at, so a live redraw that adds a record

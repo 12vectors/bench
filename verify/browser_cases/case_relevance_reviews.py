@@ -137,6 +137,16 @@ class RelevanceReviews(unittest.TestCase):
         self.assertTrue(b.wait(f"!document.querySelector('#dsec-reviews').hidden"
                                f" && !!document.querySelector('{REL}')", 5),
                         "Reviews did not draw the relevance review")
+        self.tab_focused("reviews")
+
+    def tab_focused(self, key: str):
+        """A tab click moves focus to the tab one animation frame later.
+        Wait for it: a test that focused something else in that frame had
+        its focus taken back by the tab — the cause of this case's once-seen
+        390px keyboard failure, where Tab then started from the tab button."""
+        self.assertTrue(S["browser"].wait(
+            f"document.activeElement === document.getElementById('dtab-{key}')", 5),
+            f"the {key} tab never took focus: " + self.focused())
 
     def no_sideways_scroll(self, where: str):
         over = S["browser"].eval(f"{DRAWER}.scrollWidth - {DRAWER}.clientWidth")
@@ -185,6 +195,7 @@ class RelevanceReviews(unittest.TestCase):
             shot(f"relevance-reviews-before-{mode}-1280x900")
             # after: Activity links to the exact review
             b.click("#dtab-activity")
+            self.tab_focused("activity")
             link = f"#dsec-activity [data-goreview=\"{self.rid}\"]"
             self.assertTrue(b.wait(f"!!document.querySelector('{link}')", 5),
                             "Activity does not link to the review")
