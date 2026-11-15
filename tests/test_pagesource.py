@@ -163,7 +163,9 @@ class ThePageIsReadThroughPagesource(unittest.TestCase):
 
     def test_page_is_the_shell_then_its_stylesheet(self):
         """Since task 123 the stylesheet is web/board.css; the manifest
-        beside it is not page source."""
+        beside it, and the vendored font stylesheet in web/fonts/, are not
+        page source."""
+        self.assertTrue((pagesource.WEB / "fonts" / "plex.css").is_file())
         self.assertEqual(pagesource.files(),
                          [pagesource.SHELL, pagesource.WEB / "board.css"])
         self.assertEqual(pagesource.page(),

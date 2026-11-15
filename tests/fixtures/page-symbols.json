@@ -1,0 +1,10 @@
+{
+ "about": "Every non-ASCII codepoint in the page's source (board.html and web/board.css), classified against the unicode-range values web/fonts/plex.css declares (task 123). 'declared' is inside a range every Plex face declares; 'monoOnly' is inside Plex Mono's symbols2 range only; 'system' is inside no Plex range, so a system font draws it now as it did when the page linked Google Fonts. Declared is not proof that Plex has the glyph: verify/browser_cases/case_fonts.py draws each one and reports what it found. tests/test_font_bundle.py keeps this list equal to the page.",
+ "declared": ["00A7", "00B7", "00D7", "2013", "2014", "2016", "2019", "201C", "201D", "2026", "203A", "2191", "2193", "2212"],
+ "excluded": {
+  "E000-E003": "private-use sentinels md() swaps out before anything is drawn"
+ },
+ "monoOnly": ["2500", "258C"],
+ "system": ["2192", "2197", "21A9", "21BA", "21BB", "21C5", "21E2", "223F", "2261", "2298", "22A0", "22EF", "2315", "2316", "2318", "2338", "233E", "2387", "2442", "25A3", "25B4", "25B6", "25B8", "25BE", "25C6", "25C7", "25CB", "25CC", "25CF", "25D4", "25EB", "2611", "2691", "2695", "2696", "26BF", "270E", "2713", "2715", "2733", "27F6", "FF0B"],
+ "v": 1
+}

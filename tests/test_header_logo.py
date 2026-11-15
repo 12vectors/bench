@@ -24,14 +24,7 @@ from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 
-# What the page was already allowed to fetch before the logo landed. The list
-# is the point: a logo that needed a font would have to grow it.
-KNOWN_EXTERNALS = {
-    "https://fonts.googleapis.com",
-    "https://fonts.gstatic.com",
-    "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500"
-    "&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap",
-}
+REPO_WEB = REPO / "manager" / "core" / "web"
 
 # Colour only ever means state, so none of these may appear in the mark.
 STATE_TOKENS = ("var(--accent)", "var(--calm)", "var(--alarm)", "var(--idle)")
@@ -76,13 +69,32 @@ class TheWordmark(Fixture):
 
     def test_nothing_is_fetched_for_it(self):
         """The whole reason it is outlines. If this fails, the page grew a
-        request (or an @font-face) that the acceptance forbids."""
+        request (or an @font-face of its own) that the acceptance forbids.
+        The Plex faces are the board's own since task 123, declared in
+        web/fonts/plex.css — which is not page source — and none of them is
+        Zilla Slab."""
         externals = set(re.findall(r'(?:href|src)="(https?://[^"]+)"', self.html))
-        self.assertEqual(externals, KNOWN_EXTERNALS,
-                         "board.html gained an external resource")
+        self.assertEqual(externals, set(),
+                         "board.html links an external resource")
         for forbidden in ("@font-face", ".woff", ".ttf", "family=Zilla"):
             self.assertNotIn(forbidden, self.html,
                              f"the logo may not bring in {forbidden}")
+        self.assertNotIn("Zilla", (REPO_WEB / "fonts" / "plex.css")
+                         .read_text(encoding="utf-8"))
+
+    def test_no_asset_references_a_url_off_the_board(self):
+        """Task 123: the page fetches nothing from anyone else. No asset the
+        board serves — the shell, its stylesheets, the font stylesheet —
+        names an http(s) url it would load. The licence and the provenance
+        record name upstream urls as text, which nothing fetches."""
+        fetched = re.compile(r"""(?:url\(\s*['"]?|@import\s+['"]?|(?:href|src)=["']?)https?://""")
+        self.assertIsNone(fetched.search((REPO / "manager" / "core" / "board.html")
+                                         .read_text(encoding="utf-8")))
+        for path in REPO_WEB.rglob("*"):
+            if path.suffix in (".css", ".js", ".mjs") and path.is_file():
+                self.assertIsNone(fetched.search(path.read_text(encoding="utf-8")),
+                                  f"{path.relative_to(REPO)} references a url "
+                                  f"off the board")
         # Naming the source face in a comment is documentation; setting text
         # in it would be a font the page hasn't got.
         self.assertIsNone(re.search(r"font-family:[^;}\n]*Zilla", self.html),

@@ -37,14 +37,20 @@ WEB = CORE / "web"
 # What a page module may be. Anything else under web/ (a manifest, a font)
 # is not source a test lifts text from.
 SUFFIXES = (".js", ".mjs", ".css")
+# Directories under web/ holding upstream material rather than the page's
+# own source: web/fonts/plex.css is Google's stylesheet for the Plex faces
+# with its urls localized (task 123), and nothing a test lifts lives there.
+VENDORED = ("fonts",)
 
 
 def files(core: Path = CORE) -> list[Path]:
     """The page's source files: the shell first, then every module under
-    `web/` in path order. Only the shell exists until the split lands."""
+    `web/` in path order, leaving out the vendored directories."""
     web = core / "web"
     modules = sorted(p for p in web.rglob("*")
-                     if p.is_file() and p.suffix in SUFFIXES) if web.is_dir() else []
+                     if p.is_file() and p.suffix in SUFFIXES
+                     and p.relative_to(web).parts[0] not in VENDORED
+                     ) if web.is_dir() else []
     return [core / "board.html", *modules]
 
 

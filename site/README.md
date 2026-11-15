@@ -186,7 +186,7 @@ answers rather than files:
 | `root/` | Copied to the **top** of `dist/` verbatim: `_headers`, which the host reads and never serves |
 | `wrangler.jsonc` | The Worker: assets directory, url handling, 404, custom domain |
 | `requirements.txt` | `markdown-it-py`, pinned. The only dependency |
-| `fetch-fonts.py` | Refetches the committed woff2 files, or adds a face |
+| `fetch-fonts.py` | Refetches the committed woff2 files, or adds a face; `--core` refreshes the board's own Plex set in `manager/core/web/fonts/` |
 
 ## A manifest entry
 

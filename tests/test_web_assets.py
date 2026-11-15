@@ -17,6 +17,7 @@ import hashlib
 import http.client
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -98,9 +99,8 @@ class TheShippedManifest(unittest.TestCase):
         self.assertIn(assets.PLACEHOLDER, snapshot.html)
 
     def test_no_asset_names_an_absolute_url_it_would_fetch(self):
-        """The stylesheet is the page's own: it references nothing off the
-        board (fonts move to web/fonts/ with their licence once the full
-        public subset set is bundled)."""
+        """The stylesheets are the page's own: they reference nothing off
+        the board — the Plex faces are web/fonts/, with their licence."""
         for name in json.loads((WEB / "manifest.json").read_bytes())["assets"]:
             text = (WEB / name).read_bytes()
             if name.endswith((".css", ".js", ".mjs")):
@@ -111,7 +111,8 @@ class TheShippedManifest(unittest.TestCase):
 class WhatAPathMayBe(unittest.TestCase):
     def test_normalized_relative_paths_with_a_typed_suffix(self):
         for good in ("board.css", "fonts/IBMPlexSans-Regular.woff2",
-                     "fonts/README.md", "app/state.js", "IBMPlex.LICENSE.txt"):
+                     "fonts/README.md", "app/state.js", "IBMPlex.LICENSE.txt",
+                     "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2", "_x.css"):
             self.assertIsNone(assets.path_problem(good), good)
 
     def test_everything_else_is_refused(self):
@@ -357,6 +358,17 @@ class ARunningBoard(unittest.TestCase):
         self.assertEqual(headers["cache-control"], assets.IMMUTABLE)
         self.assertEqual(headers["x-content-type-options"], "nosniff")
         self.assertEqual(css, (WEB / "board.css").read_bytes())
+        # the font stylesheet and every face it names, from the same build
+        self.assertIn(f'href="/web/{build}/fonts/plex.css"'.encode(), page)
+        status, headers, fonts = fetch(board, f"/web/{build}/fonts/plex.css")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["cache-control"], assets.IMMUTABLE)
+        for name in sorted(set(re.findall(rb"url\(([^)]+)\)", fonts))):
+            status, headers, body = fetch(board, f"/web/{build}/fonts/{name.decode()}")
+            self.assertEqual(status, 200, name)
+            self.assertEqual(headers["content-type"], "font/woff2")
+            self.assertEqual(headers["cache-control"], assets.IMMUTABLE)
+            self.assertEqual(body[:4], b"wOF2")
         code, state = board.get("/api/state")
         self.assertEqual(state["assets"]["build"], build)
         self.assertEqual(state["assets"]["mode"], "snapshot")
@@ -438,6 +450,161 @@ class TheArtifactCarriesTheAssets(unittest.TestCase):
         snapshot = assets.load(unpacked / "manager" / "core")
         self.assertEqual(snapshot.build, assets.build_id(
             (WEB / "manifest.json").read_bytes()))
+        # the fonts and their licence travel in the artifact (WP14)
+        fonts = [n for n in listed if n.startswith("fonts/") and n.endswith(".woff2")]
+        self.assertEqual(len(fonts), 24)
+        for name in fonts:
+            self.assertEqual(snapshot.files[name][0][:4], b"wOF2", name)
+        for name in ("fonts/plex.css", "fonts/IBMPlex.LICENSE.txt",
+                     "fonts/SOURCES.txt", "fonts/README.md"):
+            self.assertIn(name, snapshot.files)
+        self.assertIn(b"SIL Open Font License",
+                      snapshot.files["fonts/IBMPlex.LICENSE.txt"][0])
+
+
+def _clean_env() -> dict:
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith(("BOARD_", "BENCH_"))}
+
+
+class ThreeLayoutsBootAndUpdate(_Patched):
+    """The same asset behaviour in each layout an install can take —
+    vendored (the release unpacked into `.task-manager/` of a host
+    repository), source (a git checkout of bench itself, run in place) and
+    external (the tool in its own directory with `--app` and `--work`):
+
+    - the installed core loads its snapshot, fonts and licence included,
+      under the build the release names;
+    - a board booted there keeps serving the booted bytes, page and fonts
+      alike, after an update rewrites `manager/core/` — `rsync -a
+      --delete`, as update.sh does, for the two release layouts, and the
+      new files written in place, as a pull does, for the checkout — and
+      reports the build on disk as differing rather than serving it;
+    - the updated core then loads as the newer build on its own.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.scratch = Path(tempfile.mkdtemp(prefix="bench-assets-layouts-")).resolve()
+        cls.tarball = cls.scratch / "bench.tar.gz"
+        result = subprocess.run(
+            ["bash", str(REPO / "release.sh"), "--tarball", str(cls.tarball),
+             "--source", "example/bench"],
+            capture_output=True, text=True)
+        if result.returncode != 0:  # not assert: must survive python -O
+            raise RuntimeError(f"release.sh failed:\n{result.stdout}{result.stderr}")
+        cls.build = assets.build_id((WEB / "manifest.json").read_bytes())
+        # The "next release": the same artifact with a changed stylesheet
+        # and a font file of a different subset's bytes, manifest rewritten.
+        cls.next = cls.scratch / "next"
+        cls.next.mkdir()
+        subprocess.run(["tar", "-xzf", str(cls.tarball), "-C", str(cls.next)],
+                       check=True, capture_output=True)
+        web = cls.next / "manager" / "core" / "web"
+        with open(web / "board.css", "ab") as css:
+            css.write(b"\n/* the next release */\n")
+        cls.font = "fonts/zYXzKVElMYYaJe8bpLHnCwDKr932-G7dytD-Dmu1syxeKYbSB4Zh.woff2"
+        (web / cls.font).write_bytes((web / "fonts" /
+            "zYXzKVElMYYaJe8bpLHnCwDKr932-G7dytD-Dmu1syxQKYbSB4ZhRNU.woff2").read_bytes())
+        (web / "manifest.json").write_bytes(assets.render(web))
+        cls.next_build = assets.build_id((web / "manifest.json").read_bytes())
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.scratch, ignore_errors=True)
+
+    def unpack(self, into: Path) -> None:
+        into.mkdir(parents=True)
+        subprocess.run(["tar", "-xzf", str(self.tarball), "-C", str(into)],
+                       check=True, capture_output=True)
+
+    def git(self, *args: str) -> None:
+        subprocess.run(["git", *args], check=True, capture_output=True,
+                       env={**_clean_env(), "GIT_AUTHOR_NAME": "t",
+                            "GIT_AUTHOR_EMAIL": "t@example.invalid",
+                            "GIT_COMMITTER_NAME": "t",
+                            "GIT_COMMITTER_EMAIL": "t@example.invalid"})
+
+    def vendored(self, tmp: Path) -> Path:
+        host = tmp / "host"
+        self.git("init", "-q", "-b", "main", str(host))
+        tm = host / ".task-manager"
+        self.unpack(tm)
+        result = subprocess.run([sys.executable, str(tm / "install.py")], cwd=host,
+                                capture_output=True, text=True,
+                                stdin=subprocess.DEVNULL, env=_clean_env())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return tm / "manager" / "core"
+
+    def source(self, tmp: Path) -> Path:
+        """A checkout of bench: the release's tree committed as a repository
+        and run from where it sits, with no install step of its own."""
+        checkout = tmp / "bench"
+        self.unpack(checkout)
+        self.git("init", "-q", "-b", "main", str(checkout))
+        self.git("-C", str(checkout), "add", "-A")
+        self.git("-C", str(checkout), "commit", "-q", "-m", "bench")
+        return checkout / "manager" / "core"
+
+    def external(self, tmp: Path) -> Path:
+        tool, app, work = tmp / "tool", tmp / "app", tmp / "work"
+        self.unpack(tool)
+        self.git("init", "-q", "-b", "main", str(app))
+        result = subprocess.run(
+            [sys.executable, str(tool / "install.py"), "--app", str(app),
+             "--work", str(work)],
+            capture_output=True, text=True, cwd=str(tmp), env=_clean_env(),
+            stdin=subprocess.DEVNULL)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((work / "tasks").is_dir())
+        return tool / "manager" / "core"
+
+    def check(self, layout: str) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix=f"{layout}-", dir=self.scratch))
+        core = getattr(self, layout)(tmp)
+        self.use(core)
+        booted = assets.boot()
+        self.assertEqual(booted.build, self.build, layout)
+        page = assets.page_html()
+        css = assets.lookup(self.build, "board.css").body
+        font = assets.lookup(self.build, self.font)
+        self.assertEqual(font.body[:4], b"wOF2")
+        self.assertEqual(font.type, "font/woff2")
+        self.assertIsNotNone(assets.lookup(self.build, "fonts/IBMPlex.LICENSE.txt"))
+
+        if layout == "source":
+            # a pull writes the newer files over the checkout
+            for path in (self.next / "manager" / "core").rglob("*"):
+                if path.is_file():
+                    target = core / path.relative_to(self.next / "manager" / "core")
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(path.read_bytes())
+        else:
+            subprocess.run(["rsync", "-a", "--delete",
+                            f"{self.next}/manager/core/", f"{core}/"],
+                           check=True, capture_output=True)
+
+        self.assertEqual(assets.page_html(), page, layout)
+        self.assertEqual(assets.lookup(self.build, "board.css").body, css, layout)
+        self.assertEqual(assets.lookup(self.build, self.font).body, font.body, layout)
+        self.assertIsNone(assets.lookup(self.next_build, "board.css"),
+                          "a running board serves only the build it booted")
+        public = assets.public()
+        self.assertTrue(public["differs"], layout)
+        self.assertEqual(public["build"], self.build)
+        self.assertEqual(public["disk"], self.next_build)
+        fresh = assets.load(core)
+        self.assertEqual(fresh.build, self.next_build, layout)
+        self.assertTrue(fresh.files["board.css"][0].endswith(b"/* the next release */\n"))
+
+    def test_vendored(self):
+        self.check("vendored")
+
+    def test_source(self):
+        self.check("source")
+
+    def test_external(self):
+        self.check("external")
 
 
 if __name__ == "__main__":
