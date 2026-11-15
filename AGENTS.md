@@ -95,7 +95,7 @@ gitproc / records / redact < config < githost / assets < state / reports / templ
   oversized or changed; then it serves that snapshot under
   `/web/<build>/`, immutable, whatever an update does to the disk.
   `BOARD_ASSETS=disk` reads from disk, uncached, for editing. Imports
-  `config` only
+  `config` and `records`
 - `state.py` — shared registries, event log persistence, SSE fan-out
 - `reports.py` — what the record keeps of an agent's closing report: one
   cap, one clip, for the task file and the PR body alike

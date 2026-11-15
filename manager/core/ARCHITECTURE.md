@@ -147,7 +147,8 @@ reaching into `PR_STATE`. `delivery` and `routes` ask it for the recovery
 and delivered records and for the merge sheet's facts.
 
 `assets` (task 123, WP14) sits beside `githost`, directly above
-`config`, which is all it imports: the page's asset manifest, the build
+`config`; it imports `config` and `records` (which writes the
+manifest atomically): the page's asset manifest, the build
 id and the boot snapshot the board serves under `/web/<build>/`. `board`
 asks it to boot before the port is bound (a refusal means the board does
 not start) and `routes` asks it for the page, the build and each asset.

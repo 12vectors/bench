@@ -34,7 +34,7 @@ after an update — the shims, the adapters' `run` — are not covered by
 either and may talk to an older running board.
 
 Stdlib only. Imports `config`, for where core is and which mode is in
-force.
+force, and `records`, which writes the manifest atomically.
 
     python3 manager/core/assets.py            # is the manifest current?
     python3 manager/core/assets.py --write    # rewrite it from web/
@@ -52,6 +52,7 @@ from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
 import config
+import records
 
 MANIFEST = "manifest.json"
 VERSION = 1
@@ -431,7 +432,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     path = web / MANIFEST
     if argv == ["--write"]:
-        path.write_bytes(wanted)
+        records.write_bytes(path, wanted)
         print(f"wrote {path} — build {build_id(wanted)}")
         return 0
     if argv:
