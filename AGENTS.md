@@ -4575,7 +4575,7 @@ can trust by keeping five acts apart, each its own control:
 | **Stop** | SIGTERM to the group bench started, SIGKILL after its grace period, then reports what is left | no | the drive record |
 
 Discovery is not an act. It reads the application's files through the
-setup cards' own inspection (`setuptasks.inspect`) and **proposes**: start
+setup cards' own inspection (`appinspect.inspect`) and **proposes**: start
 commands with port hints, a dependency step, environment names from an
 `.env.example` (secrets marked as references, values never read), and data
 prerequisites. Nothing is run, installed or started by reading the guide,

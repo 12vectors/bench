@@ -3,7 +3,7 @@ rides, and the prompt templates each launch is filled from (task 77).
 
 **It owns no resolution.** What a launch rides is `config.agent_choice()`
 — the one resolver `profiles.resolve()`, the doctor, the preflight and
-`agents._launch` all read — and what a template must contain is
+`agents.launch` all read — and what a template must contain is
 `templates.problems()`. This module reads both, says what they say in
 words, and writes the two kinds of file they read:
 

@@ -97,16 +97,19 @@ import watch
 
 
 def load_provider() -> None:
-    """Load the selected hosting provider's code now, so a running board
-    executes the provider that was on disk when it started. Loading reads
-    the module and checks its declared functions; it asks the network,
-    `gh` and the remote nothing. A provider that does not load is not a
-    reason to refuse to serve: it is reported where it always was (the
-    Configuration check, Settings), so startup is unchanged by it."""
-    try:
-        githost.module()
-    except githost.Refused:
-        pass
+    """Load the hosting provider code a running board may execute — the
+    selected provider, and `none`, which `githost.agent_verbs` falls back
+    to when the selected one does not act on this remote — so the board
+    executes the providers that were on disk when it started. Loading
+    reads each module and checks its declared functions; it asks the
+    network, `gh` and the remote nothing. A provider that does not load is
+    not a reason to refuse to serve: it is reported where it always was
+    (the Configuration check, Settings), so startup is unchanged by it."""
+    for load in (githost.module, lambda: githost.load("none")):
+        try:
+            load()
+        except githost.Refused:
+            pass
 
 
 def wire() -> None:

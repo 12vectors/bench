@@ -187,9 +187,10 @@ an alias, a wholesale re-export, or a module moved to look compliant.
 
 **Eager startup.** `board.py` imports every core module at its top level
 — check 11 fails a core module it does not — and loads the selected
-hosting provider (`board.load_provider`, which reads the provider's code
-and its declared functions and asks no network, `gh` or remote) before
-it serves. A running board therefore executes the code that was on disk
+hosting provider, plus `none`, which `githost.agent_verbs` falls back to
+when the selected one does not act on the remote (`board.load_provider`,
+which reads the providers' code and declared functions and asks no
+network, `gh` or remote), before it serves. A running board therefore executes the code that was on disk
 when it started; a core update takes effect on restart, all of it at
 once. `tests/test_eager_startup.py` holds the running process to that:
 every core module and the provider are in memory after startup, and the

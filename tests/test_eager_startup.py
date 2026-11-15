@@ -100,6 +100,9 @@ class StartupLoadsEverything(unittest.TestCase):
         self.assertEqual(found["missing"], [],
                          "a core module was left to be imported on demand")
         self.assertIn(found["provider"], found["loaded"])
+        # and `none`, the fallback `githost.agent_verbs` runs when the
+        # selected provider does not act on this remote
+        self.assertIn("none", found["loaded"])
 
     def test_a_none_provider_board_loads_the_none_provider(self):
         found = self.probe(BOARD_GIT_PROVIDER="none")
