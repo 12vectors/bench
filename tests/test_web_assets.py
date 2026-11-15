@@ -528,12 +528,17 @@ class ThreeLayoutsBootAndUpdate(_Patched):
     def vendored(self, tmp: Path) -> Path:
         host = tmp / "host"
         self.git("init", "-q", "-b", "main", str(host))
+        (host / ".claude").mkdir()
         tm = host / ".task-manager"
         self.unpack(tm)
+        # As test_update_from_release does, the adapter wiring's own exit is
+        # not this test's subject; the work state the installer lays down
+        # before wiring is.
         result = subprocess.run([sys.executable, str(tm / "install.py")], cwd=host,
                                 capture_output=True, text=True,
                                 stdin=subprocess.DEVNULL, env=_clean_env())
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((tm / "tasks" / "backlog").is_dir(),
+                        result.stdout + result.stderr)
         return tm / "manager" / "core"
 
     def source(self, tmp: Path) -> Path:

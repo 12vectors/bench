@@ -10,8 +10,8 @@ re-subset is a failure here rather than a glyph that quietly falls back.
 What the standard library cannot do is read a woff2 character map, so
 glyph coverage is proved in the browser (`verify/browser_cases/
 case_fonts.py`). This module keeps that case's inputs honest: the faces
-and ranges it probes, and the inventory of the page's own non-ASCII
-characters (`tests/fixtures/page-symbols.json`).
+and ranges it probes. It reads no page source; tests/test_font_page.py
+holds the page to the bundle and to its symbol inventory.
 
     python3 -m unittest tests.test_font_bundle -v
 """
@@ -25,8 +25,6 @@ import re
 import sys
 import unittest
 from pathlib import Path
-
-from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 CORE = REPO / "manager" / "core"
@@ -182,65 +180,6 @@ class TheLicenceTravelsWithTheFonts(Fixture):
         for name in ("IBMPlex.LICENSE.txt", "SOURCES.txt", "plex.css",
                      "site/fetch-fonts.py --core", "page-symbols.json"):
             self.assertIn(name, readme)
-
-
-class ThePageLinksTheBundle(Fixture):
-    def test_the_shell_links_plex_css_from_its_own_build_before_board_css(self):
-        shell = pagesource.shell()
-        fonts = shell.find('href="/web/__BUILD__/fonts/plex.css"')
-        own = shell.find('href="/web/__BUILD__/board.css"')
-        self.assertGreater(fonts, 0)
-        self.assertGreater(own, fonts)
-        self.assertNotIn("fonts.googleapis.com", shell)
-        self.assertNotIn("fonts.gstatic.com", shell)
-        self.assertNotIn('rel="preconnect"', shell)
-
-    def test_the_stylesheet_asks_for_the_families_plex_css_declares(self):
-        page = pagesource.page()
-        self.assertIn("'IBM Plex Sans'", page)
-        self.assertIn("'IBM Plex Mono'", page)
-
-
-class TheInventoryOfThePageSymbols(Fixture):
-    """Every non-ASCII codepoint the page's source holds is listed, and the
-    list says which a Plex range declares and which a system font has
-    always drawn. A symbol added to the page has to be added here, which
-    is the point: the browser case then probes it."""
-
-    def test_the_inventory_is_the_page_s_own(self):
-        inventory = json.loads(INVENTORY.read_text(encoding="utf-8"))
-        excluded = []
-        for span in inventory["excluded"]:
-            low, _, high = span.partition("-")
-            excluded.append((int(low, 16), int(high or low, 16)))
-        page = {ord(c) for c in pagesource.page() if ord(c) > 0x7F}
-        page = {cp for cp in page if not covered(cp, excluded)}
-        sans = [r for f in self.faces if f["family"] == "IBM Plex Sans" for r in f["ranges"]]
-        mono = [r for f in self.faces if f["family"] == "IBM Plex Mono" for r in f["ranges"]]
-        want = {"declared": [], "monoOnly": [], "system": []}
-        for cp in sorted(page):
-            if covered(cp, sans) and covered(cp, mono):
-                want["declared"].append(f"{cp:04X}")
-            elif covered(cp, mono):
-                want["monoOnly"].append(f"{cp:04X}")
-            elif covered(cp, sans):
-                self.fail(f"U+{cp:04X} is declared by Sans alone; add a class for it")
-            else:
-                want["system"].append(f"{cp:04X}")
-        for key, codes in want.items():
-            self.assertEqual(inventory[key], codes,
-                             f"tests/fixtures/page-symbols.json {key!r} is not the page's")
-
-    def test_the_excluded_codepoints_are_only_the_markdown_sentinels(self):
-        """U+E000–U+E003 are placeholders md() swaps out; nothing draws them."""
-        page = pagesource.page()
-        start = page.index("\nfunction md(")
-        end = re.compile(r"\n(?:async function |function |const |let )").search(page, start + 1).start()
-        outside = page[:start] + page[end:]
-        for cp in range(0xE000, 0xF900):
-            self.assertNotIn(chr(cp), outside,
-                             f"U+{cp:04X} is used outside md(); classify it in "
-                             f"tests/fixtures/page-symbols.json")
 
 
 if __name__ == "__main__":

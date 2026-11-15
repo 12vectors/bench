@@ -81,20 +81,8 @@ class TheWordmark(Fixture):
                              f"the logo may not bring in {forbidden}")
         self.assertNotIn("Zilla", (REPO_WEB / "fonts" / "plex.css")
                          .read_text(encoding="utf-8"))
-
-    def test_no_asset_references_a_url_off_the_board(self):
-        """Task 123: the page fetches nothing from anyone else. No asset the
-        board serves — the shell, its stylesheets, the font stylesheet —
-        names an http(s) url it would load. The licence and the provenance
-        record name upstream urls as text, which nothing fetches."""
-        fetched = re.compile(r"""(?:url\(\s*['"]?|@import\s+['"]?|(?:href|src)=["']?)https?://""")
-        self.assertIsNone(fetched.search((REPO / "manager" / "core" / "board.html")
-                                         .read_text(encoding="utf-8")))
-        for path in REPO_WEB.rglob("*"):
-            if path.suffix in (".css", ".js", ".mjs") and path.is_file():
-                self.assertIsNone(fetched.search(path.read_text(encoding="utf-8")),
-                                  f"{path.relative_to(REPO)} references a url "
-                                  f"off the board")
+        # that no asset references a url off the board at all is
+        # tests/test_font_page.py's
         # Naming the source face in a comment is documentation; setting text
         # in it would be a font the page hasn't got.
         self.assertIsNone(re.search(r"font-family:[^;}\n]*Zilla", self.html),
