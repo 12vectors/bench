@@ -299,6 +299,12 @@ def _cleanup_preview(out: dict, reading: dict, ctx: dict, head: str) -> None:
     out["identities"]["landing"] = landing
     out["label"] = "Finish: clean up"
     out["mode"] = "cleanup"
+    if stacks.own_work(ctx, out["identities"], reading) is False:
+        out["blockers"].append(
+            f"{out['identities']['childBranch']} has no commits of its own "
+            f"beyond its parent's — finishing it would record a delivery of "
+            f"work it never did; start its work, or move the card by hand")
+        return
     remote = config.app_remote()
     if not remote:
         out["blockers"].append(
@@ -366,9 +372,17 @@ def _record_retarget(fresh: dict, how: str, notes: list[str]) -> dict:
     ids = fresh["identities"]
     filename = fresh["file"]
     stage = taskfiles.find_stage_of(filename) or ""
+    # The plan and the card's header are one statement in two places. The
+    # plan is written first and put back if the header cannot follow, so a
+    # failed card edit never leaves the next preflight reading drift.
+    previous = plans.recorded(filename)
     plans.retarget(filename, ids["newTarget"], old=ids["target"],
                    head=ids["childHead"], how=how)
-    header = taskfiles.set_pr_base(filename, stage, ids["newTarget"])
+    try:
+        header = taskfiles.set_pr_base(filename, stage, ids["newTarget"])
+    except BaseException:
+        plans.restore(filename, previous)
+        raise
     gates.invalidate()
     summary = (f"{filename} retargeted from {ids['target']} onto "
                f"{ids['newTarget']} ({how}) at {ids['childHead'][:12]} — a "
@@ -484,7 +498,28 @@ def _update(fresh: dict) -> dict:
     if merged.returncode != 0:
         conflicted = gitrepo.git(path, "diff", "--name-only",
                                  "--diff-filter=U").stdout.split()
-        gitrepo.git(path, "merge", "--abort")
+        in_merge = gitrepo.git(path, "rev-parse", "-q", "--verify",
+                               "MERGE_HEAD").returncode == 0
+        if in_merge:
+            gitrepo.git(path, "merge", "--abort")
+        if not conflicted:
+            # Not a conflict: git refused the merge for another reason (an
+            # untracked file it would overwrite, a hook, a lock). Say what
+            # it said, and what the branch is now.
+            said = ((merged.stderr or merged.stdout or "").strip()
+                    .splitlines() or ["no detail"])[-1][:200]
+            after = gitrepo.git(path, "rev-parse", "HEAD").stdout.strip()
+            now = ("the branch is exactly as it was"
+                   if after == ids["childHead"] else
+                   f"the branch is now at {after[:12]} — look before acting "
+                   f"again")
+            summary = (f"{filename}: updating {cbranch} from {pbranch} "
+                       f"failed — git said: {said}"
+                       + ("; the merge was aborted" if in_merge else "")
+                       + f"; {now}")
+            _say(filename, summary)
+            return {"ok": False, "action": "update", "outcome": "failed",
+                    "conflicts": [], "sentence": summary, "identities": ids}
         summary = (f"{filename}: updating {cbranch} from {pbranch} conflicts"
                    + (f" on {', '.join(conflicted[:6])}" if conflicted else "")
                    + " — the merge was aborted and the branch is exactly as "

@@ -20,10 +20,12 @@ What this holds:
   reported with the branch as it was; a parent that is not published is
   never published by its child.
 - **Finish: clean up** happens only once the remote application base is
-  seen to hold the child's head.
+  seen to hold the child's head, and never for a child with no commits of
+  its own.
 - **Review context follows the target.** A Bench verdict or a formal
-  approval given before a retarget does not carry over at the same head;
-  a new head is history under the existing rule.
+  approval given before a retarget does not carry over at the same head,
+  including after a later launch re-records the plan; a new head is
+  history under the existing rule.
 
     python3 -m unittest tests.test_stack_actions -v
 """
@@ -213,6 +215,18 @@ class Retarget(ActionCase):
         self.assertEqual(self.host.calls(), [])
         self.assertEqual(plans.recorded(CHILD)["prBase"], "main")
 
+    def test_a_card_edit_that_fails_puts_the_plan_back(self):
+        self.landed_pair(with_pr=False)
+        before = plans.recorded(CHILD)
+        shown = stackactions.preview(CHILD, "retarget")
+        with mock.patch.object(taskfiles, "set_pr_base",
+                               side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                stackactions.run(CHILD, "retarget", shown["identities"])
+        self.assertEqual(plans.recorded(CHILD), before,
+                         "the plan says main while the card does not")
+        self.assertNotIn("**PR base:**", self.card_text())
+
     def test_a_parent_that_has_not_landed_has_nowhere_to_retarget(self):
         self.parent_and_child()
         shown = stackactions.preview(CHILD, "retarget")
@@ -358,6 +372,28 @@ class UpdateFromParent(ActionCase):
         self.assertEqual(git(self.origin, "rev-parse", C_BRANCH).stdout.strip(),
                          published)
 
+    def test_a_failure_that_is_not_a_conflict_is_not_called_one(self):
+        _, ctip = self.parent_and_child()
+        self.commit_on(P_BRANCH, "more-parent-work")
+        real = stackactions.gitrepo.git
+
+        def refusing(path, *args, **kwargs):
+            if args[:2] == ("merge", "--no-ff"):
+                return subprocess.CompletedProcess(
+                    ["git", *args], 1, "",
+                    "fatal: the pre-merge-commit hook refused it\n")
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(stackactions.gitrepo, "git", side_effect=refusing):
+            result = self.confirm("update")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["outcome"], "failed")
+        self.assertEqual(result["conflicts"], [])
+        self.assertNotIn("conflict", result["sentence"])
+        self.assertIn("hook refused it", result["sentence"])
+        self.assertIn("exactly as it was", result["sentence"])
+        self.assertEqual(sha(self.repo, C_BRANCH), ctip)
+
     def test_nothing_to_bring_in_is_refused(self):
         self.parent_and_child()
         shown = stackactions.preview(CHILD, "update")
@@ -396,6 +432,24 @@ class FinishCleanUp(ActionCase):
         record = json.loads((config.GATES_DIR / f"{CHILD[:-3]}.delivered.json")
                             .read_text(encoding="utf-8"))
         self.assertEqual((record["commit"], record["how"]), (ctip, "stack"))
+
+    def test_a_child_with_no_work_of_its_own_is_not_finished(self):
+        ptip, _ = self.parent_and_child(child_branch=False)
+        git(self.repo, "branch", C_BRANCH, P_BRANCH)     # cut, never worked
+        git(self.repo, "push", "-q", "origin", C_BRANCH)
+        git(self.repo, "merge", "-q", "--no-ff", "-m", "merge 56", P_BRANCH)
+        git(self.repo, "push", "-q", "origin", "main")
+        self.delivered(PARENT, ptip)
+        self.assertNotIn("cleanup", [a["action"] for a in
+                                     self.stacked()[CHILD]["actions"]])
+        shown = stackactions.preview(CHILD, "cleanup")
+        self.assertTrue(any("no commits of its own" in b
+                            for b in shown["blockers"]), shown["blockers"])
+        with self.assertRaises(ValueError):
+            stackactions.run(CHILD, "cleanup", shown["identities"])
+        self.assertTrue((self.tasks / "review" / CHILD).is_file())
+        self.assertFalse((config.GATES_DIR / f"{CHILD[:-3]}.delivered.json")
+                         .exists())
 
 
 # ── review context follows the target ──────────────────────────────────
@@ -449,6 +503,35 @@ class ReviewFollowsTheTarget(GateCase):
                            "submitted_at": "2999-01-01T00:00:00Z"}],
                          head=self.head)
         self.assertEqual(self.row()["reason"], "approved")
+
+    def relaunch(self) -> None:
+        """What ▸ start work on an existing branch and ↻ act on PR do
+        (`agents`): record the plan preflight returned, which knows
+        nothing of retargets, at an unchanged head."""
+        fresh = {"task": CARD, "blockers": [], "branch": f"task/{CARD[:-3]}",
+                 "startBranch": "task/70-parent", "prBase": "main"}
+        with mock.patch.object(plans, "preflight", return_value=fresh):
+            plans.record(plans.require(plans.preflight(CARD, "review")))
+        gates.invalidate()
+
+    def test_a_later_launch_does_not_erase_the_retarget(self):
+        self.gated(review="bench")
+        gates.record_verdict(CARD, verdict="APPROVE", head=self.head)
+        time.sleep(0.01)
+        self.retarget()
+        self.relaunch()
+        self.assertEqual(plans.latest_retarget(CARD)["to"], "main")
+        self.assertEqual(self.row()["reason"], "verdict-before-retarget")
+
+    def test_a_later_launch_does_not_restore_a_github_approval(self):
+        self.gated(review="github")
+        self.reviews_say([{"id": 2, "user": {"login": "elena"},
+                           "state": "APPROVED", "commit_id": self.head,
+                           "submitted_at": "2026-01-01T00:00:00Z"}],
+                         head=self.head)
+        self.retarget()
+        self.relaunch()
+        self.assertEqual(self.row()["reason"], "approval-before-retarget")
 
     def test_a_new_head_is_history_under_the_existing_rule(self):
         self.gated(review="bench")

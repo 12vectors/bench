@@ -382,8 +382,20 @@ def record(plan: dict) -> dict:
     under `local/state/`, which is gitignored and never leaves the machine.
     What reaches shared history is the portable half (`portable`), and the
     two are kept apart here rather than at each reader.
+
+    The retarget history is carried from the record already on disk when
+    the plan being written does not say otherwise (task 119): a launch
+    re-records the plan it preflighted — ▸ start work on an existing
+    branch, ↻ act on PR — and preflight knows nothing of retargets. A
+    retarget is an event about the card's work, and the review rule in
+    `gates` reads it; a re-record that dropped it would let a verdict or
+    an approval given before the retarget count again at the same head.
     """
     stored = dict(plan)
+    if "retargets" not in stored:
+        carried = (recorded(plan["task"]) or {}).get("retargets")
+        if carried:
+            stored["retargets"] = list(carried)[-RETARGET_HISTORY:]
     stored["v"] = PLAN_VERSION
     stored["recorded"] = time.time()
     stored.pop("blockers", None)
@@ -789,6 +801,17 @@ def retarget(filename: str, new: str, *, old: str, head: str, how: str,
                            + [_retarget_entry(old, new, head, how)]
                            )[-RETARGET_HISTORY:]
     return record(stored)
+
+
+def restore(filename: str, previous: dict | None) -> None:
+    """Put back the record `previous` was read as (None: no record) — for
+    a confirmed action whose next step failed after the plan was written,
+    so the plan and the card never disagree (task 119)."""
+    path = plan_path(filename)
+    if previous is None:
+        path.unlink(missing_ok=True)
+        return
+    records.write_json(path, previous, durable=True)
 
 
 def latest_retarget(filename: str) -> dict | None:

@@ -454,7 +454,9 @@ def _actions(task: dict, parent: dict | None, found: dict,
     landing = found["targets"]["landingTarget"]["branch"]
     mine = ctx["heads"].get(_work_branch(task)) or ""
     held = ctx["tracked"].get(landing) or ""
-    if mine and held and _contains(ctx, mine, held):
+    ours = own_work(ctx, {"childHead": mine,
+                          "parentTip": _tip(ctx, _work_branch(parent))}, found)
+    if mine and held and ours is not False and _contains(ctx, mine, held):
         out.append({"action": "cleanup", "target": landing,
                     "label": "Finish: clean up"})
     return out
@@ -482,6 +484,24 @@ def tip(ctx: dict, branch: str | None) -> str:
 def contains(ctx: dict, commit: str, tip_: str) -> bool | None:
     """Is `commit` in `tip_`? None when git cannot say."""
     return _contains(ctx, commit, tip_)
+
+
+def own_work(ctx: dict, ids: dict, found: dict | None) -> bool | None:
+    """Has the child commits of its own beyond its parent's? False when its
+    head is still the commit its work was cut from, or is contained in the
+    parent's tip — a child that never started, which Finish: clean up must
+    not record as delivered (task 119). None when that cannot be told."""
+    head = ids.get("childHead") or ""
+    if not head:
+        return None
+    cut = ((((found or {}).get("targets") or {}).get("selectedBase") or {})
+           .get("commit") or "")
+    if cut and cut == head:
+        return False
+    ptip = ids.get("parentTip") or ""
+    if ptip and _contains(ctx, head, ptip):
+        return False
+    return True if (ptip or cut) else None
 
 
 def delivered(task: dict, ctx: dict) -> str | None:

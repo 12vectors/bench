@@ -1679,14 +1679,20 @@ click: no beat, no move and no read.
   last fetch: the workspace is cleared under merge & clean up's rules
   (uncommitted work keeps the worktree and its branch, a branch something
   still targets is kept on the remote), the card moves to `done/` and a
-  delivered record is written. Nothing is merged.
+  delivered record is written. Nothing is merged. A child with no commits
+  of its own — still at the commit it was cut from, or contained in its
+  parent's tip — is not offered it: there is no work of its own to have
+  delivered.
 
 **A retarget is a new review context.** It changes the change's diff and
 integration even when the head did not move, so it is recorded on the
 plan (`retargets`: from, to, the head, when, how) and the merge rules
 stop counting a Bench verdict or a formal approval given before it
 (`verdict-before-retarget`, `approval-before-retarget`, both *needed*).
-A **⌖ replan** that changes the target records one too. Check evidence
+A **⌖ replan** that changes the target records one too, and the history
+is carried whenever the plan is recorded again — **▸ start work** on an
+existing branch and **↻ act on PR** re-record it — so a later launch at
+the same head cannot make an earlier approval count again. Check evidence
 keeps its own identity rules: a pass whose declared identity still holds
 is still a pass. An update from the parent is a new head, and everything
 about the old head is history under the existing rule.
