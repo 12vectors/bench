@@ -136,7 +136,7 @@ def sample_fields() -> dict[str, str]:
         "stage": "in-progress",
         "branch": "task/00-sample-card",
         "plan": "- Branch: `task/00-sample-card` (sample plan)",
-        "pr": "https://github.com/example/example/pull/0",
+        "pr": "(sample: the change request's url)",
         "base": config.APP_BASE,
         "remote": "origin",
         "review": "(sample: the pinned review checkout would be named here)",

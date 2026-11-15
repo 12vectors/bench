@@ -429,6 +429,6 @@ top-level-exceptions 0
 function-imports 25
 private-reaches 61
 dynamic-patch-targets 1
-provider-vocabulary 187
+provider-vocabulary 186
 routes 91
 ```
