@@ -852,6 +852,12 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
 
         self.addCleanup(setattr, self.completion, "_run", original)
         self.completion._run = race
+        # nothing targets the branch (task 117 asks before it deletes), so
+        # the delete reaches the lease this case is about
+        import githost
+        self.addCleanup(setattr, githost, "changes_targeting",
+                        githost.changes_targeting)
+        githost.changes_targeting = lambda base: []
         deleted = self.completion._delete_remote_branch("origin", branch,
                                                     self.head, CARD)
         self.assertTrue(raced, "the race was injected at the delete")
