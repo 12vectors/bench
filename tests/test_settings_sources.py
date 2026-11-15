@@ -115,7 +115,7 @@ PRELUDE = (
     # directory, so a test never writes into the checkout it is testing
     "config.STATE = Path(os.environ['TEST_STATE'])\n"
     "config.EVIDENCE_DIR = config.STATE / 'evidence'\n"
-    "import profiles, settings, httpd\n"
+    "import gatepolicy, profiles, settings, httpd\n"
 )
 
 
@@ -193,10 +193,10 @@ class EveryValueComesFromTheResolver(unittest.TestCase):
                       [g["name"] for g in found["work"][0]],
                       "a configured check reaches no grant to ask for it")
 
-    def test_the_gate_policy_equals_profiles_gate_policy(self):
+    def test_the_gate_policy_equals_gatepolicy_gate_policy(self):
         same = run("page = settings.page()\n"
                    "R = page['acceptance']['policy'] == "
-                   "profiles.gate_policy_public(profiles.gate_policy())",
+                   "gatepolicy.gate_policy_public(gatepolicy.gate_policy())",
                    doc=FULL)
         self.assertTrue(same, "the page shows a gate policy of its own")
 

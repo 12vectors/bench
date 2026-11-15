@@ -146,7 +146,7 @@ def _setting_row(key: str, values: dict) -> dict:
     found = config.agent_setting(key, values)
     return {"key": key, "value": found["value"], "source": found["source"],
             "locked": found["locked"],
-            "sourceWords": profiles._SOURCE_WORDS.get(found["source"], found["source"]),
+            "sourceWords": profiles.SOURCE_WORDS.get(found["source"], found["source"]),
             "how": _how(key, found)}
 
 

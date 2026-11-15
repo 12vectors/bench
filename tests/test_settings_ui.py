@@ -46,7 +46,7 @@ import settings  # noqa: E402
 def without_comments(text: str) -> str:
     """The source with its block comments removed.
 
-    Naming an authority in a comment — "`profiles.gate_policy()` for what
+    Naming an authority in a comment — "`gatepolicy.gate_policy()` for what
     a merge must have" — is documentation, and the thing being forbidden
     is *calling* it. Line comments are left alone: `//` is also what a URL
     has in it."""

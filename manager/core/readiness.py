@@ -56,6 +56,7 @@ import time
 from pathlib import Path
 
 import config
+import gatepolicy
 import profiles
 import settings
 import setupguide
@@ -482,7 +483,7 @@ def check_states(doc: dict | None = None) -> list[dict]:
     doc = profiles.document() if doc is None else doc
     defined = settings._checks_of(doc)
     recorded = reviews()
-    policy = profiles.gate_policy(doc)
+    policy = gatepolicy.gate_policy(doc)
     required = {}
     for scope, entry in policy["scopes"].items():
         for c in entry.get("checks") or []:
@@ -542,7 +543,7 @@ def bootstrap(states: list[dict] | None = None, doc: dict | None = None) -> dict
     doc = profiles.document() if doc is None else doc
     states = check_states(doc) if states is None else states
     ready = [s["name"] for s in states if s["readiness"] == "ready"]
-    policy = profiles.gate_policy(doc)
+    policy = gatepolicy.gate_policy(doc)
     preserved, circular = [], []
     for scope in sorted(policy["scopes"]):
         entry = policy["scopes"][scope]

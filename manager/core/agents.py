@@ -46,6 +46,7 @@ from pathlib import Path
 
 import config
 import events
+import gatepolicy
 import gates
 import githost
 import gitrepo
@@ -642,7 +643,8 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     prompt = templates.render("work.md", template["text"], dict(
         branch=branch, filename=filename, body=task["body"],
         plan=plans.brief(plan), context=profiles.prompt_block(manifest),
-        verification=profiles.verification_block(manifest),
+        verification=profiles.verification_block(
+            manifest, gatepolicy.required_lines(manifest)),
         **config.prompt_fields(filename, "in-progress"), **_progress_fields("work")))
     proc, log_file, model = _launch("work", prompt, worktree, agent_id,
                                     filename, log_path, manifest)
@@ -698,7 +700,8 @@ def start_review(filename: str, stage: str) -> dict:
     prompt = templates.render("review.md", template["text"], dict(
         stage=stage, filename=filename, body=task["body"],
         context=profiles.prompt_block(manifest),
-        verification=profiles.verification_block(manifest),
+        verification=profiles.verification_block(
+            manifest, gatepolicy.required_lines(manifest)),
         **config.prompt_fields(filename, stage), **_progress_fields("review")))
     proc, log_file, model = _launch("review", prompt, config.REPO, agent_id,
                                     filename, log_path, manifest)
@@ -1030,7 +1033,8 @@ def start_pr_review(filename: str, stage: str) -> dict:
             filename=filename, pr=task["pr"], branch=branch, body=task["body"],
             review=reviews.prompt_block(pinned),
             context=profiles.prompt_block(manifest),
-            verification=profiles.verification_block(manifest),
+            verification=profiles.verification_block(
+                manifest, gatepolicy.required_lines(manifest)),
             **githost.fragments("review-pr.md", branch),
             **config.prompt_fields(filename, stage), **_progress_fields("review")))
         proc, log_file, model = _launch("review", prompt, Path(pinned["path"]),
@@ -1126,7 +1130,8 @@ def start_pr_fix(filename: str, stage: str) -> dict:
         filename=filename, branch=branch, pr=task["pr"], body=task["body"],
         base=plan["prBase"], remote=plan.get("appRemote") or "origin",
         plan=plans.brief(plan), context=profiles.prompt_block(manifest),
-        verification=profiles.verification_block(manifest),
+        verification=profiles.verification_block(
+            manifest, gatepolicy.required_lines(manifest)),
         **githost.fragments("act-pr.md", branch),
         **config.prompt_fields(filename, stage), **_progress_fields("act-pr")))
     # act-pr is the one intent allowed to push: the PR must update.

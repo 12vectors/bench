@@ -39,6 +39,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import config  # noqa: E402
+import gatepolicy  # noqa: E402
 import gates  # noqa: E402
 import profiles  # noqa: E402
 
@@ -135,16 +136,20 @@ class _Install:
         return json.loads(text.replace(str(self.root), "<tmp>"))
 
 
+# The golden values were taken through `profiles` before the move (commit
+# 68515db); these are the same readings through the modules that own them
+# now, and the prompt block as every launch composes it.
 def gate_policy(doc: dict) -> dict:
-    return profiles.gate_policy(doc)
+    return gatepolicy.gate_policy(doc)
 
 
 def gate_policy_public(found: dict) -> dict:
-    return profiles.gate_policy_public(found)
+    return gatepolicy.gate_policy_public(found)
 
 
 def verification_block(manifest: dict) -> str:
-    return profiles.verification_block(manifest)
+    return profiles.verification_block(
+        manifest, gatepolicy.required_lines(manifest))
 
 
 def _observe_document(install: _Install, raw: str | None) -> dict:

@@ -68,6 +68,7 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 import agents  # noqa: E402
 import config  # noqa: E402
 import doctor  # noqa: E402
+import gatepolicy  # noqa: E402
 import gates  # noqa: E402
 import githost  # noqa: E402
 import completion  # noqa: E402
@@ -324,7 +325,7 @@ class GateCase(unittest.TestCase):
 
 
 class ThePolicyIsOneReader(GateCase):
-    """`profiles.gate_policy` is the only thing that parses a gate block,
+    """`gatepolicy.gate_policy` is the only thing that parses a gate block,
     and a gate that cannot be satisfied is refused there rather than
     blocking every merge later."""
 
@@ -348,7 +349,7 @@ class ThePolicyIsOneReader(GateCase):
 
     def test_a_gate_requiring_an_undeclared_check_is_refused_by_code(self):
         self.declares({"v": 1, "gates": {"acceptance": {"checks": ["unit"]}}})
-        policy = profiles.gate_policy()
+        policy = gatepolicy.gate_policy()
         self.assertEqual([d["code"] for d in policy["diagnostics"]],
                          ["gate-check-undeclared"])
         self.assertIn("declares nowhere", policy["blockers"][0])
@@ -356,14 +357,14 @@ class ThePolicyIsOneReader(GateCase):
 
     def test_a_scope_that_is_not_a_scope_is_refused_by_name(self):
         self.declares({"v": 1, "gates": {"akceptance": {}}})
-        policy = profiles.gate_policy()
+        policy = gatepolicy.gate_policy()
         self.assertEqual([d["code"] for d in policy["diagnostics"]],
                          ["gate-scope-unknown"])
         self.assertIn("'akceptance'", policy["blockers"][0])
 
     def test_a_review_policy_bench_has_no_word_for_is_refused(self):
         self.declares({"v": 1, "gates": {"acceptance": {"review": "lgtm"}}})
-        policy = profiles.gate_policy()
+        policy = gatepolicy.gate_policy()
         self.assertEqual([d["code"] for d in policy["diagnostics"]],
                          ["gate-review-unknown"])
         self.assertIn("'lgtm'", policy["blockers"][0])
@@ -377,9 +378,9 @@ class ThePolicyIsOneReader(GateCase):
                          "an operator mid-edit is not handed an open gate")
 
     def test_the_four_review_policies_are_named_and_distinct(self):
-        self.assertEqual(set(profiles.REVIEW_POLICIES),
+        self.assertEqual(set(gatepolicy.REVIEW_POLICIES),
                          {"none", "bench", "github", "separate-reviewer"})
-        for word, why in profiles.REVIEW_POLICIES.items():
+        for word, why in gatepolicy.REVIEW_POLICIES.items():
             with self.subTest(word=word):
                 self.assertTrue(why.strip(), "each says what it means")
 
@@ -398,7 +399,7 @@ class ThePolicyIsOneReader(GateCase):
 
     def test_the_gate_has_no_second_parser(self):
         seams = gates.seams()
-        self.assertIn("profiles.gate_policy()", seams["evaluates"])
+        self.assertIn("gatepolicy.gate_policy()", seams["evaluates"])
         self.assertIn("parses no policy document itself", seams["evaluates"])
         self.assertIn("reads COMMENTED as an approval", seams["never"])
 
@@ -525,7 +526,7 @@ class EvidenceIsBoundToTheCommit(GateCase):
     def test_a_check_declared_against_the_application_is_refused(self):
         self.gated(root="app")
         self.commit_in(self.wt)
-        policy = profiles.gate_policy()
+        policy = gatepolicy.gate_policy()
         # Two codes, and both are true: the check is refused where checks
         # are read, and the gate then requires a name nothing declares.
         self.assertEqual([d["code"] for d in policy["diagnostics"]],
@@ -1084,7 +1085,7 @@ class AnOverrideIsNeverAPass(GateCase):
         self.declares({"v": 1, "gates": {"acceptance": {"checks": ["nope"]},
                                          "overrides": {"allow": True}}})
         self.assertFalse(
-            profiles.gate_policy()["overrides"]["allowed"],
+            gatepolicy.gate_policy()["overrides"]["allowed"],
             "a document with a refusal in it offers no way around itself")
         with self.assertRaises(ValueError):
             gates.override(CARD, "acceptance", actor="istos",

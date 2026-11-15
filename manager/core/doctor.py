@@ -73,6 +73,7 @@ import uuid
 from pathlib import Path
 
 import config
+import gatepolicy
 import githost
 import profiles
 import verify
@@ -424,7 +425,7 @@ def inspect(worktree: Path | str | None = None) -> dict:
         findings += _intent_findings(intent, found)
 
     # — what a merge refuses without, which is not what a launch grants —
-    gate_policy = profiles.gate_policy(doc)
+    gate_policy = gatepolicy.gate_policy(doc)
     findings += _gate_findings(gate_policy)
 
     # — what nothing here enforces, named rather than omitted —
@@ -439,7 +440,7 @@ def inspect(worktree: Path | str | None = None) -> dict:
         # what this board refuses a merge without, per guarded scope. The
         # same resolution the merge path reads, reported and never
         # re-derived — this module owns no policy logic here either.
-        "gates": profiles.gate_policy_public(gate_policy),
+        "gates": gatepolicy.gate_policy_public(gate_policy),
         "policy": {"kind": doc["kind"], "identity": doc["identity"],
                    "path": doc["path"], "revision": doc["revision"],
                    "describes": doc["describes"], "problem": doc["problem"],
@@ -466,7 +467,7 @@ def _harness_finding(intent: str, found: dict) -> dict:
         "inspect", f"harness:{intent}", "passed" if present else "failed",
         f"which harness and model a '{intent}' launch rides",
         f"{harness.get('name')} ({harness.get('setting')}, "
-        f"{profiles._SOURCE_WORDS.get(harness.get('source'), harness.get('source'))})"
+        f"{profiles.SOURCE_WORDS.get(harness.get('source'), harness.get('source'))})"
         f" · model: {model.get('words')}",
         intent=intent,
         code=None if present else "harness-unavailable",
@@ -708,9 +709,10 @@ FIXTURES = (
         "raw": "{ this is not json",
     },
     {
-        # Resolved through `gate_policy` rather than `resolve`, because a
-        # gate is a property of the board and not of a launch intent. Same
-        # reader, same codes, same remedies — see `fixture_findings`.
+        # Resolved through `gatepolicy.gate_policy` rather than `resolve`,
+        # because a gate is a property of the board and not of a launch
+        # intent. Same reader, same codes, same remedies — see
+        # `fixture_findings`.
         "name": "a-gate-requiring-nothing",
         "about": "a gate requiring a check the document declares nowhere",
         "code": "gate-check-undeclared",
@@ -756,7 +758,7 @@ def fixture_findings() -> list[dict]:
             wanted = fixture["code"]
             try:
                 found = (
-                    profiles.gate_policy(profiles.document_at(path))
+                    gatepolicy.gate_policy(profiles.document_at(path))
                     if fixture.get("via") == "gates" else
                     profiles.resolve(fixture["intent"],
                                      worktree=tmp / "worktree",

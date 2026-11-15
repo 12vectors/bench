@@ -13,7 +13,7 @@ asks:
 - the harness and model each purpose rides of `config.agent_choice`, the
   installed adapters of `config.adapters_installed`;
 - the checks and merge rules of `settings.verification` and
-  `profiles.gate_policy`, and what they found of `verify`'s own records,
+  `gatepolicy.gate_policy`, and what they found of `verify`'s own records,
   read through `verify.outcome_now`, which only ever disagrees in the
   safe direction.
 
@@ -60,6 +60,7 @@ import time
 from pathlib import Path
 
 import config
+import gatepolicy
 import githost
 import profiles
 import records
@@ -450,7 +451,7 @@ def _newest_outcomes(names: set[str]) -> dict[str, str]:
 def _verification() -> dict:
     doc = profiles.document()
     verif = settings.verification(doc)
-    policy = profiles.gate_policy(doc)
+    policy = gatepolicy.gate_policy(doc)
     names = {c["name"] for c in verif["checks"]}
     outcomes = _newest_outcomes(names) if names else {}
     gated = sorted(s for s, e in policy["scopes"].items() if e["gated"])
@@ -623,7 +624,7 @@ def _delivery() -> dict:
     remote = config.app_remote()
     gh = githost.available()
     doc = profiles.document()
-    policy = profiles.gate_policy(doc)
+    policy = gatepolicy.gate_policy(doc)
     reviews = sorted({e["review"] for e in policy["scopes"].values()})
     facts = [_fact("Application remote", remote or "none",
                    None if remote else "decision-needed"),

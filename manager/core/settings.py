@@ -15,7 +15,7 @@ already answers for it:
 | the question | the authority |
 | --- | --- |
 | what may this run do, and read | `profiles.resolve()` |
-| what does this board require before a merge | `profiles.gate_policy()` |
+| what does this board require before a merge | `gatepolicy.gate_policy()` |
 | what did the project's checks actually find | `verify.py`'s records |
 | may this merge happen | `gates.evaluate()` |
 | what would stop a launch, asked without paying | `doctor.report()` |
@@ -69,6 +69,7 @@ import agentsettings
 import callers
 import config
 import doctor
+import gatepolicy
 import githost
 import gates
 import profiles
@@ -864,7 +865,7 @@ def verification(doc: dict | None = None) -> dict:
     doc = profiles.document() if doc is None else doc
     steps, step_trouble = profiles.document_steps(doc)
     checks, check_trouble = profiles.document_checks(doc, steps)
-    policy = profiles.gate_policy(doc)
+    policy = gatepolicy.gate_policy(doc)
     required: dict[str, set[str | None]] = {}
     for scope, entry in policy["scopes"].items():
         for want in entry["checks"]:
@@ -1048,11 +1049,11 @@ def acceptance(doc: dict | None = None) -> dict:
     commits. The two review records are drawn apart because they are two
     different records and neither stands in for the other.
     """
-    policy = profiles.gate_policy(doc)
-    public = profiles.gate_policy_public(policy)
+    policy = gatepolicy.gate_policy(doc)
+    public = gatepolicy.gate_policy_public(policy)
     gh = githost.available()
     modes = []
-    for word, why in profiles.REVIEW_POLICIES.items():
+    for word, why in gatepolicy.REVIEW_POLICIES.items():
         available, unavailable_why = True, None
         if word in ("github", "separate-reviewer") and not gh:
             available = False
@@ -1077,7 +1078,7 @@ def acceptance(doc: dict | None = None) -> dict:
         "remedies": dict(gates.REMEDIES),
         "reviewModes": modes,
         "signoffModes": [{"name": word, "why": why}
-                         for word, why in profiles.SIGNOFF_POLICIES.items()],
+                         for word, why in gatepolicy.SIGNOFF_POLICIES.items()],
         "signoff": {
             "what": (
                 "Off by default. The PR review already assesses the work "
@@ -1272,7 +1273,7 @@ def ci(doc: dict | None = None) -> dict:
     """The three things a single tick would collapse, kept apart — and the
     mapping bench does not have, named as the follow-up it is."""
     doc = profiles.document() if doc is None else doc
-    policy = profiles.gate_policy(doc)
+    policy = gatepolicy.gate_policy(doc)
     reviewing = any(entry["review"] != "none"
                     for entry in policy["scopes"].values())
     gated = any(entry["gated"] for entry in policy["scopes"].values())
@@ -1454,7 +1455,7 @@ def recommendations(doc: dict | None = None) -> list[dict]:
     out: list[dict] = []
     steps, _ = profiles.document_steps(doc)
     checks, _ = profiles.document_checks(doc, steps)
-    policy = profiles.gate_policy(doc)
+    policy = gatepolicy.gate_policy(doc)
     acc = access(doc)
 
     if doc.get("problem"):
@@ -1689,7 +1690,7 @@ def revision_of(path: Path) -> str:
     detect that somebody else's save landed in between.
     """
     raw = _raw_at(path)
-    return profiles._digest(raw) if raw is not None else ""
+    return profiles.digest(raw) if raw is not None else ""
 
 
 def draft() -> dict:
@@ -1715,7 +1716,7 @@ def draft() -> dict:
         parsed = None
     return {
         "path": str(path),
-        "identity": profiles._tool_relative(path),
+        "identity": profiles.tool_relative(path),
         "exists": raw is not None,
         "revision": revision_of(path),
         "document": parsed if parsed is not None
@@ -1781,7 +1782,7 @@ def validate(payload: dict) -> dict:
                            "field": FIELD_OF.get(entry.get("code") or ""),
                            "intent": intent, "why": entry.get("why"),
                            "remedy": entry.get("remedy")})
-    gate = profiles.gate_policy(doc)
+    gate = gatepolicy.gate_policy(doc)
     for entry in gate["diagnostics"]:
         errors.append({"code": entry.get("code"),
                        "field": FIELD_OF.get(entry.get("code") or ""),
@@ -1796,11 +1797,11 @@ def validate(payload: dict) -> dict:
         unique.append(entry)
     return {
         "ok": not unique,
-        "revision": profiles._digest(raw),
+        "revision": profiles.digest(raw),
         "baseRevision": revision_of(path),
         "errors": unique,
         "intents": intents,
-        "gate": profiles.gate_policy_public(gate),
+        "gate": gatepolicy.gate_policy_public(gate),
         "wroteNothing": True,
         "unknownKeys": sorted(k for k in found if k not in KNOWN_KEYS),
     }
@@ -1820,8 +1821,8 @@ def preview(payload: dict) -> dict:
     after = profiles.document_from(after_raw, path)
     checked = validate(payload)
 
-    before_gate = profiles.gate_policy(before)
-    after_gate = profiles.gate_policy(after)
+    before_gate = gatepolicy.gate_policy(before)
+    after_gate = gatepolicy.gate_policy(after)
     before_checks = _checks_of(before)
     after_checks = _checks_of(after)
 
@@ -1958,7 +1959,7 @@ def _pending_acceptance(after_gate: dict) -> list[dict]:
         collected = taskfiles.collect()
     except (OSError, ValueError):
         return out
-    current = profiles.gate_policy()
+    current = gatepolicy.gate_policy()
     for group in collected.get("stages", []):
         if group.get("slug") != "review":
             continue
@@ -2062,7 +2063,7 @@ def apply(payload: dict, *, actor: str | None = None) -> dict:
         "revision": revision_of(path),
         "previousRevision": current,
         "path": str(path),
-        "identity": profiles._tool_relative(path),
+        "identity": profiles.tool_relative(path),
         "preservedKeys": preserved,
         "history": entry,
         "draft": draft(),
@@ -2104,7 +2105,7 @@ def _record_change(path: Path, *, before: str, after: str, document: dict,
         "actorWhy": (None if actor else
                      "this board records no authenticated identity, and git "
                      "config named none — so none is claimed"),
-        "document": profiles._tool_relative(path),
+        "document": profiles.tool_relative(path),
         "before": before or None,
         "after": after,
         "changedKeys": sorted(
@@ -2230,7 +2231,7 @@ def board_summary() -> dict:
     inputs.
     """
     doc = profiles.document()
-    policy = profiles.gate_policy(doc)
+    policy = gatepolicy.gate_policy(doc)
     steps, step_trouble = profiles.document_steps(doc)
     checks, check_trouble = profiles.document_checks(doc, steps)
     return {

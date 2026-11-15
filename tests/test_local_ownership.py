@@ -144,7 +144,7 @@ def install(tm: Path, *args: str, cwd: Path | None = None,
 
 
 RENDER = """
-import json, config, profiles, templates
+import json, config, gatepolicy, profiles, templates
 fields = templates.sample_fields()
 fields.update(config.prompt_fields("01-card.md", "in-progress"))
 prompts = {n: templates.render(n, templates.require(n)["text"], fields)
@@ -155,7 +155,7 @@ print(json.dumps({
     "outside": [str(p) for p in config.guidance_outside_app()],
     "checks": [c["label"] for c in config.checks()],
     "policy": profiles.document()["kind"],
-    "gated": profiles.gate_policy()["configured"],
+    "gated": gatepolicy.gate_policy()["configured"],
 }))
 """
 

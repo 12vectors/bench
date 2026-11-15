@@ -34,6 +34,7 @@ import delivery
 import doctor
 import drive
 import events
+import gatepolicy
 import gates
 import changes
 import phases
@@ -215,7 +216,7 @@ def gates_payload(name: str, stage: str) -> dict:
         scopes = ["integration"]
     elif not (task or {}).get("phase"):
         scopes = ["acceptance"]
-    policy = profiles.gate_policy()
+    policy = gatepolicy.gate_policy()
     actor = taskfiles.actor_name() or ""
     shown = []
     for scope in scopes:
@@ -228,7 +229,7 @@ def gates_payload(name: str, stage: str) -> dict:
     return {
         "task": name, "stage": stage,
         "scopes": shown,
-        "policy": profiles.gate_policy_public(policy),
+        "policy": gatepolicy.gate_policy_public(policy),
         "verdicts": gates.verdicts_for(name),
         "github": gates.github_reviews(name),
         "overrides": gates.overrides_for(name),
@@ -313,7 +314,7 @@ def state_payload() -> dict:
         # pass: `ungated` is its own word, and a card with an unmet gate
         # carries the reason rather than a colour.
         "gates": gates.board(collected),
-        "gatePolicy": profiles.gate_policy_public(profiles.gate_policy()),
+        "gatePolicy": gatepolicy.gate_policy_public(gatepolicy.gate_policy()),
         # per card, the one delivery status every surface draws: the word,
         # its sentence, the primary action and who holds it, the
         # candidate commit's state and the required-only counts. Memoised

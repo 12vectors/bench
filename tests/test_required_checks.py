@@ -40,6 +40,7 @@ from tests.test_integration_gates import CARD, STEM, GateCase, wait_for  # noqa:
 
 import config  # noqa: E402
 import delivery  # noqa: E402
+import gatepolicy  # noqa: E402
 import gates  # noqa: E402
 import httpd  # noqa: E402
 import profiles  # noqa: E402
@@ -966,7 +967,8 @@ class PromptsAskAfterTheLastCommit(BatchCase):
                           base="main", remote="origin",
                           plan="the plan", pr="https://example.invalid/pr/1",
                           context=profiles.prompt_block(manifest),
-                          verification=profiles.verification_block(manifest),
+                          verification=profiles.verification_block(
+                              manifest, gatepolicy.required_lines(manifest)),
                           progress="",
                           **config.prompt_fields(CARD, "in-progress"))
             name = f"{intent}.md"
@@ -1000,16 +1002,32 @@ class PromptsAskAfterTheLastCommit(BatchCase):
 
     def test_a_review_is_not_told_to_cover_the_rules(self):
         manifest = profiles.manifest("review", CARD, "review")
-        block = profiles.verification_block(manifest)
+        self.assertEqual(gatepolicy.required_lines(manifest), [])
+        block = profiles.verification_block(
+            manifest, gatepolicy.required_lines(manifest))
         self.assertIn("`other`", block, "review-first stays possible")
         self.assertNotIn("Ask for every required check", block)
 
     def test_an_ungated_board_renders_the_block_it_always_did(self):
         self.declares({"v": 1, "checks": [self.check("unit")],
                        "profiles": {"work": {"verify": ["unit"]}}})
+        manifest = profiles.manifest("work", CARD, "in-progress")
+        self.assertEqual(gatepolicy.required_lines(manifest), [])
         block = profiles.verification_block(
-            profiles.manifest("work", CARD, "in-progress"))
+            manifest, gatepolicy.required_lines(manifest))
         self.assertNotIn("required check", block)
+
+    def test_the_rules_reach_the_block_only_as_handed_in(self):
+        """The merge rules are read above `profiles` (task 120): the block
+        names them only from the lines a launch hands it."""
+        manifest = profiles.manifest("work", CARD, "in-progress")
+        bare = profiles.verification_block(manifest)
+        self.assertIn("This board gates its merges", bare)
+        self.assertNotIn("Ask for every required check", bare)
+        told = profiles.verification_block(
+            manifest, gatepolicy.required_lines(manifest))
+        self.assertTrue(told.startswith(bare))
+        self.assertIn("Ask for every required check", told)
 
 
 if __name__ == "__main__":

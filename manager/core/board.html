@@ -5782,7 +5782,7 @@ function phaseMembers(t) {
 
    Everything drawn here is resolved by the server from the authority that
    already answers for it — `profiles.resolve()` for what a run may do,
-   `profiles.gate_policy()` for what a merge must have, `verify`'s records
+   `gatepolicy.gate_policy()` for what a merge must have, `verify`'s records
    for what the checks found, `gates.evaluate()` for whether a merge may
    happen. This page compiles no grant, parses no settings file and decides
    no outcome: a second reader of the same document could disagree with the

@@ -43,6 +43,7 @@ from tests import pagesource
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
+import gatepolicy  # noqa: E402
 import gates  # noqa: E402
 import profiles  # noqa: E402
 import verify  # noqa: E402
@@ -296,18 +297,18 @@ class ScopeIsPartOfTheRequirement(GateCase):
 
     def test_a_scope_the_check_does_not_declare_is_refused(self):
         self.scoped([{"check": "unit", "scope": "frontend"}])
-        codes = [d["code"] for d in profiles.gate_policy()["diagnostics"]]
+        codes = [d["code"] for d in gatepolicy.gate_policy()["diagnostics"]]
         self.assertIn("gate-scope-undeclared", codes)
         self.assertEqual(self.decide()["decision"], "blocked")
 
     def test_a_requirement_object_with_an_unknown_key_is_refused(self):
         self.scoped([{"check": "unit", "scopes": ["backend"]}])
-        codes = [d["code"] for d in profiles.gate_policy()["diagnostics"]]
+        codes = [d["code"] for d in gatepolicy.gate_policy()["diagnostics"]]
         self.assertIn("gate-invalid", codes)
 
     def test_a_requirement_object_naming_no_check_is_refused(self):
         self.scoped([{"scope": "backend"}])
-        codes = [d["code"] for d in profiles.gate_policy()["diagnostics"]]
+        codes = [d["code"] for d in gatepolicy.gate_policy()["diagnostics"]]
         self.assertIn("name-invalid", codes)
 
     def test_every_code_the_schema_can_raise_has_a_remedy(self):
@@ -316,13 +317,13 @@ class ScopeIsPartOfTheRequirement(GateCase):
 
     def test_a_scoped_requirement_changes_the_policy_revision(self):
         self.scoped(["unit"])
-        legacy = profiles.gate_policy()["revision"]
+        legacy = gatepolicy.gate_policy()["revision"]
         self.scoped([{"check": "unit", "scope": "backend"}])
-        self.assertNotEqual(legacy, profiles.gate_policy()["revision"])
+        self.assertNotEqual(legacy, gatepolicy.gate_policy()["revision"])
 
     def test_the_public_policy_names_each_requirements_scope(self):
         self.scoped([{"check": "unit", "scope": "backend"}, "unit"])
-        public = profiles.gate_policy_public(profiles.gate_policy())
+        public = gatepolicy.gate_policy_public(gatepolicy.gate_policy())
         rows = public["scopes"]["acceptance"]["checks"]
         self.assertEqual([(r["name"], r["scope"]) for r in rows],
                          [("unit", "backend"), ("unit", None)])
@@ -561,7 +562,7 @@ class AnOutstandingChangeRequestBlocks(GateCase):
         self.assertEqual(row["state"], "met")
         self.assertIn("branch protection", row["authority"])
         self.assertIn("branch protection",
-                      profiles.REVIEW_POLICIES["separate-reviewer"])
+                      gatepolicy.REVIEW_POLICIES["separate-reviewer"])
 
 
 # A stand-in for `gh`, faithful in the one way that matters here: `pr

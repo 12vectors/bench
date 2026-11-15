@@ -50,7 +50,7 @@ PRELUDE = (
     "import config\n"
     "config.STATE = Path(os.environ['TEST_STATE'])\n"
     "config.EVIDENCE_DIR = config.STATE / 'evidence'\n"
-    "import profiles, settings, httpd\n"
+    "import gatepolicy, profiles, settings, httpd\n"
 )
 
 
@@ -277,7 +277,7 @@ class ApplyWritesOnceAtomically(unittest.TestCase):
         self.assertIn("start an agent", did_not)
         self.assertIn("move a card", did_not)
         # and a *fresh* interpreter — a restart, in effect — resolves it
-        after = fx.run("policy = profiles.gate_policy()\n"
+        after = fx.run("policy = gatepolicy.gate_policy()\n"
                        "R = [policy['configured'],\n"
                        "     policy['scopes']['acceptance']['gated'],\n"
                        "     [c['name'] for c in "

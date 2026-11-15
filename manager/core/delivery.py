@@ -66,6 +66,7 @@ import time
 import acceptance
 import completion as completion_mod   # `completion` names a reading here
 import config
+import gatepolicy
 import gates
 import githost
 import changes
@@ -248,7 +249,7 @@ def _context(phase_state: dict | None = None) -> dict:
     with state.LOCK:
         agents = [dict(record) for record in state.AGENTS.values()]
         completing = {k: dict(v) for k, v in state.COMPLETING.items()}
-    policy = profiles.gate_policy()
+    policy = gatepolicy.gate_policy()
     return {
         "tips": gates._tips(),
         "remoteTips": _remote_tips(),

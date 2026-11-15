@@ -46,6 +46,7 @@ import time
 from pathlib import Path
 
 import config
+import gatepolicy
 import gates
 import gitrepo
 import profiles
@@ -664,7 +665,7 @@ def on_review_setting(policy: dict | None = None) -> dict:
     reading of `config` and the gate policy (`policy`, the public form, or
     the one in force); it changes nothing."""
     if policy is None:
-        policy = profiles.gate_policy_public(gates.gate_policy())
+        policy = gatepolicy.gate_policy_public(gates.gate_policy())
     # Each check with the merge rules that require it: a card entering
     # review asks only for its own rule's checks (`scope_of`), so a check
     # only the phase rules name never runs for an ordinary card.

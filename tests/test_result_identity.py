@@ -500,9 +500,9 @@ class ChecksDeclareInputsAndEnv(IdentityCase):
         are what they were before inputs and env existed."""
         self.declares(self.document())
         check = profiles.resolve("work", worktree=self.wt)["verify"][0]
-        old = profiles._digest("unit", check["run"], "worktree",
-                               json.dumps({}, sort_keys=True), json.dumps([]),
-                               f"{check['timeout']:.0f}")
+        old = profiles.digest("unit", check["run"], "worktree",
+                              json.dumps({}, sort_keys=True), json.dumps([]),
+                              f"{check['timeout']:.0f}")
         self.assertEqual(check["revision"], old)
         self.assertEqual(check["checkId"], profiles.check_id("unit", old))
 

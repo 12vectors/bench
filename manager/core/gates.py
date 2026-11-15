@@ -98,6 +98,7 @@ from pathlib import Path
 
 import acceptance
 import config
+import gatepolicy
 import gitrepo
 import profiles
 import records
@@ -381,9 +382,6 @@ def severity(reason: str) -> str:
     never met: a word bench has no row for is not a pass."""
     return SEVERITY.get(reason, "problem")
 
-
-# What a gate requires of a review, in the words `profiles` validated.
-REVIEW_POLICIES = profiles.REVIEW_POLICIES
 
 # Where the two records this module owns live. Machine-local, for the
 # reason every other record under state/ is.
@@ -814,10 +812,10 @@ def forget_reviews(filename: str) -> None:
 
 
 def gate_policy() -> dict:
-    """This board's gate requirements. One call into `profiles`, which is
-    the only thing that parses a policy document — there is no second
+    """This board's gate requirements. One call into `gatepolicy`, which
+    is the only thing that parses a gate block — there is no second
     reader here and there must not grow one."""
-    return profiles.gate_policy()
+    return gatepolicy.gate_policy()
 
 
 # ── which records a requirement may read ───────────────────────────────
@@ -1261,7 +1259,7 @@ def _review_requirement(filename: str, policy: str, head: dict) -> dict:
     A comment satisfies none of them.
     """
     row = {"kind": "review", "name": policy, "policy": policy,
-           "policyWhy": REVIEW_POLICIES.get(policy, policy)}
+           "policyWhy": gatepolicy.REVIEW_POLICIES.get(policy, policy)}
     commit = head.get("commit")
     if policy == "none":
         return {**row, "state": "met", "reason": "ungated",
@@ -1406,7 +1404,7 @@ def _signoff_requirement(filename: str, policy: str, head: dict,
       move to done/ is not an acceptance, and nothing here writes one.
     """
     row = {"kind": "signoff", "name": "sign-off", "policy": policy,
-           "policyWhy": profiles.SIGNOFF_POLICIES.get(policy, policy)}
+           "policyWhy": gatepolicy.SIGNOFF_POLICIES.get(policy, policy)}
     commit = head.get("commit")
     text = _card_text(filename, task)
     if text is None:
@@ -2092,7 +2090,7 @@ def seams() -> dict:
     return {
         "decisions": dict(DECISIONS),
         "reasons": dict(REASONS),
-        "evaluates": ("profiles.gate_policy() for the requirements, "
+        "evaluates": ("gatepolicy.gate_policy() for the requirements, "
                       "verify.for_task()/outcome_now() for the evidence, "
                       "and application git for the commit. It parses no "
                       "policy document itself"),

@@ -324,7 +324,7 @@ product suites** rather than a runner of their own:
 
 - `tests/test_settings_sources.py` — the reading, across five fixtures
   (default/legacy, partial, full, invalid, unsupported), asserted as
-  equalities against `profiles.resolve`, `profiles.gate_policy_public`
+  equalities against `profiles.resolve`, `gatepolicy.gate_policy_public`
   and `profiles.document_checks` rather than against literals. Two cases
   record what `subprocess.run`/`Popen` launch during a page read and
   during Check configuration, and allow nothing but `git` and `gh`.
