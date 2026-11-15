@@ -1,0 +1,13 @@
+{"v": 1,
+ "requires": ["filesystem-sandbox"],
+ "context": [{"name": "gone", "path": "tool:manager/local/missing.md"},
+             {"name": "secret", "path": "tool:.env"}],
+ "prepare": [{"name": "deps", "run": "pip install | tee"}],
+ "checks": [{"name": "unit", "run": "python3 -m unittest", "root": "app",
+             "prepare": ["undeclared"]}],
+ "commands": [{"name": "Bad", "run": "make"}, {"name": "x", "run": "a;b"}],
+ "profiles": {"work": {"verify": ["unit", "nope"], "commands": ["x"],
+                       "context": ["gone", "secret"], "deny": ["teleport"],
+                       "publication": {"push": true}},
+              "review": {"verify": ["unit"], "publication": {"push": true}}},
+ "gates": {"acceptance": {"checks": ["unit"]}}}

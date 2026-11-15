@@ -1,0 +1,16 @@
+{"v": 1,
+ "checks": [{"name": "unit", "run": "python3 -m unittest", "root": "worktree",
+             "scopes": {"fast": ["-k", "fast"]}},
+            {"name": "bad", "run": "make test && rm -rf /", "root": "worktree"}],
+ "gates": {
+   "deploy": {"checks": ["unit"]},
+   "member": {"checks": ["nothing-declares-this", "Bad Name",
+                         {"check": "unit", "scope": "slow"},
+                         {"check": "unit", "extra": 1}, "bad", "unit", "unit"],
+              "review": "maybe", "signoff": "sometimes", "colour": "red"},
+   "integration": {"checks": "unit",
+                   "review": ["bench", "bench", "none", "github",
+                              "separate-reviewer", 7]},
+   "acceptance": {"review": []},
+   "overrides": {"allow": "yes", "actors": "ron"}
+ }}

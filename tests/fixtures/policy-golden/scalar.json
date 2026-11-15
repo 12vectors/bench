@@ -1,0 +1,5 @@
+{"v": 1,
+ "checks": [{"name": "unit", "run": "python3 -m unittest", "root": "worktree"}],
+ "profiles": {"work": {"verify": ["unit"]}},
+ "gates": {"acceptance": {"checks": ["unit"], "review": "github"},
+           "overrides": {"allow": false}}}
