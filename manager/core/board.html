@@ -10,14 +10,14 @@
      it at app-icon size. Its outline is the same string as #mark-b below —
      one letter, two places; tests/test_header_logo.py keeps them equal. -->
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill-rule='evenodd'><rect width='16' height='16' rx='4' fill='%230d6e8c'/><path fill='%23ffffff' transform='translate(4.81 3.57) scale(.011)' d='M15 0H178V210H330C450 210 565 305 565 420V530C565 645 450 740 330 740H15V648H60V92H15ZM178 314V636H305C385 636 447 585 447 530V420C447 365 385 314 305 314Z'/></svg>">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
-<!-- The page's own stylesheet is an asset of the snapshot this board booted
+<!-- The page's stylesheets are assets of the snapshot this board booted
      with (task 123): the server writes that build's id — a digest of
-     web/manifest.json — where __BUILD__ stands, so a page and its
-     stylesheet always come from one build. -->
+     web/manifest.json — where __BUILD__ stands, so a page, its fonts and
+     its stylesheet always come from one build. The Plex faces are served
+     by the board itself (web/fonts/README.md): the page fetches nothing
+     from anyone else. -->
 <meta name="bench-build" content="__BUILD__">
+<link rel="stylesheet" href="/web/__BUILD__/fonts/plex.css">
 <link rel="stylesheet" href="/web/__BUILD__/board.css">
 </head>
 <body>

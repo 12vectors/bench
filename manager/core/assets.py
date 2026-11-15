@@ -86,9 +86,11 @@ DISK_BUILD = "disk"
 IMMUTABLE = "public, max-age=31536000, immutable"
 NO_STORE = "no-store"
 
-# One path segment: starts with a letter or digit (so no `.`, `..` or
-# hidden file), then letters, digits, `.`, `_`, `-`.
-_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+# One path segment: starts with a letter, a digit, `_` or `-` — never a
+# `.`, so no `.`, `..` or hidden file — then letters, digits, `.`, `_`,
+# `-`. A leading `-` is allowed because the upstream Plex Mono files are
+# named that way and are shipped under their upstream names.
+_SEGMENT = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]*\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _BUILD = re.compile(r"[0-9a-f]{16}\Z")
 
@@ -142,9 +144,9 @@ def path_problem(name) -> str | None:
         return f"{name[:40]!r}… is longer than an asset path may be"
     for part in name.split("/"):
         if not _SEGMENT.match(part):
-            return (f"{name!r} is not a normalized relative path: every "
-                    f"segment must start with a letter or digit and hold "
-                    f"only letters, digits, '.', '_' and '-'")
+            return (f"{name!r} is not a normalized relative path: no "
+                    f"segment may start with '.', and each holds only "
+                    f"letters, digits, '.', '_' and '-'")
     if name == MANIFEST:
         return "the manifest does not list itself"
     suffix = PurePosixPath(name).suffix.lower()
