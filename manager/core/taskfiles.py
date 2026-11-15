@@ -86,7 +86,7 @@ STAGE_ORDER = {slug: index for index, (slug, _) in enumerate(config.STAGES)}
 CLAIM_FROM = {"backlog", "to-do"}   # the unstarted stages: leaving one claims
 
 
-def _first(pattern: re.Pattern[str], text: str) -> str | None:
+def first_match(pattern: re.Pattern[str], text: str) -> str | None:
     match = pattern.search(text)
     return match.group(1) if match else None
 
@@ -106,13 +106,13 @@ def canonical_number(number: str) -> str:
     return str(int(number))
 
 
-def _depends_on(text: str) -> list[str]:
+def depends_on(text: str) -> list[str]:
     """The `**Depends on:**` header, parsed at last — into the task numbers
     it names, and nothing else. The line may also carry external
     preconditions in prose ("the API key"); those are for the reader, so
     only comma-separated items that are entirely a number are taken.
     """
-    line = _first(DEPENDS_RE, text)
+    line = first_match(DEPENDS_RE, text)
     if not line:
         return []
     numbers = []
@@ -158,7 +158,7 @@ def _ref_header(pattern: re.Pattern[str], label: str, text: str,
 
     Like **Priority** and **Depends on**, the value may carry a note after
     ` — `; a branch name holds no whitespace, so the split cannot cut one."""
-    value, _note = _split_reason(_first(pattern, text))
+    value, _note = _split_reason(first_match(pattern, text))
     if value is None:
         return None
     value = value.strip().strip("`")
@@ -194,12 +194,12 @@ def _listed_cards(text: str) -> tuple[list[str], list[str]]:
 
 def read_task(path: Path, stage: str) -> dict:
     text = path.read_text(encoding="utf-8", errors="replace")
-    priority, priority_note = _split_reason(_first(PRIORITY_RE, text))
+    priority, priority_note = _split_reason(first_match(PRIORITY_RE, text))
     number_match = NUMBER_RE.match(path.name)
-    declared = _first(STATUS_RE, text)
+    declared = first_match(STATUS_RE, text)
     # the latest appended `PR REVIEW:` marker wins — reviews accumulate
     verdicts = PR_VERDICT_RE.findall(text)
-    kind = _split_reason(_first(TYPE_RE, text))[0]
+    kind = _split_reason(first_match(TYPE_RE, text))[0]
     is_phase = (kind or "").lower() == PHASE_TYPE
     # a `## Cards` section means membership on a phase card and nothing at
     # all anywhere else — one direction, one authority
@@ -211,21 +211,21 @@ def read_task(path: Path, stage: str) -> dict:
     base_branch = _ref_header(BASE_BRANCH_RE, "Base branch", text, plan_drift)
     pr_base = _ref_header(PR_BASE_RE, "PR base", text, plan_drift)
     return {
-        "pr": _first(PR_RE, text),
+        "pr": first_match(PR_RE, text),
         # who holds the card — written by the board when a move claims it
-        "assignee": _first(ASSIGNEE_RE, text),
+        "assignee": first_match(ASSIGNEE_RE, text),
         "prVerdict": {"APPROVE": "green", "REQUEST CHANGES": "red"}.get(
             verdicts[-1] if verdicts else None),
         "file": path.name,
         "stage": stage,
         "number": number_match.group(1) if number_match else None,
-        "title": _first(TITLE_RE, text) or path.stem,
+        "title": first_match(TITLE_RE, text) or path.stem,
         "priority": priority,
         "priorityNote": priority_note,
         "type": kind,
         # What runs next is the phase's list; what may run is this line —
         # parsed here, acted on nowhere yet.
-        "dependsOn": _depends_on(text),
+        "dependsOn": depends_on(text),
         # Explicit execution metadata: which application branch this card's
         # work starts from, and which branch its PR targets. `None` on both
         # is the established default — the application base — and that is
@@ -482,7 +482,7 @@ def _escape(path: Path) -> str | None:
             f"a link out of the board's own state")
 
 
-def _refuse_escape(*paths: Path) -> None:
+def refuse_escape(*paths: Path) -> None:
     """The raising flavour, for the doors a caller already handles a
     `ValueError` from — the move, the archive, the claim."""
     for path in paths:
@@ -562,7 +562,7 @@ def _git(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
 
     No work-state repository is not an error to raise: it is a failed run
     like any other, so every caller's existing narration covers it (and
-    `_commit` says the useful version of it)."""
+    `commit_paths` says the useful version of it)."""
     root = config.state_repo()
     if root is None:
         return subprocess.CompletedProcess(args, 128, "",
@@ -606,7 +606,7 @@ def set_assignee(filename: str, stage: str, name: str) -> None:
     the new owner travels to the other boards.
     """
     path = config.TASKS / stage / filename
-    _refuse_escape(path)
+    refuse_escape(path)
     with WRITE_LOCK:
         text = path.read_text(encoding="utf-8")
         updated = (ASSIGNEE_RE.sub(f"**Assignee:** {name}", text, count=1)
@@ -644,7 +644,7 @@ def set_pr_base(filename: str, stage: str, branch: str) -> dict:
                      f"PR base → {branch}")
 
 
-def _commit(filename: str, message: str, spec: list[str], failure: str) -> bool:
+def commit_paths(filename: str, message: str, spec: list[str], failure: str) -> bool:
     """One commit touching only this task file's paths.
 
     Staging is scoped to those paths (`git add` then a pathspec commit), so
@@ -710,7 +710,7 @@ def _move_spec(src: Path, dst: Path) -> list[str]:
 def _commit_move(filename: str, target: str, src: Path, dst: Path, who: str,
                  number: str | None) -> None:
     """The move and the claim in one commit."""
-    _commit(filename, f"board: {number or filename[:-3]} → {target} ({who or 'board'})",
+    commit_paths(filename, f"board: {number or filename[:-3]} → {target} ({who or 'board'})",
             _move_spec(src, dst), f"{filename} moved, but committing it failed")
 
 
@@ -735,7 +735,7 @@ def _relocate(filename: str, src: Path, dst: Path, text: str, target: str,
     tasks/ — both ends, before anything is registered or written, so a
     linked card and a linked destination are the same answer.
     """
-    _refuse_escape(src, dst)
+    refuse_escape(src, dst)
     state.expect_move(filename, target, actor, quiet=quiet)
     dst.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write(src, text)
@@ -757,7 +757,7 @@ def commit_edit(filename: str, stage: str, what: str) -> bool:
     if not config.COMMIT_MOVES:
         return False
     path = config.TASKS / stage / filename
-    return _commit(filename,
+    return commit_paths(filename,
                    f"board: {_number(filename) or filename[:-3]} "
                    f"{what} ({actor_name() or 'board'})",
                    [str(path)],
@@ -776,7 +776,7 @@ def commit_work_file(path: Path, message: str, failure: str) -> bool:
         name = str(path.relative_to(config.work_root()))
     except ValueError:
         name = path.name
-    return _commit(name, message, [str(path)], failure)
+    return commit_paths(name, message, [str(path)], failure)
 
 
 def append_to_task(filename: str, stage: str, text: str, what: str) -> bool:
@@ -1003,7 +1003,7 @@ def move_together(moves: list[tuple[str, str]], target: str, note: str,
         spec += _move_spec(src, dst)
     if moved and config.COMMIT_MOVES:
         numbers = ", ".join(task["number"] or task["file"][:-3] for task in moved)
-        _commit(moved[0]["file"],
+        commit_paths(moved[0]["file"],
                 f"board: {numbers} → {target}" + (f" {note}" if note else "")
                 + f" ({actor_name() or 'board'})",
                 spec, f"{len(moved)} cards moved, but committing them failed")
@@ -1086,7 +1086,7 @@ def _starts_history(line: str) -> bool:
     return bool(HISTORY_HEADING_RE.match(line) or STAMPED_HEADING_RE.match(line))
 
 
-def _is_fence(line: str) -> bool:
+def is_fence(line: str) -> bool:
     """A ``` line opens or closes a fenced block — the one rule both
     card_parts and the literal-text reading below use, so "inside a code
     block" means the same thing to the history split and to validation.
@@ -1142,7 +1142,7 @@ def prose_of(text: str) -> tuple[str, bool]:
     which a renderer hides as an HTML comment)."""
     out, fenced = [], False
     for line in text.splitlines(keepends=True):
-        if _is_fence(line):
+        if is_fence(line):
             fenced = not fenced
             out.append(line)
         elif fenced:
@@ -1168,7 +1168,7 @@ def card_parts(text: str) -> dict:
     end, fenced = n, False
     for k in range(start, n):
         line = lines[k]
-        if _is_fence(line):
+        if is_fence(line):
             fenced = not fenced
             continue
         if fenced or not _starts_history(line):
@@ -1190,7 +1190,7 @@ def brief_sha(brief: str) -> str:
     return hashlib.sha256(brief.strip().encode("utf-8")).hexdigest()
 
 
-def _one_line(value, cap: int = 80) -> str:
+def one_line(value, cap: int = 80) -> str:
     text = re.sub(r"[\x00-\x1f<>]", " ", str(value or ""))
     return " ".join(text.split())[:cap]
 
@@ -1262,7 +1262,7 @@ def discussion(text: str) -> list[dict]:
 
 
 def _entry_block(meta: dict, title: str, body: str) -> str:
-    return (f"### {_one_line(title, 160)}\n<!-- bench:entry {_marker(meta)} -->\n\n"
+    return (f"### {one_line(title, 160)}\n<!-- bench:entry {_marker(meta)} -->\n\n"
             f"{quote(body.strip())}\n")
 
 
@@ -1318,7 +1318,7 @@ def add_discussion_entry(filename: str, stage: str, meta: dict, title: str,
     path = config.TASKS / stage / filename
     if not path.is_file():
         raise ValueError(f"{filename} is no longer in {stage}/ — refresh the board")
-    _refuse_escape(path)
+    refuse_escape(path)
     block = _entry_block(meta, title, body)
     with WRITE_LOCK:
         text = path.read_text(encoding="utf-8")
@@ -1352,7 +1352,7 @@ def add_comment(filename: str, stage: str, body, author: str, *,
         raise ValueError("that is not a request identity")
     at = now_iso()
     meta = {"v": DISCUSSION_VERSION, "id": f"c-{secrets.token_hex(5)}",
-            "kind": "comment", "author": _one_line(author) or "unattributed",
+            "kind": "comment", "author": one_line(author) or "unattributed",
             "at": at}
     if review is not None:
         meta["review"] = review
@@ -1399,7 +1399,7 @@ def criteria(brief: str) -> list[dict]:
     for line in brief.splitlines():
         # a checklist shown as an example in a ``` block is documentation,
         # not a criterion — the same reading `prose_of` gives it
-        if _is_fence(line):
+        if is_fence(line):
             fenced, current = not fenced, None
             continue
         if fenced:
@@ -1528,7 +1528,7 @@ def edit_card(filename: str, stage: str, change, what: str) -> dict:
         if not path.is_file():
             raise StaleCard(f"{filename} is no longer in {stage}/ — refresh "
                             f"the card and decide again where it is now")
-        _refuse_escape(path)
+        refuse_escape(path)
         text = path.read_text(encoding="utf-8")
         updated, result = change(text)
         if updated == text:
@@ -1696,7 +1696,7 @@ def replace_brief(filename: str, stage: str, *, expected_sha: str,
         if not path.is_file():
             raise StaleCard(f"{filename} is no longer in {stage}/ — the proposal "
                             f"was made there; regenerate it where the card is now")
-        _refuse_escape(path)
+        refuse_escape(path)
         text = path.read_text(encoding="utf-8")
         parts = card_parts(text)
         if brief_sha(parts["brief"]) != expected_sha:

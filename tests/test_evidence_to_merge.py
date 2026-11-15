@@ -93,8 +93,8 @@ class AnOverrideNeedsATarget(OverrideCase):
         self.worktree()
         self.commit_in(self.worktree())
         self.gated(overrides={"allow": True})
-        self.addCleanup(setattr, gates, "_tips", gates._tips)
-        gates._tips = lambda: {}
+        self.addCleanup(setattr, gates, "branch_tips", gates.branch_tips)
+        gates.branch_tips = lambda: {}
         with self.assertRaises(ValueError) as caught:
             gates.override(CARD, "acceptance", actor="istos", reason=REASON)
         self.assertIn(NO_TARGET, str(caught.exception))

@@ -139,7 +139,7 @@ def _legacy_ticks(brief: str) -> dict:
     checklist, the only identity an untracked criterion has."""
     out, index, fenced = {}, 0, False
     for line in brief.splitlines():
-        if taskfiles._is_fence(line):
+        if taskfiles.is_fence(line):
             fenced = not fenced
             continue
         if fenced:
@@ -590,7 +590,7 @@ def track(filename: str, stage: str, *, brief_sha: str, request=None) -> dict:
         lines = parts["brief"].splitlines(keepends=True)
         fenced, items = False, []
         for index, line in enumerate(lines):
-            if taskfiles._is_fence(line):
+            if taskfiles.is_fence(line):
                 fenced = not fenced
                 continue
             if fenced:

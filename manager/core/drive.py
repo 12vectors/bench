@@ -31,6 +31,18 @@ only for previews, so a driver-only board behaves exactly as before:
   - a **stop that escalates** — SIGTERM, a grace period, then SIGKILL of
     that one group — and reports whether the group is gone and the port
     released, rather than assuming either.
+
+Two things about a preview the drive used to ask `previews` for, by
+importing it from inside functions — upward, since `previews` builds on
+this module (task 122, WP13):
+
+  - **scrubbing** what a drive printed. The secret values live in the drive
+    record and its log is the drive's, so the drive owns `scrub` and the two
+    markers a preview's reader has always seen; `previews` asks it.
+  - **recording a drive's end**. The drive does not know what a preview
+    keeps once it is gone. It calls whatever was registered with
+    `on_ended` — the board wires `previews.record_last` there at startup
+    (`board.wire`), and nothing else registers.
 """
 
 from __future__ import annotations
@@ -47,6 +59,7 @@ from pathlib import Path
 import config
 import gitrepo
 import records
+import redact
 import state
 
 DRIVE: dict | None = None      # the current (or last) drive
@@ -64,6 +77,34 @@ PUBLIC = ("task", "status", "url", "started", "line", "reason", "kind",
 LEGACY_PUBLIC = ("task", "status", "url", "started", "line", "reason")
 OWNER_ENV = "BENCH_PREVIEW_OWNER"
 
+# The words a preview's reader sees in place of what was removed.
+SECRET_MARK = "«secret»"
+REDACTED_MARK = "«redacted»"
+
+# Called, with no arguments, whenever a drive's outcome may have changed
+# (it ended, was parked or was found gone). Registered by composition only.
+_ENDED: list = []
+
+
+def on_ended(callback) -> None:
+    """Register what to do when a drive's outcome may have changed. The
+    board registers `previews.record_last` once at startup; registering
+    the same callback twice keeps one."""
+    if callback not in _ENDED:
+        _ENDED.append(callback)
+
+
+def scrub(text: str, values=None) -> str:
+    """Text on its way to a reader: every secret value this preview was
+    given replaced by `«secret»`, then anything credential-shaped — the
+    shapes `redact`'s one table knows — by `«redacted»`, the marker a
+    preview's log has always shown."""
+    out = str(text or "")
+    for value in sorted({v for v in (values or ()) if v and len(v) >= 4},
+                        key=len, reverse=True):
+        out = out.replace(value, SECRET_MARK)
+    return redact.scrub(out, REDACTED_MARK)
+
 
 def _persist() -> None:
     """The drive outlives the board (it is its own process group), so its
@@ -79,7 +120,9 @@ def _persist() -> None:
         pass
 
 
-def _alive(drive: dict) -> bool:
+def alive(drive: dict) -> bool:
+    """Is this drive's process still running — asked of the process we
+    started, or of its group when it was adopted after a restart."""
     proc = drive.get("proc")
     if proc is not None:
         return proc.poll() is None
@@ -312,14 +355,13 @@ def _watch(drive: dict, proc: subprocess.Popen | None, log_file) -> None:
     filename = drive["task"]
     log = Path(drive["log"])
     preview = drive.get("kind") == "preview"
-    while _alive(drive):
+    while alive(drive):
         text = _tail(log)
         lines = [l.strip() for l in text.splitlines() if l.strip()]
         if lines:
             new_line = lines[-1][:200]
             if preview:
-                import previews
-                new_line = previews.scrub(new_line, drive.get("secrets"))
+                new_line = scrub(new_line, drive.get("secrets"))
             if drive.get("line") != new_line:
                 drive["line"] = new_line
                 state.broadcast({"type": "board"})
@@ -426,9 +468,8 @@ def _preview_ended(drive: dict, rc: int | None) -> None:
     elif drive["status"] == "starting":
         lines = [l.strip() for l in _tail(Path(drive["log"])).splitlines()
                  if l.strip()]
-        import previews
         drive["status"] = "failed"
-        drive["reason"] = previews.scrub(
+        drive["reason"] = scrub(
             f"exited before it was ready (rc={rc}): "
             + (lines[-1][:160] if lines else "no output"), drive.get("secrets"))
         _record_event(filename, f"preview of {filename} failed to start — "
@@ -444,22 +485,22 @@ def _preview_ended(drive: dict, rc: int | None) -> None:
 
 def _remember() -> None:
     """The newest preview's outcome, kept by previews.py after the drive
-    is gone."""
-    import previews
-    try:
-        previews.record_last()
-    except OSError:
-        pass
+    is gone — through whatever composition registered with `on_ended`
+    (the board registers `previews.record_last`)."""
+    for callback in list(_ENDED):
+        try:
+            callback()
+        except OSError:
+            pass
 
 
 def _scrub_log(drive: dict) -> None:
     """Once the process is gone its log is rewritten scrubbed: the secret
     values the preview was given, and anything credential-shaped."""
-    import previews
     path = Path(drive.get("log") or "")
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-        clean = previews.scrub(text, drive.get("secrets"))
+        clean = scrub(text, drive.get("secrets"))
         if clean != text:
             records.write_text(path, clean, mkdir=False)
     except OSError:

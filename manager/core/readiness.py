@@ -55,17 +55,17 @@ import shlex
 import time
 from pathlib import Path
 
+import appinspect
 import config
 import evidence
 import gatepolicy
 import profiles
 import settings
-import setupguide
-import setuptasks
+import setupbase
 import staleness
 import taskfiles
 
-Refused = setupguide.Refused
+Refused = setupbase.Refused
 
 KIND = "bench-verification-readiness"
 VERSION = 1
@@ -311,7 +311,7 @@ def discover() -> dict:
     """Candidate checks, from what the project already maintains. Reads
     files; runs nothing, installs nothing and writes nothing."""
     app = config.app_repo()
-    found = setuptasks.inspect()
+    found = appinspect.inspect()
     if not found.get("readable"):
         return {"candidates": [], "unreadable": (
             "the application root could not be read, so nothing is offered: "
@@ -340,7 +340,7 @@ def discover() -> dict:
             kind = SCRIPT_KINDS.get(name) or (
                 "medium" if name.startswith(("test:", "test-")) else None)
             if not kind or not isinstance(body, str) or \
-                    setuptasks.NPM_NO_TEST in body:
+                    appinspect.NPM_NO_TEST in body:
                 continue
             add("npm test" if name == "test" else f"npm run {name}",
                 "package.json", f"the `{name}` script (`{body[:80]}`)", kind)
@@ -448,7 +448,7 @@ def _confidence_why(entry: dict) -> str:
 # ── the reviews, and each check's readiness ────────────────────────────
 
 def reviews() -> dict:
-    doc = setupguide.read_decisions()["doc"]
+    doc = setupbase.read_decisions()["doc"]
     found = (doc.get("verification") or {}).get("checks") or {}
     return found if isinstance(found, dict) else {}
 
@@ -463,7 +463,7 @@ def _card_records(name: str) -> list[dict]:
 def _assignee_of_gap() -> str | None:
     """The assignee of the verification setup card, if one is linked — so a
     reviewer who is also the card's assignee is said not to be independent."""
-    doc = setupguide.read_decisions()["doc"]
+    doc = setupbase.read_decisions()["doc"]
     link = (doc.get("tasks") or {}).get("verification") or {}
     filename = link.get("filename") if isinstance(link, dict) else None
     if not filename:
@@ -481,7 +481,7 @@ def _assignee_of_gap() -> str | None:
 
 def check_states(doc: dict | None = None) -> list[dict]:
     doc = profiles.document() if doc is None else doc
-    defined = settings._checks_of(doc)
+    defined = settings.checks_of(doc)
     recorded = reviews()
     policy = gatepolicy.gate_policy(doc)
     required = {}
@@ -596,7 +596,7 @@ def state() -> dict:
     states = check_states(doc)
     return {
         "kind": KIND, "v": VERSION,
-        "revision": setupguide.revision(),
+        "revision": setupbase.revision(),
         "policyRevision": settings.revision_of(settings.document_target()),
         "discovery": discover(),
         "checks": states,
@@ -787,18 +787,18 @@ def review(payload: dict) -> dict:
     It changes no gate and no acceptance. It is what *readiness* rests on.
     """
     payload = payload if isinstance(payload, dict) else {}
-    request, _ = setupguide._check_request(dict(payload, area="verification"))
-    with setupguide.LOCK:
-        replay = setupguide._replayed(request, "verification-review",
+    request, _ = setupbase.check_request(dict(payload, area="verification"))
+    with setupbase.LOCK:
+        replay = setupbase.replayed(request, "verification-review",
                                       "verification")
         if replay is not None and replay.get("duplicate"):
             return replay       # done: answer with the first result
         # started and never finished: the review is redone from the top,
         # which writes the same entry — nothing is written twice
-        read = setupguide.read_decisions()
-        setupguide._guard_revision(payload, read)
+        read = setupbase.read_decisions()
+        setupbase.guard_revision(payload, read)
         name = str(payload.get("check") or "")
-        defined = settings._checks_of(profiles.document())
+        defined = settings.checks_of(profiles.document())
         if name not in defined:
             raise Refused(f"no registered check '{name}' — register it first",
                           404)
@@ -843,7 +843,7 @@ def review(payload: dict) -> dict:
             raise Refused("name the controlled failing run of this check, or "
                           "say why a failing case is not appropriate "
                           "(failingWaived, 10+ characters)", code="no-failure")
-        who = setupguide._actor()
+        who = setupbase.actor()
         if not who["name"]:
             raise Refused("a review names who made it, and this board has no "
                           "identity — set git config user.name in the work "
@@ -869,19 +869,19 @@ def review(payload: dict) -> dict:
             raise Refused("setup/decisions.json has a malformed verification "
                           "block; bench refuses to write over it", 409)
         block.setdefault("checks", {})[name] = entry
-        setupguide._journal_put(request, {"kind": "verification-review",
+        setupbase.journal_put(request, {"kind": "verification-review",
                                           "area": "verification",
                                           "status": "started",
                                           "at": entry["at"]})
-        committed = setupguide._write_decisions(doc,
+        committed = setupbase.write_decisions(doc,
                                                 f"verification review of {name}")
         result = {"area": "verification", "check": name, "review": entry,
                   "readiness": "ready", "committed": committed,
-                  "revision": setupguide.revision(),
+                  "revision": setupbase.revision(),
                   "changesGates": False,
                   "note": ("Ready means usable. No merge rule requires it "
                            "until you activate one, separately.")}
-        setupguide._journal_put(request, {"kind": "verification-review",
+        setupbase.journal_put(request, {"kind": "verification-review",
                                           "area": "verification",
                                           "status": "done", "at": entry["at"],
                                           "result": result})

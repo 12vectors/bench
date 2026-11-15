@@ -438,7 +438,7 @@ class NoRetryNoFollowOn(OnReviewCase):
     def guarded(self):
         """Nothing an entry does may launch an agent, review or merge."""
         targets = [(agents, name) for name in (
-            "_launch", "start_agent", "start_review", "start_pr_review",
+            "launch", "start_agent", "start_review", "start_pr_review",
             "start_pr_fix")]
         targets += [(phases, "_merge_member"), (completion, "_merge_locally")]
         for module, name in targets:

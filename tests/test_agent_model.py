@@ -114,7 +114,7 @@ class LaunchEnv(unittest.TestCase):
 
     def _launch_env(self, mode: str) -> tuple[dict, str]:
         log = Path(self._tmp.name) / "job.log"
-        proc, log_file, model = agents._launch(
+        proc, log_file, model = agents.launch(
             mode, "do the task", Path(self._tmp.name), "id-1", "t.md", log)
         proc.wait()
         log_file.close()

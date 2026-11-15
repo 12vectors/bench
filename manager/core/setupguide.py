@@ -46,33 +46,43 @@ and is refused as a conflict when the revision moved. Configuring a check,
 running one and enabling a gate stay where they already are — Settings →
 Checks, a card's ◫ evidence sheet, Settings → Merge rules — with their own
 protections; the guide links there rather than growing a second editor.
+
+Where it sits (task 122, WP13): the guide *composes* the surfaces built on
+the setup record — verification readiness (`readiness`), application
+previews (`previews`) and the proposed setup cards (`setuptasks`) — so it
+sits above all three and imports them at the top level. What those
+surfaces share with it — the decisions record, the journal, the request
+and revision guards and the agent area — is `setupbase`, below them; the
+read-only inspection of the application is `appinspect`. Nothing here is
+reached into by a lower module, and nothing here reaches up.
 """
 
 from __future__ import annotations
 
-import hashlib
+import argparse
 import json
 import os
-import re
 import secrets
-import shutil
 import time
 from pathlib import Path
 
+import appinspect
 import config
-import evidence
 import gatepolicy
 import githost
+import previews
 import profiles
-import records
+import readiness
 import settings
-import staleness
+import setupbase
+import setuptasks
 import taskfiles
 
 KIND = "bench-setup-state"
 VERSION = 1
-DECISIONS_KIND = "bench-setup-decisions"
-DECISIONS_VERSION = 1
+
+# The one refusal every setup surface raises, owned by `setupbase`.
+Refused = setupbase.Refused
 
 # ── the vocabulary ─────────────────────────────────────────────────────
 
@@ -105,8 +115,7 @@ OWNERS = {
     "bench": "a setting Bench already edits safely, in Settings",
 }
 
-AREAS = ("workspace", "agent", "instructions", "verification", "preview",
-         "delivery")
+AREAS = setupbase.AREAS
 TITLES = {
     "workspace": "Workspace and task storage",
     "agent": "Coding agent",
@@ -121,126 +130,19 @@ NOT_APPLICABLE_OK = {"instructions", "verification", "preview", "delivery"}
 # Which areas a setup card can be proposed for, and what it asks for.
 TASKABLE = {"instructions", "verification", "preview"}
 
-INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md",
-                     ".github/copilot-instructions.md")
-REASON_CAP = 500
-JOURNAL_CAP = 200
-REQUEST_RE = re.compile(r"^[A-Za-z0-9._:-]{8,80}$")
-
-# Every read-modify-write of the setup decisions holds this lock across the
-# read, the revision comparison and the write. The board and
-# `board.py --setup-guide` are two processes writing one file, and a
-# revision comparison alone is not compare-and-swap between processes, so
-# the lock is interprocess: reentrant within the board, and an exclusive
-# flock on a machine-local lock file against the CLI (task 110). Two
-# installs sharing one work root on one machine are not serialized by it;
-# between machines, the work state's git history is the serialization.
-LOCK = records.InterprocessLock(lambda: local_dir() / "decisions.lock")
-
-
-class Refused(Exception):
-    """A mutation bench will not make, with the status an API answers."""
-
-    def __init__(self, message: str, status: int = 400, **extra) -> None:
-        super().__init__(message)
-        self.status = status
-        self.extra = extra
-
 
 # ── where things live ──────────────────────────────────────────────────
-
-def decisions_path() -> Path:
-    return config.work_root() / "setup" / "decisions.json"
-
-
-def local_dir() -> Path:
-    return config.STATE / "setup"
-
-
-def journal_path() -> Path:
-    return local_dir() / "operations.json"
-
+#
+# The decisions record, the journal and their paths are `setupbase`'s.
 
 def handoff_path() -> Path:
     return config.STATE / "bootstrap" / "handoff.json"
 
 
-def _digest(value) -> str:
-    raw = json.dumps(value, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
-
-
-def _raw(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
-
-
-def revision() -> str:
-    """The revision of the portable decisions, which every mutation must
-    name. No file is a revision too ("none"), so the first write is held
-    to the same rule as every later one."""
-    try:
-        raw = decisions_path().read_bytes()
-    except FileNotFoundError:
-        return "none"
-    except OSError:
-        return "unreadable"
-    return hashlib.sha256(raw).hexdigest()[:16]
-
-
-def read_decisions() -> dict:
-    """The portable document, whole — unknown keys included, because a
-    later bench (or a teammate's) may have written fields this one does
-    not read and a write here must carry them over."""
-    blank = {"kind": DECISIONS_KIND, "v": DECISIONS_VERSION,
-             "decisions": {}, "tasks": {}}
-    try:
-        raw = decisions_path().read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return {"doc": blank, "problem": None}
-    except (OSError, UnicodeDecodeError) as exc:
-        return {"doc": blank, "problem": (
-            f"setup/decisions.json could not be read ({type(exc).__name__}); "
-            "bench refuses to write over it. Inspect its permissions and "
-            "UTF-8 encoding and repair the file by hand.")}
-    try:
-        doc = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        return {"doc": blank, "problem": (
-            f"setup/decisions.json does not parse ({exc.msg}, line "
-            f"{exc.lineno}); the guide reads it as empty and refuses to "
-            f"write over it. Fix or remove the file by hand.")}
-    if not isinstance(doc, dict) or doc.get("kind") != DECISIONS_KIND:
-        return {"doc": blank, "problem": (
-            "setup/decisions.json is not a setup decisions document; the "
-            "guide refuses to write over it")}
-    if not isinstance(doc.get("v"), int) or doc["v"] > DECISIONS_VERSION:
-        return {"doc": doc, "problem": (
-            f"setup/decisions.json is version {doc.get('v')!r}, newer than "
-            f"this bench reads ({DECISIONS_VERSION}). It is shown read-only; "
-            f"update bench to change it")}
-    doc.setdefault("decisions", {})
-    doc.setdefault("tasks", {})
-    if not isinstance(doc["decisions"], dict) or \
-            not isinstance(doc["tasks"], dict):
-        return {"doc": blank, "problem": (
-            "setup/decisions.json has a malformed decisions or tasks map; "
-            "the guide refuses to write over it")}
-    return {"doc": doc, "problem": None}
-
-
 # ── the facts, from the authorities that own them ─────────────────────
 
-def _fact(label: str, value: str, status: str | None = None,
-          local: bool = False) -> dict:
-    return {"label": label, "value": value, "status": status,
-            "local": local}
-
-
-def _next(owner: str, label: str, kind: str, **extra) -> dict:
-    return {"owner": owner, "label": label, "kind": kind, **extra}
+_fact = setupbase.fact
+_next = setupbase.next_action
 
 
 def _workspace() -> dict:
@@ -296,99 +198,10 @@ def _workspace() -> dict:
             "recommendation": rec, "consequence": consequence, "next": nxt}
 
 
-def _cli_of(name: str) -> dict:
-    """Which binary an adapter drives and whether it is on PATH — asked of
-    the adapter's own declaration (its `conformance.stubEnv`, the variable
-    naming the vendor binary), so core still knows no vendor."""
-    binary_key, binary = None, name
-    adir = config.adapter_dir(name)
-    if adir is not None:
-        try:
-            caps = json.loads((adir / "capabilities.json").read_text(
-                encoding="utf-8"))
-            binary_key = (caps.get("conformance") or {}).get("stubEnv")
-            setup_note = caps.get("setup")
-        except (OSError, json.JSONDecodeError):
-            setup_note = None
-    else:
-        setup_note = None
-    if binary_key:
-        binary = config.setting(binary_key, name).strip() or name
-    return {"binary": Path(binary).name, "setting": binary_key,
-            "onPath": shutil.which(binary) is not None, "setup": setup_note}
-
-
-def _agent() -> dict:
-    installed = {a["name"] for a in config.adapters_installed()}
-    rows, ready, missing = [], [], []
-    purposes = {"work": "Implementation", "act-pr": "PR fixes",
-                "review": "Reviews"}
-    harnesses = set()
-    for intent, label in purposes.items():
-        choice = config.agent_choice(intent)
-        harness = choice["harness"]["value"]
-        harnesses.add(harness)
-        model = choice["model"]["value"] or "harness default"
-        rows.append(_fact(f"{label}", f"{harness} · {model}"
-                          + (" (inherited)" if choice["harness"]["inherited"]
-                             else "")))
-    clis = {}
-    for harness in sorted(harnesses):
-        if harness not in installed:
-            missing.append(f"the {harness} adapter is not installed")
-            continue
-        cli = clis[harness] = _cli_of(harness)
-        if cli["onPath"]:
-            ready.append(harness)
-        else:
-            missing.append(f"'{cli['binary']}' (the {harness} CLI) is not "
-                           f"on PATH")
-    supported = []
-    for name in sorted(installed):
-        cli = clis.get(name) or _cli_of(name)
-        supported.append({"harness": name, "cliOnPath": cli["onPath"],
-                          "setup": cli["setup"]})
-    facts = rows + [_fact("Agent CLI", "; ".join(missing) if missing else
-                          ", ".join(f"{h}: on PATH" for h in ready),
-                          "blocked" if missing else None),
-                    _fact("Runs under bench's policy with a real model",
-                          "not inspected — the one diagnostic that spends "
-                          "tokens, and only on explicit approval",
-                          "not-inspected")]
-    basis = {"harnesses": sorted(harnesses), "ready": sorted(ready),
-             "missing": len(missing)}
-    usable = [s["harness"] for s in supported if s["cliOnPath"]]
-    if missing:
-        status = "blocked"
-        nxt = _next("you", "Install the agent CLI and sign in through its "
-                    "own login, in your terminal", "external",
-                    detail="; ".join(missing) + ". Bench never asks for a "
-                    "token.")
-        rec = (f"Use {usable[0]}, which is installed and on PATH."
-               if usable else
-               "Install one supported harness's CLI; bench drives it but "
-               "does not install it.")
-    else:
-        status = "configured"
-        nxt = _next("bench", "Review the harness and model per purpose",
-                    "settings", section="agents")
-        rec = ("Keep the harness default and let the CLI choose its model; "
-               "override a purpose only when you have a reason to.")
-    return {"status": status, "facts": facts, "basis": basis,
-            "recommendation": rec,
-            "consequence": ("Agents can be launched from cards."
-                            if not missing else
-                            "Starting work on a card will fail until the "
-                            "CLI is there."),
-            "next": nxt, "supported": supported,
-            "smoke": f"python3 {config.CORE / 'board.py'} --doctor "
-                     f"--real-agent --approve-real-agent"}
-
-
 def _instructions() -> dict:
     app = config.app_repo()
     found, unreadable = [], []
-    for name in INSTRUCTION_FILES:
+    for name in appinspect.INSTRUCTION_FILES:
         try:
             (app / name).read_text(encoding="utf-8")
             found.append(name)
@@ -432,29 +245,12 @@ def _instructions() -> dict:
                           "instructions", "task")}
 
 
-def _newest_outcomes(names: set[str]) -> dict[str, str]:
-    """Per registered check, what its newest card-bound record reads now.
-    The doctor's own fixture runs are not about this project, so only
-    records filed under a card count."""
-    found: dict[str, str] = {}
-    for record in evidence.all_evidence():          # newest first
-        name = record.get("check")
-        task = record.get("task") or ""
-        if name not in names or name in found or not str(task).endswith(".md"):
-            continue
-        try:
-            found[name] = staleness.outcome_now(record).get("outcome") or "error"
-        except Exception:
-            found[name] = "error"
-    return found
-
-
 def _verification() -> dict:
     doc = profiles.document()
     verif = settings.verification(doc)
     policy = gatepolicy.gate_policy(doc)
     names = {c["name"] for c in verif["checks"]}
-    outcomes = _newest_outcomes(names) if names else {}
+    outcomes = setupbase.newest_outcomes(names) if names else {}
     gated = sorted(s for s, e in policy["scopes"].items() if e["gated"])
     facts = [
         _fact("Registered checks", ", ".join(sorted(names)) or "none"),
@@ -472,7 +268,6 @@ def _verification() -> dict:
     # Readiness (task 90): a check is *ready* only once a person reviewed
     # its program, a current pass and a controlled failure. Shown beside
     # the run's outcome and never folded into it.
-    import readiness
     try:
         boot = readiness.bootstrap(doc=doc)
     except Exception as exc:      # a reading that failed is not a pass
@@ -532,7 +327,6 @@ def _verification() -> dict:
 def _preview() -> dict:
     driver = config.driver_path()
     runnable = bool(driver and os.access(driver, os.X_OK))
-    import previews
     p = previews.summary()
     facts = [_fact("Driver (manager/local/driver/start)",
                    "present and executable" if runnable else
@@ -662,7 +456,7 @@ def _delivery() -> dict:
                           section="acceptance")}
 
 
-READERS = {"workspace": _workspace, "agent": _agent,
+READERS = {"workspace": _workspace, "agent": setupbase.agent,
            "instructions": _instructions, "verification": _verification,
            "preview": _preview, "delivery": _delivery}
 
@@ -684,7 +478,7 @@ def handoff() -> dict:
     """What the terminal setup left for the browser, read as the history it
     is: the areas below are read now, and the handoff says what was true
     when it was written."""
-    raw = _raw(handoff_path())
+    raw = setupbase.raw_text(handoff_path())
     if raw is None:
         return {"present": False}
     try:
@@ -709,40 +503,14 @@ def handoff() -> dict:
                            "are read now and win where the two differ.")}
 
 
-# ── the journal (machine-local) ────────────────────────────────────────
-
-def _journal() -> dict:
-    raw = _raw(journal_path())
-    if raw is None:
-        return {}
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _write_json(path: Path, doc: dict, *, durable: bool = False) -> None:
-    records.write_json(path, doc, newline=True, durable=durable)
-
-
-def _journal_put(request: str, entry: dict) -> None:
-    data = _journal()
-    data[request] = entry
-    if len(data) > JOURNAL_CAP:
-        for key in sorted(data, key=lambda k: data[k].get("at", ""))[
-                :len(data) - JOURNAL_CAP]:
-            if data[key].get("status") == "done":
-                del data[key]
-    _write_json(journal_path(), data)
-
+# ── the journal (machine-local, `setupbase`'s) ─────────────────────────
 
 def interrupted() -> list[dict]:
     return [{"request": key, "kind": e.get("kind"), "area": e.get("area"),
              "at": e.get("at"),
              "recovery": ("Send the same request again (Resume): it finishes "
                           "what was started and creates nothing twice.")}
-            for key, e in sorted(_journal().items())
+            for key, e in sorted(setupbase.journal().items())
             if e.get("status") == "started"]
 
 
@@ -758,7 +526,7 @@ def _area(area: str, decisions: dict, tasks: dict) -> dict:
                  "problem": f"this area could not be read: {exc}",
                  "next": _next("you", "Re-read after fixing the problem",
                                "board")}
-    fingerprint = _digest(found.pop("basis"))
+    fingerprint = setupbase.digest(found.pop("basis"))
     decision = decisions.get(area)
     if decision is not None and not isinstance(decision, dict):
         decision = None
@@ -802,7 +570,7 @@ def state() -> dict:
     """The whole guide, in one reading. Writes nothing and runs nothing:
     it resolves the policy, reads records on disk, asks `git` and `PATH`
     the questions the authorities already ask, and reads two JSON files."""
-    read = read_decisions()
+    read = setupbase.read_decisions()
     doc = read["doc"]
     areas = [_area(a, doc.get("decisions") or {}, doc.get("tasks") or {})
              for a in AREAS]
@@ -814,7 +582,7 @@ def state() -> dict:
     stale = [a["id"] for a in areas if a["decision"] and a["decision"]["stale"]]
     return {
         "kind": KIND, "v": VERSION, "generated": time.time(),
-        "revision": revision(),
+        "revision": setupbase.revision(),
         "readOnly": read["problem"],
         "statuses": dict(STATUSES), "owners": dict(OWNERS),
         "areas": areas,
@@ -850,7 +618,6 @@ def state() -> dict:
 def _readiness() -> dict:
     """Verification readiness (task 90), read in the same pass. Its own
     module owns it; a reading that fails says so rather than vanishing."""
-    import readiness
     try:
         return readiness.state()
     except Exception as exc:
@@ -861,7 +628,6 @@ def _readiness() -> dict:
 def _application_preview() -> dict:
     """The preview lifecycle (task 91), read in the same pass. Its own
     module owns it; a reading that fails says so rather than vanishing."""
-    import previews
     try:
         return previews.state()
     except Exception as exc:
@@ -872,7 +638,6 @@ def _application_preview() -> dict:
 def _proposals(doc: dict) -> dict:
     """The gap-specific setup cards (task 89), read in the same pass and
     under the same rule: nothing is written, nothing is run."""
-    import setuptasks
     try:
         return setuptasks.proposals(doc)
     except Exception as exc:  # a reading that failed is not "no gaps"
@@ -881,84 +646,9 @@ def _proposals(doc: dict) -> dict:
 
 
 # ── the two mutations ──────────────────────────────────────────────────
-
-def _check_request(payload: dict) -> tuple[str, str]:
-    if not isinstance(payload, dict):
-        raise Refused("the request body must be a JSON object")
-    area = payload.get("area")
-    if area not in AREAS:
-        raise Refused(f"unknown area {area!r}; one of {', '.join(AREAS)}")
-    request = payload.get("request")
-    if not isinstance(request, str) or not REQUEST_RE.match(request):
-        raise Refused("a mutation names a request identity (8–80 letters, "
-                      "digits or ._:-) so a repeat answers rather than acts "
-                      "twice")
-    return area, request
-
-
-def _replayed(request: str, kind: str, area: str) -> dict | None:
-    entry = _journal().get(request)
-    if not entry:
-        return None
-    if entry.get("kind") != kind or entry.get("area") != area:
-        raise Refused("this request identity was already used for a "
-                      "different operation", 409)
-    if entry.get("status") == "done":
-        return dict(entry.get("result") or {}, duplicate=True)
-    return entry          # started: the caller resumes it
-
-
-def _guard_integrity(read: dict) -> None:
-    if read["problem"]:
-        raise Refused(read["problem"], 409, readOnly=True)
-
-
-def _guard_revision(payload: dict, read: dict) -> None:
-    _guard_integrity(read)
-    expected = payload.get("expected")
-    current = revision()
-    if expected != current:
-        raise Refused(f"the setup decisions changed since this page read them "
-                      f"(now {current}); re-read and decide again", 409,
-                      stale=True, current=current)
-
-
-def _clean_reason(value) -> str:
-    if not isinstance(value, str):
-        raise Refused("a decision names its reason")
-    text = " ".join(value.split())
-    if len(text) < 3:
-        raise Refused("a decision names its reason (at least a few words)")
-    if len(text) > REASON_CAP:
-        raise Refused(f"a reason is at most {REASON_CAP} characters")
-    if settings.MASK in text:
-        raise Refused("a masked value cannot be submitted as a reason")
-    return settings.scrub(text)
-
-
-def _actor() -> dict:
-    import acceptance
-    return acceptance.actor()
-
-
-def _write_decisions(doc: dict, what: str) -> bool:
-    _guard_integrity(read_decisions())
-    path = decisions_path()
-    real = config.escapes_work(path)
-    if real is not None:
-        raise Refused(f"setup/decisions.json is a link to {real}, outside the "
-                      f"work root; bench does not write through it", 409)
-    doc["kind"], doc["v"] = DECISIONS_KIND, DECISIONS_VERSION
-    doc["_doc"] = ("Written by bench's setup guide. Portable: decisions, "
-                   "reasons and setup-card links only — no paths, no "
-                   "credentials, no runtime evidence.")
-    _write_json(path, doc, durable=True)
-    if not config.COMMIT_MOVES:
-        return False
-    return taskfiles.commit_work_file(
-        path, f"board: setup {what} ({taskfiles.actor_name() or 'board'})",
-        f"setup: {what} recorded, but committing it failed")
-
+#
+# Both are held to `setupbase`'s request identity, journal, revision and
+# integrity guards, as every setup mutation is.
 
 def _alternative(area: str, choice: str, value) -> dict | None:
     """What verifies a project that has no preview instead (task 91): a
@@ -1001,18 +691,18 @@ def _alternative(area: str, choice: str, value) -> dict | None:
 def decide(payload: dict) -> dict:
     """Record, or withdraw, a person's decision about one area: `defer` or
     `not-applicable` with a reason, or `reopen` to make it revisitable."""
-    area, request = _check_request(payload)
+    area, request = setupbase.check_request(payload)
     choice = payload.get("decision")
     if choice not in ("defer", "not-applicable", "reopen"):
         raise Refused("decision is one of defer, not-applicable, reopen")
-    with LOCK, taskfiles.WRITE_LOCK:
-        again = _replayed(request, "decide", area)
+    with setupbase.LOCK, taskfiles.WRITE_LOCK:
+        again = setupbase.replayed(request, "decide", area)
         if again and again.get("duplicate"):
             return again
-        read = read_decisions()
-        _guard_integrity(read)
+        read = setupbase.read_decisions()
+        setupbase.guard_integrity(read)
         if not again:          # a resumed request was checked when it began
-            _guard_revision(payload, read)
+            setupbase.guard_revision(payload, read)
         doc = read["doc"]
         current = _area(area, doc["decisions"], doc["tasks"])
         if choice == "not-applicable" and area not in NOT_APPLICABLE_OK:
@@ -1024,15 +714,15 @@ def decide(payload: dict) -> dict:
                 not current["decision"]:
             raise Refused(f"{TITLES[area]} reads {current['status']}; there "
                           f"is nothing to {choice}", 409)
-        reason = _clean_reason(payload.get("reason")) \
+        reason = setupbase.clean_reason(payload.get("reason")) \
             if choice != "reopen" else None
         alternative = _alternative(area, choice, payload.get("alternative"))
-        _journal_put(request, {"kind": "decide", "area": area,
+        setupbase.journal_put(request,{"kind": "decide", "area": area,
                                "status": "started", "at": taskfiles.now_iso()})
         if choice == "reopen":
             doc["decisions"].pop(area, None)
         else:
-            who = _actor()
+            who = setupbase.actor()
             # unknown fields of an earlier record are carried over
             record = dict(doc["decisions"].get(area) or {})
             record.update({"status": ("deferred" if choice == "defer"
@@ -1047,10 +737,10 @@ def decide(payload: dict) -> dict:
             else:
                 record.pop("alternative", None)
             doc["decisions"][area] = record
-        committed = _write_decisions(doc, f"{area} {choice}")
+        committed = setupbase.write_decisions(doc, f"{area} {choice}")
         result = {"ok": True, "area": area, "decision": choice,
-                  "revision": revision(), "committed": committed}
-        _journal_put(request, {"kind": "decide", "area": area,
+                  "revision": setupbase.revision(), "committed": committed}
+        setupbase.journal_put(request,{"kind": "decide", "area": area,
                                "status": "done", "at": taskfiles.now_iso(),
                                "result": result})
         return result
@@ -1094,42 +784,23 @@ TASK_BODIES = {
 }
 
 
-def _next_number() -> int:
-    highest = 0
-    for directory in [config.TASKS / s for s in config.STAGE_DIRS] + \
-            [config.TASKS / "archive"]:
-        try:
-            names = os.listdir(directory)
-        except OSError:
-            continue
-        for name in names:
-            match = taskfiles.NUMBER_RE.match(name)
-            if match:
-                highest = max(highest, int(match.group(1)))
-    return highest + 1
-
-
-def _slug(title: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:48].strip("-")
-
-
 def create_task(payload: dict) -> dict:
     """Propose a setup card in backlog/ for an area an agent can do, and
     link it from the area. The card is an ordinary card: nothing starts."""
-    area, request = _check_request(payload)
+    area, request = setupbase.check_request(payload)
     if area not in TASKABLE:
         raise Refused(f"{TITLES[area]} has no setup card to propose: its next "
                       f"action is yours or Settings'")
-    with LOCK, taskfiles.WRITE_LOCK:
-        again = _replayed(request, "task", area)
+    with setupbase.LOCK, taskfiles.WRITE_LOCK:
+        again = setupbase.replayed(request, "task", area)
         if again and again.get("duplicate"):
             return again
-        read = read_decisions()
-        _guard_integrity(read)
+        read = setupbase.read_decisions()
+        setupbase.guard_integrity(read)
         doc = read["doc"]
         planned = again.get("filename") if again else None
         if not again:
-            _guard_revision(payload, read)
+            setupbase.guard_revision(payload, read)
             current = _area(area, doc["decisions"], doc["tasks"])
             if "create-task" not in current["allowed"]:
                 raise Refused(
@@ -1142,9 +813,9 @@ def create_task(payload: dict) -> dict:
         if planned and (backlog / planned).is_file():
             filename = planned            # an interrupted run got this far
         else:
-            number = _next_number()
-            filename = f"{number:02d}-{_slug(title)}.md"
-            _journal_put(request, {"kind": "task", "area": area,
+            number = setupbase.next_number()
+            filename = f"{number:02d}-{setupbase.slug(title)}.md"
+            setupbase.journal_put(request,{"kind": "task", "area": area,
                                    "status": "started", "filename": filename,
                                    "at": taskfiles.now_iso()})
             number_text = filename.split("-", 1)[0]
@@ -1156,25 +827,25 @@ def create_task(payload: dict) -> dict:
                     f"\n## What to build\n\n{build}\n\n## Acceptance\n\n"
                     f"{accept}\n")
             path = backlog / filename
-            taskfiles._refuse_escape(path)
+            taskfiles.refuse_escape(path)
             backlog.mkdir(parents=True, exist_ok=True)
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(text)
             taskfiles.commit_edit(filename, "backlog",
                                   "proposed by the setup guide")
-        who = _actor()
+        who = setupbase.actor()
         link = dict(doc["tasks"].get(area) or {})
         link.update({"filename": filename,
                      "number": filename.split("-", 1)[0],
                      "title": title, "at": taskfiles.now_iso(),
                      "actor": who["name"], "request": request})
         doc["tasks"][area] = link
-        committed = _write_decisions(doc, f"{area} task {link['number']}")
+        committed = setupbase.write_decisions(doc, f"{area} task {link['number']}")
         result = {"ok": True, "area": area, "filename": filename,
-                  "stage": "backlog", "revision": revision(),
+                  "stage": "backlog", "revision": setupbase.revision(),
                   "committed": committed}
-        _journal_put(request, {"kind": "task", "area": area, "status": "done",
+        setupbase.journal_put(request,{"kind": "task", "area": area, "status": "done",
                                "filename": filename,
                                "at": taskfiles.now_iso(), "result": result})
         return result
@@ -1189,8 +860,7 @@ def cli(argv: list[str]) -> int:
     `--create-task` call exactly the functions the HTTP routes call, so a
     terminal and a browser are held to the same revision, request identity
     and refusals."""
-    import argparse
-    p = argparse.ArgumentParser(prog="board.py --setup-guide")
+    p =argparse.ArgumentParser(prog="board.py --setup-guide")
     p.add_argument("--json", action="store_true", help="print the state as JSON")
     p.add_argument("--decide", nargs=2, metavar=("AREA", "DECISION"),
                    help="defer, not-applicable or reopen an area")
@@ -1206,13 +876,12 @@ def cli(argv: list[str]) -> int:
                         "the bootstrap condition. Writes nothing")
     args = p.parse_args(argv)
     if args.verification:
-        import readiness
         found = readiness.state()
         print(json.dumps(found, indent=2) if args.json
               else readiness.text(found))
         return 0
     if args.decide or args.create_task:
-        payload = {"expected": args.expected or revision(),
+        payload = {"expected": args.expected or setupbase.revision(),
                    "request": args.request or f"cli-{secrets.token_hex(8)}"}
         try:
             if args.decide:

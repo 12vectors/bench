@@ -439,6 +439,14 @@ def _bump() -> None:
     _BOARD = None
 
 
+def epoch() -> int:
+    """How many writes this module has made since the board started — the
+    key `delivery` memoises its board reading on beside `evidence.epoch()`
+    (task 122: read here rather than through `gates._EPOCH`). Reading one
+    int needs no lock, and taking `_LOCK` here could not be nested."""
+    return _EPOCH
+
+
 def forget_cached() -> None:
     """Drop the memoised board reading. Nothing on the serving path needs
     it — the epoch and the TTL do that work — but a test, and anything
@@ -478,7 +486,7 @@ def _write_json(path: Path, payload, *, durable: bool = False) -> None:
 # ── application git, read once per pass ────────────────────────────────
 
 
-def _tips() -> dict[str, str]:
+def branch_tips() -> dict[str, str]:
     """Every local branch and the commit it points at, in one call.
 
     One `for-each-ref` rather than a `rev-parse` per card: the board reads
@@ -516,7 +524,7 @@ def head_for(filename: str, scope: str, tips: dict[str, str] | None = None) -> d
     to close.
     """
     stem = filename[:-3] if filename.endswith(".md") else filename
-    tips = _tips() if tips is None else tips
+    tips = branch_tips() if tips is None else tips
     if scope == "integration":
         ref = config.PHASE_BRANCH_PREFIX + stem
     elif scope == "member":
@@ -544,7 +552,7 @@ CANDIDATES = {
 }
 
 
-def _contained(commit: str, base: str) -> bool:
+def contained(commit: str, base: str) -> bool:
     """Is `commit` already in `base`, in this checkout? A local read."""
     if not commit or not base:
         return False
@@ -574,7 +582,7 @@ def candidate(filename: str, scope: str, *, task: dict | None = None,
     """
     task = task or {}
     stem = filename[:-3] if filename.endswith(".md") else filename
-    tips = _tips() if tips is None else tips
+    tips = branch_tips() if tips is None else tips
     head = head_for(filename, scope, tips)
     out = {"state": "none-yet", "commit": None, "ref": head["ref"],
            "qualifier": None, "why": CANDIDATES["none-yet"],
@@ -626,7 +634,7 @@ def candidate(filename: str, scope: str, *, task: dict | None = None,
     if delivered is None:
         delivered = next((c for kind, c in commits
                           if kind in ("verdict", "pr", "completion")
-                          and _contained(c, app_base)), None)
+                          and contained(c, app_base)), None)
     if task.get("stage") == "done" or merged or delivered:
         out.update(state="delivered",
                    commit=delivered or (pr or {}).get("head")
@@ -2107,7 +2115,7 @@ def board(collected: dict) -> dict:
     stamp = (epoch, policy["revision"], int(time.time() / _TTL), evidence.epoch())
     if _BOARD is not None and _BOARD[0] == stamp and _BOARD[1] == files:
         return _BOARD[2]
-    tips = _tips()
+    tips = branch_tips()
     # One branch walk, one document read and one scan of the evidence for
     # the whole board, rather than one of each per card: this runs on
     # every state load, and a per-card subprocess is what makes a payload

@@ -473,13 +473,13 @@ def agent_model(mode: str) -> str:
 # reads. `refine` keeps the default harness (it has no harness override
 # of its own) but does have a model setting, as it did before.
 AGENT_PURPOSES = ("work", "act-pr", "review")
-_SUFFIX = {"work": "_WORK", "act-pr": "_ACT_PR", "review": "_REVIEW",
-           "refine": "_REFINE"}
+PURPOSE_SUFFIX = {"work": "_WORK", "act-pr": "_ACT_PR", "review": "_REVIEW",
+                  "refine": "_REFINE"}
 HARNESS_KEY = "BOARD_AGENT_ADAPTER"
 MODEL_KEY = "BOARD_AGENT_MODEL"
-HARNESS_KEYS = (HARNESS_KEY,) + tuple(HARNESS_KEY + _SUFFIX[p]
+HARNESS_KEYS = (HARNESS_KEY,) + tuple(HARNESS_KEY + PURPOSE_SUFFIX[p]
                                       for p in AGENT_PURPOSES)
-MODEL_KEYS = (MODEL_KEY,) + tuple(MODEL_KEY + _SUFFIX[p]
+MODEL_KEYS = (MODEL_KEY,) + tuple(MODEL_KEY + PURPOSE_SUFFIX[p]
                                   for p in (*AGENT_PURPOSES, "refine"))
 AGENT_KEYS = HARNESS_KEYS + MODEL_KEYS
 DEFAULT_HARNESS = "claude"
@@ -517,7 +517,7 @@ def _patched(key: str) -> str | None:
         return ADAPTER
     if key == MODEL_KEY and AGENT_MODEL != _BOOT["AGENT_MODEL"]:
         return AGENT_MODEL
-    for purpose, suffix in _SUFFIX.items():
+    for purpose, suffix in PURPOSE_SUFFIX.items():
         if key == MODEL_KEY + suffix:
             now = (AGENT_MODELS or {}).get(purpose, "")
             if now != _BOOT["AGENT_MODELS"].get(purpose, ""):
@@ -552,12 +552,12 @@ def agent_choice(intent: str, file_values: dict[str, str] | None = None) -> dict
     """The harness and model one launch intent rides, with provenance.
 
     The one resolver: `profiles.resolve` reads it for the manifest, so the
-    preflight, the doctor, the Settings page and `_launch` agree by
+    preflight, the doctor, the Settings page and `agents.launch` agree by
     construction. `file_values` lets a caller resolve a *draft* `.env`
     (Settings' preview) through exactly the same rules.
     """
     values = env_file_now() if file_values is None else file_values
-    suffix = _SUFFIX.get(intent)
+    suffix = PURPOSE_SUFFIX.get(intent)
     default_h = agent_setting(HARNESS_KEY, values)
     harness = dict(default_h, inherited=True, setting=HARNESS_KEY)
     if intent in AGENT_PURPOSES:

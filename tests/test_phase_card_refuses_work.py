@@ -112,7 +112,7 @@ class TheWorkAgentRefusesAPhaseCard(LaunchCase):
         self.assertIn("phase card", str(caught.exception))
 
     def test_the_refusal_leaves_nothing_behind(self):
-        """Refused with `_validate`, so it costs nothing: no branch, no
+        """Refused with `validate_launch`, so it costs nothing: no branch, no
         worktree, no process, nothing for anyone to clean up."""
         with self.assertRaises(ValueError):
             agents.start_agent(PHASE, "in-progress")

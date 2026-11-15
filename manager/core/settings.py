@@ -77,6 +77,7 @@ import profiles
 import records
 import redact
 import required
+import state
 import sync
 import taskfiles
 
@@ -831,13 +832,16 @@ def frozen_runs() -> list[dict]:
     The point this exists to make: an edit applied now does not reach any
     of these. Each one rode a manifest written before it started, that
     record is on disk, and nothing in this module touches it.
+
+    The run registry is `state.AGENTS` (task 122: read there rather than
+    by reaching up to `agents`). Each entry is read as the registry's
+    public row would read it — `file` is not a key either form carries,
+    so `task` stays empty exactly as it always has.
     """
     out = []
-    try:
-        import agents
-        live = agents.list_public()
-    except Exception:  # pragma: no cover - agents is always importable
-        live = []
+    with state.LOCK:
+        live = [dict(record, mode=record.get("mode", "work"))
+                for record in state.AGENTS.values()]
     for entry in live:
         frozen = profiles.recorded(entry.get("id") or "")
         if frozen is None:
@@ -1280,7 +1284,7 @@ def ci(doc: dict | None = None) -> dict:
     return {
         "kinds": dict(KINDS),
         "limits": list(CI_LIMITS),
-        "bench": {"configured": bool(_checks_of(doc)), "gated": gated},
+        "bench": {"configured": bool(checks_of(doc)), "gated": gated},
         "ci": {"polled": True, "interval": config.PR_POLL_INTERVAL,
                "ghAvailable": githost.available(),
                "what": ("reviews, check runs and GitHub's mergeable state for "
@@ -1823,8 +1827,8 @@ def preview(payload: dict) -> dict:
 
     before_gate = gatepolicy.gate_policy(before)
     after_gate = gatepolicy.gate_policy(after)
-    before_checks = _checks_of(before)
-    after_checks = _checks_of(after)
+    before_checks = checks_of(before)
+    after_checks = checks_of(after)
 
     changes: list[dict] = []
     for name in sorted(set(before_checks) | set(after_checks)):
@@ -1896,7 +1900,9 @@ def preview(payload: dict) -> dict:
     }
 
 
-def _checks_of(doc: dict) -> dict:
+def checks_of(doc: dict) -> dict:
+    """The checks a profile document defines, by name — read by the same
+    parser a launch uses (`profiles.document_checks`)."""
     steps, _ = profiles.document_steps(doc)
     checks, _ = profiles.document_checks(doc, steps)
     return checks

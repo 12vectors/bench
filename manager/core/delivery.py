@@ -252,7 +252,7 @@ def _context(phase_state: dict | None = None) -> dict:
         completing = {k: dict(v) for k, v in state.COMPLETING.items()}
     policy = gatepolicy.gate_policy()
     return {
-        "tips": gates._tips(),
+        "tips": gates.branch_tips(),
         "remoteTips": _remote_tips(),
         "policy": policy,
         "records": evidence.all_evidence(),
@@ -430,7 +430,7 @@ def _merged_covers(pr: dict, candidate: dict) -> bool:
     commit, head = candidate.get("commit"), (pr or {}).get("head")
     if not head:
         return False
-    return commit == head or gates._contained(commit, head)
+    return commit == head or gates.contained(commit, head)
 
 
 def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
@@ -1044,7 +1044,7 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
         snaps.append((task["file"], snap.get("head"), snap.get("merged"),
                       snap.get("prState"), snap.get("observed")))
     parts = {
-        "epochs": [_EPOCH, gates._EPOCH, evidence.epoch()],
+        "epochs": [_EPOCH, gates.epoch(), evidence.epoch()],
         "policy": ctx["policy"].get("revision"),
         "tips": sorted(ctx["tips"].items()),
         "remoteTips": sorted(ctx["remoteTips"].items()),

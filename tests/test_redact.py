@@ -15,8 +15,9 @@ What this holds:
   URL's user information) are masked once, readably;
 - what is not a secret survives: the prefix that names it, the separator,
   the scheme and host, ordinary prose, and a second pass changes nothing;
-- each caller keeps its own marker: settings `••••••••`, previews
-  `«redacted»` (and `«secret»` for a value it was given);
+- each caller keeps its own marker: settings `••••••••`, a preview's
+  output `«redacted»` (and `«secret»` for a value it was given) — scrubbed
+  by `drive`, which owns a drive's log since task 122;
 - the old names are gone rather than left as a second table.
 
 Every sample is fabricated: repeated characters, the alphabet, or the
@@ -35,7 +36,7 @@ CORE = REPO / "manager" / "core"
 sys.path.insert(0, str(CORE))
 
 import agentsettings  # noqa: E402
-import previews  # noqa: E402
+import drive  # noqa: E402
 import redact  # noqa: E402
 import settings  # noqa: E402
 
@@ -251,7 +252,7 @@ class WhatIsNotSecretSurvives(unittest.TestCase):
         self.assertEqual(redact.found(None), [])
 
     def test_a_second_pass_changes_nothing(self):
-        for marker in (M, settings.MASK, previews.REDACTED_MARK, "***"):
+        for marker in (M, settings.MASK, drive.REDACTED_MARK, "***"):
             for sample in SAMPLES:
                 once = redact.scrub(sample, marker)
                 self.assertEqual(redact.scrub(once, marker), once, sample)
@@ -280,14 +281,16 @@ class EachCallerKeepsItsMarker(unittest.TestCase):
         self.assertEqual(settings.masked("GH_TOKEN", "anything"), ("••••••••", True))
 
     def test_previews_masks_with_its_own_words(self):
-        out = previews.scrub("t=ghp_" + A + " v=" + "local-dev-value",
-                             ["local-dev-value"])
+        # a preview's output is the drive's log, scrubbed by the drive
+        # (task 122); the words are the ones a preview always showed
+        out = drive.scrub("t=ghp_" + A + " v=" + "local-dev-value",
+                          ["local-dev-value"])
         self.assertEqual(out, "t=«redacted» v=«secret»")
-        self.assertEqual(previews.scrub("Bearer " + A),
+        self.assertEqual(drive.scrub("Bearer " + A),
                          "Bearer «redacted»")
         # a shape only settings knew used to fall to its bullets; the
         # preview's log now says its own word for it
-        self.assertEqual(previews.scrub("xoxb-" + D), "«redacted»")
+        self.assertEqual(drive.scrub("xoxb-" + D), "«redacted»")
 
     def test_the_evidence_log_masks_with_its_own_word(self):
         """Task 121: `evidence.scrub` delegates to this table with

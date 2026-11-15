@@ -37,7 +37,7 @@ The five acts, and what each may do:
                 released. Signals nothing bench did not start
 
 Discovery is a sixth thing and not an act: it reads the application's
-files (through `setuptasks.inspect`, the same reading the setup cards
+files (through `appinspect.inspect`, the same reading the setup cards
 use) and *proposes* a configuration. A detected start script is not a
 working preview, and nothing about it is run.
 
@@ -51,6 +51,11 @@ once the process is gone. Preparation records and the last preview's
 outcome live under `manager/local/state/preview/`. The only portable
 thing is the setup guide's decision about the area (not applicable, with
 a reason and an alternative check or card), which `setupguide` owns.
+
+Scrubbing what a preview printed is the drive's (`drive.scrub`, with the
+`«secret»` and `«redacted»` markers): the secret values and the log are
+the drive's record. What this module keeps once a preview has ended
+(`record_last`) the board registers with `drive.on_ended` (task 122).
 """
 
 from __future__ import annotations
@@ -70,16 +75,17 @@ import threading
 import time
 from pathlib import Path
 
+import appinspect
 import config
 import drive
 import records
 import redact
 import settings
-import setupguide
+import setupbase
 import state as board_state
 import taskfiles
 
-Refused = setupguide.Refused
+Refused = setupbase.Refused
 
 KIND = "bench-preview"
 VERSION = 1
@@ -197,8 +203,6 @@ TOP_KEYS = {"v", "start", "prepare", "port", "host", "ready", "env",
             "fixture", "stop", "network", "notes"}
 STEP_KEYS = {"name", "run", "network", "data", "timeout"}
 READY_KEYS = {"path", "status", "contains", "timeout"}
-SECRET_MARK = "«secret»"
-REDACTED_MARK = "«redacted»"
 
 LOCK = threading.RLock()
 PREPARING: dict | None = None        # the one preparation in flight
@@ -212,18 +216,6 @@ def _digest(value) -> str:
     if isinstance(value, str):
         value = value.encode("utf-8")
     return hashlib.sha256(value).hexdigest()[:16]
-
-
-def scrub(text: str, values=None) -> str:
-    """Text on its way to a reader: every secret value this preview was
-    given replaced by `«secret»`, then anything credential-shaped — the
-    shapes `redact`'s one table knows — by `«redacted»`, the marker a
-    preview's log has always shown."""
-    out = str(text or "")
-    for value in sorted({v for v in (values or ()) if v and len(v) >= 4},
-                        key=len, reverse=True):
-        out = out.replace(value, SECRET_MARK)
-    return redact.scrub(out, REDACTED_MARK)
 
 
 def _raw_config() -> str | None:
@@ -677,8 +669,7 @@ def discover() -> dict:
     """What the application holds that bears on a preview, as a proposal.
     Reads files through the setup cards' own inspection; runs nothing,
     installs nothing, starts nothing."""
-    import setuptasks
-    found = setuptasks.inspect()
+    found = appinspect.inspect()
     app = config.app_repo()
     out = {"inert": ("Read from the application's files. Nothing was run, "
                      "installed or started, and a detected start script is "
@@ -697,7 +688,7 @@ def discover() -> dict:
         except (json.JSONDecodeError, AttributeError):
             scripts = {}
     proposals = []
-    for name in setuptasks.START_SCRIPTS:
+    for name in appinspect.START_SCRIPTS:
         body = scripts.get(name) if isinstance(scripts, dict) else None
         if isinstance(body, str):
             port = PORT_HINT.search(body)
@@ -715,7 +706,7 @@ def discover() -> dict:
                           "port": None, "note": None})
     make = refs.get("Makefile", {})
     if make.get("finding") == "present" and make.get("text"):
-        for target in setuptasks.START_TARGETS:
+        for target in appinspect.START_TARGETS:
             if re.search(rf"^{target}\s*:", make["text"], re.M):
                 proposals.append({"run": f"make {target}", "from": "Makefile",
                                   "how": f"a `{target}` target", "port": None,
@@ -1172,7 +1163,7 @@ def _prepare_run(record: dict, cfg: dict, env: dict, values: list[str],
             continue
         else:
             step["outcome"] = "failed"
-            step["tail"] = scrub(_tail(log), values)
+            step["tail"] = drive.scrub(_tail(log), values)
             outcome = "prepare-failed"
         for later in record["steps"]:
             if later["outcome"] == "pending":
@@ -1208,7 +1199,7 @@ def _tail(path: Path, cap: int = 2000) -> str:
 def _scrub_file(path: Path, values) -> None:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-        clean = scrub(text, values)
+        clean = drive.scrub(text, values)
         if clean != text:
             records.write_text(path, clean, mkdir=False)
     except OSError:
@@ -1333,7 +1324,7 @@ def log(lines: int = 80) -> dict:
         return {"log": "", "path": None}
     stored, _ = _secret_file()
     values = list(d.get("secrets") or ()) + list(stored.values())
-    text = scrub(_tail(Path(d["log"]), 16000), values)
+    text = drive.scrub(_tail(Path(d["log"]), 16000), values)
     rel = os.path.relpath(d["log"], config.TM_ROOT)
     return {"log": "\n".join(text.splitlines()[-lines:]), "path": rel,
             "scrubbed": True}

@@ -225,7 +225,7 @@ IN_PLACE = {
     ("settings", "_record_change"): "append-only sanitized history (open 'a')",
     ("taskfiles", "append_to_task"): "append under WRITE_LOCK (open 'a')",
     ("state", "persist"): "append-only session JSONL (open 'a')",
-    ("agents", "_launch"): "the run's own log stream (open 'wb')",
+    ("agents", "launch"):"the run's own log stream (open 'wb')",
     ("commands", "run"): "the command's own log stream (open 'wb')",
     ("drive", "start"): "the drive's own log stream (open 'wb')",
     ("previews", "_prepare_run"): "a preparation step's own log stream (open 'wb')",

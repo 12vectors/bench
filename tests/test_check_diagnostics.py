@@ -542,7 +542,7 @@ with open(os.environ["OUT"], "w") as fh:
 
 
 class TheLaunchHandsTheCapability(ShimCase):
-    """A real launch through `agents._launch` and an adapter that runs the
+    """A real launch through `agents.launch` and an adapter that runs the
     shipped shim, with the progress channel available and unavailable: the
     run reads its own failure either way, by the capability it was handed."""
 
@@ -567,8 +567,8 @@ class TheLaunchHandsTheCapability(ShimCase):
         self.addCleanup(setattr, progress, "channel", progress.channel)
         progress.channel = lambda intent, adapter=None: {"state": state, "why": "t"}
         log = self.tmp / f"run-1-{state}.log"
-        proc, log_file, _ = agents._launch("work", "the prompt", self.tmp,
-                                           "run-1", CARD, log)
+        proc, log_file, _ = agents.launch("work", "the prompt", self.tmp,
+                                          "run-1", CARD, log)
         self.assertEqual(proc.wait(timeout=120), 0, log.read_text())
         log_file.close()
         return json.loads(out.read_text(encoding="utf-8"))

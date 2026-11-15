@@ -26,6 +26,16 @@ task files, but the tasks work as a plain folder kanban without it. See
     .prompts/     agent prompt templates (read fresh on every launch)
 
 Stdlib only, no install.
+
+Every core module is imported here, at the top, and the selected hosting
+provider is loaded before the board serves (task 122, WP13). A running
+board therefore executes the code that was on disk when it started — a
+core update takes effect on restart, all of it at once — rather than
+whichever module a request happened to import first. No core module
+imports another from inside a function; `tests/test_architecture.py`
+fails one that does. Importing reads code and defines names: it starts no
+thread, opens no socket and runs no probe; everything that does is below,
+in `main`, as it was.
 """
 
 from __future__ import annotations
@@ -37,21 +47,77 @@ import threading
 import webbrowser
 from http.server import ThreadingHTTPServer
 
+import acceptance  # noqa: F401  (eager: see the docstring)
+import agents  # noqa: F401
+import agentsettings  # noqa: F401
+import appinspect  # noqa: F401
+import callers  # noqa: F401
+import changes
+import commands  # noqa: F401
+import completion  # noqa: F401
 import config
+import delivery  # noqa: F401
 import doctor
 import drive
 import events
-import changes
+import evidence  # noqa: F401
+import gatepolicy  # noqa: F401
+import gates  # noqa: F401
+import githost
+import gitproc  # noqa: F401
+import gitrepo  # noqa: F401
 import httpd
 import phases
+import plans  # noqa: F401
+import previews
+import profiles  # noqa: F401
 import progress
+import readiness  # noqa: F401
+import records  # noqa: F401
+import redact  # noqa: F401
 import refine
+import reports  # noqa: F401
 import required
+import resultidentity  # noqa: F401
 import reviews
+import routes  # noqa: F401
+import settings  # noqa: F401
+import setupbase  # noqa: F401
+import setupguide
+import setuptasks  # noqa: F401
+import stackactions  # noqa: F401
+import stacks  # noqa: F401
+import staleness  # noqa: F401
 import state
 import sync
+import taskfiles  # noqa: F401
+import templates  # noqa: F401
 import verify
 import watch
+
+
+def load_provider() -> None:
+    """Load the selected hosting provider's code now, so a running board
+    executes the provider that was on disk when it started. Loading reads
+    the module and checks its declared functions; it asks the network,
+    `gh` and the remote nothing. A provider that does not load is not a
+    reason to refuse to serve: it is reported where it always was (the
+    Configuration check, Settings), so startup is unchanged by it."""
+    try:
+        githost.module()
+    except githost.Refused:
+        pass
+
+
+def wire() -> None:
+    """The one place a lower module is told about a higher one, so neither
+    imports the other from inside a function (task 122).
+
+    - `drive` runs a preview's process but does not know what a preview
+      keeps once it has ended; `previews.record_last` does, and is
+      registered as the drive's end hook. Idempotent.
+    """
+    drive.on_ended(previews.record_last)
 
 
 def refuse_broken_layout() -> None:
@@ -95,9 +161,10 @@ def main() -> None:
                              "reading as the browser's), or record a "
                              "decision with it; see --setup-guide --help")
     argv = sys.argv[1:]
+    load_provider()
+    wire()
     if "--setup-guide" in argv:
         refuse_broken_layout()
-        import setupguide
         raise SystemExit(setupguide.cli([a for a in argv
                                          if a != "--setup-guide"]))
     if "--doctor" in argv:
@@ -160,7 +227,6 @@ def main() -> None:
     # A preview preparation a dead board left running is closed, its
     # process group stopped only when it is provably bench's own; nothing
     # is prepared again by itself.
-    import previews
     previews.recover()
 
     print(f"Task board for {config.TASKS}")

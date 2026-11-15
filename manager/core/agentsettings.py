@@ -192,7 +192,7 @@ def rows(values: dict | None = None) -> dict:
     }}
     for purpose in PURPOSES:
         intent = purpose["id"]
-        suffix = config._SUFFIX[intent]
+        suffix = config.PURPOSE_SUFFIX[intent]
         reading = _intent_reading(intent, file_values)
         out[intent] = {
             "label": purpose["label"],

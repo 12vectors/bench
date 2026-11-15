@@ -488,7 +488,7 @@ def _park_drive(filename: str) -> None:
     if d and d.get("task") == filename and d.get("status") in ("starting", "up"):
         drive_mod.stop()
         for _ in range(40):
-            if not drive_mod._alive(d):
+            if not drive_mod.alive(d):
                 break
             time.sleep(0.5)
 

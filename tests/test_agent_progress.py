@@ -791,8 +791,8 @@ class Headless(Base):
 
     def launch(self, mode: str, agent_id: str):
         log = self.tmp / f"{agent_id}.log"
-        proc, log_file, _ = self.agents._launch(mode, "the prompt", self.tmp,
-                                                agent_id, CARD, log)
+        proc, log_file, _ = self.agents.launch(mode, "the prompt", self.tmp,
+                                               agent_id, CARD, log)
         rc = proc.wait(timeout=60)
         log_file.close()
         return rc, log.read_text(), json.loads(self.out.read_text())

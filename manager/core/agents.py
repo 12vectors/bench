@@ -119,7 +119,7 @@ NAMES = ["Wren", "Juno", "Basil", "Piper", "Sage", "Reed", "Olive", "Finch",
          "Hazel", "Cleo", "Milo", "Fern", "Ada", "Otto", "Nell", "Skye"]
 
 
-def _pick_name(stem: str) -> str:
+def pick_name(stem: str) -> str:
     """Stable-ish per task (same task tends to get the same name back),
     skipping names already worn by a running agent."""
     with state.LOCK:
@@ -242,7 +242,7 @@ def is_phase_card(filename: str, stage: str) -> bool:
         return False
 
 
-def _validate(filename: str, stage: str, allowed: set[str], why: str | None = None,
+def validate_launch(filename: str, stage: str, allowed: set[str], why: str | None = None,
               *, phase: str | None = None) -> None:
     """The refusals every launch shares, before anything exists to clean up.
 
@@ -261,7 +261,7 @@ def _validate(filename: str, stage: str, allowed: set[str], why: str | None = No
     _assert_no_running_agent(filename)
 
 
-def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str,
+def launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str,
             log_path: Path, manifest: dict | None = None):
     """Run one headless job through the configured agent adapter.
 
@@ -371,7 +371,7 @@ def _launch(mode: str, prompt: str, cwd: Path, agent_id: str, filename: str,
 def _progress_fields(mode: str) -> dict[str, str]:
     """The `{progress}` placeholder: what the run is told about reporting,
     or nothing at all when its adapter gives it no channel — the same
-    reading `_launch` takes when it decides whether to hand one over."""
+    reading `launch` takes when it decides whether to hand one over."""
     available = progress.channel(mode).get("state") == "available"
     return {"progress": progress.prompt_block(mode, available)}
 
@@ -438,7 +438,7 @@ def _with_template(manifest: dict, template: dict) -> dict:
     return found
 
 
-def _preflight_profile(intent: str, filename: str, stage: str, *,
+def preflight_profile(intent: str, filename: str, stage: str, *,
                        worktree: Path | str | None = None) -> None:
     """The same question asked with *nothing at all* written — not even a
     pinned bundle.
@@ -467,11 +467,11 @@ def _work_preflight(filename: str, stage: str) -> list:
     prompt template. `start_agent` runs them and stops at the first; the
     launch check runs the same steps and writes nothing either way."""
     return [
-        lambda: _validate(filename, stage, {"in-progress"},
+        lambda: validate_launch(filename, stage, {"in-progress"},
                           "work starts from in-progress/ — move the card "
                           "there first", phase=PHASE_RUNS_WITH),
         lambda: plans.require(plans.preflight(filename, stage)),
-        lambda: _preflight_profile("work", filename, stage),
+        lambda: preflight_profile("work", filename, stage),
         # A local override that breaks its contract refuses here, before
         # the claim, the branch and the worktree (task 77).
         lambda: templates.require("work.md"),
@@ -504,8 +504,8 @@ def launch_refusals(filename: str, stage: str, intent: str = "work",
             return [f"there is no launch called {intent!r}"]
         allowed, why, phase, template = rules[intent]
         steps = [
-            lambda: _validate(filename, stage, allowed, why, phase=phase),
-            lambda: _preflight_profile(intent, filename, stage),
+            lambda: validate_launch(filename, stage, allowed, why, phase=phase),
+            lambda: preflight_profile(intent, filename, stage),
             lambda: templates.require(template),
         ]
     for index, step in enumerate(steps):
@@ -646,10 +646,10 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
         verification=profiles.verification_block(
             manifest, gatepolicy.required_lines(manifest)),
         **config.prompt_fields(filename, "in-progress"), **_progress_fields("work")))
-    proc, log_file, model = _launch("work", prompt, worktree, agent_id,
+    proc, log_file, model = launch("work", prompt, worktree, agent_id,
                                     filename, log_path, manifest)
 
-    name = _pick_name(stem)
+    name = pick_name(stem)
     record = {
         "id": agent_id, "task": filename, "branch": branch,
         "worktree": str(worktree), "base": base, "status": "running",
@@ -682,7 +682,7 @@ def start_review(filename: str, stage: str) -> dict:
     Every stage, and a phase card too: no `phase=` here is the deliberate
     answer, not an omission. Nothing is written but the report.
     """
-    _validate(filename, stage, config.STAGE_DIRS)
+    validate_launch(filename, stage, config.STAGE_DIRS)
     # The read-only intent gets a resolved profile of its own now, rather
     # than the hardcoded grant set each adapter used to hold alone — so a
     # relevance check refuses a missing required input exactly as a work
@@ -703,10 +703,10 @@ def start_review(filename: str, stage: str) -> dict:
         verification=profiles.verification_block(
             manifest, gatepolicy.required_lines(manifest)),
         **config.prompt_fields(filename, stage), **_progress_fields("review")))
-    proc, log_file, model = _launch("review", prompt, config.REPO, agent_id,
+    proc, log_file, model = launch("review", prompt, config.REPO, agent_id,
                                     filename, log_path, manifest)
 
-    name = _pick_name(filename)
+    name = pick_name(filename)
     record = {
         "id": agent_id, "task": filename, "branch": None, "worktree": None,
         "base": None, "status": "running", "rc": None, "started": time.time(),
@@ -835,7 +835,7 @@ def _headline(excerpt: str, cap: int = 120) -> str:
     return (lines[-1].strip()[:cap] if lines else "no output")
 
 
-def _why(record: dict) -> str:
+def died_on(record: dict) -> str:
     """What a dead run's log ended on, for the ticker line that records it."""
     return _headline((record.get("failure") or {}).get("excerpt", ""))
 
@@ -882,7 +882,7 @@ def forget_failure(filename: str) -> bool:
     return cleared
 
 
-def _finish(agent_id: str, proc: subprocess.Popen, log_file) -> tuple[dict, bool, int]:
+def finish(agent_id: str, proc: subprocess.Popen, log_file) -> tuple[dict, bool, int]:
     rc = proc.wait()
     log_file.close()
     # A run that has gone cannot be waiting on a check, and evidence for a
@@ -906,7 +906,7 @@ def _finish(agent_id: str, proc: subprocess.Popen, log_file) -> tuple[dict, bool
 
 
 def _reap_agent(agent_id: str, proc: subprocess.Popen, log_file) -> None:
-    record, stopped, rc = _finish(agent_id, proc, log_file)
+    record, stopped, rc = finish(agent_id, proc, log_file)
     filename, branch = record["task"], record["branch"]
     name = record.get("name") or "the agent"
 
@@ -957,7 +957,7 @@ def _reap_agent(agent_id: str, proc: subprocess.Popen, log_file) -> None:
         # also leaves nothing worth keeping, so the worktree goes and
         # ▸ start work is one click again — same reasoning as a decline.
         cleaned, kept = _discard_untouched_worktree(record)
-        summary = (f"{name} exited on {filename} rc={rc} — {_why(record)}"
+        summary = (f"{name} exited on {filename} rc={rc} — {died_on(record)}"
                    + (" (worktree cleared — relaunch when you have read it)" if cleaned
                       else f" (worktree {record['worktree']} kept: {kept})"))
     state.record_board_event({"kind": "agent", "actor": "agent", "file": filename,
@@ -988,7 +988,7 @@ def start_pr_review(filename: str, stage: str) -> dict:
     4. the manifest, which carries the review record, so `verify` and the
        page read what this run was pinned rather than asking again.
     """
-    _validate(filename, stage, {"review"},
+    validate_launch(filename, stage, {"review"},
               "PR reviews run on cards in review/")
     task = read_task(config.TASKS / stage / filename, stage)
     if not task.get("pr"):
@@ -1011,7 +1011,7 @@ def start_pr_review(filename: str, stage: str) -> dict:
     # …and it must be told the branch its PR is actually from: the prompt
     # asks GitHub for the diff by branch, and a phase's is its own.
     branch = phase_branch(filename) if task["isPhase"] else f"task/{stem}"
-    name = _pick_name(filename)
+    name = pick_name(filename)
     agent_id = f"review-pr-{stem}-{time.strftime('%H%M%S')}"
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1037,7 +1037,7 @@ def start_pr_review(filename: str, stage: str) -> dict:
                 manifest, gatepolicy.required_lines(manifest)),
             **githost.fragments("review-pr.md", branch),
             **config.prompt_fields(filename, stage), **_progress_fields("review")))
-        proc, log_file, model = _launch("review", prompt, Path(pinned["path"]),
+        proc, log_file, model = launch("review", prompt, Path(pinned["path"]),
                                         agent_id, filename, log_path, manifest)
     except BaseException:
         # Nothing may be left holding a checkout for a run that never
@@ -1074,7 +1074,7 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     """Fire a work agent that addresses the review feedback on the task's PR,
     working in the task's existing worktree (recreated from the branch if it
     was cleaned up), committing and pushing to update the PR."""
-    _validate(filename, stage, {"review"},
+    validate_launch(filename, stage, {"review"},
               "acting on a PR happens from review/",
               phase="↻ act on PR is a work agent, and a phase's PR carries "
                     "its members' commits — address the review on the member's "
@@ -1120,7 +1120,7 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     if made["problem"] == "add-failed":
         raise ValueError(f"could not recreate the worktree: {made['detail'][:200]}")
 
-    name = _pick_name(stem)
+    name = pick_name(stem)
     agent_id = f"fix-pr-{stem}-{time.strftime('%H%M%S')}"
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1135,7 +1135,7 @@ def start_pr_fix(filename: str, stage: str) -> dict:
         **githost.fragments("act-pr.md", branch),
         **config.prompt_fields(filename, stage), **_progress_fields("act-pr")))
     # act-pr is the one intent allowed to push: the PR must update.
-    proc, log_file, model = _launch("act-pr", prompt, worktree, agent_id,
+    proc, log_file, model = launch("act-pr", prompt, worktree, agent_id,
                                     filename, log_path, manifest)
 
     record = {
@@ -1162,7 +1162,7 @@ def start_pr_fix(filename: str, stage: str) -> dict:
 
 
 def _reap_pr_fix(agent_id: str, proc: subprocess.Popen, log_file) -> None:
-    record, stopped, rc = _finish(agent_id, proc, log_file)
+    record, stopped, rc = finish(agent_id, proc, log_file)
     filename = record["task"]
     name = record.get("name") or "the agent"
 
@@ -1179,7 +1179,7 @@ def _reap_pr_fix(agent_id: str, proc: subprocess.Popen, log_file) -> None:
     elif stopped:
         summary = f"{name} was held while acting on {filename}'s PR"
     else:
-        summary = f"{name} failed acting on {filename}'s PR (rc={rc}) — {_why(record)}"
+        summary = f"{name} failed acting on {filename}'s PR (rc={rc}) — {died_on(record)}"
     state.record_board_event({"kind": "agent", "actor": "agent", "file": filename,
                               "summary": summary})
     state.broadcast({"type": "board"})
@@ -1187,7 +1187,7 @@ def _reap_pr_fix(agent_id: str, proc: subprocess.Popen, log_file) -> None:
 
 
 def _reap_pr_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
-    record, stopped, rc = _finish(agent_id, proc, log_file)
+    record, stopped, rc = finish(agent_id, proc, log_file)
     filename = record["task"]
     name = record.get("name") or "the reviewer"
 
@@ -1243,7 +1243,7 @@ def _reap_pr_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
     if stopped:
         summary = f"{name}'s PR review of {filename} was held"
     elif rc != 0:
-        summary = f"{name}'s PR review of {filename} died (rc={rc}) — {_why(record)}"
+        summary = f"{name}'s PR review of {filename} died (rc={rc}) — {died_on(record)}"
     elif verdict is None:
         summary = f"{name}'s PR review of {filename} ended without a verdict — see its log"
     else:
@@ -1319,7 +1319,7 @@ def _review_heading(pinned: dict, moved: dict) -> str:
 
 
 def _reap_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
-    record, stopped, rc = _finish(agent_id, proc, log_file)
+    record, stopped, rc = finish(agent_id, proc, log_file)
     filename = record["task"]
 
     verdict = None
@@ -1338,7 +1338,7 @@ def _reap_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
     if stopped:
         summary = f"{name}'s check of {filename} was held"
     elif rc != 0:
-        summary = f"{name}'s check of {filename} exited rc={rc} — {_why(record)}"
+        summary = f"{name}'s check of {filename} exited rc={rc} — {died_on(record)}"
     else:
         summary = f"{name} on {filename}: {verdict[:140] if verdict else 'report appended to the task'}"
     state.record_board_event({"kind": "agent", "actor": "agent", "file": filename,

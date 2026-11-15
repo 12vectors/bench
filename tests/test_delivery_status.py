@@ -1444,7 +1444,7 @@ class CheckTheRemote(DeliveryCase):
         after = self.read()
         self.assertEqual(after["candidate"]["state"], "unavailable")
         self.assertEqual(after["candidate"]["remote"]["ref"], f"task/{STEM}")
-        self.assertNotIn(f"task/{STEM}", gates._tips(),
+        self.assertNotIn(f"task/{STEM}", gates.branch_tips(),
                          "no local branch was created")
 
     def test_no_remote_is_refused_by_name(self):
