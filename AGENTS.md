@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost < state / reports / templates / gitrepo < taskfiles < plans / profiles < gatepolicy / reviews < evidence / resultidentity < staleness < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets < state / reports / templates / gitrepo < taskfiles < plans / profiles < gatepolicy / reviews < evidence / resultidentity < staleness < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -87,6 +87,15 @@ gitproc / records / redact < config < githost < state / reports / templates / gi
   `providers/github/` and nowhere else; a remote the provider does not
   recognise is reported and never acted on. Contract:
   `manager/core/providers/README.md`. Imports `config` only
+- `assets.py` — the page's static assets (task 123): `web/manifest.json`
+  lists every file under `web/` with its sha256, size and the one type
+  its suffix is served as, and the build id is a digest of that manifest.
+  At start the board reads `board.html` and every listed asset into
+  memory, verifies them and refuses to serve when one is missing, linked,
+  oversized or changed; then it serves that snapshot under
+  `/web/<build>/`, immutable, whatever an update does to the disk.
+  `BOARD_ASSETS=disk` reads from disk, uncached, for editing. Imports
+  `config` only
 - `state.py` — shared registries, event log persistence, SSE fan-out
 - `reports.py` — what the record keeps of an agent's closing report: one
   cap, one clip, for the task file and the PR body alike

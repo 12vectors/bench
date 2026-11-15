@@ -51,6 +51,7 @@ import acceptance  # noqa: F401  (eager: see the docstring)
 import agents  # noqa: F401
 import agentsettings  # noqa: F401
 import appinspect  # noqa: F401
+import assets
 import callers  # noqa: F401
 import changes
 import commands  # noqa: F401
@@ -147,6 +148,32 @@ def refuse_broken_layout() -> None:
     raise SystemExit(2)
 
 
+def boot_assets() -> None:
+    """Take the page's asset snapshot, or refuse to serve (task 123).
+
+    The page and every file `web/manifest.json` lists are read into memory
+    and checked against their hashes before the port is bound; a missing,
+    linked, oversized or changed asset means this install would serve a
+    page that cannot load what it names, so the board says which and does
+    not start. Under BOARD_ASSETS=disk the same checks run except the
+    hashes, and nothing is kept."""
+    if config.ASSETS_PROBLEM:
+        print(f"note: {config.ASSETS_PROBLEM}")
+    try:
+        assets.boot()
+    except assets.Refused as refused:
+        print("This board cannot serve its page's assets:\n")
+        for problem in refused.problems:
+            print(f"  - {problem}")
+        print(f"\n  assets      {assets.web_dir()}"
+              f"\n\nAn interrupted update leaves exactly this: finish it "
+              f"(update.sh) or restore manager/core/, then start again. "
+              f"Editing the page? python3 {config.CORE / 'assets.py'} "
+              f"--write rewrites the manifest, and BOARD_ASSETS=disk serves "
+              f"from disk without a snapshot.")
+        raise SystemExit(2) from None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=config.PORT)
@@ -175,6 +202,7 @@ def main() -> None:
         raise SystemExit(doctor.cli([a for a in argv if a != "--doctor"]))
     args = parser.parse_args(argv)
     refuse_broken_layout()
+    boot_assets()
     state.serve_port = args.port
 
     url = f"http://127.0.0.1:{args.port}/"

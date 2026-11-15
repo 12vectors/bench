@@ -161,10 +161,15 @@ def direct_reads(tests: Path = TESTS) -> list[str]:
 
 class ThePageIsReadThroughPagesource(unittest.TestCase):
 
-    def test_page_is_the_shell_while_there_are_no_modules(self):
-        self.assertEqual(pagesource.files(), [pagesource.SHELL])
-        self.assertEqual(pagesource.page(), pagesource.SHELL.read_text("utf-8"))
-        self.assertEqual(pagesource.shell(), pagesource.page())
+    def test_page_is_the_shell_then_its_stylesheet(self):
+        """Since task 123 the stylesheet is web/board.css; the manifest
+        beside it is not page source."""
+        self.assertEqual(pagesource.files(),
+                         [pagesource.SHELL, pagesource.WEB / "board.css"])
+        self.assertEqual(pagesource.page(),
+                         pagesource.SHELL.read_text("utf-8") + "\n"
+                         + (pagesource.WEB / "board.css").read_text("utf-8"))
+        self.assertTrue(pagesource.page().startswith(pagesource.shell()))
 
     def test_a_split_page_is_read_whole_shell_first(self):
         tmp = Path(tempfile.mkdtemp(prefix="bench-pagesource-")).resolve()

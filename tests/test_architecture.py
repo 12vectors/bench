@@ -801,6 +801,7 @@ ROUTES: dict[str, str] = {
     "GET /board.html": "read",
     "GET /files/*": "read",
     "GET /index.html": "read",
+    "GET /web/*": "read",
     "POST /api/agent/act-pr": "browser-mutation",
     "POST /api/agent/review": "browser-mutation",
     "POST /api/agent/review-pr": "browser-mutation",

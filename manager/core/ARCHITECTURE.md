@@ -40,7 +40,7 @@ composition.
 ```architecture current
 L0  gitproc records redact
 L1  config
-L2  githost
+L2  githost assets
 L3  state reports templates gitrepo
 L4  taskfiles
 L5  plans profiles
@@ -146,6 +146,14 @@ about the pull request through public accessors (`pr_state`, `forget_pr`,
 reaching into `PR_STATE`. `delivery` and `routes` ask it for the recovery
 and delivered records and for the merge sheet's facts.
 
+`assets` (task 123, WP14) sits beside `githost`, directly above
+`config`, which is all it imports: the page's asset manifest, the build
+id and the boot snapshot the board serves under `/web/<build>/`. `board`
+asks it to boot before the port is bound (a refusal means the board does
+not start) and `routes` asks it for the page, the build and each asset.
+It covers the page's files only; the Python code a running board
+executes is pinned by eager startup (task 122), not by this.
+
 `gitproc` (task 109, WP03a) is the first stdlib leaf: the hardened git
 subprocess layer, moved verbatim out of `config`. It imports no core
 module and only the standard library, which `tests/test_architecture.py`
@@ -219,7 +227,7 @@ be checked against it when they land. Not enforced.
 ```architecture proposed
 L0  gitproc records redact
 L1  config
-L2  state reports templates gitrepo
+L2  state reports templates gitrepo assets
 L3  githost
 L4  taskfiles
 L5  profiles plans
@@ -519,5 +527,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 182
-routes 93
+routes 94
 ```

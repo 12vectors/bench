@@ -514,6 +514,10 @@ CATALOGUE = (
     ("BOARD_HOST_CHECK", "installation", "restart",
      "whether a request naming a Host this board does not answer to is "
      "only counted (report) or refused (enforce); loopback always works"),
+    ("BOARD_ASSETS", "installation", "restart",
+     "whether the page's assets are served from the snapshot taken at "
+     "start (snapshot) or read from disk on every request, for editing "
+     "(disk)"),
 )
 
 APPLIES_AT = {

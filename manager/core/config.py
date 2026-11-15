@@ -401,6 +401,24 @@ RUN_IDENTITY_MODE, RUN_IDENTITY_PROBLEM = parse_mode(
 HOST_CHECK_MODE, HOST_CHECK_PROBLEM = parse_mode(
     "BOARD_HOST_CHECK", setting("BOARD_HOST_CHECK", "report"))
 
+
+def parse_assets(raw: str) -> tuple[str, str | None]:
+    """How the page's assets are served (task 123), and why the setting
+    was not taken. `snapshot` — the default — serves what the board booted
+    with; `disk` reads every request from disk, for editing. Anything else
+    reads `snapshot` and is named, so a typo never loosens what is served."""
+    value = (raw or "").strip().lower()
+    if value in ("", "snapshot"):
+        return "snapshot", None
+    if value == "disk":
+        return "disk", None
+    return "snapshot", (f"BOARD_ASSETS={raw.strip()!r} is not one of "
+                        f"snapshot or disk, so the board serves its boot "
+                        f"snapshot")
+
+
+ASSETS_MODE, ASSETS_PROBLEM = parse_assets(setting("BOARD_ASSETS", "snapshot"))
+
 # Which agent adapter runs headless jobs. Resolution ladder: local wins.
 # The *startup* reading; a launch asks `agent_choice()`, which reads the
 # agent settings fresh (task 77).

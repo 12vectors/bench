@@ -26,6 +26,7 @@ from typing import Callable, NamedTuple
 
 import acceptance
 import agents
+import assets
 import agentsettings
 import commands
 import completion
@@ -276,6 +277,10 @@ def state_payload() -> dict:
         "appBase": config.APP_BASE,
         "sessions": sessions,
         "agents": agents.list_public(),
+        # the build this board serves its page's assets from, and whether
+        # the one on disk has moved on since it booted (task 123): an
+        # update waiting for a restart, which the header says
+        "assets": assets.public(),
         "prs": changes.public_state(),
         # what the last pass of the phase runner saw: per phase card in
         # in-progress/, its branch, whether a run is in force or halted (and
@@ -373,20 +378,43 @@ _TITLE = re.compile(rb"<title>.*?</title>", re.DOTALL)
 
 def page_bytes() -> bytes:
     """board.html with the project's name rendered into its <title>, so the
-    tab reads right on first paint rather than after the first state load."""
-    html = (config.CORE / "board.html").read_bytes()
+    tab reads right on first paint rather than after the first state load,
+    and the build it was booted with written where it names its assets —
+    the snapshot's copy of the page once booted (task 123), so a page and
+    its assets always come from one build."""
+    html = assets.page_html() or b""
     title = escape(f"{config.PROJECT} · bench").encode("utf-8")
-    return _TITLE.sub(lambda _: b"<title>" + title + b"</title>", html, count=1)
+    html = _TITLE.sub(lambda _: b"<title>" + title + b"</title>", html, count=1)
+    return html.replace(assets.PLACEHOLDER,
+                        assets.current_build().encode("ascii"))
 
 
 # ── GET: reads ─────────────────────────────────────────────────────────
 
 
 def get_page(req) -> None:
-    if not (config.CORE / "board.html").is_file():
+    if assets.page_html() is None:
         req.send(500, b"board.html is missing", "text/plain")
         return
+    # no-store, as every reply here: the page names the build, so a cached
+    # page is how a browser would keep asking for a build nobody serves
     req.send(200, page_bytes(), "text/html; charset=utf-8")
+
+
+def get_web(req) -> None:
+    """`/web/<build>/<path>`: one asset of the build in force, from the
+    boot snapshot (immutable) or, under BOARD_ASSETS=disk, from disk
+    (no-store). Any other build, an unlisted path or a malformed one is a
+    404 — the route serves the manifest's files and nothing beside them."""
+    rest = req.path[len("/web/"):]
+    build, _, name = rest.partition("/")
+    served = assets.lookup(build, name)
+    if served is None:
+        req.send(404, b"not found", "text/plain")
+        return
+    req.send(200, served.body, served.type,
+             {"Cache-Control": served.cache,
+              "X-Content-Type-Options": "nosniff"})
 
 
 def get_tasks(req) -> None:
@@ -1409,6 +1437,7 @@ ROUTES = (
     Route("GET", "/", "read", get_page),
     Route("GET", "/index.html", "read", get_page),
     Route("GET", "/board.html", "read", get_page),
+    Route("GET", "/web/*", "read", get_web),
     Route("GET", "/api/tasks", "read", get_tasks),
     Route("GET", "/api/state", "read", get_state),
     Route("GET", "/api/session", "read", get_session),
