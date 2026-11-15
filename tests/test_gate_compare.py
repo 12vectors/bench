@@ -25,6 +25,7 @@ import hashlib
 import importlib.machinery
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 import unittest
@@ -149,6 +150,57 @@ class ClassifyingChanges(unittest.TestCase):
         self.assertIn("x.md — blocked → allowed", gc.markdown(found))
 
 
+class AnExpectedTransition(unittest.TestCase):
+    """`--expect runner-changed` (card 121): every changed requirement must
+    be the transition's own effect, or the comparison fails."""
+
+    def one(self, before_row, after_row, before="allowed", after="blocked"):
+        head = "h" * 40
+        b = reading({"x.md": {"decision": before, "head": head,
+                              "requirements": [before_row] if before_row else []}})
+        a = reading({"x.md": {"decision": after, "head": head,
+                              "requirements": [after_row] if after_row else []}})
+        return gc.compare(b, a, "runner-changed")
+
+    def test_met_to_runner_changed_is_expected(self):
+        found = self.one(check("met", "passed"),
+                         check("unmet", "stale", staleReason="runner-changed"))
+        self.assertEqual((found["changed"], found["unexpected"],
+                          found["unaccounted"]), (1, 0, 0))
+
+    def test_a_legacy_stale_turning_runner_changed_is_expected(self):
+        found = self.one(check("unmet", "stale", staleReason="policy-changed"),
+                         check("unmet", "stale", staleReason="runner-changed"),
+                         before="blocked")
+        self.assertEqual(found["unexpected"], 0)
+
+    def test_any_other_stricter_change_is_unexpected(self):
+        found = self.one(check("met", "passed"),
+                         check("unmet", "stale", staleReason="check-changed"))
+        self.assertEqual((found["unexpected"], found["unaccounted"]), (1, 0))
+        self.assertIn("UNEXPECTED", gc.markdown(found))
+
+    def test_a_relaxation_is_never_the_expected_effect(self):
+        found = self.one(check("unmet", "stale", staleReason="runner-changed"),
+                         check("met", "passed"), before="blocked", after="allowed")
+        self.assertEqual(found["unexpected"], 1)
+
+    def test_a_requirement_appearing_or_going_is_unexpected(self):
+        self.assertEqual(self.one(None, check("unmet", "not-run"))["unexpected"], 1)
+        self.assertEqual(self.one(check("met", "passed"), None)["unexpected"], 1)
+
+    def test_an_unknown_transition_is_refused(self):
+        with self.assertRaises(ValueError):
+            gc.compare(reading({}), reading({}), "anything")
+
+    def test_without_expect_nothing_is_unexpected(self):
+        b = reading({"x.md": {"decision": "allowed", "requirements": [check("met")]}})
+        a = reading({"x.md": {"decision": "blocked", "requirements": [
+            check("unmet", "stale", staleReason="check-changed")]}})
+        found = gc.compare(b, a)
+        self.assertEqual((found["expect"], found["unexpected"]), (None, 0))
+
+
 class AgainstAFixtureBoard(GateCase):
     """The SAFER36 shape, on a disposable board: a pass with a result
     identity at H, then unrelated approved context in the policy."""
@@ -257,6 +309,41 @@ class AgainstAFixtureBoard(GateCase):
                              "--app", self.repo, "--out", self.work / "snap")
         self.assertEqual(done.returncode, 2)
         self.assertFalse((self.work / "snap").exists())
+
+    def test_a_runner_transition_changes_only_runner_changed_readings(self):
+        """Card 121: the one honest transition, previewed on copied
+        records. The after resolver is this core with one runner file
+        edited, so its runner revision differs and nothing else does; every
+        changed reading must be `stale / runner-changed`, and the records
+        themselves are read, never rewritten (the snapshot's digest holds)."""
+        snap = self.snapshot()
+        digest = tree(snap)
+        after_core = self.tmp / "core-next"
+        shutil.copytree(ROOT / "manager" / "core", after_core,
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        with (after_core / "verify.py").open("a", encoding="utf-8") as handle:
+            handle.write("\n# a later runner\n")
+        done = self.run_tool("run", "--snapshot", snap,
+                             "--before-core", ROOT / "manager" / "core",
+                             "--after-core", after_core,
+                             "--expect", "runner-changed",
+                             "--out", self.tmp / "cmp")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        report = json.loads((self.tmp / "cmp" / "report.json").read_text("utf-8"))
+        self.assertEqual((report["changed"], report["unaccounted"],
+                          report["unexpected"], report["expect"]),
+                         (1, 0, 0, "runner-changed"))
+        change = report["changes"][0]
+        self.assertEqual(change["card"], CARD)
+        self.assertEqual((change["before"]["decision"], change["after"]["decision"]),
+                         ("allowed", "blocked"))
+        after = json.loads((self.tmp / "cmp" / "after.json").read_text("utf-8"))
+        row = after["cards"][CARD]["requirements"][0]
+        self.assertEqual((row["state"], row["reason"], row["staleReason"]),
+                         ("unmet", "stale", "runner-changed"))
+        self.assertEqual(tree(snap), digest, "no record was rewritten")
+        self.assertIn("expected transition: `runner-changed`",
+                      (self.tmp / "cmp" / "report.md").read_text("utf-8"))
 
     def test_a_directory_that_is_not_a_core_is_refused(self):
         snap = self.snapshot()
