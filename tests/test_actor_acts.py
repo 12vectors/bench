@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import agents  # noqa: E402
 import config  # noqa: E402
+import completion  # noqa: E402
 import github  # noqa: E402
 import state  # noqa: E402
 import sync  # noqa: E402
@@ -505,7 +506,7 @@ class MergesGoThroughOrigin(Boards):
         return int(out) if out.isdigit() else 0
 
     def test_the_merge_is_made_on_origin(self):
-        result = github.complete_task(FILENAME, "review")
+        result = completion.complete_task(FILENAME, "review")
 
         self.assertTrue(result["merged"])
         self.assertTrue(result["published"], result)
@@ -529,7 +530,7 @@ class MergesGoThroughOrigin(Boards):
                             for s in self.summaries()))
 
     def test_the_worktree_and_local_branch_go(self):
-        github.complete_task(FILENAME, "review")
+        completion.complete_task(FILENAME, "review")
 
         self.assertFalse((config.WORKTREES / STEM).exists())
         self.assertEqual(git(self.ada, "rev-parse", "--verify", "--quiet",
@@ -541,7 +542,7 @@ class MergesGoThroughOrigin(Boards):
         self.mode("unmergeable")
 
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(FILENAME, "review")
+            completion.complete_task(FILENAME, "review")
 
         self.assertIn("origin would not merge", str(caught.exception))
         self.assertEqual(self.stage_of(self.ada), "review")
@@ -552,7 +553,7 @@ class MergesGoThroughOrigin(Boards):
         self.place(self.ada, "review", card("Review", "ada"), commit=False)
 
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(FILENAME, "review")
+            completion.complete_task(FILENAME, "review")
 
         self.assertIn("open PR", str(caught.exception))
         self.assertEqual(self.stage_of(self.ada), "review")
@@ -571,7 +572,7 @@ class TheLocalMergeIsUntouched(Boards):
         self.use(self.ada)
 
     def test_it_merges_locally_and_pushes_main(self):
-        github.complete_task(FILENAME, "review")
+        completion.complete_task(FILENAME, "review")
 
         self.assertIn("the work", git(self.ada, "log", "--format=%s", "main").stdout)
         self.assertEqual(self.gh_verbs(), [], "gh is not part of this path")

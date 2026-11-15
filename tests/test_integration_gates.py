@@ -69,6 +69,7 @@ import agents  # noqa: E402
 import config  # noqa: E402
 import doctor  # noqa: E402
 import gates  # noqa: E402
+import completion  # noqa: E402
 import github  # noqa: E402
 import httpd  # noqa: E402
 import phases  # noqa: E402
@@ -1106,7 +1107,7 @@ class TheBackendIsTheAuthority(GateCase):
     def test_merge_and_clean_up_refuses_an_unmet_gate(self):
         self.gated()
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         said = str(caught.exception)
         self.assertIn("blocked by this board's acceptance gate", said)
         self.assertIn("nothing has asked bench for 'unit'", said)
@@ -1115,7 +1116,7 @@ class TheBackendIsTheAuthority(GateCase):
     def test_a_refusal_leaves_the_card_the_branch_and_the_worktree(self):
         self.gated()
         with self.assertRaises(ValueError):
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertTrue((self.tasks / "review" / CARD).is_file())
         self.assertEqual(
             git(self.repo, "rev-parse", f"task/{STEM}").stdout.strip(),
@@ -1130,7 +1131,7 @@ class TheBackendIsTheAuthority(GateCase):
     def test_the_refusal_is_not_a_claim_left_on_the_card(self):
         self.gated()
         with self.assertRaises(ValueError):
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertEqual(state.completing_public(), {},
                          "the completing claim is given back on every exit")
 
@@ -1141,7 +1142,7 @@ class TheBackendIsTheAuthority(GateCase):
                          "passed")
         self.assertEqual(gates.evaluate(CARD, "acceptance")["decision"],
                          "allowed")
-        result = github.complete_task(CARD, "review")
+        result = completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
         self.assertEqual(
             0, git(self.repo, "merge-base", "--is-ancestor", self.head,
@@ -1155,11 +1156,11 @@ class TheBackendIsTheAuthority(GateCase):
         shown = payload["scopes"][0]
         self.assertEqual(shown["decision"], "blocked")
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertIn(shown["unmet"][0]["why"], str(caught.exception))
 
     def test_an_ungated_board_merges_exactly_as_it_always_did(self):
-        result = github.complete_task(CARD, "review")
+        result = completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
 
     def test_a_push_between_the_two_readings_is_a_refusal(self):
@@ -1178,7 +1179,7 @@ class TheBackendIsTheAuthority(GateCase):
         self.assertEqual(gates.evaluate(CARD, "acceptance")["decision"],
                          "allowed")
         landed: list[str] = []
-        original = github._assert_lands_in_the_base
+        original = completion._assert_lands_in_the_base
 
         def push_lands(filename, target):
             original(filename, target)
@@ -1188,10 +1189,10 @@ class TheBackendIsTheAuthority(GateCase):
                 gates.forget_cached()
 
         self.addCleanup(setattr, github, "_assert_lands_in_the_base", original)
-        github._assert_lands_in_the_base = push_lands
+        completion._assert_lands_in_the_base = push_lands
 
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertIn("the merge is blocked", str(caught.exception))
         self.assertNotEqual(
             0, git(self.repo, "merge-base", "--is-ancestor", landed[0],
@@ -1208,7 +1209,7 @@ class TheBackendIsTheAuthority(GateCase):
         self.assertEqual(gates.evaluate(CARD, "member")["decision"],
                          "blocked")
         # and acceptance is what merge & clean up asks for an ordinary card
-        result = github.complete_task(CARD, "review")
+        result = completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
 
 
@@ -1434,7 +1435,7 @@ class AGatedPhase(PhaseCase):
         self.assertEqual(found["unmet"][0]["reason"], "not-run")
         self.assertEqual(found["head"]["commit"], self.tip(PHASE_BRANCH))
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(PHASE, "review")
+            completion.complete_task(PHASE, "review")
         self.assertIn("integration gate", str(caught.exception))
         self.assertEqual(self.stage_of(PHASE), "review",
                          "a refused acceptance moves nothing")
@@ -1453,7 +1454,7 @@ class AGatedPhase(PhaseCase):
                          "the phase's check ran in the integration head")
         self.assertEqual(gates.evaluate(PHASE, "integration")["decision"],
                          "allowed")
-        result = github.complete_task(PHASE, "review")
+        result = completion.complete_task(PHASE, "review")
         self.assertTrue(result["merged"])
         self.assertEqual(sorted(result["swept"]), sorted([ONE, TWO]))
 

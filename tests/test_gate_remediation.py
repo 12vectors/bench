@@ -624,8 +624,8 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
 
     def setUp(self):
         super().setUp()
-        import github
-        self.github = github
+        import completion
+        self.completion = completion
         self.wt = self.worktree()
         self.head = self.commit_in(self.wt)
         self.review_card()
@@ -677,7 +677,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         late: list[str] = []
         self.at_the_boundary(
             lambda: late.append(self.commit_in(self.wt, "a late commit\n")))
-        result = self.github.complete_task(CARD, "review")
+        result = self.completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
         self.assertTrue(late, "the boundary fired")
         self.assertTrue(self.contains(self.head, "main"))
@@ -693,7 +693,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         """Nothing moved, so the base fast-forwards to precisely the commit
         the gate read, and the workspace is cleaned up as before."""
         self.verified()
-        result = self.github.complete_task(CARD, "review")
+        result = self.completion.complete_task(CARD, "review")
         self.assertEqual(self.tip("main"), self.head)
         self.assertFalse(self.wt.exists())
         self.assertEqual({k: result[k] for k in ("merged", "swept", "moved")},
@@ -715,7 +715,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         late: list[str] = []
         self.at_the_boundary(
             lambda: late.append(self.commit_in(self.wt, "a late commit\n")))
-        result = self.github.complete_task(CARD, "review")
+        result = self.completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"], "the gated commit did merge")
         self.assertTrue(result.get("partial"), result)
         self.assertEqual(result.get("stage"), "review")
@@ -735,12 +735,12 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         git(self.repo, "add", "-A")
         git(self.repo, "commit", "-q", "-m", "main moved on")
         self.verified()
-        self.github.complete_task(CARD, "review")
+        self.completion.complete_task(CARD, "review")
         subject = git(self.repo, "log", "-1", "--format=%s", "main").stdout
         self.assertIn(f"task/{CARD[:-3]}", subject)
 
     def test_an_ungated_local_merge_is_unchanged(self):
-        result = self.github.complete_task(CARD, "review")
+        result = self.completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
         self.assertTrue(self.contains(self.head, "main"))
         self.assertFalse(self.wt.exists())
@@ -777,7 +777,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
     def test_the_origin_merge_is_conditional_on_the_gated_head(self):
         self.origin()
         self.verified()
-        self.github.complete_task(CARD, "review")
+        self.completion.complete_task(CARD, "review")
         (merge,) = self.merges()
         self.assertIn("--match-head-commit", merge)
         self.assertEqual(merge[merge.index("--match-head-commit") + 1],
@@ -796,7 +796,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
 
         self.at_the_boundary(push_lands)
         with self.assertRaises(ValueError) as caught:
-            self.github.complete_task(CARD, "review")
+            self.completion.complete_task(CARD, "review")
         self.assertIn("origin would not merge", str(caught.exception))
         self.assertFalse((self.gh_state / "merged").exists())
         self.assertEqual(self.stage_of(CARD), "review")
@@ -806,14 +806,14 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         self.origin(old_gh=True)
         self.verified()
         with self.assertRaises(ValueError) as caught:
-            self.github.complete_task(CARD, "review")
+            self.completion.complete_task(CARD, "review")
         self.assertIn("--match-head-commit", str(caught.exception))
         self.assertEqual(self.merges(), [], "no unconditional merge was tried")
         self.assertEqual(self.stage_of(CARD), "review")
 
     def test_an_ungated_origin_merge_is_unchanged(self):
         self.origin(old_gh=True)
-        self.github.complete_task(CARD, "review")
+        self.completion.complete_task(CARD, "review")
         (merge,) = self.merges()
         self.assertNotIn("--match-head-commit", merge)
 
@@ -828,7 +828,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
                    self.head, "-m", "pushed after the merge").stdout.strip()
         git(self.repo, "push", "-q", "origin", f"{late}:refs/heads/late")
         (self.gh_state / "advance-after-merge").write_text(late)
-        self.github.complete_task(CARD, "review")
+        self.completion.complete_task(CARD, "review")
         self.assertEqual(self.tip(f"refs/heads/task/{CARD[:-3]}", bare), late,
                          "an unmerged push was deleted from origin")
 
@@ -841,7 +841,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         late = git(self.repo, "commit-tree", f"{self.head}^{{tree}}", "-p",
                    self.head, "-m", "raced").stdout.strip()
         git(self.repo, "push", "-q", "origin", f"{late}:refs/heads/late")
-        original = self.github._run
+        original = self.completion._run
         raced: list = []
 
         def race(cmd, *args, **kwargs):
@@ -850,9 +850,9 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
                                  late))
             return original(cmd, *args, **kwargs)
 
-        self.addCleanup(setattr, self.github, "_run", original)
-        self.github._run = race
-        deleted = self.github._delete_remote_branch("origin", branch,
+        self.addCleanup(setattr, self.completion, "_run", original)
+        self.completion._run = race
+        deleted = self.completion._delete_remote_branch("origin", branch,
                                                     self.head, CARD)
         self.assertTrue(raced, "the race was injected at the delete")
         self.assertFalse(deleted)
@@ -864,7 +864,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         late: list[str] = []
         self.at_the_boundary(
             lambda: late.append(self.commit_in(self.wt, "local only\n")))
-        result = self.github.complete_task(CARD, "review")
+        result = self.completion.complete_task(CARD, "review")
         self.assertEqual(self.tip(f"task/{CARD[:-3]}"), late[0],
                          "-D removed a commit nobody merged")
         self.assertTrue(self.wt.is_dir())
@@ -880,13 +880,13 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         path = self.worktree(member[:-3])
         merged = self.commit_in(path, "the member's work\n")
         late = self.commit_in(path, "after the phase merged it\n")
-        note = self.github._clear_member({"file": member}, merged)
+        note = self.completion._clear_member({"file": member}, merged)
         self.assertIn("moved on", note)
         self.assertEqual(self.tip(f"task/{member[:-3]}"), late)
         self.assertTrue(path.is_dir())
         # and one that did not move is cleared as before
         git(path, "reset", "-q", "--hard", merged)
-        self.assertEqual(self.github._clear_member({"file": member}, merged), "")
+        self.assertEqual(self.completion._clear_member({"file": member}, merged), "")
         self.assertFalse(path.exists())
 
 

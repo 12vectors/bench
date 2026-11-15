@@ -24,6 +24,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import config  # noqa: E402
+import completion  # noqa: E402
 import github  # noqa: E402
 import state  # noqa: E402
 import taskfiles  # noqa: E402
@@ -48,7 +49,7 @@ class PhaseEnding(PhaseCase):
         self.assertEqual(self.stage_of(PHASE), "review", "the run never finished")
 
     def complete(self, stage: str = "review") -> dict:
-        return github.complete_task(PHASE, stage)
+        return completion.complete_task(PHASE, stage)
 
     def worktrees(self) -> list[str]:
         return [line.split(" ", 1)[1] for line in
@@ -245,13 +246,13 @@ class AFinishedPhase(PhaseEnding):
         so a merge that fails half way finds nothing already swept."""
         self.run_phase()
         seen = {}
-        real = github._merge_locally
-        self.addCleanup(setattr, github, "_merge_locally", real)
+        real = completion._merge_locally
+        self.addCleanup(setattr, completion, "_merge_locally", real)
 
         def watched(filename, branch):
             seen["before"] = (self.stage_of(ONE), self.stage_of(TWO))
             real(filename, branch)
-        github._merge_locally = watched
+        completion._merge_locally = watched
 
         self.complete()
 
@@ -384,7 +385,7 @@ class AFinishedPhase(PhaseEnding):
         git(config.WORKTREES / ONE[:-3], "add", "-A")
         git(config.WORKTREES / ONE[:-3], "commit", "-q", "-m", "work")
 
-        result = github.complete_task(ONE, "review")
+        result = completion.complete_task(ONE, "review")
 
         self.assertEqual((result["merged"], result["swept"], result["moved"]),
                          (True, [], True))

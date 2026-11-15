@@ -39,6 +39,7 @@ import agents  # noqa: E402
 import commands as commands_mod  # noqa: E402
 import config  # noqa: E402
 import drive as drive_mod  # noqa: E402
+import completion  # noqa: E402
 import github  # noqa: E402
 import gitrepo  # noqa: E402
 import phases  # noqa: E402
@@ -309,7 +310,7 @@ print("NOT READY: the card does not say which store to write to")
         worktree = self.worktrees / STEM
         (worktree / "unsaved.txt").write_text("mine\n", encoding="utf-8")
 
-        github.complete_task(CARD, "review")
+        completion.complete_task(CARD, "review")
 
         self.assertTrue(worktree.is_dir(), "the worktree was kept")
         self.assertEqual((worktree / "unsaved.txt").read_text(encoding="utf-8"),
@@ -325,7 +326,7 @@ print("NOT READY: the card does not say which store to write to")
         agents.start_agent(CARD, "in-progress")
         self.settle()
 
-        github.complete_task(CARD, "review")
+        completion.complete_task(CARD, "review")
 
         self.assertFalse((self.worktrees / STEM).exists())
         self.assertFalse(self.branch_exists(f"task/{STEM}"))
@@ -463,7 +464,7 @@ class MergingTheApplicationIsItsOwnDecision(Workspace):
         agents.start_agent(CARD, "in-progress")
         self.settle()
 
-        github.complete_task(CARD, "review")
+        completion.complete_task(CARD, "review")
 
         subjects = git(self.app, "log", "--format=%s", "main").stdout
         self.assertIn("built it", subjects, "the work is in the app's base")
@@ -483,7 +484,7 @@ class MergingTheApplicationIsItsOwnDecision(Workspace):
         git(self.app, "push", "-q", "origin", f"task/{STEM}")
         before = git(self.app, "rev-parse", "main").stdout.strip()
 
-        github.complete_task(CARD, "review")
+        completion.complete_task(CARD, "review")
 
         self.assertTrue(any(call[:2] == ["pr", "merge"]
                             for call in self.gh_calls()),
@@ -502,7 +503,7 @@ class MergingTheApplicationIsItsOwnDecision(Workspace):
         self.settle()
         taskfiles.append_to_task(CARD, "review", f"\n**PR:** {PR_URL}\n", "pr")
         git(self.app, "push", "-q", "origin", f"task/{STEM}")
-        github.complete_task(CARD, "review")
+        completion.complete_task(CARD, "review")
 
         point, _ = gitrepo.fresh_branch_point()
 
@@ -519,7 +520,7 @@ class MergingTheApplicationIsItsOwnDecision(Workspace):
         git(self.app, "push", "-q", "origin", f"task/{STEM}")
         git(self.app, "checkout", "-q", "-b", "side")
 
-        github.complete_task(CARD, "review")
+        completion.complete_task(CARD, "review")
 
         self.assertEqual(git(self.app, "branch", "--show-current").stdout.strip(),
                          "side", "nothing switched the checkout under them")

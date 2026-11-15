@@ -35,6 +35,7 @@ import agents  # noqa: E402
 import commands as commands_mod  # noqa: E402
 import config  # noqa: E402
 import drive as drive_mod  # noqa: E402
+import completion  # noqa: E402
 import github  # noqa: E402
 import phases  # noqa: E402
 import reports  # noqa: E402
@@ -569,7 +570,7 @@ class ExternalPhase(Workspace):
                 break
         self.assertEqual(self.stage_of(self.PHASE_FILE), "review")
 
-        github.complete_task(self.PHASE_FILE, "review")
+        completion.complete_task(self.PHASE_FILE, "review")
 
         self.assertEqual(self.stage_of(self.PHASE_FILE), "done")
         self.assertEqual(self.stage_of(self.ONE), "done")

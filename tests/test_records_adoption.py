@@ -328,8 +328,8 @@ class DurableWritersAreListed(unittest.TestCase):
         the completion recovery record, delivered records, plans,
         manifests, setup decisions and the policy document."""
         self.assertLessEqual({"gates.record_verdict", "gates.override",
-                              "github._remember",
-                              "github._record_delivered", "plans.record",
+                              "completion._remember",
+                              "completion._record_delivered", "plans.record",
                               "profiles.record", "setupguide._write_decisions",
                               "settings.apply"}, durable_call_sites())
 

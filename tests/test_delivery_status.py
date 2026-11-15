@@ -44,6 +44,7 @@ import agents  # noqa: E402
 import config  # noqa: E402
 import delivery  # noqa: E402
 import gates  # noqa: E402
+import completion  # noqa: E402
 import github  # noqa: E402
 import httpd  # noqa: E402
 import phases  # noqa: E402
@@ -431,7 +432,7 @@ class TheCopyMatrix(DeliveryCase):
         self.assertEqual(found["status"]["tone"], "alarm")
 
     def test_f24_reopened_after_delivery(self):
-        github._record_delivered(CARD, "1a2b3c4d5e6f7a8b9c0d", "main", "local")
+        completion._record_delivered(CARD, "1a2b3c4d5e6f7a8b9c0d", "main", "local")
         self.place("backlog")
         found = self.expect("not-started", "move")
         self.assertEqual(found["candidate"]["state"], "delivered")
@@ -527,7 +528,7 @@ class TheCopyMatrix(DeliveryCase):
         self.assertIn(head[:12], found["status"]["sentence"])
 
     def test_f31_not_published(self):
-        directory = github._recovery_dir()
+        directory = completion._recovery_dir()
         directory.mkdir(parents=True, exist_ok=True)
         (directory / f"{STEM}.json").write_text(json.dumps({
             "branch": f"task/{STEM}", "target": "main", "mode": "local",
@@ -1233,7 +1234,7 @@ class TheCacheFollowsItsInputs(DeliveryCase):
         self.assertEqual(self.board_word(), "changes-requested")
 
     def test_a_completion_record(self):
-        directory = github._recovery_dir()
+        directory = completion._recovery_dir()
         directory.mkdir(parents=True, exist_ok=True)
         (directory / f"{STEM}.json").write_text(json.dumps(
             {"commit": self.head, "target": "main"}), encoding="utf-8")
@@ -1274,7 +1275,7 @@ class TheCacheFollowsTheDeliveredRecord(DeliveryCase):
         self.place("backlog")
         reading = lambda: delivery.board(taskfiles.collect())[CARD]
         self.assertEqual(reading()["candidate"]["state"], "none-yet")
-        github._record_delivered(CARD, "1a2b3c4d5e6f7a8b9c0d", "main", "local")
+        completion._record_delivered(CARD, "1a2b3c4d5e6f7a8b9c0d", "main", "local")
         self.assertEqual(reading()["candidate"]["state"], "delivered")
 
 
@@ -1366,7 +1367,7 @@ class MutationsStillRevalidate(DeliveryCase):
             "ready-to-merge")
         self.commit_in(config.WORKTREES / STEM, "a push nobody checked\n")
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertIn("blocked", str(caught.exception))
         self.assertEqual(taskfiles.find_stage_of(CARD), "review")
 
@@ -1460,10 +1461,10 @@ class MergedOnGitHub(DeliveryCase):
         self.assertEqual(self.word(), "merged-elsewhere")
         self.assertEqual(gates.evaluate(CARD, "acceptance")["decision"],
                          "blocked", "the gate is unmet, and not asked")
-        result = github.complete_task(CARD, "review")
+        result = completion.complete_task(CARD, "review")
         self.assertTrue(result["moved"], result)
         self.assertEqual(taskfiles.find_stage_of(CARD), "done")
-        self.assertEqual(github.delivered_record(CARD)["commit"], head)
+        self.assertEqual(completion.delivered_record(CARD)["commit"], head)
 
     def test_an_unconfirmed_merge_is_still_gated(self):
         self.origin()
@@ -1474,7 +1475,7 @@ class MergedOnGitHub(DeliveryCase):
         # the snapshot says merged; the remote does not hold it
         self.snapshot(head=head, prState="MERGED", merged=True)
         with self.assertRaises(ValueError):
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertEqual(taskfiles.find_stage_of(CARD), "review")
 
 

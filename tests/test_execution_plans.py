@@ -34,6 +34,7 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import agents  # noqa: E402
 import config  # noqa: E402
+import completion  # noqa: E402
 import github  # noqa: E402
 import plans  # noqa: E402
 import profiles  # noqa: E402
@@ -681,7 +682,7 @@ class AStackedCardIsNotMergedIntoTheDefault(PlanCase):
         self.write(card("57 — Document it", base=PREREQ, pr_base=PREREQ))
         self.run_agent()
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertIn(PREREQ, str(caught.exception))
         self.assertEqual(taskfiles.find_stage_of(CARD), "review",
                          "the card moved on a merge that never happened")
@@ -696,7 +697,7 @@ class AStackedCardIsNotMergedIntoTheDefault(PlanCase):
         self.run_agent()
         github.open_pr_now(CARD)
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertIn("without its work reaching main", str(caught.exception))
         self.assertEqual([c for c in self.gh_calls() if c[:2] == ["pr", "merge"]],
                          [], "origin was asked to merge it anyway")
@@ -713,18 +714,18 @@ class AStackedCardIsNotMergedIntoTheDefault(PlanCase):
         git(self.repo, "branch", "-D", PREREQ)
         git(self.repo, "push", "-q", "origin", "--delete", PREREQ)
         with self.assertRaises(ValueError):
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         path = self.tasks / "review" / CARD
         path.write_text(path.read_text(encoding="utf-8").replace(PREREQ, "main"),
                         encoding="utf-8")
         plans.replan(CARD, "review")
-        self.assertTrue(github.complete_task(CARD, "review")["merged"])
+        self.assertTrue(completion.complete_task(CARD, "review")["merged"])
         self.assertEqual(taskfiles.find_stage_of(CARD), "done")
 
     def test_an_ordinary_card_still_merges_as_it_always_did(self):
         self.write(card("57 — Document it"))
         self.run_agent()
-        result = github.complete_task(CARD, "review")
+        result = completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
         self.assertEqual(taskfiles.find_stage_of(CARD), "done")
         self.assertNotIn(BRANCH, self.branches())
@@ -737,7 +738,7 @@ class AStackedCardIsNotMergedIntoTheDefault(PlanCase):
         git(self.repo, "branch", "-D", PREREQ)
         git(self.repo, "push", "-q", "origin", "--delete", PREREQ)
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertIn("no longer exists", str(caught.exception))
         self.assertIn("replan", str(caught.exception))
 
@@ -775,7 +776,7 @@ class ACardOnTheDefaultWhenTheDefaultMoves(PlanCase):
         self.assertEqual(plans.recorded(CARD)["prBase"], "main")
 
     def test_merge_and_clean_up_finishes_it_into_what_it_was_planned_on(self):
-        result = github.complete_task(CARD, "review")
+        result = completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
         self.assertEqual(taskfiles.find_stage_of(CARD), "done")
 

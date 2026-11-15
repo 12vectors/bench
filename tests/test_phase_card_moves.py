@@ -395,7 +395,7 @@ class TheGuardIsOnEveryDoorOut(unittest.TestCase):
                              ("phases.assert_not_working(payload[\"file\"], \"archive it\")",
                               "taskfiles.archive_task("),
                              ("phases.assert_not_working(payload[\"file\"], \"merge it\")",
-                              "github.complete_task(")):
+                              "completion.complete_task(")):
             with self.subTest(write=write):
                 self.assertLess(self.source.index(guard), self.source.index(write))
 

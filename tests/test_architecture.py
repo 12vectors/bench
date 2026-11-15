@@ -711,6 +711,8 @@ PRIVATE_REACHES: dict[str, tuple[int, int]] = {
     "acceptance.py::track.change -> taskfiles._is_fence": (1, 592),
     "agentsettings.py::_setting_row -> profiles._SOURCE_WORDS": (1, 148),
     "agentsettings.py::rows -> config._SUFFIX": (1, 194),
+    # moved with merge & clean up out of github.py by WP07 (task 115)
+    "completion.py::_complete -> drive._alive": (1, 211),
     "delivery.py::_context -> gates._tips": (1, 243),
     "delivery.py::_fingerprint -> gates._EPOCH": (1, 1008),
     "delivery.py::_fingerprint -> verify._EPOCH": (1, 1008),
@@ -718,7 +720,6 @@ PRIVATE_REACHES: dict[str, tuple[int, int]] = {
     "delivery.py::_optional -> verify._offered": (1, 403),
     "doctor.py::_harness_finding -> profiles._SOURCE_WORDS": (1, 446),
     "gates.py::board -> verify._EPOCH": (1, 2007),
-    "github.py::_complete -> drive._alive": (1, 829),
     "readiness.py::check_states -> settings._checks_of": (1, 483),
     "readiness.py::review -> settings._checks_of": (1, 802),
     "readiness.py::review -> setupguide._actor": (1, 847),
@@ -782,11 +783,16 @@ DYNAMIC_PATCH_TARGETS: dict[str, tuple[int, int]] = {
 # like, not provider behaviour, so WP08 leaves them where they are.
 # `routes`' fourteen are `httpd`'s thirteen, moved with the handlers by
 # WP04, plus the route table's one reference to the Copilot handler.
+# `completion`'s are merge & clean up's, moved out of the provider module
+# by WP07 (task 115): its `github.…` accessor calls, `gh`'s availability
+# and its refusals' sentences. WP08 moves the provider half behind
+# `githost`. The same move took four from `routes`, six from `delivery`
+# and one from `gates`, whose references now name `completion`.
 PROVIDER_VOCABULARY: dict[str, int] = {
-    "agents": 2, "board": 3, "config": 10,
-    "delivery": 22, "doctor": 3, "gates": 25, "phases": 4,
+    "agents": 2, "board": 3, "completion": 38, "config": 10,
+    "delivery": 16, "doctor": 3, "gates": 24, "phases": 4,
     "plans": 6, "profiles": 17, "readiness": 9, "redact": 4,
-    "reviews": 18, "routes": 14, "settings": 39, "setupguide": 16,
+    "reviews": 18, "routes": 10, "settings": 39, "setupguide": 16,
     "templates": 1,
     "verify": 1, "watch": 2,
 }

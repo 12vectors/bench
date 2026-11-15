@@ -52,27 +52,37 @@ L10 required
 L11 doctor
 L12 commands drive events sync
 L13 github
-L14 delivery
-L15 agentsettings
-L16 settings
-L17 setupguide
-L18 agents
-L19 setuptasks
-L20 readiness
-L21 previews
-L22 phases
-L23 refine
-L24 routes watch
-L25 httpd
-L26 board
+L14 completion
+L15 delivery
+L16 agentsettings
+L17 settings
+L18 setupguide
+L19 agents
+L20 setuptasks
+L21 readiness
+L22 previews
+L23 phases
+L24 refine
+L25 routes watch
+L26 httpd
+L27 board
 composition: board httpd routes watch
 ```
 
 This is the order `AGENTS.md` states, with two facts made explicit:
-`github` imports `drive`, so the old `events / github / drive / sync`
-tier is split with `github` above it; and `commands`, which the old map
-omitted, sits with the other leaf services on `L12`. All 176 distinct
-top-level core-to-core import edges obey it.
+`github` imported `drive`, so the old `events / github / drive / sync`
+tier is split with `github` above it (since WP07 it is `completion` that
+imports `drive`; `github` keeps its layer); and `commands`, which the old map
+omitted, sits with the other leaf services on `L12`. Every distinct
+top-level core-to-core import edge obeys it (176 at WP01).
+
+`completion` (task 115, WP07) sits directly above `github`: merge & clean
+up — the merge, its publication, the recovery record, the cleanup and a
+phase's sweep — moved out of `github.py` verbatim, and it asks `github`
+about the pull request through public accessors (`pr_state`, `forget_pr`,
+`pr_info`, `merge_pr`, `merge_is_conditional`, `woven`) rather than
+reaching into `PR_STATE`. `delivery` and `routes` ask it for the recovery
+and delivered records and for the merge sheet's facts.
 
 `gitproc` (task 109, WP03a) is the first stdlib leaf: the hardened git
 subprocess layer, moved verbatim out of `config`. It imports no core
@@ -102,10 +112,10 @@ task 114, when the branch points moved to `gitrepo` and `plans`):
 
 | Importer (layer) | Imports (layer), from inside | Why it matters |
 | --- | --- | --- |
-| `drive` (L12) | `previews` (L21), in `_watch`, `_preview_ended`, `_remember`, `_scrub_log` | a leaf service calls back into a surface |
-| `settings` (L16) | `agents` (L18), in `frozen_runs` | reads the run registry |
-| `setupguide` (L17) | `readiness`, `previews`, `setuptasks` (L19–L21), in six functions | the guide composes the three modules that are built on it |
-| `setuptasks` (L19) | `previews` (L21), in `gaps` | the same cycle, the other way |
+| `drive` (L12) | `previews` (L22), in `_watch`, `_preview_ended`, `_remember`, `_scrub_log` | a leaf service calls back into a surface |
+| `settings` (L17) | `agents` (L19), in `frozen_runs` | reads the run registry |
+| `setupguide` (L18) | `readiness`, `previews`, `setuptasks` (L20–L22), in six functions | the guide composes the three modules that are built on it |
+| `setuptasks` (L20) | `previews` (L22), in `gaps` | the same cycle, the other way |
 
 The other thirteen are deferred *downward* imports (`readiness → verify`,
 `setuptasks → agents`, `board → previews` …) that could be top-level;
@@ -185,7 +195,7 @@ One owner per question; `AGENTS.md` describes each module in full.
 | policy | `plans`, `profiles`, `reviews` | which branch, what a run may do and read, the pinned review checkout |
 | evidence | `verify`, `progress`, `acceptance`, `callers` | the check runner and its records; a run's own claims; criterion decisions and findings; whether a request's claim to be a run is proved, and the Host and Origin a request names (report or enforce) |
 | decisions | `gates`, `required`, `doctor` | may this merge happen; run missing required checks; readiness diagnosis |
-| services | `commands`, `drive`, `events`, `sync`, `github` | local chores; the one live drive; normalized events; ticket sync; PRs, polling and merge-and-clean-up |
+| services | `commands`, `drive`, `events`, `sync`, `github`, `completion` | local chores; the one live drive; normalized events; ticket sync; opening and polling PRs; merge-and-clean-up (merge, publish, recover, clean up, sweep) |
 | reading | `delivery` | one status per card, owning no policy |
 | surfaces | `agentsettings`, `settings`, `setupguide`, `setuptasks`, `readiness`, `previews` | configuration pages and the setup guide's areas |
 | runs | `agents`, `phases`, `refine` | headless launches; the phase beat; refinement jobs |
@@ -213,7 +223,7 @@ neither.
 | execution plans | `plans` | the launch's own sequence | yes |
 | run manifests | `profiles` | the launch's own sequence | yes |
 | review checkout ownership | `reviews` | the launch's own sequence | no |
-| delivered record, completion recovery record | `github` | the card's completion claim | yes |
+| delivered record, completion recovery record | `completion` | the card's completion claim | yes |
 | PR snapshot | `github` | the PR poll | no |
 | progress records | `progress` | `progress._LOCK` | no |
 | required-check batches, review-entry record | `required` | `required._LOCK`, `_ON_REVIEW_LOCK` | no |
@@ -230,10 +240,10 @@ neither.
 to the code by `tests/test_records_adoption.py`:
 
 ```records durable
+completion._record_delivered
+completion._remember
 gates.override
 gates.record_verdict
-github._record_delivered
-github._remember
 plans.record
 profiles.record
 settings.apply
@@ -254,8 +264,8 @@ list in the same test, which may only shrink.
 ## Git: who runs it, and how (task 114, WP06)
 
 Every git process core starts goes through `gitproc.run`, by way of
-`config.git_run` (or `github._run`, which builds the same argv and
-environment through `config.git_argv` and `config.git_env`). So a read
+`config.git_run` (or `github._run` and `completion._run`, which build the
+same argv and environment through `config.git_argv` and `config.git_env`). So a read
 verb is hardened wherever it is asked from; a mutation inherits the
 environment unchanged. `gitrepo` names the two repositories and holds the
 operations more than one module needs. The rest of this section is the
@@ -284,7 +294,8 @@ kept on purpose and held by `tests/test_gitrepo.py`.
 | `phases._git` | application, or a phase worktree | 60 s | via `gitrepo.git`; a timeout reads exactly `timed out` |
 | `reviews._git`, `reviews._git_in` | application; a pinned review checkout | 30 s | never raises: 128 and the exception's text |
 | `delivery._git_bounded` | application | the caller's | `None` on any failure to run |
-| `github._run` | application (`cwd`, default the application) | 60 s default | **raises** what `subprocess.run` raises; callers catch. Moves with WP07 |
+| `github._run` | application (`cwd`, default the application) | 60 s default | **raises** what `subprocess.run` raises; callers catch. Opening and polling PRs, and the host merge verb |
+| `completion._run` | application (`cwd`, default the application; a member's worktree for its status) | 60 s default | the same body and contract as `github._run`: the one git seam merge & clean up runs through, and the one its tests patch (WP07) |
 | `sync._git` | work state | 30 s | never raises: 128 `no work-state repository`, `timed out`, or the exception's text |
 | `taskfiles._git` | work state | 30 s | 128 `no work-state repository`; otherwise **raises** |
 | `config.git_root`, `_remotes_of`, `gh_repo`, `_git_at` | named | 10 s | `None` / `[]` |
@@ -297,9 +308,10 @@ kept on purpose and held by `tests/test_gitrepo.py`.
 keep their bodies in `config` because `verify.py` calls them; `gitrepo`
 offers them under the same names, and the callers this card routed —
 `agents`, `drive`, `commands`, `plans` and `phases` — ask `gitrepo`.
-Two other direct readers stay on `config` for now: `github` (its
-`branch_for` and `dirty_files` calls, with the rest of its git wrappers
-in a later package) and `verify` (WP12). A delegation from `config` up to
+Two other direct readers stay on `config` for now: `github` and
+`completion` (`branch_for` through `github.branch_of`, and `completion`'s
+`dirty_files` call, with the rest of their git wrappers in a later
+package) and `verify` (WP12). A delegation from `config` up to
 `gitrepo` would be an upward import, so the bodies move with WP12/WP13.
 
 **Raw invocations.** A list beginning `"git"` handed straight to
@@ -332,9 +344,10 @@ exception.
 - **A check.** `bench-verify` → `POST /api/verify` → `verify.request`
   (authorised against the run's frozen manifest) → the runner → an
   evidence record → `gates` and `delivery` read it.
-- **Merge and clean up.** `httpd` → `github` completion → `gates` read
-  twice against the exact head → merge, publish, confirm on the remote →
-  cleanup → `taskfiles` moves the card.
+- **Merge and clean up.** `httpd` → `completion.complete_task` → `gates`
+  read twice against the exact head → merge (locally, or on origin
+  through `github.merge_pr`), publish, confirm on the remote → cleanup →
+  `taskfiles` moves the card.
 
 ## Install modes and update rules (as they are today)
 
@@ -401,6 +414,6 @@ top-level-exceptions 0
 function-imports 25
 private-reaches 61
 dynamic-patch-targets 1
-provider-vocabulary 196
+provider-vocabulary 223
 routes 91
 ```

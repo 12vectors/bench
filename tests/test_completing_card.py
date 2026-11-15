@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import config  # noqa: E402
 import drive as drive_mod  # noqa: E402
+import completion  # noqa: E402
 import github  # noqa: E402
 import state  # noqa: E402
 
@@ -196,13 +197,13 @@ class ACompletionInFlight(unittest.TestCase):
             drive_mod.DRIVE["status"] = "parked"
         drive_mod.stop = fake_stop
 
-        github.complete_task(FILENAME, "review")
+        completion.complete_task(FILENAME, "review")
 
         self.assertTrue(seen.get("claimed"),
                         "the card must already be busy when the drive is parked")
 
     def test_the_card_tracks_the_steps_the_ticker_narrates(self):
-        github.complete_task(FILENAME, "review")
+        completion.complete_task(FILENAME, "review")
 
         steps = self.steps()
         self.assertEqual(steps[0], "merging and cleaning up…")
@@ -215,7 +216,7 @@ class ACompletionInFlight(unittest.TestCase):
                           "every step narrated to the ticker lands on the card too")
 
     def test_a_finished_completion_gives_the_card_back(self):
-        github.complete_task(FILENAME, "review")
+        completion.complete_task(FILENAME, "review")
 
         self.assertEqual(self.stage_of(), "done")
         self.assertEqual(state.COMPLETING, {})
@@ -229,7 +230,7 @@ class ACompletionInFlight(unittest.TestCase):
         self.conflict()
 
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(FILENAME, "review")
+            completion.complete_task(FILENAME, "review")
 
         self.assertIn("merge conflict", str(caught.exception))
         self.assertEqual(self.stage_of(), "review", "the card stays put")
@@ -241,40 +242,40 @@ class ACompletionInFlight(unittest.TestCase):
         git(self.board, "checkout", "-q", "-b", "side")
 
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(FILENAME, "review")
+            completion.complete_task(FILENAME, "review")
 
         self.assertIn("not main", str(caught.exception))
         self.assertEqual(state.COMPLETING, {})
 
     def test_a_crash_mid_completion_releases_the_card(self):
-        self.addCleanup(setattr, github, "_merge_locally", github._merge_locally)
+        self.addCleanup(setattr, completion, "_merge_locally", completion._merge_locally)
 
         def boom(filename, branch):
             raise OSError("git went away")
-        github._merge_locally = boom
+        completion._merge_locally = boom
 
         with self.assertRaises(OSError):
-            github.complete_task(FILENAME, "review")
+            completion.complete_task(FILENAME, "review")
 
         self.assertEqual(state.COMPLETING, {}, "a finally, not a release per exit")
 
     # — and the second request is refused, not run —
 
     def test_a_second_request_mid_completion_starts_no_second_merge(self):
-        real = github._merge_locally
-        self.addCleanup(setattr, github, "_merge_locally", real)
+        real = completion._merge_locally
+        self.addCleanup(setattr, completion, "_merge_locally", real)
         calls, refused = [], []
 
         def merge_then_race(filename, branch):
             calls.append(branch)
             try:
-                github.complete_task(FILENAME, "review")
+                completion.complete_task(FILENAME, "review")
             except ValueError as exc:
                 refused.append(str(exc))
             real(filename, branch)
-        github._merge_locally = merge_then_race
+        completion._merge_locally = merge_then_race
 
-        github.complete_task(FILENAME, "review")
+        completion.complete_task(FILENAME, "review")
 
         self.assertEqual(len(refused), 1, "the second request must be refused")
         self.assertIn("already being completed", refused[0])
@@ -285,7 +286,7 @@ class ACompletionInFlight(unittest.TestCase):
         state.claim_completing(FILENAME, "merging and cleaning up…")
 
         with self.assertRaises(ValueError):
-            github.complete_task(FILENAME, "review")
+            completion.complete_task(FILENAME, "review")
 
         self.assertIn(FILENAME, state.COMPLETING,
                       "a refused caller must never release what it did not take")

@@ -45,6 +45,7 @@ from tests.test_integration_gates import (CARD, FAILS, HANGS, PASSES,  # noqa: E
                                           wait_for)
 
 import gates  # noqa: E402  (on sys.path once the case module is imported)
+import completion  # noqa: E402
 import github  # noqa: E402
 import httpd  # noqa: E402
 import taskfiles  # noqa: E402
@@ -324,7 +325,7 @@ class TheMergeRevalidatesUnderAnOverride(OverrideCase):
     def test_an_override_at_h_lets_h_merge(self):
         self.gated(overrides={"allow": True})
         gates.override(CARD, "acceptance", actor="istos", reason=REASON)
-        result = github.complete_task(CARD, "review")
+        result = completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
         self.assertEqual(
             0, git(self.repo, "merge-base", "--is-ancestor", self.head,
@@ -335,7 +336,7 @@ class TheMergeRevalidatesUnderAnOverride(OverrideCase):
         gates.override(CARD, "acceptance", actor="istos", reason=REASON)
         self.assertEqual(self.decide()["decision"], "overridden")
         landed: list[str] = []
-        original = github._assert_lands_in_the_base
+        original = completion._assert_lands_in_the_base
 
         def push_lands(filename, target):
             original(filename, target)
@@ -345,9 +346,9 @@ class TheMergeRevalidatesUnderAnOverride(OverrideCase):
                 gates.forget_cached()
 
         self.addCleanup(setattr, github, "_assert_lands_in_the_base", original)
-        github._assert_lands_in_the_base = push_lands
+        completion._assert_lands_in_the_base = push_lands
         with self.assertRaises(ValueError):
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertNotEqual(
             0, git(self.repo, "merge-base", "--is-ancestor", landed[0],
                    "main").returncode,
@@ -774,7 +775,7 @@ class TheMergeRevalidatesTheEvidence(GateCase):
         (self.tasks / "in-progress" / CARD).unlink()
         self.assertEqual(self.decide()["decision"], "allowed")
         landed: list[str] = []
-        original = github._assert_lands_in_the_base
+        original = completion._assert_lands_in_the_base
 
         def push_lands(filename, target):
             original(filename, target)
@@ -784,9 +785,9 @@ class TheMergeRevalidatesTheEvidence(GateCase):
                 gates.forget_cached()
 
         self.addCleanup(setattr, github, "_assert_lands_in_the_base", original)
-        github._assert_lands_in_the_base = push_lands
+        completion._assert_lands_in_the_base = push_lands
         with self.assertRaises(ValueError):
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertNotEqual(
             0, git(self.repo, "merge-base", "--is-ancestor", landed[0],
                    "main").returncode)

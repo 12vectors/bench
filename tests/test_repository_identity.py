@@ -174,8 +174,10 @@ class NoPrivateCallers(unittest.TestCase):
                 offenders.append(path.name)
         self.assertEqual(offenders, [])
 
-    def test_github_asks_the_public_helper(self):
-        source = (BENCH / "manager" / "core" / "github.py").read_text(
+    def test_completion_asks_the_public_helper(self):
+        """Both readers — the merge sheet's facts and the base catch-up —
+        moved with merge & clean up from github.py to completion.py (WP07)."""
+        source = (BENCH / "manager" / "core" / "completion.py").read_text(
             encoding="utf-8")
         self.assertEqual(source.count("config.app_shares_state_repository()"),
                          2)
