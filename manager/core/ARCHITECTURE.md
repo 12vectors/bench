@@ -171,7 +171,7 @@ L28 httpd
 L29 board
 composition: board httpd routes
 retired: github
-new: githost gatepolicy evidence resultidentity staleness changes completion stacks
+new: githost gatepolicy evidence resultidentity staleness changes stacks
 ```
 
 The plan wrote same-layer orderings as `gitrepo → githost`; with the

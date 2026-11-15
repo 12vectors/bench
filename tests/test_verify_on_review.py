@@ -34,6 +34,7 @@ from tests.test_integration_gates import CARD, wait_for  # noqa: E402
 from tests.test_required_checks import BatchCase  # noqa: E402
 
 import agents  # noqa: E402
+import completion  # noqa: E402
 import config  # noqa: E402
 import gates  # noqa: E402
 import github  # noqa: E402
@@ -438,7 +439,7 @@ class NoRetryNoFollowOn(OnReviewCase):
         targets = [(agents, name) for name in (
             "_launch", "start_agent", "start_review", "start_pr_review",
             "start_pr_fix")]
-        targets += [(phases, "_merge_member"), (github, "_merge_locally")]
+        targets += [(phases, "_merge_member"), (completion, "_merge_locally")]
         for module, name in targets:
             patcher = mock.patch.object(module, name, side_effect=AssertionError(
                 f"{module.__name__}.{name} must not be called"))
