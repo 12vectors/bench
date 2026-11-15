@@ -47,6 +47,7 @@ from pathlib import Path
 import config
 import events
 import gates
+import gitrepo
 import plans
 import profiles
 import progress
@@ -443,92 +444,6 @@ def _preflight_profile(intent: str, filename: str, stage: str, *,
                                        worktree=worktree))
 
 
-def _fresh_branch_point() -> tuple[str | None, str | None]:
-    """Where a brand-new task branch starts when nothing on the card says
-    otherwise: the newest base branch that exists, in the **application**
-    repository.
-
-    Which remote and which branch are `config`'s answers, resolved
-    independently of the work state's (task 56) — and the remote one is
-    `app_branch_remote()`, not `git_remote()`: with nothing configured
-    only `origin` counts, exactly as before, because branching is on the
-    launch path and a board must not start fetching a remote nobody
-    named. An explicit setting or an external layout widens it.
-
-    With a remote, fetch its base (bounded by FETCH_TIMEOUT) and branch
-    from `<remote>/<base>` — never touching the checkout itself, the
-    fetched ref is only the branch point. No remote, a failed fetch or a
-    timeout all mean today's behaviour: branch from HEAD, because
-    launching must never be blocked by network weather.
-
-    Returns (start point, ticker note); (None, …) means HEAD. The note is
-    non-None whenever the branch point deserves a mention — the remote
-    base ahead of this checkout, or a fetch that had to be skipped.
-
-    This is the *default* path, and the one card 58 deliberately left
-    alone: a card that names its own base is resolved by `plans`, which
-    refuses rather than falling back, because falling back is the failure
-    it exists to stop.
-    """
-    def _git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", "-C", str(plans.app_repo()), *args],
-                              capture_output=True, text=True)
-
-    rname = config.app_branch_remote()
-    if not rname or rname not in _git("remote").stdout.split():
-        return None, None
-    base = config.APP_BASE
-    upstream = f"{rname}/{base}"
-    try:
-        fetched = subprocess.run(
-            ["git", "-C", str(plans.app_repo()), "fetch", rname, base],
-            capture_output=True, text=True, timeout=config.FETCH_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return None, f"fetch of {upstream} timed out; branched from local HEAD"
-    if fetched.returncode != 0 or \
-            _git("rev-parse", "--verify", "--quiet", upstream).returncode != 0:
-        return None, f"fetch of {upstream} failed; branched from local HEAD"
-    # Counted against HEAD, not the base: HEAD is the fallback base, so this
-    # is exactly what launching would have missed — accurate even when the
-    # board checkout sits on another branch.
-    ahead = _git("rev-list", "--count", f"HEAD..{upstream}").stdout.strip()
-    if ahead.isdigit() and int(ahead) > 0:
-        return upstream, (f"branched from {upstream}, "
-                          f"{ahead} ahead of this checkout")
-    return upstream, None
-
-
-def phase_branch_point(filename: str) -> tuple[str | None, str | None]:
-    """Where a *member of a running phase* branches from: the phase's own
-    branch, not main.
-
-    That is the whole reason a phase has a branch. Related cards run one
-    after another, so card two branched from main could not see card one's
-    work while card one sat unmerged in review/ — it would conflict, or
-    quietly build the same thing twice. Branching from the phase tip is
-    what makes the list add up.
-
-    (None, None) for a card in no phase, or one whose phase has not been
-    started — then the ordinary fresh branch point applies.
-    """
-    phase = None
-    try:
-        for stage in collect()["stages"]:
-            for task in stage["tasks"]:
-                if task["file"] == filename:
-                    phase = task.get("phase")
-    except OSError:
-        return None, None
-    if not phase:
-        return None, None
-    branch = phase_branch(phase["file"])
-    exists = subprocess.run(["git", "-C", str(plans.app_repo()), "rev-parse",
-                             "--verify", "--quiet", branch], capture_output=True)
-    if exists.returncode != 0:
-        return None, None
-    return branch, f"branched from {branch}, the phase's own branch"
-
-
 def _claim_refusal(filename: str, holder: str | None, me: str | None,
                    takeover: bool) -> str | None:
     """Why the claim would refuse, or None — the one sentence both the
@@ -685,10 +600,6 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     branch = plan["branch"]
     worktree = Path(plan["worktree"])
 
-    def _git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", "-C", str(plans.app_repo()), *args],
-                              capture_output=True, text=True)
-
     # Earlier work, a foreign checkout sitting where the worktree goes, a
     # branch that is not built on what the card now names: all of it was
     # answered by the preflight above, which refused before the claim
@@ -699,12 +610,10 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
     if not worktree.exists():
         config.WORKTREES.mkdir(parents=True, exist_ok=True)
         if continuing:                     # the branch is there, its worktree is not
-            result = _git("worktree", "add", str(worktree), branch)
-        elif plan["startRef"]:
-            result = _git("worktree", "add", "--no-track", "-b", branch,
-                          str(worktree), plan["startRef"])
+            result = gitrepo.worktree_add(worktree, branch)
         else:
-            result = _git("worktree", "add", "-b", branch, str(worktree))
+            result = gitrepo.worktree_add(worktree, branch, new=True,
+                                          start=plan["startRef"] or None)
         if result.returncode != 0:
             raise ValueError(f"git worktree add failed: {result.stderr.strip()[:300]}")
 
@@ -853,9 +762,7 @@ def _no_new_commits(record: dict) -> bool:
     from — i.e. the run produced no commits on the branch."""
     if not record.get("worktree") or not record.get("base"):
         return False
-    head = subprocess.run(
-        ["git", "-C", record["worktree"], "rev-parse", "HEAD"],
-        capture_output=True, text=True)
+    head = gitrepo.git(record["worktree"], "rev-parse", "HEAD", timeout=None)
     return head.returncode == 0 and head.stdout.strip() == record["base"]
 
 
@@ -879,19 +786,16 @@ def _discard_untouched_worktree(record: dict) -> tuple[bool, str]:
     if not _no_new_commits(record):
         return False, "it has commits"
     worktree = record["worktree"]
-    dirty = config.dirty_files(worktree)
+    dirty = gitrepo.dirty(worktree)
     if dirty:
         return False, (f"{len(dirty)} uncommitted change"
                        f"{'' if len(dirty) == 1 else 's'} in it")
-    removed = subprocess.run(
-        ["git", "-C", str(plans.app_repo()), "worktree", "remove", worktree],
-        capture_output=True, text=True)
+    removed = gitrepo.worktree_remove(worktree)
     if removed.returncode != 0:
         detail = (removed.stderr.strip() or removed.stdout.strip()
                   or "git would not remove it")
         return False, detail.splitlines()[-1][:120]
-    subprocess.run(["git", "-C", str(plans.app_repo()), "branch", "-D", record["branch"]],
-                   capture_output=True)
+    gitrepo.branch_delete(record["branch"])
     # The branch it described is gone, so the plan would describe nothing.
     plans.forget(record["task"])
     return True, ""
@@ -1197,16 +1101,13 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     # repository-identity refusal with it: a foreign checkout sitting where
     # this card's worktree goes is a blocker there, not a second check here.
     plan = plans.record(plans.require(plans.preflight(filename, stage)))
-    if not worktree.exists():
-        if subprocess.run(["git", "-C", str(plans.app_repo()), "rev-parse", "--verify",
-                           "--quiet", branch], capture_output=True).returncode != 0:
-            raise ValueError(f"branch {branch} does not exist locally — nothing to act in")
-        config.WORKTREES.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(
-            ["git", "-C", str(plans.app_repo()), "worktree", "add", str(worktree), branch],
-            capture_output=True, text=True)
-        if result.returncode != 0:
-            raise ValueError(f"could not recreate the worktree: {result.stderr.strip()[:200]}")
+    made = gitrepo.ensure_worktree(stem, branch)
+    if made["problem"] == "mismatch":
+        raise ValueError(made["detail"])
+    if made["problem"] == "no-branch":
+        raise ValueError(f"branch {branch} does not exist locally — nothing to act in")
+    if made["problem"] == "add-failed":
+        raise ValueError(f"could not recreate the worktree: {made['detail'][:200]}")
 
     name = _pick_name(stem)
     agent_id = f"fix-pr-{stem}-{time.strftime('%H%M%S')}"

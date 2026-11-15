@@ -29,6 +29,7 @@ import agents  # noqa: E402
 import config  # noqa: E402
 import github  # noqa: E402
 import phases  # noqa: E402
+import plans  # noqa: E402
 import state  # noqa: E402
 import taskfiles  # noqa: E402
 
@@ -834,17 +835,17 @@ class TheCardsBranchIsFound(PhaseCase):
 class TheBranchPointOfAMember(PhaseCase):
     def test_a_member_of_a_running_phase_branches_from_the_phase(self):
         self.start()
-        point, note = agents.phase_branch_point(TWO)
+        point, note = plans.phase_branch_point(TWO)
         self.assertEqual(point, PHASE_BRANCH)
         self.assertIn("the phase's own branch", note)
 
     def test_a_member_of_a_phase_that_has_not_started_branches_as_usual(self):
-        self.assertEqual(agents.phase_branch_point(TWO), (None, None))
+        self.assertEqual(plans.phase_branch_point(TWO), (None, None))
 
     def test_a_card_in_no_phase_branches_as_usual(self):
         self.write("77-alone.md", card("77 — On its own"))
         self.start()
-        self.assertEqual(agents.phase_branch_point("77-alone.md"), (None, None))
+        self.assertEqual(plans.phase_branch_point("77-alone.md"), (None, None))
 
     def test_the_ticker_names_the_branch_point(self):
         self.start()

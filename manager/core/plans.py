@@ -79,6 +79,7 @@ import time
 from pathlib import Path
 
 import config
+import gitrepo
 import records
 import taskfiles
 
@@ -106,7 +107,7 @@ def app_remote() -> str | None:
     """The remote an application branch is published to and fetched from.
 
     Note what this is *not* used for: the default base's own branch point
-    keeps its established rule (`agents._fresh_branch_point`, which fetches
+    keeps its established rule (`gitrepo.fresh_branch_point`, which fetches
     a remote literally named `origin` and never reaches past it). This
     remote resolves the branches a card names explicitly — the same remote
     its PR is opened on, which is the only one that could carry them.
@@ -116,12 +117,10 @@ def app_remote() -> str | None:
 
 def _git(*args: str, cwd: Path | None = None,
          timeout: float = 30) -> subprocess.CompletedProcess:
-    try:
-        return config.git_run(cwd or app_repo(), *args, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(args, 128, "", "timed out")
-    except OSError as exc:
-        return subprocess.CompletedProcess(args, 128, "", str(exc))
+    """git in the application (or `cwd`), never raising; a timeout reads
+    exactly "timed out", as it always has here."""
+    return gitrepo.git(cwd or app_repo(), *args, timeout=timeout,
+                       timed_out="timed out")
 
 
 def _branch_exists(branch: str) -> bool:
@@ -154,14 +153,7 @@ def _fetch(remote: str, branch: str) -> bool:
     """Bounded, and never fatal on its own: a fetch that fails leaves the
     local copy of the branch as the only candidate, and whether that is
     good enough is the caller's judgement."""
-    try:
-        done = subprocess.run(
-            ["git", "-C", str(app_repo()), "fetch", remote,
-             f"refs/heads/{branch}:refs/remotes/{remote}/{branch}"],
-            capture_output=True, text=True, timeout=config.FETCH_TIMEOUT)
-    except (subprocess.SubprocessError, OSError):
-        return False
-    return done.returncode == 0
+    return gitrepo.fetch_branch(remote, branch, timeout=config.FETCH_TIMEOUT)
 
 
 # ── resolving one named branch ─────────────────────────────────────────
@@ -691,6 +683,37 @@ def replan(filename: str, stage: str) -> dict:
     return {"plan": stored, "previous": portable(previous) if previous else None}
 
 
+def phase_branch_point(filename: str) -> tuple[str | None, str | None]:
+    """Where a *member of a running phase* branches from: the phase's own
+    branch, not main. Moved here from `agents` (task 114): it is a plan
+    question, and asking it from `agents` was why this module imported
+    upward.
+
+    That is the whole reason a phase has a branch. Related cards run one
+    after another, so card two branched from main could not see card one's
+    work while card one sat unmerged in review/ — it would conflict, or
+    quietly build the same thing twice. Branching from the phase tip is
+    what makes the list add up.
+
+    (None, None) for a card in no phase, or one whose phase has not been
+    started — then the ordinary fresh branch point applies.
+    """
+    phase = None
+    try:
+        for stage in taskfiles.collect()["stages"]:
+            for task in stage["tasks"]:
+                if task["file"] == filename:
+                    phase = task.get("phase")
+    except OSError:
+        return None, None
+    if not phase:
+        return None, None
+    branch = config.PHASE_BRANCH_PREFIX + phase["file"][:-3]
+    if not gitrepo.branch_exists(branch):
+        return None, None
+    return branch, f"branched from {branch}, the phase's own branch"
+
+
 def _resolve_ref(plan: dict, *, fetch: bool) -> dict | None:
     """Where the work starts, resolved to a ref and a commit.
 
@@ -706,14 +729,14 @@ def _resolve_ref(plan: dict, *, fetch: bool) -> dict | None:
       never substituted. This is the path that must refuse rather than fall
       back, because falling back is the failure being fixed.
     - **The default base** keeps the rule it has always had:
-      `agents._fresh_branch_point`, which fetches a remote named `origin`
+      `gitrepo.fresh_branch_point`, which fetches a remote named `origin`
       and uses this checkout's HEAD rather than making a launch wait on the
-      network. The import is local because `agents` imports this module.
+      network. (It lived in `agents` until task 114, which made this
+      function import upward to reach it.)
     """
-    import agents                                   # noqa: PLC0415 — cycle
     phase = plan.get("phase")
     if phase:
-        point, note = agents.phase_branch_point(plan["task"])
+        point, note = phase_branch_point(plan["task"])
         if point:
             plan["startRef"] = point
             plan["startCommit"] = _ref_commit(f"refs/heads/{point}")
@@ -737,7 +760,7 @@ def _resolve_ref(plan: dict, *, fetch: bool) -> dict | None:
             plan["notes"].append(found["note"])
         return found
 
-    point, note = agents._fresh_branch_point() if fetch else (None, None)
+    point, note = gitrepo.fresh_branch_point() if fetch else (None, None)
     plan["startRef"] = point
     plan["startCommit"] = _ref_commit(point or "HEAD")
     if note:

@@ -47,6 +47,7 @@ from pathlib import Path
 
 import config
 import gates
+import gitrepo
 import profiles
 import records
 import state
@@ -226,7 +227,7 @@ def scope_of(task: dict) -> str:
 
 def _checkout_of(ref: str) -> Path | None:
     """The worktree that has `ref` checked out, if any. A local read."""
-    found = config._app_git("worktree", "list", "--porcelain")
+    found = gitrepo.app_git("worktree", "list", "--porcelain")
     if found.returncode != 0:
         return None
     path = None

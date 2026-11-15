@@ -14,8 +14,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
-import agents  # noqa: E402
 import config  # noqa: E402
+import gitrepo  # noqa: E402
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -31,7 +31,8 @@ def _commit(cwd: Path, msg: str) -> None:
 
 
 class FreshBranchPoint(unittest.TestCase):
-    """_fresh_branch_point decides the base of a brand-new task branch."""
+    """gitrepo.fresh_branch_point (agents._fresh_branch_point until task
+    114) decides the base of a brand-new task branch."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -61,7 +62,7 @@ class FreshBranchPoint(unittest.TestCase):
 
     def test_no_remote_branches_from_head_silently(self):
         _git(self.local, "remote", "remove", "origin")
-        self.assertEqual(agents._fresh_branch_point(), (None, None))
+        self.assertEqual(gitrepo.fresh_branch_point(), (None, None))
 
     def test_only_origin_counts_and_is_never_fetched_when_absent(self):
         # A hanging remote under another name: if anything fetched it, this
@@ -69,13 +70,13 @@ class FreshBranchPoint(unittest.TestCase):
         _git(self.local, "remote", "rename", "origin", "upstream")
         self._hang_remote("upstream")
         started = time.monotonic()
-        self.assertEqual(agents._fresh_branch_point(), (None, None))
+        self.assertEqual(gitrepo.fresh_branch_point(), (None, None))
         self.assertLess(time.monotonic() - started, 2)
 
     def test_origin_ahead_branches_from_its_tip_and_says_so(self):
         _commit(self.upstream, "landed elsewhere 1")
         _commit(self.upstream, "landed elsewhere 2")
-        point, note = agents._fresh_branch_point()
+        point, note = gitrepo.fresh_branch_point()
         self.assertEqual(point, "origin/main")
         self.assertEqual(note, "branched from origin/main, "
                                "2 ahead of this checkout")
@@ -86,7 +87,7 @@ class FreshBranchPoint(unittest.TestCase):
     def test_worktree_from_origin_main_has_its_tip_as_merge_base(self):
         # The same commands start_agent runs for a fresh branch.
         _commit(self.upstream, "landed elsewhere")
-        point, _ = agents._fresh_branch_point()
+        point, _ = gitrepo.fresh_branch_point()
         worktree = Path(self._tmp.name) / "wt"
         _git(self.local, "worktree", "add", "--no-track", "-b", "task/x",
              str(worktree), point)
@@ -105,10 +106,10 @@ class FreshBranchPoint(unittest.TestCase):
         _commit(self.upstream, "landed elsewhere")
         _git(self.local, "fetch", "-q", "origin")
         _git(self.local, "checkout", "-q", "-b", "other", "origin/main")
-        self.assertEqual(agents._fresh_branch_point(), ("origin/main", None))
+        self.assertEqual(gitrepo.fresh_branch_point(), ("origin/main", None))
 
     def test_origin_in_sync_is_used_without_narration(self):
-        self.assertEqual(agents._fresh_branch_point(), ("origin/main", None))
+        self.assertEqual(gitrepo.fresh_branch_point(), ("origin/main", None))
 
     # — what an explicit configuration may widen it to (task 56) —
 
@@ -120,7 +121,7 @@ class FreshBranchPoint(unittest.TestCase):
         self.addCleanup(setattr, config, "GIT_REMOTE", config.GIT_REMOTE)
         config.GIT_REMOTE = "upstream"
 
-        point, note = agents._fresh_branch_point()
+        point, note = gitrepo.fresh_branch_point()
 
         self.assertEqual(point, "upstream/main")
         self.assertEqual(note, "branched from upstream/main, "
@@ -134,14 +135,14 @@ class FreshBranchPoint(unittest.TestCase):
         self.addCleanup(setattr, config, "EXTERNAL", config.EXTERNAL)
         config.EXTERNAL = True
 
-        self.assertEqual(agents._fresh_branch_point()[0], "upstream/main")
+        self.assertEqual(gitrepo.fresh_branch_point()[0], "upstream/main")
 
     def test_a_configured_base_branch_is_the_one_fetched(self):
         _git(self.upstream, "branch", "-m", "main", "trunk")
         self.addCleanup(setattr, config, "APP_BASE", config.APP_BASE)
         config.APP_BASE = "trunk"
 
-        point, _ = agents._fresh_branch_point()
+        point, _ = gitrepo.fresh_branch_point()
 
         self.assertEqual(point, "origin/trunk")
         self.assertEqual(_git(self.local, "rev-parse", "origin/trunk"),
@@ -157,7 +158,7 @@ class FreshBranchPoint(unittest.TestCase):
         config.FETCH_TIMEOUT = 0.5
 
         started = time.monotonic()
-        point, note = agents._fresh_branch_point()
+        point, note = gitrepo.fresh_branch_point()
 
         self.assertLess(time.monotonic() - started, 5)
         self.assertIsNone(point)
@@ -166,7 +167,7 @@ class FreshBranchPoint(unittest.TestCase):
     def test_unreachable_origin_falls_back_to_head_and_says_so(self):
         _git(self.local, "remote", "set-url", "origin",
              str(Path(self._tmp.name) / "gone"))
-        point, note = agents._fresh_branch_point()
+        point, note = gitrepo.fresh_branch_point()
         self.assertIsNone(point)
         self.assertEqual(note, "fetch of origin/main failed; "
                                "branched from local HEAD")
@@ -175,7 +176,7 @@ class FreshBranchPoint(unittest.TestCase):
         self._hang_remote("origin")
         config.FETCH_TIMEOUT = 0.5
         started = time.monotonic()
-        point, note = agents._fresh_branch_point()
+        point, note = gitrepo.fresh_branch_point()
         self.assertLess(time.monotonic() - started, 5)
         self.assertIsNone(point)
         self.assertEqual(note, "fetch of origin/main timed out; "

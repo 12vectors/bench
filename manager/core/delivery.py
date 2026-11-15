@@ -67,6 +67,7 @@ import acceptance
 import config
 import gates
 import github
+import gitrepo
 import plans
 import profiles
 import required
@@ -216,7 +217,7 @@ def _remote_tips() -> dict[str, str]:
     if not remote:
         return {}
     found: dict[str, str] = {}
-    result = config._app_git("for-each-ref",
+    result = gitrepo.app_git("for-each-ref",
                              "--format=%(refname) %(objectname)",
                              f"refs/remotes/{remote}/")
     if result.returncode != 0:

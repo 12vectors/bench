@@ -98,6 +98,7 @@ from pathlib import Path
 
 import acceptance
 import config
+import gitrepo
 import profiles
 import records
 import state
@@ -469,7 +470,7 @@ def _tips() -> dict[str, str]:
     panel expensive enough that somebody caches the *answer* instead of
     the lookup.
     """
-    result = config._app_git("for-each-ref", "--format=%(refname:short) %(objectname)",
+    result = gitrepo.app_git("for-each-ref", "--format=%(refname:short) %(objectname)",
                              "refs/heads")
     found: dict[str, str] = {}
     if result.returncode != 0:
@@ -531,7 +532,7 @@ def _contained(commit: str, base: str) -> bool:
     """Is `commit` already in `base`, in this checkout? A local read."""
     if not commit or not base:
         return False
-    return config._app_git("merge-base", "--is-ancestor", commit,
+    return gitrepo.app_git("merge-base", "--is-ancestor", commit,
                            base).returncode == 0
 
 

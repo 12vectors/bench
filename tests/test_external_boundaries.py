@@ -40,6 +40,7 @@ import commands as commands_mod  # noqa: E402
 import config  # noqa: E402
 import drive as drive_mod  # noqa: E402
 import github  # noqa: E402
+import gitrepo  # noqa: E402
 import phases  # noqa: E402
 import reports  # noqa: E402
 import state  # noqa: E402
@@ -503,7 +504,7 @@ class MergingTheApplicationIsItsOwnDecision(Workspace):
         git(self.app, "push", "-q", "origin", f"task/{STEM}")
         github.complete_task(CARD, "review")
 
-        point, _ = agents._fresh_branch_point()
+        point, _ = gitrepo.fresh_branch_point()
 
         self.assertEqual(point, "origin/main")
         self.assertEqual(

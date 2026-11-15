@@ -58,6 +58,7 @@ import agents
 import config
 import gates
 import github
+import gitrepo
 import state
 import taskfiles
 
@@ -80,12 +81,10 @@ _LOCK = threading.Lock()          # one pass at a time, whoever asks for it
 
 
 def _git(*args: str, cwd=None, timeout: float = 60) -> subprocess.CompletedProcess:
-    try:
-        return config.git_run(cwd or config.REPO, *args, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(args, 128, "", "timed out")
-    except OSError as exc:
-        return subprocess.CompletedProcess(args, 128, "", str(exc))
+    """git in the application (or a phase worktree), never raising; a
+    timeout reads exactly "timed out", as it always has here."""
+    return gitrepo.git(cwd or gitrepo.app(), *args, timeout=timeout,
+                       timed_out="timed out")
 
 
 def _branch_exists(branch: str) -> bool:
@@ -385,18 +384,15 @@ def _worktree(phase: dict) -> Path:
     arrangement every other branch here gets, recreated from the branch if
     it was cleaned up."""
     branch = agents.phase_branch(phase["file"])
-    path = config.WORKTREES / phase["file"][:-3]
-    mismatch = config.worktree_mismatch(path)
-    if mismatch:
-        raise _Halt(mismatch)
-    if path.exists():
-        return path
-    config.WORKTREES.mkdir(parents=True, exist_ok=True)
-    result = _git("worktree", "add", str(path), branch)
-    if result.returncode != 0:
+    # No separate branch check: git's own refusal is the halt's reason.
+    made = gitrepo.ensure_worktree(phase["file"][:-3], branch,
+                                   check_branch=False, timeout=60)
+    if made["problem"] == "mismatch":
+        raise _Halt(made["detail"])
+    if made["problem"]:
         raise _Halt(f"could not put a worktree on {branch}: "
-                    f"{result.stderr.strip()[:140]}")
-    return path
+                    f"{made['detail'][:140]}")
+    return made["path"]
 
 
 def _merge_into_phase(phase: dict, branch: str, what: str,
@@ -443,7 +439,7 @@ def _freshen(phase: dict) -> None:
     """Merge main into the phase branch on the beat, so a phase that runs
     for hours does not drift into one enormous conflict at the end. A
     conflict here halts the phase like any other."""
-    point, _ = agents._fresh_branch_point()
+    point, _ = gitrepo.fresh_branch_point()
     if _merge_into_phase(phase, point or config.APP_BASE, config.APP_BASE):
         _say(phase["file"], f"merged main into {agents.phase_branch(phase['file'])}")
         _push_phase(phase)
@@ -724,18 +720,17 @@ def _start(phase: dict, filename: str) -> dict:
     # Before the branch is cut: the path the phase's worktree wants may
     # already hold a checkout of something else, and git's own refusal
     # would arrive as an unreadable "fatal: ... already exists".
-    mismatch = config.worktree_mismatch(config.WORKTREES / filename[:-3])
+    mismatch = gitrepo.worktree_mismatch(config.WORKTREES / filename[:-3])
     if mismatch:
         raise ValueError(mismatch)
     if not _branch_exists(branch):
         # The same rule and the same timeout a task branch is cut by: the
         # newest main this checkout can see, and never a wait on the network.
-        point, note = agents._fresh_branch_point()
+        point, note = gitrepo.fresh_branch_point()
         worktree = config.WORKTREES / filename[:-3]
         config.WORKTREES.mkdir(parents=True, exist_ok=True)
-        result = (_git("worktree", "add", "--no-track", "-b", branch,
-                       str(worktree), point) if point
-                  else _git("worktree", "add", "-b", branch, str(worktree)))
+        result = gitrepo.worktree_add(worktree, branch, new=True, start=point,
+                                      timeout=60)
         if result.returncode != 0:
             raise ValueError(f"could not cut {branch}: {result.stderr.strip()[:200]}")
         _push_phase(phase)

@@ -835,23 +835,23 @@ TASK_BRANCH_PREFIX = "task/"
 PHASE_BRANCH_PREFIX = "phase/"
 
 
-def _app_git(*args: str, timeout: float = 30) -> subprocess.CompletedProcess:
-    try:
-        return git_run(REPO, *args, timeout=timeout)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return subprocess.CompletedProcess(args, 128, "", str(exc))
-
-
 def branch_for(stem: str) -> str:
     """The branch a card's work lives on: a phase's own `phase/<stem>`
     when that branch exists, `task/<stem>` otherwise.
 
     One answer in one place. A driver or a local command that assumed
-    `task/<stem>` attached to a branch a phase card never had."""
+    `task/<stem>` attached to a branch a phase card never had.
+
+    The body stays here, rather than in `gitrepo`, only because
+    `verify.py` calls it and is not edited before WP12; every other
+    caller asks `gitrepo.branch_for`. (The never-raising application git
+    it used, `_app_git`, is `gitrepo.app_git` since task 114.)"""
     phase = PHASE_BRANCH_PREFIX + stem
-    if _app_git("rev-parse", "--verify", "--quiet", phase).returncode == 0:
-        return phase
-    return TASK_BRANCH_PREFIX + stem
+    try:
+        found = git_run(REPO, "rev-parse", "--verify", "--quiet", phase)
+    except (OSError, subprocess.SubprocessError):
+        return TASK_BRANCH_PREFIX + stem
+    return phase if found.returncode == 0 else TASK_BRANCH_PREFIX + stem
 
 
 def _common_git_dir(path: Path) -> Path | None:
