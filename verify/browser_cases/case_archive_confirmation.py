@@ -88,7 +88,10 @@ class ConfirmedArchive(unittest.TestCase):
         before = self.server_count()
         b.eval(HOLD)
         # a reading sent before the archive, held: the old board, card and all
-        b.eval("loadState()")
+        # `void`: the reading is sent, not awaited. The harness awaits a
+        # returned promise, and this one settles only on RELEASE — an eval
+        # the one-at-a-time Playwright adapter would never get to
+        b.eval("void loadState()")
         self.assertTrue(b.wait("window.__held.length === 1", 5),
                         "the older reading was not sent")
         # the drop on the activity bar is the archive gesture; it calls the
