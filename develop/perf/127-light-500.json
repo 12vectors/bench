@@ -1,0 +1,333 @@
+{
+ "buildSeconds": 0.37,
+ "fixture": {
+  "cards": 500,
+  "inputs": 6,
+  "outcomes": {
+   "failed": 3,
+   "passed": 3,
+   "running": 2,
+   "stale": 2
+  },
+  "records": 20,
+  "rich": 10,
+  "stages": {
+   "backlog": 100,
+   "done": 100,
+   "in-progress": 100,
+   "review": 100,
+   "to-do": 100
+  }
+ },
+ "host": {
+  "at": "2026-11-16T09:33:46Z",
+  "commit": "52a953f01404",
+  "cpus": 8,
+  "executable": "/usr/bin/python3",
+  "git": "git version 2.53.0",
+  "platform": "Linux-7.0.0-42-generic-x86_64-with-glibc2.43",
+  "python": "3.14.4"
+ },
+ "order": [
+  "baseline",
+  "optimized",
+  "optimized",
+  "baseline"
+ ],
+ "payloadDiffers": [],
+ "payloadsEqual": true,
+ "samples": {
+  "baseline": [
+   {
+    "cold": {
+     "byVerb": {
+      "config": 12,
+      "diff": 6,
+      "for-each-ref": 2,
+      "log": 192,
+      "ls-files": 6,
+      "remote": 4,
+      "rev-parse": 31,
+      "status": 6
+     },
+     "git": 259,
+     "seconds": 1.3302
+    },
+    "concurrent": {
+     "agree": true,
+     "git": 1000,
+     "slowest": 3.0626,
+     "threads": 4,
+     "wall": 3.0731
+    },
+    "expiry": {
+     "byVerb": {
+      "config": 12,
+      "diff": 6,
+      "for-each-ref": 2,
+      "log": 198,
+      "ls-files": 6,
+      "remote": 4,
+      "rev-parse": 30,
+      "status": 6
+     },
+     "git": 264,
+     "seconds": 1.3097
+    },
+    "warm": {
+     "byVerb": {
+      "for-each-ref": 1,
+      "log": 6,
+      "remote": 4
+     },
+     "git": 11,
+     "seconds": 0.0814
+    }
+   },
+   {
+    "cold": {
+     "byVerb": {
+      "config": 12,
+      "diff": 6,
+      "for-each-ref": 2,
+      "log": 192,
+      "ls-files": 6,
+      "remote": 4,
+      "rev-parse": 30,
+      "status": 6
+     },
+     "git": 258,
+     "seconds": 1.2864
+    },
+    "concurrent": {
+     "agree": true,
+     "git": 1032,
+     "slowest": 2.7408,
+     "threads": 4,
+     "wall": 2.7541
+    },
+    "expiry": {
+     "byVerb": {
+      "config": 12,
+      "diff": 6,
+      "for-each-ref": 2,
+      "log": 192,
+      "ls-files": 6,
+      "remote": 4,
+      "rev-parse": 30,
+      "status": 6
+     },
+     "git": 258,
+     "seconds": 1.2957
+    },
+    "warm": {
+     "byVerb": {
+      "for-each-ref": 1,
+      "log": 6,
+      "remote": 4
+     },
+     "git": 11,
+     "seconds": 0.0701
+    }
+   }
+  ],
+  "optimized": [
+   {
+    "cold": {
+     "byVerb": {
+      "config": 12,
+      "diff": 6,
+      "for-each-ref": 2,
+      "log": 6,
+      "ls-files": 6,
+      "remote": 4,
+      "rev-parse": 30,
+      "status": 6
+     },
+     "git": 72,
+     "seconds": 0.4833
+    },
+    "concurrent": {
+     "agree": true,
+     "git": 251,
+     "slowest": 1.8735,
+     "threads": 4,
+     "wall": 1.8927
+    },
+    "expiry": {
+     "byVerb": {
+      "config": 12,
+      "diff": 6,
+      "for-each-ref": 2,
+      "log": 6,
+      "ls-files": 6,
+      "remote": 4,
+      "rev-parse": 30,
+      "status": 6
+     },
+     "git": 72,
+     "seconds": 0.5043
+    },
+    "warm": {
+     "byVerb": {
+      "for-each-ref": 1,
+      "log": 6,
+      "remote": 4
+     },
+     "git": 11,
+     "seconds": 0.0891
+    }
+   },
+   {
+    "cold": {
+     "byVerb": {
+      "config": 12,
+      "diff": 6,
+      "for-each-ref": 2,
+      "log": 6,
+      "ls-files": 6,
+      "remote": 4,
+      "rev-parse": 30,
+      "status": 6
+     },
+     "git": 72,
+     "seconds": 0.4627
+    },
+    "concurrent": {
+     "agree": true,
+     "git": 228,
+     "slowest": 1.5962,
+     "threads": 4,
+     "wall": 1.6121
+    },
+    "expiry": {
+     "byVerb": {
+      "config": 12,
+      "diff": 6,
+      "for-each-ref": 2,
+      "log": 6,
+      "ls-files": 6,
+      "remote": 4,
+      "rev-parse": 30,
+      "status": 6
+     },
+     "git": 72,
+     "seconds": 0.4748
+    },
+    "warm": {
+     "byVerb": {
+      "for-each-ref": 1,
+      "log": 6,
+      "remote": 4
+     },
+     "git": 11,
+     "seconds": 0.0831
+    }
+   }
+  ]
+ },
+ "scenario": "light-500",
+ "sections": {
+  "baseline": {
+   "collect": {
+    "git": 0,
+    "seconds": 0.0
+   },
+   "delivery.board": {
+    "git": 11,
+    "seconds": 0.1771
+   },
+   "gates.board": {
+    "git": 43,
+    "seconds": 0.1082
+   },
+   "verify.board": {
+    "git": 204,
+    "seconds": 0.7156
+   }
+  },
+  "optimized": {
+   "collect": {
+    "git": 0,
+    "seconds": 0.0
+   },
+   "delivery.board": {
+    "git": 5,
+    "seconds": 0.1318
+   },
+   "gates.board": {
+    "git": 7,
+    "seconds": 0.0602
+   },
+   "readScope": {
+    "asked": {
+     "document": 520,
+     "provenance": 12,
+     "resolve": 16,
+     "selection": 156
+    },
+    "computed": {
+     "document": 1,
+     "provenance": 6,
+     "resolve": 10,
+     "selection": 12
+    }
+   },
+   "verify.board": {
+    "git": 60,
+    "seconds": 0.2812
+   }
+  }
+ },
+ "summary": {
+  "baseline": {
+   "cold": {
+    "gitMedian": 258.5,
+    "max": 1.3302,
+    "median": 1.3083,
+    "min": 1.2864,
+    "n": 2
+   },
+   "expiry": {
+    "gitMedian": 261.0,
+    "max": 1.3097,
+    "median": 1.3027,
+    "min": 1.2957,
+    "n": 2
+   },
+   "warm": {
+    "gitMedian": 11.0,
+    "max": 0.0814,
+    "median": 0.0757,
+    "min": 0.0701,
+    "n": 2
+   }
+  },
+  "optimized": {
+   "cold": {
+    "gitMedian": 72.0,
+    "max": 0.4833,
+    "median": 0.473,
+    "min": 0.4627,
+    "n": 2
+   },
+   "expiry": {
+    "gitMedian": 72.0,
+    "max": 0.5043,
+    "median": 0.4895,
+    "min": 0.4748,
+    "n": 2
+   },
+   "warm": {
+    "gitMedian": 11.0,
+    "max": 0.0891,
+    "median": 0.0861,
+    "min": 0.0831,
+    "n": 2
+   }
+  }
+ },
+ "variableFields": [
+  "now"
+ ]
+}
