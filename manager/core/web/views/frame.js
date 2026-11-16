@@ -176,7 +176,10 @@ function renderTitle() {
 }
 
 function render() {
-  if (!S.state) return;
+  // before the first good reading there is no board to draw, but the
+  // connection chip still says why: a first read that failed is not
+  // silence on the page
+  if (!S.state) { renderChip(); return; }
   forgetActsOfVanishedCards();
   renderTitle();
   renderChip();

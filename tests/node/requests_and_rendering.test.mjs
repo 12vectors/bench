@@ -383,6 +383,65 @@ test('loadState: a burst of SSE frames is one request in flight and one queued',
   }
 });
 
+test('loadState: a caller resuming from await while a follow-up is queued starts no second read', async () => {
+  // The in-flight read clears itself before its waiters run, and a caller
+  // that awaited it first resumes before the queued follow-up's callback.
+  // Asking again there must join the follow-up, not start a read beside it.
+  const data = await load('app/data.js');
+  const { S } = await load('app/state.js');
+  const net = controlledFetch();
+  const real = globalThis.fetch;
+  globalThis.fetch = net.fetch;
+  try {
+    let again;
+    const resumed = (async () => { await data.loadState(); again = data.loadState(); })();
+    const follow = data.loadState();
+    await settle();
+    assert.equal(net.asked.length, 1, 'one read out, one queued');
+    net.reply(0, 200, STATE('one')); await settle();
+    await resumed;
+    assert.equal(net.asked.length, 2, 'only the queued follow-up started');
+    assert.equal(again, follow, 'the resumed caller joined the queued follow-up');
+    assert.deepEqual(data.stateReading().queued, false);
+    net.reply(1, 200, STATE('two')); await Promise.all([follow, again]);
+    assert.equal(S.state.tag, 'two');
+    assert.equal(net.asked.length, 2, 'never two reads out at once, never a third');
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test('loadState: a failed first read says so on the chip, and a stream frame before it does not throw', async () => {
+  const data = await load('app/data.js');
+  const { S } = await load('app/state.js');
+  const header = await load('views/header.js');
+  const saved = S.state;
+  const real = globalThis.fetch;
+  try {
+    S.state = null; S.stateError = null;
+    globalThis.fetch = async () => new Response(JSON.stringify({ error: 'nope' }), { status: 503 });
+    await data.loadState();
+    assert.equal(S.state, null);
+    assert.equal(S.stateError.why, 'nope');
+    elements['#livechip'].textContent = '';
+    const frame = await load('views/frame.js');
+    frame.render();
+    assert.match(elements['#livechip'].textContent, /board not read/, 'render() drew the chip with no state');
+    header.renderChip();
+    assert.match(elements['#livechip'].textContent, /board not read/);
+    let source = null;
+    globalThis.EventSource = class { constructor() { source = this; } };
+    data.connectStream();
+    source.onmessage({ data: JSON.stringify({ type: 'event', event: { session: 's1', ts: 1 },
+                                               session: { id: 's1', agentId: 'a1' } }) });
+    assert.equal(S.state, null, 'an event frame before the first reading does not throw');
+    await settle();
+  } finally {
+    globalThis.fetch = real;
+    S.state = saved; S.stateError = null;
+  }
+});
+
 test('loadState: a failed read keeps the last state, says so on the chip, and is announced once', async () => {
   const data = await load('app/data.js');
   const { S } = await load('app/state.js');

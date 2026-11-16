@@ -32,13 +32,17 @@ function sessionElapsed(meta) {
 const reading = { inflight: null, queued: null, asked: 0 };
 
 function loadState() {
+  // A queued follow-up answers every ask until it has started, even in
+  // the moment after the in-flight read cleared itself and before the
+  // follow-up's callback ran: a caller resuming from `await loadState()`
+  // runs in that moment, and starting a read there would put two out at
+  // once, the older able to land last.
+  if (reading.queued) return reading.queued;
   if (reading.inflight) {
-    if (!reading.queued) {
-      reading.queued = reading.inflight.then(() => {
-        reading.queued = null;
-        return startState();
-      });
-    }
+    reading.queued = reading.inflight.then(() => {
+      reading.queued = null;
+      return startState();
+    });
     return reading.queued;
   }
   return startState();
@@ -181,7 +185,7 @@ function connectStream(hooks = {}) {
     const msg = JSON.parse(e.data);
     if (msg.type === 'event') {
       const ev = msg.event, sid = ev.session;
-      if (msg.session) {
+      if (msg.session && S.state) {
         const idx = (S.state.sessions || []).findIndex(m => m.id === sid);
         if (idx >= 0) S.state.sessions[idx] = msg.session;
         else S.state.sessions.unshift(msg.session);
@@ -195,7 +199,7 @@ function connectStream(hooks = {}) {
       // an agent's first event links it to its session — refetch so cards
       // switch from "warming up" to the live line without waiting for a move
       if (msg.session && msg.session.agentId) {
-        const rec = (S.state.agents || []).find(a => a.id === msg.session.agentId);
+        const rec = (S.state?.agents || []).find(a => a.id === msg.session.agentId);
         if (rec && !rec.session) { loadState(); return; }
       }
       scheduleRender();

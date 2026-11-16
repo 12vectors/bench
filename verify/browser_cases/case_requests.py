@@ -46,22 +46,29 @@ def load(width=1280, height=800):
 
 
 # Wraps the page's fetch to count /api/state requests and the most that
-# were ever out at once. The page's own fetch looks the global up at call
-# time, so this is what its reads go through.
-COUNT = """(() => {
+# were ever out at once, and holds every one until the case releases it
+# (until __open is set). The page's own fetch looks the global up at call
+# time, so this is what its reads go through. A request counts as out from
+# when it is asked until its reply is handed back, so a held read is an
+# outstanding one.
+GATE = """(() => {
   const real = window.__realFetch || window.fetch;
   window.__realFetch = real;
   window.__state = { asked: 0, out: 0, most: 0 };
+  window.__held = []; window.__open = false; window.__burstDone = false;
   window.fetch = async (url, opts) => {
     const isState = String(url).startsWith('/api/state');
-    if (isState) { __state.asked++; __state.out++; __state.most = Math.max(__state.most, __state.out); }
-    try { return await real(url, opts); }
-    finally { if (isState) __state.out--; }
+    if (!isState) return real(url, opts);
+    __state.asked++; __state.out++; __state.most = Math.max(__state.most, __state.out);
+    try {
+      if (!__open) await new Promise((go) => __held.push(go));
+      return await real(url, opts);
+    } finally { __state.out--; }
   };
   return true;
 })()"""
 
-RESTORE = "(() => { if (window.__realFetch) window.fetch = window.__realFetch; return true; })()"
+RESTORE ="(() => { if (window.__realFetch) window.fetch = window.__realFetch; return true; })()"
 
 
 class StateReads(unittest.TestCase):
@@ -70,13 +77,31 @@ class StateReads(unittest.TestCase):
         S["browser"].eval(RESTORE)
 
     def test_a_burst_is_one_request_in_flight_and_one_queued(self):
+        # The page asks for the state on its own too (window focus, the 30s
+        # safety net, stream frames), so counting every request until the
+        # burst settles counted those as well and failed at random. Instead
+        # each state reply is held until the case releases it: while a read
+        # is held, any ask — the burst's or the page's — can only join the
+        # queue, so the count is exactly what the queue allows.
         b = load()
-        b.eval(COUNT)
-        b.eval("Promise.all(Array.from({ length: 30 }, () => loadState())).then(() => true)")
+        b.eval(GATE)
+        b.eval("(() => { window.__burst = Promise.all(Array.from({ length: 30 }, () => loadState()))"
+               ".then(() => { window.__burstDone = true; }); return true; })()")
+        self.assertTrue(b.wait("window.__held.length === 1", 5), "no state read went out")
+        got = b.eval("window.__state")
+        self.assertEqual(1, got["asked"], f"thirty asks while nothing had landed were more than one read: {got}")
+        self.assertTrue(b.eval("stateReading().queued"), "the burst queued no follow-up")
+        # the first read lands; the queued follow-up is the one more read
+        b.eval("(() => { __held.shift()(); return true; })()")
+        self.assertTrue(b.wait("window.__held.length === 1 || window.__burstDone === true", 5),
+                        "the queued follow-up never went out")
         got = b.eval("window.__state")
         self.assertLessEqual(got["most"], 1, f"more than one state read out at once: {got}")
         self.assertLessEqual(got["asked"], 2, f"thirty asks were more than two reads: {got}")
-        self.assertGreaterEqual(got["asked"], 1)
+        # let everything through, the follow-up and anything queued behind it
+        b.eval("(() => { __open = true; while (__held.length) __held.shift()(); return true; })()")
+        self.assertTrue(b.wait("window.__burstDone === true", 10), "the burst never settled")
+        self.assertLessEqual(b.eval("window.__state")["most"], 1)
         self.assertTrue(b.eval("document.querySelectorAll('.drop[data-stage]').length >= 5"))
 
     def test_a_failed_read_keeps_the_board_and_says_so(self):
