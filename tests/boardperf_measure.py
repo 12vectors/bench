@@ -58,10 +58,16 @@ from tests import boardperf as bp
 
 import profiles  # noqa: E402
 import routes  # noqa: E402
+import staleness  # noqa: E402
 
 OUT = Path(__file__).resolve().parents[1] / "develop" / "perf"
 CONCURRENT_LIMIT = 30.0
 THREADS = 4
+FRESH_TTL = staleness.FRESH_TTL
+# rich-500 was measured with the slow baseline's warm read; at 1000 cards
+# it would not fit one ten-minute run, and (as rich-500 shows) a read
+# longer than the freshness bucket is never warm anyway
+SKIP_SLOW_WARM = True
 
 
 class Clock:
@@ -173,12 +179,26 @@ def scenario(name: str, *, cards: int, rich: int, pairs: int) -> dict:
             for arm in order:
                 bp.forget_all()
                 cold = read(arm)
-                warm = read(arm)
+                slow = arm == "baseline" and cold["seconds"] > CONCURRENT_LIMIT
+                sample = {"cold": strip(cold)}
+                if slow and SKIP_SLOW_WARM:
+                    sample["warm"] = {
+                        "skipped": f"baseline cold read took "
+                                   f"{cold['seconds']:.1f}s, longer than the "
+                                   f"{FRESH_TTL:.0f}s freshness bucket, so a "
+                                   f"second read is not warm; not repeated"}
+                else:
+                    sample["warm"] = strip(read(arm))
                 clock.offset += 20.0
-                expiry = read(arm)
-                sample = {"cold": strip(cold), "warm": strip(warm),
-                          "expiry": strip(expiry)}
-                if arm == "baseline" and cold["seconds"] > CONCURRENT_LIMIT:
+                if slow:
+                    sample["expiry"] = {
+                        "skipped": f"baseline cold read took "
+                                   f"{cold['seconds']:.1f}s; an expiry read "
+                                   f"repeats the same work and is not "
+                                   f"repeated at this size"}
+                else:
+                    sample["expiry"] = strip(read(arm))
+                if slow:
                     sample["concurrent"] = {
                         "skipped": f"baseline cold read took "
                                    f"{cold['seconds']:.1f}s, over the "
@@ -197,7 +217,13 @@ def scenario(name: str, *, cards: int, rich: int, pairs: int) -> dict:
                                    if a.get(k) != b.get(k))
             else:
                 differing = []
-            parts = {arm: sections(arm) for arm in ("baseline", "optimized")}
+            slowest = max(s["cold"]["seconds"] for s in samples["baseline"])
+            parts = {"optimized": sections("optimized")}
+            parts["baseline"] = (sections("baseline")
+                                 if slowest <= CONCURRENT_LIMIT else
+                                 {"skipped": f"baseline cold read took "
+                                             f"{slowest:.1f}s; sections not "
+                                             f"timed again at this size"})
         for arm in samples:
             for sample in samples[arm]:
                 sample.pop("_cold_payload", None)
@@ -241,7 +267,7 @@ class Measure(unittest.TestCase):
         scenario("rich-100", cards=100, rich=100, pairs=4)
 
     def test_rich_500(self):
-        scenario("rich-500", cards=500, rich=500, pairs=2)
+        scenario("rich-500", cards=500, rich=500, pairs=1)
 
     def test_rich_1000(self):
         scenario("rich-1000", cards=1000, rich=1000, pairs=1)
