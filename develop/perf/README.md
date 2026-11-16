@@ -112,3 +112,9 @@ The first-card figure is an upper bound — the case reads the clock once
 the card is seen, so it includes polling. Compression (gzip on
 `/api/state`) is a separate option the card asks to measure on its own;
 it was not measured or enabled here, and it would not stand in for this.
+
+**Running the checks.** Run `bench-backend` and `bench-browser` one after
+the other, not together, at the same commit. They share one source
+checkout per commit, and the run that finishes first removes it from
+under the other. That ends the other run as a setup error with no verdict,
+and leaves a directory that refuses later runs at that commit.
