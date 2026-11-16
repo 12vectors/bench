@@ -6,9 +6,9 @@
    store keyed by a stable name, and a rebuilt button reads it back. One
    timeout per phase:
 
-     rest ──arm──▶ armed ──fire──▶ busy ──settle──▶ rest
-                    │ armMs           │ busyMs
-                    ▼                 ▼
+     rest --arm--> armed --fire--> busy --settle--> rest
+                    | after armMs     | after busyMs
+                    v                 v
                    rest              rest (and the caller is told: no answer)
 
    An armed window that runs out goes back to rest by itself — a second
