@@ -589,11 +589,18 @@ class ThePageSheet(unittest.TestCase):
 
     def render(self, preview: dict, armed: bool = False) -> str:
         from tests.test_agents_settings_ui import lift
+        # the confirmation's armed window lives in the one shared store
+        # (lib/arm.js, task 125), and runs out by itself
+        acts = ({"57-x.md::stack-confirm": {"phase": "armed", "until": "LATER"}}
+                if armed else {})
         body = ("const esc = s => String(s ?? '').replace(/[&<>\"]/g, c => "
                 "({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));\n"
+                + lift("isArmed") + "\n"
+                + "const S = { acts: " + json.dumps(acts).replace('"LATER"', "Date.now() + 5000")
+                + " };\n"
                 + lift("stackSheet") + "\n"
                 + "process.stdout.write(JSON.stringify(stackSheet({file: '57-x.md'}, "
-                + json.dumps({"action": preview.get("action"), "armed": armed,
+                + json.dumps({"action": preview.get("action"),
                               "preview": preview}) + ")));")
         out = subprocess.run([self.node, "-e", body], capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
