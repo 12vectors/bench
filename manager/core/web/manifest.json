@@ -1,8 +1,8 @@
 {
  "assets": {
   "app/data.js": {
-   "bytes": 10995,
-   "sha256": "5287362972d16048cd8c27a88f96d70f790cfa0753467db7ed536d72d6b43e65",
+   "bytes": 11372,
+   "sha256": "c55d2ccc7d7ef06adc8519fea2e5621e15ac8777de4607758e028c487d3cb388",
    "type": "text/javascript; charset=utf-8"
   },
   "app/state.js": {

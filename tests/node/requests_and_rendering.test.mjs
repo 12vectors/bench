@@ -411,6 +411,42 @@ test('loadState: a caller resuming from await while a follow-up is queued starts
   }
 });
 
+test('loadState: a read whose paint throws cannot jam the queue', async () => {
+  // The paint runs inside the read, so a view that throws rejects it. The
+  // follow-up queued behind that read must still start, and once it has,
+  // a later ask must reach the board rather than being handed the old
+  // rejection for good.
+  const data = await load('app/data.js');
+  const { S } = await load('app/state.js');
+  const sched = await load('lib/schedule.js');
+  let throwsLeft = 1;
+  sched.onRender(() => { if (throwsLeft > 0) { throwsLeft--; throw new Error('a view threw'); } });
+  const net = controlledFetch();
+  const real = globalThis.fetch;
+  globalThis.fetch = net.fetch;
+  try {
+    const first = data.loadState();
+    const follow = data.loadState();
+    first.catch(() => {});
+    await settle();
+    assert.equal(net.asked.length, 1, 'one read out, one queued');
+    net.reply(0, 200, STATE('throws')); await settle();
+    await assert.rejects(first, /a view threw/, 'the caller of the read that threw is told');
+    assert.equal(net.asked.length, 2, 'the queued follow-up started although the read before it rejected');
+    assert.equal(data.stateReading().queued, false, 'nothing is left queued');
+    net.reply(1, 200, STATE('after')); await follow;
+    assert.equal(S.state.tag, 'after');
+    const later = data.loadState();
+    await settle();
+    assert.equal(net.asked.length, 3, 'a later ask reaches the board');
+    net.reply(2, 200, STATE('later')); await later;
+    assert.equal(S.state.tag, 'later');
+  } finally {
+    globalThis.fetch = real;
+    sched.onRender(() => {});
+  }
+});
+
 test('loadState: a failed first read says so on the chip, and a stream frame before it does not throw', async () => {
   const data = await load('app/data.js');
   const { S } = await load('app/state.js');

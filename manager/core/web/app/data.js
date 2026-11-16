@@ -39,10 +39,16 @@ function loadState() {
   // once, the older able to land last.
   if (reading.queued) return reading.queued;
   if (reading.inflight) {
-    reading.queued = reading.inflight.then(() => {
+    // The follow-up starts whether the read it waited for resolved or
+    // rejected. A read can reject after its fetch — the paint runs in it,
+    // and a view can throw — and a follow-up that waited only for success
+    // would stay queued, rejected, answering every later ask with that
+    // rejection and never asking the board again.
+    const next = () => {
       reading.queued = null;
       return startState();
-    });
+    };
+    reading.queued = reading.inflight.then(next, next);
     return reading.queued;
   }
   return startState();
