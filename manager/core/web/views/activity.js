@@ -1,7 +1,7 @@
 /* The activity bar, the event log and the archive tray. */
-import { confirmWrite, loadState, sessionMeta } from '../app/data.js';
+import { afterWrite, sessionMeta } from '../app/data.js';
 import { S } from '../app/state.js';
-import { fetch } from '../lib/api.js';
+import { post } from '../lib/api.js';
 import { $, esc } from '../lib/dom.js';
 import { markScroll, restoreScroll } from '../lib/keep.js';
 import { fmtClock } from '../lib/time.js';
@@ -98,7 +98,7 @@ function renderLog() {
    behind, whether git recorded it and the board revision whose reading
    holds it — so the card is taken off the page *then*, from the reply,
    and the whole-board reading that reconciles everything else is asked
-   for in the background (`confirmWrite`). The action does not wait for
+   for in the background (`afterWrite`). The action does not wait for
    it. A reading sent before the archive cannot put the card back: the
    confirmed removal is laid over any reading older than its revision.
 
@@ -132,18 +132,10 @@ function restoreTask(state, task, to) {
   stage.tasks.splice(at, 0, { ...task, stage: to });
 }
 
-async function post(url, body) {
-  let res;
-  try {
-    res = await fetch(url, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
-    });
-  } catch {
-    return { answered: false };
-  }
-  let data = null;
-  try { data = await res.json(); } catch { /* an answer that is not JSON */ }
-  return { answered: true, ok: res.ok && !!data, status: res.status, data: data || {} };
+/* No answer, or a success that says nothing about what happened, is not
+   a confirmation: the reply must name the card it moved. */
+function unconfirmed(r) {
+  return r.status === 0 || (r.ok && !(r.data && r.data.file));
 }
 
 function archiveCard(file, from) {
@@ -154,21 +146,21 @@ function archiveCard(file, from) {
 }
 
 async function sendArchive(file, from) {
-  const r = await post('/api/archive', JSON.stringify({ file, from }));
-  if (!r.answered || (r.status < 400 && !r.ok)) {
+  const r = await post('/api/archive', { file, from });
+  if (unconfirmed(r)) {
     toast(`${file}: the archive could not be confirmed — nothing is known to have ` +
           `been archived; the board is being read again to show what happened`, true);
-    loadState();
+    afterWrite(null);
     return false;
   }
   if (!r.ok) {
-    toast(r.data.error || 'archive failed', true);
-    loadState();
+    toast(r.error || 'archive failed', true);
+    afterWrite(null);
     return false;
   }
   const d = r.data;
   let removed = null;
-  confirmWrite(d, (state) => {
+  afterWrite(d, (state) => {
     const task = removeTask(state, d.file, d.from);
     if (task) removed = task;
     if (typeof d.archivedCount === 'number') state.archivedCount = d.archivedCount;
@@ -194,21 +186,21 @@ async function sendUnarchive() {
   // the undo covers the last archive this page saw confirmed — so it
   // waits for any still on their way rather than racing them
   if (archiving.size) await Promise.allSettled([...archiving.values()]);
-  const r = await post('/api/unarchive', '{}');
-  if (!r.answered || (r.status < 400 && !r.ok)) {
+  const r = await post('/api/unarchive', {});
+  if (unconfirmed(r)) {
     toast('⌘Z could not be confirmed — the board is being read again to show what happened', true);
-    loadState();
+    afterWrite(null);
     return false;
   }
   if (!r.ok) {
-    toast(r.data.error || 'nothing to bring back', true);
-    loadState();
+    toast(r.error || 'nothing to bring back', true);
+    afterWrite(null);
     return false;
   }
   const d = r.data;
   const known = lastRemoved && lastRemoved.file === d.file ? lastRemoved.task : null;
   lastRemoved = null;
-  confirmWrite(d, (state) => {
+  afterWrite(d, (state) => {
     if (known) restoreTask(state, known, d.to);
     if (typeof d.archivedCount === 'number') state.archivedCount = d.archivedCount;
   });

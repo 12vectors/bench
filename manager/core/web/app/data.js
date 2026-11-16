@@ -90,16 +90,21 @@ function boardChanged(rev) {
   return loadState();
 }
 
-/* A write the board confirmed (task 128). `apply` is the exact change
-   the reply described — a card gone, a count — and it is painted now,
-   without waiting for a whole-board reading. It is then laid over every
-   reading older than the write's revision, and dropped by the first
-   reading that holds the write (or comes from a restarted board, which
-   read the disk afresh). The reading that reconciles it is asked for in
-   the background; the caller does not wait for it. */
-function confirmWrite({ rev, boot }, apply) {
-  if (typeof rev !== 'number') {
-    // an older board says nothing about order: no overlay, just read
+/* After a write was asked for (task 128). When the board confirmed it,
+   `apply` is the exact change the reply described — a card gone, a
+   count — and it is painted now, without waiting for a whole-board
+   reading. It is then laid over every reading older than the write's
+   revision, and dropped by the first reading that holds the write (or
+   comes from a restarted board, which read the disk afresh). The reading
+   that reconciles it is asked for in the background; the caller does not
+   wait for it.
+
+   With no confirmation — a refusal, no answer, or an older board whose
+   reply names no revision — nothing is painted from the reply and the
+   board is simply read: what happened is the reading's to say. */
+function afterWrite(reply, apply) {
+  const rev = reply && reply.rev, boot = reply && reply.boot;
+  if (!apply || typeof rev !== 'number') {
     loadState();
     return;
   }
@@ -165,10 +170,14 @@ function stateFailed(why) {
 /* how many state requests this page has made, and whether one is out
    and one queued: for a test, and for a person at the console */
 function stateReading() {
-  return {
-    asked: reading.asked, inflight: !!reading.inflight, queued: !!reading.queued,
-    rev: reading.rev, known: reading.known, pending: reading.confirmed.length,
-  };
+  return { asked: reading.asked, inflight: !!reading.inflight, queued: !!reading.queued };
+}
+
+/* where the readings stand among the board's revisions (task 128): the
+   newest painted, the newest heard of, and how many confirmed writes are
+   still laid over the page waiting for a reading that holds them */
+function boardOrder() {
+  return { rev: reading.rev, known: reading.known, pending: reading.confirmed.length };
 }
 
 async function loadSession(sid) {
@@ -326,7 +335,8 @@ function connectStream(hooks = {}) {
 }
 
 export {
-  agentFor, agentOnTask, allTasks, boardChanged, confirmWrite, connectStream,
+  agentFor, agentOnTask, allTasks, boardChanged, boardOrder, afterWrite,
+  connectStream,
   failedRun, isLiveSession,
   lastRunOn, loadSession, loadState, modelChip, scheduleRender,
   sessionElapsed, sessionMeta, sessionsOf, shortModel, stateReading,
