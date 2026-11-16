@@ -514,13 +514,4 @@ class Wiring(unittest.TestCase):
 @unittest.skipUnless(NODE, "node is needed to parse the page")
 class ThePageStillParses(unittest.TestCase):
     def test_the_inline_script_parses(self):
-        html = pagesource.page()
-        scripts = re.findall(r"<script[^>]*>(.*?)</script>", html, re.S)
-        self.assertTrue(scripts, "board.html has no inline script")
-        with tempfile.TemporaryDirectory() as tmp:
-            for index, script in enumerate(scripts):
-                source = Path(tmp) / f"page-{index}.js"
-                source.write_text(script, encoding="utf-8")
-                out = subprocess.run([NODE, "--check", str(source)],
-                                     capture_output=True, text=True)
-                self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(pagesource.parse_problems(NODE), [])

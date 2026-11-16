@@ -18,10 +18,6 @@ REPO = Path(__file__).resolve().parents[1]
 HTML = pagesource.page()
 
 
-def scripts() -> str:
-    return "\n".join(re.findall(r"<script>(.*?)</script>", HTML, re.S))
-
-
 def lift(name: str) -> str:
     """One top-level function's source, by brace matching."""
     start = HTML.index(f"function {name}(")
@@ -46,12 +42,7 @@ class ThePageScript(unittest.TestCase):
             raise unittest.SkipTest("node not available — the script is unchecked")
 
     def test_the_whole_script_parses(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "board.js"
-            path.write_text(scripts(), encoding="utf-8")
-            out = subprocess.run([self.node, "--check", str(path)],
-                                 capture_output=True, text=True)
-        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(pagesource.parse_problems(self.node), [])
 
     def node_eval(self, body: str):
         out = subprocess.run([self.node, "-e", body], capture_output=True, text=True)

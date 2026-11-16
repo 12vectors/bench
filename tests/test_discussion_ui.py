@@ -186,14 +186,7 @@ class Rendering(unittest.TestCase):
 @unittest.skipUnless(NODE, "node is needed to parse the page's script")
 class Script(unittest.TestCase):
     def test_the_page_script_parses(self):
-        script = lift(r"<script>\n(.*)</script>", "its script").split("\n", 1)[1]
-        script = script.rsplit("</script>", 1)[0]
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "board.js"
-            path.write_text(script, encoding="utf-8")
-            out = subprocess.run([NODE, "--check", str(path)], capture_output=True,
-                                 text=True)
-        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(pagesource.parse_problems(NODE), [])
 
 
 class SourceInvariants(unittest.TestCase):

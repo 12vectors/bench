@@ -175,15 +175,7 @@ class PageParsesTests(unittest.TestCase):
     the whole script to a parser."""
 
     def test_the_inline_script_parses(self):
-        m = re.search(r"<script>\n(.*)\n</script>", HTML, re.S)
-        self.assertIsNotNone(m, "board.html lost its inline script")
-        script = m.group(1)
-        with tempfile.TemporaryDirectory() as tmp:
-            js = Path(tmp) / "board.js"
-            js.write_text(script, encoding="utf-8")
-            run = subprocess.run([NODE, "--check", str(js)],
-                                 capture_output=True, text=True)
-        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(pagesource.parse_problems(NODE), [])
 
 
 @unittest.skipUnless(NODE, "node is not installed")

@@ -63,3 +63,34 @@ def page(core: Path = CORE) -> str:
 def shell(core: Path = CORE) -> str:
     """The shell document alone, `board.html`."""
     return (Path(core) / "board.html").read_text(encoding="utf-8")
+
+
+def scripts(core: Path = CORE) -> list[Path]:
+    """The page's own script files under `web/`, in path order (task 124:
+    the shell carries no inline script)."""
+    return [p for p in files(Path(core))[1:] if p.suffix in (".js", ".mjs")]
+
+
+def parse_problems(node: str, core: Path = CORE) -> list[str]:
+    """`node --check` over every page script, each read as what it is — an
+    ES module unless it sits in the classic bridge directory — and what
+    Node said about any that did not parse. A page with no script is a
+    problem too: a parse check over nothing checks nothing."""
+    import subprocess
+    import tempfile
+    found = []
+    paths = scripts(core)
+    if not paths:
+        return ["the page has no script files under web/"]
+    web = Path(core) / "web"
+    with tempfile.TemporaryDirectory() as tmp:
+        for path in paths:
+            rel = path.relative_to(web)
+            suffix = ".js" if rel.parts[0] == "classic" else ".mjs"
+            copy = Path(tmp) / (rel.as_posix().replace("/", "__") + suffix)
+            copy.write_bytes(path.read_bytes())
+            out = subprocess.run([node, "--check", str(copy)],
+                                 capture_output=True, text=True)
+            if out.returncode != 0:
+                found.append(f"{rel}: {out.stderr.strip()[-600:]}")
+    return found

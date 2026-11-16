@@ -439,14 +439,7 @@ class TheActionOnTheCard(unittest.TestCase):
 
     @unittest.skipUnless(NODE, "node is needed to parse the page")
     def test_the_page_still_parses(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            for index, script in enumerate(
-                    re.findall(r"<script[^>]*>(.*?)</script>", self.html, re.S)):
-                source = Path(tmp) / f"page-{index}.js"
-                source.write_text(script, encoding="utf-8")
-                out = subprocess.run([NODE, "--check", str(source)],
-                                     capture_output=True, text=True)
-                self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(pagesource.parse_problems(NODE), [])
 
 
 class TheRouteBehindIt(unittest.TestCase):

@@ -45,9 +45,8 @@ NOT_READERS = {"test_architecture.py", "test_agent_progress.py", "test_pagesourc
 # It may only shrink — lower a count when a lift moves to a real module.
 # Recorded at refactor/bench-architecture a155bcd: 228 lifts in 39 modules.
 LIFTS = {
-    "test_add_to_phase.py": 6,
-    "test_agents_settings_ui.py": 5,
-    "test_application_previews.py": 1,
+    "test_add_to_phase.py": 5,
+    "test_agents_settings_ui.py": 4,
     "test_archive_chip.py": 25,
     "test_board_title.py": 9,
     "test_boards_sync.py": 1,
@@ -71,14 +70,14 @@ LIFTS = {
     "test_model_chip.py": 4,
     "test_no_agent_commands.py": 3,
     "test_phase_card_refuses_work.py": 4,
-    "test_phase_cards.py": 5,
-    "test_phase_members_hidden.py": 5,
+    "test_phase_cards.py": 4,
+    "test_phase_members_hidden.py": 4,
     "test_phase_watch.py": 11,
     "test_phases_view.py": 4,
     "test_profile_ui.py": 2,
     "test_progress_ui.py": 1,
     "test_review_markdown.py": 14,
-    "test_scroll_kept.py": 5,
+    "test_scroll_kept.py": 4,
     "test_session_identity.py": 1,
     "test_settings_security.py": 2,
     "test_settings_ui.py": 18,
@@ -166,11 +165,16 @@ class ThePageIsReadThroughPagesource(unittest.TestCase):
         beside it, and the vendored font stylesheet in web/fonts/, are not
         page source."""
         self.assertTrue((pagesource.WEB / "fonts" / "plex.css").is_file())
-        self.assertEqual(pagesource.files(),
-                         [pagesource.SHELL, pagesource.WEB / "board.css"])
-        self.assertEqual(pagesource.page(),
-                         pagesource.SHELL.read_text("utf-8") + "\n"
-                         + (pagesource.WEB / "board.css").read_text("utf-8"))
+        files = pagesource.files()
+        self.assertEqual(files[0], pagesource.SHELL)
+        self.assertIn(pagesource.WEB / "board.css", files)
+        # since task 124 the script is modules under web/ too
+        self.assertEqual(files[1:], sorted([pagesource.WEB / "board.css",
+                                            *pagesource.scripts()]))
+        self.assertGreater(len(pagesource.scripts()), 10)
+        self.assertNotIn(pagesource.WEB / "fonts" / "plex.css", files)
+        self.assertEqual(pagesource.page(), "\n".join(
+            p.read_text("utf-8") for p in files))
         self.assertTrue(pagesource.page().startswith(pagesource.shell()))
 
     def test_a_split_page_is_read_whole_shell_first(self):

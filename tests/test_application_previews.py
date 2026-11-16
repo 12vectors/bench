@@ -659,16 +659,9 @@ class ThePageKeepsTheActsApart(unittest.TestCase):
 
     @unittest.skipUnless(__import__("shutil").which("node"), "node is not installed")
     def test_the_page_script_parses(self):
-        import re
         import shutil
-        import tempfile
-        scripts = re.findall(r"<script[^>]*>(.*?)</script>", self.html, re.S)
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "page.js"
-            path.write_text("\n;\n".join(scripts), encoding="utf-8")
-            out = subprocess.run([shutil.which("node"), "--check", str(path)],
-                                 capture_output=True, text=True)
-        self.assertEqual(0, out.returncode, out.stderr[-2000:])
+        from tests import pagesource
+        self.assertEqual(pagesource.parse_problems(shutil.which("node")), [])
 
 
 def _kill(pid: int) -> None:
