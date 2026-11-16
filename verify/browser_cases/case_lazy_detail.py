@@ -16,7 +16,11 @@ card's text from `GET /api/card` when it is opened. In a real browser:
    an unsent comment surviving the redraw, and state reloads (as a
    reconnect makes) ask for nothing while the revision stands;
 6. a card moved on disk while open is followed to its new stage, and one
-   deleted closes the view.
+   deleted closes the view;
+7. a move the card's own read discovers — its reply held while the file
+   moves, and every board reading held shut until that read has answered
+   — is followed: the `409 moved` reply itself asks for the board again;
+8. likewise an archive the read discovers (`410 archived`) closes the view.
 
 The measurements are written to `lazy-detail-measurements.json` beside
 the screenshots, and printed.
@@ -283,6 +287,86 @@ class LazyDetail(unittest.TestCase):
         self.assertTrue(b.wait("!S.selected && !document.querySelector('#drawer.open')", 10),
                         "the view stayed open on a deleted card")
         src.write_text(text, encoding="utf-8")
+
+    def _discovered_by_the_read(self, name: str, dest: str, status: str):
+        """Open `name`, hold its text read, move the file to `dest` on disk,
+        and hold every board reading until that read has answered: the
+        page can learn of the move only from the read's own reply."""
+        b = self.load()
+        b.eval(DISCOVER)
+        b.eval(f"(() => {{ window.__holdFor = {json.dumps(name)}; return true; }})()")
+        self.open(name)
+        self.assertTrue(b.wait("__held.length === 1", 5), "the card's read did not go out")
+        src = self.tasks / "review" / name
+        dst = self.tasks / dest / name
+        text = src.read_text(encoding="utf-8")
+        dst.write_text(text.replace("**Status:** Review", f"**Status:** {status}"), encoding="utf-8")
+        src.unlink()
+        b.eval("(() => { window.__stateShut = true; window.__holdFor = null;"
+               " __held.shift()(); return true; })()")
+        try:
+            self.assertTrue(b.wait("__cards.answered.length === 1", 10), "the held read never answered")
+            return b, dst, src, text
+        except AssertionError:
+            dst.unlink(missing_ok=True)
+            src.write_text(text, encoding="utf-8")
+            raise
+
+    def test_7_a_move_the_read_itself_discovers_is_followed(self):
+        b, dst, src, text = self._discovered_by_the_read(HEAVY[1], "done", "Done")
+        try:
+            self.assertEqual(409, b.eval("__cards.answered[0]"), "the read did not answer 'moved'")
+            self.assertTrue(b.wait("__stateAfter > 0", 10),
+                            "the read's 'moved' reply did not ask for the board again")
+            self.assertTrue(b.wait("S.selected && S.selected.stage === 'done'", 10),
+                            "the view did not follow the card after the read said it moved")
+            self.assertTrue(b.wait(f"({BRIEF}).includes({json.dumps(BRIEF_LINE.format(name=HEAVY[1]))})", 10),
+                            "the moved card's brief was not read from its new stage")
+            self.assertIn(200, b.eval("__cards.answered"), "the text was not read again from done/")
+        finally:
+            dst.unlink(missing_ok=True)
+            src.write_text(text, encoding="utf-8")
+
+    def test_8_an_archive_the_read_itself_discovers_closes_the_view(self):
+        b, dst, src, text = self._discovered_by_the_read(HEAVY[0], "archive", "Archived")
+        try:
+            self.assertEqual(410, b.eval("__cards.answered[0]"), "the read did not answer 'archived'")
+            self.assertTrue(b.wait("__stateAfter > 0", 10),
+                            "the read's 'archived' reply did not ask for the board again")
+            self.assertTrue(b.wait("!S.selected && !document.querySelector('#drawer.open')", 10),
+                            "the view stayed open on an archived card")
+            self.assertFalse(b.eval(f"({BRIEF}).includes({json.dumps(BRIEF_LINE.format(name=HEAVY[0]))})"))
+        finally:
+            dst.unlink(missing_ok=True)
+            src.write_text(text, encoding="utf-8")
+
+
+# GATE, plus: every /api/card status is recorded as it answers, and while
+# `__stateShut` is set every /api/state request waits until a held card
+# read has answered — so a reading cannot tell the page what the read did.
+DISCOVER = """(() => {
+  const real = window.__realFetch || window.fetch;
+  window.__realFetch = real;
+  window.__cards = { asked: [], answered: [] }; window.__held = []; window.__holdFor = null;
+  window.__stateShut = false; window.__stateWaiting = []; window.__stateAfter = 0;
+  const open = () => { __stateShut = false; __stateWaiting.splice(0).forEach((go) => go()); };
+  window.fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.startsWith('/api/state')) {
+      if (__cards.answered.length) __stateAfter += 1;
+      if (__stateShut) await new Promise((go) => __stateWaiting.push(go));
+      return real(url, opts);
+    }
+    if (!u.startsWith('/api/card?')) return real(url, opts);
+    __cards.asked.push(u);
+    if (__holdFor && u.includes(__holdFor)) await new Promise((go) => __held.push(go));
+    const r = await real(url, opts);
+    __cards.answered.push(r.status);
+    open();
+    return r;
+  };
+  return true;
+})()"""
 
 
 if __name__ == "__main__":
