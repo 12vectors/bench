@@ -476,6 +476,20 @@ The Playwright adapter reports CSP violations apart from uncaught errors
 (`Browser.csp`); the local-Chromium path collects them from the `Log`
 domain and, like the rest of that path, has not run on this host.
 
+## Requests, announcements and the connection chip (card 125)
+
+`verify/browser_cases/case_requests.py` is the browser half of WP16's
+request and accessibility work; the policies themselves are driven as real
+modules under Node (`tests/node/requests_and_rendering.test.mjs`). In the
+running page it requires that thirty state reads asked at once are never
+more than one request out at a time and at most two in total; that a
+state read the test refuses keeps the last board drawn, puts *board not
+read* on the connection chip and announces the failure in the alert
+region, and that the next good read clears it; that the connection chip
+is a keyboard stop with a visible focus ring whose Enter opens Sessions;
+and that an error is announced in the persistent alert region, which a
+redraw does not remove.
+
 ## Not covered here
 
 These checks do not cover live lifecycle behaviour (real agents, PRs,
