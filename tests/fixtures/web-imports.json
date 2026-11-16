@@ -1,9 +1,6 @@
 {
  "about": "Import edges the page's direction rule does not allow by itself (task 124, WP15): from app/ or views/ to anything but lib/, words.js and app/state.js, each with the number of names imported. Reviewed at the module conversion; it may only shrink (WP16 drains it). tests/test_script_policy.py holds the page to it.",
  "edges": {
-  "app/data.js -> views/frame.js": 1,
-  "app/data.js -> views/header.js": 1,
-  "app/data.js -> views/settings/setup.js": 1,
   "views/activity.js -> app/data.js": 2,
   "views/activity.js -> views/extras.js": 1,
   "views/board.js -> app/data.js": 2,
@@ -72,7 +69,7 @@
   "views/frame.js -> views/settings/shell.js": 2,
   "views/gates.js -> app/data.js": 1,
   "views/gates.js -> views/card.js": 3,
-  "views/gates.js -> views/delivery.js": 9,
+  "views/gates.js -> views/delivery.js": 8,
   "views/header.js -> app/data.js": 2,
   "views/header.js -> views/doctor.js": 1,
   "views/header.js -> views/frame.js": 1,

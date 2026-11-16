@@ -284,9 +284,12 @@ class OneStatusAcrossSurfaces(Source):
         self.assertIn("body.querySelector(`[data-dslot=\"${dslot}\"]`)", drawer)
 
     def test_the_full_reading_is_fetched_only_when_the_compact_one_moved(self):
+        # the reading is keyed by deliveryFullKey and asked only when that
+        # key moves (lib/resource.js; driven as a real module in
+        # tests/node/requests_and_rendering.test.mjs, task 125)
         body = self.body("loadDeliveryFull")
-        self.assertIn("cur.key === key", body)
-        self.assertIn("/api/card/delivery?file=", body)
+        self.assertIn("deliveryFull.read(task.file, deliveryFullKey(task)", body)
+        self.assertIn("/api/card/delivery?file=", self.html)
         self.assertNotIn("method: 'POST'", body)
 
 

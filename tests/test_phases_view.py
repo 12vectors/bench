@@ -32,6 +32,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import config  # noqa: E402
+import phases  # noqa: E402
 import taskfiles  # noqa: E402
 
 NODE = shutil.which("node")
@@ -103,7 +104,14 @@ class LaneCase(unittest.TestCase):
         (self.tasks / stage / filename).write_text(text, encoding="utf-8")
 
     def state(self, **extra) -> dict:
-        return {"board": taskfiles.collect(), "agents": [], "phases": {}, **extra}
+        board = taskfiles.collect()
+        # which members each phase's branch holds is the server's answer
+        # (task 125), computed here as `/api/state` computes it — from the
+        # runner's snapshot the test hands in and the card's own log
+        snaps = extra.get("phases") or {}
+        merged = {t["file"]: phases.merged_members(t, snaps.get(t["file"]))
+                  for stage in board["stages"] for t in stage["tasks"] if t.get("isPhase")}
+        return {"board": board, "agents": [], "phases": {}, "phaseMerged": merged, **extra}
 
     def run_js(self, expression: str, **extra) -> object:
         script = (self.src + "\nvar S = { state: " + json.dumps(self.state(**extra))

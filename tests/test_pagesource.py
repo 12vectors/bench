@@ -44,13 +44,15 @@ NOT_READERS = {"test_architecture.py", "test_agent_progress.py", "test_pagesourc
 # The reviewed baseline: regex lifts per page-reading test module at WP02.
 # It may only shrink — lower a count when a lift moves to a real module.
 # Recorded at refactor/bench-architecture a155bcd: 228 lifts in 39 modules.
+# WP16 (task 125) moved the arm, request and sweep checks to real modules
+# under tests/node/ and lowered the counts it touched.
 LIFTS = {
     "test_add_to_phase.py": 5,
     "test_agents_settings_ui.py": 4,
-    "test_archive_chip.py": 25,
+    "test_archive_chip.py": 23,
     "test_board_title.py": 9,
     "test_boards_sync.py": 1,
-    "test_card_actions.py": 15,
+    "test_card_actions.py": 14,
     "test_card_detail_ui.py": 1,
     "test_card_face.py": 6,
     "test_checks_definition.py": 6,

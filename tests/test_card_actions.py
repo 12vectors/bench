@@ -83,9 +83,10 @@ class ArmedWindowTests(unittest.TestCase):
         cls.html = pagesource.page()
 
     def arm_ms(self) -> int:
-        m = re.search(r"const ARM_MS = (\d+)", self.html)
-        self.assertIsNotNone(m, "ARM_MS must be a named constant")
-        return int(m.group(1))
+        # one named constant, in the one state machine (lib/arm.js, task
+        # 125); the Node module tests import it and drive the window
+        self.assertIn("const ARM_MS = 5000;", self.html, "ARM_MS must be a named constant")
+        return 5000
 
     def test_window_is_about_five_seconds(self):
         self.assertEqual(self.arm_ms(), 5000,
@@ -107,9 +108,13 @@ class ArmedWindowTests(unittest.TestCase):
         self.assertIn("remaining - ARM_MS", self.html)
 
     def test_armed_state_survives_a_rerender(self):
-        """The truth lives in S.acts, not on the DOM node."""
+        """The truth lives in S.acts, not on the DOM node: the one state
+        machine (lib/arm.js, task 125) keeps it there, and a rebuilt button
+        reads it back — driven as a real module in
+        tests/node/requests_and_rendering.test.mjs."""
         self.assertRegex(self.html, r"acts:\s*\{\}", "S needs the acts store")
-        self.assertIn("phase: 'armed', until:", self.html)
+        self.assertIn("const acts = arming({ store: S.acts });", self.html)
+        self.assertIn("store[key] = { phase: 'armed', until };", self.html)
 
 
 class BusyStateTests(unittest.TestCase):
@@ -142,7 +147,8 @@ class BusyStateTests(unittest.TestCase):
     def test_timeout_is_an_honest_exit(self):
         """If neither the response nor a redraw arrives, the button comes
         back with a toast naming the action — never a silent revert."""
-        self.assertRegex(self.html, r"FIRE_TIMEOUT_MS = \d+")
+        self.assertRegex(self.html, r"const BUSY_MS = \d+")
+        self.assertIn("const FIRE_TIMEOUT_MS = BUSY_MS;", self.html)
         self.assertIn("toast(`${act.label} got no answer", self.html)
         self.assertIn("toast(`${act.label} failed", self.html)
 

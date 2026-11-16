@@ -157,6 +157,107 @@ test('resource: an unchanged reading is not asked again', async () => {
   assert.equal(net.asked.length, 1);
 });
 
+// ── views/detail/discussion.js: the card's discussion ───────────────────
+// The browser case for card 65 failed intermittently with the saved
+// comment missing: the drawer's first read was in flight when the comment
+// was saved, the forced refresh after the write was dropped because a read
+// was "loading", and the first read then answered with the card as it was
+// before the comment. A refresh asked for during a read is made once that
+// read ends. (Formerly lifted out of the page as text.)
+
+test('discussion: a refresh asked for during a read is not dropped', async () => {
+  const disc = await load('views/detail/discussion.js');
+  const { S } = await load('app/state.js');
+  S.state = { board: { stages: [] }, refinements: {}, agents: [] };
+  const net = controlledFetch(); const real = globalThis.fetch; globalThis.fetch = net.fetch;
+  try {
+    const t = { file: '02-x.md', stage: 'to-do', mtime: 1 };
+    disc.loadDiscussion(t);                       // the drawer opens
+    disc.loadDiscussion(t, true);                 // a comment is saved meanwhile
+    await settle();
+    net.reply(0, 200, { entries: [] }); await settle();   // the card as it was
+    assert.equal(net.asked.length, 2, 'the refresh after the write was dropped');
+    net.reply(1, 200, { entries: [{ id: 'c-1' }] }); await settle();
+    assert.deepEqual(S.disc[t.file].data.entries, [{ id: 'c-1' }]);
+    assert.equal(S.disc[t.file].loading, false);
+  } finally { globalThis.fetch = real; }
+});
+
+// ── views/delivery.js: the full delivery reading, under that policy ───────
+// The supervisor's finding at 4618dd5: the Overview's rows were cached by
+// a key holding only the summary, so a rule moved from one check to
+// another with the same totals kept the old rows for good. These drive the
+// page's own `loadDeliveryFull` (formerly lifted out of the page as text).
+
+async function deliveryHarness() {
+  const delivery = await load('views/delivery.js');
+  const { S } = await load('app/state.js');
+  S.state = S.state || { board: { stages: [] } };
+  S.state.delivery = {};
+  for (const k of Object.keys(S.dfull)) delete S.dfull[k];
+  const compact = (detail) => ({ status: { word: 'ready-to-merge' }, counts: { required: 1, met: 1 },
+    candidate: { state: 'present', commit: 'abc' }, classes: ['met'], detail });
+  const rows = (name) => ({ detail: name, requirements: [{ kind: 'check', name }] });
+  return { delivery, S, compact, rows };
+}
+
+test('delivery: a rule replaced with the same summary is read again; the last rows stay drawn meanwhile', async () => {
+  const { delivery, S, compact, rows } = await deliveryHarness();
+  const net = controlledFetch(); const real = globalThis.fetch; globalThis.fetch = net.fetch;
+  try {
+    const task = { file: 'r1.md', stage: 'review', mtime: 1 };
+    S.state.delivery['r1.md'] = compact('d-old');
+    delivery.loadDeliveryFull(task, () => {}); await settle();
+    net.reply(0, 200, { delivery: rows('old-unit') }); await settle();
+    assert.equal(delivery.loadDeliveryFull(task, () => {}).detail, 'old-unit');
+    S.state.delivery['r1.md'] = compact('d-new');      // same word, counts, classes
+    assert.equal(delivery.loadDeliveryFull(task, () => {}).detail, 'old-unit');
+    await settle();
+    net.reply(1, 200, { delivery: rows('new-unit') }); await settle();
+    assert.equal(delivery.loadDeliveryFull(task, () => {}).detail, 'new-unit');
+    assert.equal(net.asked.length, 2);
+    for (let i = 0; i < 5; i++) delivery.loadDeliveryFull(task, () => {});
+    assert.equal(net.asked.length, 2, 'an unchanged reading is not asked again');
+  } finally { globalThis.fetch = real; }
+});
+
+test('delivery: two keys in quick succession end on the newer reading', async () => {
+  const { delivery, S, compact, rows } = await deliveryHarness();
+  const net = controlledFetch(); const real = globalThis.fetch; globalThis.fetch = net.fetch;
+  try {
+    const task = { file: 'r2.md', stage: 'review', mtime: 1 };
+    S.state.delivery['r2.md'] = compact('d-1');
+    delivery.loadDeliveryFull(task, () => {});
+    S.state.delivery['r2.md'] = compact('d-2');
+    delivery.loadDeliveryFull(task, () => {}); await settle();
+    assert.equal(net.asked.length, 1, 'the second key waits for the first read');
+    net.reply(0, 200, { delivery: rows('first') }); await settle();
+    net.reply(1, 200, { delivery: rows('second') }); await settle();
+    assert.equal(delivery.loadDeliveryFull(task, () => {}).detail, 'second');
+    assert.equal(net.asked.length, 2);
+  } finally { globalThis.fetch = real; }
+});
+
+test('delivery: a failed read keeps the last rows, marked, and is not re-asked on every repaint', async () => {
+  const { delivery, S, compact, rows } = await deliveryHarness();
+  const net = controlledFetch(); const real = globalThis.fetch; globalThis.fetch = net.fetch;
+  try {
+    const task = { file: 'r3.md', stage: 'review', mtime: 1 };
+    S.state.delivery['r3.md'] = compact('d-1');
+    delivery.loadDeliveryFull(task, () => {}); await settle();
+    net.reply(0, 200, { delivery: rows('kept') }); await settle();
+    S.state.delivery['r3.md'] = compact('d-2');
+    delivery.loadDeliveryFull(task, () => {}); await settle();
+    net.reply(1, 500, { error: 'boom' }); await settle();
+    assert.equal(S.dfull['r3.md'].error, 'boom');
+    assert.equal(S.dfull['r3.md'].stale, true);
+    assert.equal(S.dfull['r3.md'].data.detail, 'kept');
+    for (let i = 0; i < 3; i++) delivery.loadDeliveryFull(task, () => {});
+    assert.equal(net.asked.length, 2, 'an error is not re-asked on every repaint');
+    assert.equal(delivery.DFULL_RETRY_MS, 5000);
+  } finally { globalThis.fetch = real; }
+});
+
 // ── lib/api.js post ────────────────────────────────────────────────────
 
 test('post: a mutation is sent once, whatever comes back', async () => {

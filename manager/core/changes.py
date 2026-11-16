@@ -54,6 +54,8 @@ from taskfiles import (STATUS_RE, collect, commit_edit, find_stage_of,
                        read_task)
 
 PR_STATE: dict[str, dict] = {}   # filename -> {verdict, detail, url, ts}
+# the field the poll keeps the external reviewer's state in, named once
+EXTERNAL_REVIEW = "copilot"
 _OPENING: set[str] = set()       # filenames with a PR-open in flight
 
 
@@ -629,8 +631,8 @@ def _poll_pr(filename: str, url: str) -> None:
                        f"not {entry['wantBase']} — nothing was retargeted; "
                        f"settle which base is right before merging"})
         state.broadcast({"type": "board"})
-    verdict, ci, copilot = entry["verdict"], entry["ci"], entry["copilot"]
-    if prev.get("copilot") in (None, "asked") and copilot in ("approved", "changes", "commented"):
+    verdict, ci, copilot = entry["verdict"], entry["ci"], entry[EXTERNAL_REVIEW]
+    if prev.get(EXTERNAL_REVIEW) in (None, "asked") and copilot in ("approved", "changes", "commented"):
         word = {"approved": "approved it", "changes": "asked for changes",
                 "commented": "commented"}[copilot]
         state.record_board_event({
@@ -757,9 +759,9 @@ def card_verdict(task: dict, observed: dict | None = None) -> dict | None:
     host = (observed if observed is not None else PR_STATE).get(task["file"]) or {}
     signals = (task.get("prVerdict"), host.get("verdict"))
     verdict = "red" if "red" in signals else "green" if "green" in signals else "pending"
-    copilot = host.get("copilot")
+    external = host.get(EXTERNAL_REVIEW)
     return {"verdict": verdict,
-            "reviewIn": verdict != "pending" or bool(copilot and copilot != "asked")}
+            "reviewIn": verdict != "pending" or bool(external and external != "asked")}
 
 
 def board_verdicts(collected: dict) -> dict:

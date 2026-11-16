@@ -278,14 +278,19 @@ class NoStaleArmedChip(unittest.TestCase):
     def setUpClass(cls):
         cls.html = html()
 
+    def sweep(self) -> str:
+        """The sweep's body, found by its name rather than by a pattern."""
+        start = self.html.index("function forgetActsOfVanishedCards() {")
+        return self.html[start:self.html.index("\n}\n", start)]
+
     def test_render_forgets_the_windows_of_cards_that_left(self):
-        body = re.search(r"function forgetActsOfVanishedCards\(\) \{(.*?)\n\}",
-                         self.html, re.S)
-        self.assertIsNotNone(body, "the sweep is gone")
-        self.assertIn("allTasks()", body.group(1))
-        self.assertIn("key.split('::')[0]", body.group(1),
-                      "act keys are <file>::<action>")
-        self.assertIn("delete S.acts[key]", body.group(1))
+        # the store's own sweep (lib/arm.js) drops every key the predicate
+        # does not keep — driven as a real module in
+        # tests/node/requests_and_rendering.test.mjs (task 125)
+        body = self.sweep()
+        self.assertIn("allTasks()", body)
+        self.assertIn("key.split('::')[0]", body, "act keys are <file>::<action>")
+        self.assertIn("acts.sweep(", body)
 
     def test_the_sweep_runs_before_anything_is_drawn(self):
         head = re.search(r"function render\(\) \{\n(.*?)\n  renderTitle", self.html, re.S)
@@ -311,9 +316,7 @@ class NoStaleArmedChip(unittest.TestCase):
                 f"stray act key {key!r}")
 
     def test_the_sweep_knows_the_boards_own_keys_are_not_cards(self):
-        body = re.search(r"function forgetActsOfVanishedCards\(\) \{(.*?)\n\}",
-                         self.html, re.S)
-        self.assertIn("key.startsWith(BOARD_ACT)", body.group(1),
+        self.assertIn("key.startsWith(BOARD_ACT)", self.sweep(),
                       "the sweep would delete the board's own armed windows")
 
 

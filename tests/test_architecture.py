@@ -753,8 +753,12 @@ DYNAMIC_PATCH_TARGETS: dict[str, tuple[int, int]] = {
 # WP11 (task 120) moved the merge-rule policy out of `profiles` verbatim:
 # thirteen of its seventeen went with it to `gatepolicy` (the review
 # policy words and their sentences), and the total is unchanged.
+#
+# WP16 (task 125) named the external reviewer's field once in `changes`
+# (`EXTERNAL_REVIEW`), so the combined verdict the page used to compute
+# reads it without spelling it again: 24 → 23.
 PROVIDER_VOCABULARY: dict[str, int] = {
-    "agents": 2, "changes": 24, "completion": 13, "config": 10,
+    "agents": 2, "changes": 23, "completion": 13, "config": 10,
     "delivery": 10, "doctor": 3, "gatepolicy": 13, "gates": 23,
     "githost": 2, "plans": 1, "profiles": 4, "readiness": 9, "redact": 4,
     "reviews": 8, "routes": 5, "settings": 36, "setupguide": 13,
