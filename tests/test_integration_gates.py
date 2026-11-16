@@ -1520,9 +1520,10 @@ class ThePageReadsTheDecision(unittest.TestCase):
         # against it rather than against the whole page — where a
         # perfectly good line of the verification panel would satisfy or
         # break it by accident.
-        start = cls.html.index("may this merge happen?")
-        end = cls.html.index("where a PR review ran", start)
-        cls.region = cls.html[start:end]
+        # Since task 124 that code is a module of its own.
+        module = next(p.read_text("utf-8") for p in pagesource.scripts()
+                      if "may this merge happen?" in p.read_text("utf-8"))
+        cls.region = module[module.index("may this merge happen?"):]
 
     def test_the_page_asks_the_server_for_the_decision(self):
         self.assertIn("'/api/gates?file='", self.html)
