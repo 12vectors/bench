@@ -133,8 +133,15 @@ class ReferenceFilesRenderInert(unittest.TestCase):
         return b
 
     def test_1_the_same_script_runs_in_a_same_origin_frame(self):
-        """The control: without the sandbox this fixture does call the API."""
+        """The control: without the sandbox this fixture does call the API.
+
+        Since task 124 the board's own page is sent with a script policy
+        that refuses an inline script and any frame, so the control runs in
+        a same-origin document that carries no policy — the JSON of
+        /api/state — where a frame inherits this board's origin and
+        nothing else."""
         b = self.board()
+        b.goto("/api/state")
         b.eval("(() => { const f = document.createElement('iframe');"
                f" f.srcdoc = {json.dumps(self.html)}; f.id = 'wp05-control';"
                " document.body.appendChild(f); })()")

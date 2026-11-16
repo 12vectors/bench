@@ -213,8 +213,10 @@ STILL_JS = """(() => {
 
 class TheScriptRunsClean(unittest.TestCase):
     def test_1_boot_and_a_tour_throw_nothing_and_violate_nothing(self):
+        # reports an earlier case raised belong to it, not to this page
+        S["browser"].console.clear()
+        S["browser"].csp.clear()
         b = load()
-        b.console.clear()
         toured = []
         for view in VIEWS:
             b.click(f'#views button[data-view="{view}"]')
@@ -242,7 +244,9 @@ class TheScriptRunsClean(unittest.TestCase):
         S["metrics"]["scriptPolicyViolations"] = csp(b)
         self.assertEqual([], thrown(b), "the page threw during the tour: "
                          + json.dumps(toured))
-        self.assertEqual([], csp(b), "the page broke its own policy")
+        if csp(b):
+            self.fail("the page broke its own policy: "
+                      + " | ".join(v["text"][:240] for v in csp(b)))
         self.assertTrue(b.eval("typeof S === 'object' && !!S.state"),
                         "the page's state never loaded")
 
