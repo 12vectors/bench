@@ -79,3 +79,36 @@ rather than a warm one. That holds before and after this change.
   here.
 - **Host.** One Linux machine (`host` in each file). These numbers are
   relative; the investigation's own host may differ.
+
+# The board list without the cards' text (task 129)
+
+`/api/state` no longer carries each card's Markdown; the detail view reads
+it from `GET /api/card` when a card is opened. Measured by the browser
+case `verify/browser_cases/case_lazy_detail.py`, which writes
+`lazy-detail-measurements.json` beside its screenshots and prints the
+same line into the `bench-browser` log (evidence
+`ev:verification@424ef17b5ac5`, commit `2edd875`).
+
+The fixture is the browser suite's disposable board plus 60 small cards
+and 3 history-heavy ones (20 work reports and 20 review rounds each, about
+128 KB of text per card): 69 cards in all.
+
+| measure | before | after |
+| --- | --- | --- |
+| `/api/state` bytes, uncompressed | 474,218 | 100,941 (−79 %) |
+| the board section alone | 414,810 (as `/api/tasks` serves it) | 41,533 |
+| first card drawn, from navigation start (upper bound) | not measured | 225 ms |
+| opening a heavy card until its brief is drawn | not measured | 227 ms |
+
+**How "before" is computed.** Both columns come from one moment on one
+board: the same state payload with its `board` swapped for the one
+`/api/tasks` serves, which still carries every card's whole text. That is
+exactly the list's old shape, because the sections beside it did not
+change. The case asserts the new payload is under half the old one.
+
+**What is not shown.** Timings for the old code were not taken: the
+browser suite runs one build, and the old one was not served beside it.
+The first-card figure is an upper bound — the case reads the clock once
+the card is seen, so it includes polling. Compression (gzip on
+`/api/state`) is a separate option the card asks to measure on its own;
+it was not measured or enabled here, and it would not stand in for this.

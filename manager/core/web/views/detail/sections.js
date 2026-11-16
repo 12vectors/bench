@@ -232,7 +232,8 @@ const detail = resource({
     const why = body && GONE_WORDS[body.code];
     // the list is behind the disk: read it again, and the drawer follows
     // the card to its new stage, or closes with it
-    if (why) Promise.resolve().then(() => loadState());
+    // (a failed reload is the state reader's to say; it is not this one's)
+    if (why) Promise.resolve().then(() => loadState()).catch(() => {});
     return { error: why ? why(body) : ((body && body.error) || 'the board did not answer') };
   },
   ask: (url) => fetch(url),
