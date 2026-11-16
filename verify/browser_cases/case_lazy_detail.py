@@ -162,11 +162,20 @@ class LazyDetail(unittest.TestCase):
         lean = b.eval("""(async () => {
           const t0 = performance.now(); const r = await fetch('/api/state'); const text = await r.text();
           return { bytes: text.length, ms: performance.now() - t0 }; })()""")
+        # the state as it was before: the same payload with the board as
+        # `/api/tasks` serves it, every card's text included
+        before = dict(payload, board=json.loads(tasks))
+        before_bytes = len(json.dumps(before).encode())
+        after_bytes = len(json.dumps(payload).encode())
+        self.measured["a_stateBytesBefore"] = before_bytes
+        self.measured["a_stateBytesAfter"] = after_bytes
         self.measured["cards"] = {"small": SMALL, "heavy": len(HEAVY), "listed": len(cards)}
         self.measured["stateBytes"] = len(state)
         self.measured["tasksBytesFullText"] = len(tasks)
         self.measured["stateCardBytes"] = len(json.dumps(payload["board"]).encode())
         self.measured["tasksCardBytes"] = len(json.dumps(json.loads(tasks)["stages"]).encode())
+        self.assertLess(after_bytes * 2, before_bytes,
+                        f"the list is not under half the board it was: {after_bytes} of {before_bytes}")
         self.measured["firstCardMsUpperBound"] = first
         self.measured["stateResource"] = timing
         self.measured["inPageFetch"] = {"state": lean, "tasksFullText": full}
