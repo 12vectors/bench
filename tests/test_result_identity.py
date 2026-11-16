@@ -143,9 +143,11 @@ class ANewRecordCarriesItsIdentity(IdentityCase):
         self.assertEqual(found["outcome"], "passed")
         self.assertEqual(found["identity"]["rootClass"], "fresh")
 
-    def test_a_source_checkout_holding_ignored_state_is_not_fresh(self):
-        """Bench reuses a `source` checkout of the same commit. One that
-        already holds ignored state is `reused`, not `fresh`."""
+    def test_a_legacy_shared_checkout_is_not_adopted(self):
+        """Bench used to reuse a `source` checkout of the same commit, and
+        one already holding ignored state read `reused`. Since card 131
+        every run makes its own: a shared checkout at the old path is
+        neither run in nor removed, and the run's own reads `fresh`."""
         (self.wt / ".gitignore").write_text("cache/\n", encoding="utf-8")
         self.commit_in(self.wt, "ignore the cache\n")
         sha = git(self.wt, "rev-parse", "HEAD").stdout.strip()
@@ -155,7 +157,12 @@ class ANewRecordCarriesItsIdentity(IdentityCase):
         (root / "cache").mkdir()
         (root / "cache" / "built").write_text("stale build\n", encoding="utf-8")
         found = self.run_check(self.document(root="source"))
-        self.assertEqual(found["identity"]["rootClass"], "reused")
+        self.assertEqual(found["identity"]["rootClass"], "fresh")
+        self.assertNotEqual(found["root"]["path"], str(root))
+        self.assertTrue((root / "cache" / "built").exists(),
+                        "the legacy checkout is left exactly as it was")
+        self.assertEqual(resultidentity.root_class("source", root), "reused",
+                         "a checkout holding ignored state still reads reused")
 
 
 # ── E1 / R1 ────────────────────────────────────────────────────────────
