@@ -29,7 +29,21 @@ function sessionElapsed(meta) {
    board could not be read, announced once when it starts failing. The
    next successful read clears it. A read is never retried here: the
    safety net and the stream ask again on their own beat. */
-const reading = { inflight: null, queued: null, asked: 0 };
+const reading = {
+  inflight: null, queued: null, asked: 0,
+  // Board revisions (task 128). The server stamps every `board` frame
+  // with a revision and every state reading with the revision it read
+  // before it read the disk, so a reading at revision r holds every
+  // change announced at r or below. `rev` is the newest reading painted,
+  // `known` the newest revision this page has heard of from anyone (a
+  // frame, a confirmed write, a reading), and `floor` what was known when
+  // the read now out was sent — that read is bound to hold it.
+  rev: -1, boot: null, known: -1, floor: -1,
+  // confirmed writes not yet seen in a reading: each is laid over any
+  // reading older than its revision, so a read sent before the write
+  // cannot put back what the write took away
+  confirmed: [],
+};
 
 function loadState() {
   // A queued follow-up answers every ask until it has started, even in
@@ -55,9 +69,51 @@ function loadState() {
 }
 
 function startState() {
+  reading.floor = reading.known;
   const p = readState().finally(() => { if (reading.inflight === p) reading.inflight = null; });
   reading.inflight = p;
   return p;
+}
+
+/* "The board changed, at revision `rev`" — from a stream frame or from a
+   write this page just had confirmed. Asks for a reading only when none
+   painted or on its way is bound to hold that revision, so a write's own
+   confirmation and its own stream frame — which race each other — cost
+   one reading between them, whichever lands first. A change without a
+   revision (an older board) asks as it always did. */
+function boardChanged(rev) {
+  if (typeof rev !== 'number') return loadState();
+  if (rev > reading.known) reading.known = rev;
+  if (rev <= reading.rev) return Promise.resolve();
+  if (reading.queued) return reading.queued;
+  if (reading.inflight && reading.floor >= rev) return reading.inflight;
+  return loadState();
+}
+
+/* After a write was asked for (task 128). When the board confirmed it,
+   `apply` is the exact change the reply described — a card gone, a
+   count — and it is painted now, without waiting for a whole-board
+   reading. It is then laid over every reading older than the write's
+   revision, and dropped by the first reading that holds the write (or
+   comes from a restarted board, which read the disk afresh). The reading
+   that reconciles it is asked for in the background; the caller does not
+   wait for it.
+
+   With no confirmation — a refusal, no answer, or an older board whose
+   reply names no revision — nothing is painted from the reply and the
+   board is simply read: what happened is the reading's to say. */
+function afterWrite(reply, apply) {
+  const rev = reply && reply.rev, boot = reply && reply.boot;
+  if (!apply || typeof rev !== 'number') {
+    loadState();
+    return;
+  }
+  reading.confirmed.push({ rev, boot: boot ?? reading.boot, apply });
+  if (S.state) {
+    apply(S.state);
+    flushRender();
+  }
+  boardChanged(rev);
 }
 
 async function readState() {
@@ -72,6 +128,7 @@ async function readState() {
   if (!res.ok || !data || !data.board) {
     return stateFailed((data && data.error) || `the board answered ${res.status}`);
   }
+  orderReading(data);
   S.state = data;
   const was = S.stateError;
   S.stateError = null;
@@ -80,6 +137,26 @@ async function readState() {
   if (root) root.textContent = S.state.board.root.replace(/^.*?\/([^/]+\/\.task-manager).*$/, '$1');
   if (was) announce('the board can be read again');
   flushRender();
+}
+
+/* Where a reading sits among the writes this page has had confirmed: a
+   confirmed write the reading already holds is done with, and one it is
+   older than is laid over it, so the paint never goes back in time. A
+   reading from a board that restarted (another `boardBoot`) read the
+   disk after every write the old process confirmed, so it holds them all
+   and starts the revisions again. */
+function orderReading(data) {
+  if (typeof data.boardRev !== 'number') return;
+  const rev = data.boardRev, boot = data.boardBoot ?? null;
+  if (boot !== reading.boot) {
+    reading.boot = boot;
+    reading.rev = -1;
+    reading.known = rev;
+  }
+  reading.confirmed = reading.confirmed.filter(c => c.boot === boot && c.rev > rev);
+  for (const c of reading.confirmed) c.apply(data);
+  if (rev > reading.rev) reading.rev = rev;
+  if (rev > reading.known) reading.known = rev;
 }
 
 function stateFailed(why) {
@@ -94,6 +171,13 @@ function stateFailed(why) {
    and one queued: for a test, and for a person at the console */
 function stateReading() {
   return { asked: reading.asked, inflight: !!reading.inflight, queued: !!reading.queued };
+}
+
+/* where the readings stand among the board's revisions (task 128): the
+   newest painted, the newest heard of, and how many confirmed writes are
+   still laid over the page waiting for a reading that holds them */
+function boardOrder() {
+  return { rev: reading.rev, known: reading.known, pending: reading.confirmed.length };
 }
 
 async function loadSession(sid) {
@@ -183,7 +267,13 @@ function connectStream(hooks = {}) {
   const es = new EventSource('/api/stream');
   let hadError = false;
   es.onopen = () => {
-    if (hadError) { hadError = false; loadState(); }
+    if (hadError) {
+      hadError = false;
+      // the board may have restarted, and its revisions with it: until a
+      // reading says otherwise, every frame is news
+      reading.rev = -1; reading.known = -1;
+      loadState();
+    }
     S.sseDown = false; scheduleRender();
   };
   es.onerror = () => { hadError = true; S.sseDown = true; scheduleRender(); };
@@ -210,7 +300,10 @@ function connectStream(hooks = {}) {
       }
       scheduleRender();
     } else if (msg.type === 'board' || msg.type === 'agents') {
-      loadState();
+      // a board frame names its revision: one this page has already read,
+      // or is reading, asks for nothing more (task 128)
+      if (msg.type === 'board') boardChanged(msg.rev);
+      else loadState();
       // another client's setup decision arrives as a board event; the
       // guide re-reads so this page cannot act on a revision it lost
       if (msg.type === 'board' && hooks.onBoard) hooks.onBoard();
@@ -242,7 +335,9 @@ function connectStream(hooks = {}) {
 }
 
 export {
-  agentFor, agentOnTask, allTasks, connectStream, failedRun, isLiveSession,
+  agentFor, agentOnTask, allTasks, boardChanged, boardOrder, afterWrite,
+  connectStream,
+  failedRun, isLiveSession,
   lastRunOn, loadSession, loadState, modelChip, scheduleRender,
   sessionElapsed, sessionMeta, sessionsOf, shortModel, stateReading,
   whyFailed

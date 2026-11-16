@@ -1,0 +1,276 @@
+{
+ "expireSeconds": 20.0,
+ "fixture": {
+  "cards": 100,
+  "inputs": 6,
+  "outcomes": {
+   "failed": 3,
+   "passed": 3,
+   "running": 2,
+   "stale": 2
+  },
+  "records": 20,
+  "rich": 10,
+  "stages": {
+   "backlog": 20,
+   "done": 20,
+   "in-progress": 20,
+   "review": 20,
+   "to-do": 20
+  }
+ },
+ "host": {
+  "cpus": 8,
+  "git": "git version 2.53.0",
+  "platform": "Linux-7.0.0-42-generic-x86_64-with-glibc2.43",
+  "python": "3.14.4"
+ },
+ "order": [
+  "before",
+  "after",
+  "after",
+  "before",
+  "before",
+  "after",
+  "after",
+  "before"
+ ],
+ "samples": {
+  "expired": {
+   "after": [
+    {
+     "actionDone": 0.027818743023090065,
+     "commit": "board: 1045 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1045-perf-card-45.md",
+     "frameBeforeReply": true,
+     "gone": 0.027818743023090065,
+     "post": 0.027818743023090065,
+     "reconciled": 0.39367865305393934,
+     "stateReads": 1
+    },
+    {
+     "actionDone": 0.019753942964598536,
+     "commit": "board: 1050 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1050-perf-card-50.md",
+     "frameBeforeReply": true,
+     "gone": 0.019753942964598536,
+     "post": 0.019753942964598536,
+     "reconciled": 0.39046798401977867,
+     "stateReads": 1
+    },
+    {
+     "actionDone": 0.028783399029634893,
+     "commit": "board: 1065 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1065-perf-card-65.md",
+     "frameBeforeReply": true,
+     "gone": 0.028783399029634893,
+     "post": 0.028783399029634893,
+     "reconciled": 0.4118777719559148,
+     "stateReads": 1
+    },
+    {
+     "actionDone": 0.025296173058450222,
+     "commit": "board: 1070 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1070-perf-card-70.md",
+     "frameBeforeReply": false,
+     "gone": 0.025296173058450222,
+     "post": 0.025296173058450222,
+     "reconciled": 0.38075553195085377,
+     "stateReads": 1
+    }
+   ],
+   "before": [
+    {
+     "actionDone": 0.4964115470647812,
+     "commit": "board: 1040 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1040-perf-card-40.md",
+     "frameBeforeReply": false,
+     "gone": 0.3907832039985806,
+     "post": 0.026496457983739674,
+     "reconciled": 0.3907832039985806,
+     "stateReads": 2
+    },
+    {
+     "actionDone": 0.4660812229849398,
+     "commit": "board: 1055 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1055-perf-card-55.md",
+     "frameBeforeReply": true,
+     "gone": 0.38915049005299807,
+     "post": 0.031032999977469444,
+     "reconciled": 0.38915049005299807,
+     "stateReads": 2
+    },
+    {
+     "actionDone": 0.4704540870152414,
+     "commit": "board: 1060 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1060-perf-card-60.md",
+     "frameBeforeReply": true,
+     "gone": 0.3737776899943128,
+     "post": 0.02970174595247954,
+     "reconciled": 0.3737776899943128,
+     "stateReads": 2
+    },
+    {
+     "actionDone": 0.4238967950223014,
+     "commit": "board: 1075 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1075-perf-card-75.md",
+     "frameBeforeReply": true,
+     "gone": 0.33551740599796176,
+     "post": 0.031342579051852226,
+     "reconciled": 0.33551740599796176,
+     "stateReads": 2
+    }
+   ]
+  },
+  "warm": {
+   "after": [
+    {
+     "actionDone": 0.024097277084365487,
+     "commit": "board: 1005 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1005-perf-card-5.md",
+     "frameBeforeReply": true,
+     "gone": 0.024097277084365487,
+     "post": 0.024097277084365487,
+     "reconciled": 0.15713560406584293,
+     "stateReads": 1
+    },
+    {
+     "actionDone": 0.013611727976240218,
+     "commit": "board: 1010 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1010-perf-card-10.md",
+     "frameBeforeReply": true,
+     "gone": 0.013611727976240218,
+     "post": 0.013611727976240218,
+     "reconciled": 0.09862008993513882,
+     "stateReads": 1
+    },
+    {
+     "actionDone": 0.027077205013483763,
+     "commit": "board: 1025 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1025-perf-card-25.md",
+     "frameBeforeReply": true,
+     "gone": 0.027077205013483763,
+     "post": 0.027077205013483763,
+     "reconciled": 0.1496969920117408,
+     "stateReads": 1
+    },
+    {
+     "actionDone": 0.02454848599154502,
+     "commit": "board: 1030 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1030-perf-card-30.md",
+     "frameBeforeReply": true,
+     "gone": 0.02454848599154502,
+     "post": 0.02454848599154502,
+     "reconciled": 0.1403690290171653,
+     "stateReads": 1
+    }
+   ],
+   "before": [
+    {
+     "actionDone": 0.21870402700733393,
+     "commit": "board: 1000 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1000-perf-card-0.md",
+     "frameBeforeReply": true,
+     "gone": 0.12161798099987209,
+     "post": 0.02542202197946608,
+     "reconciled": 0.12161798099987209,
+     "stateReads": 2
+    },
+    {
+     "actionDone": 0.25437714997678995,
+     "commit": "board: 1015 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1015-perf-card-15.md",
+     "frameBeforeReply": true,
+     "gone": 0.1696557259419933,
+     "post": 0.025509891915135086,
+     "reconciled": 0.1696557259419933,
+     "stateReads": 2
+    },
+    {
+     "actionDone": 0.2540208110585809,
+     "commit": "board: 1020 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1020-perf-card-20.md",
+     "frameBeforeReply": true,
+     "gone": 0.16590190096758306,
+     "post": 0.025566891999915242,
+     "reconciled": 0.16590190096758306,
+     "stateReads": 2
+    },
+    {
+     "actionDone": 0.22798530105501413,
+     "commit": "board: 1035 \u2192 archived (tester)",
+     "committed": true,
+     "file": "1035-perf-card-35.md",
+     "frameBeforeReply": false,
+     "gone": 0.1360077060526237,
+     "post": 0.02736524399369955,
+     "reconciled": 0.1360077060526237,
+     "stateReads": 2
+    }
+   ]
+  }
+ },
+ "scenario": "light-100",
+ "summary": {
+  "expired": {
+   "after": {
+    "actionDone": 0.0266,
+    "gone": 0.0266,
+    "n": 4,
+    "post": 0.0266,
+    "reconciled": 0.3921,
+    "stateReads": [
+     1
+    ]
+   },
+   "before": {
+    "actionDone": 0.4683,
+    "gone": 0.3815,
+    "n": 4,
+    "post": 0.0304,
+    "reconciled": 0.3815,
+    "stateReads": [
+     2
+    ]
+   }
+  },
+  "warm": {
+   "after": {
+    "actionDone": 0.0243,
+    "gone": 0.0243,
+    "n": 4,
+    "post": 0.0243,
+    "reconciled": 0.145,
+    "stateReads": [
+     1
+    ]
+   },
+   "before": {
+    "actionDone": 0.241,
+    "gone": 0.151,
+    "n": 4,
+    "post": 0.0255,
+    "reconciled": 0.151,
+    "stateReads": [
+     2
+    ]
+   }
+  }
+ },
+ "task": 128
+}

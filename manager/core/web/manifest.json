@@ -1,8 +1,8 @@
 {
  "assets": {
   "app/data.js": {
-   "bytes": 11372,
-   "sha256": "c55d2ccc7d7ef06adc8519fea2e5621e15ac8777de4607758e028c487d3cb388",
+   "bytes": 15611,
+   "sha256": "16131e7af61cd66ac9ab069d836681bbda5cb0efc2bcaf3d96cb68dd62cfb2d2",
    "type": "text/javascript; charset=utf-8"
   },
   "app/state.js": {
@@ -211,8 +211,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/activity.js": {
-   "bytes": 5184,
-   "sha256": "e3cab68035b324f5b22013266e4dba72a6598643c060403e50d16770c7a652d1",
+   "bytes": 9370,
+   "sha256": "8528f6316b9c8d802a6f94d2d6006e06f2e2a322fdeb391a7f85d89f658f80bb",
    "type": "text/javascript; charset=utf-8"
   },
   "views/board.js": {

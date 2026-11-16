@@ -264,6 +264,10 @@ def _state_payload() -> dict:
             (dict(m) for m in state.SESSIONS.values()),
             key=lambda m: m.get("last") or m.get("started") or 0, reverse=True)
         board_events = list(state.BOARD_EVENTS[-80:])
+        # read before the disk is: every change announced at or below this
+        # revision was already on disk when it was announced, so this
+        # reading holds it (task 128 — the page's order guard)
+        board_rev = state.BOARD_REV
     collected = taskfiles.collect()
     # which card each card's work is stacked on, what is stacked on it and
     # the state of each edge (task 117) — local reads only, read once and
@@ -395,6 +399,8 @@ def _state_payload() -> dict:
                               key=lambda slug: taskfiles.STAGE_ORDER.get(slug, 99)),
         "sync": sync.status(),
         "boardEvents": board_events,
+        "boardRev": board_rev,
+        "boardBoot": state.BOOT,
         "now": time.time(),
     }
 
@@ -978,8 +984,14 @@ def post_archive(req) -> None:
         "kind": "move", "file": result["file"], "from": result["from"],
         "to": "archive", "actor": "you",
         "summary": f"{result['file']} archived (from {result['from']}/) — ⌘Z brings it back"})
-    state.broadcast({"type": "board"})
-    req.reply(200, result)
+    # The reply is the authoritative confirmation the page paints from
+    # without waiting for a whole-board read (task 128): the card that
+    # left, the count it left behind, whether git recorded it, and the
+    # board revision whose reading will contain it — the page's guard
+    # against an older reading putting the card back.
+    rev = state.broadcast({"type": "board"})
+    req.reply(200, {**result, "rev": rev, "boot": state.BOOT,
+                    "archivedCount": taskfiles.archived_count()})
 
 
 def post_unarchive(req) -> None:
@@ -993,8 +1005,9 @@ def post_unarchive(req) -> None:
         "kind": "move", "file": result["file"], "from": "archive",
         "to": result["to"], "actor": "you",
         "summary": f"{result['file']} brought back to {result['to']}/"})
-    state.broadcast({"type": "board"})
-    req.reply(200, result)
+    rev = state.broadcast({"type": "board"})
+    req.reply(200, {**result, "rev": rev, "boot": state.BOOT,
+                    "archivedCount": taskfiles.archived_count()})
 
 
 def post_command_run(req) -> None:

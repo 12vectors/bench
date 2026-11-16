@@ -118,3 +118,74 @@ the other, not together, at the same commit. They share one source
 checkout per commit, and the run that finishes first removes it from
 under the other. That ends the other run as a setup error with no verdict,
 and leaves a directory that refuses later runs at that commit.
+
+# One archive, end to end (task 128)
+
+Raw output of `tests/archiveperf_measure.py`, in `128-<scenario>.json`:
+the host, the fixture, the sample order and every sample. Regenerate one
+scenario, in the foreground, with:
+
+```bash
+python3 -m unittest tests.archiveperf_measure.Measure.test_rich_100
+```
+
+The fixture is task 127's board with its `tasks/` committed and
+`BOARD_COMMIT_MOVES` on, so each archive is a real commit in the work
+state's repository. It is served by the real `httpd.Handler` on a
+loopback port with a real `/api/stream` connection. Every archived card
+is a disposable fixture card; no live board is touched.
+
+The server is the same in both arms. What differs is what the page does
+with an archive, driven over HTTP the way the page's code does it:
+
+- **before** — the page as it was. The archive's `board` frame asks for
+  a reading (A); the action awaits the POST, then `await loadState()`,
+  which queues behind A (B). The card leaves when A lands, and the
+  action ends when B lands. Two whole-board reads.
+- **after** — this card. The card leaves when the POST answers. The
+  frame and the confirmation share one reading, whichever arrives first,
+  and the board is reconciled when it lands. One whole-board read.
+
+`warm` reads the state immediately before the archive. `expired` moves
+the clock 20 s on first, past every memo's time bucket. Arms alternate
+ABBA. Medians of 4 samples per cell, in seconds from sending the POST:
+
+| scenario | cache | arm | POST answered | card gone | reconciled | action done | state reads |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| rich-100 | warm | before | 0.027 | 0.211 | 0.211 | 0.316 | 2 |
+| rich-100 | warm | after | 0.029 | **0.029** | 0.230 | 0.029 | 1 |
+| rich-100 | expired | before | 0.028 | 2.241 | 2.241 | 2.349 | 2 |
+| rich-100 | expired | after | 0.029 | **0.029** | 2.282 | 0.029 | 1 |
+| light-100 | warm | before | 0.026 | 0.151 | 0.151 | 0.241 | 2 |
+| light-100 | warm | after | 0.024 | **0.024** | 0.145 | 0.024 | 1 |
+| light-100 | expired | before | 0.030 | 0.382 | 0.382 | 0.468 | 2 |
+| light-100 | expired | after | 0.027 | **0.027** | 0.392 | 0.027 | 1 |
+
+The archive itself, commit included, answers in under 30 ms at both
+sizes. Before, the card stayed on the page for a whole-board read after
+that — 2.2 s on an evidence-rich board whose memos had expired — and
+the archive's chip stayed busy for a second read. After, the card leaves
+on the reply and the chip frees with it. Reconciliation still costs one
+read, now in the background, so "reconciled" is unchanged within noise.
+
+**The request count, bounded.** One archive asks for at most two
+whole-board reads in the page:
+
+1. one for the archive itself, shared by its confirmation and its
+   `board` frame (each names the same revision, and a reading already out
+   that was sent after the revision was known holds it). If a reading
+   sent *before* the archive is still out when it is confirmed, that
+   reading cannot hold it, so one follow-up is queued behind it — the
+   older reading is painted with the archive laid over it, never with the
+   card back;
+2. one for the watcher's later frame, sent when it notices the file
+   gone from the stage directory (about `BOARD_WATCH_INTERVAL` later). It
+   names a newer revision, so it reads once. The harness runs no watcher,
+   so this read is in neither arm above; the old page made it too.
+
+A frame naming a revision the page has already painted asks for nothing.
+
+**Not measured here.** The browser's own paint (the harness stops at
+the data the page acts on). `verify/browser_cases/case_archive_confirmation.py`
+checks the real page in the sandboxed browser instead: the card leaves
+while a whole-board read is held back.

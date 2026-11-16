@@ -1,7 +1,7 @@
 /* The activity bar, the event log and the archive tray. */
-import { loadState, sessionMeta } from '../app/data.js';
+import { afterWrite, sessionMeta } from '../app/data.js';
 import { S } from '../app/state.js';
-import { fetch } from '../lib/api.js';
+import { post } from '../lib/api.js';
 import { $, esc } from '../lib/dom.js';
 import { markScroll, restoreScroll } from '../lib/keep.js';
 import { fmtClock } from '../lib/time.js';
@@ -90,24 +90,124 @@ function renderLog() {
   if (S.logStick) body.scrollTop = body.scrollHeight;
 }
 
-async function archiveCard(file, from) {
-  const res = await fetch('/api/archive', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ file, from }),
-  });
-  const data = await res.json();
-  toast(res.ok ? `Archived ${file} — ⌘Z brings it back` : (data.error || 'archive failed'), !res.ok);
-  await loadState();
-  return res.ok;
+/* Archiving, and its ⌘Z (task 128).
+
+   Nothing is shown as archived before the board says it was: the card
+   stays where it is, its chip busy, until the reply. A successful reply
+   is the authority — it names the card that left, the count it left
+   behind, whether git recorded it and the board revision whose reading
+   holds it — so the card is taken off the page *then*, from the reply,
+   and the whole-board reading that reconciles everything else is asked
+   for in the background (`afterWrite`). The action does not wait for
+   it. A reading sent before the archive cannot put the card back: the
+   confirmed removal is laid over any reading older than its revision.
+
+   Every other outcome reads the board instead of guessing: a refusal is
+   the server's sentence, and a request that got no answer says that
+   nothing is known to have happened, then reads what did. A second
+   archive of a card already on its way joins the first rather than
+   sending again, and ⌘Z waits for every archive in flight, so it undoes
+   the archive the person last saw rather than whichever the server
+   happened to finish first. */
+const archiving = new Map();          // file -> the archive request in flight
+let undoing = null;                   // the ⌘Z request in flight
+let lastRemoved = null;               // { file, from, task } — what ⌘Z restores
+
+function removeTask(state, file, from) {
+  for (const stage of state.board?.stages || []) {
+    if (from && stage.slug !== from) continue;
+    const at = stage.tasks.findIndex(t => t.file === file);
+    if (at >= 0) return stage.tasks.splice(at, 1)[0];
+  }
+  return null;
 }
 
-async function unarchiveLast() {
-  const res = await fetch('/api/unarchive', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+function restoreTask(state, task, to) {
+  const stage = (state.board?.stages || []).find(s => s.slug === to);
+  if (!stage || !task || stage.tasks.some(t => t.file === task.file)) return;
+  const key = t => [t.number ? parseInt(t.number, 10) : 9999, t.file];
+  const [n, f] = key(task);
+  let at = stage.tasks.findIndex(t => { const [m, g] = key(t); return m > n || (m === n && g > f); });
+  if (at < 0) at = stage.tasks.length;
+  stage.tasks.splice(at, 0, { ...task, stage: to });
+}
+
+/* No answer, or a success that says nothing about what happened, is not
+   a confirmation: the reply must name the card it moved. */
+function unconfirmed(r) {
+  return r.status === 0 || (r.ok && !(r.data && r.data.file));
+}
+
+function archiveCard(file, from) {
+  if (archiving.has(file)) return archiving.get(file);
+  const p = sendArchive(file, from).finally(() => archiving.delete(file));
+  archiving.set(file, p);
+  return p;
+}
+
+async function sendArchive(file, from) {
+  const r = await post('/api/archive', { file, from });
+  if (unconfirmed(r)) {
+    toast(`${file}: the archive could not be confirmed — nothing is known to have ` +
+          `been archived; the board is being read again to show what happened`, true);
+    afterWrite(null);
+    return false;
+  }
+  if (!r.ok) {
+    toast(r.error || 'archive failed', true);
+    afterWrite(null);
+    return false;
+  }
+  const d = r.data;
+  let removed = null;
+  afterWrite(d, (state) => {
+    const task = removeTask(state, d.file, d.from);
+    if (task) removed = task;
+    if (typeof d.archivedCount === 'number') state.archivedCount = d.archivedCount;
   });
-  const data = await res.json();
-  toast(res.ok ? `${data.file} brought back to ${data.to}/` : (data.error || 'nothing to bring back'), !res.ok);
-  await loadState();
+  lastRemoved = { file: d.file, from: d.from, task: removed };
+  if (d.committed === false) {
+    toast(`Archived ${d.file}, but committing it failed — the card is in archive/ ` +
+          `uncommitted; the activity log says why. ⌘Z brings it back`, true);
+  } else {
+    toast(`Archived ${d.file} — ⌘Z brings it back`);
+  }
+  return true;
+}
+
+function unarchiveLast() {
+  // a held ⌘Z repeats: one undo at a time, and the repeat is not a second
+  if (undoing) return undoing;
+  undoing = sendUnarchive().finally(() => { undoing = null; });
+  return undoing;
+}
+
+async function sendUnarchive() {
+  // the undo covers the last archive this page saw confirmed — so it
+  // waits for any still on their way rather than racing them
+  if (archiving.size) await Promise.allSettled([...archiving.values()]);
+  const r = await post('/api/unarchive', {});
+  if (unconfirmed(r)) {
+    toast('⌘Z could not be confirmed — the board is being read again to show what happened', true);
+    afterWrite(null);
+    return false;
+  }
+  if (!r.ok) {
+    toast(r.error || 'nothing to bring back', true);
+    afterWrite(null);
+    return false;
+  }
+  const d = r.data;
+  const known = lastRemoved && lastRemoved.file === d.file ? lastRemoved.task : null;
+  lastRemoved = null;
+  afterWrite(d, (state) => {
+    if (known) restoreTask(state, known, d.to);
+    if (typeof d.archivedCount === 'number') state.archivedCount = d.archivedCount;
+  });
+  toast(d.committed === false
+    ? `${d.file} brought back to ${d.to}/, but committing it failed — the activity log says why`
+    : `${d.file} brought back to ${d.to}/`, d.committed === false);
+  return true;
 }
 
 export {

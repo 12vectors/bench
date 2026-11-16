@@ -172,10 +172,13 @@ class ArmThenFire(unittest.TestCase):
     def test_a_refused_archive_reports_itself(self):
         """fireAction can only unlock on failure if the runner tells it
         the truth — the same contract runCommand and stopAgent keep."""
-        body = re.search(r"async function archiveCard\(file, from\) \{(.*?)\n\}",
+        body = re.search(r"async function sendArchive\(file, from\) \{(.*?)\n\}",
                          self.html, re.S)
-        self.assertIsNotNone(body, "archiveCard is gone")
-        self.assertIn("return res.ok", body.group(1))
+        self.assertIsNotNone(body, "sendArchive is gone")
+        # a refusal and an unconfirmed request answer false, a confirmed
+        # archive true (task 128; behaviour in tests/node/archive_confirmation)
+        self.assertEqual(body.group(1).count("return false;"), 2)
+        self.assertIn("return true;", body.group(1))
 
     def test_the_click_does_not_open_the_card(self):
         wiring = re.search(r"el\.querySelectorAll\('\[data-arch\]'\).*?\n  \}\);",
@@ -251,12 +254,15 @@ class TheUndoStaysThePromise(unittest.TestCase):
                          "the chip and the drop share archiveCard")
 
     def test_the_toast_names_the_undo(self):
-        body = re.search(r"async function archiveCard\(file, from\) \{(.*?)\n\}",
+        body = re.search(r"async function sendArchive\(file, from\) \{(.*?)\n\}",
                          self.html, re.S).group(1)
         self.assertIn("⌘Z brings it back", body)
-        self.assertIn("await loadState()", body,
-                      "the tray's count is read from the state, so it "
-                      "follows only if the archive reloads it")
+        # task 128: the tray's count comes from the confirmed reply, painted
+        # at once; the whole-board reading reconciles in the background and
+        # the action does not wait for it
+        self.assertIn("state.archivedCount = d.archivedCount", body)
+        self.assertIn("afterWrite(d,", body)
+        self.assertNotIn("await loadState()", body)
 
     def test_the_chips_tooltip_says_it_too(self):
         push = re.search(r"if \(canArchive\(task\)\) \{(.*?)\n  \}",

@@ -96,7 +96,9 @@ gitproc / records / redact < config < githost / assets < state / reports / templ
   `/web/<build>/`, immutable, whatever an update does to the disk.
   `BOARD_ASSETS=disk` reads from disk, uncached, for editing. Imports
   `config` and `records`
-- `state.py` — shared registries, event log persistence, SSE fan-out
+- `state.py` — shared registries, event log persistence, SSE fan-out,
+  and the board revision every `board` frame and state reading carries
+  (task 128)
 - `reports.py` — what the record keeps of an agent's closing report: one
   cap, one clip, for the task file and the PR body alike
 - `templates.py` — the four launch prompt templates: what each may and
@@ -364,6 +366,35 @@ stopped at the disk would silently hold up every later move on that board,
 and the archived card would exist in one working tree only. The same law
 covers every write the board makes to a task file: the `**PR:**` line, a
 claim, and an agent's closing report all reach git the same way.
+
+**The card leaves on the reply, not on a reload** (task 128). Nothing is
+shown archived before the board says so: the chip stays busy until
+`/api/archive` answers. Its answer is the confirmation the page paints
+from — the card and the stage it left, the archive count it left behind,
+whether git recorded the move (`committed`: `false` is a moved card
+whose commit failed, said in an alarm toast; `null` with
+`BOARD_COMMIT_MOVES` off) and the **board revision** whose reading will
+hold it. The whole-board reading that reconciles everything else is
+asked for in the background, and the action does not wait for it.
+⌘Z answers the same way and puts the card back where it stood.
+
+Board revisions are what make that safe. Every `board` frame carries the
+next revision (`state.broadcast`), `/api/state` carries the revision it
+read *before* reading the disk (`boardRev`, with `boardBoot` naming the
+process), so a reading holds every change announced at or below its
+revision. A confirmed write is laid over any reading older than its
+revision and retired by the first that holds it, so a reading sent
+before the archive cannot put the card back; a reading from a restarted
+board read the disk afresh and holds everything. A frame naming a
+revision already painted, or one the reading already out was sent after,
+asks for nothing — so an archive's confirmation and its own frame cost
+one reading between them, and one archive causes at most two (that one,
+or one follow-up behind a reading sent before it; and the watcher's
+later frame). A refusal, no answer, or an answer that names no card
+paints nothing from the reply: the toast says nothing is known to have
+happened, and a reading says what did. A second archive of a card
+already on its way joins the first, and ⌘Z waits for every archive in
+flight. The timings are in `develop/perf/README.md`.
 
 ## Local commands
 
