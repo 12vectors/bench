@@ -459,6 +459,23 @@ Its regression tests (`tests/test_gate_compare.py`) run on fixture boards
 only. A comparison over an operator's real inventory is a separate act by
 whoever holds that data; a fixture run says nothing about that board.
 
+## The page's script policy (card 124)
+
+`verify/browser_cases/case_script_policy.py` is the browser half of the
+module conversion and the Content Security Policy. It tours every view,
+Settings section and the card detail and requires zero uncaught errors
+and zero CSP violations; reads the live document (one module script, no
+inline script, no handler attribute); injects an inline script and
+requires that it does not run and is reported; drives the `stale-page`
+refusal and the reload banner; and takes matched-view screenshots of the
+board, phases, sessions, focus and card detail at 1280x800 and 390x844 in
+both themes from the pre-change build (the launch base, run as a second
+board over the same application, work state and machine-local state) and
+the candidate, failing when more than 0.5% of a view's pixels differ.
+The Playwright adapter reports CSP violations apart from uncaught errors
+(`Browser.csp`); the local-Chromium path collects them from the `Log`
+domain and, like the rest of that path, has not run on this host.
+
 ## Not covered here
 
 These checks do not cover live lifecycle behaviour (real agents, PRs,
