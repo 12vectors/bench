@@ -603,6 +603,7 @@ test('the detail text is keyed by card: a reply about one card never fills anoth
     const b = { file: 'k1-b.md', stage: 'review', rev: 'q1' };
     loadDetail(a);
     loadDetail(b);
+    await settle();   // the resource asks in a microtask
     assert.equal(c.asked.length, 2);
     assert.match(c.asked[0].url, /^\/api\/card\?file=k1-a\.md&stage=review$/);
     assert.equal(withDetail(a), null, 'nothing is shown before the text is read');
@@ -621,6 +622,7 @@ test('the detail text is keyed by card: a reply about one card never fills anoth
     // a payload that still carries the text (an older board) is read as is
     const old = { file: 'k1-c.md', stage: 'review', body: 'inline', parts: {} };
     loadDetail(old);
+    await settle();
     assert.equal(c.asked.length, 2, 'nothing asked for a card that carries its text');
     assert.equal(withDetail(old).body, 'inline');
   } finally { globalThis.fetch = saved; }
@@ -636,13 +638,16 @@ test('a new revision is asked for; asks made meanwhile are queued, and the newes
   try {
     const a = { file: 'k2-a.md', stage: 'review', rev: 'r1' };
     loadDetail(a);
+    await settle();
     c.reply(0, 200, textOf('k2-a.md', 'review', 'r1', 'one'));
     await settle();
     loadDetail(a);
+    await settle();
     assert.equal(c.asked.length, 1, 'the same revision is not asked again');
     // a sync edit: the list now names r2, then r3 while r2 is still out
     loadDetail({ ...a, rev: 'r2' });
     loadDetail({ ...a, rev: 'r3' });
+    await settle();
     assert.equal(c.asked.length, 2, 'one request in flight');
     // the earlier text stays on screen, said to be refreshing
     assert.match(briefHtml({ ...a, rev: 'r3' }), /has changed since this text was read/);
@@ -665,6 +670,7 @@ test('a card that moved, or could not be read, says so in an alert with a way to
   try {
     const a = { file: 'k3-a.md', stage: 'review', rev: 'r1' };
     loadDetail(a);
+    await settle();
     c.reply(0, 409, { error: 'x', code: 'moved', stage: 'done' });
     await settle();
     assert.equal(withDetail(a), null);
@@ -674,7 +680,9 @@ test('a card that moved, or could not be read, says so in an alert with a way to
     assert.match(html, /id="dretry"/, 'a way to ask again');
     const b = { file: 'k3-b.md', stage: 'review', rev: 'r1' };
     loadDetail(b);
+    await settle();
     const at = c.asked.findIndex(q => String(q.url).includes('k3-b.md'));
+    assert.ok(at >= 0, 'the second card was asked for');
     c.fail(at);
     await settle();
     assert.match(briefHtml(b), /Could not read this card's brief — the board could not be asked/);
