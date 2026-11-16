@@ -1248,6 +1248,26 @@ verdict, a finding or an acceptance. Report text is untrusted: raw HTML
 arrives as text, a link is followed only to the web, mail, an anchor or
 a relative path, and an image is drawn as a link to it, never fetched.
 
+**The board lists cards; a card's text is read when it is opened**
+(task 129). `/api/state` carries every card's fields — identity, stage,
+headers, phase and stack membership, the verdict and assignee read out
+of its text — and its revision (`rev`, the first 16 hex digits of the
+text's sha256), but not the text itself: every server section that reads
+a card's text (delivery, acceptance and findings, verdicts, phase
+progress) is computed from the full board before the list is made, so no
+signal is lost and the page infers nothing from what is left out. A
+phase card's log travels as `phaseLogs`. Opening a card asks `GET
+/api/card?file=&stage=` for its text, where it splits and its revision.
+The answer is about that name in that stage only: a card that has since
+moved reads `409 moved` with the stage it is in, an archived one `410
+archived`, a deleted one `404 gone`, and the page then reads the board
+again so the view follows the card or closes. The text is keyed by card
+and asked again when the listed stage or revision moves, through the
+same race policy as the other on-demand readings — a late reply never
+lands on another card or over a newer one — and the brief says
+*Reading the card…* (announced as busy) or why it could not be read,
+with **Try again**. `/api/tasks` still serves every card's whole text.
+
 A live update keeps your place: each section keeps its own scroll
 position, open folds and unsent text survive a redraw, and a record
 arriving above what you are reading moves the page rather than you.
