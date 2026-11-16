@@ -268,19 +268,20 @@ function withDetail(t) {
   return { ...t, body: d.body, parts: d.parts, words: d.words, textRev: d.rev };
 }
 
-function briefHtml(t) {
-  const full = withDetail(t);
-  const entry = (t && S.detail[t.file]) || {};
-  if (!full) {
+function briefHtml(listed) {
+  // the card as listed, and — once its text is in hand — the card with it
+  const t = withDetail(listed);
+  const entry = (listed && S.detail[listed.file]) || {};
+  if (!t) {
     if (entry.error && !entry.loading)
       return `<div class="dload bad" role="alert">Could not read this card's brief — ${esc(entry.error)}. ` +
         `<button type="button" class="dlink" id="dretry">Try again</button></div>`;
     return `<div class="dload" role="status" aria-live="polite" aria-busy="true">Reading the card…</div>`;
   }
   const note = entry.stale && entry.error ? staleWords(entry.error)
-    : entry.loading && full.textRev && t.rev && full.textRev !== t.rev
+    : entry.loading && t.textRev && listed.rev && t.textRev !== listed.rev
       ? 'This card has changed since this text was read; the newest text is being read.' : '';
-  const parts = cardSplit(full);
+  const parts = cardSplit(t);
   const head = parts.head.replace(/^\s*#\s[^\n]*\n?/, '');
   return (note ? `<p class="dnote dstale" role="status">${esc(note)}</p>` : '') +
     `<div class="dbody">${md(head + '\n' + withoutDiscussion(parts.brief))}</div>` +
