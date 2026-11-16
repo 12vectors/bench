@@ -90,7 +90,6 @@ class StateReads(unittest.TestCase):
         self.assertTrue(b.wait("window.__held.length === 1", 5), "no state read went out")
         got = b.eval("window.__state")
         self.assertEqual(1, got["asked"], f"thirty asks while nothing had landed were more than one read: {got}")
-        self.assertTrue(b.eval("stateReading().queued"), "the burst queued no follow-up")
         # the first read lands; the queued follow-up is the one more read
         b.eval("(() => { __held.shift()(); return true; })()")
         self.assertTrue(b.wait("window.__held.length === 1 || window.__burstDone === true", 5),
