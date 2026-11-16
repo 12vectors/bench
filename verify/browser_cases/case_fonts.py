@@ -216,9 +216,13 @@ window.__benchFontProbe = async (faces) => {
 true;
 """
 
-# Holds the page still for the matched screenshots: its redraw entry points
-# become no-ops, its timers are cleared and animation is off — for the
-# candidate and the baseline alike, so all that differs is the faces.
+# Holds the page still for the matched screenshots: its timers are cleared
+# and animation is off — for the candidate and the baseline alike, so all
+# that differs is the faces. Since the page became modules (task 124) the
+# redraw entry points on `window` are only its console seam: replacing them
+# no longer reaches the page's own calls, so a stream event can still
+# redraw the board underneath — which is why the board shots are recorded
+# rather than asserted, and the specimen (drawn over it) is the assertion.
 FREEZE_JS = """(() => {
   for (const f of ['scheduleRender', 'render', 'loadState', 'renderChip', 'toast', 'fetchSetup'])
     if (typeof window[f] === 'function') window[f] = () => {};

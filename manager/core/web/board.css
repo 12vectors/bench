@@ -1423,3 +1423,18 @@
   #toast.show{display:flex}
   #toast .dot{background:var(--calm)}
   #toast.err .dot{background:var(--alarm)}
+
+  /* ── a page of an earlier build (task 124) ──
+     Refused by the board after a restart: says so at the top, in the
+     alarm register, until the page is reloaded. */
+  #stalebanner{
+    position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:45;
+    max-width:min(640px, calc(100vw - 32px));padding:12px 16px;font-size:13px;
+    line-height:1.5;color:var(--text);background:var(--raised);
+    border:1px solid var(--alarm);border-radius:12px;
+    box-shadow:0 16px 34px -22px rgba(0,0,0,.8);
+  }
+  #stalebanner[hidden]{display:none}
+  #stalebanner p{margin:0 0 6px}
+  #stalebanner .stalewarn{color:var(--alarm)}
+  #stalebanner button{margin-top:4px}

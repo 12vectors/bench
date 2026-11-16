@@ -1,0 +1,380 @@
+/* One delivery status per card. */
+import { agentOnTask, loadState } from '../app/data.js';
+import { S } from '../app/state.js';
+import { fetch } from '../lib/api.js';
+import { $, esc } from '../lib/dom.js';
+import { fmtClock, fmtShort } from '../lib/time.js';
+import { toast } from '../lib/toast.js';
+import { actLabel, closeSheet, completeSheet, fireAgent, holdPhase, move, openPR, requiredSheet, runPhase, showDetail, verifySheet, wireAction } from './card.js';
+import { setView } from './frame.js';
+import { gateSheet } from './gates.js';
+import { fold, stopAgent } from './sessions.js';
+import { mix } from '../words.js';
+
+/* ── one delivery status per card (task 99, design #94 §3, §3.6) ───────
+
+   What is happening, what to do next, and what prevents delivery are
+   answered once, by the server (`delivery.py`), and carried in
+   `S.state.delivery`. The card face, the Overview and the merge dialog
+   draw that reading and nothing else: there is no status cascade on this
+   page. Mutations never read it either — every action below calls the
+   route that rechecks its own rules at the moment it acts. */
+
+// The face wears a status only when it changes what you do next (§3.6):
+// active work, an actionable current problem, an override in force, a
+// publication problem, and — in review/ — the next delivery step. The
+// rest (not started, queued, ready to start, in progress, an ungated
+// review, delivered) is the column's own word and stays off the face.
+const FACE_WORDS = new Set([
+  'merging', 'not-published', 'run-failed', 'agent-working', 'phase-running',
+  'returned', 'cannot-assess', 'rules-invalid', 'check-failed', 'cannot-run-check',
+  'changes-requested', 'checks-running', 'checks-needed', 'review-needed',
+  'signoff-needed', 'ready-to-merge', 'ready-overridden', 'merged-elsewhere',
+  'waiting-for-phase', 'waiting-for-parent',
+]);
+// the words whose cause is a requirement on the current commit, so the ◫
+// evidence earns the face beside them; a stale or historical row never does
+const EVIDENCE_ON_FACE = new Set(['check-failed', 'cannot-run-check', 'checks-running']);
+
+function deliveryOf(task) {
+  return ((S.state || {}).delivery || {})[task.file] || null;
+}
+
+function toneColours(tone) {
+  switch (tone) {
+    case 'working': return { tint: 'var(--accent)', bg: mix('var(--accent)', 16) };
+    case 'alarm': return { tint: 'var(--alarm)', bg: mix('var(--alarm)', 16) };
+    case 'calm': return { tint: 'var(--calm)', bg: mix('var(--calm)', 18) };
+    case 'idle': return { tint: 'var(--idle)', bg: 'var(--sunken)' };
+    default: return { tint: 'var(--muted)', bg: 'var(--sunken)' };
+  }
+}
+
+function deliveryPill(d) {
+  const c = toneColours(d.status.tone);
+  return { text: d.status.label, tint: c.tint, bg: c.bg, title: d.status.sentence,
+           word: d.status.word, tone: d.status.tone };
+}
+
+function shortSha(sha) { return sha ? String(sha).slice(0, 12) : ''; }
+
+/* The headline count: required obligations only (design §7). Optional
+   checks and earlier runs are counted apart and never inflate it. */
+function requirementsHeadline(d) {
+  const c = d.counts || { required: 0, met: 0 };
+  const at = (d.candidate || {}).state === 'present' && d.candidate.commit
+    ? ` for ${shortSha(d.candidate.commit)}` : '';
+  if (!c.required) return 'No merge requirements apply';
+  return `${c.met} of ${c.required} merge requirement${c.required === 1 ? '' : 's'} met${at}`;
+}
+
+const REQ_GLYPH = { met: '✓', needed: '○', running: '◌', problem: '✕', 'cannot-assess': '!' };
+const REQ_ROW = { met: 'pass', needed: '', running: 'accent', problem: 'fail', 'cannot-assess': 'fail' };
+
+function requirementRows(rows) {
+  if (!rows || !rows.length) return '';
+  return rows.map(r => {
+    const overridden = r.state === 'overridden';
+    const cls = overridden ? 'fail' : (REQ_ROW[r.class] || '');
+    const glyph = overridden ? '!' : (REQ_GLYPH[r.class] || '·');
+    const name = r.kind === 'check' ? `${r.name} — ${r.coverage}` : r.name;
+    // A record of a declared equivalent (card 104) keeps its own name,
+    // evidence and requester, and is said to be that; one that is declared
+    // and is not the same check says which dimension stops it.
+    const via = r.reusedFrom
+      ? `<span class="dreqvia">run as <code>${esc(r.reusedFrom.check)}</code>` +
+        ` (evidence ${esc(r.reusedFrom.evidence || '')}, run for ` +
+        `${esc(r.reusedFrom.agent || r.reusedFrom.actor || 'an earlier request')}` +
+        `), which this check accepts as the same check</span>`
+      : r.equivalence
+        ? `<span class="dreqvia"><code>${esc(r.equivalence.check)}</code> ran ` +
+          `here and does not count: ${esc(r.equivalence.why || r.equivalence.dimension)}</span>`
+        : '';
+    return `<li class="check-row ${cls}" title="${esc(r.why || '')}">` +
+      `<span class="glyph" aria-hidden="true">${glyph}</span>` +
+      `<span class="name">${esc(name)}</span>` +
+      `<span class="state">${esc(overridden ? 'Overridden — still unmet' : (r.plain || r.state))}` +
+      `${r.remedy && ['problem', 'cannot-assess'].includes(r.class)
+        ? `<span class="dreqfix">${esc(r.remedy)}</span>` : ''}${via}</span></li>`;
+  }).join('');
+}
+
+/* An action from the reading, as a button wired to the route that does it
+   today. `kind: view` opens something on this page and changes nothing; a
+   disabled action is drawn disabled with its reason, never as a button
+   that does nothing. */
+function deliveryRun(task, a) {
+  const post = async (url, body) => {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                   body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, data };
+  };
+  switch (a.action) {
+    case 'move': return () => move(task.file, task.stage, a.to);
+    case 'start': return () => fireAgent(task, '/api/agent/start');
+    case 'takeover': return () => fireAgent(task, '/api/agent/start', { takeover: true });
+    case 'hold': return () => stopAgent(a.agent || (agentOnTask(task.file) || {}).id);
+    case 'run-phase': return () => runPhase(task, task.assignee && S.state.me
+      && task.assignee !== S.state.me ? { takeover: true } : undefined);
+    case 'hold-phase': return () => holdPhase(task);
+    case 'act-pr': return () => fireAgent(task, '/api/agent/act-pr');
+    case 'review-pr': return () => fireAgent(task, '/api/agent/review-pr');
+    case 'open-pr': return () => openPR(task);
+    // the completion sheet is the confirmation: it reads what merge &
+    // clean up would do before offering it, exactly as dragging to done/
+    case 'complete': return () => { completeSheet(task, task.stage); return true; };
+    case 'cancel-check': return async () => {
+      const { ok, data } = await post('/api/verify/cancel', { id: a.evidence });
+      toast(ok ? 'the check was cancelled — nothing else changed' : (data.error || 'not cancelled'), !ok);
+      await loadState();
+      return ok;
+    };
+    case 'check-remote': return async () => {
+      const { ok, data } = await post('/api/card/delivery/check-remote', { file: task.file });
+      const f = data.found || {};
+      toast(!ok ? (data.error || 'the remote was not asked')
+        : f.error ? f.error
+        : Object.keys(f.found || {}).length ? `fetched ${Object.keys(f.found).join(', ')} from ${f.remote}`
+        : `${f.remote || 'the remote'} has neither branch for this card`, !ok || !!f.error);
+      await loadState();
+      return ok;
+    };
+    case 'launch-check': return async () => {
+      const { ok, data } = await post('/api/card/delivery/launch-check',
+        // the intent and the ownership rule are the server's, carried on
+        // the action: the check asks about the launch this card offers
+        { file: task.file, stage: task.stage, intent: a.intent, takeover: !!a.takeover });
+      toast(ok ? `${(data.launch || {}).says || 'asked'} — nothing was claimed or started`
+               : (data.error || 'the launch check could not be asked'),
+            !ok || !(data.launch || {}).ok);
+      return ok;
+    };
+    case 'read-failure': return () => {
+      const d = deliveryOf(task);
+      if (d && d.status.word === 'run-failed') {
+        showDetail(task);
+        requestAnimationFrame(() => { const f = $('#dfail'); if (f) { f.scrollIntoView({ block: 'nearest' }); f.focus(); } });
+      } else verifySheet(task);
+      return true;
+    };
+    // the sheet is the confirmation: it reads what a click would request
+    // and holds the armed fire, as the completion sheet does for a merge
+    case 'run-required-checks': return () => { requiredSheet(task); return true; };
+    case 'evidence': return () => { verifySheet(task); return true; };
+    // a merge rule asks for sign-off: open the Acceptance section, where
+    // Track acceptance and each criterion's decision already live. Opening
+    // it changes nothing; every decision is still its own armed write
+    case 'confirm-criteria': return () => {
+      S.dtab[task.file] = 'acceptance';
+      closeSheet();
+      showDetail(task);
+      return true;
+    };
+    case 'gates': return () => { gateSheet(task); return true; };
+    case 'phases': return () => { setView('phases'); return true; };
+    case 'settings-merge-rules': return () => {
+      S.settingsSection = 'acceptance';
+      closeSheet();
+      setView('settings');
+      return true;
+    };
+    default: return null;
+  }
+}
+
+/* One action as markup, and its wiring after it lands. The key is the
+   card's and the action's, so the primary on the Overview and the same
+   action in the dialog are one armed window, not two. */
+function deliveryButtonHtml(a, slot, primary) {
+  if (!a) return '';
+  const why = !a.enabled && a.why
+    ? `<small class="dwhy" id="dwhy-${slot}">${esc(a.why)}</small>` : '';
+  if (a.action === 'open-pr-url' && a.url) {
+    return `<a class="dact${primary ? ' dprimary' : ''}" href="${esc(a.url)}" target="_blank" ` +
+      `rel="noopener" data-dslot="${slot}">${esc(a.label)} ↗</a>`;
+  }
+  return `<span class="dactwrap"><button type="button" class="dact${primary ? ' dprimary' : ''}" ` +
+    `data-dslot="${slot}"${a.enabled ? '' : ` disabled aria-describedby="dwhy-${slot}"`}>` +
+    `${a.arm && a.enabled ? actLabel(a.label, ACT_CONFIRM[a.action] || 'click again to confirm', 'working…')
+                          : esc(a.label)}</button>${why}</span>`;
+}
+
+const ACT_CONFIRM = {
+  start: 'start it?', takeover: 'take it over?', hold: 'hold it?', 'run-phase': 'run it?',
+  'hold-phase': 'hold it?', 'act-pr': 'act on it?', 'review-pr': 'review it?',
+  'cancel-check': 'cancel it?',
+};
+
+function wireDeliveryButtons(root, task, actions) {
+  root.querySelectorAll('button[data-dslot]').forEach(btn => {
+    const a = actions[btn.dataset.dslot];
+    if (!a || !a.enabled) return;
+    const run = deliveryRun(task, a);
+    if (!run) return;
+    if (a.arm) {
+      wireAction(btn, `${task.file}::delivery::${a.action}`, {
+        label: a.label, confirm: ACT_CONFIRM[a.action] || 'click again to confirm',
+        busy: 'working…', run });
+    } else {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); run(); });
+    }
+  });
+}
+
+/* The status block every surface draws: the word as a heading, the
+   sentence, the primary action first, then the alternatives in one native
+   disclosure. An alarm is announced as one; every other tone is a status. */
+function deliveryStatusHtml(task, d, where) {
+  if (!d) return `<p class="dnote">Reading the delivery status…</p>`;
+  const c = toneColours(d.status.tone);
+  const others = (d.others || []);
+  const id = `dstatus-${where}`;
+  const who = d.primary ? ({ you: 'you', agent: 'an agent', board: 'the board',
+                             nobody: 'nobody' }[d.primary.who] || d.primary.who) : '';
+  return `<section class="dstatus tone-${esc(d.status.tone)}" aria-labelledby="${id}" ` +
+    `data-word="${esc(d.status.word)}">` +
+    `<h3 id="${id}" class="dsword" style="color:${c.tint}">${esc(d.status.label)}</h3>` +
+    `<p class="dssent" role="${d.status.tone === 'alarm' ? 'alert' : 'status'}">${esc(d.status.sentence)}</p>` +
+    `<div class="dsacts">` +
+    (d.primary ? deliveryButtonHtml(d.primary, `${where}-p`, true) +
+                 (who ? `<span class="dswho">next · ${esc(who)}</span>` : '')
+               : `<span class="dswho">nothing is yours to do here right now</span>`) +
+    `</div>` +
+    (others.length
+      ? `<details class="dsmore" data-fold="${where}-more"${S.accOpen[`${task.file}:${where}-more`] ? ' open' : ''}>` +
+        `<summary>More actions (${others.length})</summary><div class="dsmorebody">` +
+        others.map((a, i) => deliveryButtonHtml(a, `${where}-o${i}`, false)).join('') +
+        `</div></details>`
+      : '') +
+    `</section>`;
+}
+
+function deliveryActions(d, where) {
+  const out = {};
+  if (!d) return out;
+  if (d.primary) out[`${where}-p`] = d.primary;
+  (d.others || []).forEach((a, i) => { out[`${where}-o${i}`] = a; });
+  return out;
+}
+
+/* The full reading — the requirement rows, their remedies, the candidate
+   and where each fact came from. A GET that writes nothing; refetched
+   whenever the server says the rows it would return have changed.
+
+   The key carries the server's own `detail` — a digest of every row, its
+   prose and remedy, the merge rule's reading and the completion — so a
+   check replaced by another with the same totals, or a reworded remedy,
+   is a new key even when the word, the counts and the classes are not.
+   Only the newest request may answer: a reply to an older key is dropped
+   rather than written over a newer one. A failed read keeps the last rows
+   it had, marked with the error, and is asked again after a short wait
+   rather than on every repaint. */
+const DFULL_RETRY_MS = 5000;
+
+function deliveryFullKey(task) {
+  const d = deliveryOf(task);
+  return JSON.stringify([task.stage, task.mtime, d && d.detail, d && d.status, d && d.counts,
+                         d && d.candidate, d && d.classes]);
+}
+
+let dfullSeq = 0;
+// the next request number, for a reader in another module
+function nextDfullSeq() { return ++dfullSeq; }
+function storeDeliveryFull(file, key, seq, entry) {
+  const cur = S.dfull[file];
+  if (cur && cur.seq > seq) return false;
+  S.dfull[file] = { ...entry, key, seq };
+  return true;
+}
+
+function loadDeliveryFull(task, done) {
+  const key = deliveryFullKey(task);
+  const cur = S.dfull[task.file];
+  if (cur && cur.key === key
+      && (cur.loading || !cur.error || Date.now() < cur.retryAt)) return cur.data || null;
+  const seq = ++dfullSeq;
+  const prior = (cur || {}).data || null;
+  S.dfull[task.file] = { data: prior, error: (cur || {}).error || null, loading: true, key, seq };
+  fetch(`/api/card/delivery?file=${encodeURIComponent(task.file)}&stage=${encodeURIComponent(task.stage)}`)
+    .then(res => res.json().then(data => ({ ok: res.ok, data })))
+    .then(({ ok, data }) => ok && data.delivery
+      ? { data: data.delivery, error: null }
+      : { data: prior, error: (data && data.error) || 'the board did not answer',
+          retryAt: Date.now() + DFULL_RETRY_MS })
+    .catch(() => ({ data: prior, error: 'the board could not be asked',
+                    retryAt: Date.now() + DFULL_RETRY_MS }))
+    .then(entry => {
+      if (storeDeliveryFull(task.file, key, seq, entry) && done) done();
+      // an error is asked again once its wait is over, by the next repaint
+      if (entry.error && done) setTimeout(done, DFULL_RETRY_MS + 50);
+    });
+  return prior;
+}
+
+/* Merge requirements, as supporting detail under the status: the required
+   rows with their state in words, then — folded — the optional checks and
+   earlier runs that are counted apart, and the technical provenance. */
+function requirementsHtml(task, d, full, where) {
+  if (!d) return '';
+  const rows = full ? full.requirements : null;
+  const hist = d.history || {};
+  const gated = (S.state.gates || {})[task.file];
+  const fold = (key, summary, body) =>
+    `<details class="fold dreqfold" data-fold="${where}-${key}"` +
+    `${S.accOpen[`${task.file}:${where}-${key}`] ? ' open' : ''}><summary>${summary}</summary>` +
+    `<div class="dfoldbody">${body}</div></details>`;
+  const optional = (hist.optional || 0) + (hist.older || 0) + (hist.obsolete || 0);
+  const tech = full ? [
+    ['Commit', full.candidate.state === 'present'
+      ? `${shortSha(full.candidate.commit)} on ${full.candidate.ref || 'its branch'}`
+      : `${full.candidate.state}${full.candidate.why ? ' — ' + full.candidate.why : ''}`],
+    ['Merge rule', full.decision ? `${full.decision.scope}: ${full.decision.decision} — ${full.decision.summary || ''}`
+                                 : 'no merge rule was read for this stage'],
+    ['Completion', full.completion ? `${full.completion.mode} merge into ${full.completion.target}` +
+      (full.completion.refusal ? ` — ${full.completion.refusal}` : '') : ''],
+    ['Pull request', full.pr ? `${full.pr.prState || 'state unknown'}${full.pr.merged ? ', merged' : ''}` +
+      (full.source && full.source.pr && full.source.pr.observed
+        ? ` · as of ${fmtShort(full.source.pr.observed)} (${full.source.pr.from || 'snapshot'})` : '')
+      : 'not observed'],
+    ['Read', `${fmtClock(full.read.at)} · local to this board · reading it ran nothing`],
+  ].filter(([, v]) => v) : [];
+  const failed = (S.dfull[task.file] || {}).error;
+  return `<section class="dreqs" aria-labelledby="dreqs-${where}">` +
+    `<h3 id="dreqs-${where}">Merge requirements · ${esc(requirementsHeadline(d))}</h3>` +
+    (failed
+      ? `<p class="dnote dreqerr" role="status">The requirement rows could not be read: ${esc(failed)}. ` +
+        `${rows ? 'The rows below are the last reading, and may be out of date' : 'Nothing is shown in their place'}` +
+        ` — they are asked again in a few seconds.</p>`
+      : '') +
+    (!gated && !(d.counts || {}).required
+      ? `<p class="dnote">No merge requirements are configured on this board. Nothing is required before a merge, and that is not a pass.</p>`
+      : rows === null ? `<p class="dnote">Reading the requirements…</p>`
+      : rows.length ? `<ul class="dreqlist">${requirementRows(rows)}</ul>`
+      : (hist.obsolete
+          ? `<p class="dnote">The pull request is already merged, so no requirement applies to closing it.</p>`
+          : '')) +
+    (optional
+      ? fold('optional', `Optional checks and earlier runs (${optional})`,
+          `<p class="dnote">Counted apart from the merge requirements, and never a reason a merge waits.</p>` +
+          `<ul class="dhist">` +
+          (hist.optional ? `<li>${hist.optional} optional check${hist.optional === 1 ? '' : 's'} — registered or run, required by no merge rule</li>` : '') +
+          (hist.older ? `<li>${hist.older} earlier run${hist.older === 1 ? '' : 's'} on other commits — history, not today's reason</li>` : '') +
+          (hist.obsolete ? `<li>${hist.obsolete} requirement${hist.obsolete === 1 ? '' : 's'} the merged pull request made obsolete</li>` : '') +
+          `</ul><button type="button" class="dlink" data-dview="evidence">Open ◫ evidence</button>`)
+      : '') +
+    (tech.length
+      ? fold('technical', 'Technical details',
+          `<dl class="dfacts">` + tech.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('') + `</dl>`)
+      : '') +
+    `</section>`;
+}
+
+export {
+  ACT_CONFIRM, deliveryActions, deliveryButtonHtml, deliveryFullKey,
+  deliveryOf, deliveryPill, deliveryRun, deliveryStatusHtml, DFULL_RETRY_MS,
+  dfullSeq, EVIDENCE_ON_FACE, FACE_WORDS, loadDeliveryFull, nextDfullSeq,
+  REQ_GLYPH, REQ_ROW, requirementRows, requirementsHeadline,
+  requirementsHtml, shortSha, storeDeliveryFull, toneColours,
+  wireDeliveryButtons
+};
