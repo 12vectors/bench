@@ -252,12 +252,90 @@ def read_task(path: Path, stage: str) -> dict:
         and declared.lower() != config.STAGE_LABELS[stage].lower(),
         "mtime": path.stat().st_mtime,
         "words": len(text.split()),
+        # which text this reading is of (task 129): the list carries it in
+        # place of the text, and a detail read answers with it, so the
+        # page can tell a detail that is about this card as listed from
+        # one about an earlier or later edit of it
+        "rev": revision(text),
+        "bytes": len(text.encode("utf-8", "replace")),
         "body": text,
         # where `body` splits into head, brief and history (task 125), as
         # this module splits it — so the page slices the card rather than
         # keeping a second copy of the rule
         "parts": part_offsets(text),
     }
+
+
+def revision(text: str) -> str:
+    """A card text's revision: the first 16 hex digits of its sha256. Not
+    a security boundary — the identity a list entry and a detail reading
+    are compared by, so a sync edit, a report appended or a hand edit is a
+    different revision even within one second of mtime."""
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+# What a card's list entry leaves out (task 129): the text and where it
+# splits. Everything the server reads out of the text — the verdict, the
+# assignee, the plan headers, phase membership, the delivery, acceptance
+# and finding signals — is computed before the list is made and travels
+# as the fields and sections it already was; only the text itself waits
+# for the card to be opened (`card_detail`, `GET /api/card`).
+LIST_OMITS = ("body", "parts")
+
+
+def list_card(task: dict) -> dict:
+    """One card as the board lists it: every field `read_task` and the
+    weaves gave it but its text."""
+    return {key: value for key, value in task.items() if key not in LIST_OMITS}
+
+
+def list_board(collected: dict) -> dict:
+    """`collect()` with every card a list entry. A new dict: the collected
+    board the server's own sections read keeps its text."""
+    return {**collected,
+            "stages": [{**stage, "tasks": [list_card(t) for t in stage["tasks"]]}
+                       for stage in collected["stages"]]}
+
+
+CARD_NAME_RE = re.compile(r"^[^/\\\x00]+\.md$")
+
+
+class CardNotHere(LookupError):
+    """A detail read for a card that is not in the stage it was asked in.
+    `code` is `moved` (with `stage`, where it is now), `archived` or
+    `gone`."""
+
+    def __init__(self, code: str, message: str, stage: str | None = None):
+        super().__init__(message)
+        self.code = code
+        self.stage = stage
+
+
+def card_detail(filename: str, stage: str) -> dict:
+    """One card's text, read now, for its detail view (task 129): the
+    text, where it splits, and the revision it is — asked by name *and*
+    stage, so a card that moved, was archived or was deleted since the
+    page listed it is said to be so rather than read from elsewhere."""
+    if not CARD_NAME_RE.match(filename or "") or filename.startswith("."):
+        raise ValueError(f"{filename!r} is not a card's file name")
+    if stage not in config.STAGE_DIRS:
+        raise ValueError(f"{stage!r} is not a stage")
+    path = config.TASKS / stage / filename
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        mtime = path.stat().st_mtime
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
+        now = find_stage_of(filename)
+        if now:
+            raise CardNotHere("moved", f"{filename} is no longer in {stage}/ — "
+                              f"it is in {now}/ now", now) from None
+        if (config.TASKS / "archive" / filename).is_file():
+            raise CardNotHere("archived", f"{filename} was archived") from None
+        raise CardNotHere("gone", f"{filename} is not on the board any more") from None
+    return {"file": filename, "stage": stage, "rev": revision(text),
+            "mtime": mtime, "words": len(text.split()),
+            "bytes": len(text.encode("utf-8", "replace")),
+            "body": text, "parts": part_offsets(text)}
 
 
 def _utf16_len(text: str) -> int:

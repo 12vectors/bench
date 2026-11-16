@@ -270,7 +270,14 @@ def _state_payload() -> dict:
     # handed to the delivery reading rather than derived twice
     stacked = stacks.board(collected)
     return {
-        "board": collected,
+        # every card as a list entry: its fields and none of its text
+        # (task 129). What the server reads out of the text travels as the
+        # fields and the sections below, all computed from `collected`,
+        # which keeps the text; the text itself is `/api/card`, on opening
+        "board": taskfiles.list_board(collected),
+        # per phase card, its `## Phase log` entries with their times —
+        # what the Phases view draws under a lane, without the card's text
+        "phaseLogs": phases.board_logs(collected),
         "project": config.PROJECT,
         # the resolved roots: which application this board manages, where
         # its work state lives, and which repository the bookkeeping goes
@@ -738,6 +745,29 @@ def get_card_discussion(req) -> None:
         req.reply(200, refine.for_card(name, stage))
     except (ValueError, OSError) as exc:
         req.reply(409, {"error": str(exc)})
+
+
+def get_card(req) -> None:
+    # One card's text for its detail view (task 129), asked by name
+    # and stage: a card that moved, was archived or deleted since the
+    # page listed it is answered as such, never read from elsewhere.
+    # A read: it writes nothing and launches nothing.
+    try:
+        found = taskfiles.card_detail(_q(req, "file"), _q(req, "stage"))
+    except ValueError as exc:
+        req.reply(400, {"error": str(exc), "code": "invalid"})
+        return
+    except taskfiles.CardNotHere as exc:
+        answer = {"error": str(exc), "code": exc.code}
+        if exc.stage:
+            answer["stage"] = exc.stage
+        req.reply({"moved": 409, "archived": 410}.get(exc.code, 404), answer)
+        return
+    except OSError as exc:
+        req.reply(500, {"error": f"the card could not be read: {exc}",
+                        "code": "unreadable"})
+        return
+    req.reply(200, {"card": found})
 
 
 def get_card_acceptance(req) -> None:
@@ -1480,6 +1510,7 @@ ROUTES = (
     Route("GET", "/api/setup/verification", "read", get_setup_verification),
     Route("GET", "/api/preview", "read", get_preview),
     Route("GET", "/api/preview/log", "read", get_preview_log),
+    Route("GET", "/api/card", "read", get_card),
     Route("GET", "/api/card/discussion", "read", get_card_discussion),
     Route("GET", "/api/card/acceptance", "read", get_card_acceptance),
     Route("GET", "/api/card/delivery", "read", get_card_delivery),

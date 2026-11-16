@@ -118,6 +118,38 @@ def log_entries(text: str) -> list[str]:
     return entries
 
 
+LOG_DATED_RE = re.compile(
+    r"^-\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s+·\s+(.+?)\s*$")
+
+
+def log_dated(text: str) -> list[dict]:
+    """The phase log as the Phases view draws it under a lane: each entry
+    with the time it was written (task 129). The board list carries this
+    for a phase card instead of the card's whole text."""
+    section = re.search(rf"^##\s+{LOG_HEADING}\s*$(.*?)(?=^##\s|\Z)", text,
+                        re.MULTILINE | re.DOTALL)
+    if not section:
+        return []
+    entries = []
+    for line in section.group(1).splitlines():
+        match = LOG_DATED_RE.match(line.strip())
+        if match:
+            entries.append({"at": match.group(1), "text": match.group(2)})
+    return entries
+
+
+def board_logs(collected: dict) -> dict:
+    """Per phase card with a log, its dated entries."""
+    found = {}
+    for stage in collected["stages"]:
+        for task in stage["tasks"]:
+            if task.get("isPhase"):
+                entries = log_dated(task.get("body") or "")
+                if entries:
+                    found[task["file"]] = entries
+    return found
+
+
 def _write_log(phase: dict, entry: str) -> bool:
     """One line into the log, where it reaches git like every other write
     the board makes to a task file. The stage is asked of the disk: a pass

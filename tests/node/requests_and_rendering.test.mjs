@@ -586,6 +586,103 @@ test('cardSplit slices the card where the server split it, emoji and all', async
                    { head: body, brief: '', history: '' }, 'offsets are clamped to the text');
 });
 
+// ── the card's text, read on opening (task 129) ────────────────────────
+
+const textOf = (file, stage, rev, body) => ({
+  card: { file, stage, rev, body, parts: { brief: 0, history: body.length }, words: 2 } });
+
+test('the detail text is keyed by card: a reply about one card never fills another', async () => {
+  const { briefHtml, loadDetail, withDetail } = await load('views/detail/sections.js');
+  const { S } = await load('app/state.js');
+  const c = controlledFetch();
+  const saved = globalThis.fetch;
+  globalThis.fetch = c.fetch;
+  S.selected = null;
+  try {
+    const a = { file: 'k1-a.md', stage: 'review', rev: 'r1' };
+    const b = { file: 'k1-b.md', stage: 'review', rev: 'q1' };
+    loadDetail(a);
+    loadDetail(b);
+    assert.equal(c.asked.length, 2);
+    assert.match(c.asked[0].url, /^\/api\/card\?file=k1-a\.md&stage=review$/);
+    assert.equal(withDetail(a), null, 'nothing is shown before the text is read');
+    assert.match(briefHtml(a), /role="status"[^>]*aria-busy="true"/, 'loading is announced');
+    // b answers first: a is still loading, and does not wear b's text
+    c.reply(1, 200, textOf('k1-b.md', 'review', 'q1', 'B text'));
+    await settle();
+    assert.equal(withDetail(a), null);
+    assert.equal(withDetail(b).body, 'B text');
+    c.reply(0, 200, textOf('k1-a.md', 'review', 'r1', 'A text'));
+    await settle();
+    assert.equal(withDetail(a).body, 'A text');
+    assert.doesNotMatch(briefHtml(a), /aria-busy/);
+    // the same card listed in another stage does not wear the old stage's text
+    assert.equal(withDetail({ ...a, stage: 'done' }), null);
+    // a payload that still carries the text (an older board) is read as is
+    const old = { file: 'k1-c.md', stage: 'review', body: 'inline', parts: {} };
+    loadDetail(old);
+    assert.equal(c.asked.length, 2, 'nothing asked for a card that carries its text');
+    assert.equal(withDetail(old).body, 'inline');
+  } finally { globalThis.fetch = saved; }
+});
+
+test('a new revision is asked for; asks made meanwhile are queued, and the newest lands last', async () => {
+  const { briefHtml, loadDetail, withDetail } = await load('views/detail/sections.js');
+  const { S } = await load('app/state.js');
+  const c = controlledFetch();
+  const saved = globalThis.fetch;
+  globalThis.fetch = c.fetch;
+  S.selected = null;
+  try {
+    const a = { file: 'k2-a.md', stage: 'review', rev: 'r1' };
+    loadDetail(a);
+    c.reply(0, 200, textOf('k2-a.md', 'review', 'r1', 'one'));
+    await settle();
+    loadDetail(a);
+    assert.equal(c.asked.length, 1, 'the same revision is not asked again');
+    // a sync edit: the list now names r2, then r3 while r2 is still out
+    loadDetail({ ...a, rev: 'r2' });
+    loadDetail({ ...a, rev: 'r3' });
+    assert.equal(c.asked.length, 2, 'one request in flight');
+    // the earlier text stays on screen, said to be refreshing
+    assert.match(briefHtml({ ...a, rev: 'r3' }), /has changed since this text was read/);
+    c.reply(1, 200, textOf('k2-a.md', 'review', 'r2', 'two'));
+    await settle();
+    assert.equal(c.asked.length, 3, 'the queued ask follows');
+    c.reply(2, 200, textOf('k2-a.md', 'review', 'r3', 'three'));
+    await settle();
+    assert.equal(withDetail({ ...a, rev: 'r3' }).body, 'three');
+  } finally { globalThis.fetch = saved; }
+});
+
+test('a card that moved, was archived or deleted says so and the board is read again', async () => {
+  const { briefHtml, loadDetail, withDetail } = await load('views/detail/sections.js');
+  const { S } = await load('app/state.js');
+  const c = controlledFetch();
+  const saved = globalThis.fetch;
+  globalThis.fetch = c.fetch;
+  S.selected = null;
+  try {
+    const a = { file: 'k3-a.md', stage: 'review', rev: 'r1' };
+    loadDetail(a);
+    c.reply(0, 409, { error: 'x', code: 'moved', stage: 'done' });
+    await settle();
+    assert.equal(withDetail(a), null);
+    const html = briefHtml(a);
+    assert.match(html, /role="alert"/);
+    assert.match(html, /moved to done\//);
+    assert.match(html, /id="dretry"/, 'a way to ask again');
+    assert.ok(c.asked.some(q => String(q.url).startsWith('/api/state')),
+              'the list is read again, so the drawer follows the card');
+    const b = { file: 'k3-b.md', stage: 'review', rev: 'r1' };
+    loadDetail(b);
+    const at = c.asked.findIndex(q => String(q.url).includes('k3-b.md'));
+    c.fail(at);
+    await settle();
+    assert.match(briefHtml(b), /Could not read this card's brief — the board could not be asked/);
+  } finally { globalThis.fetch = saved; }
+});
+
 // ── escaping in attribute context ──────────────────────────────────────
 
 function scripts(dir = WEB) {

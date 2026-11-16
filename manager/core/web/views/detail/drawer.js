@@ -8,7 +8,7 @@ import { ago } from '../../lib/time.js';
 import { cardFor, cardTitle, focusCard, phaseMembers, planBlock, showDetail, verifySheet } from '../card.js';
 import { deliveryActions, deliveryOf, deliveryPill, wireDeliveryButtons } from '../delivery.js';
 import { discussionPanel, signalsBlock, wireDiscussion } from './discussion.js';
-import { acceptanceHtml, activityHtml, briefHtml, drawerAnchor, drawerTab, dsec, dtabsHtml, loadAcc, overviewHtml, reviewsHtml, wireDetail, wireReviews } from './sections.js';
+import { acceptanceHtml, activityHtml, briefHtml, drawerAnchor, drawerTab, dsec, dtabsHtml, loadAcc, loadDetail, overviewHtml, reviewsHtml, wireDetail, wireReviews } from './sections.js';
 import { findTask } from '../focus.js';
 import { renderCards } from '../frame.js';
 import { pillFor } from '../../words.js';
@@ -98,6 +98,7 @@ function renderDrawer() {
   const anchor = S.drawerAnchorKey === key ? drawerAnchor(body) : null;
   S.drawerAnchorKey = key;
   loadAcc(t);
+  loadDetail(t);
   const acc = (S.acc[t.file] || {}).data;
   panel.classList.toggle('wide', !!S.dwide);
   // Identity, lifecycle and the way out stay in view while reading (the

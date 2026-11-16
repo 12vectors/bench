@@ -1212,6 +1212,10 @@
   #drawer .dsec button.dact{font-size:12px;padding:4px 10px}
   #drawer .dsec .dnote{font-size:11.5px;color:var(--dim);margin:0}
   #drawer .dsec .dnote.bad{color:var(--alarm)}
+  /* the brief while its text is being read, or could not be (task 129) */
+  #drawer .dsec .dload{font-size:12.5px;color:var(--dim);padding:10px 0}
+  #drawer .dsec .dload.bad{color:var(--alarm)}
+  #drawer .dsec .dstale{margin-bottom:6px}
   #drawer .rpt{border:1px solid var(--line);border-radius:8px}
   #drawer .rpt>summary{padding:7px 10px;cursor:pointer;font-size:12.5px;display:flex;
     gap:8px;flex-wrap:wrap;align-items:baseline}

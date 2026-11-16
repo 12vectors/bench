@@ -62,6 +62,9 @@ function canonicalNumber(number) {
 const PHASE_LOG_LINE = /^-\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s+·\s+(.+?)\s*$/;
 
 function phaseLog(task) {
+  // the server's reading of the log (task 129): the list carries no text
+  const logs = S.state && S.state.phaseLogs;
+  if (logs && task.body == null) return logs[task.file] || [];
   const lines = (task.body || '').split('\n');
   const start = lines.findIndex(line => /^##\s+Phase log\s*$/.test(line));
   if (start < 0) return [];

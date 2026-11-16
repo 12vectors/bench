@@ -776,6 +776,7 @@ PROVIDER_VOCABULARY: dict[str, int] = {
 # runs; a route changing class is a reviewed edit of this snapshot.
 ROUTES: dict[str, str] = {
     "GET /": "read",
+    "GET /api/card": "read",
     "GET /api/card/acceptance": "read",
     "GET /api/card/delivery": "read",
     "GET /api/card/discussion": "read",

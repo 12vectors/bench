@@ -205,10 +205,85 @@ function overviewHtml(t, acc, failBlock, signals, plan, members) {
             `<summary>Branch and plan</summary><div style="padding:6px 10px">${plan}</div></details>` : '');
 }
 
+/* The card's text, read when the card is opened (task 129). The board list
+   carries every field the server reads out of a card — and its revision,
+   `rev` — but not the text, so the brief is asked for here, under
+   lib/resource.js's race policy: keyed by the card's file, so a reply
+   about one card never lands in another's; numbered, so a late reply
+   never replaces a newer one; and asked again whenever the stage or the
+   revision the list carries moves. The server answers by name *and*
+   stage, and a card that moved, was archived or deleted is answered as
+   such — then the board itself is read again, which moves the detail view
+   with the card or closes it. */
+const DETAIL_KEEP = 12;
+
+const GONE_WORDS = {
+  moved: (b) => `it moved to ${b.stage || 'another stage'}/ since the board was read`,
+  archived: () => 'it was archived since the board was read',
+  gone: () => 'it is no longer on the board',
+};
+
+const detail = resource({
+  store: S.detail,
+  url: (file, t) => `/api/card?file=${encodeURIComponent(file)}` +
+    `&stage=${encodeURIComponent(t.stage)}`,
+  accept: (ok, body) => {
+    if (ok && body && body.card) return { data: body.card };
+    const why = body && GONE_WORDS[body.code];
+    // the list is behind the disk: read it again, and the drawer follows
+    // the card to its new stage, or closes with it
+    if (why) Promise.resolve().then(() => loadState());
+    return { error: why ? why(body) : ((body && body.error) || 'the board did not answer') };
+  },
+  ask: (url) => fetch(url),
+});
+
+function detailKey(t) {
+  return `${t.stage}:${t.rev || ''}`;
+}
+
+function loadDetail(t, force) {
+  // a payload that still carries the text (an older board) needs no read
+  if (typeof t.body === 'string' && !t.rev) return;
+  detail.read(t.file, detailKey(t), {
+    force, arg: t,
+    done: () => { if (S.selected && S.selected.file === t.file && !S.fileView) renderDrawer(); },
+  });
+  // a handful of texts are kept for going back and forth; the rest are
+  // dropped, and any reply still on its way for them with them
+  const files = Object.keys(S.detail);
+  for (const f of files.slice(0, Math.max(0, files.length - DETAIL_KEEP)))
+    if (f !== t.file) detail.forget(f);
+}
+
+/* The card with its text, when a text is in hand that is about this card
+   in the stage it is listed in — otherwise null, and the brief says it is
+   being read. Never another card's text, and never one read from another
+   stage. */
+function withDetail(t) {
+  if (!t) return null;
+  if (typeof t.body === 'string' && !t.rev) return t;
+  const d = (S.detail[t.file] || {}).data;
+  if (!d || d.file !== t.file || d.stage !== t.stage) return null;
+  return { ...t, body: d.body, parts: d.parts, words: d.words, textRev: d.rev };
+}
+
 function briefHtml(t) {
-  const parts = cardSplit(t);
+  const full = withDetail(t);
+  const entry = (t && S.detail[t.file]) || {};
+  if (!full) {
+    if (entry.error && !entry.loading)
+      return `<div class="dload bad" role="alert">Could not read this card's brief — ${esc(entry.error)}. ` +
+        `<button type="button" class="dlink" id="dretry">Try again</button></div>`;
+    return `<div class="dload" role="status" aria-live="polite" aria-busy="true">Reading the card…</div>`;
+  }
+  const note = entry.stale && entry.error ? staleWords(entry.error)
+    : entry.loading && full.textRev && t.rev && full.textRev !== t.rev
+      ? 'This card has changed since this text was read; the newest text is being read.' : '';
+  const parts = cardSplit(full);
   const head = parts.head.replace(/^\s*#\s[^\n]*\n?/, '');
-  return `<div class="dbody">${md(head + '\n' + withoutDiscussion(parts.brief))}</div>` +
+  return (note ? `<p class="dnote dstale" role="status">${esc(note)}</p>` : '') +
+    `<div class="dbody">${md(head + '\n' + withoutDiscussion(parts.brief))}</div>` +
     `<p class="dnote">The brief is the requirement. Earlier wordings are in the card's history: ` +
     `each applied refinement is a decision in the discussion below, and the card's git history ` +
     `holds every previous text.</p>`;
@@ -648,6 +723,8 @@ async function postAcc(t, url, payload) {
 
 function wireDetail(t) {
   const body = $('#drawerbody');
+  const retry = body.querySelector('#dretry');
+  if (retry) retry.addEventListener('click', () => { loadDetail(t, true); renderDrawer(); });
   const tabs = [...body.querySelectorAll('.dtabs [role="tab"]')];
   const go = (key, focus) => {
     S.dtab[t.file] = key;
@@ -779,7 +856,8 @@ function acceptanceChips(task) {
 export {
   ACC_GLYPH, accActor, acceptanceChips, acceptanceHtml, accStamp,
   activityHtml, briefHtml, cardSplit, criterionHtml, drawerAnchor, drawerTab,
-  dsec, DTABS, dtabsHtml, evidenceOptions, findingHtml, loadAcc, openReview,
+  detailKey, dsec, DTABS, dtabsHtml, evidenceOptions, findingHtml, loadAcc, loadDetail,
+  openReview, withDetail,
   overviewHtml, postAcc, progressFact, recordHtml, RELEVANCE_TONE,
   relevanceHtml, relevanceLine, reportHtml, reviewRefineWhy, reviewsHtml,
   reviewThreadHtml, roundLine, sinceRound, STAGE_WORDS, stampOf, whenOf,

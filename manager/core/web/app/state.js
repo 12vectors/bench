@@ -12,6 +12,9 @@ const S = {
   commentKey: {},        // file::review -> the request key for that review comment
   dtab: {},              // file -> the detail view's open section (task 81)
   acc: {},               // file -> {data, stamp, error}: acceptance, findings, reports
+  // file -> {data, key, error, loading}: the card's text, read on opening
+  // it (task 129) — the board list carries every field but the text
+  detail: {},
   dfull: {},             // file -> {data, key, error}: the full delivery reading
   accOpen: {},           // `${file}:${criterion|finding}` -> expanded in the detail view
   accDraft: {},          // form key -> unsent note text, kept across redraws
