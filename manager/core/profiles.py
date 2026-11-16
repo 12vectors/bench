@@ -2338,9 +2338,32 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
            doc["revision"], doc["kind"], doc.get("problem"),
            json.dumps(choice, sort_keys=True, default=str),
            str(directory) if directory else None,
-           _file_key(directory / "capabilities.json") if directory else None)
+           _file_key(directory / "capabilities.json") if directory else None,
+           _selection_files(doc, roots(worktree, review)))
     return _scoped("resolve", key, lambda: _resolve_now(
         intent, worktree=worktree, review=review, policy=doc))
+
+
+def _selection_files(doc: dict, available: dict) -> tuple:
+    """The `stat` of every file any context selection in `doc` names,
+    under the roots in hand — so a resolution is read again when an
+    approved input it pins changes, exactly as the input itself is."""
+    if doc.get("kind") != "file":
+        return ()
+    lists = [doc.get("context")]
+    for declared in (doc.get("profiles") or {}).values():
+        if isinstance(declared, dict):
+            lists.append(declared.get("context"))
+    out = []
+    for raw in (s for lst in lists if isinstance(lst, list) for s in lst):
+        if not isinstance(raw, dict):
+            continue
+        spec = str(raw.get("path") or "").strip()
+        word, _, relative = spec.partition(":")
+        root = available.get(word)
+        out.append((spec, _file_key(Path(root) / relative.strip())
+                    if root and relative.strip() else None))
+    return tuple(out)
 
 
 def _resolve_now(intent: str, *, worktree: Path | str | None = None,
