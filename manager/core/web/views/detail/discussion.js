@@ -1,8 +1,9 @@
 /* A card's discussion, refining its brief, and its signals. */
 import { agentOnTask, loadState } from '../../app/data.js';
 import { S } from '../../app/state.js';
-import { fetch } from '../../lib/api.js';
+import { fetch, post } from '../../lib/api.js';
 import { $, esc } from '../../lib/dom.js';
+import { resource, staleWords } from '../../lib/resource.js';
 import { toast } from '../../lib/toast.js';
 import { REVIEW_LABELS, actLabel, wireAction } from '../card.js';
 import { deliveryOf, requirementsHeadline, shortSha } from '../delivery.js';
@@ -43,29 +44,22 @@ function discStamp(t) {
     `${agentOnTask(t.file) ? agentOnTask(t.file).id : '-'}`;
 }
 
+/* The card's discussion, read on demand under lib/resource.js's policy
+   (task 125). A read already in flight may have read the card before the
+   write that asked for this one, so that ask is queued and made when the
+   read lands — dropping it is how a saved comment never appeared. */
+const discussion = resource({
+  store: S.disc,
+  url: (file, t) => `/api/card/discussion?file=${encodeURIComponent(file)}` +
+    `&stage=${encodeURIComponent(t.stage)}`,
+  ask: (url) => fetch(url),
+});
+
 function loadDiscussion(t, force) {
-  const cur = S.disc[t.file] || {};
-  // a read already in flight may have read the card before the write that
-  // asked for this one, so the request is kept and made when it ends —
-  // dropping it is how a saved comment never appeared
-  if (cur.loading) {
-    if (force || cur.loadingStamp !== discStamp(t)) S.disc[t.file] = { ...cur, again: t };
-    return;
-  }
-  if (!force && cur.stamp === discStamp(t)) return;
-  const stamp = discStamp(t);
-  S.disc[t.file] = { ...cur, loading: true, loadingStamp: stamp, again: null };
-  fetch(`/api/card/discussion?file=${encodeURIComponent(t.file)}` +
-        `&stage=${encodeURIComponent(t.stage)}`)
-    .then(res => res.json().then(data => ({ ok: res.ok, data })))
-    .then(({ ok, data }) => ok ? { data, stamp } : { data: cur.data, error: data.error, stamp })
-    .catch(() => ({ data: cur.data, stamp, error: 'the board could not be asked' }))
-    .then(next => {
-      const again = (S.disc[t.file] || {}).again;
-      S.disc[t.file] = next;
-      if (again) loadDiscussion(again, true);
-      if (S.selected && S.selected.file === t.file) renderDiscussion(S.selected);
-    });
+  discussion.read(t.file, discStamp(t), {
+    force, arg: t,
+    done: () => { if (S.selected && S.selected.file === t.file) renderDiscussion(S.selected); },
+  });
 }
 
 function diffHtml(diff) {
@@ -134,6 +128,8 @@ function discussionLive(t) {
   }
   const d = c.data;
   const notes = [];
+  // a failed re-read keeps the last reading, and says it is the last one
+  if (c.stale && c.error) notes.push(staleWords(c.error));
   if (d.blocked) notes.push(d.blocked);
   if (!d.refine.ready) {
     notes.push('Update card with agent is not available on this board: ' +
@@ -218,14 +214,12 @@ function discussionPanel(t) {
     `brief changes only when you apply the proposal.</p></div></section>`;
 }
 
+/* A card write: sent once (lib/api.js `post` never retries a mutation),
+   and a refusal is said — toasted and announced — in the board's words. */
 async function postCard(url, payload) {
-  const res = await fetch(url, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    toast(data.error || 'the board refused that', true);
+  const { ok, data, error } = await post(url, payload);
+  if (!ok) {
+    toast(error || 'the board refused that', true);
     if (data.stale && S.selected) loadDiscussion(S.selected, true);
     return null;
   }

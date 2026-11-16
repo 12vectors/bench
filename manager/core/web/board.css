@@ -93,6 +93,7 @@
   /* an author display beats the UA's [hidden] — say it here or the sync
      chip is never hidden */
   .livechip[hidden]{display:none}
+  .livechip[role="button"]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   /* A running phase is the same kind of fact as the agents and the sync
      chips: what is happening across the board without you. One chip per
      phase in flight — two phases could in principle run at once, and a
@@ -1438,3 +1439,7 @@
   #stalebanner p{margin:0 0 6px}
   #stalebanner .stalewarn{color:var(--alarm)}
   #stalebanner button{margin-top:4px}
+
+  /* announced, not drawn (task 125): the live regions beside the toast */
+  .sronly{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+          clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}

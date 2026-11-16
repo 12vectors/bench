@@ -19,12 +19,18 @@ function renderChip() {
   const agents = runningAgents();
   const liveYou = sessionsOf(m => isLiveSession(m) && !m.agentId);
   const el = $('#livechip');
-  if (S.sseDown) {
+  // the chip is a keyboard stop (task 125): its name says what it opens
+  // and, when the board is out of reach, that what is drawn may be old
+  if (S.sseDown || S.stateError) {
+    const why = S.sseDown ? 'reconnecting…' : 'board not read';
     el.innerHTML = `<span class="dot" style="background:var(--alarm)"></span>` +
-      `<span style="color:var(--alarm)">reconnecting…</span>` +
+      `<span style="color:var(--alarm)">${why}</span>` +
       `<span class="mono">what you see may be stale</span>`;
+    el.title = S.stateError ? `the last read failed — ${S.stateError.why}` : 'open Sessions';
+    el.setAttribute('aria-label', `${why} what you see may be stale — open Sessions`);
     return;
   }
+  el.title = 'open Sessions';
   if (agents.length) {
     const longest = Math.min(...agents.map(a => a.started));
     el.innerHTML = `<span class="dot live"></span>` +
@@ -36,6 +42,7 @@ function renderChip() {
   } else {
     el.innerHTML = `<span class="dot"></span><span style="color:var(--muted)">quiet</span>`;
   }
+  el.setAttribute('aria-label', `${el.textContent.trim()} — open Sessions`);
 }
 
 /* Sync only shows itself when it has stopped converging: a stall that is

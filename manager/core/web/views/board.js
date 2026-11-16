@@ -2,6 +2,7 @@
 import { agentOnTask, allTasks } from '../app/data.js';
 import { S } from '../app/state.js';
 import { fetch } from '../lib/api.js';
+import { isArmed } from '../lib/arm.js';
 import { $, esc } from '../lib/dom.js';
 import { markScroll, restoreScroll } from '../lib/keep.js';
 import { cardFor, closeSheet, move, replan } from './card.js';
@@ -284,9 +285,11 @@ function stackSheet(t, open) {
     `<dt>${esc(names[k])}</dt><dd class="mono">${esc(k.endsWith('Head') || k.endsWith('Tip') ? short(ids[k]) : (ids[k] || 'none'))}</dd>`).join('');
   const blocked = (p.blockers || []).length;
   const manual = p.mode === 'manual';
+  // armed in the one shared store (lib/arm.js), so it runs out by itself
+  const armed = isArmed(S.acts, `${t.file}::stack-confirm`);
   const confirm = !blocked && !manual
-    ? `<button type="button" class="stkbtn go${open.armed ? ' armed' : ''}" data-stack-confirm="${esc(open.action)}" ` +
-      `data-file="${esc(t.file)}">${open.armed ? 'Click again to confirm' : esc(p.label || 'Confirm')}</button>`
+    ? `<button type="button" class="stkbtn go${armed ? ' armed' : ''}" data-stack-confirm="${esc(open.action)}" ` +
+      `data-file="${esc(t.file)}">${armed ? 'Click again to confirm' : esc(p.label || 'Confirm')}</button>`
     : '';
   return `<div class="stksheet" role="group" aria-label="${esc(p.label || 'Stack action')}">` +
     `<p><b>${esc(p.label || '')}</b> — ${esc(p.effects || '')}</p>` +

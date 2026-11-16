@@ -7,13 +7,14 @@
 import { connectStream, loadState, scheduleRender, sessionElapsed, sessionMeta } from './app/data.js';
 import { S } from './app/state.js';
 import { applyTheme } from './app/theme.js';
-import { fetch, onStalePage } from './lib/api.js';
+import { onStalePage, post } from './lib/api.js';
 import { $ } from './lib/dom.js';
+import { onRender } from './lib/schedule.js';
 import { ago } from './lib/time.js';
 import { toast } from './lib/toast.js';
 import { archiveCard, renderBar, renderLog, unarchiveLast } from './views/activity.js';
 import { STACK_SHEETS } from './views/board.js';
-import { closeSheet, focusCard, move, rawMove, requiredSheet } from './views/card.js';
+import { acts, closeSheet, focusCard, move, rawMove, requiredSheet } from './views/card.js';
 import { FACE_WORDS, deliveryOf } from './views/delivery.js';
 import { renderDrawer } from './views/detail/drawer.js';
 import { doctorSheet, paintDoctorSheet } from './views/doctor.js';
@@ -30,6 +31,8 @@ import { renderSettings } from './views/settings/shell.js';
 import { showStalePage } from './views/stale.js';
 
 let tickCount = 0;
+// every repaint goes through lib/schedule (task 125): this is the painter
+onRender(render);
 // a refused mutation from a page of an earlier build says so, once
 onStalePage(showStalePage);
 document.addEventListener('click', async ev => {
@@ -37,24 +40,24 @@ document.addEventListener('click', async ev => {
   if (!el) return;
   ev.preventDefault();
   const file = el.dataset.file || el.dataset.stackClose;
-  const post = async (url, body) => {
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                   body: JSON.stringify(body) });
-    return { ok: res.ok, data: await res.json().catch(() => ({})) };
-  };
-  if (el.dataset.stackClose) { delete STACK_SHEETS[file]; render(); return; }
+  const key = `${file}::stack-confirm`;
+  if (el.dataset.stackClose) { delete STACK_SHEETS[file]; acts.disarm(key); render(); return; }
   if (el.dataset.stackAction) {
     const action = el.dataset.stackAction;
-    const { ok, data } = await post('/api/card/stack/preview', { file, action });
-    if (!ok) { toast(data.error || 'the stack action could not be read', true); return; }
-    STACK_SHEETS[file] = { action, preview: data.stack, armed: false };
+    const { ok, data, error } = await post('/api/card/stack/preview', { file, action });
+    if (!ok) { toast(error || 'the stack action could not be read', true); return; }
+    STACK_SHEETS[file] = { action, preview: data.stack };
+    acts.disarm(key);
     render();
     return;
   }
   const open = STACK_SHEETS[file];
   if (!open) return;
-  if (!open.armed) { open.armed = true; render(); return; }
-  open.armed = false;
+  // the confirmation arms for the one shared window, and goes back to
+  // rest by itself when it runs out — it never fires on a stale arm
+  const step = acts.click(key, undefined, scheduleRender);
+  if (step !== 'fire') { render(); return; }
+  acts.disarm(key);
   const { ok, data } = await post('/api/card/stack/action',
     { file, action: open.action, expected: (open.preview || {}).identities || {} });
   const said = ok ? ((data.result || {}).sentence || 'done') : (data.error || 'refused');
@@ -68,9 +71,16 @@ document.addEventListener('click', async ev => {
 
 document.querySelectorAll('#views button').forEach(b =>
   b.addEventListener('click', () => setView(b.dataset.view)));
-$('#livechip').addEventListener('click', () => setView('flight'));
-/* Keyboard as well as pointer: the inspector is the one header chip that
-   opens something, so it is reachable without a mouse. */
+/* Keyboard as well as pointer: every header chip that opens something —
+   the configuration check, the setup guide and the connection chip —
+   takes Enter and Space through the one key handler (task 125). */
+function onActivate(el, open) {
+  el.addEventListener('click', open);
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+  });
+}
+onActivate($('#livechip'), () => setView('flight'));
 /* Every labelled Copy control — a path in the configuration check, in a
    sheet or in Settings. The value is the control's own attribute, never
    read off the page around it. Clipboard access needs a secure context,
@@ -104,14 +114,8 @@ document.addEventListener('click', async (e) => {
   }
 });
 
-$('#doctorchip').addEventListener('click', () => doctorSheet(null));
-$('#doctorchip').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doctorSheet(null); }
-});
-$('#setupchip').addEventListener('click', openSetupGuide);
-$('#setupchip').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSetupGuide(); }
-});
+onActivate($('#doctorchip'), () => doctorSheet(null));
+onActivate($('#setupchip'), openSetupGuide);
 $('#themebtn').addEventListener('click', () => { S.dark = !S.dark; applyTheme(); });
 $('#focussel').addEventListener('change', (e) => { S.focusSid = e.target.value; render(); });
 $('#refresh').addEventListener('click', loadState);
@@ -228,7 +232,9 @@ setInterval(() => {
 }, 5000);
 
 applyTheme();
-loadState().then(connectStream);
+// another client's setup decision arrives as a board frame; the guide
+// re-reads so this page cannot act on a revision it lost
+loadState().then(() => connectStream({ onBoard: () => { if (S.setup) fetchSetup(true); } }));
 // the setup guide is read once on load for the header's invitation; the
 // terminal handoff names `#setup`, which opens the guide itself
 fetchSetup().then(() => { if (location.hash === '#setup') openSetupGuide(); });

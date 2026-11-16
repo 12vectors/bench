@@ -3,6 +3,7 @@ import { agentOnTask, loadState } from '../app/data.js';
 import { S } from '../app/state.js';
 import { fetch } from '../lib/api.js';
 import { $, esc } from '../lib/dom.js';
+import { DEFAULT_RETRY_MS, resource } from '../lib/resource.js';
 import { fmtClock, fmtShort } from '../lib/time.js';
 import { toast } from '../lib/toast.js';
 import { actLabel, closeSheet, completeSheet, fireAgent, holdPhase, move, openPR, requiredSheet, runPhase, showDetail, verifySheet, wireAction } from './card.js';
@@ -266,11 +267,11 @@ function deliveryActions(d, where) {
    prose and remedy, the merge rule's reading and the completion — so a
    check replaced by another with the same totals, or a reworded remedy,
    is a new key even when the word, the counts and the classes are not.
-   Only the newest request may answer: a reply to an older key is dropped
-   rather than written over a newer one. A failed read keeps the last rows
-   it had, marked with the error, and is asked again after a short wait
-   rather than on every repaint. */
-const DFULL_RETRY_MS = 5000;
+   The race policy is lib/resource.js's (task 125): one read in flight and
+   one follow-up queued, the newest reading standing, and a failed read
+   keeping the last rows, marked with the error and `stale`, asked again
+   after a short wait rather than on every repaint. */
+const DFULL_RETRY_MS = DEFAULT_RETRY_MS;
 
 function deliveryFullKey(task) {
   const d = deliveryOf(task);
@@ -278,38 +279,23 @@ function deliveryFullKey(task) {
                          d && d.candidate, d && d.classes]);
 }
 
-let dfullSeq = 0;
-// the next request number, for a reader in another module
-function nextDfullSeq() { return ++dfullSeq; }
-function storeDeliveryFull(file, key, seq, entry) {
-  const cur = S.dfull[file];
-  if (cur && cur.seq > seq) return false;
-  S.dfull[file] = { ...entry, key, seq };
-  return true;
-}
+const deliveryFull = resource({
+  store: S.dfull,
+  url: (file, task) => `/api/card/delivery?file=${encodeURIComponent(file)}` +
+    `&stage=${encodeURIComponent(task.stage)}`,
+  accept: (ok, body) => ok && body && body.delivery
+    ? { data: body.delivery }
+    : { error: (body && body.error) || 'the board did not answer' },
+  ask: (url) => fetch(url),
+});
+
+/* A reading another surface has just made (the merge dialog reads the
+   rows fresh): it stands as the newest. */
+function storeDeliveryFull(file, key, data) { deliveryFull.put(file, key, data); }
 
 function loadDeliveryFull(task, done) {
-  const key = deliveryFullKey(task);
-  const cur = S.dfull[task.file];
-  if (cur && cur.key === key
-      && (cur.loading || !cur.error || Date.now() < cur.retryAt)) return cur.data || null;
-  const seq = ++dfullSeq;
-  const prior = (cur || {}).data || null;
-  S.dfull[task.file] = { data: prior, error: (cur || {}).error || null, loading: true, key, seq };
-  fetch(`/api/card/delivery?file=${encodeURIComponent(task.file)}&stage=${encodeURIComponent(task.stage)}`)
-    .then(res => res.json().then(data => ({ ok: res.ok, data })))
-    .then(({ ok, data }) => ok && data.delivery
-      ? { data: data.delivery, error: null }
-      : { data: prior, error: (data && data.error) || 'the board did not answer',
-          retryAt: Date.now() + DFULL_RETRY_MS })
-    .catch(() => ({ data: prior, error: 'the board could not be asked',
-                    retryAt: Date.now() + DFULL_RETRY_MS }))
-    .then(entry => {
-      if (storeDeliveryFull(task.file, key, seq, entry) && done) done();
-      // an error is asked again once its wait is over, by the next repaint
-      if (entry.error && done) setTimeout(done, DFULL_RETRY_MS + 50);
-    });
-  return prior;
+  const entry = deliveryFull.read(task.file, deliveryFullKey(task), { arg: task, done });
+  return (entry && entry.data) || null;
 }
 
 /* Merge requirements, as supporting detail under the status: the required
@@ -372,8 +358,8 @@ function requirementsHtml(task, d, full, where) {
 
 export {
   ACT_CONFIRM, deliveryActions, deliveryButtonHtml, deliveryFullKey,
-  deliveryOf, deliveryPill, deliveryRun, deliveryStatusHtml, DFULL_RETRY_MS,
-  dfullSeq, EVIDENCE_ON_FACE, FACE_WORDS, loadDeliveryFull, nextDfullSeq,
+  deliveryFull, deliveryOf, deliveryPill, deliveryRun, deliveryStatusHtml,
+  DFULL_RETRY_MS, EVIDENCE_ON_FACE, FACE_WORDS, loadDeliveryFull,
   REQ_GLYPH, REQ_ROW, requirementRows, requirementsHeadline,
   requirementsHtml, shortSha, storeDeliveryFull, toneColours,
   wireDeliveryButtons

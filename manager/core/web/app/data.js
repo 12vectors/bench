@@ -2,22 +2,9 @@
 import { S } from './state.js';
 import { fetch } from '../lib/api.js';
 import { $, esc } from '../lib/dom.js';
+import { flushRender, scheduleRender } from '../lib/schedule.js';
 import { elapsed } from '../lib/time.js';
-import { toast } from '../lib/toast.js';
-import { render } from '../views/frame.js';
-import { renderChip } from '../views/header.js';
-import { fetchSetup } from '../views/settings/setup.js';
-
-/* PR verdict: the file's latest claude review + GitHub's live state.
-   Any red signal wins; green needs an approval and no red. */
-function prVerdict(task) {
-  if (!task.pr) return null;
-  const gh = (S.state.prs || {})[task.file];
-  const signals = [task.prVerdict, gh && gh.verdict];
-  if (signals.includes('red')) return 'red';
-  if (signals.includes('green')) return 'green';
-  return 'pending';
-}
+import { announce, toast } from '../lib/toast.js';
 
 function sessionElapsed(meta) {
   const over = meta.status === 'ended' || !isLiveSession(meta);
@@ -26,12 +13,77 @@ function sessionElapsed(meta) {
 
 /* ── data ─────────────────────────────────────────────────────────────── */
 
-async function loadState() {
-  const res = await fetch('/api/state');
-  S.state = await res.json();
-  for (const meta of S.state.sessions) if (!(meta.id in S.events)) S.events[meta.id] = [];
-  $('#root').textContent = S.state.board.root.replace(/^.*?\/([^/]+\/\.task-manager).*$/, '$1');
-  render();
+/* Reading the state (task 125, WP16). Four kinds of stream frame, the
+   window's focus, the Refresh button, the 30s safety net and every
+   action's ending all ask for a fresh state — a burst of them used to be
+   a burst of whole-board requests racing each other, any of them able to
+   land last with the oldest answer. Now: at most one request in flight
+   and one queued. An ask while one is out is answered by the queued
+   follow-up (asked for once the read lands, so a write that happened
+   during the read is in it); every further ask joins that same
+   follow-up. Each promise resolves once the reading it waited for has
+   been painted.
+
+   A read that fails keeps the last state on the page — what you see is
+   the last good reading, not nothing — and the connection chip says the
+   board could not be read, announced once when it starts failing. The
+   next successful read clears it. A read is never retried here: the
+   safety net and the stream ask again on their own beat. */
+const reading = { inflight: null, queued: null, asked: 0 };
+
+function loadState() {
+  if (reading.inflight) {
+    if (!reading.queued) {
+      reading.queued = reading.inflight.then(() => {
+        reading.queued = null;
+        return startState();
+      });
+    }
+    return reading.queued;
+  }
+  return startState();
+}
+
+function startState() {
+  const p = readState().finally(() => { if (reading.inflight === p) reading.inflight = null; });
+  reading.inflight = p;
+  return p;
+}
+
+async function readState() {
+  reading.asked++;
+  let res, data;
+  try {
+    res = await fetch('/api/state');
+    data = await res.json();
+  } catch (e) {
+    return stateFailed('the board could not be asked');
+  }
+  if (!res.ok || !data || !data.board) {
+    return stateFailed((data && data.error) || `the board answered ${res.status}`);
+  }
+  S.state = data;
+  const was = S.stateError;
+  S.stateError = null;
+  for (const meta of S.state.sessions || []) if (!(meta.id in S.events)) S.events[meta.id] = [];
+  const root = $('#root');
+  if (root) root.textContent = S.state.board.root.replace(/^.*?\/([^/]+\/\.task-manager).*$/, '$1');
+  if (was) announce('the board can be read again');
+  flushRender();
+}
+
+function stateFailed(why) {
+  const first = !S.stateError;
+  S.stateError = { why, at: Date.now() / 1000 };
+  if (first) announce(`the board could not be read — ${why}; showing the last reading`, true);
+  // the last good state stays drawn; only the chip changes
+  if (S.state) flushRender();
+}
+
+/* how many state requests this page has made, and whether one is out
+   and one queued: for a test, and for a person at the console */
+function stateReading() {
+  return { asked: reading.asked, inflight: !!reading.inflight, queued: !!reading.queued };
 }
 
 async function loadSession(sid) {
@@ -44,7 +96,7 @@ async function loadSession(sid) {
     const lastTs = data.events.length ? data.events[data.events.length - 1].ts : 0;
     const streamed = (S.events[sid] || []).filter(e => e.ts > lastTs);
     S.events[sid] = data.events.concat(streamed);
-    render();
+    scheduleRender();
   } catch { S.loaded[sid] = false; }
 }
 
@@ -114,14 +166,17 @@ function modelChip(agent) {
   return `<span class="mchip" title="${esc(agent.model)}">${esc(shortModel(agent.model))}</span>`;
 }
 
-function connectStream() {
+/* The stream. `hooks.onBoard` is told of a board frame (the setup guide
+   re-reads on one); it is the composition root's to wire, so this module
+   imports no view. A reconnect reads the state again, once. */
+function connectStream(hooks = {}) {
   const es = new EventSource('/api/stream');
   let hadError = false;
   es.onopen = () => {
     if (hadError) { hadError = false; loadState(); }
-    S.sseDown = false; renderChip();
+    S.sseDown = false; scheduleRender();
   };
-  es.onerror = () => { hadError = true; S.sseDown = true; renderChip(); };
+  es.onerror = () => { hadError = true; S.sseDown = true; scheduleRender(); };
   es.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if (msg.type === 'event') {
@@ -148,7 +203,7 @@ function connectStream() {
       loadState();
       // another client's setup decision arrives as a board event; the
       // guide re-reads so this page cannot act on a revision it lost
-      if (msg.type === 'board' && S.setup) fetchSetup(true);
+      if (msg.type === 'board' && hooks.onBoard) hooks.onBoard();
     } else if (msg.type === 'progress') {
       // a run reported, ended, or had a report refused: its timeline is
       // re-read rather than patched, and the card's reading rides the state
@@ -176,16 +231,9 @@ function connectStream() {
   };
 }
 
-let renderQueued = false;
-function scheduleRender() {
-  if (renderQueued) return;
-  renderQueued = true;
-  requestAnimationFrame(() => { renderQueued = false; render(); });
-}
-
 export {
   agentFor, agentOnTask, allTasks, connectStream, failedRun, isLiveSession,
-  lastRunOn, loadSession, loadState, modelChip, prVerdict, renderQueued,
-  scheduleRender, sessionElapsed, sessionMeta, sessionsOf, shortModel,
+  lastRunOn, loadSession, loadState, modelChip, scheduleRender,
+  sessionElapsed, sessionMeta, sessionsOf, shortModel, stateReading,
   whyFailed
 };

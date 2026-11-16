@@ -2,6 +2,7 @@
 import { agentOnTask, allTasks, failedRun, loadState, modelChip, scheduleRender, sessionMeta, whyFailed } from '../app/data.js';
 import { S } from '../app/state.js';
 import { fetch } from '../lib/api.js';
+import { ARM_MS, arming, BUSY_MS } from '../lib/arm.js';
 import { $, esc } from '../lib/dom.js';
 import { scrollMarks } from '../lib/keep.js';
 import { ago, elapsed } from '../lib/time.js';
@@ -1132,8 +1133,11 @@ function cardFor(task) {
    lives in S.acts, keyed by task file + action, because cards are torn
    down and rebuilt on every SSE render: a rebuild mid-window re-applies
    the same picture (the drain bar resumes via a negative delay), and a
-   second click keeps its meaning across the redraw. */
-const ARM_MS = 5000, FIRE_TIMEOUT_MS = 15000;
+   second click keeps its meaning across the redraw. The machine itself
+   is lib/arm.js (task 125): one store, one timeout per phase, shared
+   with the stack sheet's confirmation. */
+const FIRE_TIMEOUT_MS = BUSY_MS;
+const acts = arming({ store: S.acts });
 
 function actLabel(rest, confirm, busy) {
   return `<span class="actlbl"><span class="l-rest">${esc(rest)}</span>` +
@@ -1158,35 +1162,28 @@ const BOARD_ACT = 'board::';
 
 function forgetActsOfVanishedCards() {
   const live = new Set(allTasks().map(t => t.file));
-  for (const key of Object.keys(S.acts)) {
-    if (key.startsWith(BOARD_ACT)) continue;
-    if (!live.has(key.split('::')[0])) delete S.acts[key];
-  }
+  acts.sweep(key => key.startsWith(BOARD_ACT) || live.has(key.split('::')[0]));
 }
 
 function wireAction(btn, key, act) {
-  const st = S.acts[key];
-  if (st && st.until > Date.now()) {
-    if (st.phase === 'busy') lockAction(btn);
-    else armAction(btn, key, st.until - Date.now());
-  } else if (st) delete S.acts[key];
+  const phase = acts.phase(key);
+  if (phase === 'busy') lockAction(btn);
+  else if (phase === 'armed') armAction(btn, key, acts.remaining(key));
   btn.addEventListener('click', () => {
     if (btn.disabled) return;
-    if (act.confirm && !btn.classList.contains('armed')) armAction(btn, key, ARM_MS);
+    if (act.confirm && acts.phase(key) !== 'armed') armAction(btn, key, ARM_MS);
     else fireAction(btn, key, act);
   });
 }
 
 function armAction(btn, key, remaining) {
-  S.acts[key] = { phase: 'armed', until: Date.now() + remaining };
+  // a rebuilt button rejoins the window it found; a first click opens one
+  if (acts.phase(key) !== 'armed') acts.arm(key, remaining, () => btn.classList.remove('armed'));
   // the CSS drain animation is ARM_MS long; a rebuilt button rejoins it
   // partway through with a negative delay instead of starting over
   btn.style.setProperty('--arm-delay', `${remaining - ARM_MS}ms`);
   btn.classList.add('armed');
-  setTimeout(() => {
-    if ((S.acts[key] || {}).phase === 'armed') delete S.acts[key];
-    btn.classList.remove('armed');
-  }, remaining);
+  setTimeout(() => { if (acts.phase(key) !== 'armed') btn.classList.remove('armed'); }, remaining);
 }
 
 function lockAction(btn) {
@@ -1197,21 +1194,17 @@ function lockAction(btn) {
 
 async function fireAction(btn, key, act) {
   lockAction(btn);
-  S.acts[key] = { phase: 'busy', until: Date.now() + FIRE_TIMEOUT_MS };
   // client-side optimism needs an honest exit: if neither the response
-  // nor an SSE redraw arrives, come back to rest loudly — never silently
-  const bail = setTimeout(() => {
-    if ((S.acts[key] || {}).phase !== 'busy') return;
-    delete S.acts[key];
+  // nor an SSE redraw arrives, come back to rest loudly — never silently,
+  // and never by sending the request again
+  acts.fire(key, () => {
     toast(`${act.label} got no answer in ${FIRE_TIMEOUT_MS / 1000}s — not fired again; check the board`, true);
     scheduleRender();
-  }, FIRE_TIMEOUT_MS);
+  });
   let ok;
   try { ok = await act.run() !== false; }
   catch (e) { ok = false; toast(`${act.label} failed — ${e.message || 'no response'}`, true); }
-  clearTimeout(bail);
-  if ((S.acts[key] || {}).phase === 'busy') {
-    delete S.acts[key];
+  if (acts.settle(key)) {
     btn.disabled = false;
     btn.classList.remove('busy');
     // a successful run usually re-rendered the card already (loadState);
@@ -1677,7 +1670,7 @@ function phaseMembers(t) {
 }
 
 export {
-  actLabel, addToPhase, ARM_MS, armAction, askCopilot, BOARD_ACT, canArchive,
+  actLabel, acts, addToPhase, ARM_MS, armAction, askCopilot, BOARD_ACT, canArchive,
   cardFor, cardTitle, chipOnFace, closeSheet, completeSheet, completionWords,
   fetchVerifyLog, fireAction, fireAgent, focusCard,
   forgetActsOfVanishedCards, holdPhase, joinablePhases, lockAction,

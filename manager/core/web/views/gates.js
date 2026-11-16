@@ -5,7 +5,7 @@ import { fetch } from '../lib/api.js';
 import { $, esc } from '../lib/dom.js';
 import { toast } from '../lib/toast.js';
 import { closeSheet, verifySheet, wireAction } from './card.js';
-import { deliveryActions, deliveryFullKey, deliveryOf, deliveryStatusHtml, nextDfullSeq, requirementsHeadline, requirementsHtml, storeDeliveryFull, wireDeliveryButtons } from './delivery.js';
+import { deliveryActions, deliveryFullKey, deliveryOf, deliveryStatusHtml, requirementsHeadline, requirementsHtml, storeDeliveryFull, wireDeliveryButtons } from './delivery.js';
 
 /* ── may this merge happen? ────────────────────────────────────────────
 
@@ -167,7 +167,7 @@ async function gateSheet(task) {
   // reading's rows; when it is not, the page's compact reading is the one
   // behind, and asking for the board state again (a GET) brings both up.
   if (full && d && full.detail && full.detail === d.detail) {
-    storeDeliveryFull(task.file, deliveryFullKey(task), nextDfullSeq(), { data: full, error: null });
+    storeDeliveryFull(task.file, deliveryFullKey(task), full);
   } else if (full && d && full.detail !== d.detail) {
     loadState();
   }

@@ -45,7 +45,26 @@ async function fetch(url, opts = {}) {
   return res;
 }
 
+/* A mutation, in one shape (task 125, WP16): JSON out, JSON back, and
+   `{ok, status, data, error}` whatever happened — a refusal's own words
+   in `error`, a network failure as `status: 0`. It is sent exactly once:
+   a mutation is never retried here, because a write that may have landed
+   is not this helper's to repeat. */
+async function post(url, body) {
+  let res;
+  try {
+    res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                             body: JSON.stringify(body || {}) });
+  } catch (e) {
+    return { ok: false, status: 0, data: {}, error: 'the board could not be asked' };
+  }
+  const data = await res.json().catch(() => ({}));
+  const ok = res.ok;
+  return { ok, status: res.status, data,
+           error: ok ? null : (data && data.error) || `the board answered ${res.status}` };
+}
+
 export {
-  BUILD_HEADER, fetch, onStalePage, PAGE_BUILD, staleListener, staleTold,
+  BUILD_HEADER, fetch, onStalePage, PAGE_BUILD, post, staleListener, staleTold,
   withBuild
 };

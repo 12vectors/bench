@@ -64,7 +64,10 @@
   <!-- the version chip (task 123): only when this page or the files on
        disk are not the build the board is serving -->
   <div class="livechip" id="buildchip" hidden style="cursor:default"></div>
-  <div class="livechip" id="livechip" title="open Sessions"></div>
+  <!-- the connection chip: what is live, or that the board cannot be
+       read. A keyboard stop like the two chips above (task 125) -->
+  <div class="livechip" id="livechip" role="button" tabindex="0" title="open Sessions"
+       aria-label="open Sessions"></div>
   <button id="themebtn">Daylight</button>
   <button id="refresh">Refresh</button>
 </header>
@@ -139,7 +142,13 @@
 <!-- a page of an earlier build, refused by the board after a restart
      (task 124): outside every root a redraw demolishes -->
 <div id="stalebanner" role="alert" hidden></div>
-<div id="toast"><span class="dot"></span><span id="toastmsg"></span></div>
+<!-- the toast is what a sighted person reads; the two regions below are
+     what is announced (task 125). Both are always in the page, outside
+     every root a redraw demolishes, so a repaint never re-announces and a
+     refusal is never lost to a region that was not there yet -->
+<div id="toast" aria-hidden="true"><span class="dot"></span><span id="toastmsg"></span></div>
+<div id="announce" class="sronly" role="status" aria-live="polite" aria-atomic="true"></div>
+<div id="announcealert" class="sronly" role="alert" aria-live="assertive" aria-atomic="true"></div>
 
 <script type="module" src="/web/__BUILD__/main.js"></script>
 </body>

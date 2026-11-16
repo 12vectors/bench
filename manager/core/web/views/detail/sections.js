@@ -4,6 +4,7 @@ import { S } from '../../app/state.js';
 import { fetch } from '../../lib/api.js';
 import { $, esc } from '../../lib/dom.js';
 import { md } from '../../lib/md.js';
+import { resource, staleWords } from '../../lib/resource.js';
 import { ago } from '../../lib/time.js';
 import { toast } from '../../lib/toast.js';
 import { stackBlock } from '../board.js';
@@ -112,19 +113,22 @@ function accStamp(t) {
     `${a ? JSON.stringify(a) : '-'}`;
 }
 
+/* Acceptance, findings and reports, read on demand under lib/resource.js's
+   policy (task 125): a forced read during one in flight — a decision just
+   recorded — is queued, never dropped, and a failure keeps the last
+   reading, marked stale. */
+const acceptance = resource({
+  store: S.acc,
+  url: (file, t) => `/api/card/acceptance?file=${encodeURIComponent(file)}` +
+    `&stage=${encodeURIComponent(t.stage)}`,
+  ask: (url) => fetch(url),
+});
+
 function loadAcc(t, force) {
-  const cur = S.acc[t.file] || {};
-  const stamp = accStamp(t);
-  if (cur.loading || (!force && cur.stamp === stamp)) return;
-  S.acc[t.file] = { ...cur, loading: true };
-  fetch(`/api/card/acceptance?file=${encodeURIComponent(t.file)}&stage=${encodeURIComponent(t.stage)}`)
-    .then(res => res.json().then(data => ({ ok: res.ok, data })))
-    .then(({ ok, data }) => ok ? { data, stamp } : { data: cur.data, error: data.error, stamp })
-    .catch(() => ({ data: cur.data, stamp, error: 'the board could not be asked' }))
-    .then(next => {
-      S.acc[t.file] = next;
-      if (S.selected && S.selected.file === t.file && !S.fileView) renderDrawer();
-    });
+  acceptance.read(t.file, accStamp(t), {
+    force, arg: t,
+    done: () => { if (S.selected && S.selected.file === t.file && !S.fileView) renderDrawer(); },
+  });
 }
 
 function progressFact(t) {
@@ -284,7 +288,17 @@ function accActor(t) {
   return a && a.actor ? a.actor.name : '';
 }
 
+/* A failed re-read keeps the last reading, and says it is the last one. */
+function accStaleHtml(t) {
+  const c = S.acc[t.file];
+  return c && c.stale && c.error ? `<p class="dnote bad">${esc(staleWords(c.error))}</p>` : '';
+}
+
 function acceptanceHtml(t, acc) {
+  return accStaleHtml(t) + acceptanceBody(t, acc);
+}
+
+function acceptanceBody(t, acc) {
   if (!acc) {
     const c = S.acc[t.file];
     return c && c.error ? `<p class="dnote bad">${esc(c.error)}</p>` : `<p class="dnote">reading acceptance…</p>`;
