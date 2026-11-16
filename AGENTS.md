@@ -272,8 +272,9 @@ gitproc / records / redact < config < githost / assets < state / reports / templ
   class, and its handler, in one literal table the architecture test
   reads
 - `httpd.py` — the socket: finds a request's route, applies the door its
-  class names and checks the body before any handler runs; the SSE
-  stream and serving the page
+  class names and checks the body before any handler runs, refusing a
+  browser's write from a page of another build (`stale-page`, task 124);
+  the SSE stream and serving the page
 - `board.py` — argparse + startup wiring only: it imports every core
   module at the top and loads the selected hosting provider before it
   serves, so a running board executes the code that was on disk when it
@@ -1079,6 +1080,48 @@ The board has five views (header switcher):
   configuration, and changing it safely"). The switcher carries a mark
   when this board's execution policy refuses something, for the reason
   the Phases mark exists: the thing it refuses is the next launch.
+
+### The page's script: modules under a policy
+
+The page's script is native ES modules under `manager/core/web/`, loaded
+from the build like every other asset (task 124). No npm, no bundler, no
+framework: the files the board serves are the files in the tree.
+
+- **One side-effectful module.** `board.html` loads `web/main.js` as a
+  module and carries no script of its own. `main.js` is the composition
+  root: it wires the listeners, applies the theme, reads the state and
+  opens the stream. Every other module only imports, declares and
+  exports, so importing one starts nothing.
+- **Import direction.** `lib/` (`dom`, `time`, `toast`, `keep`, `md`,
+  `api`) imports only `lib/`; `words.js` and `app/state.js` import
+  nothing; nothing imports `main.js`. Every other edge from `app/` or
+  `views/` to anything but those is listed in
+  `tests/fixtures/web-imports.json`, a reviewed baseline that may only
+  shrink. `tests/test_script_policy.py` holds the page to all of it, and
+  `tests/node/board_modules.test.mjs` imports every module but `main.js`
+  under Node, so an import that names nothing, or a module reading
+  another's binding before it exists, fails there and not in a browser.
+- **A console seam.** Modules make no globals. `main.js` puts a short,
+  named list of them (`S`, `render`, `loadState`, `toast` and a few
+  more) on `window` for the browser suite and a person at the console.
+  Replacing one there does not replace it inside a module.
+- **The policy.** The page is sent with a Content Security Policy
+  (`assets.PAGE_POLICY`): `script-src 'self'` — the build's modules and
+  nothing else, no inline script, no `eval`, no handler attribute —
+  `connect-src 'self'`, and `'none'` for objects, frames, workers, the
+  base and forms. Inline styles stay allowed: the templates write tints
+  and heights into `style` attributes, and a style runs nothing. The one
+  image is the favicon, a `data:` SVG. A plans/ or reference/ document is
+  opened in a tab of its own under its own sandbox policy, or fetched as
+  Markdown into the drawer.
+- **A page from another build.** Every mutation the page sends names its
+  build (`X-Bench-Build`, from `lib/api.js`). After a restart into
+  another build, the board refuses a browser's write from an older page —
+  `409 stale-page`, nothing changed — and the page shows a banner: it is
+  out of date, reload to update, and what a reload would discard (an
+  unsent comment, a note, a Settings draft). Only a request that states a
+  browser (an `Origin` or `Sec-Fetch-Site`) is asked for a build: the run
+  shims, the event bridges and `curl` are never refused for it.
 
 ### The card face and its tools
 

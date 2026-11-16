@@ -83,6 +83,30 @@ PLACEHOLDER = b"__BUILD__"
 # a snapshot build is never mistaken for it.
 DISK_BUILD = "disk"
 
+# The page's Content Security Policy (task 124, WP15), sent with board.html.
+# The script is the build's own modules and nothing else: no inline script,
+# no eval, no handler attribute, no plugin. The page talks only to this
+# board, may not be framed, and has no base to rewrite or form to submit.
+# The rest is set from an inventory of what the page actually uses:
+# - style: the shell has 4 static `style=""` attributes and the modules
+#   write 53 into their templates (tints, heights, a check row's indent),
+#   plus CSSOM sets — so inline style stays allowed. A style cannot run
+#   script; moving those into classes is a later, visual change.
+# - images: the one icon is the favicon, an SVG `data:` url. The page
+#   draws no other image: Markdown draws an image as a link to it.
+# - fonts: the bundled Plex faces, from this board. `data:` is allowed so
+#   a face can be given as bytes inline — the font case's baseline is the
+#   same files given that way; a font cannot run script either.
+# - user files: plans/ and reference/ are opened in a new tab (served with
+#   their own sandbox policy) or fetched as Markdown text into the drawer,
+#   which `connect-src 'self'` covers. A link in a document is a
+#   navigation, which this policy does not restrict.
+PAGE_POLICY = ("default-src 'self'; script-src 'self'; object-src 'none'; "
+               "base-uri 'none'; form-action 'none'; frame-ancestors 'none'; "
+               "frame-src 'none'; worker-src 'none'; connect-src 'self'; "
+               "img-src 'self' data:; font-src 'self' data:; "
+               "style-src 'self' 'unsafe-inline'")
+
 IMMUTABLE = "public, max-age=31536000, immutable"
 NO_STORE = "no-store"
 

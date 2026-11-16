@@ -155,8 +155,11 @@ class PageWritesOverLoopbackAndAProxy(unittest.TestCase):
     def status_of(b, path: str) -> list:
         """The page posting a bodyless write the way it now does: its
         status and the error it was answered with."""
+        # the page names its build on every write (task 124)
         return b.eval(f"fetch({path!r}, {{method: 'POST', headers: "
-                      "{'Content-Type': 'application/json'}, body: '{}'})"
+                      "{'Content-Type': 'application/json', 'X-Bench-Build': "
+                      "document.querySelector('meta[name=\"bench-build\"]').content},"
+                      " body: '{}'})"
                       ".then(async r => [r.status, (await r.json()).error || ''])")
 
     def write_round(self, b) -> dict:

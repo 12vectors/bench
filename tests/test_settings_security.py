@@ -171,6 +171,18 @@ class Board:
             req.add_header(key, value)
         return self._open(req)
 
+    def build(self) -> str:
+        """The build this board serves, as its page names it."""
+        _, data = self.get("/api/state")
+        return data["assets"]["build"]
+
+    def page(self, origin: str | None = None) -> dict:
+        """What the board's own page sends with a write: its origin, its
+        fetch metadata and the build it was served as (task 124)."""
+        return {"Content-Type": "application/json",
+                "Origin": origin or f"http://127.0.0.1:{self.port}",
+                "Sec-Fetch-Site": "same-origin", "X-Bench-Build": self.build()}
+
     def doc(self) -> dict:
         return json.loads(self.doc_path.read_text(encoding="utf-8"))
 
@@ -232,8 +244,7 @@ class ThePolicyDoorRefusesAForgedWrite(unittest.TestCase):
         board = Board(self)
         code, data = board.post(
             "/api/settings/validate", {"document": board.doc()},
-            headers={**HEADERS, "Origin": f"http://127.0.0.1:{board.port}",
-                     "Sec-Fetch-Site": "same-origin"})
+            headers={**HEADERS, **board.page()})
         self.assertEqual(200, code, data)
         self.assertTrue(data["validation"]["ok"], data["validation"]["errors"])
 
@@ -312,8 +323,7 @@ class TheAgentsDoorIsTheSameDoor(unittest.TestCase):
         code, data = board.post("/api/settings/agents/apply", {
             "revision": revision,
             "agents": {"BOARD_AGENT_MODEL_REVIEW": "cheap-model"}},
-            headers={**HEADERS, "Origin": f"http://127.0.0.1:{board.port}",
-                     "Sec-Fetch-Site": "same-origin"})
+            headers={**HEADERS, **board.page()})
         self.assertEqual(200, code, data)
         self.assertIn("BOARD_AGENT_MODEL_REVIEW=cheap-model", self.env_text(board))
         _, data = board.get("/api/settings")

@@ -15,6 +15,7 @@ import queue
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer  # noqa: F401
 from urllib.parse import parse_qs, unquote, urlparse
 
+import assets
 import callers
 import config
 import routes
@@ -147,6 +148,37 @@ def door_problem(klass: str, headers, port: int) -> str | None:
     if klass == "policy-mutation":
         return origin_problem(headers, port)
     return write_problem(headers, port)
+
+
+# The build a browser page says it was served as (task 124, WP15). The
+# page's own fetch sends it on every mutation; a shim, a bridge or `curl`
+# states no Origin and no Sec-Fetch-Site and is never asked for it.
+BUILD_HEADER = "X-Bench-Build"
+
+
+def build_problem(klass: str, headers) -> str | None:
+    """Why a browser's mutation comes from a page this board no longer
+    serves, or None. After a restart into another build an open page's
+    code is not the code that would have rendered the rules it is about to
+    act on, so its write is refused — nothing changed, reload to update —
+    rather than carried out by old code against new rules. Only the two
+    browser-facing classes, and only a request that states a browser: the
+    run shims (`run-authenticated`), the event bridges (`event-ingest`) and
+    every local caller are untouched. A browser request naming no build is
+    a page from before builds were sent, so it is refused too."""
+    if klass not in ("browser-mutation", "policy-mutation"):
+        return None
+    if not states_a_browser(headers):
+        return None
+    sent = (headers.get(BUILD_HEADER) or "").strip()
+    served = assets.current_build()
+    if sent == served:
+        return None
+    page = f"build {sent[:40]}" if sent else "a build from before builds were named"
+    return (f"this page is {page}, and the board now serves build {served} — it "
+            f"restarted since the page was loaded. Nothing was changed. Reload "
+            f"the page to update; copy anything you have typed and not sent "
+            f"first, because a reload discards it.")
 
 
 def claim_problem(klass: str, headers, body: dict) -> str | None:
@@ -283,6 +315,11 @@ class Handler(BaseHTTPRequestHandler):
         problem = door_problem(route.klass, self.headers, self.served_port())
         if problem:
             self.reply(403, {"error": problem})
+            return
+        problem = build_problem(route.klass, self.headers)
+        if problem:
+            self.reply(409, {"error": problem, "code": "stale-page",
+                             "stale": True, "build": assets.current_build()})
             return
         try:
             self.body = self._read_body(route.max_body)

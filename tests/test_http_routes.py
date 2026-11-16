@@ -313,9 +313,7 @@ class ThePageAndTheShimsStillWrite(unittest.TestCase):
         write alike. The configured port is not this board's origin."""
         from tests.test_settings_security import free_port
         board = Board(self, configured_port=free_port())
-        page = {"Content-Type": "application/json",
-                "Origin": f"http://127.0.0.1:{board.port}",
-                "Sec-Fetch-Site": "same-origin"}
+        page = board.page()
         code, data = board.post("/api/move", {
             "file": CARD, "from": "review", "to": "in-progress"}, headers=page)
         self.assertEqual(200, code, data)
@@ -337,8 +335,7 @@ class ThePageAndTheShimsStillWrite(unittest.TestCase):
     def test_an_allowed_origin_writes_exactly(self):
         board = Board(self, env={
             "BOARD_ALLOWED_ORIGINS": f" {ALLOWED} , https://*.example, ftp://x"})
-        proxied = {"Content-Type": "application/json", "Origin": ALLOWED,
-                   "Sec-Fetch-Site": "same-origin"}
+        proxied = board.page(ALLOWED)
         code, data = board.post("/api/move", {
             "file": CARD, "from": "review", "to": "in-progress"}, headers=proxied)
         self.assertEqual(200, code, data)
@@ -425,18 +422,20 @@ class ARunClaimIsNotBorrowedByRouteClass(unittest.TestCase):
 
     def test_a_browser_naming_a_run_is_refused_even_from_this_board(self):
         before = self.evidence()
+        build = self.board.build()
         for origin in (f"http://127.0.0.1:{self.board.port}",
                        "https://evil.example", "null"):
             with self.subTest(origin=origin):
                 code, data = self.board.post("/api/verify", {
                     "check": "unit", "file": CARD, "agent": "run-1",
                     "token": "x"}, headers={"Content-Type": "application/json",
-                                            "Origin": origin})
+                                            "Origin": origin,
+                                            "X-Bench-Build": build})
                 self.assertEqual(403, code, data)
         code, data = self.board.post("/api/verify", {
             "check": "unit", "file": CARD, "agent": "run-1"},
             headers={"Content-Type": "application/json",
-                     "Sec-Fetch-Site": "same-origin"})
+                     "Sec-Fetch-Site": "same-origin", "X-Bench-Build": build})
         self.assertEqual(403, code, data)
         self.assertEqual("browser-claims-run", data["code"])
         self.assertEqual(before, self.evidence())
@@ -458,10 +457,8 @@ class ARunClaimIsNotBorrowedByRouteClass(unittest.TestCase):
     def test_a_person_asking_from_the_page_still_reaches_verify(self):
         code, data = self.board.post("/api/verify", {
             "check": "no-such-check", "file": CARD, "stage": "review"},
-            headers={"Content-Type": "application/json",
-                     "Origin": f"http://127.0.0.1:{self.board.port}",
-                     "Sec-Fetch-Site": "same-origin"})
-        self.assertNotEqual(403, code, data)
+            headers=self.board.page())
+        self.assertNotIn(code, (403, 409), data)
 
 
 class ThePageSendsJsonOnEveryWrite(unittest.TestCase):

@@ -398,7 +398,10 @@ def get_page(req) -> None:
         return
     # no-store, as every reply here: the page names the build, so a cached
     # page is how a browser would keep asking for a build nobody serves
-    req.send(200, page_bytes(), "text/html; charset=utf-8")
+    # the script policy (task 124): the build's own modules and nothing else
+    req.send(200, page_bytes(), "text/html; charset=utf-8",
+             {"Content-Security-Policy": assets.PAGE_POLICY,
+              "X-Content-Type-Options": "nosniff"})
 
 
 def get_web(req) -> None:
