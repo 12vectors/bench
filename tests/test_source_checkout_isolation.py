@@ -157,16 +157,18 @@ class TwoChecksOneCommit(IsolationCase):
         quick = verify.request(check=fast, agent="run-1")
         self.assertEqual(quick["outcome"], "passed", quick["why"])
         fast_root = Path(quick["root"]["path"])
+        # the slower run's own view first: on the shared-checkout runner
+        # this is where the defect shows — its files are gone
+        self.release(slow)
+        held = self.join(thread, out)
+        self.assertEqual(held["outcome"], "passed",
+                         f"the slower run's source was never touched: "
+                         f"{held['why']}")
         self.assertNotEqual(slow_root.resolve(), fast_root.resolve(),
                             "each run has its own checkout")
         self.assertTrue(quick["root"].get("removed"),
                         "the finisher gave its own checkout back")
         self.assertFalse(fast_root.exists())
-        self.assert_intact(slow_root)
-        self.release(slow)
-        held = self.join(thread, out)
-        self.assertEqual(held["outcome"], "passed",
-                         "the slower run's source was never touched")
         for record in (held, quick):
             self.assertEqual(record["source"]["commit"], self.sha)
             self.assertTrue(record["source"]["bound"])
