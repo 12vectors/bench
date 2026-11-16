@@ -139,6 +139,7 @@
 <div id="toast"><span class="dot"></span><span id="toastmsg"></span></div>
 
 <script>
+'use strict';
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
