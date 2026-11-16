@@ -247,6 +247,18 @@ def gates_payload(name: str, stage: str) -> dict:
 
 
 def state_payload() -> dict:
+    """The whole board, read once. Every section below asks the policy the
+    same questions — the document, each intent's resolution, every
+    approved input and its provenance — once per evidence record; inside
+    one read scope each is asked once for this request and no longer
+    (`profiles.read_scope`, task 127). The scope is this thread's and ends
+    with the payload: no memo outlives the request, and no mutation path,
+    which never opens one, reads through it."""
+    with profiles.read_scope():
+        return _state_payload()
+
+
+def _state_payload() -> dict:
     with state.LOCK:
         sessions = sorted(
             (dict(m) for m in state.SESSIONS.values()),

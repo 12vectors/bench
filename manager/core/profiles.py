@@ -111,12 +111,16 @@ here is committed, pushed, or carried into a PR body.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import copy
 import hashlib
 import json
 import os
 import re
 import shlex
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -167,6 +171,117 @@ ID_PREFIXES = {
     "evidence": "ev",           # what a verification actually found
     "review": "rev",            # which revision a review was of
 }
+
+
+# ── one request, one reading of the policy's inputs (task 127) ─────────
+#
+# A board read asks this module the same questions hundreds of times: the
+# document, each intent's resolution, and every approved input — read,
+# hashed and its provenance looked up with a `git log` — once per passing
+# evidence record, per card, per section. The answers cannot differ within
+# one request unless a file changes under it, so a request may open a
+# **read scope** and have each one asked once.
+#
+# What the scope is, and is not:
+#
+# - **Request-scoped, never global.** It lives in a `ContextVar` set by the
+#   reader that opens it (`routes.state_payload`) and is dropped when that
+#   reader returns. Nothing outlives the request, so no answer is held one
+#   moment longer than the request that read it, and no existing memo's
+#   lifetime is extended. Another thread — a concurrent request, a launch,
+#   a merge — never sees it: a fresh thread starts with no scope, and asks
+#   everything afresh exactly as before.
+# - **Reads only.** Nothing that writes, pins, launches or decides a
+#   mutation opens one. A gate read immediately before a merge, a launch's
+#   preflight and a verification request all run unscoped and resolve the
+#   current authorities themselves.
+# - **Keyed on what the answer depends on.** An input is keyed on its
+#   name, selection, root and the file's own `stat` (inode, size,
+#   modification time, through and without a link), so a file edited or
+#   replaced during the request is read again. The document is keyed the
+#   same way, and an intent's resolution on the intent, its roots, the
+#   document's revision, the harness and model selection and the adapter's
+#   declared capabilities. What a key cannot see — a commit that touches an
+#   input without changing it, an `.env` edit mid-request — is read as it
+#   was when the request first asked, which is the consistency one request
+#   is owed.
+# - **Copies out.** Every answer is handed back as a copy, so a caller that
+#   edits what it was given cannot change what the next caller reads.
+
+_READ_SCOPE: contextvars.ContextVar = contextvars.ContextVar(
+    "bench_profiles_read_scope", default=None)
+
+
+class _Scope:
+    __slots__ = ("memo", "lock", "asked", "computed")
+
+    def __init__(self):
+        self.memo: dict = {}
+        self.lock = threading.Lock()
+        self.asked: dict[str, int] = {}
+        self.computed: dict[str, int] = {}
+
+
+@contextlib.contextmanager
+def read_scope():
+    """Ask each of this module's read-only questions once for the rest of
+    the block, on this thread. Nested scopes share the outer one. Yields
+    a function returning the scope's counts (`asked` and `computed` per
+    kind), which is how a measurement shows the duplication is gone."""
+    outer = _READ_SCOPE.get()
+    if outer is not None:
+        yield lambda: _scope_counts(outer)
+        return
+    scope = _Scope()
+    token = _READ_SCOPE.set(scope)
+    try:
+        yield lambda: _scope_counts(scope)
+    finally:
+        _READ_SCOPE.reset(token)
+
+
+def in_read_scope() -> bool:
+    """Whether this thread is inside a read scope right now."""
+    return _READ_SCOPE.get() is not None
+
+
+def _scope_counts(scope: _Scope) -> dict:
+    with scope.lock:
+        return {"asked": dict(scope.asked), "computed": dict(scope.computed)}
+
+
+def _scoped(kind: str, key, compute):
+    """`compute()`, once per `(kind, key)` within the current read scope,
+    and on every call outside one. Always a copy."""
+    scope = _READ_SCOPE.get()
+    if scope is None:
+        return compute()
+    full = (kind, key)
+    with scope.lock:
+        scope.asked[kind] = scope.asked.get(kind, 0) + 1
+        if full in scope.memo:
+            return copy.deepcopy(scope.memo[full])
+    value = compute()
+    with scope.lock:
+        scope.computed[kind] = scope.computed.get(kind, 0) + 1
+        scope.memo.setdefault(full, value)
+    return copy.deepcopy(value)
+
+
+def _file_key(path: Path | None):
+    """What identifies a file's bytes without reading them: its `stat`
+    through a link and of the link itself. None when there is nothing."""
+    if path is None:
+        return None
+    out = []
+    for follow in (True, False):
+        try:
+            st = os.stat(path, follow_symlinks=follow)
+            out.append((st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns,
+                        st.st_ctime_ns, st.st_mode))
+        except OSError:
+            out.append(None)
+    return tuple(out)
 
 
 def digest(*parts: str) -> str:
@@ -807,8 +922,13 @@ def document_path() -> Path | None:
 
 
 def document() -> dict:
-    """The profile document this board resolves with, read fresh."""
-    return document_at(document_path())
+    """The profile document this board resolves with, read fresh — once per
+    read scope while the file is unchanged."""
+    path = document_path()
+    return _scoped("document",
+                   (str(path) if path else None, _file_key(path),
+                    config.AGENT_COMMANDS),
+                   lambda: document_at(path))
 
 
 def document_at(path: Path | None) -> dict:
@@ -1811,7 +1931,15 @@ def _source_revision(path: Path) -> str:
     """What revision a source file is at, named the way its own repository
     would name it: the commit that last touched it when it is tracked,
     else its size and modification time. Not a substitute for the content
-    hash — it is the *provenance* half, and a reader needs both."""
+    hash — it is the *provenance* half, and a reader needs both.
+
+    Asked once per file per read scope: within one request the same
+    approved input was being looked up once per evidence record."""
+    return _scoped("provenance", (str(path), _file_key(path)),
+                   lambda: _source_revision_now(path))
+
+
+def _source_revision_now(path: Path) -> str:
     try:
         result = config.git_run(path.parent, "log", "-1", "--format=%H", "--",
                                 path.name, timeout=10)
@@ -1887,7 +2015,23 @@ def _resolve_selection(raw: dict, available: dict) -> dict:
     there and the one that cannot be read. A selection marked
     `"required": false` that fails is a note instead of a blocker — it is
     the only difference the flag makes.
+
+    Within a read scope, one selection in one root is read once while the
+    file it names is unchanged (`_file_key`).
     """
+    spec = str(raw.get("path") or "").strip()
+    word = spec.partition(":")[0]
+    root = available.get(word) if isinstance(available, dict) else None
+    target = (Path(root) / spec.partition(":")[2].strip()) if root else None
+    key = (str(raw.get("name") or "").strip(), spec,
+           raw.get("required", True) is not False, word,
+           str(root) if root else None, tuple(sorted(available)),
+           _file_key(target))
+    return _scoped("selection", key,
+                   lambda: _resolve_selection_now(raw, available))
+
+
+def _resolve_selection_now(raw: dict, available: dict) -> dict:
     name = str(raw.get("name") or "").strip()
     spec = str(raw.get("path") or "").strip()
     required = raw.get("required", True) is not False
@@ -2172,10 +2316,37 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
     the diagnostic an operator will see is the diagnostic bench actually
     produces. Default None reads the board's own, which is every other
     caller.
+
+    Within a read scope (task 127) the board's own resolution of one
+    intent at one pair of roots is computed once, keyed on everything it
+    reads that can move during a request: the document's revision, the
+    harness and model selection, and the adapter's declared capabilities.
+    A draft document or draft agent values is never memoised.
     """
     if intent not in INTENTS:
         raise ValueError(f"unknown launch intent '{intent}' — one of "
                          f"{', '.join(INTENTS)}")
+    if policy is not None or agent_values is not None or not in_read_scope():
+        return _resolve_now(intent, worktree=worktree, review=review,
+                            policy=policy, agent_values=agent_values)
+    doc = document()
+    choice = config.agent_choice(intent)
+    harness = choice["harness"]["value"]
+    directory = config.adapter_dir(harness)
+    key = (intent, str(worktree) if worktree is not None else None,
+           str(review) if review is not None else None,
+           doc["revision"], doc["kind"], doc.get("problem"),
+           json.dumps(choice, sort_keys=True, default=str),
+           str(directory) if directory else None,
+           _file_key(directory / "capabilities.json") if directory else None)
+    return _scoped("resolve", key, lambda: _resolve_now(
+        intent, worktree=worktree, review=review, policy=doc))
+
+
+def _resolve_now(intent: str, *, worktree: Path | str | None = None,
+                 review: Path | str | None = None,
+                 policy: dict | None = None,
+                 agent_values: dict[str, str] | None = None) -> dict:
     baseline = BASELINE[intent]
     doc = policy if policy is not None else document()
     # Which harness and model this intent rides, resolved once and carried
