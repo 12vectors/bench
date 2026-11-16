@@ -305,7 +305,7 @@ class LazyDetail(unittest.TestCase):
         b.eval("(() => { window.__stateShut = true; window.__holdFor = null;"
                " __held.shift()(); return true; })()")
         try:
-            self.assertTrue(b.wait("__cards.answered.length === 1", 10), "the held read never answered")
+            self.assertTrue(b.wait("window.__heldAnswer != null", 10), "the held read never answered")
             return b, dst, src, text
         except AssertionError:
             dst.unlink(missing_ok=True)
@@ -315,7 +315,7 @@ class LazyDetail(unittest.TestCase):
     def test_7_a_move_the_read_itself_discovers_is_followed(self):
         b, dst, src, text = self._discovered_by_the_read(HEAVY[1], "done", "Done")
         try:
-            self.assertEqual(409, b.eval("__cards.answered[0]"), "the read did not answer 'moved'")
+            self.assertEqual(409, b.eval("__heldAnswer"), "the read did not answer 'moved'")
             self.assertTrue(b.wait("__stateAfter > 0", 10),
                             "the read's 'moved' reply did not ask for the board again")
             self.assertTrue(b.wait("S.selected && S.selected.stage === 'done'", 10),
@@ -330,7 +330,7 @@ class LazyDetail(unittest.TestCase):
     def test_8_an_archive_the_read_itself_discovers_closes_the_view(self):
         b, dst, src, text = self._discovered_by_the_read(HEAVY[0], "archive", "Archived")
         try:
-            self.assertEqual(410, b.eval("__cards.answered[0]"), "the read did not answer 'archived'")
+            self.assertEqual(410, b.eval("__heldAnswer"), "the read did not answer 'archived'")
             self.assertTrue(b.wait("__stateAfter > 0", 10),
                             "the read's 'archived' reply did not ask for the board again")
             self.assertTrue(b.wait("!S.selected && !document.querySelector('#drawer.open')", 10),
@@ -349,6 +349,7 @@ DISCOVER = """(() => {
   window.__realFetch = real;
   window.__cards = { asked: [], answered: [] }; window.__held = []; window.__holdFor = null;
   window.__stateShut = false; window.__stateWaiting = []; window.__stateAfter = 0;
+  window.__heldAnswer = null;
   const open = () => { __stateShut = false; __stateWaiting.splice(0).forEach((go) => go()); };
   window.fetch = async (url, opts) => {
     const u = String(url);
@@ -359,9 +360,16 @@ DISCOVER = """(() => {
     }
     if (!u.startsWith('/api/card?')) return real(url, opts);
     __cards.asked.push(u);
-    if (__holdFor && u.includes(__holdFor)) await new Promise((go) => __held.push(go));
+    // one read is held, never a second: a later read of the same card
+    // (from its new stage) must go straight through
+    const held = !!(__holdFor && u.includes(__holdFor));
+    if (held) {
+      __holdFor = null;
+      await new Promise((go) => __held.push(go));
+    }
     const r = await real(url, opts);
     __cards.answered.push(r.status);
+    if (held) window.__heldAnswer = r.status;
     open();
     return r;
   };
