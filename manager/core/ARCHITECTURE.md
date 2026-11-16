@@ -122,6 +122,17 @@ handed the merge rules' prompt lines by every launch
 (`gatepolicy.required_lines`) rather than reaching up for them. Every
 persisted identity it computes is pinned by `tests/test_policy_golden.py`.
 
+`profiles.read_scope` (task 127) is a request-scoped memo, not a layer:
+a `ContextVar` that `routes.state_payload` sets for the length of one
+board read, inside which `document()`, `resolve()` without a draft, an
+approved input's reading and its `git log` provenance are each computed
+once per key — the key being what the answer depends on, the files'
+`stat` included. No other module opens one, no mutation path reads
+through one, and nothing in it outlives the request. It lives in
+`profiles` because every question it memoises is `profiles`' own, which
+keeps the runner files (`resultidentity.RUNNER_FILES`) — and so every
+recorded pass's runner identity — untouched.
+
 `githost` (task 116, WP08) sits directly above `config`: which hosting
 provider is in force, what it can do here, and refusing by name. It
 imports `config` only, and loads a provider (`providers/github/`,

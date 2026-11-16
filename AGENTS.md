@@ -117,7 +117,11 @@ gitproc / records / redact < config < githost / assets < state / reports / templ
 - `profiles.py` — the other half of the same decision: what a run may do
   in that checkout and which files it is guaranteed to have read. One
   profile per launch intent, the approved context it pins read-only, and
-  the manifest recording what each run actually rode
+  the manifest recording what each run actually rode. Its request-scoped
+  read context (`read_scope`, task 127) lets one board read ask the
+  document, each resolution and every approved input once rather than
+  once per evidence record; only `routes.state_payload` opens one, and it
+  ends with the request
 - `gatepolicy.py` — the merge rules as written: reading and validating
   the policy document's `"gates"` block (each scope's checks, review and
   sign-off policy, the override path), its public form, and the lines a
