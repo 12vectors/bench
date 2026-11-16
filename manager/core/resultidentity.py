@@ -568,10 +568,10 @@ def root_class(policy: str, root: Path) -> str:
     virtualenv) the source identity deliberately does not hash. A `source`
     or `review` checkout is only called `fresh` when the runner genuinely
     found it so as the check began — no ignored, untracked or modified
-    file in it — because bench reuses a `source` checkout of the same
-    commit, and a review's pinned checkout outlives one check. One that
-    already held such state is `reused`, which is said rather than
-    papered over."""
+    file in it. A `source` checkout is made for each run (task 131), so
+    it is fresh by construction; a review's pinned checkout outlives one
+    check and may not be. One that already held such state is `reused`,
+    which is said rather than papered over."""
     if policy not in ("source", "review"):
         return "worktree"
     status = git(root, "status", "--porcelain", "--ignored",
