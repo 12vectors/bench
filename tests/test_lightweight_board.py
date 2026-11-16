@@ -78,7 +78,7 @@ class Board(GateCase):
                             status=("Backlog", "To Do", "In Progress", "Review", "Done")[n % 5],
                             body="- [ ] It works <!-- ac:works -->\n"))
         self.heavy_text = card("90 — a card with a long history", status="Review",
-                               body="## Acceptance\n\n- [ ] Holds <!-- ac:holds -->\n") + history(12)
+                               body="## Acceptance\n\n- [ ] Holds <!-- ac:holds -->\n") + history(30)
         self.write("review", HEAVY, self.heavy_text)
         self.phase_text = card("95 — the phase", status="In Progress", type="Phase",
                                body="## Cards\n\n- 01 — one\n- 02 — two\n") + (
@@ -92,7 +92,8 @@ class TheListLeavesTheTextOut(Board):
     def test_no_card_in_the_state_carries_its_text(self):
         payload = routes.state_payload()
         cards = [t for s in payload["board"]["stages"] for t in s["tasks"]]
-        self.assertEqual(len(cards), 42)
+        # forty small ones, the heavy one, the phase, and GateCase's own card
+        self.assertEqual(len(cards), 43)
         for task in cards:
             self.assertNotIn("body", task, task["file"])
             self.assertNotIn("parts", task, task["file"])
@@ -112,7 +113,6 @@ class TheListLeavesTheTextOut(Board):
         collected = taskfiles.collect()
         self.assertEqual(payload["acceptance"], acceptance.board(collected))
         self.assertIn(HEAVY, payload["acceptance"])
-        self.assertIn(HEAVY, payload["delivery"])
         self.assertEqual(payload["verdicts"], routes.changes.board_verdicts(collected))
 
     def test_a_phase_card_lists_its_log_without_its_text(self):

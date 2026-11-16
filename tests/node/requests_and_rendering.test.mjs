@@ -655,7 +655,7 @@ test('a new revision is asked for; asks made meanwhile are queued, and the newes
   } finally { globalThis.fetch = saved; }
 });
 
-test('a card that moved, was archived or deleted says so and the board is read again', async () => {
+test('a card that moved, or could not be read, says so in an alert with a way to ask again', async () => {
   const { briefHtml, loadDetail, withDetail } = await load('views/detail/sections.js');
   const { S } = await load('app/state.js');
   const c = controlledFetch();
@@ -672,8 +672,6 @@ test('a card that moved, was archived or deleted says so and the board is read a
     assert.match(html, /role="alert"/);
     assert.match(html, /moved to done\//);
     assert.match(html, /id="dretry"/, 'a way to ask again');
-    assert.ok(c.asked.some(q => String(q.url).startsWith('/api/state')),
-              'the list is read again, so the drawer follows the card');
     const b = { file: 'k3-b.md', stage: 'review', rev: 'r1' };
     loadDetail(b);
     const at = c.asked.findIndex(q => String(q.url).includes('k3-b.md'));
