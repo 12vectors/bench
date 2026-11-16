@@ -743,6 +743,37 @@ def public_state() -> dict:
             for f, v in PR_STATE.items()}
 
 
+def card_verdict(task: dict, observed: dict | None = None) -> dict | None:
+    """One card's combined review reading (task 125): the latest review
+    verdict filed in the card (`prVerdict`) folded with the host's live
+    verdict for its change request. Any red signal wins; green needs an
+    approval and no red; otherwise pending. `reviewIn` is whether a review
+    has come in at all — a verdict either way, or a Copilot review that is
+    more than asked for — which is what turns a review card's next step
+    from ◔ review PR to ↻ act on PR. The page drew both of these itself;
+    now it draws this. None for a card with no change request."""
+    if not task.get("pr"):
+        return None
+    host = (observed if observed is not None else PR_STATE).get(task["file"]) or {}
+    signals = (task.get("prVerdict"), host.get("verdict"))
+    verdict = "red" if "red" in signals else "green" if "green" in signals else "pending"
+    copilot = host.get("copilot")
+    return {"verdict": verdict,
+            "reviewIn": verdict != "pending" or bool(copilot and copilot != "asked")}
+
+
+def board_verdicts(collected: dict) -> dict:
+    """`card_verdict` for every card on the board that has a change request."""
+    observed = dict(PR_STATE)
+    out = {}
+    for stage in collected.get("stages", []):
+        for task in stage.get("tasks", []):
+            reading = card_verdict(task, observed)
+            if reading is not None:
+                out[task["file"]] = reading
+    return out
+
+
 def open_pr_async(filename: str) -> None:
     threading.Thread(target=maybe_open_pr, args=(filename,), daemon=True).start()
 

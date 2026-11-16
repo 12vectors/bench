@@ -367,6 +367,36 @@ def public_state() -> dict:
     return {name: dict(snapshot) for name, snapshot in SNAPSHOTS.items()}
 
 
+MERGED_ENTRY_RE = re.compile(r"^(\d+) merged into ")
+
+
+def merged_members(task: dict, snapshot: dict | None = None) -> list[str]:
+    """Which members a phase's branch already holds, as canonical card
+    numbers in ascending order (task 125). Two durable sources for one
+    fact: while a run is on, the runner's last pass has just read it off
+    git; once the phase leaves in-progress/ there are no more passes — and
+    the log, written by the same runner as it merged them, still
+    remembers. That is what keeps a phase in review/ from drawing a lane
+    where nothing ever landed. The page used to work this out itself."""
+    merged = set()
+    for member in (snapshot or {}).get("members") or []:
+        if member.get("state") == "merged" and member.get("number"):
+            merged.add(taskfiles.canonical_number(member["number"]))
+    for entry in log_entries(task.get("body") or ""):
+        match = MERGED_ENTRY_RE.match(entry)
+        if match:
+            merged.add(taskfiles.canonical_number(match.group(1)))
+    return sorted(merged, key=int)
+
+
+def board_merged(collected: dict) -> dict:
+    """`merged_members` for every phase card on the board, by file."""
+    snapshots = public_state()
+    return {task["file"]: merged_members(task, snapshots.get(task["file"]))
+            for stage in collected.get("stages", []) for task in stage.get("tasks", [])
+            if task.get("isPhase")}
+
+
 # ── the phase branch ───────────────────────────────────────────────────
 
 

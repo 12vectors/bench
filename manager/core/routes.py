@@ -282,6 +282,13 @@ def state_payload() -> dict:
         # update waiting for a restart, which the header says
         "assets": assets.public(),
         "prs": changes.public_state(),
+        # per card with a change request, its combined review reading: the
+        # verdict filed in the card folded with the host's, and whether a
+        # review has come in at all (task 125) — drawn, never recomputed
+        "verdicts": changes.board_verdicts(collected),
+        # per phase card, the members its branch already holds, from the
+        # runner's last pass and the phase log (task 125)
+        "phaseMerged": phases.board_merged(collected),
         # what the last pass of the phase runner saw: per phase card in
         # in-progress/, its branch, whether a run is in force or halted (and
         # why, and where), and each member's state — the header chip and the

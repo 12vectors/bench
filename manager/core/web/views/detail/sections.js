@@ -65,32 +65,21 @@ function dtabsHtml(t, tab, acc) {
     `</nav>`;
 }
 
-/* The card split as the server splits it (`taskfiles.card_parts`): the
-   head (title and `**Field:**` lines), the brief, and the history from
-   the first dated report or history heading — a ``` fence hides both. */
-function cardSplit(body) {
-  const lines = String(body || '').split(/(?<=\n)/);
-  let i = 0;
-  while (i < lines.length && !lines[i].trim()) i++;
-  if (i < lines.length && /^#\s/.test(lines[i])) i++;
-  while (i < lines.length && (!lines[i].trim() || /^\*\*[A-Za-z][A-Za-z ]{0,40}:\*\*/.test(lines[i]))) i++;
-  const start = i;
-  let end = lines.length, fenced = false;
-  for (let k = start; k < lines.length; k++) {
-    const line = lines[k];
-    if (line.trimStart().startsWith('```')) { fenced = !fenced; continue; }
-    if (fenced) continue;
-    if (/^##\s+(?:Discussion|Phase log|Acceptance record|Review findings)\s*$/.test(line)
-        || /^##\s+.+\s[—–-]\s\d{4}-\d{2}-\d{2}\b/.test(line)) {
-      end = k;
-      let above = k - 1;
-      while (above >= start && !lines[above].trim()) above--;
-      if (above >= start && lines[above].trim() === '---') end = above;
-      break;
-    }
-  }
-  return { head: lines.slice(0, start).join(''), brief: lines.slice(start, end).join(''),
-           history: lines.slice(end).join('') };
+/* The card split as the server splits it — and by the server
+   (`taskfiles.card_parts`, task 125): the state carries `parts`, two
+   offsets into the body in the units a JavaScript string counts, so the
+   page slices the card and keeps no second copy of the rule. A card read
+   without offsets (an older payload) is all brief: shown, never guessed
+   apart. */
+function cardSplit(t) {
+  const body = String((t && t.body) || '');
+  const p = (t && t.parts) || {};
+  const at = (n, floor) => (Number.isInteger(n) ? Math.min(Math.max(n, floor), body.length) : null);
+  const brief = at(p.brief, 0);
+  const history = brief == null ? null : at(p.history, brief);
+  if (brief == null || history == null) return { head: '', brief: body, history: '' };
+  return { head: body.slice(0, brief), brief: body.slice(brief, history),
+           history: body.slice(history) };
 }
 
 function whenOf(value) {
@@ -217,7 +206,7 @@ function overviewHtml(t, acc, failBlock, signals, plan, members) {
 }
 
 function briefHtml(t) {
-  const parts = cardSplit(t.body);
+  const parts = cardSplit(t);
   const head = parts.head.replace(/^\s*#\s[^\n]*\n?/, '');
   return `<div class="dbody">${md(head + '\n' + withoutDiscussion(parts.brief))}</div>` +
     `<p class="dnote">The brief is the requirement. Earlier wordings are in the card's history: ` +

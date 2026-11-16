@@ -26,9 +26,8 @@ const PROFILE_INTENT_FOR = { 'in-progress': 'work', review: 'act-pr' };
    reads the same answer: until one has, a review card offers ◔ review PR
    and not ↻ act on PR, so its launch check opens on Review. */
 function reviewIsIn(task) {
-  const pr = (S.state.prs || {})[task.file];
-  return !!task.prVerdict ||
-    !!(pr && (pr.verdict !== 'pending' || (pr.copilot && pr.copilot !== 'asked')));
+  // the server's combined reading (`changes.card_verdict`, task 125)
+  return !!((S.state.verdicts || {})[task.file] || {}).reviewIn;
 }
 
 function profileIntentFor(task) {

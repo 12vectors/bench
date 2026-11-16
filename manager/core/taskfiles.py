@@ -253,7 +253,25 @@ def read_task(path: Path, stage: str) -> dict:
         "mtime": path.stat().st_mtime,
         "words": len(text.split()),
         "body": text,
+        # where `body` splits into head, brief and history (task 125), as
+        # this module splits it — so the page slices the card rather than
+        # keeping a second copy of the rule
+        "parts": part_offsets(text),
     }
+
+
+def _utf16_len(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def part_offsets(text: str) -> dict:
+    """`card_parts` as two offsets into the card's text: where the brief
+    starts and where the history starts. Counted in UTF-16 code units,
+    which is what a JavaScript string's `slice` counts, so the page cuts
+    the text exactly where this module does whatever characters it holds."""
+    parts = card_parts(text)
+    brief = _utf16_len(parts["head"])
+    return {"brief": brief, "history": brief + _utf16_len(parts["brief"])}
 
 
 def _phase_name(phase: dict) -> str:

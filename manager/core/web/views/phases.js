@@ -74,23 +74,12 @@ function phaseLog(task) {
   return entries;
 }
 
-/* Which members the phase branch already holds. While a run is on, the
-   runner's last pass has just read it off git; once the phase leaves
-   in-progress/ there are no more passes — and the log, written by the same
-   runner as it merged them, still remembers. Two durable sources for one
-   fact, which is what keeps a phase in review/ from drawing a lane where
-   nothing ever landed. */
+/* Which members the phase branch already holds, as canonical numbers —
+   the server's answer (`phases.merged_members`, task 125), read from the
+   runner's last pass and the phase log. The page draws it; it no longer
+   works it out. */
 function mergedIn(task) {
-  const merged = new Set();
-  const snap = (S.state.phases || {})[task.file];
-  for (const m of ((snap && snap.members) || [])) {
-    if (m.state === 'merged' && m.number) merged.add(canonicalNumber(m.number));
-  }
-  for (const entry of phaseLog(task)) {
-    const match = /^(\d+) merged into /.exec(entry.text);
-    if (match) merged.add(canonicalNumber(match[1]));
-  }
-  return merged;
+  return new Set(((S.state && S.state.phaseMerged) || {})[task.file] || []);
 }
 
 /* The columns a lane runs. The first four are the board's own stages, named
