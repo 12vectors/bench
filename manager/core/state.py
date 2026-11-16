@@ -38,15 +38,45 @@ LAST_ARCHIVED: dict | None = None
 IDENTITY_SUFFIX = ".who.json"
 
 
-def broadcast(payload: dict) -> None:
-    msg = json.dumps(payload)
+# How many times this board has said "the board changed" (task 128). Every
+# `board` frame carries the value it was sent with, and `/api/state` carries
+# the value it read *before* reading the disk — so a reading whose `boardRev`
+# is at least a frame's `rev` already holds that frame's change. That is the
+# order guard the page reconciles by: a confirmed archive names the revision
+# its broadcast took, a state reading older than that cannot resurrect the
+# card, and a frame the page has already read past asks for nothing.
+# In memory and per process; a restart starts again at zero, which a page
+# reads as an older revision and simply reads the board again.
+BOARD_REV = 0
+# Which process the revisions belong to: a reading or a reply from another
+# boot is not comparable with this one's revisions.
+BOOT = f"{time.time_ns():x}"
+
+
+def board_rev() -> int:
     with LOCK:
+        return BOARD_REV
+
+
+def broadcast(payload: dict) -> int | None:
+    """Fan a frame out to every open stream. A `board` frame is stamped
+    with the next board revision, which is returned — the write that
+    caused it tells its caller which reading will contain it."""
+    global BOARD_REV
+    rev = None
+    with LOCK:
+        if payload.get("type") == "board":
+            BOARD_REV += 1
+            rev = BOARD_REV
+            payload = {**payload, "rev": rev}
         clients = list(CLIENTS)
+    msg = json.dumps(payload)
     for q in clients:
         try:
             q.put_nowait(msg)
         except queue.Full:
             pass
+    return rev
 
 
 def persist(name: str, record: dict) -> None:

@@ -548,8 +548,8 @@ def archive_task(filename: str, source: str, actor: str = "you") -> dict:
     text = src.read_text(encoding="utf-8")
     if STATUS_RE.search(text):
         text = STATUS_RE.sub("**Status:** Archived", text, count=1)
-    _relocate(filename, src, dst, text, "archived", actor)
-    return {"file": filename, "from": source}
+    committed = _relocate(filename, src, dst, text, "archived", actor)
+    return {"file": filename, "from": source, "committed": committed}
 
 
 def unarchive_task(filename: str, target: str, actor: str = "you") -> dict:
@@ -566,8 +566,8 @@ def unarchive_task(filename: str, target: str, actor: str = "you") -> dict:
     text = src.read_text(encoding="utf-8")
     if STATUS_RE.search(text):
         text = STATUS_RE.sub(f"**Status:** {config.STAGE_LABELS[target]}", text, count=1)
-    _relocate(filename, src, dst, text, target, actor)
-    return {"file": filename, "to": target}
+    committed = _relocate(filename, src, dst, text, target, actor)
+    return {"file": filename, "to": target, "committed": committed}
 
 
 def archived_count() -> int:
@@ -726,15 +726,16 @@ def _move_spec(src: Path, dst: Path) -> list[str]:
 
 
 def _commit_move(filename: str, target: str, src: Path, dst: Path, who: str,
-                 number: str | None) -> None:
+                 number: str | None) -> bool:
     """The move and the claim in one commit."""
-    commit_paths(filename, f"board: {number or filename[:-3]} → {target} ({who or 'board'})",
-            _move_spec(src, dst), f"{filename} moved, but committing it failed")
+    return commit_paths(
+        filename, f"board: {number or filename[:-3]} → {target} ({who or 'board'})",
+        _move_spec(src, dst), f"{filename} moved, but committing it failed")
 
 
 def _relocate(filename: str, src: Path, dst: Path, text: str, target: str,
               actor: str, who: str | None = None, commit: bool = True,
-              quiet: bool = False) -> None:
+              quiet: bool = False) -> bool | None:
     """The one door out of a directory under tasks/: register who is doing
     it, write the file, move it, commit it.
 
@@ -752,6 +753,12 @@ def _relocate(filename: str, src: Path, dst: Path, text: str, target: str,
     Being the one door, it is also where a move is refused for leaving
     tasks/ — both ends, before anything is registered or written, so a
     linked card and a linked destination are the same answer.
+
+    Returns whether the move was committed: True or False when a commit
+    was asked for, None when none was (`BOARD_COMMIT_MOVES` off, or a
+    batch committing later). The move itself has happened either way —
+    the disk is the truth — so a False is a partial outcome to say out
+    loud, not a refusal (task 128: the archive reply carries it).
     """
     refuse_escape(src, dst)
     state.expect_move(filename, target, actor, quiet=quiet)
@@ -759,8 +766,9 @@ def _relocate(filename: str, src: Path, dst: Path, text: str, target: str,
     _atomic_write(src, text)
     shutil.move(str(src), str(dst))
     if config.COMMIT_MOVES and commit:
-        _commit_move(filename, target, src, dst,
-                     actor_name() if who is None else who, _number(filename))
+        return _commit_move(filename, target, src, dst,
+                            actor_name() if who is None else who, _number(filename))
+    return None
 
 
 def commit_edit(filename: str, stage: str, what: str) -> bool:
