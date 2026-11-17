@@ -716,5 +716,192 @@ class SyncedMoves(Fixture):
         self.assertFalse(config.INPUTS_DIR.exists(), "nothing was fetched or recorded")
 
 
+class ClassifyByIdentity(Fixture):
+    """The page is sent a URL's safe form — no query — so it names an input
+    by identity, and the source written is the one the brief spells."""
+
+    def test_a_url_with_a_query_binds_to_the_discovered_reference(self):
+        name = self.put("07-x.md", card("## Context\n\nSee https://docs.example.com/d?id=1.\n"))
+        reading = self.reading(name)
+        row = inputs.public(reading)["inputs"][0]
+        self.assertEqual(row["source"], "https://docs.example.com/d?…",
+                         "the page is sent the safe form")
+        result = inputs.classify(name, "to-do", brief_sha=reading["briefSha"],
+                                 identity=row["identity"], classification="optional")
+        self.assertIn("https://docs.example.com/d?id=1", result["line"])
+        text = (self.work / "tasks" / "to-do" / name).read_text()
+        self.assertNotIn("?…", text, "no placeholder is written into the card")
+        again = self.reading(name)
+        self.assertEqual(len(again["inputs"]), 1, "one row: the classification bound")
+        self.assertEqual(again["inputs"][0]["status"], "optional")
+        self.assertEqual(again["state"], "ready")
+
+    def test_an_identity_the_card_no_longer_names_is_refused(self):
+        name = self.put("07-x.md", card("## Context\n\nSee https://docs.example.com/d.\n"))
+        reading = self.reading(name)
+        before = (self.work / "tasks" / "to-do" / name).read_text()
+        with self.assertRaises(ValueError):
+            inputs.classify(name, "to-do", brief_sha=reading["briefSha"],
+                            identity="card:nothing.md", classification="optional")
+        with self.assertRaises(taskfiles.StaleCard):
+            inputs.classify(name, "to-do", brief_sha="0" * 64,
+                            identity="https://docs.example.com/d", classification="optional")
+        self.assertEqual((self.work / "tasks" / "to-do" / name).read_text(), before)
+
+    def test_a_supporting_reference_is_written_by_its_identity(self):
+        (self.work / "plans" / "a.md").write_text("[api](../reference/api.md)\n")
+        self.ref("api.md", b"# api\n")
+        name = self.put("07-x.md", card("## Inputs and required tools\n\n"
+                                        "- input, required, follow: ../../plans/a.md\n"))
+        reading = self.reading(name)
+        inputs.classify(name, "to-do", brief_sha=reading["briefSha"],
+                        identity="work:reference/api.md", classification="optional")
+        self.assertIn("- input, optional: work:reference/api.md",
+                      (self.work / "tasks" / "to-do" / name).read_text())
+
+
+class ToolRoot(Fixture):
+    """A card cannot select the tool's machine-local half — settings,
+    policy, secrets, run state and logs — however it spells the path."""
+
+    def setUp(self):
+        super().setUp()
+        self.tool = self.tmp / "bench"
+        (self.tool / "manager" / "local" / "state" / "sessions").mkdir(parents=True)
+        (self.tool / "manager" / "core").mkdir(parents=True)
+        for name in ("TM_ROOT", "LOCAL"):
+            self.addCleanup(setattr, config, name, getattr(config, name))
+        config.TM_ROOT = self.tool
+        config.LOCAL = self.tool / "manager" / "local"
+        (config.LOCAL / "profiles.json").write_text('{"v": 1}\n')
+        (config.LOCAL / "state" / "sessions" / "s1.jsonl").write_text('{"kind": "x"}\n')
+        (self.tool / "manager" / "core" / "README.md").write_text("# core\n")
+
+    def test_manager_local_is_refused_and_the_rest_of_the_tool_is_not(self):
+        name = self.put("07-x.md", card(
+            "## Context\n\n[p](tool:manager/local/profiles.json), "
+            "[s](tool:manager/local/state/sessions/s1.jsonl) and "
+            "[core](tool:manager/core/README.md).\n"))
+        reading = self.reading(name)
+        for needle in ("profiles.json", "s1.jsonl"):
+            row = self.row(reading, needle)
+            self.assertEqual(row["status"], "blocked")
+            self.assertIn("machine-local", row["why"])
+            self.assertIn("nothing is granted", row["remedy"])
+        self.assertEqual(self.row(reading, "core/README.md")["status"], "available")
+
+    def test_a_link_into_manager_local_is_refused(self):
+        (self.work / "reference" / "plan.json").symlink_to(config.LOCAL / "profiles.json")
+        name = self.put("07-x.md", card("[p](../../reference/plan.json)\n"))
+        row = self.reading(name)["inputs"][0]
+        self.assertEqual(row["status"], "blocked")
+        self.assertTrue("machine-local" in row["why"] or "outside" in row["why"], row["why"])
+
+    def test_nothing_from_manager_local_is_pinned(self):
+        name = self.put("07-x.md", card("[p](tool:manager/local/profiles.json)\n",
+                                        status="In Progress"), "in-progress")
+        found = profiles.manifest("work", name, "in-progress",
+                                  worktree=config.WORKTREES / name[:-3])
+        with self.assertRaises(ValueError):
+            inputs.attach(found, name, "in-progress")
+        self.assertFalse(config.CONTEXT_DIR.exists())
+
+
+class CommandTools(unittest.TestCase):
+    RUN = {"intent": "work", "harness": "claude", "checks": [], "capabilities": {},
+           "declared": True, "delivery": "exact-read", "representations": ["text"],
+           "commands": [{"name": "git-status", "prefix": "git status"}]}
+
+    def status(self, spec: str) -> str:
+        return inputs._tool_row({"source": spec, "classification": "required"},
+                                self.RUN)["status"]
+
+    def test_a_grant_covers_whole_words_only(self):
+        self.assertEqual(self.status("command git status"), "available")
+        self.assertEqual(self.status("command git status --short"), "available")
+        self.assertEqual(self.status("command g"), "blocked")
+        self.assertEqual(self.status("command git"), "blocked",
+                         "a grant of git status is not all of git")
+        self.assertEqual(self.status("command git statusx"), "blocked")
+        self.assertEqual(self.status("command"), "blocked")
+
+
+class DiscoveryForms(unittest.TestCase):
+    def test_reference_style_links_and_html_are_proposed(self):
+        text = ("See [the spec][s] and <img src=\"../../reference/shot.png\" alt=x>, "
+                "<a href='https://docs.example.com/h'>h</a>.\n\n"
+                "[s]: ../../reference/spec.md \"Spec\"\n"
+                "`<img src=\"../../reference/code.png\">`\n")
+        found = inputs.discover(text)
+        self.assertEqual([r["source"] for r in found],
+                         ["../../reference/spec.md", "../../reference/shot.png",
+                          "https://docs.example.com/h"])
+        self.assertTrue(found[1]["image"])
+        self.assertIn("reference-style", inputs.COVERAGE)
+
+
+class Layouts(unittest.TestCase):
+    """The same card reads the same way in each layout: vendored (the tool
+    and its work state inside the application), the application root alone
+    (the work state is the tool install) and external (three roots)."""
+
+    def layout(self, kind: str) -> tuple[Path, Path]:
+        tmp = Path(os.path.realpath(tempfile.mkdtemp(prefix="bench-132-layout-")))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        app = tmp / "app"
+        tool = {"vendored": app / ".task-manager", "app-only": tmp / "bench",
+                "external": tmp / "bench"}[kind]
+        work = tmp / "work" if kind == "external" else tool
+        for slug in config.STAGE_DIRS:
+            (work / "tasks" / slug).mkdir(parents=True)
+        (work / "reference").mkdir()
+        (tool / "manager" / "local").mkdir(parents=True)
+        app.mkdir(exist_ok=True)
+        saved = {n: getattr(config, n) for n in (
+            "TASKS", "REPO", "TM_ROOT", "LOCAL", "INPUTS_DIR", "CONTEXT_DIR",
+            "WORKTREES", "INPUT_FETCH_HOSTS", "COMMIT_MOVES")}
+        for n, v in saved.items():
+            self.addCleanup(setattr, config, n, v)
+        config.TASKS, config.REPO, config.TM_ROOT = work / "tasks", app, tool
+        config.LOCAL = tool / "manager" / "local"
+        config.INPUTS_DIR = tool / "manager" / "local" / "state" / "inputs"
+        config.CONTEXT_DIR = tool / "manager" / "local" / "state" / "context"
+        config.WORKTREES = tmp / "worktrees"
+        config.INPUT_FETCH_HOSTS, config.COMMIT_MOVES = [], False
+        inputs._RUNNING.clear()
+        inputs._GENERATION.clear()
+        (config.LOCAL / ".env").write_text("BOARD_PORT=1\n")
+        (work / "reference" / "api.md").write_text("# API\n")
+        return work, tool
+
+    def test_each_layout_reads_resolves_and_holds_alike(self):
+        brief = card("## Context\n\n[api](../../reference/api.md), "
+                     "[env](tool:manager/local/.env) and https://docs.example.com/d.\n")
+        for kind in ("vendored", "app-only", "external"):
+            with self.subTest(layout=kind):
+                work, _tool = self.layout(kind)
+                (work / "tasks" / "to-do" / "07-x.md").write_text(brief)
+                reading = inputs.readiness("07-x.md", "to-do")
+                rows = {r["identity"] or r["source"]: r for r in reading["inputs"]}
+                self.assertEqual(rows["work:reference/api.md"]["status"], "available")
+                env = next(r for r in reading["inputs"] if ".env" in r["source"])
+                self.assertEqual(env["status"], "blocked")
+                self.assertEqual(rows["https://docs.example.com/d"]["status"], "blocked")
+                self.assertEqual(reading["state"], "needs-information")
+                self.assertIsNone(inputs.move_refusal("07-x.md", "backlog", "to-do"))
+                self.assertIsNotNone(inputs.move_refusal("07-x.md", "to-do", "in-progress"))
+                inputs.classify("07-x.md", "to-do", brief_sha=reading["briefSha"],
+                                identity="https://docs.example.com/d",
+                                classification="non-input")
+                # a refused reference has no identity; the page names it
+                # by its source, and a person may still say it is no input
+                self.assertIsNone(env["identity"])
+                inputs.classify("07-x.md", "to-do",
+                                brief_sha=inputs.readiness("07-x.md", "to-do")["briefSha"],
+                                source=env["source"], classification="non-input")
+                after = inputs.readiness("07-x.md", "to-do")
+                self.assertEqual(after["state"], "ready", after["sentence"])
+
+
 if __name__ == "__main__":
     unittest.main()

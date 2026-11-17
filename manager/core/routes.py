@@ -832,11 +832,14 @@ def post_card_inputs(req) -> None:
             result = inputs.classify(
                 name, stage, brief_sha=str(payload.get("briefSha") or ""),
                 source=str(payload.get("source") or ""),
+                identity=str(payload.get("identity") or ""),
                 classification=str(payload.get("classification") or ""),
                 kind=str(payload.get("kind") or "input"),
                 note=str(payload.get("note") or ""))
-            said = (f"{name}: {payload.get('source')} classified "
-                    f"{payload.get('classification')}")
+            # the line as written, which classify built from a source it
+            # refused a credential in; the request's own text is not used
+            said = (f"{name}: {taskfiles.one_line(result.get('line') or '', 160)} "
+                    f"(classified)")
     except taskfiles.StaleCard as exc:
         req.reply(409, {"error": str(exc), "stale": True})
         return

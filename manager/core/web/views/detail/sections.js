@@ -388,9 +388,12 @@ function wireInputs(t) {
     const select = document.getElementById(`inp-cls-${kind}-${index}`);
     if (!row || !select) return;
     btn.disabled = true;
+    // an input is named by its identity: the source the page is sent is
+    // the safe form (a URL without its query), which names another document
+    const named = kind === 'input' && row.identity ? { identity: row.identity } : { source: row.source };
     const data = await postCard('/api/card/inputs/classify', {
       file: t.file, stage: t.stage, briefSha: d.briefSha, kind,
-      source: row.source, classification: select.value, note: row.note || '' });
+      ...named, classification: select.value, note: row.note || '' });
     if (data) {
       delete S.accDraft[select.id];
       toast(`${row.display} classified ${select.value}` + (data.committed ? '' : ' — written to the card, not committed'));

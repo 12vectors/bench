@@ -87,6 +87,11 @@ TOOL_CLASSES = ("required", "optional")
 MD_LINK_RE = re.compile(r"(!?)\[([^\]\n]*)\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"\n]*\")?\s*\)")
 AUTOLINK_RE = re.compile(r"<(https?://[^>\s]+)>")
 BARE_URL_RE = re.compile(r"(?<![\w(<\"'=/])https?://[^\s<>()\[\]`\"']+")
+# a reference-style link's definition (`[spec]: ../../reference/spec.md`),
+# and the src/href of HTML written in the brief
+REF_DEF_RE = re.compile(r"(?m)^[ ]{0,3}\[([^\]\n]+)\]:[ \t]*<?([^\s>]+)>?[^\n]*$")
+HTML_REF_RE = re.compile(
+    r"(?i)<(img|a)\b[^>]*?\b(?:src|href)\s*=\s*(?:\"([^\"\n]*)\"|'([^'\n]*)')[^>]*>")
 NOTE_SPLIT_RE = re.compile(r"\s+[—–]\s+|\s+-\s+")
 
 # Bounds, each of which is said when it is reached rather than read as
@@ -127,9 +132,12 @@ CARD_WORDS = {
     "not-applicable": "Not applicable",
 }
 COVERAGE = ("This inventory covers the references written in the brief and in "
-            "the supporting documents a person selected for following. It "
-            "does not prove the card names every piece of information the "
-            "work needs.")
+            "the supporting documents a person selected for following: "
+            "Markdown links and images (inline and reference-style), the "
+            "src and href of HTML img and a tags, autolinks and bare http(s) "
+            "addresses. A reference written any other way — a path in plain "
+            "prose, say — is not found. It does not prove the card names "
+            "every piece of information the work needs.")
 DISTINCTIONS = ("Discovered means written in the brief. Retrieved means bench "
                 "read the content through an approved path. Approved means the "
                 "intended run's harness has a delivery route and reads that "
@@ -263,6 +271,15 @@ def discover(text: str) -> list[dict]:
         add(match.group(3), match.group(2), bool(match.group(1)))
         consumed = consumed[:match.start()] + " " * (match.end() - match.start()) \
             + consumed[match.end():]
+    for match in REF_DEF_RE.finditer(consumed):
+        add(match.group(2), match.group(1), False)
+        consumed = consumed[:match.start()] + " " * (match.end() - match.start()) \
+            + consumed[match.end():]
+    for match in HTML_REF_RE.finditer(consumed):
+        add(match.group(2) if match.group(2) is not None else match.group(3), "",
+            match.group(1).lower() == "img")
+        consumed = consumed[:match.start()] + " " * (match.end() - match.start()) \
+            + consumed[match.end():]
     for match in AUTOLINK_RE.finditer(consumed):
         add(match.group(1), "", False)
         consumed = consumed[:match.start()] + " " * (match.end() - match.start()) \
@@ -370,12 +387,40 @@ def identify(source: str, stage: str) -> dict:
     return out
 
 
+def _machine_local(path: Path) -> bool:
+    """Whether a path is in, or links into, the tool's `manager/local/`:
+    this machine's settings, policy, secrets, run state and logs. The
+    operator's approved context may select from it; a card may not, in any
+    layout — vendored, the work root and the application both hold it."""
+    local = Path(os.path.normpath(str(config.LOCAL)))
+    candidates = [Path(os.path.normpath(str(path)))]
+    try:
+        candidates.append(Path(os.path.realpath(path)))
+        local_real = Path(os.path.realpath(config.LOCAL))
+    except (OSError, ValueError):
+        return True
+    for candidate in candidates:
+        for base in (local, local_real):
+            if candidate == base or base in candidate.parents:
+                return True
+    return False
+
+
 def _local(out: dict, word: str, relative: str, raw: str) -> dict:
     root = _roots()[word]
     if not relative or ".." in Path(relative).parts or Path(relative).is_absolute():
         out.update(why=f"{taskfiles.one_line(raw, 120)} does not name a file "
                        f"inside the {word} root",
                    remedy=f"write {word}:<relative path>, with no '..'")
+        return out
+    if _machine_local(root / relative):
+        out.update(why=f"{taskfiles.one_line(raw, 120)} is in the tool's "
+                       f"machine-local half (manager/local/: settings, policy, "
+                       f"run state and logs), which a card cannot select",
+                   remedy="the operator selects such a file as approved context "
+                          "in the execution policy; a card links a document "
+                          "under reference/ instead — nothing is granted "
+                          "because a card asks")
         return out
     card = re.match(r"^tasks/([a-z-]+)/([^/]+\.md)$", relative) if word == "work" else None
     if card and card.group(1) in config.STAGE_DIRS:
@@ -454,6 +499,13 @@ def _read_local(path: Path, root: Path, word: str, display: str) -> dict:
                        f"— a link out of a root is how an approved document "
                        f"becomes an unapproved one",
                    remedy="link a file genuinely inside the root")
+        return out
+    if _machine_local(path):
+        # a link that resolves into manager/local/ from inside a root
+        out.update(why=f"{display} resolves into the tool's machine-local "
+                       f"half (manager/local/), which a card cannot select",
+                   remedy="link a document under reference/; the operator "
+                          "selects machine-local files as approved context")
         return out
     if path.is_dir():
         out.update(why=f"{display} is a directory",
@@ -595,9 +647,13 @@ def _tool_row(entry: dict, run: dict) -> dict:
                               f"{run['intent']} profile's verify list (Settings → "
                               f"Checks); nothing is granted because a card asks")
     elif word == "command":
-        hit = next((g for g in run["commands"] if g["prefix"] and (
-            rest == g["prefix"] or rest.startswith(g["prefix"] + " ")
-            or g["prefix"].startswith(rest))), None)
+        # a grant covers the command when its words begin the command's
+        # words — whole words, so `g` is not `git`, and a grant of
+        # `git status` does not cover all of `git`
+        wanted = rest.split()
+        hit = next((g for g in run["commands"] if g["prefix"] and wanted
+                    and wanted[:len(g["prefix"].split())] == g["prefix"].split()),
+                   None)
         if rest and hit:
             row.update(status="available", how=f"granted as '{hit['name']}': {hit['prefix']}")
         else:
@@ -1370,14 +1426,44 @@ def retrieve(url: str) -> dict:
 # ── a person's classification, written into the brief ──────────────────
 
 
-def classify(filename: str, stage: str, *, brief_sha: str, source: str,
-             classification: str, kind: str = "input", note: str = "") -> dict:
+def _source_for(identity: str, brief: str, stage: str) -> str:
+    """The source to write for an input the page names by its identity:
+    the reference as the brief spells it, so a classification binds to
+    exactly what discovery found. The page is sent a URL's safe form (no
+    query), which names a different document; the identity does not. A
+    supporting document's reference, written relative to that document,
+    is written as the identity itself — `work:`/`tool:`/`app:` plus a
+    path, and an http(s) address, are sources in their own right."""
+    written = [e["source"] for e in contract(brief)["inputs"]]
+    written += [d["source"] for d in discover(_brief_without_section(brief))]
+    for src in written:
+        if identify(src, stage).get("identity") == identity:
+            return src
+    if re.match(r"^(work|tool|app):[^/]", identity) or re.match(r"(?i)^https?://", identity):
+        if identify(identity, stage).get("identity") == identity:
+            return identity
+    raise ValueError("that reference is no longer named by the card — nothing "
+                     "was written; look again and classify it there")
+
+
+def classify(filename: str, stage: str, *, brief_sha: str, source: str = "",
+             classification: str, kind: str = "input", note: str = "",
+             identity: str = "") -> dict:
     """Write one entry of the section — add it, or change the
     classification of the entry naming the same thing. Refused (StaleCard)
     when the brief is not the one the person was shown. The section is the
-    store; nothing else records a classification."""
+    store; nothing else records a classification. An input may be named by
+    its `identity` rather than a source — the page names one that way —
+    and the source is then read back out of the brief."""
     if kind not in ("input", "tool"):
         raise ValueError("kind is input or tool")
+    if identity and kind == "input":
+        brief = taskfiles.card_parts(card_text(filename, stage))["brief"]
+        if taskfiles.brief_sha(brief) != brief_sha:
+            raise taskfiles.StaleCard(
+                f"the brief of {filename} changed since it was shown — nothing "
+                f"was written; look again and classify it there")
+        source = _source_for(str(identity).strip(), brief, stage)
     allowed = TOOL_CLASSES if kind == "tool" else CLASSES
     if classification not in allowed:
         raise ValueError(f"classification is one of {', '.join(allowed)}")
