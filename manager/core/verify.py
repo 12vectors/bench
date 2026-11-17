@@ -956,6 +956,16 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
         # reserve it: a stop that has landed by now runs nothing.
         late_stop = stopped()
         if not late_stop:
+            # The record a duplicate joins must already say what this run
+            # is: `running`, never the shell's initial `denied`. A `source`
+            # run's checkout is made after this hold, so without this a
+            # request joining while `git worktree add` runs would be handed
+            # a refusal with no reason for a run about to execute.
+            shell["outcome"] = "running"
+            shell["reason"] = None
+            shell["why"] = ("bench is making this run's source checkout"
+                            if source_at is not None
+                            else "bench is running it")
             _KEYS[key] = shell["id"]
             RUNNING[shell["id"]] = shell
             reserved = (task, check)
@@ -967,8 +977,10 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
         # The run is reserved and is this request's alone, so the checkout
         # made now is this run's: a unique path, an ownership record
         # written before git makes anything, pinned to the commit resolved
-        # above. A failure or a stop here gives the reservation back and
-        # leaves no evidence, exactly as a refusal before it would.
+        # above. A failure here gives the reservation back and is recorded
+        # as a refusal (`denied`, with its reason), exactly as a refusal
+        # before the reservation would be; a stop here gives it back and
+        # leaves no evidence, as a stop before the reservation would.
         try:
             root, prepared, root_note = _execution_root(
                 found, task, manifest, run=shell["id"], commit=source_at)

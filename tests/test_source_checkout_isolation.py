@@ -263,6 +263,39 @@ class OneCheckoutPerRun(IsolationCase):
         self.assertEqual(len(made), 1, "one run, one checkout")
         self.assertEqual(first["outcome"], "passed")
 
+    def test_a_duplicate_joining_while_the_checkout_is_made_reads_running(self):
+        """The window between the reservation and the end of `git worktree
+        add`: a request joining then is handed the run in flight as
+        `running` — never the shell's initial `denied` — and still makes
+        no checkout of its own."""
+        self.policy([self.check("unit", self.executable("unit", PASSES))])
+        real = verify._provision_source
+        entered, proceed = threading.Event(), threading.Event()
+        made: list[Path] = []
+
+        def held(*args, **kwargs):
+            entered.set()
+            self.assertTrue(proceed.wait(TIMEOUT), "the test released it")
+            root = real(*args, **kwargs)
+            made.append(root)
+            return root
+        with mock.patch.object(verify, "_provision_source", side_effect=held):
+            thread, out = self.in_thread(check="unit")
+            self.assertTrue(entered.wait(TIMEOUT), "provisioning was reached")
+            live = verify.reserved(CARD, "unit", None)
+            joined = verify.request(check="unit", agent="run-1")
+            proceed.set()
+            first = self.join(thread, out)
+        self.assertEqual(live["outcome"], "running",
+                         "what a batch reads of the item in flight")
+        self.assertTrue(joined.get("duplicate"))
+        self.assertEqual(joined["id"], first["id"])
+        self.assertEqual(joined["outcome"], "running",
+                         f"not a refusal with no reason: {joined.get('why')}")
+        self.assertIsNone(joined["reason"])
+        self.assertEqual(len(made), 1, "the join made no checkout")
+        self.assertEqual(first["outcome"], "passed")
+
     def test_forced_reruns_each_own_a_checkout_and_keep_one_identity(self):
         self.policy([self.check("unit", self.executable("unit", PASSES))])
         patch, made = self.count_provisions()
