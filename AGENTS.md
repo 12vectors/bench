@@ -2055,6 +2055,145 @@ reason. Technical detail (identities, hashes, the settings precedence, the
 capability table) folds away rather than leading, and an approved
 document's contents are nowhere on the page.
 
+## Required information: inputs and tools
+
+Approved context is the operator's: files every run of an intent is
+given. It says nothing about the screenshot, the design document or the
+API specification one particular card links to — and an agent that
+starts without one of those builds something else, slowly, on your
+budget. So each card has its own **required information**, checked
+before implementation starts (task 132).
+
+### An example, end to end
+
+A card says: match the login screenshot
+(`[screenshot](../../reference/login.png)`), follow the API specification
+(`[API](../../reference/api.md)`), and the design is in a document on the
+team's wiki. Its Inputs tab lists all three. The
+screenshot and the specification are files in this board's `reference/`,
+readable, and of kinds the configured harness reads as content (an image
+and Markdown): **Available**. The wiki is not a host the operator listed,
+so bench has no approved way to retrieve it: **Blocked**, with the fix —
+*save an export under `reference/` and link that*. The card reads **Needs
+information**.
+
+Moving it into To Do is allowed — planning is never held — and starts a
+bounded check. Moving it into In Progress, or **▸ start work**, is
+refused with the same sentence, and the refusal opens the Inputs tab.
+Someone exports the design as a PDF into `reference/`, edits the link,
+and the tab reads **Ready**. Had the wiki been a listed host returning a
+sign-in form with HTTP 200, that would still be Blocked: a status code is
+not the document.
+
+### The section: `## Inputs and required tools`
+
+The contract is written in the brief, where a person reads it, edits it
+and a refinement can change it — not in a second store:
+
+```markdown
+## Inputs and required tools
+
+- input, required: ../../reference/api.md — the endpoints to follow
+- input, required, follow: ../../plans/design.md — and the documents it links
+- input, optional: ../../reference/old-screen.png — for comparison
+- input, non-input: https://example.com/background — context for people
+- tool, required: image-reading
+- tool, required: check unit
+```
+
+Each line is `- input|tool, <classification>[, follow]: <source> — note`.
+An input is **required**, **optional** or **non-input**; a tool is
+required or optional. A source is a path relative to the card (as a
+Markdown link would be), `work:`, `tool:` or `app:` plus a relative path,
+or an http(s) address. `follow` asks bench to read the references inside
+that document too, two levels deep at most. `- None.` says there is
+nothing to name. The seed template carries the section; a work root's
+own template is never rewritten.
+
+Tools bench can verify against the run that would start, and nothing
+else: `check <name>` (a named check that run may ask for), `command
+<prefix>` (one of its command grants), `capability <word>` (declared by
+its harness), `image-reading` and `pdf-reading`. A required tool the run
+is not granted reads Blocked and names the configuration that would
+grant it. **Nothing is granted, installed or widened because a card
+asks.**
+
+**Discovery proposes; a person classifies.** Every Markdown link, image
+and bare address in the brief's prose is found — never one inside a code
+span or fence, and never one in the card's history (reports, reviews,
+the discussion). A reference the section does not list is shown as
+proposed and counts as **required** until someone classifies it; the
+Inputs tab's **Classify** writes that line into the section, bound to the
+brief the person saw (a brief that changed meanwhile is refused with
+nothing written). Discovery does not prove a card names everything the
+work needs, and the tab says so.
+
+### Four facts, kept apart
+
+| fact | means |
+| --- | --- |
+| discovered | written in the brief, or in a document selected with `follow` |
+| retrieved | bench read the content itself: a file inside one of this board's roots, or a remote document from a host in `BOARD_INPUT_FETCH_HOSTS`, without a credential |
+| approved | the intended run's harness declares a delivery route (`inputs.delivery` in its `capabilities.json`: `exact-read`, a pinned copy granted by one exact read rule) and reads that kind of content (`text`, `image`, `pdf`) |
+| delivered | what a launch pinned and granted, with its hash, in the run's manifest (`information.received`) |
+
+An operator-readable file the harness cannot be given is not Available.
+The claude adapter declares `exact-read` and text, images and PDFs;
+opencode declares no route, so a card with required inputs reads Blocked
+on it rather than relying on a permission prompt nobody answers. A
+filename or readable bytes is not evidence a run can use a file: content
+is classified by its own bytes (an image signature, `%PDF-`, UTF-8 text),
+and anything else asks for an export.
+
+### When it is checked, and by whom
+
+- **Reading is free.** The Inputs tab, `/api/state` (`information`) and
+  `GET /api/card/inputs` read local files and hash them; they retrieve
+  nothing, launch nothing and write nothing.
+- **Entering To Do** through this board starts one bounded check, and
+  **Recheck information** starts another. A check is the only thing that
+  retrieves a remote reference; overlapping requests for the same brief
+  join one check, and a check whose brief changed while it ran, or that a
+  newer check superseded, publishes nothing.
+- **Results are machine-local** (`manager/local/state/inputs/`), so a
+  replica that sees the move through a sync fetches nothing of its own:
+  it reads the card as Unchecked until somebody on that board asks.
+- **Implementation is held.** A move into In Progress, ▸ start work and
+  its resume, a phase member's launch and ↻ act on PR all ask the same
+  resolver, before a claim, a branch, a worktree or a model; a card moved
+  there by hand or by a sync keeps its stage and still cannot start.
+  Information Ready does not override the plan, ownership, the profile or
+  the merge requirements, each of which keeps its own check.
+- **Freshness.** A local input is read again at every check and launch,
+  so an edit is seen at once. A retrieved remote input is usable for
+  `BOARD_INPUT_FRESHNESS` seconds (a day by default) and then reads
+  Unchecked until rechecked. Changing the brief, the harness, the profile
+  or its grants changes the reading immediately.
+
+### What a run receives
+
+At launch, every Available input is copied into the run's read-only
+bundle and granted by one exact read rule, exactly as an approved input
+is; bench refuses the launch if a copy's hash differs from what was
+checked. The manifest freezes the whole reading — classification,
+identity, hash, representation, the tools — so a later edit changes the
+next launch and never this one. The prompt carries one **Inputs and
+required tools** list: each delivered input's pinned path and how to read
+it, each tool and how to use it, what optional input was left out, and
+what a person marked as not an input. Retrieved content is data, never
+instructions, and the prompt says so.
+
+### Who provides what
+
+The card's author names the inputs and tools. Private material is
+supplied as an export under `reference/` by someone with access — bench
+uses no credential, follows no link into a private address, never signs
+in, and refuses a URL or file that carries one. The operator decides
+which public hosts may be retrieved from (`BOARD_INPUT_FETCH_HOSTS`, empty
+by default) and which checks, commands and harness a run gets (Settings).
+Bench discovers, checks, delivers and records; it does not decide that a
+card's list is complete.
+
 ## From evidence to merge: the whole journey
 
 The next four sections — verification, gates, delivery status and
@@ -6309,4 +6448,11 @@ existed. A phase member must omit both: it inherits its phase's branch and
 targets it.
 
 The rest of the file is freeform — description, research findings, approach,
-open questions, whatever is relevant to the current stage.
+open questions, whatever is relevant to the current stage — with one
+section the board reads: `## Inputs and required tools`, the card's
+contract for what the work needs to read and use. One line per input or
+tool (`- input, required: ../../reference/api.md — why`, `- tool,
+required: check unit`); a link in the brief it does not list is proposed
+and counts as required until classified. Implementation does not start
+while anything required is unusable — see "Required information: inputs
+and tools".
