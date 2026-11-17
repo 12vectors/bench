@@ -39,6 +39,7 @@ import evidence
 import gatepolicy
 import gates
 import changes
+import inputs
 import phases
 import plans
 import profiles
@@ -376,6 +377,11 @@ def _state_payload() -> dict:
         # card's own records, never from its column. Empty on a board that
         # tracks nothing; the whole reading is `/api/card/acceptance`.
         "acceptance": acceptance.board(collected),
+        # per card that names supporting information, whether a run could
+        # use all of it now (task 132): Ready, Needs information, Checking
+        # or Unchecked, with counts. The same resolver every launch and the
+        # move into in-progress ask; the whole reading is /api/card/inputs
+        "information": inputs.board(collected),
         "branches": changes.task_branches(),
         "commands": config.commands(),
         "commandRuns": commands.public(),
@@ -796,6 +802,54 @@ def get_card_acceptance(req) -> None:
         req.reply(409, {"error": str(exc)})
 
 
+def get_card_inputs(req) -> None:
+    # A card's Inputs and required tools, read now: the contract in its
+    # brief, every input and tool with its state, and what the brief
+    # names that the contract does not. Passive — local files are read,
+    # nothing is retrieved, nothing written, nothing launched.
+    name = _q(req, "file")
+    stage = _q(req, "stage") or taskfiles.find_stage_of(name) or ""
+    try:
+        with profiles.read_scope():
+            req.reply(200, inputs.public(inputs.readiness(name, stage)))
+    except FileNotFoundError:
+        req.reply(404, {"error": f"{name} is not in {stage}/"})
+    except (ValueError, OSError) as exc:
+        req.reply(409, {"error": str(exc)})
+
+
+def post_card_inputs(req) -> None:
+    # Recheck information (a bounded check, joined when one is already
+    # running for the same brief and profile), or a person's
+    # classification written into the brief's own section.
+    payload = req.body
+    name, stage = str(payload["file"]), str(payload["stage"])
+    try:
+        if req.path.endswith("/check"):
+            result = inputs.schedule(name, stage, why="recheck")
+            said = f"{name}: information check started"
+        else:
+            result = inputs.classify(
+                name, stage, brief_sha=str(payload.get("briefSha") or ""),
+                source=str(payload.get("source") or ""),
+                classification=str(payload.get("classification") or ""),
+                kind=str(payload.get("kind") or "input"),
+                note=str(payload.get("note") or ""))
+            said = (f"{name}: {payload.get('source')} classified "
+                    f"{payload.get('classification')}")
+    except taskfiles.StaleCard as exc:
+        req.reply(409, {"error": str(exc), "stale": True})
+        return
+    except FileNotFoundError:
+        req.reply(404, {"error": f"{name} is not in {stage}/"})
+        return
+    if not result.get("joined"):
+        state.record_board_event({"kind": "card", "actor": "you", "file": name,
+                                  "summary": said})
+    state.broadcast({"type": "board"})
+    req.reply(200, result)
+
+
 def get_card_delivery(req) -> None:
     # One card's delivery status, always recomputed: what is
     # happening, the next action and who holds it, and what the
@@ -839,7 +893,24 @@ def post_move(req) -> None:
     # so it does not move while one of them has an agent in it
     # — the refusal names ‖ hold, which stops both
     phases.assert_not_working(payload["file"])
+    # A person's move into in-progress is the commitment work starts
+    # from, so it is held to the card's required information (task 132):
+    # refused, with the card where it was, while anything required is
+    # blocked, unchecked or stale. Planning moves are never held.
+    held = inputs.move_refusal(payload["file"], payload["from"], payload["to"])
+    if held:
+        req.reply(409, {"error": held, "code": "information",
+                        "file": payload["file"], "view": "inputs"})
+        return
     task = taskfiles.move_task(payload["file"], payload["from"], payload["to"])
+    if payload["to"] == "to-do" and payload["from"] != "to-do":
+        # Entering to-do schedules one bounded check of the card's
+        # information, on this board only: a replica that sees the move
+        # through a sync retrieves nothing of its own.
+        try:
+            inputs.schedule(payload["file"], "to-do", why="entered to-do")
+        except (OSError, ValueError):
+            pass
     req.reply(200, {"task": task})
 
 
@@ -1526,6 +1597,7 @@ ROUTES = (
     Route("GET", "/api/card", "read", get_card),
     Route("GET", "/api/card/discussion", "read", get_card_discussion),
     Route("GET", "/api/card/acceptance", "read", get_card_acceptance),
+    Route("GET", "/api/card/inputs", "read", get_card_inputs),
     Route("GET", "/api/card/delivery", "read", get_card_delivery),
     Route("GET", "/api/settings/history", "read", get_settings_history),
     Route("GET", "/api/diff", "read", get_diff),
@@ -1599,6 +1671,8 @@ ROUTES = (
     Route("POST", "/api/card/acceptance/track", "browser-mutation", post_card_acceptance),
     Route("POST", "/api/card/acceptance/decide", "browser-mutation", post_card_acceptance),
     Route("POST", "/api/card/finding", "browser-mutation", post_card_acceptance),
+    Route("POST", "/api/card/inputs/check", "browser-mutation", post_card_inputs),
+    Route("POST", "/api/card/inputs/classify", "browser-mutation", post_card_inputs),
     Route("POST", "/api/verify/cancel", "browser-mutation", post_verify_cancel),
     Route("POST", "/api/verify/required", "policy-mutation", post_verify_required),
     Route("POST", "/api/verify/required/cancel", "policy-mutation",

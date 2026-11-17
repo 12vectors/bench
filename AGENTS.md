@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets < state / reports / templates / gitrepo < taskfiles < plans / profiles < gatepolicy / reviews < evidence / resultidentity < staleness < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets < state / reports / templates / gitrepo < taskfiles < plans / profiles < gatepolicy / reviews / inputs < evidence / resultidentity < staleness < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -134,6 +134,14 @@ gitproc / records / redact < config < githost / assets < state / reports / templ
   repository, base and head resolved before anything is created, a
   detached worktree of that exact head owned by the run, and whether the
   review still speaks for the head the pull request proposes
+- `inputs.py` — a card's required information (task 132): the `## Inputs
+  and required tools` contract in its brief, the references the brief
+  names, whether the run that would start can use each input and tool,
+  the one bounded check that retrieves a remote reference, and the inputs
+  a launch adds to its manifest before the pin. One resolver for the
+  Inputs tab, the move into in-progress and every implementation launch;
+  reading it fetches nothing (see "Required information: inputs and
+  tools")
 - `evidence.py` — the verification record: where it lives, how it is
   stored (through `records`, durably once its outcome is final) and read
   back, the reuse records, the outcome vocabulary every reader branches

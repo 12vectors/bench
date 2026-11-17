@@ -538,8 +538,7 @@ def intended(filename: str, intent: str = "work", found: dict | None = None) -> 
         "checks": [c.get("name") for c in found.get("verify") or []],
         "commands": [{"name": g.get("name"), "prefix": g.get("prefix")}
                      for g in found.get("commands") or []],
-        "capabilities": dict((found.get("capabilities") or {}).get("enforcement")
-                             or adapter.get("capabilities") or {}),
+        "capabilities": dict(adapter.get("capabilities") or {}),
         "policyId": found.get("policyId"),
         "key": profiles.digest(intent, str(adapter.get("name")),
                                json.dumps(declared, sort_keys=True),
@@ -799,14 +798,9 @@ def readiness(filename: str, stage: str, *, intent: str = "work",
             return
         key = ident["identity"] or f"refused:{entry['source']}"
         if key in seen:
-            prior = seen[key]
-            # an explicit classification beats a discovered default
-            if prior["origin"] != "section" and entry.get("origin") == "section":
-                rows.remove(prior)
-            else:
-                if entry.get("via") and prior.get("via") is None and prior["origin"] != "section":
-                    pass
-                return
+            # deduplicated by identity: the section's entries are read
+            # first, so a person's classification is the one that stands
+            return
         if len(rows) >= MAX_REFERENCES:
             if not any("reference limit" in item for item in limits):
                 limits.append(f"reference limit: only the first {MAX_REFERENCES} "
@@ -924,6 +918,11 @@ PUBLIC_ROW = ("kind", "source", "identity", "display", "type", "root",
 
 def _public_row(row: dict) -> dict:
     out = {k: row.get(k) for k in PUBLIC_ROW if k in row}
+    # a source as written may carry a credential (user information, a
+    # signed query); what leaves this module is the safe form
+    if re.match(r"(?i)^https?://", str(out.get("source") or "")):
+        out["source"] = safe_url(out["source"])
+    out["source"] = redact.scrub(str(out.get("source") or ""), "•••")
     out["statusLabel"] = STATUS_WORDS.get(row.get("status"), row.get("status"))
     for key in ("why", "remedy"):
         if out.get(key):
@@ -1269,12 +1268,12 @@ def retrieve(url: str) -> dict:
         if problem:
             out.update(why=problem, remedy="save an export under reference/ instead")
             return out
+        if parts.scheme == "https":
+            conn = http.client.HTTPSConnection(host, port, timeout=config.INPUT_FETCH_TIMEOUT,
+                                               context=ssl.create_default_context())
+        else:
+            conn = http.client.HTTPConnection(host, port, timeout=config.INPUT_FETCH_TIMEOUT)
         try:
-            if parts.scheme == "https":
-                conn = http.client.HTTPSConnection(host, port, timeout=config.INPUT_FETCH_TIMEOUT,
-                                                   context=ssl.create_default_context())
-            else:
-                conn = http.client.HTTPConnection(host, port, timeout=config.INPUT_FETCH_TIMEOUT)
             target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
             conn.request("GET", target, headers={
                 "User-Agent": "bench-information-check/1",
@@ -1283,7 +1282,6 @@ def retrieve(url: str) -> dict:
             status = response.status
             if status in (301, 302, 303, 307, 308):
                 location = response.getheader("Location") or ""
-                conn.close()
                 if not location:
                     out.update(why=f"HTTP {status} with no destination", remedy="link the final document")
                     return out
@@ -1296,7 +1294,6 @@ def retrieve(url: str) -> dict:
                 continue
             data = response.read(MAX_INPUT_BYTES + 1)
             content_type = (response.getheader("Content-Type") or "").lower()
-            conn.close()
         except (OSError, http.client.HTTPException, ssl.SSLError, ValueError) as exc:
             word = "timed out" if isinstance(exc, (socket.timeout, TimeoutError)) else \
                 f"failed ({exc.__class__.__name__})"
@@ -1304,6 +1301,8 @@ def retrieve(url: str) -> dict:
                        remedy="try Recheck information later, or save an export "
                               "under reference/")
             return out
+        finally:
+            conn.close()
         out["finalUrl"] = safe_url(current)
         if status in (401, 403):
             out.update(why=f"HTTP {status}: the document is private or access is denied",
@@ -1381,6 +1380,11 @@ def classify(filename: str, stage: str, *, brief_sha: str, source: str,
     note = taskfiles.one_line(note, 200)
     if taskfiles.BENCH_MARK_RE.search(source + note):
         raise ValueError("a source may not carry a board marker")
+    if kind == "input" and "credential" in (identify(source, stage).get("why") or ""):
+        raise ValueError("this source carries a credential, and bench will not "
+                         "write one into a card — link an export instead")
+    if redact.looks_secret(note):
+        raise ValueError("the note reads as a credential; nothing was written")
 
     def change(text: str):
         parts = taskfiles.card_parts(text)
@@ -1389,48 +1393,40 @@ def classify(filename: str, stage: str, *, brief_sha: str, source: str,
             raise taskfiles.StaleCard(
                 f"the brief of {filename} changed since it was shown — nothing "
                 f"was written; look again and classify it there")
-        stage_here = stage
-        want = identify(source, stage_here)["identity"] if kind == "input" else \
-            f"tool:{source.lower()}"
-        written = source if (source.startswith(("http://", "https://", "../", "./"))
-                             or re.match(r"^(work|tool|app):", source)) or kind == "tool" \
-            else source
-        line = f"- {kind}, {classification}: {written}" + (f" — {note}" if note else "")
+        def identity_of(src: str) -> str | None:
+            return (identify(src, stage)["identity"] if kind == "input"
+                    else f"tool:{src.strip().lower()}")
+
+        want = identity_of(source)
+        line = f"- {kind}, {classification}: {source}" + (f" — {note}" if note else "")
         span = _section_span(brief)
         if span is None:
             body = brief.rstrip("\n")
             new_brief = (body + "\n\n" if body else "") + f"## {SECTION}\n\n{line}\n"
         else:
-            section = brief[span[0]:span[1]]
-            lines = section.split("\n")
-            replaced = False
+            lines = brief[span[0]:span[1]].split("\n")
+            target = None
             for i, existing in enumerate(lines):
                 match = ENTRY_RE.match(existing)
                 if not match or match.group(1).lower() != kind:
                     continue
                 src, old_note = _split_source(match.group(4))
-                ident = identify(src, stage_here)["identity"] if kind == "input" \
-                    else f"tool:{src.lower()}"
-                if ident and ident == want:
-                    flags = match.group(3) or ""
+                if want and identity_of(src) == want:
                     keep = note or old_note
-                    lines[i] = (f"- {kind}, {classification}{flags}: {match.group(4).split(' — ')[0].strip()}"
-                                + (f" — {keep}" if keep else ""))
-                    replaced = True
+                    lines[i] = (f"- {kind}, {classification}{match.group(3) or ''}: "
+                                f"{src}" + (f" — {keep}" if keep else ""))
+                    target = i
                     break
-            if not replaced:
-                lines = [ln for ln in lines]
-                # after the last entry, or under the heading
-                index = max([i for i, ln in enumerate(lines) if ENTRY_RE.match(ln)
-                             or NONE_RE.match(ln)] or [0])
-                if index and NONE_RE.match(lines[index]):
-                    lines[index] = line
+            if target is None:
+                entries = [i for i, ln in enumerate(lines)
+                           if ENTRY_RE.match(ln) or NONE_RE.match(ln)]
+                if entries and NONE_RE.match(lines[entries[-1]]):
+                    lines[entries[-1]] = line          # "- None." no longer true
+                elif entries:
+                    lines.insert(entries[-1] + 1, line)
                 else:
-                    lines.insert(index + 1, line if index else "")
-                    if not index:
-                        lines.insert(index + 2, line)
-            new_section = "\n".join(lines)
-            new_brief = brief[:span[0]] + new_section + brief[span[1]:]
+                    lines[1:1] = ["", line]            # under the heading
+            new_brief = brief[:span[0]] + "\n".join(lines) + brief[span[1]:]
         if not new_brief.endswith("\n"):
             new_brief += "\n"
         head = parts["head"]

@@ -50,6 +50,7 @@ import gatepolicy
 import gates
 import githost
 import gitrepo
+import inputs
 import plans
 import profiles
 import progress
@@ -414,7 +415,8 @@ def _profile_note(manifest: dict) -> str | None:
 def _profiled(intent: str, filename: str, stage: str, *,
               worktree: Path | str | None = None,
               review: Path | str | None = None,
-              review_record: dict | None = None) -> dict:
+              review_record: dict | None = None,
+              information: bool = False) -> dict:
     """Resolve, validate and pin the profile for one launch.
 
     `require` sits between the resolution and the pin, so no bundle is
@@ -423,10 +425,28 @@ def _profiled(intent: str, filename: str, stage: str, *,
     so a refusal leaves nothing to explain. The manifest is filed under
     the run's id afterwards, once there is an id for it.
     """
-    return profiles.require(
-        profiles.manifest(intent, filename, stage, worktree=worktree,
-                          review=review, review_record=review_record,
-                          pin_inputs=True))
+    found = profiles.manifest(intent, filename, stage, worktree=worktree,
+                              review=review, review_record=review_record)
+    if information:
+        # The card's own inputs (task 132), checked against this very
+        # manifest — the run that will start — and added to what is pinned,
+        # so they are copied, hashed and granted exactly as an approved
+        # input is. Refuses before the pin when anything required is not
+        # usable by this run.
+        inputs.attach(found, filename, stage)
+    found = profiles.require(found)
+    profiles.pin(found)
+    if information:
+        inputs.confirm_delivery(found)
+    return found
+
+
+def _context_block(manifest: dict) -> str:
+    """The `{context}` placeholder: the operator's pinned inputs, then the
+    card's own Inputs and required tools (task 132) — one field, so a local
+    prompt override written before cards had inputs still receives them."""
+    return "\n".join(part for part in (profiles.prompt_block(manifest),
+                                       inputs.prompt_block(manifest)) if part)
 
 
 def _with_template(manifest: dict, template: dict) -> dict:
@@ -472,6 +492,10 @@ def _work_preflight(filename: str, stage: str) -> list:
                           "there first", phase=PHASE_RUNS_WITH),
         lambda: plans.require(plans.preflight(filename, stage)),
         lambda: preflight_profile("work", filename, stage),
+        # The card's required information (task 132): every required input
+        # usable by the run that would start, every required tool granted.
+        # Read, never fetched — a remote input needs a fresh check first.
+        lambda: inputs.require_ready(filename, stage),
         # A local override that breaks its contract refuses here, before
         # the claim, the branch and the worktree (task 77).
         lambda: templates.require("work.md"),
@@ -508,6 +532,9 @@ def launch_refusals(filename: str, stage: str, intent: str = "work",
             lambda: preflight_profile(intent, filename, stage),
             lambda: templates.require(template),
         ]
+        if intent == "act-pr":
+            steps.append(lambda: inputs.require_ready(filename, stage,
+                                                      intent="act-pr"))
     for index, step in enumerate(steps):
         try:
             step()
@@ -591,7 +618,8 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
         # read-only, so one written for a launch that then failed on git is
         # reused by the next rather than left to be cleaned up.
         manifest = _profiled("work", filename, stage,
-                             worktree=config.WORKTREES / stem)
+                             worktree=config.WORKTREES / stem,
+                             information=True)
         template = templates.require("work.md")
     except ValueError:
         # The second reading refused — a fetch that failed between the two,
@@ -642,7 +670,7 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
 
     prompt = templates.render("work.md", template["text"], dict(
         branch=branch, filename=filename, body=task["body"],
-        plan=plans.brief(plan), context=profiles.prompt_block(manifest),
+        plan=plans.brief(plan), context=_context_block(manifest),
         verification=profiles.verification_block(
             manifest, gatepolicy.required_lines(manifest)),
         **config.prompt_fields(filename, "in-progress"), **_progress_fields("work")))
@@ -1098,7 +1126,8 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     # profile that cannot be honoured must not leave a checkout behind to
     # explain, and the pin is the moment this run's inputs stop being able
     # to change under it.
-    manifest = _profiled("act-pr", filename, stage, worktree=worktree)
+    manifest = _profiled("act-pr", filename, stage, worktree=worktree,
+                         information=True)
     template = templates.require("act-pr.md")
     # The same plan the work was launched on, revalidated before the run
     # that will push to the PR: a card whose requirements changed under it,
@@ -1129,7 +1158,7 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     prompt = templates.render("act-pr.md", template["text"], dict(
         filename=filename, branch=branch, pr=task["pr"], body=task["body"],
         base=plan["prBase"], remote=plan.get("appRemote") or "origin",
-        plan=plans.brief(plan), context=profiles.prompt_block(manifest),
+        plan=plans.brief(plan), context=_context_block(manifest),
         verification=profiles.verification_block(
             manifest, gatepolicy.required_lines(manifest)),
         **githost.fragments("act-pr.md", branch),

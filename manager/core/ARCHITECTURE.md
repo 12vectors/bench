@@ -44,7 +44,7 @@ L2  githost assets
 L3  state reports templates gitrepo
 L4  taskfiles
 L5  plans profiles
-L6  gatepolicy reviews
+L6  gatepolicy reviews inputs
 L7  evidence resultidentity
 L8  staleness
 L9  verify
@@ -121,6 +121,17 @@ and its one shallow read of the block (`verified-outputs`), and is
 handed the merge rules' prompt lines by every launch
 (`gatepolicy.required_lines`) rather than reaching up for them. Every
 persisted identity it computes is pinned by `tests/test_policy_golden.py`.
+
+`inputs` (task 132) sits directly above `profiles`, beside `gatepolicy`
+and `reviews`: a card's required information — the `## Inputs and
+required tools` contract in its brief, the references the brief names,
+whether the run that would start can use each of them, the bounded check
+that retrieves a remote one, and what a launch is given. It imports
+`config`, `profiles`, `records`, `redact`, `state` and `taskfiles`, and
+nothing above them: `agents` asks it before a launch and adds its inputs
+to the manifest before the pin, `routes` asks it before a move into
+in-progress and for the Inputs tab. The policy lives here and not in
+`taskfiles.move_task`, which stays a primitive.
 
 `profiles.read_scope` (task 127) is a request-scoped memo, not a layer:
 a `ContextVar` that `routes.state_payload` sets for the length of one
@@ -243,7 +254,7 @@ L2  state reports templates gitrepo assets
 L3  githost
 L4  taskfiles
 L5  profiles plans
-L6  gatepolicy reviews
+L6  gatepolicy reviews inputs
 L7  evidence resultidentity
 L8  staleness
 L9  verify

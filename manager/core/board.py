@@ -68,6 +68,7 @@ import githost
 import gitproc  # noqa: F401
 import gitrepo  # noqa: F401
 import httpd
+import inputs  # noqa: F401
 import phases
 import plans  # noqa: F401
 import previews
