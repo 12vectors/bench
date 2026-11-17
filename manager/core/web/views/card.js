@@ -1280,7 +1280,12 @@ async function fireAgent(task, url, extra) {
     body: JSON.stringify({ file: task.file, stage: task.stage, ...(extra || {}) }),
   });
   const data = await res.json();
-  if (!res.ok) { toast(data.error || 'that did not start', true); return false; }
+  if (!res.ok) {
+    toast(data.error || 'that did not start', true);
+    // refused for its information (task 132): open where it is fixed
+    if (data.code === 'information') openInputs(task.file);
+    return false;
+  }
   const who = data.agent.name || 'An agent';
   toast(url.endsWith('act-pr')
     ? `${who} is acting on the review of ${task.file}'s PR`
@@ -1392,6 +1397,15 @@ async function move(file, from, to) {
   return rawMove(file, from, to);
 }
 
+/* Open a card's detail view on its Inputs tab — where a refusal for the
+   card's information is fixed (task 132). */
+function openInputs(file) {
+  const task = findTask(file);
+  if (!task) return;
+  S.dtab[file] = 'inputs';
+  showDetail(task);
+}
+
 async function rawMove(file, from, to) {
   const res = await fetch('/api/move', {
     method: 'POST',
@@ -1399,7 +1413,14 @@ async function rawMove(file, from, to) {
     body: JSON.stringify({ file, from, to }),
   });
   const data = await res.json();
-  if (!res.ok) { toast(data.error || 'move failed', true); await loadState(); return false; }
+  if (!res.ok) {
+    toast(data.error || 'move failed', true);
+    await loadState();
+    // refused for its information (task 132): the refusal links to the
+    // place it is fixed — the card's Inputs tab
+    if (data.code === 'information') openInputs(file);
+    return false;
+  }
   toast(`${file} → ${to}/`);
   if (S.selected && S.selected.file === file) S.selected = data.task;
   await loadState();

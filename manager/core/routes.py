@@ -938,8 +938,14 @@ def post_agent_start(req) -> None:
     payload = req.body
     # takeover: the second, deliberate click on a card someone
     # else holds — never the default a stale card face sends
-    agent = agents.start_agent(payload["file"], payload["stage"],
-                               bool(payload.get("takeover")))
+    try:
+        agent = agents.start_agent(payload["file"], payload["stage"],
+                                   bool(payload.get("takeover")))
+    except inputs.NotReady as exc:
+        # named, so the page can open the card's Inputs tab (task 132)
+        req.reply(409, {"error": str(exc), "code": "information",
+                        "file": payload["file"], "view": "inputs"})
+        return
     req.reply(200, {"agent": agent})
 
 
@@ -957,7 +963,12 @@ def post_agent_review_pr(req) -> None:
 
 def post_agent_act_pr(req) -> None:
     payload = req.body
-    agent = agents.start_pr_fix(payload["file"], payload["stage"])
+    try:
+        agent = agents.start_pr_fix(payload["file"], payload["stage"])
+    except inputs.NotReady as exc:
+        req.reply(409, {"error": str(exc), "code": "information",
+                        "file": payload["file"], "view": "inputs"})
+        return
     req.reply(200, {"agent": agent})
 
 

@@ -8,7 +8,7 @@ import { ago } from '../../lib/time.js';
 import { cardFor, cardTitle, focusCard, phaseMembers, planBlock, showDetail, verifySheet } from '../card.js';
 import { deliveryActions, deliveryOf, deliveryPill, wireDeliveryButtons } from '../delivery.js';
 import { discussionPanel, signalsBlock, wireDiscussion } from './discussion.js';
-import { acceptanceHtml, activityHtml, briefHtml, drawerAnchor, drawerTab, dsec, dtabsHtml, loadAcc, loadDetail, overviewHtml, reviewsHtml, wireDetail, wireReviews } from './sections.js';
+import { acceptanceHtml, activityHtml, briefHtml, drawerAnchor, drawerTab, dsec, dtabsHtml, inputsHtml, loadAcc, loadDetail, overviewHtml, reviewsHtml, wireDetail, wireReviews } from './sections.js';
 import { findTask } from '../focus.js';
 import { renderCards } from '../frame.js';
 import { pillFor } from '../../words.js';
@@ -119,6 +119,9 @@ function renderDrawer() {
     // the discussion is drawn by its own panel, as text — never through
     // the Markdown renderer, and never as part of the brief
     dsec('brief', tab, briefHtml(t) + discussionPanel(t)) +
+    // the card's Inputs and required tools (task 132): the section as the
+    // server checked it, and the one place it is classified and rechecked
+    dsec('inputs', tab, inputsHtml(t)) +
     dsec('acceptance', tab, acceptanceHtml(t, acc)) +
     dsec('reviews', tab, reviewsHtml(t, acc)) +
     dsec('activity', tab, activityHtml(t, acc)) +

@@ -23,8 +23,8 @@ import { ENDED_WORDS, fetchEvidence, fetchProgress, progressOf } from '../progre
    bench's evidence and the runs' claims — this draws it and never infers
    a result from a lane, a clean exit or a green suite. Every word a
    person or an agent wrote is drawn through esc(). */
-const DTABS = [['overview', 'Overview'], ['brief', 'Brief'], ['acceptance', 'Acceptance'],
-               ['reviews', 'Reviews'], ['activity', 'Activity']];
+const DTABS = [['overview', 'Overview'], ['brief', 'Brief'], ['inputs', 'Inputs'],
+               ['acceptance', 'Acceptance'], ['reviews', 'Reviews'], ['activity', 'Activity']];
 const ACC_GLYPH = { accepted: '✓', 'needs-work': '✕', recheck: '↻', reported: '·', pending: '' };
 const STAGE_WORDS = { backlog: 'Backlog', 'to-do': 'To do', 'in-progress': 'In progress',
                       review: 'Review', done: 'Done' };
@@ -57,6 +57,11 @@ function dtabsHtml(t, tab, acc) {
     acceptance: acc && acc.tracked ? `${acc.counts.accepted}/${acc.counts.total}` : '',
     reviews: acc && (acc.findingCounts.open + acc.findingCounts['fix-reported'])
       ? String(acc.findingCounts.open + acc.findingCounts['fix-reported']) : '',
+    // required information that stops a launch, counted (task 132)
+    inputs: (() => {
+      const i = ((S.state || {}).information || {})[t.file];
+      return i && (i.blocked + i.unchecked) ? String(i.blocked + i.unchecked) : '';
+    })(),
   };
   return `<nav class="dtabs" role="tablist" aria-label="Sections of this card">` +
     DTABS.map(([k, word]) => `<button role="tab" id="dtab-${k}" data-tab="${k}" ` +
@@ -188,6 +193,7 @@ function overviewHtml(t, acc, failBlock, signals, plan, members) {
     `<dl class="dfacts">` +
     fact('Stage', esc(STAGE_WORDS[t.stage] || t.stage) + (t.assignee ? ` · held by ${esc(t.assignee)}` : '')) +
     fact('Progress', esc(progressFact(t))) +
+    fact('Information', inputsFact(t)) +
     fact('Acceptance', accFact) +
     fact('Findings', findFact) +
     fact('Last review', last ? esc(roundLine(last)) +
@@ -241,6 +247,168 @@ const detail = resource({
 
 function detailKey(t) {
   return `${t.stage}:${t.rev || ''}`;
+}
+
+/* ── Inputs and required tools (task 132) ──────────────────────────────
+
+   The card's required information as the server reads it
+   (`inputs.readiness`, the resolver every launch and the move into
+   in-progress ask): the section written in the brief, every input and
+   tool with its state, and what the brief names that the section does
+   not. Read on demand under lib/resource.js's race policy, and again
+   whenever the card's text or its state summary moves. Reading it
+   retrieves nothing; Recheck information is the one action that does. */
+const INPUT_CLASSES = [['required', 'Required'], ['optional', 'Optional'], ['non-input', 'Not an input']];
+const TOOL_CLASSES = [['required', 'Required'], ['optional', 'Optional']];
+const INPUT_TONE = { available: 'ok', blocked: 'bad', unchecked: '', optional: 'dim', 'not-needed': 'dim' };
+const CARD_TONE = { ready: 'ok', 'needs-information': 'bad', checking: 'accent', unchecked: '', 'not-applicable': 'dim' };
+
+const inputsRes = resource({
+  store: S.inputs,
+  url: (file, t) => `/api/card/inputs?file=${encodeURIComponent(file)}` +
+    `&stage=${encodeURIComponent(t.stage)}`,
+  ask: (url) => fetch(url),
+});
+
+function inputsStamp(t) {
+  const i = ((S.state || {}).information || {})[t.file];
+  return `${t.stage}:${t.mtime}:${t.rev || ''}:${i ? JSON.stringify(i) : '-'}`;
+}
+
+function loadInputs(t, force) {
+  inputsRes.read(t.file, inputsStamp(t), {
+    force, arg: t,
+    done: () => { if (S.selected && S.selected.file === t.file && !S.fileView) renderDrawer(); },
+  });
+}
+
+function inputRowHtml(t, r, i, kind) {
+  const classes = kind === 'tool' ? TOOL_CLASSES : INPUT_CLASSES;
+  const id = `inp-cls-${kind}-${i}`;
+  const chosen = S.accDraft[id] || r.classification;
+  const origin = { section: 'listed in the section', discovered: 'found in the brief',
+                   supporting: `found in ${r.via || 'a supporting document'}` }[r.origin] || '';
+  const meta = [
+    r.classification === 'required' ? 'required' : r.classification === 'optional' ? 'optional' : 'not an input',
+    origin,
+    r.representation ? `${r.representation}` : '',
+    r.checkedAt ? `checked ${stampOf(r.checkedAt)}` : (r.status === 'not-needed' ? '' : 'not checked'),
+    r.revision || '',
+  ].filter(Boolean).join(' · ');
+  const controls = r.source
+    ? `<span class="inpcls"><label for="${id}">Classify</label> <select id="${id}">` +
+      classes.map(([v, w]) => `<option value="${v}"${v === chosen ? ' selected' : ''}>${w}</option>`).join('') +
+      `</select> <button data-inp-save="${kind}:${i}">Save</button></span>`
+    : '';
+  return `<li class="inprow" data-keep="inp-${kind}-${i}" data-state="${esc(r.status)}">` +
+    `<span class="cbadge ${INPUT_TONE[r.status] || ''}">${esc(r.statusLabel || r.status)}</span> ` +
+    `<b class="mono">${esc(r.display || r.source)}</b>` +
+    (r.label ? ` <span class="dim">“${esc(r.label)}”</span>` : '') +
+    (r.note ? ` — ${esc(r.note)}` : '') +
+    `<div class="dim">${esc(meta)}</div>` +
+    (r.why && r.status !== 'available' ? `<div>${esc(r.why)}</div>` : '') +
+    (r.remedy && r.status !== 'available' ? `<div><b>Fix:</b> ${esc(r.remedy)}</div>` : '') +
+    (r.how ? `<div class="dim">${esc(r.how)}</div>` : '') +
+    (r.delivery && r.status === 'available' ? `<div class="dim">Delivered as a ${esc(r.delivery)}.</div>` : '') +
+    controls + `</li>`;
+}
+
+function inputsHtml(t) {
+  // asked for as it is drawn, the way the Overview asks for its delivery
+  // reading: once per stamp, and again when the card or its summary moves
+  loadInputs(t);
+  const entry = S.inputs[t.file] || {};
+  const d = entry.data;
+  if (!d) {
+    return entry.error
+      ? `<p class="dnote" role="alert">The card's inputs could not be read: ${esc(entry.error)} ` +
+        `<button id="inpRetry">Try again</button></p>`
+      : `<p class="dnote" aria-busy="true">Reading the card's inputs…</p>`;
+  }
+  const running = d.check && d.check.running;
+  const last = d.check && d.check.last;
+  const alarm = d.state === 'needs-information';
+  const head = `<div class="inphead" data-keep="inp-head">` +
+    `<h3>Inputs and required tools <span class="cbadge ${CARD_TONE[d.state] || ''}" id="inpState">${esc(d.label)}</span></h3>` +
+    `<p ${alarm ? 'role="alert"' : 'role="status"'}>${esc(d.sentence)}</p>` +
+    (d.remedy && d.state !== 'ready' ? `<p><b>Fix:</b> ${esc(d.remedy)}</p>` : '') +
+    `<p><button id="inpRecheck"${running ? ' disabled aria-disabled="true"' : ''}>` +
+    `${running ? 'Checking…' : 'Recheck information'}</button> ` +
+    `<span class="dim">${last ? `Last check ${esc(stampOf(last.at))} — ${esc(last.outcome)}.` : 'No check has run on this board.'} ` +
+    `Checked for the ${esc(d.run.intent)} run on ${esc(d.run.harness || 'the default harness')}` +
+    ` (reads ${esc((d.run.representations || []).join(', ') || 'nothing declared')}).</span></p>` +
+    (entry.stale ? `<p class="dnote" role="status">${esc(staleWords(entry))}</p>` : '') +
+    `<p class="dnote">Information readiness is one thing a launch checks. Ready here is not launch readiness ` +
+    `(the plan, ownership and the launch check) and not merge readiness (the merge requirements) — the Overview says those.</p>` +
+    `</div>`;
+  const section = d.section || {};
+  const notes = (!section.present
+    ? `<p class="dnote">This card has no “Inputs and required tools” section. ` +
+      (d.inputs.length ? 'The references below were found in the brief; each counts as required until classified, and classifying one writes the section.'
+                       : 'The brief names no supporting input or tool.') + `</p>`
+    : '') +
+    (section.problems || []).map(p => `<p class="dnote" role="alert">${esc(p)}</p>`).join('') +
+    (d.proposed && d.proposed.length && section.present
+      ? `<p class="dnote">${d.proposed.length} reference${d.proposed.length === 1 ? '' : 's'} in the brief ` +
+        `${d.proposed.length === 1 ? 'is' : 'are'} not listed in the section — proposed below, required until classified.</p>` : '') +
+    (d.limits || []).map(l => `<p class="dnote" role="status">${esc(l)}</p>`).join('');
+  const list = (rows, kind) => rows.length
+    ? `<ul class="inplist" aria-label="${kind === 'tool' ? 'Required tools' : 'Inputs'}">` +
+      rows.map((r, i) => inputRowHtml(t, r, i, kind)).join('') + `</ul>`
+    : `<p class="dnote">${kind === 'tool' ? 'No tools are listed.' : 'No inputs.'}</p>`;
+  return head + notes +
+    `<h4>Inputs</h4>` + list(d.inputs, 'input') +
+    `<h4>Tools</h4>` + list(d.tools, 'tool') +
+    `<details class="rpt" data-keep="inp-about"${S.accOpen[t.file + ':inp-about'] ? ' open' : ''}>` +
+    `<summary>What this does and does not prove</summary><div style="padding:6px 10px">` +
+    `<p>${esc(d.distinctions)}</p><p>${esc(d.coverage)}</p>` +
+    `<p>Write an entry as <code>- input, required: ../../reference/spec.md — why</code> or ` +
+    `<code>- tool, required: check unit</code>. Tools bench can verify: <code>check &lt;name&gt;</code>, ` +
+    `<code>command &lt;prefix&gt;</code>, <code>capability &lt;word&gt;</code>, <code>image-reading</code>, <code>pdf-reading</code>.</p>` +
+    `</div></details>`;
+}
+
+function wireInputs(t) {
+  const body = $('#drawerbody');
+  const retry = body.querySelector('#inpRetry');
+  if (retry) retry.addEventListener('click', () => { loadInputs(t, true); renderDrawer(); });
+  const recheck = body.querySelector('#inpRecheck');
+  if (recheck) recheck.addEventListener('click', async () => {
+    recheck.disabled = true;
+    const data = await postCard('/api/card/inputs/check', { file: t.file, stage: t.stage });
+    if (data) toast(data.joined ? 'a check is already running — joined it' : 'checking the card\'s information');
+    loadInputs(t, true);
+    loadState();
+  });
+  const d = (S.inputs[t.file] || {}).data;
+  body.querySelectorAll('[data-inp-save]').forEach(btn => btn.addEventListener('click', async () => {
+    if (!d) return;
+    const [kind, index] = btn.dataset.inpSave.split(':');
+    const row = (kind === 'tool' ? d.tools : d.inputs)[Number(index)];
+    const select = document.getElementById(`inp-cls-${kind}-${index}`);
+    if (!row || !select) return;
+    btn.disabled = true;
+    const data = await postCard('/api/card/inputs/classify', {
+      file: t.file, stage: t.stage, briefSha: d.briefSha, kind,
+      source: row.source, classification: select.value, note: row.note || '' });
+    if (data) {
+      delete S.accDraft[select.id];
+      toast(`${row.display} classified ${select.value}` + (data.committed ? '' : ' — written to the card, not committed'));
+    }
+    loadInputs(t, true);
+    loadDetail(t, true);
+    loadState();
+  }));
+}
+
+/* The Overview's one line about the card's information: the same state the
+   Inputs tab leads with, and the way there. */
+function inputsFact(t) {
+  const i = ((S.state || {}).information || {})[t.file];
+  if (!i) return '';
+  return `<button class="dlink" data-goto="inputs">${esc(i.label)}</button>` +
+    (i.state !== 'ready' ? ` — ${esc(i.sentence)}` : '') +
+    (i.optional ? ` · ${i.optional} optional left out` : '');
 }
 
 function loadDetail(t, force) {
@@ -725,6 +893,7 @@ async function postAcc(t, url, payload) {
 
 function wireDetail(t) {
   const body = $('#drawerbody');
+  wireInputs(t);
   const retry = body.querySelector('#dretry');
   if (retry) retry.addEventListener('click', () => { loadDetail(t, true); renderDrawer(); });
   const tabs = [...body.querySelectorAll('.dtabs [role="tab"]')];
@@ -832,9 +1001,12 @@ function wireDetail(t) {
    named person accepted (never a completion ratio) and the findings still
    open. Each opens its section of the detail view. */
 function acceptanceChips(task) {
+  // the information chip rides the same list (task 132): a destination to
+  // a section of the detail view, built and wired as these are
+  const info = informationChip(task);
   const a = ((S.state || {}).acceptance || {})[task.file];
-  if (!a) return [];
-  const out = [];
+  if (!a) return info ? [info] : [];
+  const out = info ? [info] : [];
   if (a.tracked) {
     const behind = a.needsWork + a.recheck;
     const parts = [['reported', a.reported], ['pending', a.pending], ['needing work', a.needsWork],
@@ -855,10 +1027,30 @@ function acceptanceChips(task) {
   return out;
 }
 
+/* The card face's information chip (task 132): a current problem — a
+   required input or tool that would refuse a launch — is on the face;
+   a card whose information is ready keeps it in its tools. */
+function informationChip(task) {
+  const i = ((S.state || {}).information || {})[task.file];
+  if (!i || task.stage === 'done') return null;
+  const working = ['to-do', 'in-progress', 'review'].includes(task.stage);
+  if (i.state === 'needs-information')
+    return { label: 'needs information', pre: 'ⓘ', cls: 'bad', section: 'inputs', face: working,
+             title: `${i.sentence} — open the Inputs tab` };
+  if (i.state === 'checking')
+    return { label: 'checking information', pre: 'ⓘ', cls: 'accent', section: 'inputs', face: working,
+             title: 'Bench is checking this card\'s inputs' };
+  if (i.state === 'unchecked')
+    return { label: 'information unchecked', pre: 'ⓘ', cls: '', section: 'inputs', face: working,
+             title: `${i.sentence} — Recheck information in the Inputs tab` };
+  return { label: 'inputs ready', pre: 'ⓘ', cls: '', section: 'inputs', face: false,
+           title: i.optional ? `Ready; ${i.optional} optional input(s) will be left out` : 'Every required input and tool is usable' };
+}
+
 export {
   ACC_GLYPH, accActor, acceptanceChips, acceptanceHtml, accStamp,
   activityHtml, briefHtml, cardSplit, criterionHtml, drawerAnchor, drawerTab,
-  detailKey, dsec, DTABS, dtabsHtml, evidenceOptions, findingHtml, loadAcc, loadDetail,
+  detailKey, dsec, DTABS, dtabsHtml, evidenceOptions, findingHtml, inputsHtml, loadAcc, loadDetail,
   openReview, withDetail,
   overviewHtml, postAcc, progressFact, recordHtml, RELEVANCE_TONE,
   relevanceHtml, relevanceLine, reportHtml, reviewRefineWhy, reviewsHtml,

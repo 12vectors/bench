@@ -61,6 +61,8 @@ HARNESS = "\n".join([
         "staleWords", "accStaleHtml", "acceptanceBody",
         "roundLine", "sinceRound", "findingHtml", "md", "reportHtml", "reviewsHtml",
         "acceptanceChips", "dtabsHtml",
+        # task 132: the information chip rides acceptanceChips' list
+        "informationChip",
         # task 84: relevance reviews and their threads
         "relevanceLine", "reviewRefineWhy", "reviewThreadHtml", "relevanceHtml",
         "jobsByComment", "reviewRef", "commentRowHtml", "diffHtml", "jobHtml")),

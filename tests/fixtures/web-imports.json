@@ -38,7 +38,7 @@
   "views/detail/drawer.js -> views/card.js": 7,
   "views/detail/drawer.js -> views/delivery.js": 4,
   "views/detail/drawer.js -> views/detail/discussion.js": 3,
-  "views/detail/drawer.js -> views/detail/sections.js": 13,
+  "views/detail/drawer.js -> views/detail/sections.js": 14,
   "views/detail/drawer.js -> views/focus.js": 1,
   "views/detail/drawer.js -> views/frame.js": 1,
   "views/detail/sections.js -> app/data.js": 2,
