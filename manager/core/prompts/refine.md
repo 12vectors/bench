@@ -68,6 +68,10 @@ Rules for the proposed brief:
 - Keep any `<!-- ac:… -->` criterion marker on the criterion it belongs to,
   and do not invent new ones. Do not add or remove lines in a `## Cards`
   section.
+- Keep the `## Inputs and required tools` section and each of its lines
+  (`- input, required: <source> — note`, `- tool, required: <tool>`) as
+  they are, unless the instruction is about them: a person's
+  classification of an input lives there.
 - Do not start any line with PR REVIEW, NOT READY, RELEVANCE REVIEW or
   REFINEMENT.
 - Discussion entries and acceptance records (`<!-- bench:… -->` lines) are

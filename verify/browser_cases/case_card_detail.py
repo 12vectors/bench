@@ -141,7 +141,7 @@ class StructuredDetail(unittest.TestCase):
 
         # — every section by keyboard: the tab row is one stop, arrows move —
         b.eval("document.querySelector('#dtab-overview').focus()")
-        for key in ("brief", "acceptance", "reviews", "activity"):
+        for key in ("brief", "inputs", "acceptance", "reviews", "activity"):
             b.key("ArrowRight")
             self.assertTrue(b.wait(f"document.activeElement && document.activeElement.id === 'dtab-{key}'"
                                    f" && !document.querySelector('#dsec-{key}').hidden", 5),

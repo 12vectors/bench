@@ -209,7 +209,7 @@ class Rendering(unittest.TestCase):
 class SourceInvariants(unittest.TestCase):
     def test_the_drawer_has_five_sections_and_keeps_its_tools(self):
         body = function("renderDrawer")
-        for key in ("overview", "brief", "acceptance", "reviews", "activity"):
+        for key in ("overview", "brief", "inputs", "acceptance", "reviews", "activity"):
             self.assertIn(f"dsec('{key}'", body)
         self.assertIn('role="tablist"', function("dtabsHtml"))
         self.assertIn("ArrowRight", function("wireDetail"))
