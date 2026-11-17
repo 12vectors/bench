@@ -36,6 +36,20 @@
     "describe": ["python3", "describe.py"],
     "stubEnv": "BOARD_CLAUDE_BIN"
   },
+  "inputs": {
+    "_doc": [
+      "How a card's checked inputs reach a run (task 132). `delivery`",
+      "names the one route: `exact-read` is a read-only pinned copy granted",
+      "by one exact Read rule per file (AGENT_CONTEXT, hook_settings.py).",
+      "`representations` are the kinds of content the vendor's file-reading",
+      "tool consumes as content rather than as bytes: Claude Code's Read",
+      "tool reads text, images (PNG, JPEG, GIF, WebP) and PDF documents.",
+      "Permission text is not proof the vendor honours it; the opt-in",
+      "develop/claude-access-smoke.py probe is."
+    ],
+    "delivery": "exact-read",
+    "representations": ["text", "image", "pdf"]
+  },
   "unsupported": {
     "filesystem-sandbox": "Claude Code's permission rules match tool inputs; they cannot confine a run's reads to a named set of files, and the shell it is granted is not sandboxed. A pinned context bundle is a guaranteed input, never a boundary on reading.",
     "network-policy": "the CLI exposes no network boundary this adapter could set"

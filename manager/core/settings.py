@@ -504,6 +504,14 @@ CATALOGUE = (
      "how often open pull requests are polled"),
     ("BOARD_FETCH_TIMEOUT", "installation", "restart",
      "how long a branch-point fetch may take before a launch gives up"),
+    ("BOARD_INPUT_FETCH_HOSTS", "access", "restart",
+     "the exact hosts a card's remote references may be retrieved from, "
+     "without credentials; empty retrieves nothing and asks for an export"),
+    ("BOARD_INPUT_FRESHNESS", "access", "restart",
+     "how many seconds a retrieved remote input stays usable before "
+     "implementation needs Recheck information"),
+    ("BOARD_INPUT_FETCH_TIMEOUT", "access", "restart",
+     "how long one retrieval of a card's remote reference may take"),
     ("BOARD_ALLOWED_ORIGINS", "installation", "restart",
      "browser origins besides this board's own loopback page whose writes "
      "it accepts, such as a local proxy's — exact scheme://host[:port] "

@@ -30,6 +30,19 @@
     "describe": ["python3", "describe.py"],
     "stubEnv": "BOARD_OPENCODE_BIN"
   },
+  "inputs": {
+    "_doc": [
+      "How a card's checked inputs reach a run (task 132). This adapter",
+      "renders no exact read grant for a file outside the worktree (its",
+      "permission rules are globs over tool inputs), so it declares no",
+      "delivery route: a card whose required inputs live outside the",
+      "checkout reads Blocked on this harness rather than relying on a",
+      "permission prompt nobody answers."
+    ],
+    "delivery": "none",
+    "representations": ["text"],
+    "why": "the opencode adapter renders no exact read grant for a pinned input outside the worktree"
+  },
   "unsupported": {
     "filesystem-sandbox": "opencode's permission rules are globs over tool inputs and command lines; they cannot confine a run's reads to a named set of files.",
     "network-policy": "opencode exposes no network boundary this adapter could set"

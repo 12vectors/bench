@@ -981,6 +981,19 @@ BOARD_EVENTS_CAP = int(setting("BOARD_HISTORY_CAP", "300"))
 PROGRESS_REMIND = max(0.0, float(setting("BOARD_PROGRESS_REMIND", "600")))
 PROGRESS_MIN_GAP = max(0.0, float(setting("BOARD_PROGRESS_MIN_GAP", "20")))
 
+# Card information readiness (inputs.py, task 132). Remote references in a
+# card's brief are retrieved only from hosts the operator listed here —
+# exact host names, comma-separated, empty by default — and never with a
+# credential. A retrieved snapshot stays usable for INPUT_FRESHNESS
+# seconds; after that a launch refuses until the card is checked again.
+INPUTS_DIR = STATE / "inputs"                      # check records and snapshots
+INPUT_FETCH_HOSTS = [h.strip().lower().rstrip(".")
+                     for h in setting("BOARD_INPUT_FETCH_HOSTS", "").split(",")
+                     if h.strip()]
+INPUT_FRESHNESS = max(60.0, float(setting("BOARD_INPUT_FRESHNESS", "86400")))
+INPUT_FETCH_TIMEOUT = min(60.0, max(1.0, float(
+    setting("BOARD_INPUT_FETCH_TIMEOUT", "10"))))
+
 
 def child_env() -> dict[str, str]:
     """Environment for adapter/driver/command child processes: the real

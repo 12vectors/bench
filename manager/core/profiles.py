@@ -790,7 +790,24 @@ def adapter_identity(name: str | None = None) -> dict:
     # own words, shown beside its selection in Settings → Agents
     if isinstance(data.get("setup"), str):
         found["setup"] = data["setup"][:600]
+    # how a card's checked inputs reach a run, and which kinds of content
+    # the vendor's reading tool consumes (task 132). Absent is "declares
+    # no route", which `inputs` reads as Blocked, never as supported.
+    declared_inputs = data.get("inputs")
+    if isinstance(declared_inputs, dict):
+        found["inputs"] = {
+            "delivery": str(declared_inputs.get("delivery") or "none")[:40],
+            "representations": [
+                str(r) for r in declared_inputs.get("representations") or []
+                if str(r) in INPUT_REPRESENTATIONS],
+            "why": str(declared_inputs.get("why") or "")[:400] or None,
+        }
     return found
+
+
+# The kinds of content a card input can be delivered as (task 132): words
+# an adapter's capabilities.json may declare its vendor reads as content.
+INPUT_REPRESENTATIONS = ("text", "image", "pdf")
 
 
 SOURCE_WORDS = {"environment": "the process environment (locked)",
@@ -2147,7 +2164,9 @@ def pin(manifest: dict) -> dict:
     bundle = config.CONTEXT_DIR / revision[:16]
     bundle.mkdir(parents=True, exist_ok=True)
     for item in inputs:
-        target = bundle / f"{item['name']}{Path(item['source']).suffix}"
+        suffix = (item.get("suffix") if item.get("kind") == "card-input"
+                  else Path(item["source"]).suffix)
+        target = bundle / f"{item['name']}{suffix or ''}"
         try:
             data = Path(item["path"]).read_bytes()
         except OSError as exc:
@@ -3144,8 +3163,12 @@ def prompt_block(found: dict | None) -> str:
     """
     if not found:
         return ""
+    # a card's own inputs (task 132) are listed by `inputs.prompt_block`,
+    # beside the tools the card needs, in the one place the run is told to
+    # read them — not a second time here
     usable = [i for i in found.get("context") or []
-              if i.get("status") in ("pinned", "resolved")]
+              if i.get("status") in ("pinned", "resolved")
+              and i.get("kind") != "card-input"]
     if not usable:
         return ""
     lines = ["The board has pinned the following files as read-only inputs for "
