@@ -132,7 +132,7 @@ class TheChipOnTheCard(unittest.TestCase):
     def test_no_chip_where_the_server_would_refuse(self):
         """Nothing renders it on its own terms: the one condition is
         canArchive, so in-progress and review cards simply have no chip."""
-        card = re.search(r"function cardFor\(task\) \{.*?\n\}\n", self.html, re.S).group(0)
+        card = re.search(r"function cardSpec\(task\) \{.*?\nfunction mountCard\(spec\) \{.*?\n\}\n", self.html, re.S).group(0)
         self.assertEqual(len(re.findall(r"data-arch", card)), 2,
                          "the chip is written once and wired once")
         self.assertEqual(len(re.findall(r"canArchive\(task\)", card)), 2)
@@ -152,7 +152,8 @@ class ArmThenFire(unittest.TestCase):
         self.assertIn("wireAction(btn, `${task.file}::archive`", wiring.group(0))
         self.assertIn("confirm: 'archive it?'", wiring.group(0))
         self.assertIn("busy: 'archiving…'", wiring.group(0))
-        self.assertIn("archiveCard(task.file, task.stage)", wiring.group(0))
+        # the stage the card stands in as the latest paint read it (task 130)
+        self.assertIn("archiveCard(file, cur().stage)", wiring.group(0))
 
     def test_the_label_swaps_in_place_like_every_other_action(self):
         push_to_row = self.html[self.html.index("if (c.arch) return"):]
@@ -196,7 +197,7 @@ class OnTheFaceOfADoneCard(unittest.TestCase):
         cls.html = html()
         cls.push = re.search(r"if \(canArchive\(task\)\) \{(.*?)\n  \}",
                              cls.html, re.S).group(1)
-        cls.card = re.search(r"function cardFor\(task\) \{.*?\n\}\n", cls.html, re.S).group(0)
+        cls.card = re.search(r"function cardSpec\(task\) \{.*?\nfunction mountCard\(spec\) \{.*?\n\}\n", cls.html, re.S).group(0)
 
     def test_the_face_is_the_done_stage_only(self):
         self.assertIn("face: task.stage === 'done'", self.push,
@@ -237,8 +238,9 @@ class OnTheFaceOfADoneCard(unittest.TestCase):
         self.assertIn("if (el.dataset.nodrag) { e.preventDefault(); return; }", drag)
 
     def test_a_done_card_has_no_empty_tools_menu(self):
-        self.assertIn("if (chips.length && (task.stage !== 'done' || "
-                      "chips.some(c => !chipOnFace(c, task)))) {", self.card)
+        self.assertIn("const more = !!chips.length && (task.stage !== 'done' || "
+                      "chips.some(c => !chipOnFace(c, task)));", self.card)
+        self.assertIn("if (spec.more) {", self.card)
 
 
 class TheUndoStaysThePromise(unittest.TestCase):

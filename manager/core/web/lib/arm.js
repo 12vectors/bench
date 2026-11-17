@@ -99,6 +99,14 @@ function isArmed(store, key, at = Date.now()) {
   return !!st && st.phase === 'armed' && st.until > at;
 }
 
+/* Read-only: the phase of `key` in `store` now — 'rest', 'armed' or
+   'busy' — without filing an expired window. For a view that keys its
+   drawing on it (task 130). */
+function phaseOf(store, key, at = Date.now()) {
+  const st = (store || {})[key];
+  return st && st.until > at ? st.phase : 'rest';
+}
+
 export {
-  ARM_MS, arming, BUSY_MS, isArmed
+  ARM_MS, arming, BUSY_MS, isArmed, phaseOf
 };

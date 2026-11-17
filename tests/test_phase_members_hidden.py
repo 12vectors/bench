@@ -496,7 +496,7 @@ class Wiring(unittest.TestCase):
         self.assertIn("⟶", block)
 
     def test_the_phase_card_wears_a_running_phase_and_a_halted_one(self):
-        card_fn = self.body(r"function cardFor\(task\) \{.*?\n\}")
+        card_fn = self.body(r"function cardSpec\(task\) \{.*?\nfunction mountCard\(spec\) \{.*?\n\}")
         self.assertIn("const flight = task.isPhase ? phaseFlight(task) : null;", card_fn)
         self.assertIn("flight && !flight.bad", card_fn,
                       "a phase in flight breathes like any other live work")

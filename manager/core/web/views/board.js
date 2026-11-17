@@ -5,7 +5,8 @@ import { fetch } from '../lib/api.js';
 import { isArmed } from '../lib/arm.js';
 import { $, esc } from '../lib/dom.js';
 import { markScroll, restoreScroll } from '../lib/keep.js';
-import { cardFor, closeSheet, move, replan } from './card.js';
+import { emptyNote, holdFocus, keyedPool, placeChildren, setHtml } from '../lib/keyed.js';
+import { closeSheet, keyedCard, move, replan } from './card.js';
 import { renderDrawer } from './detail/drawer.js';
 import { findTask } from './focus.js';
 import { phaseProgress } from './frame.js';
@@ -60,46 +61,76 @@ function columnNote(stage, shown) {
   return notes.join(' · ');
 }
 
+/* The board is painted by key (task 130). Its five columns are built once
+   and kept — so their scroll, their drop listeners and a drag in flight
+   all survive a paint — and each column's cards are reconciled: a card
+   that would draw the same keeps its node, a changed one gets a fresh
+   node in its place, a moved one is moved, and one that left is removed.
+   A session event that changes nothing on the board therefore touches no
+   card at all. The columns are built again only when the stages
+   themselves change, and that rebuild keeps your place the way every
+   rebuild here does. */
 function renderBoard() {
   const board = $('#board');
-  // where you were looking, taken before the wipe throws the nodes away:
-  // the columns scroll down, #board itself scrolls sideways
-  markScroll('v:board', board);
-  board.querySelectorAll('.drop[data-stage]').forEach(d =>
-    markScroll('v:col:' + d.dataset.stage, d));
-  board.innerHTML = '';
-  const drops = [];
-  for (const stage of S.state.board.stages) {
-    const col = document.createElement('section');
-    col.className = 'kcol';
-    const shown = columnCards(stage);
-    col.innerHTML =
-      `<h2><span class="tickmark" style="background:${STAGE_TINT[stage.slug]}"></span>` +
-      `<span>${stage.label}</span><span class="count">${shown.length}</span>` +
-      `<span class="note">${esc(columnNote(stage, shown))}</span></h2>`;
-    const drop = document.createElement('div');
-    drop.className = 'drop';
-    drop.dataset.stage = stage.slug;
-    // a column emptied by a phase says so rather than congratulating you
-    if (!shown.length) drop.innerHTML = '<div class="empty">' +
-      (stage.tasks.length ? 'Everything here is in a phase.' : 'Nothing here. Good.') +
-      '</div>';
-    for (const task of shown) drop.appendChild(cardFor(task));
-    drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
-    drop.addEventListener('dragleave', () => drop.classList.remove('over'));
-    drop.addEventListener('drop', (e) => {
-      e.preventDefault();
-      drop.classList.remove('over');
-      const { file, from } = JSON.parse(e.dataTransfer.getData('application/json'));
-      if (from !== stage.slug) move(file, from, stage.slug);
+  const stages = S.state.board.stages;
+  const slugs = stages.map(s => s.slug).join('|');
+  const paintColumns = () => holdFocus(board, () => {
+    // every card on the board, by file: a card moved to another column
+    // keeps its node too, when it would draw the same there
+    const pool = keyedPool(board, 'article.card');
+    const replaced = new Map();
+    stages.forEach((stage, i) => {
+      const col = board.children[i];
+      const shown = columnCards(stage);
+      setHtml(col.firstElementChild,
+        `<span class="tickmark" style="background:${STAGE_TINT[stage.slug]}"></span>` +
+        `<span>${stage.label}</span><span class="count">${shown.length}</span>` +
+        `<span class="note">${esc(columnNote(stage, shown))}</span>`);
+      const drop = col.lastElementChild;
+      const nodes = [];
+      // a column emptied by a phase says so rather than congratulating you
+      if (!shown.length) nodes.push(emptyNote(drop,
+        stage.tasks.length ? 'Everything here is in a phase.' : 'Nothing here. Good.'));
+      for (const task of shown) nodes.push(keyedCard(pool, task, replaced));
+      placeChildren(drop, nodes);
     });
-    col.appendChild(drop);
-    board.appendChild(col);
-    drops.push([stage.slug, drop]);
+    return replaced;
+  });
+  if (board.__stages !== slugs || board.children.length !== stages.length) {
+    // where you were looking, taken before the wipe throws the nodes away:
+    // the columns scroll down, #board itself scrolls sideways
+    markScroll('v:board', board);
+    board.querySelectorAll('.drop[data-stage]').forEach(d =>
+      markScroll('v:col:' + d.dataset.stage, d));
+    board.innerHTML = '';
+    const drops = [];
+    for (const stage of stages) {
+      const col = document.createElement('section');
+      col.className = 'kcol';
+      col.appendChild(document.createElement('h2'));
+      const drop = document.createElement('div');
+      drop.className = 'drop';
+      drop.dataset.stage = stage.slug;
+      drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+      drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+      drop.addEventListener('drop', (e) => {
+        e.preventDefault();
+        drop.classList.remove('over');
+        const { file, from } = JSON.parse(e.dataTransfer.getData('application/json'));
+        if (from !== drop.dataset.stage) move(file, from, drop.dataset.stage);
+      });
+      col.appendChild(drop);
+      board.appendChild(col);
+      drops.push(drop);
+    }
+    board.__stages = slugs;
+    paintColumns();
+    // the new nodes are in place: put the page back where it was, same frame
+    restoreScroll('v:board', board);
+    for (const drop of drops) restoreScroll('v:col:' + drop.dataset.stage, drop);
+  } else {
+    paintColumns();
   }
-  // the new nodes are in place: put the page back where it was, same frame
-  restoreScroll('v:board', board);
-  for (const [slug, drop] of drops) restoreScroll('v:col:' + slug, drop);
   if (S.selected) {
     S.selected = allTasks().find(t => t.file === S.selected.file) || null;
   }

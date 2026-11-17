@@ -316,7 +316,7 @@ class TheCardFace(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.html = pagesource.page()
-        cls.card = re.search(r"function cardFor\(task\) \{.*?\n\}", cls.html, re.S).group(0)
+        cls.card = re.search(r"function cardSpec\(task\) \{.*?\nfunction mountCard\(spec\) \{.*?\n\}", cls.html, re.S).group(0)
 
     def test_the_card_renders_from_the_server_s_truth(self):
         self.assertIn("(S.state.completing || {})[task.file]", self.card,

@@ -301,7 +301,7 @@ class TheCardSaysWhichStateItIsIn(unittest.TestCase):
                 raise AssertionError(f"board.html no longer defines {pattern!r}")
             parts.append(match.group(0))
         cls.src = "\n".join(parts)
-        cls.card_fn = re.search(r"function cardFor\(task\) \{.*?\n\}",
+        cls.card_fn = re.search(r"function cardSpec\(task\) \{.*?\nfunction mountCard\(spec\) \{.*?\n\}",
                                 cls.html, re.S).group(0)
 
     def flight(self, snapshot: dict | None, stage: str = "in-progress") -> object:

@@ -1,10 +1,12 @@
 /* Phases: a swimlane each. */
 import { allTasks } from '../app/data.js';
 import { S } from '../app/state.js';
+import { phaseOf } from '../lib/arm.js';
 import { $, esc } from '../lib/dom.js';
 import { markScroll, restoreScroll, scrollMarks } from '../lib/keep.js';
+import { emptyNote, holdFocus, keyedPool, placeChildren, setHtml } from '../lib/keyed.js';
 import { phaseFlight } from './board.js';
-import { actLabel, cardFor, holdPhase, runPhase, showDetail, wireAction } from './card.js';
+import { actLabel, holdPhase, keyedCard, runPhase, showDetail, wireAction } from './card.js';
 import { renderDrawer } from './detail/drawer.js';
 import { findTask } from './focus.js';
 import { gateState } from './gates.js';
@@ -14,7 +16,7 @@ import { STAGE_TINT } from '../words.js';
 
    The Board draws the work you are personally holding; this draws what the
    phases are holding. One lane per phase card, the same five stages left to
-   right, and the cards are the cards — the very nodes cardFor() builds for
+   right, and the cards are the cards — the very nodes keyedCard() paints for
    the Board, agent line, chips and hover actions intact. That fidelity is
    the whole reason this is a view and not a rail squeezed into five
    columns that could never spare the width.
@@ -147,8 +149,17 @@ function laneLog(task) {
     `</div>`;
 }
 
-function laneFor(task) {
-  const el = document.createElement('section');
+/* One lane, built, or brought up to date in place when `el` is the lane a
+   previous paint built (task 130). The head, the halt and the gate line
+   are rebuilt only when what they draw changed; the log likewise; the
+   columns are kept and their cards painted by key, through the same
+   keyedCard() the Board uses — so a session event leaves every lane and
+   every card in it exactly as it was. */
+function laneFor(task, el) {
+  const fresh = !el;
+  if (fresh) el = document.createElement('section');
+  // the lane's listeners act on the phase as the latest paint read it
+  el.__task = task;
   const snap = (S.state.phases || {})[task.file];
   const members = laneMembers(task);
   const at = laneProgress(members);
@@ -211,48 +222,86 @@ function laneFor(task) {
       `</b> — ${esc(gate.summary)}</span><span class="lacts"></span></div>`
     : '';
 
-  el.innerHTML = head + halt + gateLine + well +
-    `<div class="lstages" data-phase="${esc(task.file)}"></div>` + laneLog(task);
+  const top = head + halt + gateLine + well;
+  // what the lane's own controls draw depends on their armed windows too
+  const topSig = [top, halted, running,
+    ...['run again', 'hold'].map(l => phaseOf(S.acts, `${task.file}::${l}`))].join('\u0001');
+  if (fresh) {
+    el.innerHTML = top + `<div class="lstages" data-phase="${esc(task.file)}"></div>` + laneLog(task);
+    el.__log = laneLog(task);
+  } else if (el.__topSig !== topSig) {
+    // the head, the halt and the gate line go, and their new copies come
+    // in where they were — above the columns, which stay
+    const stagesEl = el.querySelector('.lstages');
+    while (el.firstElementChild && el.firstElementChild !== stagesEl) el.firstElementChild.remove();
+    stagesEl.insertAdjacentHTML('beforebegin', top);
+  }
+  const log = fresh ? el.__log : laneLog(task);
+  if (el.__log !== log) {
+    const old = el.querySelector('.plog');
+    if (old) old.remove();
+    el.insertAdjacentHTML('beforeend', log);
+    el.__log = log;
+  }
+  if (fresh || el.__topSig !== topSig) {
+    el.__topSig = topSig;
+    el.querySelectorAll('[data-open]').forEach(btn =>
+      btn.addEventListener('click', () => showDetail(el.__task)));
+
+    // ▸ run again lives here and nowhere else: clearing a halt should mean
+    // having read what caused it, and the reason is the line above it
+    if (halted) {
+      laneAction(el.querySelector('.lhalt .lacts'), task,
+        { glyph: '▸', label: 'run again', confirm: 'run it again?', busy: 'starting…',
+          title: 'Clear the halt and carry on from where it stopped — every card already '
+               + 'merged into the phase branch stays merged',
+          run: () => runPhase(task) });
+    }
+    // ‖ hold means here what it means everywhere: the run stops, the member
+    // agent in flight stops with it, and nothing is unwound
+    if (running || halted) {
+      laneAction(el.querySelector('.lhead .lacts'), task,
+        { glyph: '‖', label: 'hold', confirm: 'hold it?', busy: 'holding…',
+          title: 'Stop the phase and the agent it has in flight — the phase branch, every '
+               + 'card already merged into it and every worktree stay exactly as they are',
+          run: () => holdPhase(task) });
+    }
+  }
 
   const stages = el.querySelector('.lstages');
-  for (const col of laneColumns()) {
+  const columns = laneColumns();
+  const slugs = columns.map(c => c.slug).join('|');
+  if (stages.__cols !== slugs) {
+    stages.innerHTML = '';
+    for (const col of columns) {
+      const box = document.createElement('div');
+      box.className = 'lcol';
+      box.appendChild(document.createElement('h3'));
+      const cards = document.createElement('div');
+      cards.className = 'lcards';
+      box.appendChild(cards);
+      stages.appendChild(box);
+    }
+    stages.__cols = slugs;
+  }
+  // a pool per lane: a card two phases both list (phase drift) is drawn in
+  // each of their lanes, and each lane keeps its own node of it
+  const pool = keyedPool(stages, 'article.card');
+  const replaced = new Map();
+  columns.forEach((col, i) => {
     const here = members.filter(m => m.column === col.slug);
-    const box = document.createElement('div');
-    box.className = 'lcol';
-    box.innerHTML = `<h3><span class="tickmark" style="background:${col.tint}"></span>` +
+    const box = stages.children[i];
+    setHtml(box.firstElementChild, `<span class="tickmark" style="background:${col.tint}"></span>` +
       `<span>${esc(col.label)}</span><span class="count">${here.length}</span>` +
-      `<span class="note">${esc(col.note || '')}</span></h3>`;
-    const cards = document.createElement('div');
-    cards.className = 'lcards';
-    if (!here.length) cards.innerHTML = '<div class="empty">—</div>';
+      `<span class="note">${esc(col.note || '')}</span>`);
+    const cards = box.lastElementChild;
     // the cards are the cards: same builder, same actions, same chips —
     // including the ⟶ chip that says where each one sits in the run
-    for (const m of here) cards.appendChild(cardFor(m.task));
-    box.appendChild(cards);
-    stages.appendChild(box);
-  }
-
-  el.querySelectorAll('[data-open]').forEach(btn =>
-    btn.addEventListener('click', () => showDetail(task)));
-
-  // ▸ run again lives here and nowhere else: clearing a halt should mean
-  // having read what caused it, and the reason is the line above it
-  if (halted) {
-    laneAction(el.querySelector('.lhalt .lacts'), task,
-      { glyph: '▸', label: 'run again', confirm: 'run it again?', busy: 'starting…',
-        title: 'Clear the halt and carry on from where it stopped — every card already '
-             + 'merged into the phase branch stays merged',
-        run: () => runPhase(task) });
-  }
-  // ‖ hold means here what it means everywhere: the run stops, the member
-  // agent in flight stops with it, and nothing is unwound
-  if (running || halted) {
-    laneAction(el.querySelector('.lhead .lacts'), task,
-      { glyph: '‖', label: 'hold', confirm: 'hold it?', busy: 'holding…',
-        title: 'Stop the phase and the agent it has in flight — the phase branch, every '
-             + 'card already merged into it and every worktree stay exactly as they are',
-        run: () => holdPhase(task) });
-  }
+    const nodes = here.map(m => keyedCard(pool, m.task, replaced));
+    if (!here.length) nodes.push(emptyNote(cards, '—'));
+    placeChildren(cards, nodes);
+  });
+  el.__replaced = replaced;
   return el;
 }
 
@@ -272,20 +321,35 @@ function renderLanes() {
   // where you were looking, taken before the wipe throws the nodes away:
   // the page scrolls down, each lane's stages scroll sideways, each log
   // scrolls in its own box
+  // A lane is kept and brought up to date (task 130), so most paints move
+  // nothing; but a lane that changes place, or a log that is drawn again,
+  // is a node whose offsets the browser resets — so the marks are still
+  // taken, and put back below.
   markScroll('v:phases', view);
   wrap.querySelectorAll('.lstages').forEach(el =>
     markScroll('v:lanestages:' + el.dataset.phase, el));
   wrap.querySelectorAll('.plines').forEach(el =>
     markScroll('v:phaselog:' + el.dataset.phase, el));
-  wrap.innerHTML = '';
   const phases = lanePhases();
   if (!phases.length) {
     // an empty grid of five columns would be a room pretending to be full
-    wrap.innerHTML = '<div class="empty">No phases yet. A phase is an ordinary card ' +
+    setHtml(wrap, '<div class="empty">No phases yet. A phase is an ordinary card ' +
       'marked <b>Type: Phase</b> with a <code>## Cards</code> section listing the cards ' +
-      'it runs, in the order they run.</div>';
+      'it runs, in the order they run.</div>');
   } else {
-    for (const task of phases) wrap.appendChild(laneFor(task));
+    holdFocus(wrap, () => {
+      const lanes = new Map([...wrap.children]
+        .filter(c => c.classList.contains('lane')).map(c => [c.dataset.phase, c]));
+      const replaced = new Map();
+      const want = phases.map(task => {
+        const lane = laneFor(task, lanes.get(task.file));
+        for (const [a, b] of lane.__replaced) replaced.set(a, b);
+        return lane;
+      });
+      placeChildren(wrap, want);
+      wrap.__html = null;
+      return replaced;
+    });
   }
   restoreScroll('v:phases', view);
   wrap.querySelectorAll('.lstages').forEach(el =>

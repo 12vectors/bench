@@ -2,9 +2,10 @@
 import { agentOnTask, allTasks, failedRun, loadState, modelChip, scheduleRender, sessionMeta, whyFailed } from '../app/data.js';
 import { S } from '../app/state.js';
 import { fetch } from '../lib/api.js';
-import { ARM_MS, arming, BUSY_MS } from '../lib/arm.js';
+import { ARM_MS, arming, BUSY_MS, phaseOf } from '../lib/arm.js';
 import { $, esc } from '../lib/dom.js';
 import { scrollMarks } from '../lib/keep.js';
+import { keyedNode } from '../lib/keyed.js';
 import { ago, elapsed } from '../lib/time.js';
 import { toast } from '../lib/toast.js';
 import { archiveCard, renderBar } from './activity.js';
@@ -542,8 +543,30 @@ function focusCard(file, inner) {
   });
 }
 
+/* A card is built in two steps (task 130). `cardSpec` reads everything
+   the card shows and writes it down as markup and a few descriptors —
+   strings, no DOM — and its `sig` is all of that as one string. `mountCard`
+   turns a spec into a node and wires it. So a paint can compare a card's
+   new signature with the one its node was built from and keep the node
+   when they are equal: same markup, same actions, same armed windows, so
+   the same drawing, and nothing in it is torn down. The node's listeners
+   read the spec it currently stands for (`el.__spec`), which a kept node
+   is given afresh, so a click always acts on the card as it now stands. */
 function cardFor(task) {
-  const el = document.createElement('article');
+  return mountCard(cardSpec(task));
+}
+
+/* The node a keyed paint draws for `task`: the one in `pool` under its
+   file when it would draw the same (given the new spec to act on), else a
+   fresh one — recorded in `replaced` so focus can follow it. Board and
+   Phases both paint their cards through this. */
+function keyedCard(pool, task, replaced) {
+  const spec = cardSpec(task);
+  return keyedNode(pool, task.file, spec.sig, () => mountCard(spec),
+                   (kept) => { kept.__spec = spec; }, replaced);
+}
+
+function cardSpec(task) {
   const agent = agentOnTask(task.file);
   // a running phase has an agent alive on a card this view no longer draws,
   // so the phase card wears that state on its members' behalf
@@ -562,7 +585,7 @@ function cardFor(task) {
   let pill = promoted ? deliveryPill(d) : null;
   let tint = promoted && tone !== 'neutral' ? pill.tint
     : working ? 'var(--accent)' : STAGE_TINT[task.stage];
-  el.className = 'card'
+  let className = 'card'
     + (S.selected && S.selected.file === task.file ? ' selected' : '')
     + (working ? ' running' : '')
     + (promoted && tone === 'calm' ? ' verdict-good' : '')
@@ -571,7 +594,7 @@ function cardFor(task) {
     + (flight && flight.bad ? ' halted' : '')
     + (completing ? ' completing' : '')
     + (task.stage === 'done' ? ' done-dim' : '');
-  el.draggable = !completing;
+  const draggable = !completing;
   // Two quiet readings the delivery status does not make, drawn only when
   // it has nothing to say on the face: a phase in in-progress/ nobody has
   // started (or one held) — the absence of work, in the settled register —
@@ -713,7 +736,7 @@ function cardFor(task) {
       actions.push(stillTrue);
     }
   }
-  if (actions.length) el.classList.add('has-acts');
+  if (actions.length) className += ' has-acts';
 
   // the who row: who has it, plus one mono fact
   let who, initial, meta;
@@ -976,7 +999,7 @@ function cardFor(task) {
   const tools = chips.map(c => chipHtml(chipOnFace(c, task)
     ? { ...c, cls: `${c.cls} onface` } : c)).join('');
 
-  el.innerHTML =
+  const html =
     `<div class="toprow">${top.join('')}</div>` +
     `<div class="title">${esc(cardTitle(task))}</div>` +
     (showWho
@@ -988,19 +1011,51 @@ function cardFor(task) {
     `<div class="cardtools${menuOpen ? ' open' : ''}" role="group" ` +
     `aria-label="${esc(`Tools for ${ref}`)}"><span class="tlabel">tools</span>` +
     `<span class="tacts"></span>${tools}</div>`;
-  el.dataset.file = task.file;
+  // a done card whose only tool is the archive on its face has nothing
+  // left for a menu, so it gets none rather than an empty one
+  const more = !!chips.length && (task.stage !== 'done' || chips.some(c => !chipOnFace(c, task)));
+  // every action this card's buttons are keyed by, so an armed or busy
+  // window that opens or closes is a change in what the card draws
+  const keys = actions.map(a => `${task.file}::${a.label}`);
+  if (chips.some(c => c.arch)) keys.push(`${task.file}::archive`);
+  for (const c of chips) if (c.cmd) keys.push(`${task.file}::$${c.cmd}`);
+  const sig = [
+    task.file, task.stage, className, draggable, html, menuOpen, more,
+    actions.map(a => [a.glyph, a.label, a.confirm || '', a.busy || '', a.title]
+      .join('\u0002')).join('\u0003'),
+    keys.map(k => phaseOf(S.acts, k)).join(','),
+  ].join('\u0001');
+  return { task, agent, actions, className, draggable, html, menuOpen, more, ref, sig };
+}
+
+/* A spec, made into a card node. Every listener reads `el.__spec` when it
+   fires rather than closing over the spec it was built from, so a node a
+   later paint keeps acts on the card as that paint read it. */
+function mountCard(spec) {
+  const el = document.createElement('article');
+  el.__spec = spec;
+  el.__sig = spec.sig;
+  const cur = () => el.__spec.task;
+  // `task` is the card as first built, read here for its file — the key
+  // a kept node never changes; everything else is read through cur()
+  const { actions, ref, menuOpen, task } = spec;
+  const file = task.file;
+  el.className = spec.className;
+  el.draggable = spec.draggable;
+  el.innerHTML = spec.html;
+  el.dataset.file = file;
   // the card itself is reachable: Tab lands on it, Enter or Space opens
   // its detail view, and focus-within reveals the same actions hover does
   el.tabIndex = 0;
   el.addEventListener('keydown', (e) => {
     if (e.target === el && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();
-      showDetail(task);
-    } else if (e.key === 'Escape' && S.cardMenu === task.file) {
+      showDetail(cur());
+    } else if (e.key === 'Escape' && S.cardMenu === file) {
       e.stopPropagation();
       S.cardMenu = null;
       renderCards();
-      focusCard(task.file, '[data-more]');
+      focusCard(file, '[data-more]');
     }
   });
   // a click between two tools is not a click on the card
@@ -1014,26 +1069,26 @@ function cardFor(task) {
       if (phase) showDetail(phase);
     }));
   el.querySelectorAll('[data-plan]').forEach(btn =>
-    btn.addEventListener('click', (e) => { e.stopPropagation(); planSheet(task); }));
+    btn.addEventListener('click', (e) => { e.stopPropagation(); planSheet(cur()); }));
   el.querySelectorAll('[data-profile]').forEach(btn =>
-    btn.addEventListener('click', (e) => { e.stopPropagation(); profileSheet(task); }));
+    btn.addEventListener('click', (e) => { e.stopPropagation(); profileSheet(cur()); }));
   el.querySelectorAll('[data-verify]').forEach(btn =>
-    btn.addEventListener('click', (e) => { e.stopPropagation(); verifySheet(task); }));
+    btn.addEventListener('click', (e) => { e.stopPropagation(); verifySheet(cur()); }));
   el.querySelectorAll('[data-gate]').forEach(btn =>
-    btn.addEventListener('click', (e) => { e.stopPropagation(); gateSheet(task); }));
+    btn.addEventListener('click', (e) => { e.stopPropagation(); gateSheet(cur()); }));
   el.querySelectorAll('[data-review]').forEach(btn =>
-    btn.addEventListener('click', (e) => { e.stopPropagation(); reviewSheet(task); }));
+    btn.addEventListener('click', (e) => { e.stopPropagation(); reviewSheet(cur()); }));
   el.querySelectorAll('[data-section]').forEach(btn =>
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      S.dtab[task.file] = btn.dataset.section;
-      if (S.selected && S.selected.file === task.file) renderDrawer();
-      else showDetail(task);
+      S.dtab[file] = btn.dataset.section;
+      if (S.selected && S.selected.file === file) renderDrawer();
+      else showDetail(cur());
     }));
   el.querySelectorAll('[data-drive]').forEach(btn =>
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (btn.dataset.drive === 'go') startDrive(task); else parkDrive();
+      if (btn.dataset.drive === 'go') startDrive(cur()); else parkDrive();
     }));
   el.querySelectorAll('[data-arch]').forEach(btn => {
     btn.addEventListener('click', (e) => e.stopPropagation());
@@ -1051,7 +1106,7 @@ function cardFor(task) {
     });
     wireAction(btn, `${task.file}::archive`, {
       label: 'archive', confirm: 'archive it?', busy: 'archiving…',
-      run: () => archiveCard(task.file, task.stage),
+      run: () => archiveCard(file, cur().stage),
     });
   });
   el.querySelectorAll('[data-cmd]').forEach(btn => {
@@ -1059,7 +1114,7 @@ function cardFor(task) {
     const name = btn.dataset.cmd;
     wireAction(btn, `${task.file}::$${name}`, {
       label: name, confirm: 'run it?', busy: 'running…',
-      run: () => runCommand(task, name),
+      run: () => runCommand(cur(), name),
     });
   });
 
@@ -1069,11 +1124,16 @@ function cardFor(task) {
     // one guard for the whole slot: clicks in its padding or in the gap
     // between buttons die here instead of opening the card's detail
     slot.addEventListener('click', (e) => e.stopPropagation());
-    for (const act of actions) {
+    actions.forEach((act, i) => {
+      // the run is the one the card's current spec holds: the same action
+      // in the same place (the signature names every action), as the
+      // latest paint read the card
+      const live = { label: act.label, confirm: act.confirm, busy: act.busy,
+                     run: () => (el.__spec.actions[i] || act).run() };
       const btn = document.createElement('button');
       btn.innerHTML = `<span class="g">${act.glyph}</span>${actLabel(act.label, act.confirm, act.busy)}`;
       btn.title = act.title;
-      wireAction(btn, `${task.file}::${act.label}`, act);
+      wireAction(btn, `${task.file}::${act.label}`, live);
       slot.appendChild(btn);
       // the same action, keyed the same, in the tools: the detail view
       // carries it there, and an armed window is one window wherever the
@@ -1082,35 +1142,34 @@ function cardFor(task) {
       twin.className = 'chip2 onface';
       twin.innerHTML = `<span class="g2">${act.glyph}</span>${actLabel(act.label, act.confirm, act.busy)}`;
       twin.title = act.title;
-      wireAction(twin, `${task.file}::${act.label}`, act);
+      wireAction(twin, `${task.file}::${act.label}`, live);
       el.querySelector('.cardtools .tacts').appendChild(twin);
-    }
+    });
     el.querySelector('.toprow').appendChild(slot);
   }
   // the tools menu: one labelled control on every card that has anything
   // in it, at the end of the top row, so the face stays quiet and nothing
   // a chip used to do is more than one keystroke away
-  // a done card whose only tool is the archive on its face has nothing
-  // left for a menu, so it gets none rather than an empty one
-  if (chips.length && (task.stage !== 'done' || chips.some(c => !chipOnFace(c, task)))) {
+  if (spec.more) {
     const more = document.createElement('button');
     more.className = 'moretools';
-    more.dataset.more = task.file;
+    more.dataset.more = file;
     more.textContent = '⋯';
     more.title = 'Tools — profile, branch, PR, checks, drive, archive';
     more.setAttribute('aria-label', `Tools for ${ref}`);
     more.setAttribute('aria-expanded', String(menuOpen));
     more.addEventListener('click', (e) => {
       e.stopPropagation();
-      S.cardMenu = S.cardMenu === task.file ? null : task.file;
+      S.cardMenu = S.cardMenu === file ? null : file;
       renderCards();
-      focusCard(task.file, S.cardMenu ? '.cardtools.open .chip2:not(.onface)' : '[data-more]');
+      focusCard(file, S.cardMenu ? '.cardtools.open .chip2:not(.onface)' : '[data-more]');
     });
     el.querySelector('.toprow').appendChild(more);
   }
 
   el.addEventListener('dragstart', (e) => {
     if (el.dataset.nodrag) { e.preventDefault(); return; }
+    const task = cur();
     el.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('application/json', JSON.stringify({ file: task.file, from: task.stage }));
@@ -1123,7 +1182,7 @@ function cardFor(task) {
     el.classList.remove('dragging');
     S.dragging = null; S.dockHot = false; renderBar();
   });
-  el.addEventListener('click', () => showDetail(task));
+  el.addEventListener('click', () => showDetail(cur()));
   return el;
 }
 
@@ -1671,9 +1730,9 @@ function phaseMembers(t) {
 
 export {
   actLabel, acts, addToPhase, ARM_MS, armAction, askCopilot, BOARD_ACT, canArchive,
-  cardFor, cardTitle, chipOnFace, closeSheet, completeSheet, completionWords,
+  cardFor, cardSpec, cardTitle, chipOnFace, closeSheet, completeSheet, completionWords,
   fetchVerifyLog, fireAction, fireAgent, focusCard,
-  forgetActsOfVanishedCards, holdPhase, joinablePhases, lockAction,
+  forgetActsOfVanishedCards, holdPhase, joinablePhases, keyedCard, lockAction,
   MEMBER_STATE, move, openPR, parkDrive, phaseMembers, phaseSheet, planBlock,
   rawMove, replan, REQ_ITEM, requiredItemRow, requiredSheet, requiredTimer,
   rerunCheck, reuseDetail, REVIEW_LABELS, REVIEW_TARGETS, reviewChip,

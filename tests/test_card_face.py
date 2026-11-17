@@ -28,7 +28,7 @@ class Source(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.html = pagesource.page()
-        cls.card = re.search(r"function cardFor\(task\) \{.*?\n\}\n",
+        cls.card = re.search(r"function cardSpec\(task\) \{.*?\nfunction mountCard\(spec\) \{.*?\n\}\n",
                              cls.html, re.S).group(0)
 
     def body(self, name: str) -> str:
@@ -152,7 +152,7 @@ class EveryToolOneControlAway(Source):
         self.assertIn("role=\"group\"", self.card)
 
     def test_the_hover_actions_are_in_the_tools_too(self):
-        self.assertIn("wireAction(twin, `${task.file}::${act.label}`, act);", self.card,
+        self.assertIn("wireAction(twin, `${task.file}::${act.label}`, live);", self.card,
                       "the same key, so an armed window is one window")
 
     def test_the_detail_view_carries_every_tool(self):
@@ -169,7 +169,7 @@ class EveryToolOneControlAway(Source):
                       "closing the detail view returns focus to its card")
 
     def test_board_and_phases_draw_the_same_card(self):
-        self.assertEqual(len(re.findall(r"appendChild\(cardFor\(", self.html)), 2)
+        self.assertEqual(len(re.findall(r"(?<!function )keyedCard\(pool, ", self.html)), 2)
 
 
 class SignalsAreKeptApart(Source):
