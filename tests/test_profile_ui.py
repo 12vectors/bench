@@ -168,7 +168,7 @@ class TheChipOnlyAppearsWhenThereIsSomethingToSay(unittest.TestCase):
     def test_the_chip_opens_the_profile_sheet(self):
         self.assertIn('data-profile="1"', self.html)
         self.assertRegex(self.html,
-                         r"\[data-profile\][\s\S]{0,200}profileSheet\(task\)")
+                         r"\[data-profile\][\s\S]{0,200}profileSheet\(cur\(\)\)")
 
     def test_the_sheet_offers_each_intent(self):
         self.assertIn("INTENT_LABEL", self.html)

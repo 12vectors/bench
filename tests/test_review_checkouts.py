@@ -1294,7 +1294,7 @@ class ThePageSaysWhereAReviewRan(unittest.TestCase):
         self.assertIn("S.state.reviews", self.html)
         self.assertIn('data-review="1"', self.html)
         self.assertRegex(self.html,
-                         r"\[data-review\][\s\S]{0,200}reviewSheet\(task\)")
+                         r"\[data-review\][\s\S]{0,200}reviewSheet\(cur\(\)\)")
 
     def test_a_refusal_reaches_the_person_who_clicked(self):
         """Every refusal in this feature is the server's sentence — a head

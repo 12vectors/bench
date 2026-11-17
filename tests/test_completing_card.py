@@ -341,7 +341,8 @@ class TheCardFace(unittest.TestCase):
                       "the card carries the latest narrated step")
 
     def test_it_holds_still(self):
-        self.assertIn("el.draggable = !completing;", self.card)
+        self.assertIn("const draggable = !completing;", self.card)
+        self.assertIn("el.draggable = spec.draggable;", self.card)
 
     def test_its_actions_are_suppressed_not_merely_ignored(self):
         self.assertRegex(self.card, r"if \(completing\) \{\n(\s*//[^\n]*\n)+\s*\} else if \(agent\)",
