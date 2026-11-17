@@ -180,7 +180,16 @@ class KeyedCardsMeasured(unittest.TestCase):
                        for k, v in m.items() if isinstance(v, list) and v}
                    for n, m in cls.measured["sizes"].items()}
         print("\nkeyed-cards measurements (median visible ms):", json.dumps(summary, sort_keys=True))
-        print("keyed-cards raw:", json.dumps(cls.measured, sort_keys=True))
+        # every raw sample, one short line per size and scenario, so the
+        # whole record survives a log reader that clips long lines
+        for n, m in cls.measured["sizes"].items():
+            for k, v in sorted(m.items()):
+                if not isinstance(v, list) or not v:
+                    continue
+                fields = [f"{f}=" + ",".join(str(s.get(f)) for s in v)
+                          for f in ("visible", "script", "layout", "kept")
+                          if any(f in s for s in v)]
+                print(f"kc {n} {k} " + " ".join(fields))
         b = S["browser"]
         b.eval("(async () => { if (window.__kbOrig) { S.state = window.__kbOrig; } "
                "await loadState(); render(); return true; })()")
