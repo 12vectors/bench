@@ -623,5 +623,98 @@ class LaunchEnforcement(Fixture):
         self.assertFalse(config.CONTEXT_DIR.exists(), "nothing was pinned")
 
 
+class ThroughTheServer(Fixture):
+    """The API is reachable whatever the page shows, so the hold lives
+    behind it: a move into in-progress is refused there, a move into
+    to-do schedules a check, and reading the Inputs tab writes nothing."""
+
+    def setUp(self):
+        super().setUp()
+        import httpd
+        from http.server import ThreadingHTTPServer
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), httpd.Handler)
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def call(self, path: str, payload: dict | None = None) -> tuple[int, dict]:
+        import urllib.error
+        import urllib.request
+        request = urllib.request.Request(
+            self.url + path, method="POST" if payload is not None else "GET",
+            data=json.dumps(payload).encode() if payload is not None else None,
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status, json.loads(response.read() or b"{}")
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read() or b"{}")
+
+    def test_move_into_in_progress_is_held_and_planning_is_not(self):
+        name = self.put("07-x.md", card("[gone](../../reference/gone.md)\n",
+                                        status="Backlog"), "backlog")
+        status, _ = self.call("/api/move", {"file": name, "from": "backlog", "to": "to-do"})
+        self.assertEqual(status, 200, "planning is never held for information")
+        inputs.wait(name)
+        status, body = self.call("/api/move", {"file": name, "from": "to-do",
+                                               "to": "in-progress"})
+        self.assertEqual(status, 409)
+        self.assertEqual(body["code"], "information")
+        self.assertIn("does not exist", body["error"])
+        self.assertTrue((self.work / "tasks" / "to-do" / name).exists(),
+                        "refused, not half-moved")
+        # fixing it permits the move
+        self.ref("gone.md", b"# here now\n")
+        status, _ = self.call("/api/move", {"file": name, "from": "to-do",
+                                            "to": "in-progress"})
+        self.assertEqual(status, 200)
+
+    def test_inputs_api_reads_classifies_and_rechecks(self):
+        name = self.put("07-x.md", card("See https://docs.example.com/d.\n"))
+        status, body = self.call(f"/api/card/inputs?file={name}&stage=to-do")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["state"], "needs-information")
+        self.assertFalse(config.INPUTS_DIR.exists(), "a read writes nothing")
+        status, stale = self.call("/api/card/inputs/classify", {
+            "file": name, "stage": "to-do", "briefSha": "0" * 64,
+            "source": "https://docs.example.com/d", "classification": "optional"})
+        self.assertEqual(status, 409)
+        self.assertTrue(stale["stale"])
+        status, _ = self.call("/api/card/inputs/classify", {
+            "file": name, "stage": "to-do", "briefSha": body["briefSha"],
+            "source": "https://docs.example.com/d", "classification": "optional"})
+        self.assertEqual(status, 200)
+        status, body = self.call(f"/api/card/inputs?file={name}&stage=to-do")
+        self.assertEqual(body["state"], "ready")
+        status, started = self.call("/api/card/inputs/check", {"file": name, "stage": "to-do"})
+        self.assertEqual(status, 200)
+        self.assertEqual(started["state"], "checking")
+        inputs.wait(name)
+
+    def test_state_carries_the_summary(self):
+        self.put("07-x.md", card("[gone](../../reference/gone.md)\n"))
+        status, body = self.call("/api/state")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["information"]["07-x.md"]["state"], "needs-information")
+
+
+class SyncedMoves(Fixture):
+    """A card that reached in-progress by a hand move or a sync keeps its
+    stage, reads honestly, and still cannot start."""
+
+    def test_a_card_moved_on_disk_keeps_its_stage_and_cannot_start(self):
+        import agents
+        subprocess.run(["git", "init", "-q", "-b", "main", str(self.app)], check=True)
+        name = self.put("07-x.md", card("See https://docs.example.com/d.\n",
+                                        status="In Progress"), "in-progress")
+        reading = self.reading(name, "in-progress")
+        self.assertEqual(reading["state"], "needs-information")
+        self.assertTrue(any("information" in r for r in
+                            agents.launch_refusals(name, "in-progress")))
+        self.assertTrue((self.work / "tasks" / "in-progress" / name).exists())
+        self.assertFalse(config.INPUTS_DIR.exists(), "nothing was fetched or recorded")
+
+
 if __name__ == "__main__":
     unittest.main()
