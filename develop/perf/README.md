@@ -189,3 +189,69 @@ A frame naming a revision the page has already painted asks for nothing.
 the data the page acts on). `verify/browser_cases/case_archive_confirmation.py`
 checks the real page in the sandboxed browser instead: the card leaves
 while a whole-board read is held back.
+
+# Cards painted by key (task 130)
+
+Raw output of `verify/browser_cases/case_keyed_cards.py`, in
+`130-keyed-before.txt` and `130-keyed-after.txt`: every sample, one line
+per board size and scenario, exactly as the `bench-browser` log printed
+them. Both arms ran in the same sandboxed container Chromium
+(151.0.7922.34, viewport 1440×900) on one Linux host, one commit apart:
+`b4f4fb2` (the page as on `refactor/bench-architecture`, evidence
+`ev:verification@0782c9479225`) and `2fb5479` (keyed painting, evidence
+`ev:verification@16aa8180d68b`). The case is the same at both.
+
+The boards are synthetic: the fixture's own cards cloned in the page into
+a state of N cards spread over the five stages, painted through the
+page's own `render()`. So this measures the page's rendering and the
+browser's layout and paint, not the server's read (task 127 measures
+that). Five repetitions per scenario. `visible` runs from the start of
+the paint until the next frame has run, which includes style, layout and
+paint; `script` is the synchronous `render()`; `layout` is what a read of
+`offsetHeight` straight afterwards forces.
+
+## Results (median `visible` ms)
+
+| cards | scenario | before | after |
+| --- | --- | --- | --- |
+| 100 | one card changed | 32.8 | 8.5 |
+| 100 | session event, board unchanged | 32.9 | 16.4 |
+| 500 | one card changed | 151.4 | 12.1 |
+| 500 | session event, board unchanged | 167.0 | 16.1 |
+| 1000 | first paint | 323.0 | 288.3 |
+| 1000 | **one card changed** | **307.6** | **24.8** |
+| 1000 | session event, board unchanged | 317.7 | 16.8 |
+| 1000 | identical reading | 313.7 | 13.6 |
+| 1000 | one column reversed | 307.6 | 50.4 |
+| 1000 | one card moved to another column | 308.0 | 20.1 |
+| 1000 | 20 readings in a burst (total) | 1435.4 | 151.7 |
+| 1000 | click on a card's ⋯ tools | 17.3 ¹ | 14.1 |
+
+**The target is met on this host:** one changed card at 1000 cards is
+visible in 24.8 ms (median; 23.9–27.7 ms over five samples), under the
+50 ms target. After the change a paint keeps every card node whose
+drawing did not change (`kept` = 999 of 1000 for one changed card, 1000
+of 1000 for a session event). Reversing a 200-card column moves every
+node and recreates none; it is the slowest update, at 43–63 ms, around
+the target.
+
+¹ Before, the first two tools clicks at 1000 cards took 342 and 347 ms
+(a whole-board rebuild each) and the last three took 4–17 ms with about
+1 ms of script, so they did not repaint the board at all; why those three
+clicks painted nothing was not investigated. The median hides that; the
+raw lines show it. At 500 cards every click before cost 151–173 ms.
+
+## What is not improved, and what is not measured
+
+- **The first paint is unchanged in kind**: at 1000 cards it still
+  builds 1000 cards (288 ms after, 323 ms before). Windowing the columns
+  would be the way to cut it, and it is not part of this card: it would
+  omit cards from the DOM (and so from in-page search), which the card
+  rules out. Reported here as a possible follow-up, not done.
+- **The detail view and the activity bar** still repaint on every
+  frame as before; this card keys the Board's cards and the Phases view's
+  lanes and cards. The column and lane headers are rewritten only when
+  their text changes.
+- **One host, one browser.** The numbers are relative. Interaction
+  latency is measured as a scripted click to the next frame, not as
+  input-to-paint from a physical device.

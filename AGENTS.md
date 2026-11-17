@@ -1307,6 +1307,19 @@ opens its detail view, focusing a card shows the same actions as hovering
 it, and closing the detail view returns focus to the card. Board and
 Phases draw the same card.
 
+**A card is redrawn only when what it shows changed** (task 130). The
+card builder writes a card as markup first (`cardSpec`), and that markup
+— with its actions and their armed or busy windows — is the card's
+signature. A paint keeps every card node whose signature is unchanged,
+moves one whose place changed, replaces one that changed and removes one
+that left (`lib/keyed.js`); the Board's columns and each phase lane are
+built once and kept. So a session event, or a reading that changes one
+card, leaves every other card's node — its focus, its open tools, a drag
+in flight — exactly as it was, and a replaced card takes focus with it.
+At 1000 cards one changed card is visible in about 25 ms where it took
+about 300 ms (`develop/perf/README.md`). The first paint still builds
+every card; nothing is windowed or left out of the page.
+
 The header carries one more chip, and unlike the sync and phase chips it
 is always there: **⚕ configuration** opens the Configuration check. Those two
 are states that come and go; this is the door to a diagnosis, and a door

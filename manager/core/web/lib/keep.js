@@ -1,7 +1,12 @@
 /* Keeping your place across a redraw: scroll marks, filed by key. */
 /* ── keeping your place across a redraw ───────────────────────────────── */
 
-/* The page redraws by demolition: every pass throws the DOM away and
+/* (The Board's columns and the phase lanes are kept by key since task 130
+   — lib/keyed.js — so their scrollers survive a paint as the same nodes;
+   the marks below cover their rare rebuilds and every view still painted
+   whole.)
+
+   The page redraws by demolition: every pass throws the DOM away and
    builds it again, so a scrolling element it rebuilds is a brand-new node
    and a new node's scrollTop is 0. render() runs on every SSE frame and a
    working agent emits an event per tool use, so without this you lose your
