@@ -252,6 +252,15 @@ ask: `source` sees only what is committed. Activate no gate until these
 checks have actually run, with their dependencies, in the operator's own
 environment.
 
+Since task 131 each run of a `source` check gets a checkout of its own
+(`state/verify/src-run/`), so `bench-backend`, `bench-docs` and
+`bench-browser` may run at once on one card and commit without one
+removing another's source. A runner from before task 131 shared one
+checkout per card and commit, and on such an operator these three must
+still be asked for one at a time. What stays shared — the cache home,
+ports and services the scripts use, `review` and `worktree` roots — is
+listed in AGENTS.md, "One source checkout per run".
+
 ## Browser: what has and has not run
 
 **Local path (Chromium over CDP on the host): never run positively.**

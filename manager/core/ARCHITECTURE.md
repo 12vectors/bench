@@ -335,6 +335,7 @@ neither.
 | verification evidence | `evidence` (`verify` decides when) | the run's reservation, `state.LOCK` | yes, once final |
 | reuse records | `evidence` (`verify._record_reuse` decides) | `state.LOCK`, the same hold as the reuse decision | no |
 | a clipped check log | `verify` | the run's own end | no |
+| source checkout ownership (one per run, task 131) | `verify` | the run's reservation: written before `git worktree add`, removed only by the run it names or a restart that proves it | yes |
 | progress records | `progress` | `progress._LOCK` | no |
 | required-check batches, review-entry record | `required` | `required._LOCK`, `_ON_REVIEW_LOCK` | no |
 | refinement jobs | `refine` | the refine registry | no |
@@ -360,6 +361,7 @@ plans.restore
 profiles.record
 settings.apply
 setupbase.write_decisions
+verify._provision_source
 ```
 
 Revision comparison is not compare-and-swap between processes. The setup

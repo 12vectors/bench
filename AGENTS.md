@@ -2239,6 +2239,14 @@ other direction. `gate-compare run … --expect runner-changed` previews
 it on a copy and fails if anything other than that transition changes.
 See `verify/README.md`.
 
+**Task 131 is one such transition.** Per-run source checkouts change
+`verify.py`, a runner file, so promoting that core reads every recorded
+pass `stale / runner-changed` once, exactly as above, and each required
+check on an open card needs one fresh run. No other dimension moves: the
+checkout path was never part of an identity. Historical evidence is not
+rewritten; a record made in a shared `verify/src/` checkout keeps naming
+that path.
+
 ### Every status word
 
 The words a card can wear, from `delivery.WORDS`, with the precedence
@@ -2654,6 +2662,74 @@ verification. A preparation step that declares `"network": true` runs
 with whatever network the machine has and the evidence says so —
 `network-policy` is pending, and a profile requiring it refuses.
 
+### One source checkout per run (task 131)
+
+A `source` check runs in a detached checkout of one exact commit that
+bench makes **for that run alone**: `local/state/verify/src-run/<card>-
+<commit>-<run>`, beside an ownership record (`<same name>.owner.json`)
+naming the run's evidence id, the card, the commit and the path. The
+record is written durably *before* `git worktree add`, so a checkout
+exists only once a run owns it. Two different checks of one card at one
+commit — a backend suite and a browser suite started together, say — get
+two checkouts pinned to the same commit, and the one that finishes first
+cannot remove or alter the other's files. They used to share
+`verify/src/<card>-<commit>`, and the first to finish deleted the source
+the other was still running in.
+
+- **Every executing run owns one; a join makes none.** A forced rerun
+  (`--again`) and another scope of the same check each get their own. A
+  duplicate request for a run already in flight joins it before any
+  checkout is made, and a request answered by an equal result already on
+  record (`REUSED`) makes no checkout at all.
+- **Release is proved, never assumed.** Every cleanup path — a pass, a
+  failure, a preparation failure, a program that could not start, a
+  timeout, a cancellation, a caller's stop — releases only the checkout
+  whose ownership record names *this* run and *this* path, inside
+  `src-run/`, not through a link, still this application's worktree, still
+  at the commit it was made at, with nothing uncommitted in it, and
+  through `git worktree remove` without `--force`. Anything else is kept
+  and the record's `root` says why. No prefix, card-wide or directory-wide
+  deletion exists.
+- **Interrupted creation is conservative.** A `git worktree add` that
+  failed before making anything leaves nothing, not even the ownership
+  record; one that left a partial directory is kept and named in the
+  refusal. A board restart releases what an earlier board's runs provably
+  owned under the same guards, tells that run's own evidence what became
+  of its checkout (and no other record), and keeps the rest. Recovery
+  proves ownership from the record and the checkout, not from whether the
+  dead board's check process is still alive: a clean, owned checkout is
+  removed even if an orphaned process is still running in it. That run's
+  evidence is already closed as `error`, so no result rides on it.
+- **What is kept, accumulates.** A checkout kept for a reason — a check
+  that left untracked, non-ignored files, say — is kept per run, so a
+  check that always does that leaves one kept checkout under `src-run/`
+  per run rather than one per card and commit. Each is named in its own
+  run's evidence; nothing bounds or prunes the total, and removing them is
+  a person's `git worktree remove` once nothing uses them.
+- **The old shared paths are never adopted.** A checkout under
+  `verify/src/` was shared by design, so no run can prove it owns one:
+  bench neither runs in, reuses, migrates nor removes it. The restart's
+  ticker line counts what is left (`verify.source_leftovers` lists it), and
+  removing it is a person's `git worktree remove` once nothing uses it.
+- **The path is provenance, not identity.** A unique directory does not
+  make an equal result different: the result identity binds the commit and
+  a digest of everything uncommitted, never the path, so a pass recorded
+  in one run's checkout is reused after that checkout is gone, and a new
+  commit still makes it `stale / source-changed`. A fresh checkout is
+  always `fresh` as its root class.
+
+What this does **not** isolate, said plainly: the git object database is
+shared (it is immutable), and so is the cache home a check's `HOME` and
+cache variables point at, which is keyed on the card and commit as it
+always was — so a `pip` or `npm` cache can be written by two runs at
+once. A check's own side effects (files it writes by absolute path,
+services, databases, ports it binds) are as shared as they ever were. And
+the `worktree` and `review` roots are unchanged: a `worktree` check runs
+in the card's own checkout and a `review` check in the review's pinned
+checkout, neither made nor removed by the verification, so two checks of
+those roots still share one directory. Independent source checkouts
+prevent one run deleting another's checkout; they are not a sandbox.
+
 ### The evidence
 
 One JSON record per verification under `local/state/evidence/`, written
@@ -2752,7 +2828,10 @@ Four things it guarantees:
   cancelled rather than as failures; a duplicate request for a check
   already in flight joins it rather than doubling it; and a `source`
   checkout with uncommitted work in it is kept and reported rather than
-  forced out.
+  forced out. Each record's `root` names the checkout that run actually
+  ran in (`checkout: "per-run"`, its ownership record) and what became of
+  it — `removed`, or `kept` with the reason — and one run's cleanup never
+  writes another run's record.
 
 ### On the board
 

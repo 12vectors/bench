@@ -33,6 +33,7 @@ import json
 import shutil
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.test_check_reuse import COUNTED, ReuseCase  # noqa: E402
 from tests.test_integration_gates import CARD, git  # noqa: E402
@@ -372,16 +373,14 @@ class TheRecordMustHoldToo(EquivalenceCase):
         self.assertEqual(row["equivalence"]["dimension"], "legacy-record")
 
     def test_a_pinned_checkout_that_was_not_clean_is_not_fresh(self):
-        (self.wt / ".gitignore").write_text("cache/\n", encoding="utf-8")
-        self.commit_in(self.wt, "ignore the cache\n")
-        sha = git(self.wt, "rev-parse", "HEAD").stdout.strip()
-        root = config.VERIFY_DIR / "src" / f"{CARD[:-3]}-{sha[:12]}"
-        root.parent.mkdir(parents=True, exist_ok=True)
-        git(self.repo, "worktree", "add", "--detach", str(root), sha)
-        (root / "cache").mkdir()
-        (root / "cache" / "built").write_text("stale\n", encoding="utf-8")
+        """A `source` checkout is made for each run since card 131, so it
+        is fresh by construction; a pinned checkout that was not clean — a
+        review's, which outlives one check — reads `reused`. That reading
+        is stood in for here, at the one function that makes it."""
         document = self.twins()
-        twin = self.twin_passes(document)
+        with mock.patch.object(resultidentity, "root_class",
+                               return_value="reused"):
+            twin = self.twin_passes(document)
         self.assertEqual(twin["identity"]["rootClass"], "reused")
         row = self.row()
         self.assertEqual(row["equivalence"]["dimension"], "root-class")

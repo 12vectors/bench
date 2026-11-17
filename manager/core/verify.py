@@ -209,14 +209,26 @@ def reserved(task: str, check: str, scope: str | None) -> dict | None:
 # ── the environment a check is given ───────────────────────────────────
 
 
-def _isolated_home(root: Path) -> Path:
+def _isolated_home(root: Path, described: dict | None = None) -> Path:
     """Where a check's caches, virtualenvs and build output are pointed.
 
-    One directory per execution root rather than one per verification, so
-    an expensive `pip install` is not repeated on every check — and never
-    the person's own `HOME`, and never another card's. A card has one run
-    at a time, so one card's home is one run's.
+    One directory per *logical* execution root rather than one per
+    verification, so an expensive `pip install` is not repeated on every
+    check — and never the person's own `HOME`, and never another card's.
+
+    A `source` check runs in a checkout of its own (task 131), whose path
+    is unique to the run. Its home is keyed on what that checkout *is* —
+    this card at this commit — exactly the key the shared checkout used to
+    give it, so caches carry over and a unique path does not make a new
+    home per run. That makes the home a shared cache between runs of one
+    card at one commit, as it always was: the checkout is isolated, the
+    cache is not, and the documentation says so.
     """
+    where = described or {}
+    if where.get("policy") == "source" and where.get("commit") \
+            and where.get("task"):
+        root = _legacy_source_path(str(where["task"])[:-3],
+                                   str(where["commit"]))
     return (config.VERIFY_DIR / "home"
             / resultidentity.digest(str(Path(root).resolve()))[:16])
 
@@ -895,6 +907,16 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
         shell["again"] = True
 
     # — the root, and nothing else's —
+    #
+    # A `worktree` or `review` root is found, never made, so it is found
+    # here, before the reservation. A `source` root is made — one checkout
+    # per run (task 131) — so only its commit is resolved here, and the
+    # checkout is made *after* the reservation: a duplicate request joins
+    # the run in flight without making a checkout of its own, and the
+    # checkout belongs to exactly one run from the moment it exists.
+    source_at: str | None = None
+    root: Path | None = None
+    prepared = False
     if fixture is not None:
         root, prepared = Path(str(fixture["root"])), False
         root_note = (f"a fixture {fixture.get('label') or 'the doctor'} made "
@@ -907,13 +929,17 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
         if stopped():
             return _not_run(shell)
         try:
-            root, prepared, root_note = _execution_root(found, task, manifest)
+            if found["root"] == "source":
+                source_at = _source_commit(found, task)
+                root_note = None
+            else:
+                root, prepared, root_note = _execution_root(found, task,
+                                                            manifest)
         except ValueError as exc:
-            reason = "root-foreign" if "checkout of another" in str(exc) \
-                else "root-unavailable"
-            return _refuse(shell, reason, str(exc))
-    shell["root"] = {"policy": found["root"], "path": str(root),
-                     "owned": prepared, "note": root_note}
+            return _refuse(shell, _root_reason(exc), str(exc))
+    if root is not None:
+        shell["root"] = {"policy": found["root"], "path": str(root),
+                         "owned": prepared, "note": root_note}
     if stopped():
         return _not_run(shell, root if prepared else None)
 
@@ -930,12 +956,44 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
         # reserve it: a stop that has landed by now runs nothing.
         late_stop = stopped()
         if not late_stop:
+            # The record a duplicate joins must already say what this run
+            # is: `running`, never the shell's initial `denied`. A `source`
+            # run's checkout is made after this hold, so without this a
+            # request joining while `git worktree add` runs would be handed
+            # a refusal with no reason for a run about to execute.
+            shell["outcome"] = "running"
+            shell["reason"] = None
+            shell["why"] = ("bench is making this run's source checkout"
+                            if source_at is not None
+                            else "bench is running it")
             _KEYS[key] = shell["id"]
             RUNNING[shell["id"]] = shell
             reserved = (task, check)
             _RESERVED[reserved] = _RESERVED.get(reserved, 0) + 1
     if late_stop:
         return _not_run(shell, root if prepared else None)
+
+    if source_at is not None:
+        # The run is reserved and is this request's alone, so the checkout
+        # made now is this run's: a unique path, an ownership record
+        # written before git makes anything, pinned to the commit resolved
+        # above. A failure here gives the reservation back and is recorded
+        # as a refusal (`denied`, with its reason), exactly as a refusal
+        # before the reservation would be; a stop here gives it back and
+        # leaves no evidence, as a stop before the reservation would.
+        try:
+            root, prepared, root_note = _execution_root(
+                found, task, manifest, run=shell["id"], commit=source_at)
+        except ValueError as exc:
+            _unreserve(key, shell)
+            return _refuse(shell, _root_reason(exc), str(exc))
+        shell["root"] = {"policy": "source", "path": str(root),
+                         "owned": prepared, "note": root_note,
+                         "commit": source_at, "checkout": "per-run",
+                         "ownership": str(_owner_path(root))}
+        if stopped():
+            _unreserve(key, shell)
+            return _not_run(shell, root if prepared else None)
     shell["outcome"] = "running"
     shell["reason"] = None
     shell["why"] = "bench is running it"
@@ -973,13 +1031,28 @@ NOT_RUN_WHY = ("stopped before bench reserved a run of it, so nothing was "
                "run and no evidence was recorded")
 
 
+def _unreserve(key: str, shell: dict) -> None:
+    """Give back a reservation no run will follow. The generation counter
+    is left where it is: a reuse decision that saw it move reads the
+    records again, which costs a run at worst and never a wrong reuse."""
+    with state.LOCK:
+        RUNNING.pop(shell["id"], None)
+        if _KEYS.get(key) == shell["id"]:
+            _KEYS.pop(key, None)
+
+
+def _root_reason(exc: Exception) -> str:
+    return "root-foreign" if "checkout of another" in str(exc) \
+        else "root-unavailable"
+
+
 def _not_run(shell: dict, owned_root: Path | None = None) -> dict:
     """A caller's stop that landed before a run existed. Nothing ran and
     nothing is stored: the answer is the caller's alone, with no evidence
     id, because there is no evidence. A checkout this request made for the
     run is given back first, under `_release_root`'s rules."""
     if owned_root is not None and shell.get("root"):
-        _release_root(shell["root"], owned_root)
+        _release_root(shell["root"], owned_root, shell["id"])
     out = {k: v for k, v in shell.items() if k not in ("proc", "cancelling")}
     out.update(id=None, outcome="cancelled", reason="cancelled-by-request",
                why=NOT_RUN_WHY, notRun=True, log=None)
@@ -1082,6 +1155,11 @@ def _prospective(shell: dict, check: dict, task: str, manifest: dict,
     root that does not exist yet is described rather than made."""
     policy = check["root"]
     if policy == "source":
+        # Every run of a `source` check gets a fresh checkout of its own
+        # (task 131), so what one would read is a clean checkout of the
+        # branch tip — described, never made, and never read off a
+        # checkout some other run owns. Its path is the run's and is not
+        # part of the identity, so naming it here would change nothing.
         stem = task[:-3]
         branch = config.branch_for(stem)
         head = resultidentity.git(config.app_repo(), "rev-parse", "--verify",
@@ -1089,16 +1167,10 @@ def _prospective(shell: dict, check: dict, task: str, manifest: dict,
         if head.returncode != 0:
             return None
         sha = head.stdout.strip()
-        root = config.VERIFY_DIR / "src" / f"{stem}-{sha[:12]}"
-        if root.is_dir():
-            if config.worktree_mismatch(root):
-                return None
-            source = resultidentity.source_identity(root)
-            klass = resultidentity.root_class("source", root)
-        else:
-            source = {"commit": sha, "bound": True, "dirty": [],
-                      "sourceId": _clean_source_id(sha)}
-            klass = "fresh"
+        root = _legacy_source_path(stem, sha)
+        source = {"commit": sha, "bound": True, "dirty": [],
+                  "sourceId": _clean_source_id(sha)}
+        klass = "fresh"
     else:
         try:
             # `worktree` and `review` roots are found, never made, so this
@@ -1329,16 +1401,18 @@ def public_reuse(reuse: dict | None) -> dict | None:
 
 
 
-def _execution_root(check: dict, task: str,
-                    manifest: dict) -> tuple[Path, bool, str | None]:
+def _execution_root(check: dict, task: str, manifest: dict, *,
+                    run: str | None = None,
+                    commit: str | None = None) -> tuple[Path, bool, str | None]:
     """Where this check runs, and whether *this verification* made it.
 
     Three answers, and the application checkout is not one of them. A
     `worktree` check runs in the card's own checkout — which bench
     created, for this card, and which a request for another card can never
     name because the path is derived from the task. A `source` check runs
-    in a detached checkout of one exact commit that bench adds here and
-    removes afterwards. A `review` check runs in the checkout bench pinned
+    in a detached checkout of one exact commit that bench adds here for
+    this one run (`run`, its evidence id) and removes afterwards — never
+    a checkout another run made or is using (task 131). A `review` check runs in the checkout bench pinned
     for the PR review that asked, which bench made and owns for that run's
     whole life rather than for this one verification — so `owned` is False
     for it, and `_cleanup` leaves it to `reviews.release`.
@@ -1362,29 +1436,228 @@ def _execution_root(check: dict, task: str,
                 f"the branch out for it")
         return root, False, None
 
-    # source: a checkout of one commit, made here and owned here.
-    branch = config.branch_for(stem)
-    commit = resultidentity.git(config.app_repo(), "rev-parse", "--verify", f"{branch}^{{commit}}")
-    if commit.returncode != 0:
+    # source: a checkout of one commit, made here for one run, owned by it.
+    sha = commit or _source_commit(check, task)
+    if not run:
+        raise ValueError(
+            f"the check '{check['name']}' runs in a checkout bench makes for "
+            f"one run, and no run was named to own it — nothing was checked "
+            f"out")
+    root = _provision_source(check, task, sha, run)
+    return root, True, (f"bench checked {config.branch_for(stem)} out at "
+                        f"{sha[:12]} for this run alone")
+
+
+# ── source checkouts: one per run, owned by that run (task 131) ────────
+#
+# A `source` check used to run in `src/<stem>-<commit>`, one path per card
+# and commit, reused by whichever run found it there and removed by
+# whichever run finished first — so two checks of one card at one commit
+# shared a checkout and the first to finish deleted the other's source.
+# Now every independently executing run gets its own detached checkout
+# under `src-run/`, named for the card, the commit and the run, and an
+# ownership record beside it (`<name>.owner.json`) written *before* git
+# makes anything. Every release asks that record: it must name this run
+# and this path, and the checkout must be this application's worktree, at
+# the commit it was pinned to, with nothing uncommitted in it. Anything
+# else is kept and said. The object database stays shared; the mutable
+# checkout does not. Paths under the old `src/` were shared by design, so
+# no run can prove it owns one: they are never adopted, reused or removed
+# here, only reported (`source_leftovers`).
+
+def _source_base() -> Path:
+    return config.VERIFY_DIR / "src-run"
+
+
+def _legacy_source_path(stem: str, sha: str) -> Path:
+    """Where a shared source checkout of this card and commit used to be.
+    Named, never made: the isolated home is still keyed on it, and
+    `source_leftovers` reports what is left there."""
+    return config.VERIFY_DIR / "src" / f"{stem}-{sha[:12]}"
+
+
+def _owner_path(root: Path) -> Path:
+    return root.parent / f"{root.name}.owner.json"
+
+
+def _source_commit(check: dict, task: str) -> str:
+    """The commit a `source` check of this card would run against now —
+    read, never checked out."""
+    branch = config.branch_for(task[:-3])
+    found = resultidentity.git(config.app_repo(), "rev-parse", "--verify",
+                               f"{branch}^{{commit}}")
+    if found.returncode != 0:
         raise ValueError(
             f"the check '{check['name']}' runs against this card's source and "
             f"there is no branch {branch} to check out — nothing has been "
             f"committed for this card yet")
-    sha = commit.stdout.strip()
-    root = config.VERIFY_DIR / "src" / f"{stem}-{sha[:12]}"
-    if root.is_dir():
-        mismatch = config.worktree_mismatch(root)
-        if mismatch:
-            raise ValueError(mismatch)
-        return root, True, f"reusing bench's checkout of {branch} at {sha[:12]}"
-    root.parent.mkdir(parents=True, exist_ok=True)
-    added = resultidentity.git(config.app_repo(), "worktree", "add", "--detach",
-                 str(root), sha, timeout=120)
-    if added.returncode != 0:
+    return found.stdout.strip()
+
+
+def _source_name(task: str, sha: str, run: str) -> str:
+    return (f"{task[:-3]}-{sha[:12]}-"
+            f"{resultidentity.digest('source-run/1', run)[:12]}")
+
+
+def _provision_source(check: dict, task: str, sha: str, run: str) -> Path:
+    """Make this run's checkout, or refuse with nothing adopted.
+
+    The ownership record goes first, durably, so a board that dies while
+    git is still writing leaves a checkout that `recover` can prove is
+    this run's. A path or record already there is never adopted — a run
+    owns only what it made. A `git worktree add` that fails gives back
+    what is provably its own and nothing else."""
+    base = _source_base()
+    base.mkdir(parents=True, exist_ok=True)
+    root = base / _source_name(task, sha, run)
+    owner = _owner_path(root)
+    if os.path.lexists(root) or os.path.lexists(owner):
         raise ValueError(
-            f"bench could not check {branch} out for the check "
-            f"'{check['name']}': {(added.stderr or added.stdout).strip()[:200]}")
-    return root, True, f"bench checked {branch} out at {sha[:12]} for this"
+            f"{root} is already there, and bench makes a checkout for one run "
+            f"and never adopts one it cannot prove this run made — nothing "
+            f"was checked out or removed")
+    record = {"v": 1, "kind": "verify-source-owner", "evidence": run,
+              "task": task, "commit": sha, "path": str(root),
+              "created": time.time(), "pid": os.getpid(),
+              "state": "creating"}
+    records.write_json(owner, record, durable=True)
+    added = resultidentity.git(config.app_repo(), "worktree", "add",
+                               "--detach", str(root), sha, timeout=120)
+    if added.returncode != 0:
+        said = (added.stderr or added.stdout).strip()[:200]
+        if not os.path.lexists(root):
+            owner.unlink(missing_ok=True)
+            raise ValueError(
+                f"bench could not check {sha[:12]} out for the check "
+                f"'{check['name']}': {said}")
+        kept: dict = {}
+        _release_root(kept, root, run)
+        raise ValueError(
+            f"bench could not finish checking {sha[:12]} out for the check "
+            f"'{check['name']}': {said} — "
+            + ("what it had made was removed"
+               if kept.get("removed") else
+               f"the partial checkout was kept: {kept.get('kept')}"))
+    head = resultidentity.git(root, "rev-parse", "HEAD")
+    if head.returncode != 0 or head.stdout.strip() != sha:
+        kept = {}
+        _release_root(kept, root, run)
+        raise ValueError(
+            f"bench's checkout at {root} is not at {sha[:12]} after it was "
+            f"made, so the check '{check['name']}' was not run against it")
+    records.write_json(owner, {**record, "state": "ready"}, durable=True)
+    return root
+
+
+def _proven_owner(root: Path, run: str) -> tuple[dict | None, str | None]:
+    """The ownership record that makes `root` this run's to remove — or
+    why there is none. Proof is the record bench wrote before making the
+    checkout, naming this run and this exact path, inside bench's own
+    source directory and not through a link. A path is never enough."""
+    base = _source_base()
+    try:
+        if not root.is_absolute() or root.parent != base \
+                or root.is_symlink() \
+                or (root.exists()
+                    and root.resolve(strict=True).parent
+                    != base.resolve(strict=True)):
+            return None, (f"{root} is not a checkout bench makes for one run, "
+                          f"so it was left as it is")
+    except OSError as exc:
+        return None, f"{root} could not be inspected ({exc}), so it was kept"
+    owner = _owner_path(root)
+    if owner.is_symlink():
+        return None, (f"the ownership record beside {root} is a link, so "
+                      f"ownership is not proven and it was kept")
+    found = records.read_json(owner, None, expect=dict)
+    if not found or found.get("kind") != "verify-source-owner":
+        return None, (f"no ownership record proves {root} belongs to this "
+                      f"run, so it was kept — remove it by hand with "
+                      f"`git worktree remove` once nothing is using it")
+    if found.get("evidence") != run or found.get("path") != str(root):
+        return None, (f"{root} belongs to another run "
+                      f"({found.get('evidence')}), so this run left it alone")
+    return found, None
+
+
+def _release_root(described: dict, root: Path, run: str | None = None) -> None:
+    """Give back a `source` checkout this run made: through git, never
+    `--force`, never one with uncommitted work in it, and never one this
+    run cannot prove it made. What happened is written into `described` —
+    the record's `root` block."""
+    owner, why = _proven_owner(root, run or "")
+    if owner is None:
+        described["kept"] = why
+        return
+    if not os.path.lexists(root):
+        _owner_path(root).unlink(missing_ok=True)
+        described["released"] = "absent"
+        return
+    mismatch = config.worktree_mismatch(root)
+    if mismatch:
+        described["kept"] = f"{mismatch} — so it was kept"
+        return
+    head = resultidentity.git(root, "rev-parse", "HEAD")
+    if head.returncode != 0 or head.stdout.strip() != owner.get("commit"):
+        described["kept"] = (
+            f"bench's checkout at {root} is no longer at the commit it was "
+            f"made at ({str(owner.get('commit') or '')[:12]}), so it was kept "
+            f"rather than removed")
+        return
+    dirty = config.dirty_files(root)
+    if dirty:
+        described["kept"] = (
+            f"{len(dirty)} uncommitted change"
+            f"{'' if len(dirty) == 1 else 's'} in bench's own checkout at "
+            f"{root}, so it was kept rather than removed")
+        return
+    removed = resultidentity.git(config.app_repo(), "worktree", "remove", str(root), timeout=60)
+    if removed.returncode != 0:
+        described["kept"] = (
+            f"git would not remove bench's checkout at {root}: "
+            f"{(removed.stderr or removed.stdout).strip().splitlines()[-1][:120]}"
+            if (removed.stderr or removed.stdout).strip() else
+            f"git would not remove bench's checkout at {root}")
+        return
+    _owner_path(root).unlink(missing_ok=True)
+    described["removed"] = True
+
+
+def source_leftovers() -> list[dict]:
+    """Source checkouts no live run accounts for, each with what to do —
+    read, never removed. A shared checkout from before per-run ownership,
+    and anything under `src-run/` with no ownership record, are a
+    person's to look at: bench cannot prove whose they are."""
+    found: list[dict] = []
+    legacy = config.VERIFY_DIR / "src"
+    if legacy.is_dir() and not legacy.is_symlink():
+        for entry in sorted(legacy.iterdir()):
+            found.append({
+                "path": str(entry), "kind": "legacy-shared",
+                "why": (f"{entry} is a shared source checkout from before each "
+                        f"run had its own. No run can prove it owns it, so "
+                        f"bench neither reuses nor removes it — remove it with "
+                        f"`git worktree remove` once nothing is using it")})
+    base = _source_base()
+    if base.is_dir() and not base.is_symlink():
+        with state.LOCK:
+            live = set(RUNNING)
+        for entry in sorted(base.iterdir()):
+            if entry.name.endswith(".owner.json"):
+                continue
+            owner = records.read_json(_owner_path(entry), None, expect=dict)
+            if owner and owner.get("evidence") in live:
+                continue
+            found.append({
+                "path": str(entry),
+                "kind": "owned" if owner else "unowned",
+                "run": (owner or {}).get("evidence"),
+                "why": (f"{entry} belonged to {owner.get('evidence')}, which "
+                        f"is no longer running, and was kept when it ended"
+                        if owner else
+                        f"{entry} has no ownership record, so bench cannot "
+                        f"say which run made it and leaves it alone")})
+    return found
 
 
 def _review_root(check: dict, task: str,
@@ -1438,7 +1711,8 @@ def _execute(record: dict, check: dict, root: Path, owned: bool, *,
              env_key: bytes | None = None) -> dict:
     """Preparation, then the check, then the evidence. One slot at a time
     so two verifications do not fight over the machine."""
-    home = _isolated_home(root)
+    home = _isolated_home(root, {**(record.get("root") or {}),
+                                 "task": record.get("task")})
     tmp = config.VERIFY_DIR / "tmp" / evidence.slug(record["id"])
     for directory in (home, tmp, evidence.log_path_of(record["id"]).parent):
         directory.mkdir(parents=True, exist_ok=True)
@@ -1716,29 +1990,7 @@ def _cleanup(record: dict, owned: bool, root: Path) -> None:
         shutil.rmtree(tmp, ignore_errors=True)
     if not owned:
         return
-    _release_root(record["root"], root)
-
-
-def _release_root(described: dict, root: Path) -> None:
-    """Give back a `source` checkout this verification made: through git,
-    never `--force`, and never one with uncommitted work in it. What
-    happened is written into `described` — the record's `root` block."""
-    dirty = config.dirty_files(root)
-    if dirty:
-        described["kept"] = (
-            f"{len(dirty)} uncommitted change"
-            f"{'' if len(dirty) == 1 else 's'} in bench's own checkout at "
-            f"{root}, so it was kept rather than removed")
-        return
-    removed = resultidentity.git(config.app_repo(), "worktree", "remove", str(root), timeout=60)
-    if removed.returncode != 0:
-        described["kept"] = (
-            f"git would not remove bench's checkout at {root}: "
-            f"{(removed.stderr or removed.stdout).strip().splitlines()[-1][:120]}"
-            if (removed.stderr or removed.stdout).strip() else
-            f"git would not remove bench's checkout at {root}")
-    else:
-        described["removed"] = True
+    _release_root(record["root"], root, record["id"])
 
 
 # ── cancelling, and what a stopped board owes ──────────────────────────
@@ -1819,7 +2071,56 @@ def recover() -> list[dict]:
                         f"{'' if len(closed) == 1 else 's'} left running by an "
                         f"earlier board recorded as unknown — nothing was "
                         f"re-run")})
+    _recover_sources()
     return closed
+
+
+def _recover_sources() -> dict:
+    """Source checkouts an earlier board made and never gave back.
+
+    Each one with an ownership record naming a run this board is not
+    running is released under `_release_root`'s guards — the record, the
+    path, the repository, the pinned commit, nothing uncommitted — and the
+    run's own evidence (only that run's, and only when it names this very
+    checkout) is told what became of it. What cannot be proved is kept and
+    named in one ticker line: never removed, never migrated, never
+    adopted."""
+    released: list[str] = []
+    base = _source_base()
+    if base.is_dir() and not base.is_symlink():
+        for owner_file in sorted(base.glob("*.owner.json")):
+            owner = records.read_json(owner_file, None, expect=dict)
+            run = str((owner or {}).get("evidence") or "")
+            with state.LOCK:
+                if not run or run in RUNNING:
+                    continue
+            root = base / owner_file.name[:-len(".owner.json")]
+            described: dict = {}
+            _release_root(described, root, run)
+            stored = evidence.read(run) if evidence.is_evidence_id(run) \
+                else None
+            where = (stored or {}).get("root") or {}
+            if stored and where.get("path") == str(root) \
+                    and stored.get("outcome") not in evidence.LIVE:
+                where = dict(where)
+                where.update(described)
+                where["recovered"] = ("released by a later board, which "
+                                      "proved from its ownership record that "
+                                      "this run made it")
+                stored["root"] = where
+                evidence.store(stored)
+            if described.get("removed") or described.get("released"):
+                released.append(str(root))
+    left = source_leftovers()
+    if released or left:
+        state.record_board_event({
+            "kind": "verify", "actor": "board", "file": "",
+            "summary": (f"{len(released)} source checkout"
+                        f"{'' if len(released) == 1 else 's'} an earlier board "
+                        f"left behind given back; {len(left)} kept because "
+                        f"bench cannot prove they are unused and unchanged"
+                        + (f" — {left[0]['why']}" if left else ""))})
+    return {"released": released, "kept": left}
 
 
 
