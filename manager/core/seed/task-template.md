@@ -62,6 +62,21 @@ tempting neighbours — delete rather than leave empty.
 
 - Not this, even though it is nearby
 
+## Inputs and required tools
+
+What the work needs to read and to use, one line each. Bench checks every
+line before implementation starts, gives the run the inputs it can use and
+refuses to start while anything required is unusable. A link in the text
+above that is not listed here is proposed for this list, and counts as
+required until someone classifies it. Write `- None.` when the card needs
+nothing beyond the code.
+
+- input, required: ../../reference/some-spec.md — what the run needs it for
+- input, optional: ../../reference/screenshot.png — useful, not essential
+- input, non-input: https://example.com/background — context for people only
+- tool, required: check unit — or `command <prefix>`, `image-reading`,
+  `pdf-reading`, `capability <word>`
+
 ## Acceptance
 
 Observable outcomes, not implementation steps — review agents judge the

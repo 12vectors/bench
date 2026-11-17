@@ -18,7 +18,8 @@ TEMPLATE = (Path(__file__).resolve().parents[1]
             / "manager" / "core" / "seed" / "task-template.md")
 
 LOAD_BEARING_HEADINGS = [
-    "Context", "What to build", "Acceptance", "Open questions", "Notes",
+    "Context", "What to build", "Inputs and required tools", "Acceptance",
+    "Open questions", "Notes",
 ]
 
 # Organisation process the board either does mechanically or doesn't own —
