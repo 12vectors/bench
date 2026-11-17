@@ -960,6 +960,10 @@ def board(collected: dict) -> dict:
     """Per card that names information, its compact reading — the same
     resolver, read once per card. Done cards are history and are skipped."""
     out: dict = {}
+    # one resolution of the work profile for the whole read: nothing a
+    # reading takes from it (the harness, its delivery route, the checks
+    # and grants) depends on which card's worktree path it was asked with
+    profile = None
     for group in collected.get("stages") or []:
         if group.get("slug") == "done":
             continue
@@ -968,7 +972,10 @@ def board(collected: dict) -> dict:
             if not body or not _mentions_anything(body):
                 continue
             try:
-                found = summary(readiness(task["file"], group["slug"], text=body))
+                if profile is None:
+                    profile = profiles.resolve("work", worktree=config.WORKTREES / task["file"][:-3])
+                found = summary(readiness(task["file"], group["slug"], text=body,
+                                          found=profile))
             except (OSError, ValueError):
                 continue
             if found:
