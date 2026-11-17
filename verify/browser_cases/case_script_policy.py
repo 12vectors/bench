@@ -55,6 +55,13 @@ MATCHED_VIEWS = ["board", "phases", "flight", "focus", "detail"]
 # relative times ("3s") and the caret are the expected sources of noise
 TOLERANCE = 0.005
 CARD = "04-check-keyboard-focus.md"
+# views a later card changed on purpose, so they can no longer match the
+# pre-module build: still shot, compared and recorded in the metrics, never
+# asserted. Each entry names the card and what it changed.
+CHANGED_ON_PURPOSE = {
+    "detail-390x844-night": "task 132 added the Inputs tab; at 390px the tab row wraps",
+    "detail-390x844-day": "task 132 added the Inputs tab; at 390px the tab row wraps",
+}
 
 
 def setUpModule():
@@ -347,8 +354,10 @@ class TheScriptRunsClean(unittest.TestCase):
                     worst = max(worst, share)
                     results[key] = round(share, 5)
         S["metrics"]["matchedViews"] = {"baseline": BASELINE, "tolerance": TOLERANCE,
-                                        "differing": results, "worst": round(worst, 5)}
-        over = {k: v for k, v in results.items() if v > TOLERANCE}
+                                        "differing": results, "worst": round(worst, 5),
+                                        "changedOnPurpose": CHANGED_ON_PURPOSE}
+        over = {k: v for k, v in results.items()
+                if v > TOLERANCE and k not in CHANGED_ON_PURPOSE}
         self.assertEqual({}, over, f"views differ beyond {TOLERANCE:.1%} of their pixels")
 
 

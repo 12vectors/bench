@@ -96,11 +96,11 @@ class InputsTab(unittest.TestCase):
                         "the detail view did not open")
         # by keyboard: the tab row is one stop, the arrows move along it
         b.eval("document.querySelector('#dtab-overview').focus()")
-        b.key("ArrowRight")
-        b.key("ArrowRight")
-        self.assertTrue(b.wait("document.activeElement && document.activeElement.id === 'dtab-inputs'"
-                               " && !document.querySelector('#dsec-inputs').hidden", 5),
-                        "the arrows did not reach the Inputs tab")
+        for key in ("brief", "inputs"):
+            b.key("ArrowRight")
+            self.assertTrue(b.wait(f"document.activeElement && document.activeElement.id === 'dtab-{key}'"
+                                   f" && !document.querySelector('#dsec-{key}').hidden", 5),
+                            f"ArrowRight did not reach the {key} tab")
         self.assertTrue(b.wait("!!document.querySelector('#inpState')", 10),
                         "the Inputs reading never drew")
 
