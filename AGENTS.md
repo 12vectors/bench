@@ -2675,7 +2675,17 @@ the other was still running in.
   record; one that left a partial directory is kept and named in the
   refusal. A board restart releases what an earlier board's runs provably
   owned under the same guards, tells that run's own evidence what became
-  of its checkout (and no other record), and keeps the rest.
+  of its checkout (and no other record), and keeps the rest. Recovery
+  proves ownership from the record and the checkout, not from whether the
+  dead board's check process is still alive: a clean, owned checkout is
+  removed even if an orphaned process is still running in it. That run's
+  evidence is already closed as `error`, so no result rides on it.
+- **What is kept, accumulates.** A checkout kept for a reason — a check
+  that left untracked, non-ignored files, say — is kept per run, so a
+  check that always does that leaves one kept checkout under `src-run/`
+  per run rather than one per card and commit. Each is named in its own
+  run's evidence; nothing bounds or prunes the total, and removing them is
+  a person's `git worktree remove` once nothing uses them.
 - **The old shared paths are never adopted.** A checkout under
   `verify/src/` was shared by design, so no run can prove it owns one:
   bench neither runs in, reuses, migrates nor removes it. The restart's
