@@ -35,7 +35,8 @@ import agents  # noqa: E402
 import commands as commands_mod  # noqa: E402
 import config  # noqa: E402
 import drive as drive_mod  # noqa: E402
-import github  # noqa: E402
+import completion  # noqa: E402
+import changes  # noqa: E402
 import phases  # noqa: E402
 import reports  # noqa: E402
 import state  # noqa: E402
@@ -179,7 +180,7 @@ class Workspace(unittest.TestCase):
         self.addCleanup(config._GIT_ROOTS.clear)
 
         for registry in (state.AGENTS, state.BOARD_EVENTS, state.EXPECTED_MOVES,
-                         github.PR_STATE, phases.SNAPSHOTS):
+                         changes.PR_STATE, phases.SNAPSHOTS):
             registry.clear()
             self.addCleanup(registry.clear)
         state.COMMIT_HOOKS.clear()
@@ -448,7 +449,7 @@ class ExternalBookkeeping(Workspace):
         taskfiles.move_task(CARD_FILE, "backlog", "to-do")
         taskfiles.move_task(CARD_FILE, "to-do", "in-progress")
         taskfiles.move_task(CARD_FILE, "in-progress", "review")
-        github._write_pr_line(CARD_FILE, PR_URL)
+        changes._write_pr_line(CARD_FILE, PR_URL)
 
         self.assertIn(f"**PR:** {PR_URL}", self.body(CARD_FILE))
         self.assertTrue(any("PR opened" in s for s in self.work_subjects()))
@@ -569,7 +570,7 @@ class ExternalPhase(Workspace):
                 break
         self.assertEqual(self.stage_of(self.PHASE_FILE), "review")
 
-        github.complete_task(self.PHASE_FILE, "review")
+        completion.complete_task(self.PHASE_FILE, "review")
 
         self.assertEqual(self.stage_of(self.PHASE_FILE), "done")
         self.assertEqual(self.stage_of(self.ONE), "done")
@@ -645,7 +646,7 @@ class ExternalReferences(Workspace):
 
     def test_the_pr_body_does_not_invent_an_application_path(self):
         task = taskfiles.read_task(self.tasks / "review" / CARD_FILE, "review")
-        body = github._pr_body(CARD_FILE, task)
+        body = changes._pr_body(CARD_FILE, task)
 
         self.assertNotIn(".task-manager/tasks/review/", body)
         self.assertIn(CARD_FILE, body)
@@ -689,7 +690,7 @@ class VendoredReferencesAreUnchanged(unittest.TestCase):
     def test_the_pr_body_still_names_the_tracked_task_path(self):
         task = taskfiles.read_task(
             config.TASKS / "review" / CARD_FILE, "review")
-        body = github._pr_body(CARD_FILE, task)
+        body = changes._pr_body(CARD_FILE, task)
         self.assertIn(".task-manager/tasks/review/", body)
         self.assertNotIn("outside this repository", body)
 

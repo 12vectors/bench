@@ -37,6 +37,9 @@ import config  # noqa: E402  (on sys.path once the case module is imported)
 import gates  # noqa: E402
 import profiles  # noqa: E402
 import settings  # noqa: E402
+import evidence  # noqa: E402
+import resultidentity  # noqa: E402
+import staleness  # noqa: E402
 import verify  # noqa: E402
 
 SECRET = "postgres://bench:hunter2-very-secret@db.example/test"
@@ -91,7 +94,7 @@ class IdentityCase(GateCase):
     def reading(self, found: dict) -> dict:
         verify.forget_cached()
         gates.forget_cached()
-        return verify.outcome_now(verify.read(found["id"]))
+        return staleness.outcome_now(evidence.read(found["id"]))
 
 
 # ── what a new record carries ──────────────────────────────────────────
@@ -104,11 +107,11 @@ class ANewRecordCarriesItsIdentity(IdentityCase):
         self.assertEqual(found["outcome"], "passed")
         self.assertTrue(found["resultId"].startswith("result:"))
         identity = found["identity"]
-        for dimension in verify.IDENTITY_DIMENSIONS:
+        for dimension in resultidentity.IDENTITY_DIMENSIONS:
             self.assertIn(dimension, identity)
         self.assertEqual(identity["rootClass"], "worktree")
-        self.assertEqual(identity["runner"], verify.RUNNER_REVISION)
-        self.assertEqual(found["resultId"], verify.result_id(identity))
+        self.assertEqual(identity["runner"], resultidentity.RUNNER_REVISION)
+        self.assertEqual(found["resultId"], resultidentity.result_id(identity))
         self.assertEqual(found["checkSubstance"], identity["check"])
         provenance = found["provenance"]
         self.assertEqual(provenance["policyRevision"], found["policyRevision"])
@@ -140,9 +143,11 @@ class ANewRecordCarriesItsIdentity(IdentityCase):
         self.assertEqual(found["outcome"], "passed")
         self.assertEqual(found["identity"]["rootClass"], "fresh")
 
-    def test_a_source_checkout_holding_ignored_state_is_not_fresh(self):
-        """Bench reuses a `source` checkout of the same commit. One that
-        already holds ignored state is `reused`, not `fresh`."""
+    def test_a_legacy_shared_checkout_is_not_adopted(self):
+        """Bench used to reuse a `source` checkout of the same commit, and
+        one already holding ignored state read `reused`. Since card 131
+        every run makes its own: a shared checkout at the old path is
+        neither run in nor removed, and the run's own reads `fresh`."""
         (self.wt / ".gitignore").write_text("cache/\n", encoding="utf-8")
         self.commit_in(self.wt, "ignore the cache\n")
         sha = git(self.wt, "rev-parse", "HEAD").stdout.strip()
@@ -152,7 +157,12 @@ class ANewRecordCarriesItsIdentity(IdentityCase):
         (root / "cache").mkdir()
         (root / "cache" / "built").write_text("stale build\n", encoding="utf-8")
         found = self.run_check(self.document(root="source"))
-        self.assertEqual(found["identity"]["rootClass"], "reused")
+        self.assertEqual(found["identity"]["rootClass"], "fresh")
+        self.assertNotEqual(found["root"]["path"], str(root))
+        self.assertTrue((root / "cache" / "built").exists(),
+                        "the legacy checkout is left exactly as it was")
+        self.assertEqual(resultidentity.root_class("source", root), "reused",
+                         "a checkout holding ignored state still reads reused")
 
 
 # ── E1 / R1 ────────────────────────────────────────────────────────────
@@ -182,7 +192,7 @@ class UnrelatedPolicyIsProvenance(IdentityCase):
         self.assertNotEqual(provenance["policyNow"], found["policyRevision"])
         self.assertIn("provenance, not a reason", provenance["note"])
         # the record itself is unchanged: provenance is what it was
-        self.assertEqual(verify.read(found["id"])["policyRevision"],
+        self.assertEqual(evidence.read(found["id"])["policyRevision"],
                          found["policyRevision"])
         self.assertEqual(self.decide()["decision"], "allowed")
 
@@ -261,9 +271,9 @@ class EachDimensionHasItsReason(IdentityCase):
             config._ENV["BENCH_TEST_SOMETHING_NEW"] = "1"
 
         def runner(doc):
-            self.addCleanup(setattr, verify, "RUNNER_REVISION",
-                            verify.RUNNER_REVISION)
-            verify.RUNNER_REVISION = "f" * 64
+            self.addCleanup(setattr, resultidentity, "RUNNER_REVISION",
+                            resultidentity.RUNNER_REVISION)
+            resultidentity.RUNNER_REVISION = "f" * 64
 
         return [
             ("dirty source", dirty, "source-changed", "changed since it ran"),
@@ -321,12 +331,12 @@ class EachDimensionHasItsReason(IdentityCase):
                 why = reading["freshness"]["changed"][
                     reading["freshness"]["reasons"].index(reason)]
                 self.assertIn(named, why, label)
-                if reason not in verify.SOURCE_REASONS:
-                    self.assertIn(verify.STALE_REMEDIES[reason], why)
+                if reason not in evidence.SOURCE_REASONS:
+                    self.assertIn(evidence.STALE_REMEDIES[reason], why)
 
     def test_an_unreadable_identity_fails_closed_with_a_remedy(self):
         found = self.run_check(self.document())
-        path = verify.path_of(found["id"])
+        path = evidence.path_of(found["id"])
         data = json.loads(path.read_text(encoding="utf-8"))
         data["identity"]["program"] = "prog:tampered"
         path.write_text(json.dumps(data), encoding="utf-8")
@@ -364,7 +374,7 @@ class EachDimensionHasItsReason(IdentityCase):
         row = self.decide()["unmet"][0]
         self.assertEqual(row["reason"], "stale")
         self.assertEqual(row["staleReason"], "check-changed")
-        self.assertEqual(row["remedy"], verify.STALE_REMEDIES["check-changed"])
+        self.assertEqual(row["remedy"], evidence.STALE_REMEDIES["check-changed"])
 
     def test_at_the_gate_a_stale_pass_names_its_dimension(self):
         document = self.document()
@@ -394,7 +404,7 @@ class DeclaredInputs(IdentityCase):
         self.assertEqual(item["sha256"], digest)
         self.assertEqual(item["contextId"], profiles.context_id("brief", digest))
         self.assertNotIn("_data", item)
-        log = verify.log_text(found["id"])["text"]
+        log = evidence.log_text(found["id"])["text"]
         self.assertIn("brief: the approved brief", log)
         # the copy was the verification's own, and went with it
         self.assertFalse(Path(found["env"]["tmp"]).exists())
@@ -404,7 +414,7 @@ class DeclaredInputs(IdentityCase):
         self.assertEqual(found["outcome"], "failed")
         self.assertEqual(found["inputs"], [])
         self.assertIn("no brief was handed over",
-                      verify.log_text(found["id"])["text"])
+                      evidence.log_text(found["id"])["text"])
 
     def test_a_required_input_that_is_missing_refuses_and_runs_nothing(self):
         """The launch pinned it; by the time the check is asked for, the
@@ -418,7 +428,7 @@ class DeclaredInputs(IdentityCase):
         self.assertIn("'brief'", found["why"])
         self.assertIsNone(found["rc"])
         self.assertNotIn("resultId", found)
-        self.assertFalse(verify.log_path_of(found["id"]).exists())
+        self.assertFalse(evidence.log_path_of(found["id"]).exists())
 
     def test_an_optional_missing_input_runs_and_is_bound_as_absent(self):
         self.brief.unlink()
@@ -500,9 +510,9 @@ class ChecksDeclareInputsAndEnv(IdentityCase):
         are what they were before inputs and env existed."""
         self.declares(self.document())
         check = profiles.resolve("work", worktree=self.wt)["verify"][0]
-        old = profiles._digest("unit", check["run"], "worktree",
-                               json.dumps({}, sort_keys=True), json.dumps([]),
-                               f"{check['timeout']:.0f}")
+        old = profiles.digest("unit", check["run"], "worktree",
+                              json.dumps({}, sort_keys=True), json.dumps([]),
+                              f"{check['timeout']:.0f}")
         self.assertEqual(check["revision"], old)
         self.assertEqual(check["checkId"], profiles.check_id("unit", old))
 
@@ -519,18 +529,18 @@ class DeclaredEnvironment(IdentityCase):
     def test_no_raw_value_or_key_reaches_json_logs_or_the_page(self):
         found = self.run_check(self.document(env=["DATABASE_URL"]))
         self.assertEqual(found["outcome"], "passed")
-        key_path = verify.env_key_path()
+        key_path = resultidentity.env_key_path()
         key = key_path.read_bytes()
-        self.assertEqual(len(key), verify.ENV_KEY_BYTES)
+        self.assertEqual(len(key), resultidentity.ENV_KEY_BYTES)
         self.assertEqual(key_path.stat().st_mode & 0o777, 0o600)
         declared = found["env"]["declared"][0]
         self.assertEqual(declared["name"], "DATABASE_URL")
         self.assertTrue(declared["set"])
         self.assertTrue(found["env"]["keyId"].startswith("key:"))
         texts = {
-            "evidence": verify.path_of(found["id"]).read_text(encoding="utf-8"),
-            "log": verify.log_path_of(found["id"]).read_text(encoding="utf-8"),
-            "public": json.dumps(verify.public(verify.read(found["id"]))),
+            "evidence": evidence.path_of(found["id"]).read_text(encoding="utf-8"),
+            "log": evidence.log_path_of(found["id"]).read_text(encoding="utf-8"),
+            "public": json.dumps(verify.public(evidence.read(found["id"]))),
             "reading": json.dumps(self.reading(found)),
             "gate": json.dumps(self.decide(), default=str),
             "settings": json.dumps(settings.verification(), default=str),
@@ -562,21 +572,21 @@ class DeclaredEnvironment(IdentityCase):
 
     def test_freshness_creates_no_key_and_no_state(self):
         found = self.run_check(self.document(env=["DATABASE_URL"]))
-        verify.env_key_path().unlink()
+        resultidentity.env_key_path().unlink()
         before = sorted(str(p) for p in self.state.rglob("*"))
         reading = self.reading(found)
-        verify.identity_drift(verify.read(found["id"]))
+        staleness.identity_drift(evidence.read(found["id"]))
         self.assertEqual(sorted(str(p) for p in self.state.rglob("*")), before)
-        self.assertFalse(verify.env_key_path().exists())
+        self.assertFalse(resultidentity.env_key_path().exists())
         self.assertEqual(reading["reason"], "env-changed")
         self.assertIn("gone or unusable", reading["why"])
         self.assertIn("one fresh run", reading["why"])
 
     def test_a_replaced_key_invalidates_conservatively(self):
         found = self.run_check(self.document(env=["DATABASE_URL"]))
-        path = verify.env_key_path()
+        path = resultidentity.env_key_path()
         path.chmod(0o600)
-        path.write_bytes(os.urandom(verify.ENV_KEY_BYTES))
+        path.write_bytes(os.urandom(resultidentity.ENV_KEY_BYTES))
         reading = self.reading(found)
         self.assertEqual(reading["reason"], "env-changed")
         self.assertIn("replaced", reading["why"])
@@ -587,10 +597,10 @@ class DeclaredEnvironment(IdentityCase):
 
     def test_a_check_without_env_makes_no_key(self):
         self.run_check(self.document())
-        self.assertFalse(verify.env_key_path().exists())
+        self.assertFalse(resultidentity.env_key_path().exists())
 
     def test_a_key_bench_will_not_use_refuses_the_run(self):
-        path = verify.env_key_path()
+        path = resultidentity.env_key_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"short")
         path.chmod(0o600)
@@ -607,7 +617,7 @@ class DeclaredEnvironment(IdentityCase):
 class LegacyRecordsKeepTheirRules(IdentityCase):
 
     def legacy(self, found: dict) -> Path:
-        path = verify.path_of(found["id"])
+        path = evidence.path_of(found["id"])
         data = json.loads(path.read_text(encoding="utf-8"))
         for key in ("resultId", "identity", "provenance", "inputs",
                     "prepareSteps", "checkSubstance"):
@@ -632,10 +642,10 @@ class LegacyRecordsKeepTheirRules(IdentityCase):
         self.assertEqual(reading["reason"], "policy-changed")
         self.assertEqual(reading["freshness"]["rules"], "legacy")
         self.decide()
-        verify.identity_drift(verify.read(found["id"]))
+        staleness.identity_drift(evidence.read(found["id"]))
         self.assertEqual(path.read_bytes(), before)
-        self.assertIsNone(verify.identity_drift(verify.read(found["id"])))
-        self.assertEqual(gates._partition(verify.read(found["id"]), None),
+        self.assertIsNone(staleness.identity_drift(evidence.read(found["id"])))
+        self.assertEqual(gates._partition(evidence.read(found["id"]), None),
                          "legacy")
 
 

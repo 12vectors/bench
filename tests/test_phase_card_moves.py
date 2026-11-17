@@ -29,13 +29,14 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import agents  # noqa: E402
 import config  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import httpd  # noqa: E402
 import phases  # noqa: E402
 import state  # noqa: E402
@@ -113,7 +114,7 @@ class PhaseCardCase(unittest.TestCase):
                    COMMIT_MOVES=False, SYNC=False)
 
         for registry in (state.AGENTS, state.BOARD_EVENTS, state.EXPECTED_MOVES,
-                         github.PR_STATE, phases.SNAPSHOTS):
+                         changes.PR_STATE, phases.SNAPSHOTS):
             registry.clear()
             self.addCleanup(registry.clear)
         self.addCleanup(setattr, state, "broadcast", state.broadcast)
@@ -378,7 +379,7 @@ class TheGuardIsOnEveryDoorOut(unittest.TestCase):
     is in all ask, and they ask before anything is written."""
 
     def setUp(self):
-        self.source = (REPO / "manager" / "core" / "httpd.py").read_text(
+        self.source = (REPO / "manager" / "core" / "routes.py").read_text(
             encoding="utf-8")
 
     def test_move_archive_and_complete_all_ask(self):
@@ -394,7 +395,7 @@ class TheGuardIsOnEveryDoorOut(unittest.TestCase):
                              ("phases.assert_not_working(payload[\"file\"], \"archive it\")",
                               "taskfiles.archive_task("),
                              ("phases.assert_not_working(payload[\"file\"], \"merge it\")",
-                              "github.complete_task(")):
+                              "completion.complete_task(")):
             with self.subTest(write=write):
                 self.assertLess(self.source.index(guard), self.source.index(write))
 
@@ -406,8 +407,7 @@ class TheToastCanBeRead(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = (REPO / "manager" / "core" / "board.html").read_text(
-            encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_the_toast_is_bounded_and_wraps(self):
         self.assertIn("max-width:min(620px, calc(100vw - 48px))", self.html)

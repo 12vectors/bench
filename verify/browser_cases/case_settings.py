@@ -727,7 +727,9 @@ def agents_api(path: str, body: dict) -> dict:
     the same board would — the server's own door, the server's answer."""
     return S["browser"].eval(
         "(async () => { const r = await fetch('/api/settings/agents/" + path + "',"
-        " {method: 'POST', headers: SETTINGS_HEADERS,"
+        # the page names its build on every write (task 124)
+        " {method: 'POST', headers: {...SETTINGS_HEADERS, 'X-Bench-Build':"
+        " document.querySelector('meta[name=\"bench-build\"]').content},"
         f" body: JSON.stringify({json.dumps(body)})}});"
         " return {status: r.status, data: await r.json()}; })()")
 

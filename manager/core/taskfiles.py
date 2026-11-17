@@ -38,6 +38,7 @@ import time
 from pathlib import Path
 
 import config
+import records
 import state
 
 # Every read-modify-write of a card's text in this module takes this lock,
@@ -85,7 +86,7 @@ STAGE_ORDER = {slug: index for index, (slug, _) in enumerate(config.STAGES)}
 CLAIM_FROM = {"backlog", "to-do"}   # the unstarted stages: leaving one claims
 
 
-def _first(pattern: re.Pattern[str], text: str) -> str | None:
+def first_match(pattern: re.Pattern[str], text: str) -> str | None:
     match = pattern.search(text)
     return match.group(1) if match else None
 
@@ -105,13 +106,13 @@ def canonical_number(number: str) -> str:
     return str(int(number))
 
 
-def _depends_on(text: str) -> list[str]:
+def depends_on(text: str) -> list[str]:
     """The `**Depends on:**` header, parsed at last — into the task numbers
     it names, and nothing else. The line may also carry external
     preconditions in prose ("the API key"); those are for the reader, so
     only comma-separated items that are entirely a number are taken.
     """
-    line = _first(DEPENDS_RE, text)
+    line = first_match(DEPENDS_RE, text)
     if not line:
         return []
     numbers = []
@@ -157,7 +158,7 @@ def _ref_header(pattern: re.Pattern[str], label: str, text: str,
 
     Like **Priority** and **Depends on**, the value may carry a note after
     ` — `; a branch name holds no whitespace, so the split cannot cut one."""
-    value, _note = _split_reason(_first(pattern, text))
+    value, _note = _split_reason(first_match(pattern, text))
     if value is None:
         return None
     value = value.strip().strip("`")
@@ -193,12 +194,12 @@ def _listed_cards(text: str) -> tuple[list[str], list[str]]:
 
 def read_task(path: Path, stage: str) -> dict:
     text = path.read_text(encoding="utf-8", errors="replace")
-    priority, priority_note = _split_reason(_first(PRIORITY_RE, text))
+    priority, priority_note = _split_reason(first_match(PRIORITY_RE, text))
     number_match = NUMBER_RE.match(path.name)
-    declared = _first(STATUS_RE, text)
+    declared = first_match(STATUS_RE, text)
     # the latest appended `PR REVIEW:` marker wins — reviews accumulate
     verdicts = PR_VERDICT_RE.findall(text)
-    kind = _split_reason(_first(TYPE_RE, text))[0]
+    kind = _split_reason(first_match(TYPE_RE, text))[0]
     is_phase = (kind or "").lower() == PHASE_TYPE
     # a `## Cards` section means membership on a phase card and nothing at
     # all anywhere else — one direction, one authority
@@ -210,21 +211,21 @@ def read_task(path: Path, stage: str) -> dict:
     base_branch = _ref_header(BASE_BRANCH_RE, "Base branch", text, plan_drift)
     pr_base = _ref_header(PR_BASE_RE, "PR base", text, plan_drift)
     return {
-        "pr": _first(PR_RE, text),
+        "pr": first_match(PR_RE, text),
         # who holds the card — written by the board when a move claims it
-        "assignee": _first(ASSIGNEE_RE, text),
+        "assignee": first_match(ASSIGNEE_RE, text),
         "prVerdict": {"APPROVE": "green", "REQUEST CHANGES": "red"}.get(
             verdicts[-1] if verdicts else None),
         "file": path.name,
         "stage": stage,
         "number": number_match.group(1) if number_match else None,
-        "title": _first(TITLE_RE, text) or path.stem,
+        "title": first_match(TITLE_RE, text) or path.stem,
         "priority": priority,
         "priorityNote": priority_note,
         "type": kind,
         # What runs next is the phase's list; what may run is this line —
         # parsed here, acted on nowhere yet.
-        "dependsOn": _depends_on(text),
+        "dependsOn": depends_on(text),
         # Explicit execution metadata: which application branch this card's
         # work starts from, and which branch its PR targets. `None` on both
         # is the established default — the application base — and that is
@@ -251,8 +252,104 @@ def read_task(path: Path, stage: str) -> dict:
         and declared.lower() != config.STAGE_LABELS[stage].lower(),
         "mtime": path.stat().st_mtime,
         "words": len(text.split()),
+        # which text this reading is of (task 129): the list carries it in
+        # place of the text, and a detail read answers with it, so the
+        # page can tell a detail that is about this card as listed from
+        # one about an earlier or later edit of it
+        "rev": revision(text),
+        "bytes": len(text.encode("utf-8", "replace")),
         "body": text,
+        # where `body` splits into head, brief and history (task 125), as
+        # this module splits it — so the page slices the card rather than
+        # keeping a second copy of the rule
+        "parts": part_offsets(text),
     }
+
+
+def revision(text: str) -> str:
+    """A card text's revision: the first 16 hex digits of its sha256. Not
+    a security boundary — the identity a list entry and a detail reading
+    are compared by, so a sync edit, a report appended or a hand edit is a
+    different revision even within one second of mtime."""
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+# What a card's list entry leaves out (task 129): the text and where it
+# splits. Everything the server reads out of the text — the verdict, the
+# assignee, the plan headers, phase membership, the delivery, acceptance
+# and finding signals — is computed before the list is made and travels
+# as the fields and sections it already was; only the text itself waits
+# for the card to be opened (`card_detail`, `GET /api/card`).
+LIST_OMITS = ("body", "parts")
+
+
+def list_card(task: dict) -> dict:
+    """One card as the board lists it: every field `read_task` and the
+    weaves gave it but its text."""
+    return {key: value for key, value in task.items() if key not in LIST_OMITS}
+
+
+def list_board(collected: dict) -> dict:
+    """`collect()` with every card a list entry. A new dict: the collected
+    board the server's own sections read keeps its text."""
+    return {**collected,
+            "stages": [{**stage, "tasks": [list_card(t) for t in stage["tasks"]]}
+                       for stage in collected["stages"]]}
+
+
+CARD_NAME_RE = re.compile(r"^[^/\\\x00]+\.md$")
+
+
+class CardNotHere(LookupError):
+    """A detail read for a card that is not in the stage it was asked in.
+    `code` is `moved` (with `stage`, where it is now), `archived` or
+    `gone`."""
+
+    def __init__(self, code: str, message: str, stage: str | None = None):
+        super().__init__(message)
+        self.code = code
+        self.stage = stage
+
+
+def card_detail(filename: str, stage: str) -> dict:
+    """One card's text, read now, for its detail view (task 129): the
+    text, where it splits, and the revision it is — asked by name *and*
+    stage, so a card that moved, was archived or was deleted since the
+    page listed it is said to be so rather than read from elsewhere."""
+    if not CARD_NAME_RE.match(filename or "") or filename.startswith("."):
+        raise ValueError(f"{filename!r} is not a card's file name")
+    if stage not in config.STAGE_DIRS:
+        raise ValueError(f"{stage!r} is not a stage")
+    path = config.TASKS / stage / filename
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        mtime = path.stat().st_mtime
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
+        now = find_stage_of(filename)
+        if now:
+            raise CardNotHere("moved", f"{filename} is no longer in {stage}/ — "
+                              f"it is in {now}/ now", now) from None
+        if (config.TASKS / "archive" / filename).is_file():
+            raise CardNotHere("archived", f"{filename} was archived") from None
+        raise CardNotHere("gone", f"{filename} is not on the board any more") from None
+    return {"file": filename, "stage": stage, "rev": revision(text),
+            "mtime": mtime, "words": len(text.split()),
+            "bytes": len(text.encode("utf-8", "replace")),
+            "body": text, "parts": part_offsets(text)}
+
+
+def _utf16_len(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def part_offsets(text: str) -> dict:
+    """`card_parts` as two offsets into the card's text: where the brief
+    starts and where the history starts. Counted in UTF-16 code units,
+    which is what a JavaScript string's `slice` counts, so the page cuts
+    the text exactly where this module does whatever characters it holds."""
+    parts = card_parts(text)
+    brief = _utf16_len(parts["head"])
+    return {"brief": brief, "history": brief + _utf16_len(parts["brief"])}
 
 
 def _phase_name(phase: dict) -> str:
@@ -325,6 +422,110 @@ def weave_phases(stages: list[dict]) -> None:
                                "index": index, "total": len(members)}
 
 
+STACK_MAPPINGS = ("default", "integration", "card", "external", "missing",
+                  "ambiguous")
+
+
+def _stack_name(task: dict) -> str:
+    return f"#{task['number']}" if task.get("number") else task["file"]
+
+
+def weave_stacks(stages: list[dict]) -> None:
+    """Resolve every card's **Base branch:** against the board: which card,
+    if any, its work is stacked on, which cards are stacked on it, and
+    whether the chain loops (task 117, WP09).
+
+    The one derivation of the stack graph. Nothing is stored twice and no
+    header is added: a child's parent is the card whose work branch the
+    child's base names (`task/<stem>` for an ordinary card, `phase/<stem>`
+    for a phase card), and the children are read back from that. Each card
+    gains `stack`:
+
+    - `mapping` — `default` (the application base), `integration` (a phase
+      member: its phase branch, with the phase's own semantics), `card` (a
+      parent card on this board), `external` (a branch no card owns),
+      `missing` (shaped like a card's branch, and no card has that name) or
+      `ambiguous` (more than one reading, so none is chosen);
+    - `base`, `parent` (a filename) and `why` (for missing and ambiguous);
+    - `children` — filenames, in board order;
+    - `cycle` — the filenames of the loop this card is on, else empty. A
+      loop has no bottom to start from, so it is `plan drift`, and a launch
+      refuses on it like any other drift.
+
+    Pure: it reads the parsed cards and nothing else — no git, no record.
+    """
+    tasks = [task for stage in stages for task in stage["tasks"]]
+    by_stem: dict[str, list[dict]] = {}
+    for task in tasks:
+        by_stem.setdefault(task["file"][:-3], []).append(task)
+        task["stack"] = {"mapping": "default", "base": None, "parent": None,
+                         "why": None, "children": [], "cycle": []}
+    for task in tasks:
+        here = task["stack"]
+        if task.get("phase") and not task.get("isPhase"):
+            here.update(mapping="integration",
+                        base=config.PHASE_BRANCH_PREFIX + task["phase"]["file"][:-3])
+            continue
+        base = task.get("baseBranch")
+        if not base or base == config.APP_BASE:
+            continue
+        here["base"] = base
+        if base.startswith(config.TASK_BRANCH_PREFIX):
+            stem, phase = base[len(config.TASK_BRANCH_PREFIX):], False
+        elif base.startswith(config.PHASE_BRANCH_PREFIX):
+            stem, phase = base[len(config.PHASE_BRANCH_PREFIX):], True
+        else:
+            here["mapping"] = "external"
+            continue
+        found = by_stem.get(stem) or []
+        if not found:
+            here.update(mapping="missing",
+                        why=(f"{base} is shaped like the work branch of "
+                             f"{stem}.md, and no card on the board has that "
+                             f"name"))
+        elif len(found) > 1:
+            where = ", ".join(sorted(f"{t['stage']}/" for t in found))
+            here.update(mapping="ambiguous",
+                        why=(f"{stem}.md is in more than one stage ({where}), "
+                             f"so which card {base} belongs to is not one "
+                             f"answer"))
+        elif found[0]["isPhase"] != phase:
+            owner = found[0]
+            mine = (config.PHASE_BRANCH_PREFIX if owner["isPhase"]
+                    else config.TASK_BRANCH_PREFIX) + stem
+            here.update(mapping="ambiguous",
+                        why=(f"{base} names {owner['file']}, whose work lives "
+                             f"on {mine} — the base and the card disagree"))
+        else:
+            here.update(mapping="card", parent=found[0]["file"])
+            found[0]["stack"]["children"].append(task["file"])
+
+    by_file = {task["file"]: task for task in tasks}
+    parent_of = {t["file"]: t["stack"]["parent"] for t in tasks
+                 if t["stack"]["parent"]}
+    for start in parent_of:
+        path: list[str] = []
+        seen: dict[str, int] = {}
+        node = start
+        while node in parent_of and node not in seen:
+            seen[node] = len(path)
+            path.append(node)
+            node = parent_of[node]
+        if node not in seen:
+            continue
+        loop = path[seen[node]:]
+        if by_file[loop[0]]["stack"]["cycle"]:
+            continue
+        names = " → ".join(_stack_name(by_file[f]) for f in loop + loop[:1])
+        for member in loop:
+            card = by_file[member]
+            card["stack"]["cycle"] = list(loop)
+            card["planDrift"].append(
+                f"**Base branch:** {card['stack']['base']} makes a loop of "
+                f"stacked cards ({names}) — a stack needs a bottom to start "
+                f"from; change one card's base")
+
+
 def collect() -> dict:
     stages = []
     for slug, label in config.STAGES:
@@ -336,6 +537,7 @@ def collect() -> dict:
         tasks.sort(key=lambda t: (int(t["number"]) if t["number"] else 9999, t["file"]))
         stages.append({"slug": slug, "label": label, "tasks": tasks})
     weave_phases(stages)
+    weave_stacks(stages)
 
     extras = {}
     for slug in ("plans", "reference"):
@@ -376,7 +578,7 @@ def _escape(path: Path) -> str | None:
             f"a link out of the board's own state")
 
 
-def _refuse_escape(*paths: Path) -> None:
+def refuse_escape(*paths: Path) -> None:
     """The raising flavour, for the doors a caller already handles a
     `ValueError` from — the move, the archive, the claim."""
     for path in paths:
@@ -424,8 +626,8 @@ def archive_task(filename: str, source: str, actor: str = "you") -> dict:
     text = src.read_text(encoding="utf-8")
     if STATUS_RE.search(text):
         text = STATUS_RE.sub("**Status:** Archived", text, count=1)
-    _relocate(filename, src, dst, text, "archived", actor)
-    return {"file": filename, "from": source}
+    committed = _relocate(filename, src, dst, text, "archived", actor)
+    return {"file": filename, "from": source, "committed": committed}
 
 
 def unarchive_task(filename: str, target: str, actor: str = "you") -> dict:
@@ -442,8 +644,8 @@ def unarchive_task(filename: str, target: str, actor: str = "you") -> dict:
     text = src.read_text(encoding="utf-8")
     if STATUS_RE.search(text):
         text = STATUS_RE.sub(f"**Status:** {config.STAGE_LABELS[target]}", text, count=1)
-    _relocate(filename, src, dst, text, target, actor)
-    return {"file": filename, "to": target}
+    committed = _relocate(filename, src, dst, text, target, actor)
+    return {"file": filename, "to": target, "committed": committed}
 
 
 def archived_count() -> int:
@@ -456,7 +658,7 @@ def _git(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
 
     No work-state repository is not an error to raise: it is a failed run
     like any other, so every caller's existing narration covers it (and
-    `_commit` says the useful version of it)."""
+    `commit_paths` says the useful version of it)."""
     root = config.state_repo()
     if root is None:
         return subprocess.CompletedProcess(args, 128, "",
@@ -500,18 +702,45 @@ def set_assignee(filename: str, stage: str, name: str) -> None:
     the new owner travels to the other boards.
     """
     path = config.TASKS / stage / filename
-    _refuse_escape(path)
+    refuse_escape(path)
     with WRITE_LOCK:
         text = path.read_text(encoding="utf-8")
         updated = (ASSIGNEE_RE.sub(f"**Assignee:** {name}", text, count=1)
                    if ASSIGNEE_RE.search(text) else _set_assignee(text, name))
         if updated == text:
             return
-        path.write_text(updated, encoding="utf-8")
+        _atomic_write(path, updated)
     commit_edit(filename, stage, f"claimed by {name}")
 
 
-def _commit(filename: str, message: str, spec: list[str], failure: str) -> bool:
+def _set_pr_base(text: str, branch: str) -> str:
+    """The card's `**PR base:**` line set to `branch`: replaced where it
+    is, else placed right under `**Base branch:**` (or Status)."""
+    line = f"**PR base:** {branch}"
+    if PR_BASE_RE.search(text):
+        return PR_BASE_RE.sub(lambda _m: line, text, count=1)
+    if BASE_BRANCH_RE.search(text):
+        return BASE_BRANCH_RE.sub(lambda m: f"{m.group(0)}\n{line}", text, count=1)
+    if STATUS_RE.search(text):
+        return STATUS_RE.sub(lambda m: f"{m.group(0)}\n{line}", text, count=1)
+    return TITLE_RE.sub(lambda m: f"{m.group(0)}\n\n{line}", text, count=1)
+
+
+def set_pr_base(filename: str, stage: str, branch: str) -> dict:
+    """Write what a card's change request now targets into its header —
+    a confirmed stack retarget (task 119), so the card's structured input
+    says what its recorded plan says and the next launch reads no drift.
+    Refused for a value that is not a branch name. Committed like every
+    other board edit."""
+    problem = ref_problem(branch)
+    if problem:
+        raise ValueError(f"cannot set the PR base to {branch!r}: {problem}")
+    return edit_card(filename, stage,
+                     lambda text: (_set_pr_base(text, branch), {}),
+                     f"PR base → {branch}")
+
+
+def commit_paths(filename: str, message: str, spec: list[str], failure: str) -> bool:
     """One commit touching only this task file's paths.
 
     Staging is scoped to those paths (`git add` then a pathspec commit), so
@@ -575,15 +804,16 @@ def _move_spec(src: Path, dst: Path) -> list[str]:
 
 
 def _commit_move(filename: str, target: str, src: Path, dst: Path, who: str,
-                 number: str | None) -> None:
+                 number: str | None) -> bool:
     """The move and the claim in one commit."""
-    _commit(filename, f"board: {number or filename[:-3]} → {target} ({who or 'board'})",
-            _move_spec(src, dst), f"{filename} moved, but committing it failed")
+    return commit_paths(
+        filename, f"board: {number or filename[:-3]} → {target} ({who or 'board'})",
+        _move_spec(src, dst), f"{filename} moved, but committing it failed")
 
 
 def _relocate(filename: str, src: Path, dst: Path, text: str, target: str,
               actor: str, who: str | None = None, commit: bool = True,
-              quiet: bool = False) -> None:
+              quiet: bool = False) -> bool | None:
     """The one door out of a directory under tasks/: register who is doing
     it, write the file, move it, commit it.
 
@@ -601,15 +831,22 @@ def _relocate(filename: str, src: Path, dst: Path, text: str, target: str,
     Being the one door, it is also where a move is refused for leaving
     tasks/ — both ends, before anything is registered or written, so a
     linked card and a linked destination are the same answer.
+
+    Returns whether the move was committed: True or False when a commit
+    was asked for, None when none was (`BOARD_COMMIT_MOVES` off, or a
+    batch committing later). The move itself has happened either way —
+    the disk is the truth — so a False is a partial outcome to say out
+    loud, not a refusal (task 128: the archive reply carries it).
     """
-    _refuse_escape(src, dst)
+    refuse_escape(src, dst)
     state.expect_move(filename, target, actor, quiet=quiet)
     dst.parent.mkdir(parents=True, exist_ok=True)
-    src.write_text(text, encoding="utf-8")
+    _atomic_write(src, text)
     shutil.move(str(src), str(dst))
     if config.COMMIT_MOVES and commit:
-        _commit_move(filename, target, src, dst,
-                     actor_name() if who is None else who, _number(filename))
+        return _commit_move(filename, target, src, dst,
+                            actor_name() if who is None else who, _number(filename))
+    return None
 
 
 def commit_edit(filename: str, stage: str, what: str) -> bool:
@@ -624,7 +861,7 @@ def commit_edit(filename: str, stage: str, what: str) -> bool:
     if not config.COMMIT_MOVES:
         return False
     path = config.TASKS / stage / filename
-    return _commit(filename,
+    return commit_paths(filename,
                    f"board: {_number(filename) or filename[:-3]} "
                    f"{what} ({actor_name() or 'board'})",
                    [str(path)],
@@ -643,7 +880,7 @@ def commit_work_file(path: Path, message: str, failure: str) -> bool:
         name = str(path.relative_to(config.work_root()))
     except ValueError:
         name = path.name
-    return _commit(name, message, [str(path)], failure)
+    return commit_paths(name, message, [str(path)], failure)
 
 
 def append_to_task(filename: str, stage: str, text: str, what: str) -> bool:
@@ -697,7 +934,7 @@ def append_to_section(filename: str, stage: str, heading: str, line: str,
         else:
             text = text.rstrip("\n") + f"\n\n## {heading}\n\n{line}\n"
         try:
-            path.write_text(text, encoding="utf-8")
+            _atomic_write(path, text)
         except OSError:
             return False
     commit_edit(filename, stage, what)
@@ -870,7 +1107,7 @@ def move_together(moves: list[tuple[str, str]], target: str, note: str,
         spec += _move_spec(src, dst)
     if moved and config.COMMIT_MOVES:
         numbers = ", ".join(task["number"] or task["file"][:-3] for task in moved)
-        _commit(moved[0]["file"],
+        commit_paths(moved[0]["file"],
                 f"board: {numbers} → {target}" + (f" {note}" if note else "")
                 + f" ({actor_name() or 'board'})",
                 spec, f"{len(moved)} cards moved, but committing them failed")
@@ -953,7 +1190,7 @@ def _starts_history(line: str) -> bool:
     return bool(HISTORY_HEADING_RE.match(line) or STAMPED_HEADING_RE.match(line))
 
 
-def _is_fence(line: str) -> bool:
+def is_fence(line: str) -> bool:
     """A ``` line opens or closes a fenced block — the one rule both
     card_parts and the literal-text reading below use, so "inside a code
     block" means the same thing to the history split and to validation.
@@ -1009,7 +1246,7 @@ def prose_of(text: str) -> tuple[str, bool]:
     which a renderer hides as an HTML comment)."""
     out, fenced = [], False
     for line in text.splitlines(keepends=True):
-        if _is_fence(line):
+        if is_fence(line):
             fenced = not fenced
             out.append(line)
         elif fenced:
@@ -1035,7 +1272,7 @@ def card_parts(text: str) -> dict:
     end, fenced = n, False
     for k in range(start, n):
         line = lines[k]
-        if _is_fence(line):
+        if is_fence(line):
             fenced = not fenced
             continue
         if fenced or not _starts_history(line):
@@ -1057,7 +1294,7 @@ def brief_sha(brief: str) -> str:
     return hashlib.sha256(brief.strip().encode("utf-8")).hexdigest()
 
 
-def _one_line(value, cap: int = 80) -> str:
+def one_line(value, cap: int = 80) -> str:
     text = re.sub(r"[\x00-\x1f<>]", " ", str(value or ""))
     return " ".join(text.split())[:cap]
 
@@ -1129,7 +1366,7 @@ def discussion(text: str) -> list[dict]:
 
 
 def _entry_block(meta: dict, title: str, body: str) -> str:
-    return (f"### {_one_line(title, 160)}\n<!-- bench:entry {_marker(meta)} -->\n\n"
+    return (f"### {one_line(title, 160)}\n<!-- bench:entry {_marker(meta)} -->\n\n"
             f"{quote(body.strip())}\n")
 
 
@@ -1161,13 +1398,7 @@ def _atomic_write(path: Path, text: str) -> None:
     """Replace a card in one step: a reader sees the old file or the new
     one, never half of either. The temporary name does not end in `.md`,
     so the stage watcher never mistakes it for a card."""
-    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.bench-tmp")
-    try:
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, path)
-    finally:
-        if tmp.exists():
-            tmp.unlink()
+    records.write_text(path, text, mkdir=False)
 
 
 def now_iso() -> str:
@@ -1191,7 +1422,7 @@ def add_discussion_entry(filename: str, stage: str, meta: dict, title: str,
     path = config.TASKS / stage / filename
     if not path.is_file():
         raise ValueError(f"{filename} is no longer in {stage}/ — refresh the board")
-    _refuse_escape(path)
+    refuse_escape(path)
     block = _entry_block(meta, title, body)
     with WRITE_LOCK:
         text = path.read_text(encoding="utf-8")
@@ -1225,7 +1456,7 @@ def add_comment(filename: str, stage: str, body, author: str, *,
         raise ValueError("that is not a request identity")
     at = now_iso()
     meta = {"v": DISCUSSION_VERSION, "id": f"c-{secrets.token_hex(5)}",
-            "kind": "comment", "author": _one_line(author) or "unattributed",
+            "kind": "comment", "author": one_line(author) or "unattributed",
             "at": at}
     if review is not None:
         meta["review"] = review
@@ -1272,7 +1503,7 @@ def criteria(brief: str) -> list[dict]:
     for line in brief.splitlines():
         # a checklist shown as an example in a ``` block is documentation,
         # not a criterion — the same reading `prose_of` gives it
-        if _is_fence(line):
+        if is_fence(line):
             fenced, current = not fenced, None
             continue
         if fenced:
@@ -1401,7 +1632,7 @@ def edit_card(filename: str, stage: str, change, what: str) -> dict:
         if not path.is_file():
             raise StaleCard(f"{filename} is no longer in {stage}/ — refresh "
                             f"the card and decide again where it is now")
-        _refuse_escape(path)
+        refuse_escape(path)
         text = path.read_text(encoding="utf-8")
         updated, result = change(text)
         if updated == text:
@@ -1569,7 +1800,7 @@ def replace_brief(filename: str, stage: str, *, expected_sha: str,
         if not path.is_file():
             raise StaleCard(f"{filename} is no longer in {stage}/ — the proposal "
                             f"was made there; regenerate it where the card is now")
-        _refuse_escape(path)
+        refuse_escape(path)
         text = path.read_text(encoding="utf-8")
         parts = card_parts(text)
         if brief_sha(parts["brief"]) != expected_sha:

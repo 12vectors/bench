@@ -54,6 +54,9 @@ import config  # noqa: E402
 import httpd  # noqa: E402
 import profiles  # noqa: E402
 import state  # noqa: E402
+import evidence  # noqa: E402
+import resultidentity  # noqa: E402
+import staleness  # noqa: E402
 import verify  # noqa: E402
 
 CLAUDE = REPO / "manager" / "core" / "adapters" / "claude"
@@ -395,7 +398,7 @@ class EveryOutcomeIsItsOwn(VerifyCase):
         self.assertEqual(found["reason"], "exit-zero")
         self.assertEqual(found["rc"], 0)
         self.assertEqual(found["runner"], {"module": "verify", "version": 1,
-                                           "revision": verify.RUNNER_REVISION})
+                                           "revision": resultidentity.RUNNER_REVISION})
 
     def test_an_assertion_failure_is_a_test_failure_and_says_rc(self):
         self.declares(self.one_check(run=str(self.executable("fails", FAILS))))
@@ -406,7 +409,7 @@ class EveryOutcomeIsItsOwn(VerifyCase):
         self.assertEqual(found["reason"], "exit-nonzero")
         self.assertEqual(found["rc"], 1)
         self.assertIn("the thing does not do the thing",
-                      verify.log_text(found["id"])["text"])
+                      evidence.log_text(found["id"])["text"])
 
     def test_an_executable_that_cannot_run_is_not_a_test_failure(self):
         missing = self.bin / "not-here"
@@ -426,7 +429,7 @@ class EveryOutcomeIsItsOwn(VerifyCase):
         found = self.ask("coverage")
         self.assertEqual(found["outcome"], "denied")
         self.assertEqual(found["reason"], "unknown-check")
-        self.assertIsNotNone(verify.read(found["id"]),
+        self.assertIsNotNone(evidence.read(found["id"]),
                              "a refusal is evidence, not an absence")
         self.assertIn("unit", found["why"], "it names what is on offer")
 
@@ -567,12 +570,12 @@ class EveryOutcomeIsItsOwn(VerifyCase):
         self.manifest()
         found = self.ask("unit")
         # what a board that died mid-check leaves behind on disk
-        stored = verify.read(found["id"])
+        stored = evidence.read(found["id"])
         stored.update({"outcome": "running", "reason": None, "ended": None})
-        verify._store(stored)
+        evidence.store(stored)
         closed = verify.recover()
         self.assertEqual([c["id"] for c in closed], [found["id"]])
-        again = verify.read(found["id"])
+        again = evidence.read(found["id"])
         self.assertEqual(again["outcome"], "error")
         self.assertEqual(again["reason"], "board-restart")
         self.assertIn("nothing about it passed", again["why"])
@@ -583,9 +586,9 @@ class EveryOutcomeIsItsOwn(VerifyCase):
         self.manifest()
         found = self.ask("unit")
         before = len(self.invocations())
-        stored = verify.read(found["id"])
+        stored = evidence.read(found["id"])
         stored["outcome"] = "running"
-        verify._store(stored)
+        evidence.store(stored)
         verify.recover()
         self.assertEqual(len(self.invocations()), before)
 
@@ -649,9 +652,9 @@ with open(path, "a") as fh:
         self.worktree()
         self.manifest()
         for record in (self.ask("unit"), self.ask("nope")):
-            self.assertIn(record["outcome"], verify.OUTCOMES)
+            self.assertIn(record["outcome"], evidence.OUTCOMES)
             if record["reason"]:
-                self.assertIn(record["reason"], verify.REASONS)
+                self.assertIn(record["reason"], evidence.REASONS)
 
 
 # ── a pass is bound to what it was about ───────────────────────────────
@@ -675,15 +678,15 @@ class EvidenceIsBoundToItsSubject(VerifyCase):
         self.manifest()
         found = self.ask("unit")
         self.assertTrue(found["source"]["dirty"])
-        self.assertTrue(verify.freshness(found)["fresh"])
+        self.assertTrue(staleness.freshness(found)["fresh"])
         # the same commit, different content: the pass is no longer about
         # the code that is there
         (tree / "code.txt").write_text("changed again\n", encoding="utf-8")
-        reading = verify.outcome_now(verify.read(found["id"]))
+        reading = staleness.outcome_now(evidence.read(found["id"]))
         self.assertEqual(reading["outcome"], "stale")
         self.assertEqual(reading["recorded"], "passed")
-        self.assertIn("changed", " ".join(verify.freshness(
-            verify.read(found["id"]))["changed"]))
+        self.assertIn("changed", " ".join(staleness.freshness(
+            evidence.read(found["id"]))["changed"]))
 
     def test_an_untracked_file_appearing_makes_a_pass_stale(self):
         self.declares(self.one_check())
@@ -692,7 +695,7 @@ class EvidenceIsBoundToItsSubject(VerifyCase):
         found = self.ask("unit")
         (tree / "new_test.py").write_text("def test(): assert False\n",
                                           encoding="utf-8")
-        self.assertEqual(verify.outcome_now(verify.read(found["id"]))["outcome"],
+        self.assertEqual(staleness.outcome_now(evidence.read(found["id"]))["outcome"],
                          "stale")
 
     def test_a_new_commit_makes_a_pass_stale_and_names_both_commits(self):
@@ -704,7 +707,7 @@ class EvidenceIsBoundToItsSubject(VerifyCase):
         git(tree, "add", "-A")
         git(tree, "-c", "user.email=a@b", "-c", "user.name=t",
             "commit", "-q", "-m", "more")
-        fresh = verify.freshness(verify.read(found["id"]))
+        fresh = staleness.freshness(evidence.read(found["id"]))
         self.assertFalse(fresh["fresh"])
         self.assertIn(found["source"]["commit"][:12], " ".join(fresh["changed"]))
 
@@ -715,11 +718,11 @@ class EvidenceIsBoundToItsSubject(VerifyCase):
         self.worktree()
         self.manifest()
         found = self.ask("unit")
-        self.assertTrue(verify.freshness(found)["fresh"])
+        self.assertTrue(staleness.freshness(found)["fresh"])
         self.declares({"v": 1, "checks": [
             {"name": "unit", "run": f"{recorder} --different"}],
             "profiles": {"work": {"verify": ["unit"]}}})
-        reading = verify.outcome_now(verify.read(found["id"]))
+        reading = staleness.outcome_now(evidence.read(found["id"]))
         self.assertEqual(reading["outcome"], "stale")
         # a record with a result identity names the dimension that moved
         # (#97); a legacy one still says `policy-changed`
@@ -742,9 +745,9 @@ class EvidenceIsBoundToItsSubject(VerifyCase):
         verify.forget_cached()
         self.assertEqual(verify.board(collected)[CARD]["outcome"], "stale")
         # and a failure is never asked at all — the record is its last word
-        again = verify.read(found["id"])
+        again = evidence.read(found["id"])
         again["outcome"] = "failed"
-        self.assertEqual(verify.outcome_now(again)["outcome"], "failed")
+        self.assertEqual(staleness.outcome_now(again)["outcome"], "failed")
 
     def test_nothing_ever_becomes_passed_by_being_re_read(self):
         self.declares(self.one_check(run=str(self.executable("fails", FAILS))))
@@ -753,7 +756,7 @@ class EvidenceIsBoundToItsSubject(VerifyCase):
         found = self.ask("unit")
         for _ in range(3):
             self.assertEqual(
-                verify.outcome_now(verify.read(found["id"]))["outcome"], "failed")
+                staleness.outcome_now(evidence.read(found["id"]))["outcome"], "failed")
 
     def test_the_policy_context_and_request_identities_are_on_the_record(self):
         (self.work / "reference" / "d.md").write_text("design\n", encoding="utf-8")
@@ -998,7 +1001,7 @@ open("tracked.txt", "a")
         self.assertEqual(got["outcome"], "passed", got["why"])
         self.assertTrue(got["root"].get("removed"))
         verify.forget_cached()
-        self.assertEqual(verify.outcome_now(verify.read(got["id"]))["outcome"],
+        self.assertEqual(staleness.outcome_now(evidence.read(got["id"]))["outcome"],
                          "passed", "the checkout going is not the pass going")
 
         (tree / "more.txt").write_text("more\n", encoding="utf-8")
@@ -1006,7 +1009,7 @@ open("tracked.txt", "a")
         git(tree, "-c", "user.email=a@b", "-c", "user.name=t",
             "commit", "-q", "-m", "more")
         verify.forget_cached()
-        reading = verify.outcome_now(verify.read(got["id"]))
+        reading = staleness.outcome_now(evidence.read(got["id"]))
         self.assertEqual(reading["outcome"], "stale")
         self.assertIn("moved on", reading["why"])
 
@@ -1233,7 +1236,7 @@ class TheBoardShowsWhatRan(VerifyCase):
         # from a stale pass, and a fixture that could not be bound would
         # make every one of them stale.
         self.tree = self.worktree()
-        self.bound = verify.source_identity(self.tree)
+        self.bound = resultidentity.source_identity(self.tree)
 
     def _fixture(self, name: str, outcome: str, **extra) -> dict:
         """One stored evidence record, written the way the runner writes
@@ -1251,15 +1254,15 @@ class TheBoardShowsWhatRan(VerifyCase):
             "source": dict(self.bound),
             # the program and runner identities the runner records, so a
             # fixture's pass is bound the way a real one is (review R2)
-            "program": verify.program_identity(
-                [sys.executable], self.tree, verify._search_path()),
+            "program": resultidentity.program_identity(
+                [sys.executable], self.tree, resultidentity.search_path()),
             "prepare": [], "location": "local",
             "runner": {"module": "verify", "version": 1,
-                       "revision": verify.RUNNER_REVISION},
-            "log": str(verify.log_path_of(f"ev:verification@{name}")),
+                       "revision": resultidentity.RUNNER_REVISION},
+            "log": str(evidence.log_path_of(f"ev:verification@{name}")),
         }
         record.update(extra)
-        return verify._store(record)
+        return evidence.store(record)
 
     def test_every_outcome_reaches_the_rollup_as_its_own_word(self):
         words = ["passed", "failed", "denied", "prepare-failed", "error",
@@ -1270,7 +1273,7 @@ class TheBoardShowsWhatRan(VerifyCase):
         got = {r["check"]: r["outcome"] for r in rollup["rows"]}
         self.assertEqual(sorted(got.values()), sorted(words))
         for row in rollup["rows"]:
-            self.assertIn(row["outcome"], verify.OUTCOMES)
+            self.assertIn(row["outcome"], evidence.OUTCOMES)
 
     def test_a_pass_that_could_not_be_bound_reads_stale_not_passed(self):
         self._fixture("unit", "passed",
@@ -1342,7 +1345,7 @@ class TheBoardShowsWhatRan(VerifyCase):
         self.worktree()
         self.manifest()
         found = self.ask("unit")
-        shown = verify.log_text(found["id"])
+        shown = evidence.log_text(found["id"])
         self.assertTrue(shown["scrubbed"])
         self.assertNotIn("ghp_01234567890abcdefghijABCDEFGHIJ", shown["text"])
         self.assertNotIn("sk-abcdefghijklmnopqrstuvwxyz0123", shown["text"])
@@ -1357,9 +1360,9 @@ class TheBoardShowsWhatRan(VerifyCase):
         found = self.ask("unit")
         git(self.repo, "worktree", "remove", "--force", str(tree))
         self.assertFalse(tree.exists())
-        again = verify.read(found["id"])
+        again = evidence.read(found["id"])
         self.assertEqual(again["outcome"], "passed")
-        self.assertEqual(verify.outcome_now(again)["outcome"], "stale",
+        self.assertEqual(staleness.outcome_now(again)["outcome"], "stale",
                          "and a pass whose checkout is gone is not reusable")
 
     def test_the_evidence_survives_a_board_restart(self):
@@ -1369,9 +1372,9 @@ class TheBoardShowsWhatRan(VerifyCase):
         found = self.ask("unit")
         verify.RUNNING.clear()
         verify._KEYS.clear()
-        self.assertEqual(verify.read(found["id"])["outcome"], "passed")
-        self.assertEqual([r["id"] for r in verify.for_task(CARD)], [found["id"]])
-        self.assertEqual([r["id"] for r in verify.for_agent("run-1")],
+        self.assertEqual(evidence.read(found["id"])["outcome"], "passed")
+        self.assertEqual([r["id"] for r in evidence.for_task(CARD)], [found["id"]])
+        self.assertEqual([r["id"] for r in evidence.for_agent("run-1")],
                          [found["id"]])
 
     def test_the_ticker_line_names_the_check_the_outcome_and_the_commit(self):
@@ -1403,7 +1406,7 @@ class TheChipAppearsBeforeTheFirstRun(VerifyCase):
     def setUp(self):
         super().setUp()
         self.tree = self.worktree()
-        self.bound = verify.source_identity(self.tree)
+        self.bound = resultidentity.source_identity(self.tree)
 
     def chip(self) -> dict | None:
         return verify.board(self.COLLECTED).get(CARD)
@@ -1503,7 +1506,7 @@ class TheChipAppearsBeforeTheFirstRun(VerifyCase):
             self.assertEqual((found["outcome"], found["passed"],
                               found["checks"]), ("not-run", 0, 1), slug)
         self.assertEqual(self.invocations(), [], "reading the board ran a check")
-        self.assertEqual(verify.all_evidence(), [])
+        self.assertEqual(evidence.all_evidence(), [])
 
     def test_a_legacy_board_leaves_every_stage_uncluttered(self):
         for slug in ("backlog", "done"):
@@ -1516,7 +1519,7 @@ class TheChipAppearsBeforeTheFirstRun(VerifyCase):
         before = sorted(p.name for p in config.WORKTREES.iterdir())
         self.assertEqual(self.chip()["outcome"], "not-run")
         self.assertEqual(sorted(p.name for p in config.WORKTREES.iterdir()), before)
-        self.assertEqual(verify.all_evidence(), [])
+        self.assertEqual(evidence.all_evidence(), [])
         self.assertFalse(config.CONTEXT_DIR.exists(), "nothing was pinned")
 
 
@@ -1581,7 +1584,7 @@ class TheApiIsOneDoor(VerifyCase):
         self.assertIn("ev:verification@", ran.stdout)
         self.assertEqual(self.invocations()[0]["argv"], ["-k", "fast"])
         # and the board recorded it before the shim was told anything
-        [record] = verify.for_task(CARD)
+        [record] = evidence.for_task(CARD)
         self.assertEqual(record["outcome"], "passed")
         self.assertIn(record["id"], ran.stdout)
 
@@ -1662,7 +1665,7 @@ class TheApiIsOneDoor(VerifyCase):
     def test_the_seams_name_the_runner_that_now_exists(self):
         seams = profiles.seams()
         self.assertIn("verify.py", seams["extend"]["a runner"])
-        self.assertIn("verify.for_task", seams["extend"]["a gate"])
+        self.assertIn("evidence.for_task", seams["extend"]["a gate"])
         # The gate this card left as a later member is card 71's
         # `gates.py`, so `verified-outputs` is no longer pending — it is a
         # capability a board that declares a gate genuinely has, and the

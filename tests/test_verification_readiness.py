@@ -31,6 +31,7 @@ import stat
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 from tests.test_setup_guide import Project, by_id, snapshot
 
@@ -42,8 +43,10 @@ import gates  # noqa: E402
 import profiles  # noqa: E402
 import readiness  # noqa: E402
 import settings  # noqa: E402
+import setupbase  # noqa: E402
 import setupguide  # noqa: E402
 import setuptasks  # noqa: E402
+import evidence  # noqa: E402
 import verify  # noqa: E402
 
 from tests.test_integration_gates import CARD, GateCase, git  # noqa: E402
@@ -254,14 +257,14 @@ class ReadinessCase(GateCase):
         payload.setdefault("check", "unit")
         payload.setdefault("note", "read the program and both runs")
         payload.setdefault("request", "review-0001")
-        payload.setdefault("expected", setupguide.revision())
+        payload.setdefault("expected", setupbase.revision())
         return readiness.review(payload)
 
-    def refused(self, **payload) -> setupguide.Refused:
-        before = setupguide.revision()
-        with self.assertRaises(setupguide.Refused) as caught:
+    def refused(self, **payload) -> setupbase.Refused:
+        before = setupbase.revision()
+        with self.assertRaises(setupbase.Refused) as caught:
             self.review(**payload)
-        self.assertEqual(before, setupguide.revision(), "a refusal wrote")
+        self.assertEqual(before, setupbase.revision(), "a refusal wrote")
         return caught.exception
 
     def state_of(self, name: str = "unit") -> dict:
@@ -296,7 +299,7 @@ class ReviewRestsOnCurrentEvidence(ReadinessCase):
         self.assertEqual("ready", found["readiness"])
         self.assertEqual(readiness.bootstrap()["ready"], ["unit"])
         # binding: the check's and program's identities, the commits
-        entry = setupguide.read_decisions()["doc"]["verification"]["checks"]["unit"]
+        entry = setupbase.read_decisions()["doc"]["verification"]["checks"]["unit"]
         self.assertEqual(profiles.document_checks(
             profiles.document(), {})[0]["unit"]["checkId"], entry["checkId"])
         self.assertTrue(entry["programId"].startswith("prog:"))
@@ -333,7 +336,7 @@ class ReviewRestsOnCurrentEvidence(ReadinessCase):
         passed = self.run_at("fine\n")
         record = dict(passed, outcome="cancelled", id=None)
         record["id"] = passed["id"].replace(passed["id"][-4:], "beef")
-        verify._store(record)
+        evidence.store(record)
         err = self.refused(passEvidence=passed["id"], failEvidence=record["id"])
         self.assertEqual("not-failed", err.extra["code"])
         self.assertIn("reached no verdict", str(err))
@@ -550,14 +553,14 @@ class TheSurfaces(unittest.TestCase):
     merge rule only for a ready check and writes only through Apply."""
 
     def test_the_writes_are_behind_the_settings_door(self):
-        src = (REPO / "manager" / "core" / "httpd.py").read_text()
-        block = src[src.index('"/api/setup/verification/register"'):]
-        block = block[:block.index("self._json(200")]
-        self.assertIn("origin_problem(self.headers", block)
-        self.assertIn('elif path == "/api/setup/verification":', src)
+        src = (REPO / "manager" / "core" / "routes.py").read_text()
+        for action in ("register", "review", "activate"):
+            self.assertIn(f'Route("POST", "/api/setup/verification/{action}", '
+                          f'"policy-mutation",', src)
+        self.assertIn('Route("GET", "/api/setup/verification", "read",', src)
 
     def test_the_page_writes_only_through_apply_and_arms_it(self):
-        html = (REPO / "manager" / "core" / "board.html").read_text()
+        html = pagesource.page()
         panel = html[html.index("function setupReadiness"):
                      html.index("function wireReadiness")]
         self.assertIn("c.readiness === 'ready'", panel)

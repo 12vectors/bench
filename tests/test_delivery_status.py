@@ -44,12 +44,16 @@ import agents  # noqa: E402
 import config  # noqa: E402
 import delivery  # noqa: E402
 import gates  # noqa: E402
-import github  # noqa: E402
+import githost  # noqa: E402
+import completion  # noqa: E402
+import changes  # noqa: E402
 import httpd  # noqa: E402
 import phases  # noqa: E402
 import plans  # noqa: E402
 import state  # noqa: E402
 import taskfiles  # noqa: E402
+import evidence  # noqa: E402
+import resultidentity  # noqa: E402
 import verify  # noqa: E402
 
 STATUS = {"backlog": "Backlog", "to-do": "To Do", "in-progress": "In Progress",
@@ -107,7 +111,7 @@ class DeliveryCase(GateCase):
         entry = {"head": None, "prState": "OPEN", "merged": False,
                  "url": PR_URL, "ts": time.time()}
         entry.update(values)
-        github._persist_snapshot(filename, entry)
+        changes._persist_snapshot(filename, entry)
 
     def running_agent(self, name: str = "Wren") -> None:
         state.AGENTS["run-live"] = {"id": "run-live", "task": CARD,
@@ -134,7 +138,7 @@ class DeliveryCase(GateCase):
                 live = [ident for ident, record in verify.RUNNING.items()
                         if record.get("proc") is not None]
             for ident in live:
-                record = verify.read(ident) or {}
+                record = evidence.read(ident) or {}
                 if (record.get("outcome") == "running"
                         and (record.get("source") or {}).get("commit") == head):
                     return True
@@ -222,8 +226,8 @@ class TheCopyMatrix(DeliveryCase):
 
     def test_f07_review_check_missing(self):
         head = self.passed_at_head()
-        for record in verify.for_task(CARD):
-            verify.path_of(record["id"]).unlink()
+        for record in evidence.for_task(CARD):
+            evidence.path_of(record["id"]).unlink()
         verify.forget_cached()
         self.place("review", pr=PR_URL)
         found = self.expect("checks-needed", "run-required-checks")
@@ -431,7 +435,7 @@ class TheCopyMatrix(DeliveryCase):
         self.assertEqual(found["status"]["tone"], "alarm")
 
     def test_f24_reopened_after_delivery(self):
-        github._record_delivered(CARD, "1a2b3c4d5e6f7a8b9c0d", "main", "local")
+        completion._record_delivered(CARD, "1a2b3c4d5e6f7a8b9c0d", "main", "local")
         self.place("backlog")
         found = self.expect("not-started", "move")
         self.assertEqual(found["candidate"]["state"], "delivered")
@@ -454,7 +458,7 @@ class TheCopyMatrix(DeliveryCase):
         gates.record_verdict(CARD, verdict="APPROVE", head=head)
         self.place("review", pr=PR_URL)
         self.snapshot(head=head, ts=time.time() - 120)
-        github.PR_STATE.clear()
+        changes.PR_STATE.clear()
         state.AGENTS.clear()
         found = self.expect("ready-to-merge", "complete")
         self.assertEqual(found["source"]["pr"]["from"], "disk")
@@ -527,7 +531,7 @@ class TheCopyMatrix(DeliveryCase):
         self.assertIn(head[:12], found["status"]["sentence"])
 
     def test_f31_not_published(self):
-        directory = github._recovery_dir()
+        directory = completion._recovery_dir()
         directory.mkdir(parents=True, exist_ok=True)
         (directory / f"{STEM}.json").write_text(json.dumps({
             "branch": f"task/{STEM}", "target": "main", "mode": "local",
@@ -579,6 +583,18 @@ class TheCopyMatrix(DeliveryCase):
     def test_done_is_delivered(self):
         self.place("done")
         self.expect("delivered", None)
+
+    def test_a_stacked_card_waits_for_its_parent(self):
+        """Task 117: an ungated card stacked on another card's work branch
+        reads `waiting-for-parent` until that card has landed, and its
+        sentence names the parent and where the card lands."""
+        wt = self.worktree()
+        self.commit_in(wt)
+        self.place("review", "72-the-parent.md", "72 — The parent")
+        self.place("review", base_branch="task/72-the-parent")
+        found = self.expect("waiting-for-parent", None)
+        self.assertIn("Waiting for #72 to land", found["status"]["sentence"])
+        self.assertIn("lands in main", found["status"]["sentence"])
 
     def test_signoff_needed_where_a_rule_asks_for_one(self):
         """Design §8.3 (card 103): checks and review met, `signoff:
@@ -634,9 +650,10 @@ class TheVocabulary(unittest.TestCase):
         imported = set(re.findall(r"^import (\w+)$", source, re.MULTILINE))
         brief = (Path(__file__).resolve().parents[1] / "AGENTS.md").read_text(
             encoding="utf-8")
+        # lowest first, `<` between layers (task 107: `→` means "imports")
         line = next(ln for ln in brief.splitlines()
-                    if ln.startswith("config → "))
-        order = [name.strip() for step in line.split("→")
+                    if ln.startswith("gitproc / records / redact < config < "))
+        order = [name.strip() for step in line.split(" < ")
                  for name in step.split("/")]
         self.assertIn("delivery", order)
         left = set(order[:order.index("delivery")])
@@ -662,12 +679,12 @@ class ARestartForgetsNothingDurable(DeliveryCase):
     def test_a_merged_pr_survives_empty_memory_with_its_time(self):
         head = self.passed_at_head()
         self.place("review", pr=PR_URL)
-        github.PR_STATE[CARD] = {"head": head, "prState": "MERGED",
+        changes.PR_STATE[CARD] = {"head": head, "prState": "MERGED",
                                  "merged": True, "url": PR_URL,
                                  "ts": time.time() - 300}
-        github._persist_snapshot(CARD, github.PR_STATE[CARD])
+        changes._persist_snapshot(CARD, changes.PR_STATE[CARD])
         # the restart: every in-memory registry empty
-        github.PR_STATE.clear()
+        changes.PR_STATE.clear()
         state.AGENTS.clear()
         gates.REVIEW_STATE.clear()
         found = self.read()
@@ -678,13 +695,13 @@ class ARestartForgetsNothingDurable(DeliveryCase):
 
     def test_the_poll_persists_at_its_own_boundary(self):
         self.place("review", pr=PR_URL)
-        self.addCleanup(setattr, github, "_gh_pr", github._gh_pr)
+        self.addCleanup(setattr, githost, "change_status", githost.change_status)
         payload = {"state": "MERGED", "headRefOid": "c" * 40,
                    "mergedAt": "2026-11-11T10:00:00Z", "reviews": [],
                    "statusCheckRollup": [], "baseRefName": "main"}
-        github._gh_pr = lambda *a, **k: subprocess.CompletedProcess(
-            a, 0, json.dumps(payload), "")
-        github._poll_pr(CARD, PR_URL)
+        githost.change_status = lambda number: \
+            githost.load("github").normalize_status(payload)
+        changes._poll_pr(CARD, PR_URL)
         stored = json.loads((self.state / "gates" / f"{STEM}.pr.json")
                             .read_text())
         self.assertTrue(stored["merged"])
@@ -891,12 +908,14 @@ class ReviewsAreReadApart(DeliveryCase):
         payload = {"reviews": [{"state": "APPROVED", "author": {"login": "elena"}}],
                    "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "FAILURE"}],
                    "mergeable": "MERGEABLE", "baseRefName": "main"}
-        folded = github._fold(payload, {})
+        normal = githost.load("github").normalize_status
+        folded = changes._fold(normal(payload), {})
         self.assertEqual(folded["verdict"], "red")
         self.assertEqual(folded["review"], "approved")
-        self.assertIsNone(github._fold({"reviews": []}, {})["review"])
-        changes = github._fold({"reviews": [{"state": "CHANGES_REQUESTED"}]}, {})
-        self.assertEqual(changes["review"], "changes")
+        self.assertIsNone(changes._fold(normal({"reviews": []}), {})["review"])
+        asked = changes._fold(
+            normal({"reviews": [{"state": "CHANGES_REQUESTED"}]}), {})
+        self.assertEqual(asked["review"], "changes")
 
 
 class CountsAreRequiredOnly(DeliveryCase):
@@ -1120,7 +1139,7 @@ class ReadingRunsNoRepositoryHelper(DeliveryCase):
         # The uncommitted edit is still seen for what it is: the source
         # identity names it, so the pass bound to the clean commit no
         # longer reads as this checkout's.
-        identity = verify.source_identity(wt)
+        identity = resultidentity.source_identity(wt)
         self.assertEqual(self.marked(), [])
         self.assertIn("code.txt", " ".join(identity["dirty"]))
         self.assertTrue(found["status"]["word"])
@@ -1232,7 +1251,7 @@ class TheCacheFollowsItsInputs(DeliveryCase):
         self.assertEqual(self.board_word(), "changes-requested")
 
     def test_a_completion_record(self):
-        directory = github._recovery_dir()
+        directory = completion._recovery_dir()
         directory.mkdir(parents=True, exist_ok=True)
         (directory / f"{STEM}.json").write_text(json.dumps(
             {"commit": self.head, "target": "main"}), encoding="utf-8")
@@ -1273,7 +1292,7 @@ class TheCacheFollowsTheDeliveredRecord(DeliveryCase):
         self.place("backlog")
         reading = lambda: delivery.board(taskfiles.collect())[CARD]
         self.assertEqual(reading()["candidate"]["state"], "none-yet")
-        github._record_delivered(CARD, "1a2b3c4d5e6f7a8b9c0d", "main", "local")
+        completion._record_delivered(CARD, "1a2b3c4d5e6f7a8b9c0d", "main", "local")
         self.assertEqual(reading()["candidate"]["state"], "delivered")
 
 
@@ -1365,7 +1384,7 @@ class MutationsStillRevalidate(DeliveryCase):
             "ready-to-merge")
         self.commit_in(config.WORKTREES / STEM, "a push nobody checked\n")
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertIn("blocked", str(caught.exception))
         self.assertEqual(taskfiles.find_stage_of(CARD), "review")
 
@@ -1387,7 +1406,8 @@ class ActionsAreHonest(unittest.TestCase):
                     self.assertIsNotNone(spec["handler"])
 
     def test_every_handler_is_a_route_the_server_answers(self):
-        source = (Path(httpd.__file__)).read_text(encoding="utf-8")
+        source = Path(httpd.__file__).with_name("routes.py").read_text(
+            encoding="utf-8")
         for key, spec in delivery.ACTIONS.items():
             if spec["handler"]:
                 with self.subTest(action=key):
@@ -1424,7 +1444,7 @@ class CheckTheRemote(DeliveryCase):
         after = self.read()
         self.assertEqual(after["candidate"]["state"], "unavailable")
         self.assertEqual(after["candidate"]["remote"]["ref"], f"task/{STEM}")
-        self.assertNotIn(f"task/{STEM}", gates._tips(),
+        self.assertNotIn(f"task/{STEM}", gates.branch_tips(),
                          "no local branch was created")
 
     def test_no_remote_is_refused_by_name(self):
@@ -1458,10 +1478,10 @@ class MergedOnGitHub(DeliveryCase):
         self.assertEqual(self.word(), "merged-elsewhere")
         self.assertEqual(gates.evaluate(CARD, "acceptance")["decision"],
                          "blocked", "the gate is unmet, and not asked")
-        result = github.complete_task(CARD, "review")
+        result = completion.complete_task(CARD, "review")
         self.assertTrue(result["moved"], result)
         self.assertEqual(taskfiles.find_stage_of(CARD), "done")
-        self.assertEqual(github.delivered_record(CARD)["commit"], head)
+        self.assertEqual(completion.delivered_record(CARD)["commit"], head)
 
     def test_an_unconfirmed_merge_is_still_gated(self):
         self.origin()
@@ -1472,7 +1492,7 @@ class MergedOnGitHub(DeliveryCase):
         # the snapshot says merged; the remote does not hold it
         self.snapshot(head=head, prState="MERGED", merged=True)
         with self.assertRaises(ValueError):
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertEqual(taskfiles.find_stage_of(CARD), "review")
 
 

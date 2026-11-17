@@ -45,9 +45,11 @@ is which:
 4. **Gate requirement** — what a later verification or merge gate will
    insist on. Two halves, and they are different facts: `verify` is what
    a *run* may ask bench for, and the document's top-level `"gates"`
-   block is what an *integration or acceptance* refuses without. Both are
-   validated here, in the policy layer; `gates.py` is what evaluates the
-   second against recorded evidence and enforces it.
+   block is what an *integration or acceptance* refuses without. The
+   first is validated here; the second in `gatepolicy.py`, directly
+   above this module and reading the same document, checks and
+   diagnostics (task 120). `gates.py` is what evaluates the second
+   against recorded evidence and enforces it.
 
 ## Where a profile comes from
 
@@ -109,16 +111,21 @@ here is committed, pushed, or carried into a PR body.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import copy
 import hashlib
 import json
 import os
 import re
 import shlex
 import subprocess
+import threading
 import time
 from pathlib import Path
 
 import config
+import records
 
 # The schema a document declares itself in, and the resolver that reads
 # it. Both travel in every manifest: a profile recorded by one revision of
@@ -166,7 +173,118 @@ ID_PREFIXES = {
 }
 
 
-def _digest(*parts: str) -> str:
+# ── one request, one reading of the policy's inputs (task 127) ─────────
+#
+# A board read asks this module the same questions hundreds of times: the
+# document, each intent's resolution, and every approved input — read,
+# hashed and its provenance looked up with a `git log` — once per passing
+# evidence record, per card, per section. The answers cannot differ within
+# one request unless a file changes under it, so a request may open a
+# **read scope** and have each one asked once.
+#
+# What the scope is, and is not:
+#
+# - **Request-scoped, never global.** It lives in a `ContextVar` set by the
+#   reader that opens it (`routes.state_payload`) and is dropped when that
+#   reader returns. Nothing outlives the request, so no answer is held one
+#   moment longer than the request that read it, and no existing memo's
+#   lifetime is extended. Another thread — a concurrent request, a launch,
+#   a merge — never sees it: a fresh thread starts with no scope, and asks
+#   everything afresh exactly as before.
+# - **Reads only.** Nothing that writes, pins, launches or decides a
+#   mutation opens one. A gate read immediately before a merge, a launch's
+#   preflight and a verification request all run unscoped and resolve the
+#   current authorities themselves.
+# - **Keyed on what the answer depends on.** An input is keyed on its
+#   name, selection, root and the file's own `stat` (inode, size,
+#   modification time, through and without a link), so a file edited or
+#   replaced during the request is read again. The document is keyed the
+#   same way, and an intent's resolution on the intent, its roots, the
+#   document's revision, the harness and model selection and the adapter's
+#   declared capabilities. What a key cannot see — a commit that touches an
+#   input without changing it, an `.env` edit mid-request — is read as it
+#   was when the request first asked, which is the consistency one request
+#   is owed.
+# - **Copies out.** Every answer is handed back as a copy, so a caller that
+#   edits what it was given cannot change what the next caller reads.
+
+_READ_SCOPE: contextvars.ContextVar = contextvars.ContextVar(
+    "bench_profiles_read_scope", default=None)
+
+
+class _Scope:
+    __slots__ = ("memo", "lock", "asked", "computed")
+
+    def __init__(self):
+        self.memo: dict = {}
+        self.lock = threading.Lock()
+        self.asked: dict[str, int] = {}
+        self.computed: dict[str, int] = {}
+
+
+@contextlib.contextmanager
+def read_scope():
+    """Ask each of this module's read-only questions once for the rest of
+    the block, on this thread. Nested scopes share the outer one. Yields
+    a function returning the scope's counts (`asked` and `computed` per
+    kind), which is how a measurement shows the duplication is gone."""
+    outer = _READ_SCOPE.get()
+    if outer is not None:
+        yield lambda: _scope_counts(outer)
+        return
+    scope = _Scope()
+    token = _READ_SCOPE.set(scope)
+    try:
+        yield lambda: _scope_counts(scope)
+    finally:
+        _READ_SCOPE.reset(token)
+
+
+def in_read_scope() -> bool:
+    """Whether this thread is inside a read scope right now."""
+    return _READ_SCOPE.get() is not None
+
+
+def _scope_counts(scope: _Scope) -> dict:
+    with scope.lock:
+        return {"asked": dict(scope.asked), "computed": dict(scope.computed)}
+
+
+def _scoped(kind: str, key, compute):
+    """`compute()`, once per `(kind, key)` within the current read scope,
+    and on every call outside one. Always a copy."""
+    scope = _READ_SCOPE.get()
+    if scope is None:
+        return compute()
+    full = (kind, key)
+    with scope.lock:
+        scope.asked[kind] = scope.asked.get(kind, 0) + 1
+        if full in scope.memo:
+            return copy.deepcopy(scope.memo[full])
+    value = compute()
+    with scope.lock:
+        scope.computed[kind] = scope.computed.get(kind, 0) + 1
+        scope.memo.setdefault(full, value)
+    return copy.deepcopy(value)
+
+
+def _file_key(path: Path | None):
+    """What identifies a file's bytes without reading them: its `stat`
+    through a link and of the link itself. None when there is nothing."""
+    if path is None:
+        return None
+    out = []
+    for follow in (True, False):
+        try:
+            st = os.stat(path, follow_symlinks=follow)
+            out.append((st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns,
+                        st.st_ctime_ns, st.st_mode))
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
+def digest(*parts: str) -> str:
     """One stable hash over an ordered tuple of strings. `\\x00` separates,
     so no concatenation of two parts can be mistaken for another pair."""
     return hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
@@ -191,7 +309,7 @@ def request_id(intent: str, filename: str, when: float | None = None) -> str:
     the launch that follows it are distinguishable in a log."""
     stamp = f"{when if when is not None else time.time():.3f}"
     return (f"{ID_PREFIXES['request']}:{intent}:{filename[:-3] if filename.endswith('.md') else filename}"
-            f"@{_digest(intent, filename, stamp)[:12]}")
+            f"@{digest(intent, filename, stamp)[:12]}")
 
 
 def review_id(filename: str, head: str) -> str:
@@ -236,7 +354,7 @@ def evidence_id(kind: str, request: str, detail: str = "") -> str:
     if kind not in EVIDENCE_KINDS:
         raise ValueError(f"unknown evidence kind '{kind}' — one of "
                          f"{', '.join(sorted(EVIDENCE_KINDS))}")
-    return f"{ID_PREFIXES['evidence']}:{kind}@{_digest(kind, request, detail)[:12]}"
+    return f"{ID_PREFIXES['evidence']}:{kind}@{digest(kind, request, detail)[:12]}"
 
 
 # ── capabilities, and who actually enforces them ───────────────────────
@@ -583,7 +701,7 @@ def diagnostic(code: str, why: str, remedy: str | None = None) -> dict:
             "remedy": remedy or standing}
 
 
-class _Trouble(list):
+class Trouble(list):
     """The `blockers` list every consumer already reads, plus the code each
     entry came from.
 
@@ -629,7 +747,7 @@ def adapter_identity(name: str | None = None) -> dict:
     found: dict = {
         "name": name,
         "path": str(directory) if directory else None,
-        "identity": _tool_relative(directory) if directory else None,
+        "identity": tool_relative(directory) if directory else None,
         "version": None,
         "capabilities": {},
         "unsupported": {},
@@ -675,7 +793,7 @@ def adapter_identity(name: str | None = None) -> dict:
     return found
 
 
-_SOURCE_WORDS = {"environment": "the process environment (locked)",
+SOURCE_WORDS = {"environment": "the process environment (locked)",
                  "process": "an in-process setting (locked)",
                  "local-file": "manager/local/.env",
                  "default": "the documented default"}
@@ -770,7 +888,7 @@ def roots(worktree: Path | str | None, review: Path | str | None = None) -> dict
     return found
 
 
-def _tool_relative(path: Path | None) -> str | None:
+def tool_relative(path: Path | None) -> str | None:
     """A path named relative to the tool install, which is the only way to
     name one that means the same thing on the next machine. Falls back to
     the absolute path when it is genuinely elsewhere."""
@@ -804,8 +922,13 @@ def document_path() -> Path | None:
 
 
 def document() -> dict:
-    """The profile document this board resolves with, read fresh."""
-    return document_at(document_path())
+    """The profile document this board resolves with, read fresh — once per
+    read scope while the file is unchanged."""
+    path = document_path()
+    return _scoped("document",
+                   (str(path) if path else None, _file_key(path),
+                    config.AGENT_COMMANDS),
+                   lambda: document_at(path))
 
 
 def document_at(path: Path | None) -> dict:
@@ -825,16 +948,16 @@ def document_at(path: Path | None) -> dict:
     """
     if path is None:
         return {"kind": "legacy", "path": None, "identity": None,
-                "revision": _digest("legacy", config.AGENT_COMMANDS),
+                "revision": digest("legacy", config.AGENT_COMMANDS),
                 "profiles": {}, "problem": None,
                 "describes": "BOARD_AGENT_COMMANDS and the adapter's built-in grants"}
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
         return {"kind": "broken", "path": str(path),
-                "identity": _tool_relative(path), "revision": "",
+                "identity": tool_relative(path), "revision": "",
                 "profiles": {}, "describes": None,
-                "problem": (f"the profile document {_tool_relative(path)} could not "
+                "problem": (f"the profile document {tool_relative(path)} could not "
                             f"be read ({exc}) — fix it or unset "
                             f"BOARD_AGENT_PROFILES; bench will not fall back to "
                             f"the legacy grants under a policy you meant to change")}
@@ -854,17 +977,17 @@ def document_from(raw: str, path: Path) -> dict:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
         return {"kind": "broken", "path": str(path),
-                "identity": _tool_relative(path),
-                "revision": _digest(raw), "profiles": {}, "describes": None,
-                "problem": (f"the profile document {_tool_relative(path)} is not "
+                "identity": tool_relative(path),
+                "revision": digest(raw), "profiles": {}, "describes": None,
+                "problem": (f"the profile document {tool_relative(path)} is not "
                             f"valid JSON (line {exc.lineno}, column {exc.colno}: "
                             f"{exc.msg}) — nothing was resolved from it")}
     if not isinstance(data, dict):
         data = {}
     version = data.get("v")
-    out = {"kind": "file", "path": str(path), "identity": _tool_relative(path),
-           "revision": _digest(raw), "profiles": data.get("profiles") or {},
-           "describes": _tool_relative(path), "problem": None,
+    out = {"kind": "file", "path": str(path), "identity": tool_relative(path),
+           "revision": digest(raw), "profiles": data.get("profiles") or {},
+           "describes": tool_relative(path), "problem": None,
            "documentVersion": version,
            "requires": data.get("requires") or [],
            "context": data.get("context") or [],
@@ -876,8 +999,8 @@ def document_from(raw: str, path: Path) -> dict:
            "prepare": data.get("prepare") or [],
            "verify": data.get("verify") or [],
            # The gate requirements, kept as written rather than
-           # defaulted: `gate_policy` has to tell "no gate block" from
-           # "a gate block that is not an object", and the second is a
+           # defaulted: `gatepolicy.gate_policy` has to tell "no gate
+           # block" from "a gate block that is not an object", and the second is a
            # refusal rather than an absence.
            "gates": data.get("gates")}
     if version != PROFILE_VERSION:
@@ -1168,7 +1291,7 @@ def _tokens_problem(name: str, what: str, tokens: list) -> str | None:
 
 # Names bench takes out of a check's environment, or sets itself, so a
 # declaration naming one would bind something the check never receives.
-# `verify.child_env` builds the environment from these same lists.
+# `resultidentity.child_env` builds the environment from these same lists.
 VERIFY_ENV_STRIPPED = ("BOARD_PORT", "BOARD_AGENT_ID", "BOARD_TASK",
                        "BOARD_APP_ROOT", "BOARD_WORK_ROOT", "BOARD_TASKS_DIR",
                        "BOARD_WORKTREES_DIR", "GIT_DIR", "GIT_WORK_TREE",
@@ -1405,7 +1528,7 @@ def _check_revision(name: str, run: str, root: str, scopes: dict,
     # keeps the revision — and the checkId — it has always had.
     extra = [json.dumps(inputs, sort_keys=True)] if inputs else []
     extra += [json.dumps(env)] if env else []
-    return _digest(name, run, root,
+    return digest(name, run, root,
                    json.dumps(scopes, sort_keys=True),
                    json.dumps(prepare), f"{timeout:.0f}", *extra)
 
@@ -1424,7 +1547,7 @@ def check_substance(run: str, root: str, timeout: float, inputs: list,
     its class, so a `source` and a `review` check of one command can be
     the same while a `worktree` one never is. Coverage and preparation are
     separate dimensions of a result, and are not part of it."""
-    return "subst:" + _digest(
+    return "subst:" + digest(
         "check-substance/1", run, root, f"{timeout:.0f}",
         json.dumps([[i["name"], i["source"], i["required"]] for i in inputs]),
         json.dumps(list(env)))[:16]
@@ -1808,7 +1931,15 @@ def _source_revision(path: Path) -> str:
     """What revision a source file is at, named the way its own repository
     would name it: the commit that last touched it when it is tracked,
     else its size and modification time. Not a substitute for the content
-    hash — it is the *provenance* half, and a reader needs both."""
+    hash — it is the *provenance* half, and a reader needs both.
+
+    Asked once per file per read scope: within one request the same
+    approved input was being looked up once per evidence record."""
+    return _scoped("provenance", (str(path), _file_key(path)),
+                   lambda: _source_revision_now(path))
+
+
+def _source_revision_now(path: Path) -> str:
     try:
         result = config.git_run(path.parent, "log", "-1", "--format=%H", "--",
                                 path.name, timeout=10)
@@ -1884,7 +2015,23 @@ def _resolve_selection(raw: dict, available: dict) -> dict:
     there and the one that cannot be read. A selection marked
     `"required": false` that fails is a note instead of a blocker — it is
     the only difference the flag makes.
+
+    Within a read scope, one selection in one root is read once while the
+    file it names is unchanged (`_file_key`).
     """
+    spec = str(raw.get("path") or "").strip()
+    word = spec.partition(":")[0]
+    root = available.get(word) if isinstance(available, dict) else None
+    target = (Path(root) / spec.partition(":")[2].strip()) if root else None
+    key = (str(raw.get("name") or "").strip(), spec,
+           raw.get("required", True) is not False, word,
+           str(root) if root else None, tuple(sorted(available)),
+           _file_key(target))
+    return _scoped("selection", key,
+                   lambda: _resolve_selection_now(raw, available))
+
+
+def _resolve_selection_now(raw: dict, available: dict) -> dict:
     name = str(raw.get("name") or "").strip()
     spec = str(raw.get("path") or "").strip()
     required = raw.get("required", True) is not False
@@ -1974,7 +2121,7 @@ def _bundle_revision(inputs: list[dict]) -> str:
     parts: list[str] = []
     for item in inputs:
         parts += [item["name"], item["source"], item.get("sha256") or ""]
-    return _digest(*parts)
+    return digest(*parts)
 
 
 def pin(manifest: dict) -> dict:
@@ -2032,7 +2179,7 @@ def pin(manifest: dict) -> dict:
             item["why"] = ("the source changed between validation and pinning; "
                            "the hash recorded is the content this run actually got")
     manifest["bundle"] = {"path": str(bundle), "revision": revision,
-                          "identity": _tool_relative(bundle),
+                          "identity": tool_relative(bundle),
                           "files": len([i for i in inputs if i.get("pinned")]),
                           "access": "read-only"}
     return manifest
@@ -2169,10 +2316,60 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
     the diagnostic an operator will see is the diagnostic bench actually
     produces. Default None reads the board's own, which is every other
     caller.
+
+    Within a read scope (task 127) the board's own resolution of one
+    intent at one pair of roots is computed once, keyed on everything it
+    reads that can move during a request: the document's revision, the
+    harness and model selection, and the adapter's declared capabilities.
+    A draft document or draft agent values is never memoised.
     """
     if intent not in INTENTS:
         raise ValueError(f"unknown launch intent '{intent}' — one of "
                          f"{', '.join(INTENTS)}")
+    if policy is not None or agent_values is not None or not in_read_scope():
+        return _resolve_now(intent, worktree=worktree, review=review,
+                            policy=policy, agent_values=agent_values)
+    doc = document()
+    choice = config.agent_choice(intent)
+    harness = choice["harness"]["value"]
+    directory = config.adapter_dir(harness)
+    key = (intent, str(worktree) if worktree is not None else None,
+           str(review) if review is not None else None,
+           doc["revision"], doc["kind"], doc.get("problem"),
+           json.dumps(choice, sort_keys=True, default=str),
+           str(directory) if directory else None,
+           _file_key(directory / "capabilities.json") if directory else None,
+           _selection_files(doc, roots(worktree, review)))
+    return _scoped("resolve", key, lambda: _resolve_now(
+        intent, worktree=worktree, review=review, policy=doc))
+
+
+def _selection_files(doc: dict, available: dict) -> tuple:
+    """The `stat` of every file any context selection in `doc` names,
+    under the roots in hand — so a resolution is read again when an
+    approved input it pins changes, exactly as the input itself is."""
+    if doc.get("kind") != "file":
+        return ()
+    lists = [doc.get("context")]
+    for declared in (doc.get("profiles") or {}).values():
+        if isinstance(declared, dict):
+            lists.append(declared.get("context"))
+    out = []
+    for raw in (s for lst in lists if isinstance(lst, list) for s in lst):
+        if not isinstance(raw, dict):
+            continue
+        spec = str(raw.get("path") or "").strip()
+        word, _, relative = spec.partition(":")
+        root = available.get(word)
+        out.append((spec, _file_key(Path(root) / relative.strip())
+                    if root and relative.strip() else None))
+    return tuple(out)
+
+
+def _resolve_now(intent: str, *, worktree: Path | str | None = None,
+                 review: Path | str | None = None,
+                 policy: dict | None = None,
+                 agent_values: dict[str, str] | None = None) -> dict:
     baseline = BASELINE[intent]
     doc = policy if policy is not None else document()
     # Which harness and model this intent rides, resolved once and carried
@@ -2198,7 +2395,7 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
                      "application checkout")
     cwd_path = available.get(cwd_word) or (str(worktree) if worktree else None)
 
-    blockers = _Trouble()
+    blockers = Trouble()
     configured: list[str] = []
     prompt_only: list[str] = []
 
@@ -2226,7 +2423,7 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
         blockers.add("harness-unavailable",
                      f"the '{adapter['name']}' harness chosen for '{intent}' "
                      f"({choice['harness']['setting']}, from "
-                     f"{_SOURCE_WORDS.get(choice['harness']['source'], choice['harness']['source'])}) "
+                     f"{SOURCE_WORDS.get(choice['harness']['source'], choice['harness']['source'])}) "
                      f"is not installed — there is no "
                      f"manager/local/adapters/{adapter['name']}/run or "
                      f"manager/core/adapters/{adapter['name']}/run")
@@ -2451,9 +2648,9 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
         configured.append("isolated-environment")
     # A gate is a property of the board rather than of this intent, so it
     # is read shallowly from the same document and never re-validated
-    # here: `gate_policy()` is the one authority on whether a gate block
-    # holds together, and a resolution of `work` must not grow a second
-    # opinion about it. What this adds is the honest guarantee word —
+    # here: `gatepolicy.gate_policy()` is the one authority on whether a
+    # gate block holds together, and a resolution of `work` must not grow
+    # a second opinion about it. What this adds is the honest guarantee word —
     # `verified-outputs` is enforced on a board that gates something, and
     # absent on one that gates nothing.
     if _gates_something(doc):
@@ -2556,7 +2753,7 @@ def resolve(intent: str, *, worktree: Path | str | None = None,
     pending = sorted({name for name in configured
                       if table.get(name, {}).get("enforcement") == "pending"})
 
-    revision = _digest(
+    revision = digest(
         str(PROFILE_VERSION), str(RUNNER_VERSION), intent, doc["revision"],
         adapter["name"], adapter.get("version") or "",
         json.dumps([g["prefix"] for g in grants], sort_keys=True),
@@ -2699,14 +2896,12 @@ def record(agent_id: str, found: dict) -> dict:
     """Freeze this run's policy and inputs. Machine-local, for plans'
     reason: it holds this machine's paths, and no part of it belongs in a
     repository anybody else pulls."""
-    config.MANIFESTS_DIR.mkdir(parents=True, exist_ok=True)
     stored = dict(found)
     stored["agent"] = agent_id
     stored["recorded"] = time.time()
     stored.pop("blockers", None)
-    manifest_path(agent_id).write_text(
-        json.dumps(stored, indent=2, sort_keys=True, default=str),
-        encoding="utf-8")
+    records.write_json(manifest_path(agent_id), stored, default=str,
+                       durable=True)
     return stored
 
 
@@ -2893,6 +3088,48 @@ def adapter_context(found: dict) -> list[dict]:
             if i.get("status") in ("pinned", "resolved")]
 
 
+def adapter_guidance(found: dict | None) -> list[dict]:
+    """The workflow briefs the prompt tells a run to read outside its own
+    checkout (`config.guidance_outside_app`), for an adapter that grants
+    reads narrowly — the explicit core-to-adapter contract behind
+    `AGENT_GUIDANCE` (task 126). Same shape as `adapter_context`.
+
+    Only these files: bench's own fixed brief locations, which the prompt
+    already makes mandatory reading, by canonical path. A context entry
+    naming some other original file grants nothing here — an approved
+    input is delivered as its pinned copy, never as its source.
+
+    Where the run's pinned context also holds a copy of a brief, the
+    brief's approved hash is *the pinned content*, so an adapter that
+    re-hashes the original proves it is the very file and content that
+    was approved, and a source that drifted since the pin fails closed
+    rather than granting a file that is no longer what bench validated.
+    """
+    pinned: dict[str, str] = {}
+    for item in (found or {}).get("context") or []:
+        if item.get("status") not in ("pinned", "resolved") or not item.get("path"):
+            continue
+        try:
+            pinned[str(Path(item["path"]).resolve())] = str(item.get("sha256") or "")
+        except OSError:
+            continue
+    out: list[dict] = []
+    for number, brief in enumerate(config.guidance_outside_app(), 1):
+        path = str(brief)
+        if path in pinned:
+            sha, approved = pinned[path], "pinned-context"
+        else:
+            try:
+                sha = hashlib.sha256(brief.read_bytes()).hexdigest()
+            except OSError:
+                sha = ""
+            approved = "launch"
+        out.append({"name": f"workflow-brief-{number}",
+                    "path": path, "sha256": sha, "access": "read-only",
+                    "kind": "workflow-brief", "approvedAt": approved})
+    return out
+
+
 def prompt_block(found: dict | None) -> str:
     """What the run is told about its effective inputs.
 
@@ -2926,11 +3163,17 @@ def prompt_block(found: dict | None) -> str:
     return "\n".join(lines)
 
 
-def verification_block(found: dict | None) -> str:
+def verification_block(found: dict | None,
+                       required_lines: list[str] | None = None) -> str:
     """What the run is told about the checks bench will run for it.
 
     Empty string when the profile declares none, so a board that
     configured nothing renders the prompt it always did, byte for byte.
+
+    `required_lines` is what the merge rules ask this run to cover —
+    `gatepolicy.required_lines(found)`, which every launch passes. It is
+    handed in rather than read here because the merge rules are read
+    above this module (task 120); None says nothing about them.
 
     Where there *are* checks, the wording is deliberate on one point: the
     run is told that the evidence is already on the board, so reporting a
@@ -3005,80 +3248,20 @@ def verification_block(found: dict | None) -> str:
             "check afterwards**, and if you commit again, ask again. "
             "Nothing merges on a report, an exit code, or new commits.",
         ]
-        lines += _required_lines(found, checks)
+        lines += required_lines or []
     return "\n".join(lines)
 
 
-# The intents that commit, and so end with a commit the merge rules will
-# read. A review run may still ask for what its profile grants (design
-# #94 §10.1 — review-first stays possible, and an equal current pass is
-# reused), but it is not told to cover the merge rules: it changes no
-# commit.
-_COMMITTING_INTENTS = ("work", "act-pr")
-
-
-def _required_lines(found: dict, checks: list[dict]) -> list[str]:
-    """Design #94 §10.1: a committing run asks for every required check it
-    is authorised to ask for, after its last commit. What it may ask for is
-    still its frozen profile — this names checks, it grants none — and a
-    requirement it cannot ask for is said to be a person's or the
-    configuration's, never something that will happen by itself."""
-    if found.get("intent") not in _COMMITTING_INTENTS:
-        return []
-    try:
-        policy = gate_policy()
-    except (ValueError, OSError):
-        return []
-    if policy.get("blockers"):
-        return []
-    wanted: list[str] = []
-    for scope in GATE_SCOPES:
-        for check in (policy["scopes"].get(scope) or {}).get("checks") or []:
-            label = check["name"] + (f" {check['gateScope']}"
-                                     if check.get("gateScope") else "")
-            if label not in wanted:
-                wanted.append(label)
-    if not wanted:
-        return []
-    mine = {c["name"] for c in checks}
-    asked = [w for w in wanted if w.split(" ")[0] in mine]
-    missing = [w for w in wanted if w.split(" ")[0] not in mine]
-    out = [""]
-    if asked:
-        out.append(
-            "Ask for every required check after your last commit; a pass "
-            "before a later commit does not count. The merge rules here "
-            "require: " + ", ".join(f"`{w}`" for w in asked) + " (run each "
-            "as `bench-verify <check> [<scope>]`). Launching you was the "
-            "person's consent to this run; these checks are the ones your "
-            "own profile already lets you ask for, and asking grants "
-            "nothing new.")
-    if missing:
-        out.append(
-            "The merge rules also require "
-            + ", ".join(f"`{w}`" for w in missing)
-            + ", which this run may not ask for. Do not try to run it "
-            "another way. Say so in your report: a person runs it from the "
-            "card (Run required checks), or the configuration changes.")
-    out.append(
-        "Nothing runs these checks on its own: a merge rule requires them, "
-        "it does not schedule them. If you do not ask, they stay not run "
-        "until someone does.")
-    return out
-
-
-# ── gate requirements: what an integration refuses without ─────────────
+# ── the gate scopes: shared vocabulary ─────────────────────────────────
 #
-# A `verify` list says what a *run* may ask bench to run. This says what a
-# *mutation* insists on having found: the automatic merge of a phase
-# member into its integration branch, the acceptance of a phase's own
-# integration head, and the merge-and-clean-up of an ordinary card.
-#
-# It is read here, in the policy layer, for the reason every other
-# document value is: these names end up deciding whether an irreversible
-# git operation runs, and a requirement that resolves to nothing is
-# indistinguishable from no requirement at all. `gates.py` evaluates what
-# this returns against recorded evidence. It has no second parser.
+# A `verify` list says what a *run* may ask bench to run. A gate says what
+# a *mutation* insists on having found. Reading and validating the
+# document's `"gates"` block is `gatepolicy.py`'s (task 120): it sits
+# above this module and asks it for the document, its checks and their
+# definitions. What stays here is the vocabulary both halves need — which
+# guarded mutations there are — and the one shallow read a resolution
+# makes of the block, to say whether `verified-outputs` is a guarantee
+# this board makes.
 
 # One scope per guarded mutation, each named for the thing it guards
 # rather than for the code that calls it.
@@ -3092,108 +3275,13 @@ GATE_SCOPES = {
                    "one place work leaves the board"),
 }
 
-# What a gate may insist on about review, and what each word actually
-# means. `none` is the default and gates nothing, which is what keeps a
-# board that declared no gates behaving exactly as it did.
-#
-# The distinction the last three exist for: GitHub's formal review state
-# and a Bench verdict are two different records of two different things,
-# and a COMMENTED review is neither of them. A board whose only reviewer
-# is the account that opened the pull request cannot produce a formal
-# APPROVED at all — GitHub refuses it — so a policy that needs one says
-# so and is reported as unmet rather than satisfied by the comment the
-# attempt fell back to.
-REVIEW_POLICIES = {
-    "none": "no review is required by this gate",
-    "bench": ("a Bench review verdict of APPROVE, recorded by bench itself "
-              "against this exact head. Independent of GitHub: it is bench's "
-              "own record of what its reviewer found"),
-    "github": ("a formal GitHub review state of APPROVED on the pull "
-               "request at this head, and no reviewer's change request still "
-               "outstanding at any commit. A COMMENTED review is not an "
-               "approval, however it is worded. This is bench's reading of "
-               "the review objects, not GitHub's branch protection, which "
-               "GitHub applies separately"),
-    "separate-reviewer": ("a formal GitHub APPROVED authored by somebody "
-                          "other than the account that proposed the head, "
-                          "and no reviewer's change request still "
-                          "outstanding. Bench never switches accounts or asks "
-                          "for a second credential to satisfy this — it "
-                          "reports it unmet. Not GitHub's branch protection, "
-                          "which GitHub applies separately"),
-}
-
-# What a gate may insist on about a card's own acceptance criteria. Off by
-# default — the PR review already assesses the work against the criteria,
-# and per-criterion bookkeeping is not a ceremony nobody asked for (design
-# #94 §8). `criteria` is the configuration for a decision that has to be a
-# person's: visual, business, regulated.
-SIGNOFF_POLICIES = {
-    "none": "no sign-off is required by this gate",
-    "criteria": ("every tracked acceptance criterion on the card reads "
-                 "accepted — a decision a named person recorded, about this "
-                 "exact commit — and the card's criteria are tracked. An "
-                 "agent's report, its review verdict and a move to done/ "
-                 "accept nothing"),
-}
-
-GATE_POLICY_VERSION = 1
-
-
-def _review_words(raw) -> tuple[list[str], list[tuple[str, str]], str]:
-    """A gate's `review` value → (the distinct words it requires, the
-    refusals as (code, why), the form it was written in).
-
-    Two spellings. The ordinary one is one word, which is every document
-    written before the list existed and reads exactly as it did. The
-    advanced one is a list, and it means *all of them*: a conjunction of
-    genuinely distinct assurance, each its own requirement row. So a list
-    may not repeat a word, may not hide `none` inside it, and may not pair
-    `github` with `separate-reviewer` — a separate reviewer's approval is
-    a formal GitHub approval already, and counting it twice is the
-    duplicate approval this design exists to stop."""
-    if raw is None:
-        return [], [], "scalar"
-    if isinstance(raw, str):
-        word = raw.strip()
-        if word not in REVIEW_POLICIES:
-            return [], [("gate-review-unknown", word)], "scalar"
-        return ([] if word == "none" else [word]), [], "scalar"
-    if not isinstance(raw, list):
-        return [], [("gate-invalid", type(raw).__name__)], "list"
-    if not raw:
-        return [], [("gate-invalid", "an empty list")], "list"
-    words: list[str] = []
-    trouble: list[tuple[str, str]] = []
-    for item in raw:
-        if not isinstance(item, str):
-            trouble.append(("gate-invalid", type(item).__name__))
-            continue
-        word = item.strip()
-        if word not in REVIEW_POLICIES:
-            trouble.append(("gate-review-unknown", word))
-        elif word == "none":
-            trouble.append(("gate-review-duplicate", "none"))
-        elif word in words:
-            trouble.append(("gate-review-duplicate", word))
-        else:
-            words.append(word)
-    if "github" in words and "separate-reviewer" in words:
-        trouble.append(("gate-review-duplicate", "github+separate-reviewer"))
-    return words, trouble, "list"
-
-
-def review_label(words: list[str]) -> str:
-    """The one-string name of a review requirement: the word, `none`, or
-    the advanced list joined with `+` — never two approval counters."""
-    return "+".join(words) if words else "none"
-
 
 def _gates_something(doc: dict) -> bool:
     """Does this document gate anything at all? A shallow read, used only
     to decide whether `verified-outputs` is a guarantee this board makes.
-    It validates nothing — `gate_policy()` is the only reader that does,
-    and two validators would be the second parser this design refuses."""
+    It validates nothing — `gatepolicy.gate_policy()` is the only reader
+    that does, and two validators would be the second parser this design
+    refuses."""
     raw = doc.get("gates") if doc.get("kind") == "file" else None
     if not isinstance(raw, dict):
         return False
@@ -3206,332 +3294,6 @@ def _gates_something(doc: dict) -> bool:
                 or str(entry.get("signoff") or "none") != "none":
             return True
     return False
-
-
-def gate_policy(doc: dict | None = None) -> dict:
-    """What this board's gates require, per scope — validated, with every
-    refusal carrying its code.
-
-    Three answers, and each is a real one:
-
-    - **nothing declared** (`configured: False`) — a board with no
-      `"gates"` block, which is every board that existed before this.
-      Each scope resolves to no checks and `review: "none"`, and
-      `gates.py` reports that as *ungated* in those words rather than as
-      a pass.
-    - **declared** — the scopes the document named, each with its checks
-      resolved to the same definitions `verify` resolves to, so a gate
-      and a run cannot disagree about what `unit` is.
-    - **broken** — a document that does not parse or declares a schema
-      this bench does not read. That is a blocker on every scope, the
-      same way it is a blocker on every intent: an operator mid-edit must
-      not have their gates silently become none.
-    """
-    doc = document() if doc is None else doc
-    trouble = _Trouble()
-    if doc.get("problem"):
-        trouble.add("policy-unreadable", doc["problem"])
-    steps, step_trouble = document_steps(doc)
-    trouble.add_all("prepare-invalid", step_trouble)
-    known, check_trouble = document_checks(doc, steps)
-    trouble.add_all("check-invalid", check_trouble)
-
-    raw = doc.get("gates") if doc.get("kind") == "file" else None
-    declared = raw if isinstance(raw, dict) else {}
-    if raw is not None and not isinstance(raw, dict):
-        trouble.add("gate-invalid",
-                    f"the document's \"gates\" is {type(raw).__name__}, and a "
-                    f"gate block is an object keyed by scope — one of "
-                    f"{', '.join(sorted(GATE_SCOPES))}")
-
-    allow_overrides = False
-    overrides = {"allowed": False, "actors": [],
-                 "why": "no override path is enabled on this board, so an "
-                        "unmet gate is unmet"}
-    for key in declared:
-        if key in GATE_SCOPES or key == "overrides":
-            continue
-        trouble.add("gate-scope-unknown",
-                    f"the \"gates\" block names {key!r}, which is not a gate "
-                    f"scope — one of {', '.join(sorted(GATE_SCOPES))}")
-
-    raw_over = declared.get("overrides")
-    if raw_over is not None:
-        if not isinstance(raw_over, dict):
-            trouble.add("gate-invalid",
-                        f"\"gates.overrides\" is {type(raw_over).__name__} — it "
-                        f"is an object with \"allow\" and an optional "
-                        f"\"actors\" list")
-        else:
-            allow = raw_over.get("allow", False)
-            if not isinstance(allow, bool):
-                trouble.add("gate-invalid",
-                            f"\"gates.overrides.allow\" is {allow!r} — it is "
-                            f"true or false, because it decides whether a "
-                            f"person may proceed over an unmet gate at all")
-            actors = raw_over.get("actors")
-            names: list[str] = []
-            if actors is not None and not isinstance(actors, list):
-                trouble.add("gate-invalid",
-                            "\"gates.overrides.actors\" is not a list — it "
-                            "names the git identities allowed to override")
-            else:
-                names = [str(a).strip() for a in (actors or []) if str(a).strip()]
-            allow_overrides = bool(allow)
-            overrides = {
-                "allowed": allow_overrides,
-                "actors": names,
-                "why": ("an authorised person may proceed over an unmet gate, "
-                        "and doing so is recorded against them — it never "
-                        "makes the gate met"
-                        if allow else
-                        "the document turns the override path off, so an unmet "
-                        "gate is unmet"),
-            }
-
-    scopes: dict = {}
-    for scope, why in GATE_SCOPES.items():
-        entry = declared.get(scope)
-        checks: list[dict] = []
-        reviews: list[str] = []
-        review_form = "scalar"
-        signoff = "none"
-        if entry is not None and not isinstance(entry, dict):
-            trouble.add("gate-invalid",
-                        f"the '{scope}' gate is {type(entry).__name__} — a "
-                        f"gate is an object with \"checks\", \"review\" and "
-                        f"\"signoff\"")
-            entry = None
-        if isinstance(entry, dict):
-            for key in entry:
-                if key not in ("checks", "review", "signoff"):
-                    trouble.add("gate-invalid",
-                                f"the '{scope}' gate declares {key!r}, which "
-                                f"a gate has no meaning for — it takes "
-                                f"\"checks\", \"review\" and \"signoff\"")
-            raw_checks = entry.get("checks")
-            if raw_checks is not None and not isinstance(raw_checks, list):
-                trouble.add("gate-invalid",
-                            f"the '{scope}' gate's \"checks\" is not a list of "
-                            f"declared check names")
-                raw_checks = []
-            seen: set[tuple] = set()
-            for raw_req in raw_checks or []:
-                # A requirement is a check and the coverage it needs. A bare
-                # name is the legacy spelling and means the *unscoped full
-                # run* — a scoped run of the same check is a different
-                # argument list, and a narrow pass must never satisfy a
-                # requirement written as the whole check.
-                wanted_scope = None
-                if isinstance(raw_req, dict):
-                    extra = [k for k in raw_req if k not in ("check", "scope")]
-                    if extra:
-                        trouble.add("gate-invalid",
-                                    f"the '{scope}' gate has a requirement "
-                                    f"declaring {extra[0]!r} — a requirement "
-                                    f"object takes \"check\" and an optional "
-                                    f"\"scope\"")
-                        continue
-                    name = str(raw_req.get("check") or "").strip()
-                    if raw_req.get("scope") is not None:
-                        wanted_scope = str(raw_req["scope"]).strip()
-                else:
-                    name = str(raw_req).strip()
-                if not NAME_RE.match(name):
-                    trouble.add("name-invalid",
-                                f"the '{scope}' gate requires the check "
-                                f"{name!r} — names match [a-z0-9][a-z0-9._-]*")
-                    continue
-                if wanted_scope is not None and not NAME_RE.match(wanted_scope):
-                    trouble.add("name-invalid",
-                                f"the '{scope}' gate requires the scope "
-                                f"{wanted_scope!r} of '{name}' — names match "
-                                f"[a-z0-9][a-z0-9._-]*")
-                    continue
-                if (name, wanted_scope) in seen:
-                    continue
-                seen.add((name, wanted_scope))
-                found = known.get(name)
-                if found is None:
-                    trouble.add(
-                        "gate-check-undeclared",
-                        f"the '{scope}' gate requires the check '{name}', "
-                        f"which this document declares nowhere. A gate reads "
-                        f"evidence filed under a check's own name, so a name "
-                        f"nothing declares could never be satisfied — and a "
-                        f"requirement that can never be met is refused here "
-                        f"rather than blocking every merge later")
-                    continue
-                if found.get("status") != "available":
-                    trouble.add("check-unrunnable",
-                                f"the '{scope}' gate requires the check "
-                                f"'{name}', which cannot be run as one: "
-                                f"{found.get('why')}")
-                    continue
-                if wanted_scope is not None and \
-                        wanted_scope not in (found.get("scopes") or {}):
-                    offered = ", ".join(sorted(found.get("scopes") or {})) \
-                        or "none"
-                    trouble.add(
-                        "gate-scope-undeclared",
-                        f"the '{scope}' gate requires the scope "
-                        f"'{wanted_scope}' of the check '{name}', which that "
-                        f"check does not declare (it offers: {offered}). "
-                        f"Evidence is filed under the scope a run asked for, "
-                        f"so a scope nothing declares could never be met")
-                    continue
-                checks.append({
-                    **found, "gateScope": wanted_scope,
-                    # the definitions its declared equivalents have *now*,
-                    # read from the same document in the same pass, so a
-                    # gate compares two checks as the policy declares them
-                    "acceptedChecks": {other: known[other]
-                                       for other in found.get("accepts") or []
-                                       if other in known},
-                    "requirement": (f"{name}:{wanted_scope}"
-                                    if wanted_scope else name)})
-            raw_review = entry.get("review")
-            if raw_review is not None and not isinstance(raw_review,
-                                                         (str, list)):
-                # A number or an object was never a word; read it the way
-                # the scalar form always has, so it is refused as one.
-                raw_review = str(raw_review)
-            reviews, review_trouble, review_form = _review_words(raw_review)
-            for code, what in review_trouble:
-                if code == "gate-review-unknown":
-                    trouble.add(
-                        code,
-                        f"the '{scope}' gate asks for the review policy "
-                        f"{what!r} — one of "
-                        f"{', '.join(sorted(REVIEW_POLICIES))}")
-                elif code == "gate-review-duplicate":
-                    trouble.add(
-                        code,
-                        f"the '{scope}' gate's review list "
-                        + ("puts `none` inside a list, which requires "
-                           "everything it names" if what == "none" else
-                           "pairs `github` with `separate-reviewer` — a "
-                           "separate reviewer's approval is a formal GitHub "
-                           "approval already, so the list would count one "
-                           "approval twice"
-                           if what == "github+separate-reviewer" else
-                           f"names {what!r} twice")
-                        + " — a list is a conjunction of distinct "
-                          "requirements")
-                else:
-                    trouble.add(
-                        code,
-                        f"the '{scope}' gate's \"review\" holds {what} — it "
-                        f"is one review policy word, or a non-empty list of "
-                        f"distinct ones")
-            raw_signoff = entry.get("signoff")
-            if raw_signoff is not None:
-                word = raw_signoff.strip() if isinstance(raw_signoff, str) \
-                    else None
-                if word not in SIGNOFF_POLICIES:
-                    trouble.add(
-                        "gate-signoff-unknown",
-                        f"the '{scope}' gate asks for the sign-off policy "
-                        f"{raw_signoff!r} — one of "
-                        f"{', '.join(sorted(SIGNOFF_POLICIES))}")
-                else:
-                    signoff = word
-        review = review_label(reviews)
-        scopes[scope] = {
-            "scope": scope, "why": why,
-            "declared": isinstance(entry, dict),
-            "checks": checks,
-            # `review` stays one string, as it has always been: the word,
-            # or the advanced list joined with `+`. `reviews` is the list
-            # a gate evaluates — one requirement row per word, each
-            # explained on its own, never collapsed into one tick.
-            "review": review,
-            "reviews": list(reviews),
-            "reviewForm": review_form,
-            "reviewWhy": (REVIEW_POLICIES[review] if len(reviews) <= 1
-                          else "all of: " + "; ".join(
-                              f"{w} — {REVIEW_POLICIES[w]}" for w in reviews)),
-            "signoff": signoff,
-            "signoffWhy": SIGNOFF_POLICIES[signoff],
-            # A gate with nothing to insist on is ungated, and the word is
-            # the one the board shows. It is not a pass.
-            "gated": bool(checks) or bool(reviews) or signoff != "none",
-        }
-
-    # Resolved last, because a document with *any* refusal in it is a
-    # document whose author is mid-edit: handing them an override path out
-    # of a policy that does not parse would be the one way a broken gate
-    # block could let a merge through.
-    overrides["allowed"] = allow_overrides and not trouble
-    if allow_overrides and trouble:
-        overrides["why"] = ("the override path is declared, and it is not "
-                            "offered while this document has a refusal in it "
-                            "— fix the policy first")
-
-    revision = _digest(
-        str(GATE_POLICY_VERSION), doc.get("revision") or "",
-        # The new fields join the digest only when they say something, so
-        # a document that does not use them keeps its revision byte for
-        # byte — nothing the operator did not write may stale a record.
-        json.dumps({s: {"checks": [
-                            ([c["revision"], c["gateScope"]]
-                             if c["gateScope"] else c["revision"])
-                            if not c.get("accepts") else
-                            # what else may answer the requirement is part
-                            # of the rule, but only where it was declared
-                            [c["revision"], c["gateScope"],
-                             sorted((n, d.get("revision"))
-                                    for n, d in c["acceptedChecks"].items())]
-                            for c in v["checks"]],
-                        "review": v["review"],
-                        **({"signoff": v["signoff"]}
-                           if v["signoff"] != "none" else {})}
-                    for s, v in scopes.items()}, sort_keys=True),
-        json.dumps(overrides, sort_keys=True))
-    return {
-        "v": GATE_POLICY_VERSION,
-        "configured": bool(declared) and not trouble,
-        "revision": revision,
-        "policyId": f"gates:{revision[:12]}",
-        "source": {"kind": doc.get("kind"), "identity": doc.get("identity"),
-                   "revision": doc.get("revision"),
-                   "describes": doc.get("describes")},
-        "scopes": scopes,
-        "overrides": overrides,
-        "reviewPolicies": dict(REVIEW_POLICIES),
-        "signoffPolicies": dict(SIGNOFF_POLICIES),
-        "blockers": list(trouble),
-        "diagnostics": trouble.coded,
-    }
-
-
-def gate_policy_public(found: dict) -> dict:
-    """One gate policy as the board may show it: the same allowlist law
-    `public` keeps, applied to a structure that holds operator-local paths
-    in its check definitions and nothing else of consequence."""
-    return {
-        "v": found["v"], "configured": found["configured"],
-        "revision": found["revision"], "policyId": found["policyId"],
-        "source": dict(found["source"]),
-        "scopes": {scope: {
-            "scope": scope, "why": entry["why"], "declared": entry["declared"],
-            "gated": entry["gated"], "review": entry["review"],
-            "reviewWhy": entry["reviewWhy"],
-            "reviews": list(entry["reviews"]),
-            "reviewForm": entry["reviewForm"],
-            "signoff": entry["signoff"], "signoffWhy": entry["signoffWhy"],
-            "checks": [{"name": c["name"], "scope": c["gateScope"],
-                        "requirement": c["requirement"],
-                        "run": c["run"], "root": c["root"],
-                        "checkId": c["checkId"], "required": c["required"],
-                        "help": c["help"]} for c in entry["checks"]],
-        } for scope, entry in found["scopes"].items()},
-        "overrides": dict(found["overrides"]),
-        "reviewPolicies": dict(found["reviewPolicies"]),
-        "signoffPolicies": dict(found["signoffPolicies"]),
-        "blockers": list(found["blockers"]),
-        "diagnostics": list(found["diagnostics"]),
-    }
 
 
 # ── the seams later members plug into ──────────────────────────────────
@@ -3566,10 +3328,11 @@ def seams() -> dict:
                          "resolve(policy=…). It has no second parser and must "
                          "not grow one: every code it reports is one "
                          "profiles.DIAGNOSTICS names"),
-            "a gate": ("`gates.py` — it reads the requirements `gate_policy()` "
-                       "returns, the evidence `verify.for_task()` returns, and "
-                       "insists on a `passed` that `verify.outcome_now()` still "
-                       "calls `passed` against the exact commit it is about to "
+            "a gate": ("`gates.py` — it reads the requirements "
+                       "`gatepolicy.gate_policy()` returns, the evidence "
+                       "`evidence.for_task()` returns, and insists on a "
+                       "`passed` that `staleness.outcome_now()` still calls"
+                       "`passed` against the exact commit it is about to "
                        "let through. It declares 'verified-outputs', and it has "
                        "no second parser either: every refusal it reports about "
                        "a policy is a diagnostic this module named"),

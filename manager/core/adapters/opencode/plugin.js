@@ -37,6 +37,11 @@ export const BenchBoard = async ({ directory }) => {
   const port = boardPort(directory)
   const seen = new Set()
 
+  // The run's own capability proves the `agent` claim (WP05); the board
+  // removes it before recording anything. Only sent beside an agent id.
+  const token = process.env.BOARD_AGENT_ID && process.env.BOARD_RUN_TOKEN
+    ? { token: process.env.BOARD_RUN_TOKEN } : {}
+
   const post = async (session, body) => {
     try {
       await fetch(`http://127.0.0.1:${port}/api/events`, {
@@ -48,6 +53,7 @@ export const BenchBoard = async ({ directory }) => {
           agent: process.env.BOARD_AGENT_ID,
           task: process.env.BOARD_TASK,
           ...body,
+          ...token,
         }),
         signal: AbortSignal.timeout(1000),
       })

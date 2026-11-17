@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 
 import config
+import gitrepo
 import state
 
 RUNNING: dict[str, dict] = {}   # "task:name" -> record
@@ -45,21 +46,15 @@ def run(name: str, filename: str) -> dict:
 
     stem = filename[:-3]
     # A phase card runs on phase/<stem>; one answer, in config.
-    branch = config.branch_for(stem)
-    worktree = config.WORKTREES / stem
-    mismatch = config.worktree_mismatch(worktree)
-    if mismatch:
-        raise ValueError(mismatch)
-    if not worktree.exists():
-        if subprocess.run(["git", "-C", str(config.REPO), "rev-parse", "--verify",
-                           "--quiet", branch], capture_output=True).returncode != 0:
-            raise ValueError(f"no worktree and no branch {branch} — nothing to run against")
-        config.WORKTREES.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(
-            ["git", "-C", str(config.REPO), "worktree", "add", str(worktree), branch],
-            capture_output=True, text=True)
-        if result.returncode != 0:
-            raise ValueError(f"could not recreate the worktree: {result.stderr.strip()[:200]}")
+    branch = gitrepo.branch_for(stem)
+    made = gitrepo.ensure_worktree(stem, branch)
+    if made["problem"] == "mismatch":
+        raise ValueError(made["detail"])
+    if made["problem"] == "no-branch":
+        raise ValueError(f"no worktree and no branch {branch} — nothing to run against")
+    if made["problem"] == "add-failed":
+        raise ValueError(f"could not recreate the worktree: {made['detail'][:200]}")
+    worktree = made["path"]
 
     log_dir = config.STATE / "commands"
     log_dir.mkdir(parents=True, exist_ok=True)

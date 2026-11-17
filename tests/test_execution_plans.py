@@ -27,13 +27,16 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import agents  # noqa: E402
 import config  # noqa: E402
-import github  # noqa: E402
+import completion  # noqa: E402
+import githost  # noqa: E402
+import changes  # noqa: E402
 import plans  # noqa: E402
 import profiles  # noqa: E402
 import state  # noqa: E402
@@ -196,7 +199,7 @@ class PlanCase(unittest.TestCase):
                    COMMIT_MOVES=False, SYNC=False, FETCH_TIMEOUT=10.0)
 
         for registry in (state.AGENTS, state.BOARD_EVENTS, state.EXPECTED_MOVES,
-                         github.PR_STATE):
+                         changes.PR_STATE):
             registry.clear()
             self.addCleanup(registry.clear)
         self.sent: list[dict] = []
@@ -425,7 +428,7 @@ class ACardStackedOnAnotherBranch(PlanCase):
     def test_the_pr_is_opened_against_the_prerequisite(self):
         self.run_agent()
         self.assertEqual(taskfiles.find_stage_of(CARD), "review")
-        github.open_pr_now(CARD)
+        changes.open_pr_now(CARD)
         created = [c for c in self.gh_calls() if c[:2] == ["pr", "create"]]
         self.assertEqual(len(created), 1)
         self.assertEqual(created[0][created[0].index("--base") + 1], PREREQ)
@@ -643,17 +646,17 @@ class TheRecordedPlanGoverns(PlanCase):
         self.run_agent()
         self.patch(APP_BASE="trunk")
         self.assertEqual(plans.pr_base(CARD), PREREQ)
-        self.assertEqual(github._pr_base(self.read(stage="review")), PREREQ)
+        self.assertEqual(changes._pr_base(self.read(stage="review")), PREREQ)
 
     def test_the_automatic_open_and_the_explicit_one_agree(self):
         self.run_agent()
-        github.maybe_open_pr(CARD)
+        changes.maybe_open_pr(CARD)
         automatic = [c for c in self.gh_calls() if c[:2] == ["pr", "create"]]
         self.assertEqual(len(automatic), 1)
         self.assertEqual(automatic[0][automatic[0].index("--base") + 1], PREREQ)
         # the second ask is refused by the **PR:** line, not by a second base
         with self.assertRaises(ValueError):
-            github.open_pr_now(CARD)
+            changes.open_pr_now(CARD)
         self.assertEqual(
             len([c for c in self.gh_calls() if c[:2] == ["pr", "create"]]), 1)
 
@@ -680,7 +683,7 @@ class AStackedCardIsNotMergedIntoTheDefault(PlanCase):
         self.write(card("57 — Document it", base=PREREQ, pr_base=PREREQ))
         self.run_agent()
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertIn(PREREQ, str(caught.exception))
         self.assertEqual(taskfiles.find_stage_of(CARD), "review",
                          "the card moved on a merge that never happened")
@@ -693,9 +696,9 @@ class AStackedCardIsNotMergedIntoTheDefault(PlanCase):
         self.patch(SYNC=True, COMMIT_MOVES=True)
         self.write(card("57 — Document it", base=PREREQ, pr_base=PREREQ))
         self.run_agent()
-        github.open_pr_now(CARD)
+        changes.open_pr_now(CARD)
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertIn("without its work reaching main", str(caught.exception))
         self.assertEqual([c for c in self.gh_calls() if c[:2] == ["pr", "merge"]],
                          [], "origin was asked to merge it anyway")
@@ -712,18 +715,18 @@ class AStackedCardIsNotMergedIntoTheDefault(PlanCase):
         git(self.repo, "branch", "-D", PREREQ)
         git(self.repo, "push", "-q", "origin", "--delete", PREREQ)
         with self.assertRaises(ValueError):
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         path = self.tasks / "review" / CARD
         path.write_text(path.read_text(encoding="utf-8").replace(PREREQ, "main"),
                         encoding="utf-8")
         plans.replan(CARD, "review")
-        self.assertTrue(github.complete_task(CARD, "review")["merged"])
+        self.assertTrue(completion.complete_task(CARD, "review")["merged"])
         self.assertEqual(taskfiles.find_stage_of(CARD), "done")
 
     def test_an_ordinary_card_still_merges_as_it_always_did(self):
         self.write(card("57 — Document it"))
         self.run_agent()
-        result = github.complete_task(CARD, "review")
+        result = completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
         self.assertEqual(taskfiles.find_stage_of(CARD), "done")
         self.assertNotIn(BRANCH, self.branches())
@@ -736,7 +739,7 @@ class AStackedCardIsNotMergedIntoTheDefault(PlanCase):
         git(self.repo, "branch", "-D", PREREQ)
         git(self.repo, "push", "-q", "origin", "--delete", PREREQ)
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertIn("no longer exists", str(caught.exception))
         self.assertIn("replan", str(caught.exception))
 
@@ -753,7 +756,7 @@ class ACardOnTheDefaultWhenTheDefaultMoves(PlanCase):
         git(self.repo, "push", "-q", "origin", "trunk")
         self.write(card("57 — Document it"))
         self.run_agent()
-        github.open_pr_now(CARD)
+        changes.open_pr_now(CARD)
         self.patch(APP_BASE="trunk")
 
     def test_resuming_keeps_the_recorded_plan(self):
@@ -774,7 +777,7 @@ class ACardOnTheDefaultWhenTheDefaultMoves(PlanCase):
         self.assertEqual(plans.recorded(CARD)["prBase"], "main")
 
     def test_merge_and_clean_up_finishes_it_into_what_it_was_planned_on(self):
-        result = github.complete_task(CARD, "review")
+        result = completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
         self.assertEqual(taskfiles.find_stage_of(CARD), "done")
 
@@ -812,7 +815,7 @@ class ActingOnTheReviewValidatesTheSameTarget(PlanCase):
         super().setUp()
         self.write(card("57 — Document it", base=PREREQ, pr_base=PREREQ))
         self.run_agent()
-        github.open_pr_now(CARD)
+        changes.open_pr_now(CARD)
 
     def fix_and_wait(self) -> None:
         record = agents.start_pr_fix(CARD, "review")
@@ -1025,7 +1028,7 @@ class ARunFromBeforePlansExisted(PlanCase):
     def test_opening_a_pr_on_legacy_work_pins_its_target(self):
         self.write(card("57 — Document it"))
         taskfiles.move_task(CARD, "in-progress", "review")
-        github.open_pr_now(CARD)
+        changes.open_pr_now(CARD)
         saved = plans.recorded(CARD)
         self.assertEqual(saved["prBase"], "main")
         self.assertEqual(saved["provenance"], "adopted",
@@ -1044,7 +1047,7 @@ class AnExistingPRWithAnotherTarget(PlanCase):
         self.run_agent()
         os.environ["GH_BASE"] = "main"          # GitHub already has one into main
         with self.assertRaises(ValueError) as caught:
-            github.open_pr_now(CARD)
+            changes.open_pr_now(CARD)
         message = str(caught.exception)
         self.assertIn("main", message)
         self.assertIn(PREREQ, message)
@@ -1052,18 +1055,18 @@ class AnExistingPRWithAnotherTarget(PlanCase):
                          [], "a PR was created over a contradiction")
 
     def test_the_poll_folds_the_mismatch_into_the_cards_state(self):
-        entry = github._fold({"reviews": [{"state": "APPROVED"}],
-                              "reviewRequests": [], "statusCheckRollup": [],
-                              "baseRefName": "main"}, {}, PREREQ)
+        entry = changes._fold(githost.load("github").normalize_status(
+            {"reviews": [{"state": "APPROVED"}], "reviewRequests": [],
+             "statusCheckRollup": [], "baseRefName": "main"}), {}, PREREQ)
         self.assertEqual(entry["baseMismatch"], "main")
         self.assertEqual(entry["verdict"], "red",
                          "an approval cannot green a PR aimed elsewhere")
         self.assertIn(f"open against main, not {PREREQ}", entry["detail"])
 
     def test_an_agreeing_pr_folds_to_nothing(self):
-        entry = github._fold({"reviews": [], "reviewRequests": [],
-                              "statusCheckRollup": [],
-                              "baseRefName": PREREQ}, {}, PREREQ)
+        entry = changes._fold(githost.load("github").normalize_status(
+            {"reviews": [], "reviewRequests": [], "statusCheckRollup": [],
+             "baseRefName": PREREQ}), {}, PREREQ)
         self.assertIsNone(entry["baseMismatch"])
         self.assertEqual(entry["verdict"], "pending")
 
@@ -1106,7 +1109,7 @@ class APhaseMemberInheritsItsPhase(PlanCase):
         self.write(card("57 — Document it"))
         self.run_agent()
         self.assertEqual(plans.recorded(CARD)["prBase"], self.PHASE_BRANCH)
-        github.open_pr_now(CARD)
+        changes.open_pr_now(CARD)
         self.adapter_is(ECHOES_PROMPT)
         record = agents.start_pr_fix(CARD, "review")
         self.assertTrue(wait_for(
@@ -1314,8 +1317,7 @@ class ThePageReadsTheSameAnswer(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = (REPO / "manager" / "core" / "board.html").read_text(
-            encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_the_chip_reads_the_servers_per_card_plan(self):
         self.assertIn("(S.state.plans || {})[task.file]", self.html)

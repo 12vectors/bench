@@ -37,6 +37,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 CORE = REPO / "manager" / "core"
@@ -61,7 +62,14 @@ class Board:
     """One disposable board: the candidate's own manager/core, serving an
     application and a work state made here, on a loopback port."""
 
-    def __init__(self, case: unittest.TestCase, doc=START):
+    def __init__(self, case: unittest.TestCase, doc=START, *, env=None,
+                 configured_port: int | None = None, prepare=None):
+        """`env` adds settings to the board's environment; a
+        `configured_port` makes BOARD_PORT name a different port from the
+        one the board is started on with `--port`, as a board that hopped
+        or was started by hand does. `prepare(board)` runs once the roots
+        exist and before the board starts — to leave state it reads at
+        boot."""
         self.dir = Path(tempfile.mkdtemp(prefix="bench-settings-api-"))
         case.addCleanup(self._clean)
         self.tool = self.dir / "tool"
@@ -95,10 +103,14 @@ class Board:
         self.env.update({
             "BOARD_APP_ROOT": str(self.app), "BOARD_WORK_ROOT": str(self.work),
             "BOARD_WORKTREES": str(self.dir / "worktrees"),
-            "BOARD_PORT": str(self.port), "BOARD_PR_POLL_INTERVAL": "3600",
+            "BOARD_PORT": str(configured_port or self.port),
+            "BOARD_PR_POLL_INTERVAL": "3600",
             "BOARD_PHASE_INTERVAL": "3600", "BOARD_SYNC": "0",
             "BOARD_COMMIT_MOVES": "0", "BOARD_WATCH_INTERVAL": "3600",
             "BOARD_GH_BIN": str(self.dir / "no-gh")})
+        self.env.update(env or {})
+        if prepare is not None:
+            prepare(self)
         self.log = open(self.dir / "board.log", "wb")
         self.proc = subprocess.Popen(
             [sys.executable, str(self.tool / "manager" / "core" / "board.py"),
@@ -158,6 +170,18 @@ class Board:
         for key, value in (HEADERS if headers is None else headers).items():
             req.add_header(key, value)
         return self._open(req)
+
+    def build(self) -> str:
+        """The build this board serves, as its page names it."""
+        _, data = self.get("/api/state")
+        return data["assets"]["build"]
+
+    def page(self, origin: str | None = None) -> dict:
+        """What the board's own page sends with a write: its origin, its
+        fetch metadata and the build it was served as (task 124)."""
+        return {"Content-Type": "application/json",
+                "Origin": origin or f"http://127.0.0.1:{self.port}",
+                "Sec-Fetch-Site": "same-origin", "X-Bench-Build": self.build()}
 
     def doc(self) -> dict:
         return json.loads(self.doc_path.read_text(encoding="utf-8"))
@@ -220,8 +244,7 @@ class ThePolicyDoorRefusesAForgedWrite(unittest.TestCase):
         board = Board(self)
         code, data = board.post(
             "/api/settings/validate", {"document": board.doc()},
-            headers={**HEADERS, "Origin": f"http://127.0.0.1:{board.port}",
-                     "Sec-Fetch-Site": "same-origin"})
+            headers={**HEADERS, **board.page()})
         self.assertEqual(200, code, data)
         self.assertTrue(data["validation"]["ok"], data["validation"]["errors"])
 
@@ -300,8 +323,7 @@ class TheAgentsDoorIsTheSameDoor(unittest.TestCase):
         code, data = board.post("/api/settings/agents/apply", {
             "revision": revision,
             "agents": {"BOARD_AGENT_MODEL_REVIEW": "cheap-model"}},
-            headers={**HEADERS, "Origin": f"http://127.0.0.1:{board.port}",
-                     "Sec-Fetch-Site": "same-origin"})
+            headers={**HEADERS, **board.page()})
         self.assertEqual(200, code, data)
         self.assertIn("BOARD_AGENT_MODEL_REVIEW=cheap-model", self.env_text(board))
         _, data = board.get("/api/settings")
@@ -517,7 +539,7 @@ class DocumentTextIsRenderedInert(unittest.TestCase):
         """The page escapes everything it draws, and these are the
         renderers that draw document-derived text. A template that
         interpolated a string field without `esc()` is the injection."""
-        html = (CORE / "board.html").read_text(encoding="utf-8")
+        html = pagesource.page()
         checked = 0
         for name in ("settingsVerification", "settingsAcceptance",
                      "settingsAccess", "settingsInstallation",
@@ -550,7 +572,7 @@ class DocumentTextIsRenderedInert(unittest.TestCase):
         """`sline` is where most settings text is drawn now, so each text
         field it takes is escaped by it — and `chips` and `after`, the two
         it takes as markup, are built by callers out of escaped parts."""
-        html = (CORE / "board.html").read_text(encoding="utf-8")
+        html = pagesource.page()
         start = html.index("function sline(")
         body = html[start:html.index("\n}\n", start)]
         for field in ("o.label", "o.sub", "o.title", "o.value", "o.help",
@@ -561,7 +583,7 @@ class DocumentTextIsRenderedInert(unittest.TestCase):
         self.assertIn("esc(summary)", html[start:html.index("\n}\n", start)])
 
     def test_the_escaper_covers_the_characters_that_make_markup(self):
-        html = (CORE / "board.html").read_text(encoding="utf-8")
+        html = pagesource.page()
         start = html.index("const esc = ")
         body = html[start:start + 200]
         for char in ("&", "<", ">", '"'):
@@ -654,12 +676,16 @@ class SavingCannotMoveWork(unittest.TestCase):
     def test_the_settings_route_is_the_only_one_that_writes_the_document(self):
         """A grep, because the guarantee is about the whole server: one
         writer, one path."""
-        text = (CORE / "httpd.py").read_text(encoding="utf-8")
+        text = (CORE / "routes.py").read_text(encoding="utf-8")
         self.assertEqual(1, len(re.findall(r"(?<![a-z])settings\.apply\(", text)),
                          "more than one route writes the policy")
         # and Settings → Agents has exactly one writer too (task 77)
         self.assertEqual(1, text.count("agentsettings.apply("))
-        self.assertGreaterEqual(text.count("origin_problem(self.headers"), 2)
+        # both writers sit behind the policy door, by their routes' class
+        self.assertIn('Route("POST", "/api/settings/apply", "policy-mutation", '
+                      'post_settings)', text)
+        self.assertIn('Route("POST", "/api/settings/agents/apply", '
+                      '"policy-mutation",', text)
 
 
 if __name__ == "__main__":

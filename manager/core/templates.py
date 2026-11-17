@@ -41,6 +41,7 @@ import string
 from pathlib import Path
 
 import config
+import githost
 
 # Placeholders every launch fills from `config.prompt_fields` and the
 # progress block — available to all four templates.
@@ -62,7 +63,8 @@ SPECS: dict[str, dict] = {
         "label": "PR fixes",
         "purpose": "act-pr",
         "intent": "act-pr",
-        "fields": _COMMON + ("branch", "pr", "base", "remote", "plan"),
+        "fields": _COMMON + ("branch", "pr", "base", "remote", "plan")
+        + githost.FRAGMENT_FIELDS["act-pr.md"],
         "required": ("body", "branch", "pr", "plan", "guidance", "context",
                      "verification", "progress", "task_path"),
         "markers": ("ADDRESSED:",),
@@ -82,7 +84,8 @@ SPECS: dict[str, dict] = {
         "label": "PR review",
         "purpose": "review",
         "intent": "review",
-        "fields": _COMMON + ("branch", "pr", "review"),
+        "fields": _COMMON + ("branch", "pr", "review")
+        + githost.FRAGMENT_FIELDS["review-pr.md"],
         "required": ("body", "pr", "branch", "review", "guidance_read_only",
                      "context", "verification", "progress"),
         "markers": ("PR REVIEW:",),
@@ -111,6 +114,15 @@ DESCRIBE = {
     "context": "the pinned approved inputs, by path and hash",
     "verification": "the named checks this run may ask bench for",
     "progress": "how this run reports progress, when it has a channel",
+    "host_read": "how to read the change request's reviews, from the "
+                 "hosting provider",
+    "host_mergeable": "how to tell whether the change request conflicts, "
+                      "from the hosting provider",
+    "host_name": "where the verdict is posted, from the hosting provider",
+    "host_cli": "the hosting provider's read-only command, when it has one",
+    "host_diff": "how to read the change request's diff, from the hosting "
+                 "provider",
+    "host_post": "how to post the verdict, from the hosting provider",
 }
 
 
@@ -124,7 +136,7 @@ def sample_fields() -> dict[str, str]:
         "stage": "in-progress",
         "branch": "task/00-sample-card",
         "plan": "- Branch: `task/00-sample-card` (sample plan)",
-        "pr": "https://github.com/example/example/pull/0",
+        "pr": "(sample: the change request's url)",
         "base": config.APP_BASE,
         "remote": "origin",
         "review": "(sample: the pinned review checkout would be named here)",
@@ -133,6 +145,9 @@ def sample_fields() -> dict[str, str]:
         "context": "(sample: pinned approved inputs would be listed here)",
         "verification": "(sample: the named checks this run may ask for)",
         "progress": "(sample: the progress-reporting instructions)",
+        # the hosting provider in force supplies these, as a launch does
+        **githost.fragments("act-pr.md", "task/00-sample-card"),
+        **githost.fragments("review-pr.md", "task/00-sample-card"),
     }
 
 
@@ -271,7 +286,12 @@ def render(name: str, text: str, fields: dict[str, str]) -> str:
     if problems(name, text):
         raise ValueError(problems(name, text)[0]["why"])
     allowed = set(_spec(name)["fields"])
-    return text.format(**{k: str(v) for k, v in fields.items() if k in allowed})
+    # The hosting provider's fragments (task 116), for a caller that did
+    # not pass them: the provider in force supplies the words a launch
+    # would, formatted with the card's branch.
+    filled = dict(githost.fragments(name, str(fields.get("branch") or "")))
+    filled.update(fields)
+    return text.format(**{k: str(v) for k, v in filled.items() if k in allowed})
 
 
 def describe(name: str) -> dict:

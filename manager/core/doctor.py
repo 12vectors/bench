@@ -73,6 +73,9 @@ import uuid
 from pathlib import Path
 
 import config
+import evidence
+import gatepolicy
+import githost
 import profiles
 import verify
 
@@ -241,12 +244,12 @@ def _finding(mode: str, name: str, outcome: str, about: str, detail: str, *,
 # never leaves this machine. What it must never carry is a *value* — a
 # token, a password, an environment variable's content — and the one place
 # bytes bench did not write get in is a log or a subprocess's output. So
-# everything that reaches a finding goes through `verify.scrub`, which is
+# everything that reaches a finding goes through `evidence.scrub`, which is
 # the same scrubber the evidence log uses, and nothing here ever reads an
 # environment value in the first place.
 
 def _redact(text: str) -> str:
-    return verify.scrub(str(text or ""))
+    return evidence.scrub(str(text or ""))
 
 
 def redaction() -> dict:
@@ -364,6 +367,28 @@ def inspect(worktree: Path | str | None = None) -> dict:
         remedy=(profiles.DIAGNOSTICS["policy-unreadable"][1]
                 if doc["problem"] else None)))
 
+    # — the hosting provider, and what it makes of the remote (task 116) —
+    # Passive: which provider, and whether it recognises the remote. No
+    # probe process and no network, so a conditional merge reads unknown
+    # here and is asked when a merge needs to know.
+    host = githost.provider()
+    findings.append(_finding(
+        "inspect", "hosting-provider",
+        "failed" if host["problem"] else
+        ("skipped" if host["name"] == "none" else "passed"),
+        "which hosting provider change requests go through, and whether it "
+        "recognises this application's remote",
+        host["problem"] or
+        (f"none — BOARD_GIT_PROVIDER is none, so no change request is opened, "
+         f"observed or merged on a host" if host["name"] == "none" else
+         f"{host['label']} · {host['detected'].get('reason')}"),
+        code=("provider-unrecognized" if host["problem"] else None),
+        remedy=("Point BOARD_GIT_REMOTE at a remote the provider recognises, "
+                "name a GitHub Enterprise host in BOARD_GITHUB_HOSTS, or set "
+                "BOARD_GIT_PROVIDER=none in manager/local/.env. Bench does not "
+                "run the provider's CLI against a host it does not speak to.")
+        if host["problem"] else None))
+
     # — the adapter, and what it will answer for —
     declared = sorted(adapter["capabilities"])
     findings.append(_finding(
@@ -401,7 +426,7 @@ def inspect(worktree: Path | str | None = None) -> dict:
         findings += _intent_findings(intent, found)
 
     # — what a merge refuses without, which is not what a launch grants —
-    gate_policy = profiles.gate_policy(doc)
+    gate_policy = gatepolicy.gate_policy(doc)
     findings += _gate_findings(gate_policy)
 
     # — what nothing here enforces, named rather than omitted —
@@ -416,7 +441,7 @@ def inspect(worktree: Path | str | None = None) -> dict:
         # what this board refuses a merge without, per guarded scope. The
         # same resolution the merge path reads, reported and never
         # re-derived — this module owns no policy logic here either.
-        "gates": profiles.gate_policy_public(gate_policy),
+        "gates": gatepolicy.gate_policy_public(gate_policy),
         "policy": {"kind": doc["kind"], "identity": doc["identity"],
                    "path": doc["path"], "revision": doc["revision"],
                    "describes": doc["describes"], "problem": doc["problem"],
@@ -443,7 +468,7 @@ def _harness_finding(intent: str, found: dict) -> dict:
         "inspect", f"harness:{intent}", "passed" if present else "failed",
         f"which harness and model a '{intent}' launch rides",
         f"{harness.get('name')} ({harness.get('setting')}, "
-        f"{profiles._SOURCE_WORDS.get(harness.get('source'), harness.get('source'))})"
+        f"{profiles.SOURCE_WORDS.get(harness.get('source'), harness.get('source'))})"
         f" · model: {model.get('words')}",
         intent=intent,
         code=None if present else "harness-unavailable",
@@ -685,9 +710,10 @@ FIXTURES = (
         "raw": "{ this is not json",
     },
     {
-        # Resolved through `gate_policy` rather than `resolve`, because a
-        # gate is a property of the board and not of a launch intent. Same
-        # reader, same codes, same remedies — see `fixture_findings`.
+        # Resolved through `gatepolicy.gate_policy` rather than `resolve`,
+        # because a gate is a property of the board and not of a launch
+        # intent. Same reader, same codes, same remedies — see
+        # `fixture_findings`.
         "name": "a-gate-requiring-nothing",
         "about": "a gate requiring a check the document declares nowhere",
         "code": "gate-check-undeclared",
@@ -733,7 +759,7 @@ def fixture_findings() -> list[dict]:
             wanted = fixture["code"]
             try:
                 found = (
-                    profiles.gate_policy(profiles.document_at(path))
+                    gatepolicy.gate_policy(profiles.document_at(path))
                     if fixture.get("via") == "gates" else
                     profiles.resolve(fixture["intent"],
                                      worktree=tmp / "worktree",
@@ -792,10 +818,10 @@ LIFECYCLE_COMMANDS = ("git worktree", "git reset", "git checkout",
                       "git switch", "git branch", "git update-ref",
                       "git remote")
 
-# What the read-only intent may never be rendered. `review` posting a
-# verdict is not publishing: `gh pr review` is its whole job.
-REVIEW_FORBIDDEN = ("git commit", "git push", "git add", "gh pr merge",
-                    "gh pr create")
+# What the read-only intent may never be rendered: git's writes, and the
+# hosting provider's publication verbs (`githost.agent_verbs`, task 116).
+# `review` posting a verdict is not publishing: that is its whole job.
+REVIEW_FORBIDDEN = ("git commit", "git push", "git add")
 
 
 def _conformance_seam(adapter: dict) -> dict:
@@ -861,7 +887,9 @@ def _describe(adapter: dict, seam: dict, intent: str,
         "AGENT_COMMANDS": ",".join(config.agent_commands()),
         "AGENT_PROFILE": json.dumps(profiles.adapter_policy(found)),
         "AGENT_CONTEXT": json.dumps(profiles.adapter_context(found)),
+        "AGENT_GUIDANCE": json.dumps(profiles.adapter_guidance(found)),
         "AGENT_CWD": str(found["cwd"]["path"] or ""),
+        "AGENT_HOST": json.dumps(githost.agent_verbs(intent)),
     })
     try:
         result = subprocess.run(argv, env=env, cwd=adapter["path"],
@@ -974,6 +1002,55 @@ def _conformance_rows(adapter: dict, seam: dict, intent: str,
                     "bench pinned. Contents are never passed."
                     if absent or leaked else None)))
 
+    # — the approved inputs as exact read grants (task 126) —
+    # Generated permission text only: this row proves the adapter *wrote*
+    # an exact grant per approved file, never that the vendor honoured it,
+    # and it says so. `reads` is optional in the describe contract, so an
+    # adapter that does not report it is skipped rather than accused.
+    wanted_paths = [str(i.get("pinned") or i.get("path")) for i in pinned] + \
+        [g["path"] for g in profiles.adapter_guidance(found)]
+    if described.get("refused"):
+        rows.append(_finding(
+            "conformance", "context-reads", "failed",
+            "whether every approved input became an exact read grant",
+            f"the adapter would refuse this launch: {described['refused']}",
+            intent=intent,
+            remedy=("An approved input the adapter cannot grant exactly is "
+                    "refused, never widened or dropped. Re-pin it, or fix the "
+                    "path the refusal names.")))
+    elif not wanted_paths:
+        rows.append(_finding(
+            "conformance", "context-reads", "skipped",
+            "whether every approved input became an exact read grant",
+            "this intent has no approved input or outside workflow brief",
+            intent=intent))
+    elif "reads" not in described:
+        rows.append(_finding(
+            "conformance", "context-reads", "skipped",
+            "whether every approved input became an exact read grant",
+            "this adapter's describe does not report read grants, so nothing "
+            "here says whether the run can read its approved inputs",
+            intent=intent,
+            remedy=("Report `reads` from describe (see core/adapters/README.md) "
+                    "if the adapter grants file reads narrowly.")))
+    else:
+        granted = {str(r.get("path")) for r in described.get("reads") or []}
+        missing = [p for p in wanted_paths if p not in granted]
+        extra = sorted(granted - set(wanted_paths))
+        rows.append(_finding(
+            "conformance", "context-reads",
+            "failed" if (missing or extra) else "passed",
+            "whether every approved input became an exact read grant",
+            (f"no read grant for {', '.join(missing)}" if missing else
+             f"a read grant bench did not approve: {', '.join(extra)}" if extra else
+             f"{len(wanted_paths)} exact read grant"
+             f"{'' if len(wanted_paths) == 1 else 's'} generated — permission "
+             f"text, not proof the vendor honours it"),
+            intent=intent,
+            remedy=("Each approved input, and each workflow brief the prompt "
+                    "names outside the checkout, is one exact file grant — "
+                    "no more and no fewer." if (missing or extra) else None)))
+
     # — asking bench for a check, review included —
     shim = next((g for g in found["commands"]
                  if g["name"] == profiles.VERIFY_GRANT), None)
@@ -1000,7 +1077,10 @@ def _conformance_rows(adapter: dict, seam: dict, intent: str,
 
     # — publication, kept where it belongs —
     if intent == "review":
-        offending = [c for c in REVIEW_FORBIDDEN
+        forbidden = list(REVIEW_FORBIDDEN) + [
+            v for v in githost.agent_verbs("review")["publish"]
+            if v not in REVIEW_FORBIDDEN]
+        offending = [c for c in forbidden
                      if c in allow and c not in deny]
         rows.append(_finding(
             "conformance", "publication", "failed" if offending else "passed",
@@ -1028,7 +1108,10 @@ def _conformance_rows(adapter: dict, seam: dict, intent: str,
 
     # — a refinement: reads and proposes, and nothing else at all —
     if intent == "refine":
-        allowed = [str(r) for r in (described.get("allow") or [])]
+        # An exact read grant of an approved file is not a command.
+        reading = {str(r.get("rule")) for r in described.get("reads") or []}
+        allowed = [str(r) for r in (described.get("allow") or [])
+                   if str(r) not in reading]
         rows.append(_finding(
             "conformance", "no-commands",
             "failed" if allowed else "passed",
@@ -1146,7 +1229,9 @@ def _stub_rows(adapter: dict, seam: dict, intent: str,
             "AGENT_COMMANDS": ",".join(config.agent_commands()),
             "AGENT_PROFILE": json.dumps(profiles.adapter_policy(found)),
             "AGENT_CONTEXT": json.dumps(profiles.adapter_context(found)),
+            "AGENT_GUIDANCE": json.dumps(profiles.adapter_guidance(found)),
             "AGENT_CWD": str(cwd),
+            "AGENT_HOST": json.dumps(githost.agent_verbs(intent)),
         })
         # The model this intent resolved, exactly as `_launch` would hand
         # it over — a stub costs nothing, and the row then shows the model
@@ -1562,7 +1647,9 @@ def _real_agent_probe(adapter: dict, root: Path, probe: dict,
         "AGENT_COMMANDS": ",".join(config.agent_commands()),
         "AGENT_PROFILE": json.dumps(profiles.adapter_policy(found)),
         "AGENT_CONTEXT": json.dumps(profiles.adapter_context(found)),
+        "AGENT_GUIDANCE": json.dumps(profiles.adapter_guidance(found)),
         "AGENT_CWD": str(root),
+        "AGENT_HOST": json.dumps(githost.agent_verbs(intent)),
     })
     # The configured model, and nothing invented here: absent means the
     # vendor's own resolution, which is the account's own default.

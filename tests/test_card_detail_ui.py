@@ -23,6 +23,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "manager" / "core"))
@@ -31,9 +32,8 @@ import acceptance  # noqa: E402
 import progress  # noqa: E402
 import taskfiles  # noqa: E402
 
-BOARD = ROOT / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
-HTML = BOARD.read_text(encoding="utf-8")
+HTML = pagesource.page()
 FILE = "90-x.md"
 HOSTILE = '<img src=x onerror=alert(1)>'
 
@@ -57,6 +57,8 @@ HARNESS = "\n".join([
     *(function(name) for name in (
         "actLabel", "ago", "whenOf", "stampOf", "cardSplit", "recordHtml",
         "evidenceOptions", "criterionHtml", "accActor", "acceptanceHtml",
+        # task 125: a failed re-read keeps the last reading, marked
+        "staleWords", "accStaleHtml", "acceptanceBody",
         "roundLine", "sinceRound", "findingHtml", "md", "reportHtml", "reviewsHtml",
         "acceptanceChips", "dtabsHtml",
         # task 84: relevance reviews and their threads
@@ -66,8 +68,8 @@ HARNESS = "\n".join([
     "const S = { state: { acceptance: { [input.file]: input.summary } },",
     "  accOpen: {}, accDraft: {}, evidence: { [input.file]: { evidence: [] } },",
     "  acc: { [input.file]: { data: input.acc } } };",
-    "const t = { file: input.file, stage: 'review', body: input.body };",
-    "const split = cardSplit(input.body);",
+    "const t = { file: input.file, stage: 'review', body: input.body, parts: input.parts };",
+    "const split = cardSplit(t);",
     "process.stdout.write(JSON.stringify({",
     "  acceptance: acceptanceHtml(t, input.acc), reviews: reviewsHtml(t, input.acc),",
     "  chips: acceptanceChips(t), tabs: dtabsHtml(t, 'acceptance', input.acc),",
@@ -112,6 +114,8 @@ class Rendering(unittest.TestCase):
         out = subprocess.run(
             [NODE, str(self.js)], text=True, capture_output=True,
             input=json.dumps({"file": FILE, "acc": acc, "body": text,
+                              # the offsets the state carries (task 125)
+                              "parts": taskfiles.part_offsets(text),
                               "summary": acceptance.summary(text, FILE)}))
         self.assertEqual(out.returncode, 0, out.stderr)
         return json.loads(out.stdout)
@@ -192,7 +196,9 @@ class Rendering(unittest.TestCase):
         self.assertEqual(out["chips"][-1]["label"], "1 fix to recheck")
 
     def test_the_page_splits_a_card_where_the_server_does(self):
-        text = card("```\n## Work report — 2026-01-01 10:00 (x)\n```\n- [ ] A <!-- ac:a -->\n",
+        # the server splits it and sends the offsets (task 125); the page
+        # slices — so a rule the two could disagree about exists once
+        text = card("```\n## Work report — 2026-01-01 10:00 (x)\n```\n- [ ] A 🚀 <!-- ac:a -->\n",
                     "## Work report — 2026-11-08 10:00 (Juno)\n\nDid it.\n")
         out = self.render(text)
         self.assertEqual(out["split"], taskfiles.card_parts(text))
@@ -211,7 +217,8 @@ class SourceInvariants(unittest.TestCase):
 
     def test_viewing_assigns_nothing(self):
         """Only the armed Track action posts to /track; loading reads."""
-        self.assertIn("fetch(`/api/card/acceptance?file=", function("loadAcc"))
+        self.assertIn("acceptance.read(", function("loadAcc"))
+        self.assertIn("`/api/card/acceptance?file=", HTML)
         self.assertEqual(HTML.count("/api/card/acceptance/track"), 1)
         self.assertIn("label: 'Track acceptance', confirm: true", function("wireDetail"))
 

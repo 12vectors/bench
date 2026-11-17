@@ -56,6 +56,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HANDOFF_KIND = "bench-bootstrap-handoff"
@@ -1004,11 +1005,20 @@ def perform(op: dict, resolved: dict, add_remote: str | None) -> dict:
 
 
 def write_json(path: Path, document: dict) -> None:
+    # Standalone, so records.py's rule is restated here: a unique temporary
+    # file in the same directory, os.replace, and only our own file is
+    # removed on failure (task 110).
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(redact_tree(document), indent=2,
-                                    sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
+    text = json.dumps(redact_tree(document), indent=2, sort_keys=True) + "\n"
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.",
+                                     suffix=".bench-tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 # ── the handoff ───────────────────────────────────────────────────────

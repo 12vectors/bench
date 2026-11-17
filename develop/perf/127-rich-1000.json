@@ -1,0 +1,196 @@
+{
+ "buildSeconds": 4.27,
+ "fixture": {
+  "cards": 1000,
+  "inputs": 6,
+  "outcomes": {
+   "failed": 250,
+   "passed": 250,
+   "running": 250,
+   "stale": 250
+  },
+  "records": 2000,
+  "rich": 1000,
+  "stages": {
+   "backlog": 200,
+   "done": 200,
+   "in-progress": 200,
+   "review": 200,
+   "to-do": 200
+  }
+ },
+ "host": {
+  "at": "2026-11-16T09:54:38Z",
+  "commit": "9580ba0ff7ba",
+  "cpus": 8,
+  "executable": "/usr/bin/python3",
+  "git": "git version 2.53.0",
+  "platform": "Linux-7.0.0-42-generic-x86_64-with-glibc2.43",
+  "python": "3.14.4"
+ },
+ "order": [
+  "baseline",
+  "optimized"
+ ],
+ "payloadDiffers": [],
+ "payloadsEqual": true,
+ "samples": {
+  "baseline": [
+   {
+    "cold": {
+     "byVerb": {
+      "config": 1002,
+      "diff": 501,
+      "for-each-ref": 2,
+      "log": 30096,
+      "ls-files": 501,
+      "remote": 4,
+      "rev-parse": 5009,
+      "status": 501
+     },
+     "git": 37616,
+     "seconds": 168.7752
+    },
+    "concurrent": {
+     "skipped": "baseline cold read took 168.8s, over the 30s limit; four at once is impractical here"
+    },
+    "expiry": {
+     "skipped": "baseline cold read took 168.8s; an expiry read repeats the same work and is not repeated at this size"
+    },
+    "warm": {
+     "skipped": "baseline cold read took 168.8s, longer than the 10s freshness bucket, so a second read is not warm; not repeated"
+    }
+   }
+  ],
+  "optimized": [
+   {
+    "cold": {
+     "byVerb": {
+      "config": 1002,
+      "diff": 501,
+      "for-each-ref": 2,
+      "log": 6,
+      "ls-files": 501,
+      "remote": 4,
+      "rev-parse": 3506,
+      "status": 501
+     },
+     "git": 6023,
+     "seconds": 28.2837
+    },
+    "concurrent": {
+     "agree": true,
+     "git": 26852,
+     "slowest": 53.0826,
+     "threads": 4,
+     "wall": 53.1189
+    },
+    "expiry": {
+     "byVerb": {
+      "config": 1002,
+      "diff": 501,
+      "for-each-ref": 2,
+      "log": 6,
+      "ls-files": 501,
+      "remote": 4,
+      "rev-parse": 3506,
+      "status": 501
+     },
+     "git": 6023,
+     "seconds": 28.57
+    },
+    "warm": {
+     "byVerb": {
+      "config": 1002,
+      "diff": 501,
+      "for-each-ref": 2,
+      "log": 6,
+      "ls-files": 501,
+      "remote": 4,
+      "rev-parse": 3506,
+      "status": 501
+     },
+     "git": 6023,
+     "seconds": 28.879
+    }
+   }
+  ]
+ },
+ "scenario": "rich-1000",
+ "sections": {
+  "baseline": {
+   "skipped": "baseline cold read took 168.8s; sections not timed again at this size"
+  },
+  "optimized": {
+   "collect": {
+    "git": 0,
+    "seconds": 0.0
+   },
+   "delivery.board": {
+    "git": 5,
+    "seconds": 0.9405
+   },
+   "gates.board": {
+    "git": 1503,
+    "seconds": 8.2427
+   },
+   "readScope": {
+    "asked": {
+     "document": 2758,
+     "provenance": 12,
+     "resolve": 1754,
+     "selection": 15042
+    },
+    "computed": {
+     "document": 1,
+     "provenance": 6,
+     "resolve": 752,
+     "selection": 12
+    }
+   },
+   "verify.board": {
+    "git": 4515,
+    "seconds": 19.787
+   }
+  }
+ },
+ "summary": {
+  "baseline": {
+   "cold": {
+    "gitMedian": 37616,
+    "max": 168.7752,
+    "median": 168.7752,
+    "min": 168.7752,
+    "n": 1
+   },
+   "expiry": {},
+   "warm": {}
+  },
+  "optimized": {
+   "cold": {
+    "gitMedian": 6023,
+    "max": 28.2837,
+    "median": 28.2837,
+    "min": 28.2837,
+    "n": 1
+   },
+   "expiry": {
+    "gitMedian": 6023,
+    "max": 28.57,
+    "median": 28.57,
+    "min": 28.57,
+    "n": 1
+   },
+   "warm": {
+    "gitMedian": 6023,
+    "max": 28.879,
+    "median": 28.879,
+    "min": 28.879,
+    "n": 1
+   }
+  }
+ },
+ "variableFields": [
+  "now"
+ ]
+}

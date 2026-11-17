@@ -27,20 +27,23 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from tests import pagesource
 from unittest import mock
 
 from tests.test_integration_gates import CARD, wait_for  # noqa: E402
 from tests.test_required_checks import BatchCase  # noqa: E402
 
 import agents  # noqa: E402
+import completion  # noqa: E402
 import config  # noqa: E402
 import gates  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import phases  # noqa: E402
 import required  # noqa: E402
 import settings  # noqa: E402
 import state  # noqa: E402
 import sync  # noqa: E402
+import evidence  # noqa: E402
 import verify  # noqa: E402
 import watch  # noqa: E402
 
@@ -55,7 +58,7 @@ class OnReviewCase(BatchCase):
         self.addCleanup(required._ON_REVIEW_CLAIMED.clear)
         # opening a PR is the other reaction to entering review; it is not
         # what these cases are about, and there is no remote to open it on
-        opened = mock.patch.object(github, "open_pr_async")
+        opened = mock.patch.object(changes, "open_pr_async")
         self.opened = opened.start()
         self.addCleanup(opened.stop)
         self.patch(VERIFY_ON_REVIEW=False)
@@ -175,7 +178,7 @@ class ALocalPersonsMove(OnReviewCase):
         self.assertEqual(batch["intent"], "work")
         self.assertEqual(batch["head"], self.head)
         self.assertEqual(batch["state"], "finished")
-        record = verify.read(self.item(batch, "missing")["evidence"])
+        record = evidence.read(self.item(batch, "missing")["evidence"])
         self.assertIsNone(record["agent"])
         self.assertEqual(record["source"]["commit"], self.head)
         self.assertTrue(any("BOARD_VERIFY_ON_REVIEW" in s
@@ -418,8 +421,7 @@ class InSettings(OnReviewCase):
         self.assertEqual(before, after)
 
     def test_the_page_draws_the_row(self):
-        page = (ROOT / "manager" / "core" / "board.html").read_text(
-            encoding="utf-8")
+        page = pagesource.page()
         self.assertIn("onReviewLine(a.onReview, states)", page)
         self.assertIn("Turn it off:", page)
 
@@ -436,9 +438,9 @@ class NoRetryNoFollowOn(OnReviewCase):
     def guarded(self):
         """Nothing an entry does may launch an agent, review or merge."""
         targets = [(agents, name) for name in (
-            "_launch", "start_agent", "start_review", "start_pr_review",
+            "launch", "start_agent", "start_review", "start_pr_review",
             "start_pr_fix")]
-        targets += [(phases, "_merge_member"), (github, "_merge_locally")]
+        targets += [(phases, "_merge_member"), (completion, "_merge_locally")]
         for module, name in targets:
             patcher = mock.patch.object(module, name, side_effect=AssertionError(
                 f"{module.__name__}.{name} must not be called"))

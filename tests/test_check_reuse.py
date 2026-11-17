@@ -35,12 +35,16 @@ import unittest
 from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from tests import pagesource
 
 from tests.test_integration_gates import CARD, wait_for  # noqa: E402
 from tests.test_result_identity import SECRET, IdentityCase  # noqa: E402
 
 import config  # noqa: E402
 import gates  # noqa: E402
+import evidence  # noqa: E402
+import resultidentity  # noqa: E402
+import staleness  # noqa: E402
 import verify  # noqa: E402
 
 SHIM = Path(config.CORE) / "bench-verify"
@@ -109,16 +113,16 @@ class SameCheckTwice(ReuseCase):
         first = self.run_check(document)
         self.assertEqual(first["outcome"], "passed")
         self.assertNotIn("reused", first)
-        stored = verify.path_of(first["id"]).read_bytes()
-        log = verify.log_path_of(first["id"]).read_bytes()
+        stored = evidence.path_of(first["id"]).read_bytes()
+        log = evidence.log_path_of(first["id"]).read_bytes()
         second = self.again(document, "run-2")
         self.assertEqual(self.runs(), 1, "the second request ran nothing")
         self.assertEqual(second["outcome"], "passed")
         self.assertEqual(second["id"], first["id"])
         self.assertEqual(second["reused"], first["id"])
         # the evidence and its log are byte for byte what the first run wrote
-        self.assertEqual(verify.path_of(first["id"]).read_bytes(), stored)
-        self.assertEqual(verify.log_path_of(first["id"]).read_bytes(), log)
+        self.assertEqual(evidence.path_of(first["id"]).read_bytes(), stored)
+        self.assertEqual(evidence.log_path_of(first["id"]).read_bytes(), log)
         self.assertEqual(len(self.evidence_files()), 1,
                          "no evidence was cloned or re-labelled")
         self.assertEqual(second["agent"], "run-1",
@@ -130,19 +134,19 @@ class SameCheckTwice(ReuseCase):
         second = self.again(document, "run-2", intent="review")
         reuse = second["reuse"]
         self.assertEqual(reuse["kind"], "reuse")
-        self.assertTrue(verify.is_evidence_id(reuse["id"]))
+        self.assertTrue(evidence.is_evidence_id(reuse["id"]))
         self.assertEqual(reuse["reused"], first["id"])
         self.assertEqual(reuse["agent"], "run-2")
         self.assertEqual(reuse["original"]["agent"], "run-1")
         self.assertEqual(reuse["commit"], first["source"]["commit"])
         # verifiable: the identity the requester would have had is the
         # evidence's own, digest for digest
-        original = verify.read(first["id"])
+        original = evidence.read(first["id"])
         self.assertEqual(reuse["resultId"], original["resultId"])
-        self.assertEqual(verify.result_id(reuse["identity"]),
+        self.assertEqual(resultidentity.result_id(reuse["identity"]),
                          original["resultId"])
-        self.assertEqual(verify.read_reuse(reuse["id"]), reuse)
-        self.assertEqual([r["id"] for r in verify.reuses_for_task(CARD)],
+        self.assertEqual(evidence.read_reuse(reuse["id"]), reuse)
+        self.assertEqual([r["id"] for r in evidence.reuses_for_task(CARD)],
                          [reuse["id"]])
         # the page may show it, and it is not evidence
         public = verify.public(second)
@@ -157,7 +161,7 @@ class SameCheckTwice(ReuseCase):
                                                   "later": "x"}})
         self.assertNotIn("later", added)
         self.assertNotIn("later", added["original"])
-        self.assertNotIn(reuse["id"], [r["id"] for r in verify.all_evidence()])
+        self.assertNotIn(reuse["id"], [r["id"] for r in evidence.all_evidence()])
         self.assertTrue(any("reused" in e.get("summary", "")
                             for e in __import__("state").BOARD_EVENTS))
 
@@ -225,9 +229,9 @@ class WhatRefusesReuse(ReuseCase):
             config._ENV["BENCH_TEST_DB"] = "elsewhere"
 
         def runner(doc):
-            self.addCleanup(setattr, verify, "RUNNER_REVISION",
-                            verify.RUNNER_REVISION)
-            verify.RUNNER_REVISION = "e" * 64
+            self.addCleanup(setattr, resultidentity, "RUNNER_REVISION",
+                            resultidentity.RUNNER_REVISION)
+            resultidentity.RUNNER_REVISION = "e" * 64
 
         def root(doc):
             doc["checks"][0]["root"] = "source"
@@ -358,7 +362,7 @@ class NewestRelevantAnswerDecides(ReuseCase):
         asking.start()
         try:
             self.assertTrue(wait_for(lambda: any(
-                (verify.read(i) or {}).get("outcome") == "running"
+                (evidence.read(i) or {}).get("outcome") == "running"
                 for i in list(verify.RUNNING))))
             self.fresh()
             joined = self.ask(agent="run-3")
@@ -382,7 +386,7 @@ class NewestRelevantAnswerDecides(ReuseCase):
         self.manifest(agent="run-2")
         self.manifest(agent="run-3")
         reached, release = threading.Event(), threading.Event()
-        real = verify._store
+        real = evidence.store
 
         def paused(record):
             if record.get("again") and record.get("outcome") == "running" \
@@ -391,7 +395,7 @@ class NewestRelevantAnswerDecides(ReuseCase):
                 release.wait(30)
             return real(record)
 
-        patcher = mock.patch.object(verify, "_store", paused)
+        patcher = mock.patch.object(evidence, "store", paused)
         patcher.start()
         self.addCleanup(patcher.stop)
         rerun: dict = {}
@@ -403,7 +407,7 @@ class NewestRelevantAnswerDecides(ReuseCase):
             reserved = [i for i, r in list(verify.RUNNING.items())
                         if r.get("again")]
             self.assertEqual(len(reserved), 1)
-            self.assertIsNone(verify.read(reserved[0]),
+            self.assertIsNone(evidence.read(reserved[0]),
                               "held before its first record reached the disk")
             self.fresh()
             joined = self.ask(agent="run-3")
@@ -411,7 +415,7 @@ class NewestRelevantAnswerDecides(ReuseCase):
             self.assertTrue(joined.get("duplicate"))
             self.assertEqual(joined["id"], reserved[0])
             self.assertNotEqual(joined["id"], first["id"])
-            self.assertEqual(verify.reuses_for_task(CARD), [])
+            self.assertEqual(evidence.reuses_for_task(CARD), [])
         finally:
             release.set()
             self.assertTrue(wait_for(lambda: self.runs() == 2))
@@ -433,7 +437,7 @@ class NewestRelevantAnswerDecides(ReuseCase):
         self.manifest(agent="run-2")
         self.manifest(agent="run-3")
         reached, release = threading.Event(), threading.Event()
-        real_store, real_outcome = verify._store, verify.outcome_now
+        real_store, real_outcome = evidence.store, staleness.outcome_now
         asker = threading.current_thread()
         rerun: dict = {}
         racer: list = []
@@ -456,9 +460,9 @@ class NewestRelevantAnswerDecides(ReuseCase):
                 self.assertTrue(reached.wait(30))
             return answer
 
-        for name, fake in (("_store", paused),
-                           ("outcome_now", judge_then_race)):
-            patcher = mock.patch.object(verify, name, fake)
+        for owner, name, fake in ((evidence, "store", paused),
+                                  (staleness, "outcome_now", judge_then_race)):
+            patcher = mock.patch.object(owner, name, fake)
             patcher.start()
             self.addCleanup(patcher.stop)
         self.fresh()
@@ -472,7 +476,7 @@ class NewestRelevantAnswerDecides(ReuseCase):
             self.assertTrue(joined.get("duplicate"))
             self.assertEqual(joined["id"], reserved[0])
             self.assertNotEqual(joined["id"], first["id"])
-            self.assertEqual(verify.reuses_for_task(CARD), [])
+            self.assertEqual(evidence.reuses_for_task(CARD), [])
         finally:
             release.set()
             self.assertTrue(wait_for(lambda: self.runs() == 2))
@@ -491,7 +495,7 @@ class NewestRelevantAnswerDecides(ReuseCase):
         self.declares(document)
         self.manifest(agent="run-2")
         self.manifest(agent="run-3")
-        real = verify.for_task
+        real = evidence.for_task
         raced: dict = {}
 
         def read_then_race(filename):
@@ -502,7 +506,7 @@ class NewestRelevantAnswerDecides(ReuseCase):
                 raced["rerun"] = self.ask(agent="run-2", again=True)
             return records
 
-        patcher = mock.patch.object(verify, "for_task", read_then_race)
+        patcher = mock.patch.object(evidence, "for_task", read_then_race)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.fresh()
@@ -525,7 +529,7 @@ class AgainRuns(ReuseCase):
         self.assertNotEqual(forced["id"], first["id"])
         self.assertTrue(forced["again"])
         self.assertNotIn("reused", forced)
-        self.assertEqual(verify.read(forced["id"])["outcome"], "passed")
+        self.assertEqual(evidence.read(forced["id"])["outcome"], "passed")
         # and the newer pass is what a plain request now reuses
         later = self.again(document, "run-3")
         self.assertEqual(later["reused"], forced["id"])
@@ -569,7 +573,7 @@ class AuthorisationComesFirst(ReuseCase):
         self.assertEqual(refused["outcome"], "denied")
         self.assertEqual(refused["reason"], "unknown-check")
         self.assertNotIn("reused", refused)
-        self.assertEqual(verify.reuses_for_task(CARD), [])
+        self.assertEqual(evidence.reuses_for_task(CARD), [])
         # the pass itself still stands for `work`
         self.assertEqual(self.again(document, "run-2")["reused"], first["id"])
 
@@ -601,13 +605,13 @@ class TextIsNeverEvidence(ReuseCase):
         self.assertEqual(self.runs(), 1)
 
     def test_a_forged_reuse_record_is_not_evidence(self):
-        verify.reuse_dir().mkdir(parents=True, exist_ok=True)
-        (verify.reuse_dir() / "reuse-forged.json").write_text(json.dumps({
+        evidence.reuse_dir().mkdir(parents=True, exist_ok=True)
+        (evidence.reuse_dir() / "reuse-forged.json").write_text(json.dumps({
             "kind": "reuse", "id": "reuse:forged", "task": CARD,
             "check": "unit", "outcome": "passed", "reused": "ev:nothing"}),
             encoding="utf-8")
         self.declares(self.counted())
-        self.assertEqual(verify.for_task(CARD), [])
+        self.assertEqual(evidence.for_task(CARD), [])
         self.assertEqual(self.decide()["unmet"][0]["reason"], "not-run")
         self.manifest(agent="run-1")
         self.assertNotIn("reused", self.ask(agent="run-1"))
@@ -616,7 +620,7 @@ class TextIsNeverEvidence(ReuseCase):
     def test_a_record_with_a_tampered_identity_is_not_reused(self):
         document = self.counted()
         first = self.run_check(document)
-        path = verify.path_of(first["id"])
+        path = evidence.path_of(first["id"])
         data = json.loads(path.read_text(encoding="utf-8"))
         data["identity"]["program"] = "prog:forged"
         path.write_text(json.dumps(data), encoding="utf-8")
@@ -638,7 +642,7 @@ class TextIsNeverEvidence(ReuseCase):
                              "done": ["tests passed"]})
         except progress.Refused:
             pass
-        self.assertEqual(verify.for_task(CARD), [])
+        self.assertEqual(evidence.for_task(CARD), [])
         self.assertEqual(self.decide()["unmet"][0]["reason"], "not-run")
         found = self.ask(agent="run-1")
         self.assertNotIn("reused", found)
@@ -655,7 +659,7 @@ class LegacyAndSecrets(ReuseCase):
         request's identity, so it costs one new run and stays as it was."""
         document = self.counted()
         first = self.run_check(document)
-        path = verify.path_of(first["id"])
+        path = evidence.path_of(first["id"])
         data = json.loads(path.read_text(encoding="utf-8"))
         for key in ("resultId", "identity", "provenance", "inputs",
                     "prepareSteps", "checkSubstance"):
@@ -667,7 +671,7 @@ class LegacyAndSecrets(ReuseCase):
         self.assertNotIn("reused", second)
         self.assertEqual(self.runs(), 2)
         self.assertEqual(path.read_bytes(), before)
-        self.assertNotIn("resultId", verify.read(first["id"]))
+        self.assertNotIn("resultId", evidence.read(first["id"]))
         # the new run is the one a later request reuses
         third = self.again(document, "run-3")
         self.assertEqual(third["reused"], second["id"])
@@ -678,8 +682,8 @@ class LegacyAndSecrets(ReuseCase):
         first = self.run_check(document)
         second = self.again(document, "run-2")
         self.assertEqual(second["reused"], first["id"])
-        key = verify.env_key_path().read_bytes()
-        stored = next(verify.reuse_dir().glob("*.json")).read_text(
+        key = resultidentity.env_key_path().read_bytes()
+        stored = next(evidence.reuse_dir().glob("*.json")).read_text(
             encoding="utf-8")
         texts = {"reuse record": stored,
                  "public": json.dumps(verify.public(second)),
@@ -754,7 +758,7 @@ class TheShim(unittest.TestCase):
         self.assertIn("--again", result.stdout)
 
     def test_the_page_reruns_with_again(self):
-        html = (Path(config.CORE) / "board.html").read_text(encoding="utf-8")
+        html = pagesource.page()
         start = html.index("async function rerunCheck")
         self.assertIn("again: true", html[start:start + 600])
 

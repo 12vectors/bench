@@ -74,7 +74,7 @@ the mutation re-reads it immediately before the irreversible step:
 - `phases._member_state` holds a member out of `ready` while its gate is
   unmet, and `phases._merge_member` asks again with the branch tip in
   hand before the merge runs.
-- `github._complete` asks before it parks the drive, and again
+- `completion._complete` asks before it parks the drive, and again
   immediately before the merge — so a push that lands in between is a
   refusal rather than a stale-evidence window.
 - And because reading twice is not atomic, the commit the second read
@@ -98,10 +98,15 @@ from pathlib import Path
 
 import acceptance
 import config
+import evidence
+import gatepolicy
+import gitrepo
+import plans
 import profiles
+import records
+import staleness
 import state
 import taskfiles
-import verify
 
 # One decision word per answer, and the word carries the meaning rather
 # than the colour — the law the verification outcomes are written under.
@@ -158,11 +163,16 @@ REASONS = {
     "verdict-changes": ("bench's own review asked for changes"),
     "verdict-other-head": ("the Bench verdict on record is about a different "
                            "head"),
+    "verdict-before-retarget": ("the Bench verdict on record was given before "
+                                "the card was retargeted, so it is about the "
+                                "change against another target"),
     "no-approval": ("the pull request has no formal GitHub review state of "
                     "APPROVED"),
     "changes-requested": ("a formal GitHub review asks for changes"),
     "approval-other-head": ("the formal approval on record was given for a "
                             "different commit"),
+    "approval-before-retarget": ("the formal approval on record was given "
+                                 "before the card was retargeted"),
     "same-account": ("the only review activity is from the account that "
                      "proposed the head, and GitHub does not accept an "
                      "approval from it — the comment it fell back to is not "
@@ -236,6 +246,14 @@ REMEDIES = {
     "verdict-other-head": ("Review the current head: a verdict is about the "
                            "commit it was pinned to and is never retracted, "
                            "but it does not travel to the next one."),
+    "verdict-before-retarget": ("Review it again against the new target "
+                                "(◔ review PR). A retarget changes the diff "
+                                "and the integration even when the head did "
+                                "not move; the earlier verdict is kept as "
+                                "history."),
+    "approval-before-retarget": ("Ask for a review of the change against "
+                                 "its new target. An approval is not carried "
+                                 "across a retarget, whatever the host kept."),
     "no-approval": ("Get a formal review on the pull request. A comment — "
                     "however it is worded — is not a review state, and bench "
                     "will not read one as one."),
@@ -307,6 +325,7 @@ SEVERITY = {
     "source-unbound": "needed", "no-verdict": "needed",
     "verdict-other-head": "needed", "no-approval": "needed",
     "approval-other-head": "needed", "no-separate-reviewer": "needed",
+    "verdict-before-retarget": "needed", "approval-before-retarget": "needed",
     "running": "running", "preparing": "running",
     "failed": "problem", "prepare-failed": "problem", "denied": "problem",
     "error": "problem", "verdict-changes": "problem",
@@ -343,6 +362,8 @@ PLAIN = {
     "verdict-other-head": "Reviewed an earlier commit, not {at}",
     "no-approval": "No approval on GitHub yet",
     "approval-other-head": "Approved an earlier commit, not {at}",
+    "verdict-before-retarget": "Reviewed {at} against its earlier target",
+    "approval-before-retarget": "Approved {at} against its earlier target",
     "no-separate-reviewer": "Needs approval from a separate reviewer",
     "running": "Running on {at}",
     "preparing": "Preparing to run on {at}",
@@ -379,9 +400,6 @@ def severity(reason: str) -> str:
     never met: a word bench has no row for is not a pass."""
     return SEVERITY.get(reason, "problem")
 
-
-# What a gate requires of a review, in the words `profiles` validated.
-REVIEW_POLICIES = profiles.REVIEW_POLICIES
 
 # Where the two records this module owns live. Machine-local, for the
 # reason every other record under state/ is.
@@ -421,6 +439,14 @@ def _bump() -> None:
     _BOARD = None
 
 
+def epoch() -> int:
+    """How many writes this module has made since the board started — the
+    key `delivery` memoises its board reading on beside `evidence.epoch()`
+    (task 122: read here rather than through `gates._EPOCH`). Reading one
+    int needs no lock, and taking `_LOCK` here could not be nested."""
+    return _EPOCH
+
+
 def forget_cached() -> None:
     """Drop the memoised board reading. Nothing on the serving path needs
     it — the epoch and the TTL do that work — but a test, and anything
@@ -450,16 +476,17 @@ def _read_json(path: Path, fallback):
     return data if isinstance(data, type(fallback)) else fallback
 
 
-def _write_json(path: Path, payload) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str),
-                    encoding="utf-8")
+def _write_json(path: Path, payload, *, durable: bool = False) -> None:
+    """Whole or not at all; `durable` for the records that attest or
+    authorize (verdicts, overrides). Always under `_LOCK`, which owns
+    every read-modify-write of this directory."""
+    records.write_json(path, payload, default=str, durable=durable)
 
 
 # ── application git, read once per pass ────────────────────────────────
 
 
-def _tips() -> dict[str, str]:
+def branch_tips() -> dict[str, str]:
     """Every local branch and the commit it points at, in one call.
 
     One `for-each-ref` rather than a `rev-parse` per card: the board reads
@@ -467,7 +494,7 @@ def _tips() -> dict[str, str]:
     panel expensive enough that somebody caches the *answer* instead of
     the lookup.
     """
-    result = config._app_git("for-each-ref", "--format=%(refname:short) %(objectname)",
+    result = gitrepo.app_git("for-each-ref", "--format=%(refname:short) %(objectname)",
                              "refs/heads")
     found: dict[str, str] = {}
     if result.returncode != 0:
@@ -497,7 +524,7 @@ def head_for(filename: str, scope: str, tips: dict[str, str] | None = None) -> d
     to close.
     """
     stem = filename[:-3] if filename.endswith(".md") else filename
-    tips = _tips() if tips is None else tips
+    tips = branch_tips() if tips is None else tips
     if scope == "integration":
         ref = config.PHASE_BRANCH_PREFIX + stem
     elif scope == "member":
@@ -525,11 +552,11 @@ CANDIDATES = {
 }
 
 
-def _contained(commit: str, base: str) -> bool:
+def contained(commit: str, base: str) -> bool:
     """Is `commit` already in `base`, in this checkout? A local read."""
     if not commit or not base:
         return False
-    return config._app_git("merge-base", "--is-ancestor", commit,
+    return gitrepo.app_git("merge-base", "--is-ancestor", commit,
                            base).returncode == 0
 
 
@@ -555,7 +582,7 @@ def candidate(filename: str, scope: str, *, task: dict | None = None,
     """
     task = task or {}
     stem = filename[:-3] if filename.endswith(".md") else filename
-    tips = _tips() if tips is None else tips
+    tips = branch_tips() if tips is None else tips
     head = head_for(filename, scope, tips)
     out = {"state": "none-yet", "commit": None, "ref": head["ref"],
            "qualifier": None, "why": CANDIDATES["none-yet"],
@@ -579,7 +606,7 @@ def candidate(filename: str, scope: str, *, task: dict | None = None,
     if pr and pr.get("head"):
         commits.append(("pr", pr["head"]))
     mine = ([r for r in records if r.get("task") == filename]
-            if records is not None else verify.for_task(filename))
+            if records is not None else evidence.for_task(filename))
     for record in mine:
         at = (record.get("source") or {}).get("commit")
         if at:
@@ -607,7 +634,7 @@ def candidate(filename: str, scope: str, *, task: dict | None = None,
     if delivered is None:
         delivered = next((c for kind, c in commits
                           if kind in ("verdict", "pr", "completion")
-                          and _contained(c, app_base)), None)
+                          and contained(c, app_base)), None)
     if task.get("stage") == "done" or merged or delivered:
         out.update(state="delivered",
                    commit=delivered or (pr or {}).get("head")
@@ -668,7 +695,7 @@ def record_verdict(filename: str, *, verdict: str, head: str | None,
     with _LOCK:
         found = _read_json(path, [])
         found.append(record)
-        _write_json(path, found[-50:])
+        _write_json(path, found[-50:], durable=True)
     _bump()
     return record
 
@@ -680,14 +707,55 @@ def verdicts_for(filename: str) -> list[dict]:
                   key=lambda r: r.get("recorded") or 0, reverse=True)
 
 
+def retargeted(filename: str) -> dict | None:
+    """The newest retarget of this card's work (`plans.latest_retarget`),
+    or None. A review is of a change *against a target*: one given before
+    the target changed is about another diff and another integration, even
+    at the same head, so it is history from here on (task 119, §3.4)."""
+    try:
+        return plans.latest_retarget(filename)
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _since(found: dict | None) -> float:
+    try:
+        return float((found or {}).get("at") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def verdict_at(filename: str, head: str | None) -> dict | None:
-    """The newest Bench verdict about this exact head, or None."""
+    """The newest Bench verdict about this exact head, given since the
+    card's newest retarget, or None."""
     if not head:
         return None
+    since = _since(retargeted(filename))
     for record in verdicts_for(filename):
-        if record.get("head") == head:
+        if record.get("head") == head \
+                and float(record.get("recorded") or 0) >= since:
             return record
     return None
+
+
+def verdict_before_retarget(filename: str, head: str | None) -> dict | None:
+    """A Bench verdict about this exact head that was given *before* the
+    card was retargeted — read only to say why it no longer counts."""
+    found = retargeted(filename)
+    if not head or not found:
+        return None
+    since = _since(found)
+    for record in verdicts_for(filename):
+        if record.get("head") == head \
+                and float(record.get("recorded") or 0) < since:
+            return record
+    return None
+
+
+def invalidate() -> None:
+    """Forget the memoised board reading: something a gate reads (a
+    recorded retarget) changed outside the records this module writes."""
+    _bump()
 
 
 # ── GitHub's formal review state, observed and bound to a commit ───────
@@ -705,6 +773,12 @@ def needs_github_reviews() -> bool:
     return any(word in ("github", "separate-reviewer")
                for entry in policy["scopes"].values()
                for word in entry.get("reviews") or [])
+
+
+# Core's review words → the words the review record has always persisted.
+_PERSISTED_REVIEW = {"approved": "APPROVED",
+                     "changes-requested": "CHANGES_REQUESTED",
+                     "commented": "COMMENTED", "dismissed": "DISMISSED"}
 
 
 def observe_reviews(filename: str, *, reviews: list[dict], author: str | None,
@@ -733,19 +807,21 @@ def observe_reviews(filename: str, *, reviews: list[dict], author: str | None,
     for entry in reviews or []:
         if not isinstance(entry, dict):
             continue
-        login = str(((entry.get("user") or {}).get("login")
-                     if isinstance(entry.get("user"), dict)
-                     else entry.get("author") or "")).strip()
-        word = str(entry.get("state") or "").strip().upper()
+        # Normalized at the edge (`githost.review_records`): `reviewer`,
+        # a state in core's words, and the commit. The record keeps the
+        # words it has always persisted (APPROVED, CHANGES_REQUESTED, …),
+        # so `.reviews.json` written before and after read the same.
+        login = str(entry.get("reviewer") or "").strip()
+        state = str(entry.get("state") or "").strip()
+        word = _PERSISTED_REVIEW.get(state, state.upper())
         seen.append({
             "id": str(entry.get("id") or ""),
             "login": login,
             "state": word,
-            # The commit the review was of. GitHub gives it on the REST
-            # review object; without it a review binds to nothing and is
-            # reported that way rather than assumed current.
-            "commit": str(entry.get("commit_id") or "") or None,
-            "submitted": str(entry.get("submitted_at") or "") or None,
+            # The commit the review was of; without it a review binds to
+            # nothing and is reported that way rather than assumed current.
+            "commit": str(entry.get("commit") or "") or None,
+            "submitted": str(entry.get("submitted") or "") or None,
             "self": bool(login) and login.lower() == author_login,
         })
     formal = [r for r in seen if r["state"] in ("APPROVED", "CHANGES_REQUESTED")]
@@ -803,10 +879,10 @@ def forget_reviews(filename: str) -> None:
 
 
 def gate_policy() -> dict:
-    """This board's gate requirements. One call into `profiles`, which is
-    the only thing that parses a policy document — there is no second
+    """This board's gate requirements. One call into `gatepolicy`, which
+    is the only thing that parses a gate block — there is no second
     reader here and there must not grow one."""
-    return profiles.gate_policy()
+    return gatepolicy.gate_policy()
 
 
 # ── which records a requirement may read ───────────────────────────────
@@ -816,7 +892,7 @@ def gate_policy() -> dict:
 # holds. Declared equivalents (#104): a record of another name answers
 # only when the check declares it in `accepts` *and* the two definitions
 # agree in every dimension *and* the record ran in this check's root
-# class (`verify.equivalence`) — then it goes through exactly the same
+# class (`staleness.equivalence`) — then it goes through exactly the same
 # head, coverage, denial, partition and precedence filters as a record of
 # the check's own name. There is no second route.
 
@@ -825,7 +901,7 @@ def _accepted_equivalents(check: dict) -> dict:
     """Other checks whose records may answer this requirement, by name,
     with their definitions as the policy declares them now — the
     operator's `accepts` on the check. A declaration alone is never
-    enough (`verify.equivalence`)."""
+    enough (`staleness.equivalence`)."""
     return dict(check.get("acceptedChecks") or {})
 
 
@@ -833,11 +909,11 @@ def _partition(record: dict, drift: dict | None) -> str:
     """`current`, `outdated` or `legacy` (design §6.1 step 4).
 
     A record with no result identity is legacy, and is read with
-    `verify.outcome_now`'s rules, unchanged: a stale pass says why it is
+    `staleness.outcome_now`'s rules, unchanged: a stale pass says why it is
     stale and is never a pass. A record with one is *current* when every
     dimension of its definition — the check, coverage, programs,
     preparation, inputs, environment and runner — still holds
-    (`verify.identity_drift`), and *outdated* when any has moved. Its
+    (`staleness.identity_drift`), and *outdated* when any has moved. Its
     source is not part of this answer: the commit filter has already
     chosen the records about this head. An identity that cannot be read
     is outdated, never current — unknown never decides a gate."""
@@ -853,7 +929,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
     """One required check → met, pending or unmet, and why.
 
     The rule, in full: a record satisfies when it is for this check, when
-    `verify.outcome_now` *still* reads `passed` (so a pass whose binding
+    `staleness.outcome_now` *still* reads `passed` (so a pass whose binding
     has gone reads `stale` here, as it does everywhere), when the source
     it ran against was bound, when that source was clean, and when its
     commit is the commit about to be merged.
@@ -900,12 +976,12 @@ def _check_requirement(filename: str, check: dict, head: dict,
     decide nothing, so a failure under a command since replaced is not
     today's failure; if nothing else decides, the newest outdated record's
     own changed dimension is the reason. A record with no identity is
-    *legacy* and read with `verify.outcome_now`'s rules, unchanged. An
+    *legacy* and read with `staleness.outcome_now`'s rules, unchanged. An
     unrelated policy edit moves none of the dimensions, so it stales
     nothing that carries one (design R1).
 
     **Declared equivalents** (#104, design §5). A record filed under a name
-    the check `accepts` is weighed only when `verify.equivalence` finds the
+    the check `accepts` is weighed only when `staleness.equivalence` finds the
     two definitions the same in every dimension and the record ran in this
     check's root class; it is then one more record in the walk above —
     the same head filter, the same coverage, the same denial rule, the
@@ -939,7 +1015,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
             return True
         if other not in accepts or record.get("outcome") == "denied":
             return False
-        found = verify.equivalence(record, check, accepts)
+        found = staleness.equivalence(record, check, accepts)
         considered.append({
             "evidence": record.get("id"), "check": other,
             "commit": (record.get("source") or {}).get("commit"),
@@ -975,7 +1051,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
     elsewhere: list[dict] = []
     denied: list[dict] = []
     for record in mine:
-        reading = verify.outcome_now(record)
+        reading = staleness.outcome_now(record)
         source = record.get("source") or {}
         found = {
             "evidence": record.get("id"),
@@ -1011,15 +1087,15 @@ def _check_requirement(filename: str, check: dict, head: dict,
         seen.append(found)
         if found["outcome"] == "denied":
             denied.append(found)
-        elif found["commit"] == at or (found["outcome"] in verify.LIVE
+        elif found["commit"] == at or (found["outcome"] in evidence.LIVE
                                        and not found["commit"]):
             # A request still preparing has not bound its source yet. It
             # may well be about this head, so it is not hidden as history.
             found["relevant"] = True
             # Asked only of the records about this head: whether the check
             # each ran is still the check as declared now (#97).
-            if found["outcome"] not in verify.LIVE:
-                drift = verify.identity_drift(record)
+            if found["outcome"] not in evidence.LIVE:
+                drift = staleness.identity_drift(record)
                 found["partition"] = _partition(record, drift)
                 if drift and drift["reasons"]:
                     found["driftReason"] = drift["reasons"][0]
@@ -1055,7 +1131,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
     # 3. Precedence, among the relevant records only. A rerun in flight is
     # newer than anything on record, so even an earlier pass at this head
     # decides nothing until it answers.
-    running = next((f for f in deciding if f["outcome"] in verify.LIVE), None)
+    running = next((f for f in deciding if f["outcome"] in evidence.LIVE), None)
     if running is not None:
         return {**row, "state": "pending", "reason": running["outcome"],
                 "why": (f"'{label}' is {running['outcome']} "
@@ -1108,7 +1184,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
                 "staleReason": stale["reason"],
                 "why": (f"'{label}' passed on {here}, and it no longer holds: "
                         f"{stale['why'] or REASONS['stale']}{via(stale)}"),
-                "remedy": verify.STALE_REMEDIES.get(stale["reason"],
+                "remedy": evidence.STALE_REMEDIES.get(stale["reason"],
                                                     REMEDIES["stale"])
                 if stale["partition"] != "legacy" else REMEDIES["stale"],
                 "evidence": stale["evidence"], "commit": stale["commit"],
@@ -1123,7 +1199,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
             # result, which is a step still ahead — like a cancellation —
             # rather than a fault the check found.
             reason = "restarted"
-        said = verify.OUTCOMES.get(blocker["outcome"]) or REASONS.get(reason, reason)
+        said = evidence.OUTCOMES.get(blocker["outcome"]) or REASONS.get(reason, reason)
         after = deciding[deciding.index(blocker) + 1:]
         older = next((r for r in after if r["outcome"] == "passed"
                       and covers(r["scope"])), None)
@@ -1170,7 +1246,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
                         f"changed since: "
                         f"{newest.get('driftWhy') or newest['why'] or REASONS['stale']}"
                         f"{via(newest)}"),
-                "remedy": verify.STALE_REMEDIES.get(moved, REMEDIES["stale"]),
+                "remedy": evidence.STALE_REMEDIES.get(moved, REMEDIES["stale"]),
                 "evidence": newest["evidence"], "commit": newest["commit"],
                 **cited(newest)}
     ran = sorted(set(narrow))
@@ -1183,7 +1259,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
                 "commit": None}
     refused = next((c for c in considered
                     if not c["equivalent"] and c["commit"] == at
-                    and c["outcome"] not in verify.LIVE), None)
+                    and c["outcome"] not in evidence.LIVE), None)
     if refused is not None:
         # A declared equivalent ran here and is not the same check. Said,
         # with the one dimension that stops it, so "it ran, why does it
@@ -1224,7 +1300,7 @@ def _check_requirement(filename: str, check: dict, head: dict,
         # Only refusals on record: nothing ran, and the refusal is the reason.
         best = denied[0]
         return {**row, "state": "unmet", "reason": "denied",
-                "why": f"'{label}': {best['why'] or verify.OUTCOMES['denied']}",
+                "why": f"'{label}': {best['why'] or evidence.OUTCOMES['denied']}",
                 "remedy": REMEDIES["denied"],
                 "evidence": best["evidence"], "commit": best["commit"]}
     return {**row, "state": "unmet", "reason": "not-run",
@@ -1250,7 +1326,7 @@ def _review_requirement(filename: str, policy: str, head: dict) -> dict:
     A comment satisfies none of them.
     """
     row = {"kind": "review", "name": policy, "policy": policy,
-           "policyWhy": REVIEW_POLICIES.get(policy, policy)}
+           "policyWhy": gatepolicy.REVIEW_POLICIES.get(policy, policy)}
     commit = head.get("commit")
     if policy == "none":
         return {**row, "state": "met", "reason": "ungated",
@@ -1271,6 +1347,17 @@ def _review_requirement(filename: str, policy: str, head: dict) -> dict:
                     "why": (f"bench's own review of {_short(commit)} asked "
                             f"for changes"),
                     "remedy": REMEDIES["verdict-changes"]}
+        earlier = verdict_before_retarget(filename, commit)
+        if earlier:
+            moved = retargeted(filename) or {}
+            return {**row, "state": "unmet", "reason": "verdict-before-retarget",
+                    "why": (f"bench's own review of {_short(commit)} was of "
+                            f"its change against {moved.get('from')}; the "
+                            f"card now targets {moved.get('to')}, which is a "
+                            f"different diff and integration, so the review "
+                            f"does not carry over"),
+                    "remedy": REMEDIES["verdict-before-retarget"],
+                    "verdict": earlier, "retarget": moved}
         others = verdicts_for(filename)
         if others:
             was = _short(others[0].get("head"), "an unrecorded head")
@@ -1297,6 +1384,18 @@ def _review_requirement(filename: str, policy: str, head: dict) -> dict:
     outstanding = [r for r in standing if r["state"] == "CHANGES_REQUESTED"]
     approvals = [r for r in standing if r["state"] == "APPROVED"
                  and r.get("commit") and r["commit"] == commit]
+    # An approval given before the card was retargeted approved the change
+    # against the old target; it is not carried to the new one, whatever
+    # the host did with it (task 119). An approval with no submission time
+    # cannot show it came after, so it does not either.
+    moved = retargeted(filename)
+    before = []
+    if moved and approvals:
+        since = str(moved.get("atIso") or "")
+        before = [r for r in approvals
+                  if not str(r.get("submitted") or "") or
+                  str(r.get("submitted")) < since]
+        approvals = [r for r in approvals if r not in before]
     row["outstanding"] = outstanding
     if outstanding:
         named = ", ".join(
@@ -1325,6 +1424,15 @@ def _review_requirement(filename: str, policy: str, head: dict) -> dict:
                 "why": (f"GitHub holds a formal APPROVED review of "
                         f"{_short(commit)} from {approvals[0]['login']}"),
                 "remedy": None}
+    if before:
+        return {**row, "state": "unmet", "reason": "approval-before-retarget",
+                "why": (f"{before[0]['login'] or 'a reviewer'} approved "
+                        f"{_short(commit)} while it targeted "
+                        f"{moved.get('from')}; it now targets "
+                        f"{moved.get('to')}, so that approval does not carry "
+                        f"over"),
+                "remedy": REMEDIES["approval-before-retarget"],
+                "retarget": moved}
     if limitation:
         return {**row, "state": "unmet", "reason": "same-account",
                 "why": (f"{limitation['why']} The only review activity on "
@@ -1395,7 +1503,7 @@ def _signoff_requirement(filename: str, policy: str, head: dict,
       move to done/ is not an acceptance, and nothing here writes one.
     """
     row = {"kind": "signoff", "name": "sign-off", "policy": policy,
-           "policyWhy": profiles.SIGNOFF_POLICIES.get(policy, policy)}
+           "policyWhy": gatepolicy.SIGNOFF_POLICIES.get(policy, policy)}
     commit = head.get("commit")
     text = _card_text(filename, task)
     if text is None:
@@ -1616,7 +1724,7 @@ def _evaluate(filename: str, scope: str, *, task: dict | None = None,
         return found
 
     mine = ([r for r in records if r.get("task") == filename]
-            if records is not None else verify.for_task(filename))
+            if records is not None else evidence.for_task(filename))
     rows = [_check_requirement(filename, check, head, mine)
             for check in entry["checks"]]
     # One row per configured review word. The ordinary form is one word
@@ -1952,7 +2060,7 @@ def override(filename: str, scope: str, *, actor: str, reason: str,
             return {"override": record, "decision": evaluate(filename, scope),
                     "duplicate": True}
         found.append(record)
-        _write_json(path, found[-50:])
+        _write_json(path, found[-50:], durable=True)
     _bump()
     state.record_board_event({
         "kind": "agent", "actor": "you", "file": filename,
@@ -2004,15 +2112,15 @@ def board(collected: dict) -> dict:
     files = frozenset(task["file"] for task in tasks)
     with _LOCK:
         epoch = _EPOCH
-    stamp = (epoch, policy["revision"], int(time.time() / _TTL), verify._EPOCH)
+    stamp = (epoch, policy["revision"], int(time.time() / _TTL), evidence.epoch())
     if _BOARD is not None and _BOARD[0] == stamp and _BOARD[1] == files:
         return _BOARD[2]
-    tips = _tips()
+    tips = branch_tips()
     # One branch walk, one document read and one scan of the evidence for
     # the whole board, rather than one of each per card: this runs on
     # every state load, and a per-card subprocess is what makes a payload
     # expensive enough that somebody caches a *decision* instead.
-    records = verify.all_evidence()
+    records = evidence.all_evidence()
     found: dict = {}
     for task in tasks:
         scope = scope_for(task)
@@ -2081,8 +2189,8 @@ def seams() -> dict:
     return {
         "decisions": dict(DECISIONS),
         "reasons": dict(REASONS),
-        "evaluates": ("profiles.gate_policy() for the requirements, "
-                      "verify.for_task()/outcome_now() for the evidence, "
+        "evaluates": ("gatepolicy.gate_policy() for the requirements, "
+                      "evidence.for_task()/outcome_now() for the evidence, "
                       "and application git for the commit. It parses no "
                       "policy document itself"),
         "enforced_at": {
@@ -2090,7 +2198,7 @@ def seams() -> dict:
                                        "`ready`, and phases._merge_member "
                                        "calls require() again with the tip in "
                                        "hand"),
-            "an acceptance": ("github._complete calls require() before it "
+            "an acceptance": ("completion._complete calls require() before it "
                               "parks the drive and again immediately before "
                               "the merge"),
         },
@@ -2099,7 +2207,7 @@ def seams() -> dict:
                                   "reviewer found, bound to the head "
                                   "reviews.py pinned, whatever GitHub "
                                   "accepted"),
-            "the formal review state": ("github._poll_pr feeds "
+            "the formal review state": ("changes._poll_pr feeds "
                                         "observe_reviews with GitHub's own "
                                         "review objects, which carry the "
                                         "commit each review was of"),

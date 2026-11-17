@@ -41,6 +41,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from tests import pagesource
 
 from tests.test_setup_guide import (HEADERS, Project, by_id, free_port, git,
                                     snapshot)
@@ -641,12 +642,9 @@ class Reconnect(unittest.TestCase):
         self.assertTrue(alive(pid))
 
 
-PAGE = Path(__file__).resolve().parents[1] / "manager" / "core" / "board.html"
-
-
 class ThePageKeepsTheActsApart(unittest.TestCase):
     def setUp(self):
-        self.html = PAGE.read_text(encoding="utf-8")
+        self.html = pagesource.page()
 
     def test_five_separate_controls_and_the_two_that_run_code_are_armed(self):
         for act in ("validate", "configure", "prepare", "cancel", "start",
@@ -661,16 +659,9 @@ class ThePageKeepsTheActsApart(unittest.TestCase):
 
     @unittest.skipUnless(__import__("shutil").which("node"), "node is not installed")
     def test_the_page_script_parses(self):
-        import re
         import shutil
-        import tempfile
-        scripts = re.findall(r"<script[^>]*>(.*?)</script>", self.html, re.S)
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "page.js"
-            path.write_text("\n;\n".join(scripts), encoding="utf-8")
-            out = subprocess.run([shutil.which("node"), "--check", str(path)],
-                                 capture_output=True, text=True)
-        self.assertEqual(0, out.returncode, out.stderr[-2000:])
+        from tests import pagesource
+        self.assertEqual(pagesource.parse_problems(shutil.which("node")), [])
 
 
 def _kill(pid: int) -> None:

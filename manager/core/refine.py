@@ -32,7 +32,6 @@ applying — while a comment may always be saved.
 from __future__ import annotations
 
 import json
-import os
 import re
 import secrets
 import threading
@@ -44,6 +43,7 @@ import agents
 import config
 import phases
 import profiles
+import records
 import state
 import taskfiles
 
@@ -81,11 +81,7 @@ def _path(job_id: str) -> Path:
 
 
 def _save(job: dict) -> None:
-    config.REFINE_DIR.mkdir(parents=True, exist_ok=True)
-    path = _path(job["id"])
-    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
-    tmp.write_text(json.dumps(job, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    records.write_json(_path(job["id"]), job)
 
 
 def _load() -> None:
@@ -507,9 +503,9 @@ def _launch(job: dict, card: str, entry: dict, manifest: dict,
         guidance_read_only=fields["guidance_read_only"],
         task_path=fields["task_path"],
         context=profiles.prompt_block(manifest))
-    proc, log_file, model = agents._launch("refine", prompt, config.REPO,
-                                           agent_id, filename, log_path, manifest)
-    name = agents._pick_name(filename)
+    proc, log_file, model = agents.launch("refine", prompt, config.REPO,
+                                          agent_id, filename, log_path, manifest)
+    name = agents.pick_name(filename)
     record = {
         "id": agent_id, "task": filename, "branch": None, "worktree": None,
         "base": None, "status": "running", "rc": None, "started": time.time(),
@@ -589,7 +585,7 @@ def validate(job: dict, answer: dict) -> dict:
 
 
 def _reap(job_id: str, agent_id: str, proc, log_file) -> None:
-    record, stopped, rc = agents._finish(agent_id, proc, log_file)
+    record, stopped, rc = agents.finish(agent_id, proc, log_file)
     with LOCK:
         job = JOBS[job_id]
         if stopped:
@@ -597,7 +593,7 @@ def _reap(job_id: str, agent_id: str, proc, log_file) -> None:
                         "error": "cancelled — nothing was proposed or applied"})
         elif rc != 0:
             job.update({"status": "failed",
-                        "error": f"the run exited rc={rc}: {agents._why(record)}"})
+                        "error": f"the run exited rc={rc}: {agents.died_on(record)}"})
         else:
             try:
                 log = Path(record["log"]).read_text(encoding="utf-8",
@@ -687,7 +683,7 @@ def apply(job_id: str) -> dict:
         decision = {"v": taskfiles.DISCUSSION_VERSION,
                     "id": f"d-{secrets.token_hex(5)}", "kind": "decision",
                     "outcome": "applied", "proposal": job["id"],
-                    "comment": job["comment"], "author": taskfiles._one_line(actor),
+                    "comment": job["comment"], "author": taskfiles.one_line(actor),
                     "at": at, "briefBefore": job["briefSha"][:12],
                     "briefAfter": new_sha[:12], "sections": job.get("sections") or [],
                     "affected": job.get("affected") or []}
@@ -751,7 +747,7 @@ def discard(job_id: str) -> dict:
         decision = {"v": taskfiles.DISCUSSION_VERSION,
                     "id": f"d-{secrets.token_hex(5)}", "kind": "decision",
                     "outcome": "discarded", "proposal": job["id"],
-                    "comment": job["comment"], "author": taskfiles._one_line(actor),
+                    "comment": job["comment"], "author": taskfiles.one_line(actor),
                     "at": at, "briefBefore": job["briefSha"][:12]}
         if job.get("review"):
             decision["review"] = job["review"]

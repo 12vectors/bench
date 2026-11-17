@@ -105,6 +105,14 @@ class RelevanceReviews(unittest.TestCase):
         self.assertEqual(code, 200)
         return [a for a in json.loads(body)["agents"] if a.get("task") == FILE]
 
+    def focused(self) -> str:
+        """What has focus, said so a failed focus assertion names it."""
+        return S["browser"].eval(
+            "(() => { const e = document.activeElement; if (!e) return 'nothing';"
+            " return `${e.tagName.toLowerCase()}${e.id ? '#' + e.id : ''}`"
+            " + ` ${JSON.stringify({...e.dataset})}`"
+            " + ` in drawer: ${!!e.closest('#drawerbody')}`; })()")
+
     def open_card(self, width=1280, height=900, dark=False):
         b = S["browser"]
         b.viewport(width, height)
@@ -129,6 +137,23 @@ class RelevanceReviews(unittest.TestCase):
         self.assertTrue(b.wait(f"!document.querySelector('#dsec-reviews').hidden"
                                f" && !!document.querySelector('{REL}')", 5),
                         "Reviews did not draw the relevance review")
+        self.tab_focused("reviews")
+
+    def tab_focused(self, key: str):
+        """A tab click moves focus to the tab one animation frame later.
+        Wait for it: a test that focused something else in that frame had
+        its focus taken back by the tab — the cause of this case's once-seen
+        390px keyboard failure, where Tab then started from the tab button."""
+        b = S["browser"]
+        self.assertTrue(b.wait(
+            f"document.activeElement === document.getElementById('dtab-{key}')", 5),
+            f"the {key} tab never took focus: " + self.focused())
+        # A mouse click focuses the tab at once; the handler's own focus
+        # comes a frame later. Two frames on, it has run.
+        b.eval("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))")
+        self.assertTrue(b.eval(
+            f"document.activeElement === document.getElementById('dtab-{key}')"),
+            f"the {key} tab lost focus: " + self.focused())
 
     def no_sideways_scroll(self, where: str):
         over = S["browser"].eval(f"{DRAWER}.scrollWidth - {DRAWER}.clientWidth")
@@ -177,6 +202,7 @@ class RelevanceReviews(unittest.TestCase):
             shot(f"relevance-reviews-before-{mode}-1280x900")
             # after: Activity links to the exact review
             b.click("#dtab-activity")
+            self.tab_focused("activity")
             link = f"#dsec-activity [data-goreview=\"{self.rid}\"]"
             self.assertTrue(b.wait(f"!!document.querySelector('{link}')", 5),
                             "Activity does not link to the review")
@@ -185,13 +211,23 @@ class RelevanceReviews(unittest.TestCase):
                              "Activity draws a second copy of the review")
             # by keyboard: focus the link and press Enter
             b.eval(f"document.querySelector('{link}').focus()")
+            # a live redraw between the focus and the key press keeps the
+            # link focused (it has no id; this case once failed that way)
+            b.eval("renderDrawer()")
+            self.assertTrue(b.eval(f"document.activeElement === document.querySelector('{link}')"),
+                            "a redraw dropped focus from the Activity link: " + self.focused())
             b.key("Enter")
             self.assertTrue(b.wait(f"!document.querySelector('#dsec-reviews').hidden"
                                    f" && document.querySelector('{REL}[data-keep=\"{self.rid}\"]').open", 5),
                             "the link did not open the review in Reviews")
             self.assertTrue(b.wait(f"document.activeElement === document.querySelector("
                                    f"'{REL}[data-keep=\"{self.rid}\"] > summary')", 5),
-                            "focus did not land on the review")
+                            "focus did not land on the review: " + self.focused())
+            # a live redraw keeps it there (the review's summary has no id)
+            b.eval("renderDrawer()")
+            self.assertTrue(b.eval(f"document.activeElement === document.querySelector("
+                                   f"'{REL}[data-keep=\"{self.rid}\"] > summary')"),
+                            "a redraw dropped focus from the review: " + self.focused())
             groups = b.eval("[...document.querySelectorAll('#dsec-reviews .rvgroup > h3')]"
                             ".map(h => h.innerText)")
             self.assertEqual([g.split()[0] for g in groups], ["Relevance", "PR"])
@@ -329,9 +365,21 @@ class RelevanceReviews(unittest.TestCase):
             # Tab from the textarea reaches Comment, then Update card from this review
             b.eval(f"document.getElementById('rvbox-{self.rid}').focus()")
             b.key("Tab")
-            self.assertEqual(b.eval("document.activeElement.dataset.rvact"), "comment")
+            self.assertEqual(b.eval("document.activeElement.dataset.rvact"), "comment",
+                             self.focused())
+            # A live redraw rebuilds the drawer. It used to restore focus only
+            # to an element with an id or a delivery slot, so one landing
+            # right after this Tab dropped focus to the body: the once-seen
+            # failure here. Forcing the redraw makes that case deterministic.
+            b.eval("renderDrawer()")
+            self.assertEqual(b.eval("document.activeElement.dataset.rvact"), "comment",
+                             "a redraw dropped focus from Comment: " + self.focused())
             b.key("Tab")
-            self.assertEqual(b.eval("document.activeElement.dataset.rvact"), "refine")
+            self.assertEqual(b.eval("document.activeElement.dataset.rvact"), "refine",
+                             self.focused())
+            b.eval("renderDrawer()")
+            self.assertEqual(b.eval("document.activeElement.dataset.rvact"), "refine",
+                             "a redraw dropped focus from Update card: " + self.focused())
             names = b.eval(f"[...document.querySelectorAll('{REL} .rvcompose button')].map(e => e.innerText.trim())")
             self.assertIn("Comment", names)
             self.assertTrue(any("Update card from this review" in n for n in names))

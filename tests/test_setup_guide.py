@@ -42,7 +42,7 @@ STAGES = ("backlog", "to-do", "in-progress", "review", "done", "archive")
 PRELUDE = (
     "import json, os, sys\n"
     "sys.path.insert(0, sys.argv[1])\n"
-    "import config, setupguide\n"
+    "import config, setupbase, setupguide\n"
 )
 
 

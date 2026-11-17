@@ -3,7 +3,7 @@ rides, and the prompt templates each launch is filled from (task 77).
 
 **It owns no resolution.** What a launch rides is `config.agent_choice()`
 — the one resolver `profiles.resolve()`, the doctor, the preflight and
-`agents._launch` all read — and what a template must contain is
+`agents.launch` all read — and what a template must contain is
 `templates.problems()`. This module reads both, says what they say in
 words, and writes the two kinds of file they read:
 
@@ -47,16 +47,20 @@ Depends on config, profiles and templates.
 from __future__ import annotations
 
 import difflib
+import functools
 import hashlib
 import json
 import os
 import re
 import shutil
+import threading
 import time
 from pathlib import Path
 
 import config
 import profiles
+import records
+import redact
 import templates
 
 VERSION = 1
@@ -74,9 +78,6 @@ PURPOSES = (
 # the ones that keep it one token on one `.env` line: no whitespace, no
 # quote, no comment mark, no control character.
 MODEL_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+\-\[\]]{0,199}$")
-CREDENTIAL = re.compile(
-    r"(gh[pousr]_[A-Za-z0-9]{16,}|github_pat_|sk-[A-Za-z0-9_-]{16,}|"
-    r"xox[baprs]-|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{10,}\.)")
 RECOVERY_KEEP = 20
 
 APPLIES_WHY = ("read fresh on every launch: a change reaches the next launch "
@@ -145,7 +146,7 @@ def _setting_row(key: str, values: dict) -> dict:
     found = config.agent_setting(key, values)
     return {"key": key, "value": found["value"], "source": found["source"],
             "locked": found["locked"],
-            "sourceWords": profiles._SOURCE_WORDS.get(found["source"], found["source"]),
+            "sourceWords": profiles.SOURCE_WORDS.get(found["source"], found["source"]),
             "how": _how(key, found)}
 
 
@@ -191,7 +192,7 @@ def rows(values: dict | None = None) -> dict:
     }}
     for purpose in PURPOSES:
         intent = purpose["id"]
-        suffix = config._SUFFIX[intent]
+        suffix = config.PURPOSE_SUFFIX[intent]
         reading = _intent_reading(intent, file_values)
         out[intent] = {
             "label": purpose["label"],
@@ -338,7 +339,7 @@ def validate(payload: dict) -> dict:
                                "why": "a model is one vendor identifier: letters, "
                                       "digits and . _ : / @ + - [ ], no spaces "
                                       "or quotes, at most 200 characters"})
-            elif value and CREDENTIAL.search(value):
+            elif value and redact.looks_secret(value):
                 errors.append({"code": "model-credential", "field": key,
                                "why": "that looks like a credential, not a "
                                       "model name — secrets are not managed here"})
@@ -527,16 +528,25 @@ def _replace(path: Path, text: str | None) -> None:
         except FileNotFoundError:
             pass
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + f".bench-{os.getpid()}.tmp")
-    try:
-        temp.write_text(text, encoding="utf-8")
-        os.replace(temp, path)
-    finally:
-        if temp.exists():
-            temp.unlink()
+    records.write_text(path, text)
 
 
+# The board is the one writer of the agent keys and the local templates,
+# and this lock makes it one writer: the revision comparison and the write
+# happen under it, so two applies opened at the same revision cannot both
+# pass the comparison (task 110). Nothing else in the board writes them.
+_APPLY_LOCK = threading.Lock()
+
+
+def _serialized(fn):
+    @functools.wraps(fn)
+    def held(*args, **kwargs):
+        with _APPLY_LOCK:
+            return fn(*args, **kwargs)
+    return held
+
+
+@_serialized
 def apply(payload: dict, *, actor: str | None = None) -> dict:
     agents, prompts = _draft(payload)
     base = str(payload.get("revision") or "")

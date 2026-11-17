@@ -22,8 +22,7 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
-
-BOARD = Path(__file__).resolve().parents[1] / "manager" / "core" / "board.html"
+from tests import pagesource
 
 # The pieces the chip is made of, lifted from the page as written.
 PARTS = (
@@ -34,7 +33,7 @@ PARTS = (
 
 
 def _harness() -> str:
-    html = BOARD.read_text(encoding="utf-8")
+    html = pagesource.page()
     out = []
     for pattern in PARTS:
         m = re.search(pattern, html, re.S)
@@ -104,7 +103,7 @@ class ChipPlacement(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     # anchor → what the name is in that view. The chip must follow the
     # anchor within a few characters: beside the name, not further down.

@@ -45,9 +45,12 @@ from tests.test_integration_gates import (CARD, FAILS, HANGS, PASSES,  # noqa: E
                                           wait_for)
 
 import gates  # noqa: E402  (on sys.path once the case module is imported)
-import github  # noqa: E402
+import completion  # noqa: E402
+import changes  # noqa: E402
 import httpd  # noqa: E402
 import taskfiles  # noqa: E402
+import evidence  # noqa: E402
+import staleness  # noqa: E402
 import verify  # noqa: E402
 
 REASON = "the check runner is down, demo at 5"
@@ -90,8 +93,8 @@ class AnOverrideNeedsATarget(OverrideCase):
         self.worktree()
         self.commit_in(self.worktree())
         self.gated(overrides={"allow": True})
-        self.addCleanup(setattr, gates, "_tips", gates._tips)
-        gates._tips = lambda: {}
+        self.addCleanup(setattr, gates, "branch_tips", gates.branch_tips)
+        gates.branch_tips = lambda: {}
         with self.assertRaises(ValueError) as caught:
             gates.override(CARD, "acceptance", actor="istos", reason=REASON)
         self.assertIn(NO_TARGET, str(caught.exception))
@@ -304,7 +307,7 @@ class AnOverrideIsBoundToItsHeadAndRule(OverrideCase):
         found = self.decide()
         self.assertEqual(found["requirements"][0]["state"], "overridden")
         self.assertEqual(found["requirements"][0]["reason"], "not-run")
-        self.assertEqual(verify.for_task(CARD), [])
+        self.assertEqual(evidence.for_task(CARD), [])
         self.assertNotEqual(found["decision"], "allowed")
 
 
@@ -324,7 +327,7 @@ class TheMergeRevalidatesUnderAnOverride(OverrideCase):
     def test_an_override_at_h_lets_h_merge(self):
         self.gated(overrides={"allow": True})
         gates.override(CARD, "acceptance", actor="istos", reason=REASON)
-        result = github.complete_task(CARD, "review")
+        result = completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
         self.assertEqual(
             0, git(self.repo, "merge-base", "--is-ancestor", self.head,
@@ -335,7 +338,7 @@ class TheMergeRevalidatesUnderAnOverride(OverrideCase):
         gates.override(CARD, "acceptance", actor="istos", reason=REASON)
         self.assertEqual(self.decide()["decision"], "overridden")
         landed: list[str] = []
-        original = github._assert_lands_in_the_base
+        original = completion._assert_lands_in_the_base
 
         def push_lands(filename, target):
             original(filename, target)
@@ -344,10 +347,10 @@ class TheMergeRevalidatesUnderAnOverride(OverrideCase):
                 verify.forget_cached()
                 gates.forget_cached()
 
-        self.addCleanup(setattr, github, "_assert_lands_in_the_base", original)
-        github._assert_lands_in_the_base = push_lands
+        self.addCleanup(setattr, changes, "_assert_lands_in_the_base", original)
+        completion._assert_lands_in_the_base = push_lands
         with self.assertRaises(ValueError):
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertNotEqual(
             0, git(self.repo, "merge-base", "--is-ancestor", landed[0],
                    "main").returncode,
@@ -398,8 +401,8 @@ class Precedence(unittest.TestCase):
                     "why": None, "freshness": {"reasons": []},
                     "recorded": rec.get("outcome")}
 
-        self.addCleanup(setattr, verify, "outcome_now", verify.outcome_now)
-        verify.outcome_now = outcome_now
+        self.addCleanup(setattr, staleness, "outcome_now", staleness.outcome_now)
+        staleness.outcome_now = outcome_now
 
     def decide(self, records, *, head: str | None = H, scope=None,
                check: str = "unit") -> dict:
@@ -550,9 +553,9 @@ class TheEquivalentBranchIsHeldToTheSameFilters(Precedence):
 
     def setUp(self):
         super().setUp()
-        self.addCleanup(setattr, verify, "identity_drift",
-                        verify.identity_drift)
-        verify.identity_drift = lambda rec: (
+        self.addCleanup(setattr, staleness, "identity_drift",
+                        staleness.identity_drift)
+        staleness.identity_drift = lambda rec: (
             {"reasons": [], "changed": []} if rec.get("resultId") else None)
 
     def decide(self, records, *, head: str | None = H, scope=None,
@@ -658,10 +661,10 @@ class TheSafer36Shape(GateCase):
     def make_legacy(self) -> None:
         """B's pass as a record written before result identities: the
         same file, without the fields #97 added."""
-        for record in verify.for_task(CARD):
+        for record in evidence.for_task(CARD):
             if record.get("outcome") != "passed":
                 continue
-            path = verify.path_of(record["id"])
+            path = evidence.path_of(record["id"])
             data = json.loads(path.read_text(encoding="utf-8"))
             for key in ("resultId", "identity", "provenance", "inputs",
                         "prepareSteps", "checkSubstance"):
@@ -675,15 +678,15 @@ class TheSafer36Shape(GateCase):
         """E1 / R1 inverted at the gate: B's pass carries a result identity,
         and nothing it depends on moved — the gate is met with zero
         reruns, and the record still names the policy it ran under."""
-        before = next(r for r in verify.for_task(CARD)
+        before = next(r for r in evidence.for_task(CARD)
                       if r.get("outcome") == "passed")
         self.add_the_next_cards_context()
         found = self.decide()
         self.assertEqual(found["decision"], "allowed")
-        record = verify.read(before["id"])
+        record = evidence.read(before["id"])
         self.assertEqual(record["provenance"]["policyRevision"],
                          before["policyRevision"])
-        reading = verify.outcome_now(record)
+        reading = staleness.outcome_now(record)
         self.assertEqual(reading["outcome"], "passed")
         self.assertTrue(reading["freshness"]["provenance"]["policyChanged"])
 
@@ -774,7 +777,7 @@ class TheMergeRevalidatesTheEvidence(GateCase):
         (self.tasks / "in-progress" / CARD).unlink()
         self.assertEqual(self.decide()["decision"], "allowed")
         landed: list[str] = []
-        original = github._assert_lands_in_the_base
+        original = completion._assert_lands_in_the_base
 
         def push_lands(filename, target):
             original(filename, target)
@@ -783,10 +786,10 @@ class TheMergeRevalidatesTheEvidence(GateCase):
                 verify.forget_cached()
                 gates.forget_cached()
 
-        self.addCleanup(setattr, github, "_assert_lands_in_the_base", original)
-        github._assert_lands_in_the_base = push_lands
+        self.addCleanup(setattr, changes, "_assert_lands_in_the_base", original)
+        completion._assert_lands_in_the_base = push_lands
         with self.assertRaises(ValueError):
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertNotEqual(
             0, git(self.repo, "merge-base", "--is-ancestor", landed[0],
                    "main").returncode)

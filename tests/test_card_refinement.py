@@ -1,7 +1,7 @@
 """Comment → Update card with agent → proposal → Apply or Discard (task 65).
 
 The whole lifecycle against throwaway repositories and a fake adapter: a
-real refinement job is launched through `agents._launch`, the fake prints
+real refinement job is launched through `agents.launch`, the fake prints
 what a model might, and bench validates, keeps, applies or discards it.
 No model, no network, and never the live operator board.
 

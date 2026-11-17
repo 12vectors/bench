@@ -20,6 +20,7 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 CORE = REPO / "manager" / "core"
@@ -28,12 +29,11 @@ sys.path.insert(0, str(CORE))
 import config  # noqa: E402
 import taskfiles  # noqa: E402
 
-BOARD = CORE / "board.html"
 TRAY_GLYPH = "⌸"
 
 
 def html() -> str:
-    return BOARD.read_text(encoding="utf-8")
+    return pagesource.page()
 
 
 class OneAuthorityForTheRule(unittest.TestCase):
@@ -132,7 +132,7 @@ class TheChipOnTheCard(unittest.TestCase):
     def test_no_chip_where_the_server_would_refuse(self):
         """Nothing renders it on its own terms: the one condition is
         canArchive, so in-progress and review cards simply have no chip."""
-        card = re.search(r"function cardFor\(task\) \{.*?\n\}\n", self.html, re.S).group(0)
+        card = re.search(r"function cardSpec\(task\) \{.*?\nfunction mountCard\(spec\) \{.*?\n\}\n", self.html, re.S).group(0)
         self.assertEqual(len(re.findall(r"data-arch", card)), 2,
                          "the chip is written once and wired once")
         self.assertEqual(len(re.findall(r"canArchive\(task\)", card)), 2)
@@ -152,7 +152,8 @@ class ArmThenFire(unittest.TestCase):
         self.assertIn("wireAction(btn, `${task.file}::archive`", wiring.group(0))
         self.assertIn("confirm: 'archive it?'", wiring.group(0))
         self.assertIn("busy: 'archiving…'", wiring.group(0))
-        self.assertIn("archiveCard(task.file, task.stage)", wiring.group(0))
+        # the stage the card stands in as the latest paint read it (task 130)
+        self.assertIn("archiveCard(file, cur().stage)", wiring.group(0))
 
     def test_the_label_swaps_in_place_like_every_other_action(self):
         push_to_row = self.html[self.html.index("if (c.arch) return"):]
@@ -172,10 +173,13 @@ class ArmThenFire(unittest.TestCase):
     def test_a_refused_archive_reports_itself(self):
         """fireAction can only unlock on failure if the runner tells it
         the truth — the same contract runCommand and stopAgent keep."""
-        body = re.search(r"async function archiveCard\(file, from\) \{(.*?)\n\}",
+        body = re.search(r"async function sendArchive\(file, from\) \{(.*?)\n\}",
                          self.html, re.S)
-        self.assertIsNotNone(body, "archiveCard is gone")
-        self.assertIn("return res.ok", body.group(1))
+        self.assertIsNotNone(body, "sendArchive is gone")
+        # a refusal and an unconfirmed request answer false, a confirmed
+        # archive true (task 128; behaviour in tests/node/archive_confirmation)
+        self.assertEqual(body.group(1).count("return false;"), 2)
+        self.assertIn("return true;", body.group(1))
 
     def test_the_click_does_not_open_the_card(self):
         wiring = re.search(r"el\.querySelectorAll\('\[data-arch\]'\).*?\n  \}\);",
@@ -193,7 +197,7 @@ class OnTheFaceOfADoneCard(unittest.TestCase):
         cls.html = html()
         cls.push = re.search(r"if \(canArchive\(task\)\) \{(.*?)\n  \}",
                              cls.html, re.S).group(1)
-        cls.card = re.search(r"function cardFor\(task\) \{.*?\n\}\n", cls.html, re.S).group(0)
+        cls.card = re.search(r"function cardSpec\(task\) \{.*?\nfunction mountCard\(spec\) \{.*?\n\}\n", cls.html, re.S).group(0)
 
     def test_the_face_is_the_done_stage_only(self):
         self.assertIn("face: task.stage === 'done'", self.push,
@@ -234,8 +238,9 @@ class OnTheFaceOfADoneCard(unittest.TestCase):
         self.assertIn("if (el.dataset.nodrag) { e.preventDefault(); return; }", drag)
 
     def test_a_done_card_has_no_empty_tools_menu(self):
-        self.assertIn("if (chips.length && (task.stage !== 'done' || "
-                      "chips.some(c => !chipOnFace(c, task)))) {", self.card)
+        self.assertIn("const more = !!chips.length && (task.stage !== 'done' || "
+                      "chips.some(c => !chipOnFace(c, task)));", self.card)
+        self.assertIn("if (spec.more) {", self.card)
 
 
 class TheUndoStaysThePromise(unittest.TestCase):
@@ -251,12 +256,15 @@ class TheUndoStaysThePromise(unittest.TestCase):
                          "the chip and the drop share archiveCard")
 
     def test_the_toast_names_the_undo(self):
-        body = re.search(r"async function archiveCard\(file, from\) \{(.*?)\n\}",
+        body = re.search(r"async function sendArchive\(file, from\) \{(.*?)\n\}",
                          self.html, re.S).group(1)
         self.assertIn("⌘Z brings it back", body)
-        self.assertIn("await loadState()", body,
-                      "the tray's count is read from the state, so it "
-                      "follows only if the archive reloads it")
+        # task 128: the tray's count comes from the confirmed reply, painted
+        # at once; the whole-board reading reconciles in the background and
+        # the action does not wait for it
+        self.assertIn("state.archivedCount = d.archivedCount", body)
+        self.assertIn("afterWrite(d,", body)
+        self.assertNotIn("await loadState()", body)
 
     def test_the_chips_tooltip_says_it_too(self):
         push = re.search(r"if \(canArchive\(task\)\) \{(.*?)\n  \}",
@@ -278,14 +286,19 @@ class NoStaleArmedChip(unittest.TestCase):
     def setUpClass(cls):
         cls.html = html()
 
+    def sweep(self) -> str:
+        """The sweep's body, found by its name rather than by a pattern."""
+        start = self.html.index("function forgetActsOfVanishedCards() {")
+        return self.html[start:self.html.index("\n}\n", start)]
+
     def test_render_forgets_the_windows_of_cards_that_left(self):
-        body = re.search(r"function forgetActsOfVanishedCards\(\) \{(.*?)\n\}",
-                         self.html, re.S)
-        self.assertIsNotNone(body, "the sweep is gone")
-        self.assertIn("allTasks()", body.group(1))
-        self.assertIn("key.split('::')[0]", body.group(1),
-                      "act keys are <file>::<action>")
-        self.assertIn("delete S.acts[key]", body.group(1))
+        # the store's own sweep (lib/arm.js) drops every key the predicate
+        # does not keep — driven as a real module in
+        # tests/node/requests_and_rendering.test.mjs (task 125)
+        body = self.sweep()
+        self.assertIn("allTasks()", body)
+        self.assertIn("key.split('::')[0]", body, "act keys are <file>::<action>")
+        self.assertIn("acts.sweep(", body)
 
     def test_the_sweep_runs_before_anything_is_drawn(self):
         head = re.search(r"function render\(\) \{\n(.*?)\n  renderTitle", self.html, re.S)
@@ -311,9 +324,7 @@ class NoStaleArmedChip(unittest.TestCase):
                 f"stray act key {key!r}")
 
     def test_the_sweep_knows_the_boards_own_keys_are_not_cards(self):
-        body = re.search(r"function forgetActsOfVanishedCards\(\) \{(.*?)\n\}",
-                         self.html, re.S)
-        self.assertIn("key.startsWith(BOARD_ACT)", body.group(1),
+        self.assertIn("key.startsWith(BOARD_ACT)", self.sweep(),
                       "the sweep would delete the board's own armed windows")
 
 

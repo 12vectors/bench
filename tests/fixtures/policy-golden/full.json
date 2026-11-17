@@ -1,0 +1,41 @@
+{
+  "v": 1,
+  "context": [
+    {"name": "workflow-brief", "path": "tool:manager/local/brief.md"},
+    {"name": "design", "path": "work:reference/design.md", "required": false}
+  ],
+  "prepare": [
+    {"name": "deps", "run": "python3 -m pip install -e .", "network": true}
+  ],
+  "checks": [
+    {"name": "unit", "run": "python3 -m unittest discover -s tests",
+     "root": "source", "prepare": ["deps"], "timeout": 900,
+     "scopes": {"fast": ["-k", "fast"]}, "inputs": ["design"],
+     "env": ["LANG"], "accepts": ["unit-review"],
+     "help": "the unit suite"},
+    {"name": "unit-review", "run": "python3 -m unittest discover -s tests",
+     "root": "review", "prepare": ["deps"], "timeout": 900,
+     "inputs": ["design"], "env": ["LANG"]},
+    {"name": "lint", "run": "python3 -m pyflakes .", "root": "worktree",
+     "required": false}
+  ],
+  "commands": [
+    {"name": "make-test", "run": "make test", "root": "worktree"}
+  ],
+  "profiles": {
+    "work": {"verify": ["unit", "lint"],
+             "commands": [{"name": "make-lint", "run": "make lint",
+                           "root": "worktree"}]},
+    "act-pr": {"verify": ["unit"]},
+    "review": {"verify": ["unit-review"], "commands": [],
+               "context": [{"name": "workflow-brief",
+                            "path": "tool:manager/local/brief.md"}]}
+  },
+  "gates": {
+    "member": {"checks": [{"check": "unit", "scope": "fast"}]},
+    "integration": {"checks": ["unit", "lint"], "review": "bench"},
+    "acceptance": {"checks": ["unit"], "review": ["bench", "separate-reviewer"],
+                   "signoff": "criteria"},
+    "overrides": {"allow": true, "actors": ["ron", "elena"]}
+  }
+}

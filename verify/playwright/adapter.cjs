@@ -73,6 +73,14 @@ async function main() {
   let console = [];
   // the shape benchverify.Browser collects from Runtime.exceptionThrown
   page.on('pageerror', (e) => console.push({ exceptionDetails: { text: String(e && e.message || e) } }));
+  // Content Security Policy violations (task 124): Chromium reports each as
+  // a console error naming the policy. Kept apart from uncaught errors.
+  let csp = [];
+  page.on('console', (m) => {
+    const text = m.text();
+    if (m.type() === 'error' && /Content Security Policy/i.test(text))
+      csp.push({ text: text.slice(0, 500), url: page.url() });
+  });
   // Accessibility.getFullAXTree has no Playwright API of its own; this is a
   // CDP session tunnelled over the Playwright connection, not a raw socket
   const cdp = await context.newCDPSession(page);
@@ -119,6 +127,8 @@ async function main() {
     }
     reply.console = console;
     console = [];
+    reply.csp = csp;
+    csp = [];
     emit(reply);
   }
   await browser.close().catch(() => {});

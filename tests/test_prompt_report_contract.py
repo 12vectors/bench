@@ -13,6 +13,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import config  # noqa: E402
+import githost  # noqa: E402
 
 PROMPTS = REPO / "manager" / "core" / "prompts"
 TEMPLATES = ("work.md", "review.md", "review-pr.md", "act-pr.md")
@@ -103,7 +104,9 @@ class TemplatesRender(unittest.TestCase):
     def test_all_templates_format_cleanly(self):
         for name in TEMPLATES:
             text = (PROMPTS / name).read_text(encoding="utf-8")
-            rendered = text.format(**FIELDS)
+            # the hosting provider's fragments, as a launch fills them (task 116)
+            rendered = text.format(**FIELDS, **githost.fragments("act-pr.md", "task/x"),
+                                   **githost.fragments("review-pr.md", "task/x"))
             self.assertTrue(rendered.strip(), f"{name} rendered empty")
             self.assertIn(SENTINEL, rendered)
 

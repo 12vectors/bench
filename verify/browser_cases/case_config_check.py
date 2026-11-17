@@ -521,9 +521,15 @@ class LaunchCheck(unittest.TestCase):
             open_launch(CARD)
             self.assertTrue(b.eval(f"!!document.querySelector('{DIALOG} #lc-launch')"))
             p.write({"v": 1, "profiles": {"work": {"requires": ["filesystem-sandbox"]}}})
-            b.eval("(() => { window.__toasts = []; const t0 = toast;"
-                   " window.toast = toast = (m, bad) => { window.__toasts.push([m, !!bad]);"
-                   " return t0(m, bad); }; return true; })()")
+            # the page is modules (task 124): a toast is observed where it
+            # is drawn, not by replacing a function a module already holds
+            b.eval("(() => { window.__toasts = [];"
+                   " const el = document.querySelector('#toast');"
+                   " new MutationObserver(() => { if (el.classList.contains('show'))"
+                   " window.__toasts.push([document.querySelector('#toastmsg').textContent,"
+                   " el.classList.contains('err')]); })"
+                   ".observe(el, {attributes: true, subtree: true, childList: true,"
+                   " characterData: true}); return true; })()")
             b.click(f"{DIALOG} #lc-launch")
             b.click(f"{DIALOG} #lc-launch")
             if not b.wait("window.__toasts.some(([m, bad]) => bad)", 30):

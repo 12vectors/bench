@@ -37,6 +37,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 CORE = REPO / "manager" / "core"
@@ -45,6 +46,7 @@ sys.path.insert(0, str(CORE))
 import config  # noqa: E402
 import doctor  # noqa: E402
 import profiles  # noqa: E402
+import evidence  # noqa: E402
 import verify  # noqa: E402
 
 
@@ -176,9 +178,9 @@ class InspectionStartsNothing(unittest.TestCase):
                          "inspection provisioned a review checkout")
 
     def test_inspect_writes_no_evidence(self):
-        before = len(verify.all_evidence())
+        before = len(evidence.all_evidence())
         doctor.inspect()
-        self.assertEqual(before, len(verify.all_evidence()),
+        self.assertEqual(before, len(evidence.all_evidence()),
                          "inspection filed a verification record")
 
     def test_a_review_reading_asks_with_no_pinned_checkout(self):
@@ -555,14 +557,14 @@ class ControlledExecution(unittest.TestCase):
         for row in self.findings:
             self.assertEqual(row["evidence"], "runtime")
             self.assertTrue(row.get("evidenceId"), row["id"])
-            record = verify.read(row["evidenceId"])
+            record = evidence.read(row["evidenceId"])
             self.assertIsNotNone(record, row["id"])
             self.assertEqual(record["runner"]["module"], "verify")
             self.assertEqual(record["actor"], "doctor")
 
     def test_the_evidence_is_filed_under_the_doctor_and_never_a_card(self):
         for row in self.findings:
-            record = verify.read(row["evidenceId"])
+            record = evidence.read(row["evidenceId"])
             self.assertEqual(record["task"], verify.FIXTURE_TASK)
             self.assertTrue(record.get("doctor"))
             self.assertIn("doctor", verify.public(record))
@@ -574,7 +576,7 @@ class ControlledExecution(unittest.TestCase):
 
     def test_the_policy_was_resolved_by_the_same_resolver_a_launch_rides(self):
         for row in self.findings:
-            record = verify.read(row["evidenceId"])
+            record = evidence.read(row["evidenceId"])
             self.assertTrue(record["policyId"].startswith("profile:work@"))
             self.assertEqual(record["intent"], "work")
 
@@ -586,7 +588,7 @@ class ControlledExecution(unittest.TestCase):
 
     def test_the_application_is_never_the_execution_root(self):
         for row in self.findings:
-            record = verify.read(row["evidenceId"])
+            record = evidence.read(row["evidenceId"])
             path = Path(record["root"]["path"]).resolve()
             self.assertNotEqual(path, Path(config.app_repo()).resolve())
             self.assertIn(config.DOCTOR_DIR.resolve(), path.parents)
@@ -594,7 +596,7 @@ class ControlledExecution(unittest.TestCase):
                              "the runner thinks it owns the doctor's fixture")
 
     def test_the_check_environment_still_strips_publication_credentials(self):
-        record = verify.read(_by_name(self.findings, "doctor-pass")["evidenceId"])
+        record = evidence.read(_by_name(self.findings, "doctor-pass")["evidenceId"])
         self.assertTrue(record["env"]["removed"])
         for name in record["env"]["removed"]:
             self.assertIsInstance(name, str)
@@ -674,9 +676,9 @@ class EvidenceARestartDoesNotOwn(unittest.TestCase):
             "outcome": "running", "reason": None, "why": "bench is running it",
             "rc": None, "started": time.time(), "ended": None,
             "duration": None, "prepare": [], "location": "local",
-            "log": str(verify.log_path_of("ev:doctor-recover-test")),
+            "log": str(evidence.log_path_of("ev:doctor-recover-test")),
         }
-        verify._store(record)
+        evidence.store(record)
         try:
             closed = verify.recover()
             mine = [r for r in closed if r["id"] == record["id"]]
@@ -684,7 +686,7 @@ class EvidenceARestartDoesNotOwn(unittest.TestCase):
             self.assertEqual(mine[0]["outcome"], "error")
             self.assertNotEqual(mine[0]["outcome"], "passed")
         finally:
-            verify.path_of(record["id"]).unlink(missing_ok=True)
+            evidence.path_of(record["id"]).unlink(missing_ok=True)
             verify.forget_cached()
 
 
@@ -930,7 +932,7 @@ class CredentialsAndContentsDoNotTravel(unittest.TestCase):
 
     def test_the_doctor_scrubs_with_the_same_scrubber_the_evidence_uses(self):
         source = (CORE / "doctor.py").read_text(encoding="utf-8")
-        self.assertIn("verify.scrub", source)
+        self.assertIn("evidence.scrub", source)
 
     def test_no_approved_documents_contents_are_anywhere_in_the_report(self):
         report = doctor.report(["conformance"])
@@ -1034,9 +1036,9 @@ class TheApi(unittest.TestCase):
             self.assertFalse(rows[mode]["asked"], mode)
 
     def test_the_route_exists_for_reading_and_for_asking_separately(self):
-        source = (CORE / "httpd.py").read_text(encoding="utf-8")
-        self.assertIn('elif path == "/api/doctor":', source)
-        self.assertIn('elif path == "/api/doctor/run":', source)
+        source = (CORE / "routes.py").read_text(encoding="utf-8")
+        self.assertIn('Route("GET", "/api/doctor", "read", get_doctor)', source)
+        self.assertIn('Route("POST", "/api/doctor/run", ', source)
 
     def test_the_post_refuses_the_real_agent_without_approval(self):
         with self.assertRaises(ValueError) as caught:
@@ -1060,7 +1062,7 @@ class ThePage(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = (CORE / "board.html").read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_the_inspector_is_discoverable_from_the_header(self):
         self.assertIn('id="doctorchip"', self.html)

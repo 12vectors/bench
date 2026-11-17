@@ -11,9 +11,10 @@ and it never computes a percentage.
 import re
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
-HTML = (REPO / "manager" / "core" / "board.html").read_text(encoding="utf-8")
+HTML = pagesource.page()
 
 
 def lift(name: str) -> str:
@@ -35,7 +36,9 @@ class TheGuideIsASettingsSection(unittest.TestCase):
         self.assertRegex(HTML, r'id="setupchip" role="button" tabindex="0" hidden')
         body = lift("renderSetupChip")
         self.assertIn("el.hidden = !g || !g.summary.invite", body)
-        self.assertIn("'Enter'", HTML[HTML.index("$('#setupchip').addEventListener('keydown'"):][:200])
+        # the header chips share one key handler (task 125)
+        self.assertIn("onActivate($('#setupchip'), openSetupGuide);", HTML)
+        self.assertIn("'Enter'", HTML[HTML.index("function onActivate("):][:300])
 
     def test_the_handoff_link_opens_the_guide(self):
         self.assertIn("location.hash === '#setup'", HTML)

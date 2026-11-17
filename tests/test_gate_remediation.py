@@ -38,12 +38,17 @@ import sys
 import threading
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
+import gatepolicy  # noqa: E402
 import gates  # noqa: E402
 import profiles  # noqa: E402
+import evidence  # noqa: E402
+import resultidentity  # noqa: E402
+import staleness  # noqa: E402
 import verify  # noqa: E402
 
 from tests.test_integration_gates import (CARD, PASSES, GateCase,  # noqa: E402
@@ -244,7 +249,7 @@ class ScopeIsPartOfTheRequirement(GateCase):
             # not that reservation: the gate reads persisted evidence.
             self.assertTrue(wait_for(lambda: any(
                 record.get("proc") is not None
-                and (verify.read(ident) or {}).get("outcome") == "running"
+                and (evidence.read(ident) or {}).get("outcome") == "running"
                 for ident, record in list(verify.RUNNING.items()))))
             found = self.decide()
             self.assertEqual(found["decision"], "pending", found["summary"])
@@ -278,14 +283,14 @@ class ScopeIsPartOfTheRequirement(GateCase):
         self.flag("fail")
         failed = self.ask(again=True)
         for record in (passed, failed):
-            stored = verify.read(record["id"])
+            stored = evidence.read(record["id"])
             stored["requested"] = 1_000.0
             stored["started"] = 1_000.0
             stored["ended"] = 1_001.0
-            verify.path_of(record["id"]).write_text(json.dumps(stored),
+            evidence.path_of(record["id"]).write_text(json.dumps(stored),
                                                     encoding="utf-8")
         verify.forget_cached()
-        records = verify.for_task(CARD)
+        records = evidence.for_task(CARD)
         for order in (records, list(reversed(records))):
             found = gates.evaluate(CARD, "acceptance", records=order)
             self.assertEqual(found["decision"], "blocked")
@@ -295,18 +300,18 @@ class ScopeIsPartOfTheRequirement(GateCase):
 
     def test_a_scope_the_check_does_not_declare_is_refused(self):
         self.scoped([{"check": "unit", "scope": "frontend"}])
-        codes = [d["code"] for d in profiles.gate_policy()["diagnostics"]]
+        codes = [d["code"] for d in gatepolicy.gate_policy()["diagnostics"]]
         self.assertIn("gate-scope-undeclared", codes)
         self.assertEqual(self.decide()["decision"], "blocked")
 
     def test_a_requirement_object_with_an_unknown_key_is_refused(self):
         self.scoped([{"check": "unit", "scopes": ["backend"]}])
-        codes = [d["code"] for d in profiles.gate_policy()["diagnostics"]]
+        codes = [d["code"] for d in gatepolicy.gate_policy()["diagnostics"]]
         self.assertIn("gate-invalid", codes)
 
     def test_a_requirement_object_naming_no_check_is_refused(self):
         self.scoped([{"scope": "backend"}])
-        codes = [d["code"] for d in profiles.gate_policy()["diagnostics"]]
+        codes = [d["code"] for d in gatepolicy.gate_policy()["diagnostics"]]
         self.assertIn("name-invalid", codes)
 
     def test_every_code_the_schema_can_raise_has_a_remedy(self):
@@ -315,13 +320,13 @@ class ScopeIsPartOfTheRequirement(GateCase):
 
     def test_a_scoped_requirement_changes_the_policy_revision(self):
         self.scoped(["unit"])
-        legacy = profiles.gate_policy()["revision"]
+        legacy = gatepolicy.gate_policy()["revision"]
         self.scoped([{"check": "unit", "scope": "backend"}])
-        self.assertNotEqual(legacy, profiles.gate_policy()["revision"])
+        self.assertNotEqual(legacy, gatepolicy.gate_policy()["revision"])
 
     def test_the_public_policy_names_each_requirements_scope(self):
         self.scoped([{"check": "unit", "scope": "backend"}, "unit"])
-        public = profiles.gate_policy_public(profiles.gate_policy())
+        public = gatepolicy.gate_policy_public(gatepolicy.gate_policy())
         rows = public["scopes"]["acceptance"]["checks"]
         self.assertEqual([(r["name"], r["scope"]) for r in rows],
                          [("unit", "backend"), ("unit", None)])
@@ -379,8 +384,8 @@ class TheProgramIsPartOfTheEvidence(GateCase):
         row = found["unmet"][0]
         self.assertEqual(row["reason"], "stale")
         self.assertIn("executable", row["why"])
-        record = verify.for_task(CARD)[0]
-        self.assertEqual(verify.outcome_now(record)["reason"], "program-changed")
+        record = evidence.for_task(CARD)[0]
+        self.assertEqual(staleness.outcome_now(record)["reason"], "program-changed")
 
     def test_an_executable_that_has_gone_invalidates_it(self):
         self.passed_once(self.gated())
@@ -428,10 +433,10 @@ class TheProgramIsPartOfTheEvidence(GateCase):
 
     def test_the_runner_revision_is_recorded_and_compared(self):
         found = self.passed_once(self.gated())
-        self.assertEqual(found["runner"]["revision"], verify.RUNNER_REVISION)
-        stored = verify.read(found["id"])
+        self.assertEqual(found["runner"]["revision"], resultidentity.RUNNER_REVISION)
+        stored = evidence.read(found["id"])
         stored["runner"]["revision"] = "an-earlier-runner"
-        verify.path_of(found["id"]).write_text(json.dumps(stored),
+        evidence.path_of(found["id"]).write_text(json.dumps(stored),
                                                encoding="utf-8")
         result = self.reread()
         self.assertEqual(result["decision"], "blocked")
@@ -441,16 +446,16 @@ class TheProgramIsPartOfTheEvidence(GateCase):
         """Evidence written before programs were bound names no bytes, so
         it cannot say the program is unchanged — and is not reused."""
         found = self.passed_once(self.gated())
-        stored = verify.read(found["id"])
+        stored = evidence.read(found["id"])
         stored.pop("program")
-        verify.path_of(found["id"]).write_text(json.dumps(stored),
+        evidence.path_of(found["id"]).write_text(json.dumps(stored),
                                                encoding="utf-8")
         result = self.reread()
         self.assertEqual(result["decision"], "blocked")
         self.assertEqual(result["unmet"][0]["reason"], "stale")
 
     def test_an_executable_bench_cannot_resolve_is_unbound(self):
-        identity = verify.program_identity(["no-such-program-anywhere"],
+        identity = resultidentity.program_identity(["no-such-program-anywhere"],
                                            self.tmp, "/nonexistent")
         self.assertFalse(identity["bound"])
         self.assertIsNone(identity["programId"])
@@ -560,7 +565,7 @@ class AnOutstandingChangeRequestBlocks(GateCase):
         self.assertEqual(row["state"], "met")
         self.assertIn("branch protection", row["authority"])
         self.assertIn("branch protection",
-                      profiles.REVIEW_POLICIES["separate-reviewer"])
+                      gatepolicy.REVIEW_POLICIES["separate-reviewer"])
 
 
 # A stand-in for `gh`, faithful in the one way that matters here: `pr
@@ -597,9 +602,9 @@ if args[:2] == ["pr", "merge"]:
             sys.exit(1)
     (state / "merged").write_text(tip)
     # and the base on the remote now holds it, as GitHub's merge leaves it
-    sys.path.insert(0, {tests!r})
-    import fake_origin
-    fake_origin.merge_pr({bare!r}, {branch!r})
+    sys.path.insert(0, {root!r})
+    from tests.product import fakehost
+    fakehost.merge_pr({bare!r}, {branch!r})
     after = state / "advance-after-merge"
     if after.exists():
         subprocess.run(["git", "--git-dir", {bare!r}, "update-ref", ref,
@@ -623,8 +628,8 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
 
     def setUp(self):
         super().setUp()
-        import github
-        self.github = github
+        import completion
+        self.completion = completion
         self.wt = self.worktree()
         self.head = self.commit_in(self.wt)
         self.review_card()
@@ -676,7 +681,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         late: list[str] = []
         self.at_the_boundary(
             lambda: late.append(self.commit_in(self.wt, "a late commit\n")))
-        result = self.github.complete_task(CARD, "review")
+        result = self.completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
         self.assertTrue(late, "the boundary fired")
         self.assertTrue(self.contains(self.head, "main"))
@@ -692,7 +697,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         """Nothing moved, so the base fast-forwards to precisely the commit
         the gate read, and the workspace is cleaned up as before."""
         self.verified()
-        result = self.github.complete_task(CARD, "review")
+        result = self.completion.complete_task(CARD, "review")
         self.assertEqual(self.tip("main"), self.head)
         self.assertFalse(self.wt.exists())
         self.assertEqual({k: result[k] for k in ("merged", "swept", "moved")},
@@ -714,7 +719,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         late: list[str] = []
         self.at_the_boundary(
             lambda: late.append(self.commit_in(self.wt, "a late commit\n")))
-        result = self.github.complete_task(CARD, "review")
+        result = self.completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"], "the gated commit did merge")
         self.assertTrue(result.get("partial"), result)
         self.assertEqual(result.get("stage"), "review")
@@ -734,12 +739,12 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         git(self.repo, "add", "-A")
         git(self.repo, "commit", "-q", "-m", "main moved on")
         self.verified()
-        self.github.complete_task(CARD, "review")
+        self.completion.complete_task(CARD, "review")
         subject = git(self.repo, "log", "-1", "--format=%s", "main").stdout
         self.assertIn(f"task/{CARD[:-3]}", subject)
 
     def test_an_ungated_local_merge_is_unchanged(self):
-        result = self.github.complete_task(CARD, "review")
+        result = self.completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
         self.assertTrue(self.contains(self.head, "main"))
         self.assertFalse(self.wt.exists())
@@ -762,7 +767,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
                                      state=str(self.gh_state),
                                      branch=f"task/{CARD[:-3]}",
                                      bare=str(bare),
-                                     tests=str(Path(__file__).resolve().parent)),
+                                     root=str(Path(__file__).resolve().parents[1])),
                      encoding="utf-8")
         gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
         self.patch(GIT_REMOTE="origin", APP_MERGE="origin", GH_BIN=str(gh))
@@ -776,7 +781,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
     def test_the_origin_merge_is_conditional_on_the_gated_head(self):
         self.origin()
         self.verified()
-        self.github.complete_task(CARD, "review")
+        self.completion.complete_task(CARD, "review")
         (merge,) = self.merges()
         self.assertIn("--match-head-commit", merge)
         self.assertEqual(merge[merge.index("--match-head-commit") + 1],
@@ -795,7 +800,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
 
         self.at_the_boundary(push_lands)
         with self.assertRaises(ValueError) as caught:
-            self.github.complete_task(CARD, "review")
+            self.completion.complete_task(CARD, "review")
         self.assertIn("origin would not merge", str(caught.exception))
         self.assertFalse((self.gh_state / "merged").exists())
         self.assertEqual(self.stage_of(CARD), "review")
@@ -805,14 +810,14 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         self.origin(old_gh=True)
         self.verified()
         with self.assertRaises(ValueError) as caught:
-            self.github.complete_task(CARD, "review")
+            self.completion.complete_task(CARD, "review")
         self.assertIn("--match-head-commit", str(caught.exception))
         self.assertEqual(self.merges(), [], "no unconditional merge was tried")
         self.assertEqual(self.stage_of(CARD), "review")
 
     def test_an_ungated_origin_merge_is_unchanged(self):
         self.origin(old_gh=True)
-        self.github.complete_task(CARD, "review")
+        self.completion.complete_task(CARD, "review")
         (merge,) = self.merges()
         self.assertNotIn("--match-head-commit", merge)
 
@@ -827,7 +832,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
                    self.head, "-m", "pushed after the merge").stdout.strip()
         git(self.repo, "push", "-q", "origin", f"{late}:refs/heads/late")
         (self.gh_state / "advance-after-merge").write_text(late)
-        self.github.complete_task(CARD, "review")
+        self.completion.complete_task(CARD, "review")
         self.assertEqual(self.tip(f"refs/heads/task/{CARD[:-3]}", bare), late,
                          "an unmerged push was deleted from origin")
 
@@ -840,7 +845,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         late = git(self.repo, "commit-tree", f"{self.head}^{{tree}}", "-p",
                    self.head, "-m", "raced").stdout.strip()
         git(self.repo, "push", "-q", "origin", f"{late}:refs/heads/late")
-        original = self.github._run
+        original = self.completion._run
         raced: list = []
 
         def race(cmd, *args, **kwargs):
@@ -849,9 +854,15 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
                                  late))
             return original(cmd, *args, **kwargs)
 
-        self.addCleanup(setattr, self.github, "_run", original)
-        self.github._run = race
-        deleted = self.github._delete_remote_branch("origin", branch,
+        self.addCleanup(setattr, self.completion, "_run", original)
+        self.completion._run = race
+        # nothing targets the branch (task 117 asks before it deletes), so
+        # the delete reaches the lease this case is about
+        import githost
+        self.addCleanup(setattr, githost, "changes_targeting",
+                        githost.changes_targeting)
+        githost.changes_targeting = lambda base: []
+        deleted = self.completion._delete_remote_branch("origin", branch,
                                                     self.head, CARD)
         self.assertTrue(raced, "the race was injected at the delete")
         self.assertFalse(deleted)
@@ -863,7 +874,7 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         late: list[str] = []
         self.at_the_boundary(
             lambda: late.append(self.commit_in(self.wt, "local only\n")))
-        result = self.github.complete_task(CARD, "review")
+        result = self.completion.complete_task(CARD, "review")
         self.assertEqual(self.tip(f"task/{CARD[:-3]}"), late[0],
                          "-D removed a commit nobody merged")
         self.assertTrue(self.wt.is_dir())
@@ -879,13 +890,13 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         path = self.worktree(member[:-3])
         merged = self.commit_in(path, "the member's work\n")
         late = self.commit_in(path, "after the phase merged it\n")
-        note = self.github._clear_member({"file": member}, merged)
+        note = self.completion._clear_member({"file": member}, merged)
         self.assertIn("moved on", note)
         self.assertEqual(self.tip(f"task/{member[:-3]}"), late)
         self.assertTrue(path.is_dir())
         # and one that did not move is cleared as before
         git(path, "reset", "-q", "--hard", merged)
-        self.assertEqual(self.github._clear_member({"file": member}, merged), "")
+        self.assertEqual(self.completion._clear_member({"file": member}, merged), "")
         self.assertFalse(path.exists())
 
 
@@ -998,8 +1009,7 @@ class IntendedWritesAreNotAnOsBoundary(GateCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.page = (REPO / "manager" / "core" / "board.html").read_text(
-            encoding="utf-8")
+        cls.page = pagesource.page()
 
     def between(self, start: str, end: str) -> str:
         at = self.page.index(start)
@@ -1120,8 +1130,7 @@ class TheSheetSaysWhichScope(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.page = (REPO / "manager" / "core" / "board.html").read_text(
-            encoding="utf-8")
+        cls.page = pagesource.page()
 
     def between(self, start: str, end: str) -> str:
         at = self.page.index(start)

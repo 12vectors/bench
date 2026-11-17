@@ -79,12 +79,24 @@ import time
 from pathlib import Path
 
 import config
+import githost
+import gitrepo
+import records
 import taskfiles
 
 # Where a recorded plan lives, and what the file is called. One per card,
 # replaced on a replan — the plan is a property of the card's current work,
 # not a history of every plan it ever had (the ticker keeps that).
-PLAN_VERSION = 1
+#
+# Version 2 (task 117, WP09) adds two keys and changes none: `stack` — the
+# parent card this work is stacked on (`card`), the branch it was cut from
+# (`branch`) and that branch's tip when it was cut (`tip`), or None — and
+# `landing`, where the work must end up for `done/` (the application base
+# the plan was made under). A version-1 record is read unchanged, and its
+# stack reading is derived from the card instead (`stacks`); nothing here
+# checks the version field, so a reader that predates version 2 ignores
+# the new keys.
+PLAN_VERSION = 2
 
 
 def plan_path(filename: str) -> Path:
@@ -105,7 +117,7 @@ def app_remote() -> str | None:
     """The remote an application branch is published to and fetched from.
 
     Note what this is *not* used for: the default base's own branch point
-    keeps its established rule (`agents._fresh_branch_point`, which fetches
+    keeps its established rule (`gitrepo.fresh_branch_point`, which fetches
     a remote literally named `origin` and never reaches past it). This
     remote resolves the branches a card names explicitly — the same remote
     its PR is opened on, which is the only one that could carry them.
@@ -115,12 +127,10 @@ def app_remote() -> str | None:
 
 def _git(*args: str, cwd: Path | None = None,
          timeout: float = 30) -> subprocess.CompletedProcess:
-    try:
-        return config.git_run(cwd or app_repo(), *args, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(args, 128, "", "timed out")
-    except OSError as exc:
-        return subprocess.CompletedProcess(args, 128, "", str(exc))
+    """git in the application (or `cwd`), never raising; a timeout reads
+    exactly "timed out", as it always has here."""
+    return gitrepo.git(cwd or app_repo(), *args, timeout=timeout,
+                       timed_out="timed out")
 
 
 def _branch_exists(branch: str) -> bool:
@@ -153,14 +163,7 @@ def _fetch(remote: str, branch: str) -> bool:
     """Bounded, and never fatal on its own: a fetch that fails leaves the
     local copy of the branch as the only candidate, and whether that is
     good enough is the caller's judgement."""
-    try:
-        done = subprocess.run(
-            ["git", "-C", str(app_repo()), "fetch", remote,
-             f"refs/heads/{branch}:refs/remotes/{remote}/{branch}"],
-            capture_output=True, text=True, timeout=config.FETCH_TIMEOUT)
-    except (subprocess.SubprocessError, OSError):
-        return False
-    return done.returncode == 0
+    return gitrepo.fetch_branch(remote, branch, timeout=config.FETCH_TIMEOUT)
 
 
 # ── resolving one named branch ─────────────────────────────────────────
@@ -248,8 +251,23 @@ def capabilities() -> dict:
     the card discover it at the move into `review/`.
     """
     remote = app_remote()
-    gh = config.gh_available()
-    return {"remote": remote, "gh": gh, "pr": bool(remote) and gh}
+    # The provider in force answers (`githost`). The CLI key keeps its old
+    # name, because recorded plans carry it, and now reads "can the host
+    # open a change here at all" — false for BOARD_GIT_PROVIDER=none and
+    # for a remote the provider does not recognise, as well as for a
+    # missing CLI. An old record with no `provider` field reads as the
+    # default provider.
+    host = githost.available()
+    found = {"remote": remote, CLI_KEY: host, "pr": bool(remote) and host,
+             "provider": githost.name()}
+    if not host:
+        found["hostProblem"] = githost.problem() or \
+            githost.capabilities()["open"]["reason"]
+    return found
+
+
+# The persisted key a plan's capabilities name the hosting CLI by.
+CLI_KEY = "gh"
 
 
 def _delivery(plan: dict) -> None:
@@ -259,8 +277,11 @@ def _delivery(plan: dict) -> None:
         plan["delivery"] = "pr"
         return
     plan["delivery"] = "local-only"
+    # The provider's own reason (`<cli> is not installed` for a missing
+    # CLI, exactly the words this note always used); a record from before
+    # task 116 carries none and was only ever missing the CLI.
     missing = ("no git remote is configured" if not caps["remote"]
-               else f"{config.GH_BIN} is not installed")
+               else caps.get("hostProblem") or githost.missing_cli())
     asked = plan["prSource"] != "the application default"
     plan["notes"].append(
         (f"local-only: {missing}, so the PR into {plan['prBase']} this card "
@@ -361,14 +382,24 @@ def record(plan: dict) -> dict:
     under `local/state/`, which is gitignored and never leaves the machine.
     What reaches shared history is the portable half (`portable`), and the
     two are kept apart here rather than at each reader.
+
+    The retarget history is carried from the record already on disk when
+    the plan being written does not say otherwise (task 119): a launch
+    re-records the plan it preflighted — ▸ start work on an existing
+    branch, ↻ act on PR — and preflight knows nothing of retargets. A
+    retarget is an event about the card's work, and the review rule in
+    `gates` reads it; a re-record that dropped it would let a verdict or
+    an approval given before the retarget count again at the same head.
     """
-    config.PLANS_DIR.mkdir(parents=True, exist_ok=True)
     stored = dict(plan)
+    if "retargets" not in stored:
+        carried = (recorded(plan["task"]) or {}).get("retargets")
+        if carried:
+            stored["retargets"] = list(carried)[-RETARGET_HISTORY:]
     stored["v"] = PLAN_VERSION
     stored["recorded"] = time.time()
     stored.pop("blockers", None)
-    plan_path(plan["task"]).write_text(
-        json.dumps(stored, indent=2, sort_keys=True), encoding="utf-8")
+    records.write_json(plan_path(plan["task"]), stored, durable=True)
     return stored
 
 
@@ -420,14 +451,14 @@ def _foreign_worktree(path: Path) -> str | None:
     Two readings, and the first is config's. Whether a directory is a
     checkout at all, and whether it is a checkout of *this* application,
     is the repository-identity question every other consumer of a worktree
-    asks (`config.worktree_mismatch`, task 56) — asked here too, so the
+    asks (`gitrepo.worktree_mismatch`, task 56) — asked here too, so the
     refusal reads the same wherever it comes from, and so a preflight
     cannot pass something a driver or a local command would refuse. What
     the list below adds is the narrower case identity cannot see: a
     directory that genuinely belongs to this repository but is not one of
     its worktrees.
     """
-    mismatch = config.worktree_mismatch(path)
+    mismatch = gitrepo.worktree_mismatch(path)
     if mismatch:
         return mismatch
     listed = _git("worktree", "list", "--porcelain").stdout
@@ -669,7 +700,23 @@ def preflight(filename: str, stage: str, *, fetch: bool = True,
     if plan["blockers"]:
         return plan
     _resume(plan, card, ignore_recorded=ignore_recorded)
+    _stacked(plan, card)
     return plan
+
+
+def _stacked(plan: dict, card: dict) -> None:
+    """The version-2 keys: which card this work is stacked on, and where it
+    lands. Read from the board's one stack derivation
+    (`taskfiles.weave_stacks`) — a card whose base names no card on the
+    board has no parent card, exactly as before — and from the commit the
+    branch was actually cut from, which `_resume` may have read back out
+    of a recorded plan."""
+    found = card.get("stack") or {}
+    parent = found.get("parent") if found.get("mapping") == "card" else None
+    plan["stack"] = ({"card": parent, "branch": plan["startBranch"],
+                      "tip": plan.get("startCommit") or ""}
+                     if parent else None)
+    plan["landing"] = plan.get("appBase") or config.APP_BASE
 
 
 def replan(filename: str, stage: str) -> dict:
@@ -688,8 +735,121 @@ def replan(filename: str, stage: str) -> dict:
     """
     fresh = require(preflight(filename, stage, ignore_recorded=True))
     previous = recorded(filename)
+    # A replan that changes the review target is a retarget too: a review
+    # of the change against the old target is not a review of it against
+    # the new one, whether or not the head moved (task 119). The history
+    # is carried, never reset by a replan.
+    carried = list((previous or {}).get("retargets") or [])
+    if previous and previous.get("prBase") \
+            and previous["prBase"] != fresh.get("prBase"):
+        carried.append(_retarget_entry(
+            previous["prBase"], fresh["prBase"],
+            _ref_commit(f"refs/heads/{fresh['branch']}"), "replan"))
+    if carried:
+        fresh["retargets"] = carried[-RETARGET_HISTORY:]
     stored = record(fresh)
     return {"plan": stored, "previous": portable(previous) if previous else None}
+
+
+# ── retargeting: the review target changes, the work does not ──────────
+#
+# A retarget changes what a card's change request targets — the proposed
+# diff and the integration target — even when the head stays where it was
+# (§3.4 of the plan). So it is recorded as an event on the plan, with the
+# head it happened at, and `gates` reads the newest one: a review verdict
+# or a formal approval given before it is about the change against the old
+# target, and is never carried over to the new one. Check evidence keeps
+# its own identity rules; nothing here touches it.
+
+RETARGET_HISTORY = 20
+
+
+def _retarget_entry(old: str, new: str, head: str, how: str) -> dict:
+    return {"from": old, "to": new, "head": head or None, "how": how,
+            "at": time.time(),
+            "atIso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+
+
+def retarget(filename: str, new: str, *, old: str, head: str, how: str,
+             task: dict | None = None) -> dict:
+    """Record that this card's work now targets `new`, which it did not.
+
+    Written only by a person's confirmed stack action (`stackactions`),
+    after the host — where there is one — was read back targeting `new`:
+    the plan follows what was observed, never what was hoped. `how` says
+    which: `host` (bench made the edit and read it back), `adopted` (the
+    host already targeted `new`) or `plan-only` (no change request
+    exists). The start of the work is unchanged — it was cut from where it
+    was cut from — and so is everything else on record."""
+    saved = recorded(filename)
+    if saved:
+        stored = dict(saved)
+    else:
+        shape = declared(task) if task else {}
+        stored = {"task": filename,
+                  "branch": f"{config.TASK_BRANCH_PREFIX}{filename[:-3]}",
+                  "startBranch": shape.get("startBranch") or old,
+                  "startRef": None, "startCommit": "",
+                  "source": shape.get("source")
+                  or "adopted from the branch that already existed",
+                  "appBase": config.APP_BASE, "appRemote": app_remote(),
+                  "provenance": "adopted"}
+    stored["prBase"] = new
+    stored["prSource"] = (f"retargeted from {old} onto {new} by a person's "
+                          f"confirmed stack action ({how})")
+    stored["retargets"] = (list(stored.get("retargets") or [])
+                           + [_retarget_entry(old, new, head, how)]
+                           )[-RETARGET_HISTORY:]
+    return record(stored)
+
+
+def restore(filename: str, previous: dict | None) -> None:
+    """Put back the record `previous` was read as (None: no record) — for
+    a confirmed action whose next step failed after the plan was written,
+    so the plan and the card never disagree (task 119)."""
+    path = plan_path(filename)
+    if previous is None:
+        path.unlink(missing_ok=True)
+        return
+    records.write_json(path, previous, durable=True)
+
+
+def latest_retarget(filename: str) -> dict | None:
+    """The newest retarget recorded for this card's work, or None."""
+    found = [r for r in (recorded(filename) or {}).get("retargets") or []
+             if isinstance(r, dict) and r.get("at")]
+    return max(found, key=lambda r: float(r["at"])) if found else None
+
+
+def phase_branch_point(filename: str) -> tuple[str | None, str | None]:
+    """Where a *member of a running phase* branches from: the phase's own
+    branch, not main. Moved here from `agents` (task 114): it is a plan
+    question, and asking it from `agents` was why this module imported
+    upward.
+
+    That is the whole reason a phase has a branch. Related cards run one
+    after another, so card two branched from main could not see card one's
+    work while card one sat unmerged in review/ — it would conflict, or
+    quietly build the same thing twice. Branching from the phase tip is
+    what makes the list add up.
+
+    (None, None) for a card in no phase, or one whose phase has not been
+    started — then the ordinary fresh branch point applies.
+    """
+    phase = None
+    try:
+        for stage in taskfiles.collect()["stages"]:
+            for task in stage["tasks"]:
+                if task["file"] == filename:
+                    phase = task.get("phase")
+    except OSError:
+        return None, None
+    if not phase:
+        return None, None
+    branch = config.PHASE_BRANCH_PREFIX + phase["file"][:-3]
+    if not gitrepo.branch_exists(branch):
+        return None, None
+    return branch, f"branched from {branch}, the phase's own branch"
 
 
 def _resolve_ref(plan: dict, *, fetch: bool) -> dict | None:
@@ -707,14 +867,14 @@ def _resolve_ref(plan: dict, *, fetch: bool) -> dict | None:
       never substituted. This is the path that must refuse rather than fall
       back, because falling back is the failure being fixed.
     - **The default base** keeps the rule it has always had:
-      `agents._fresh_branch_point`, which fetches a remote named `origin`
+      `gitrepo.fresh_branch_point`, which fetches a remote named `origin`
       and uses this checkout's HEAD rather than making a launch wait on the
-      network. The import is local because `agents` imports this module.
+      network. (It lived in `agents` until task 114, which made this
+      function import upward to reach it.)
     """
-    import agents                                   # noqa: PLC0415 — cycle
     phase = plan.get("phase")
     if phase:
-        point, note = agents.phase_branch_point(plan["task"])
+        point, note = phase_branch_point(plan["task"])
         if point:
             plan["startRef"] = point
             plan["startCommit"] = _ref_commit(f"refs/heads/{point}")
@@ -738,7 +898,7 @@ def _resolve_ref(plan: dict, *, fetch: bool) -> dict | None:
             plan["notes"].append(found["note"])
         return found
 
-    point, note = agents._fresh_branch_point() if fetch else (None, None)
+    point, note = gitrepo.fresh_branch_point() if fetch else (None, None)
     plan["startRef"] = point
     plan["startCommit"] = _ref_commit(point or "HEAD")
     if note:
@@ -817,6 +977,50 @@ def remember_target(filename: str, branch: str, base: str) -> dict:
     stored.setdefault("appRemote", app_remote())
     stored["provenance"] = saved.get("provenance") or "adopted"
     return record(stored)
+
+
+def owner_of(branch: str) -> str | None:
+    """The card on the board whose work lives on `branch` — `task/<stem>`
+    for an ordinary card, `phase/<stem>` for a phase card — or None for a
+    branch no card owns. A local read of the stage directories."""
+    for prefix, phase in ((config.TASK_BRANCH_PREFIX, False),
+                          (config.PHASE_BRANCH_PREFIX, True)):
+        if not branch.startswith(prefix):
+            continue
+        stem = branch[len(prefix):]
+        stage = taskfiles.find_stage_of(f"{stem}.md")
+        if stage is None:
+            return None
+        task = taskfiles.read_task(config.TASKS / stage / f"{stem}.md", stage)
+        return task["file"] if bool(task.get("isPhase")) == phase else None
+    return None
+
+
+def dependants(branch: str, *, skip: str | None = None) -> list[str]:
+    """The cards on this board whose work still targets `branch` — the
+    review target of their recorded plan, or of their headers when none is
+    recorded — and is not delivered (`done/`). Local: the cards and the
+    recorded plans, nothing asked of a remote. Cleanup reads it before it
+    deletes a branch, beside what the hosting provider says (task 117)."""
+    found = []
+    for group in taskfiles.collect()["stages"]:
+        if group["slug"] == "done":
+            continue
+        for task in group["tasks"]:
+            if task["file"] == skip:
+                continue
+            saved = recorded(task["file"]) or {}
+            target = saved.get("prBase") or declared(task)["prBase"]
+            if target == branch:
+                found.append(task["file"])
+    return found
+
+
+def remote_branch_commit(remote: str, branch: str) -> str:
+    """The commit the remote has for `branch`, asked of the remote itself
+    (`git ls-remote`), or "" — for the mutations that must know, never for
+    a reading."""
+    return _remote_branch_commit(remote, branch)
 
 
 def target_problem(filename: str, base: str) -> str | None:

@@ -54,13 +54,19 @@ import os
 import re
 from pathlib import Path
 
+import agents
+import appinspect
 import config
+import plans
+import previews
 import profiles
 import settings
-import setupguide
+import setupbase
+import state
 import taskfiles
+import templates
 
-Refused = setupguide.Refused
+Refused = setupbase.Refused
 
 GAPS = ("instructions", "fixtures", "preview", "ui-smoke", "verification")
 # Which setup area a gap belongs to: a decision about the area (deferred,
@@ -92,116 +98,12 @@ RELATED_WORDS = {
 }
 STARTABLE = ("backlog", "to-do", "in-progress")
 
-UI_DEPS = ("react", "vue", "svelte", "@angular/core", "next", "nuxt",
-           "vite", "solid-js", "preact", "@sveltejs/kit", "astro")
-BROWSER_DEPS = ("@playwright/test", "playwright", "cypress", "puppeteer",
-                "webdriverio", "selenium-webdriver")
-BROWSER_FILES = tuple(f"{tool}.config.{ext}" for tool in ("playwright", "cypress")
-                      for ext in ("ts", "js", "mjs", "cjs"))
-SERVICE_FILES = ("docker-compose.yml", "docker-compose.yaml", "compose.yml",
-                 "compose.yaml", ".env.example", ".env.sample",
-                 ".env.template", "alembic.ini", "prisma/schema.prisma")
-SERVICE_DIRS = ("migrations", "db/migrations")
-FIXTURE_DIRS = ("tests/fixtures", "test/fixtures", "fixtures", "seeds",
-                "db/seeds", "spec/fixtures", "testdata")
-START_SCRIPTS = ("dev", "start", "serve", "preview")
-START_TARGETS = ("run", "serve", "dev", "start")
-NPM_NO_TEST = "no test specified"
-
 
 # ── inspection: read the application, run nothing ─────────────────────
-
-def _probe(app: Path, rel: str) -> dict:
-    """One file, as present / absent / unknown — unknown being a file that
-    exists and could not be read, which is a different fact from absent."""
-    path = app / rel
-    try:
-        if not path.exists():
-            return {"ref": rel, "finding": "absent"}
-        if path.is_dir():
-            return {"ref": rel, "finding": "present", "dir": True}
-        text = path.read_text(encoding="utf-8")
-        return {"ref": rel, "finding": "present", "text": text}
-    except (OSError, UnicodeDecodeError) as exc:
-        return {"ref": rel, "finding": "unknown",
-                "detail": f"could not be read ({type(exc).__name__})"}
-
-
-def inspect() -> dict:
-    """What the application holds that bears on the five gaps. Paths are
-    relative to the application, so every reference is portable."""
-    app = config.app_repo()
-    found: dict = {"readable": app.is_dir(), "refs": {}}
-    if not found["readable"]:
-        return found
-
-    def probe(rel: str) -> dict:
-        found["refs"][rel] = hit = _probe(app, rel)
-        return hit
-
-    pkg = probe("package.json")
-    scripts, deps = {}, set()
-    if pkg["finding"] == "present" and not pkg.get("dir"):
-        try:
-            doc = json.loads(pkg["text"])
-            scripts = doc.get("scripts") or {}
-            for key in ("dependencies", "devDependencies"):
-                deps |= set((doc.get(key) or {}).keys())
-            if not isinstance(scripts, dict):
-                scripts = {}
-        except (json.JSONDecodeError, AttributeError):
-            pkg.update(finding="unknown", detail="does not parse as JSON")
-    make = probe("Makefile")
-    targets = set()
-    if make["finding"] == "present" and not make.get("dir"):
-        targets = set(re.findall(r"^([A-Za-z][\w-]*)\s*:", make["text"], re.M))
-    for rel in ("pyproject.toml", "setup.py", "manage.py", "Cargo.toml",
-                "go.mod", "Procfile", "tests", "test", "index.html",
-                "public/index.html", "src/index.html", "templates",
-                *setupguide.INSTRUCTION_FILES, *BROWSER_FILES, "cypress",
-                "e2e", "tests/e2e", *SERVICE_FILES, *SERVICE_DIRS,
-                *FIXTURE_DIRS):
-        probe(rel)
-    has = lambda rel: found["refs"].get(rel, {}).get("finding") == "present"
-
-    test_cmds = []
-    test = scripts.get("test")
-    if isinstance(test, str) and NPM_NO_TEST not in test:
-        test_cmds.append(("package.json", "the `test` script"))
-    if "test" in targets or "check" in targets:
-        test_cmds.append(("Makefile", "a `test` or `check` target"))
-    if has("Cargo.toml"):
-        test_cmds.append(("Cargo.toml", "`cargo test`"))
-    if has("go.mod"):
-        test_cmds.append(("go.mod", "`go test ./...`"))
-    if (has("pyproject.toml") or has("setup.py")) and (has("tests") or has("test")):
-        test_cmds.append(("tests" if has("tests") else "test",
-                          "a Python test directory"))
-    start = [("package.json", f"the `{s}` script") for s in START_SCRIPTS
-             if isinstance(scripts.get(s), str)]
-    start += [("Makefile", f"a `{t}` target") for t in START_TARGETS
-              if t in targets]
-    start += [(rel, why) for rel, why in (("manage.py", "a Django project"),
-                                          ("Procfile", "a Procfile"))
-              if has(rel)]
-    ui = [("package.json", f"a `{d}` dependency") for d in UI_DEPS if d in deps]
-    ui += [(rel, "a page or template") for rel in
-           ("index.html", "public/index.html", "src/index.html", "templates")
-           if has(rel)]
-    browser = [("package.json", f"a `{d}` dependency")
-               for d in BROWSER_DEPS if d in deps]
-    browser += [(rel, "browser test configuration") for rel in
-                (*BROWSER_FILES, "cypress", "e2e", "tests/e2e") if has(rel)]
-    services = [(rel, "service or data configuration")
-                for rel in (*SERVICE_FILES, *SERVICE_DIRS) if has(rel)]
-    fixtures = [(rel, "a fixture directory") for rel in FIXTURE_DIRS if has(rel)]
-    found.update(testCommands=test_cmds, start=start, ui=ui, browser=browser,
-                 services=services, fixtureDirs=fixtures,
-                 instructions=[n for n in setupguide.INSTRUCTION_FILES if has(n)])
-    found["unknown"] = sorted(rel for rel, hit in found["refs"].items()
-                              if hit["finding"] == "unknown")
-    return found
-
+#
+# The reading itself is `appinspect.inspect` (WP13, task 122): previews
+# and readiness read the application the same way, and none of the three
+# reaches across another for it.
 
 def _ev(ref: str, finding: str, detail: str, kind: str = "file") -> dict:
     return {"ref": ref, "kind": kind, "finding": finding,
@@ -247,7 +149,7 @@ def _authority(gap: str, runs: bool) -> dict:
 def gaps(found: dict | None = None) -> dict:
     """Every gap inspection supports, and every capability it found in
     place — the second list is why a working project gets no card."""
-    found = inspect() if found is None else found
+    found = appinspect.inspect() if found is None else found
     out, covered = {}, []
     if not found["readable"]:
         return {"gaps": {}, "covered": [], "unreadable": (
@@ -257,7 +159,7 @@ def gaps(found: dict | None = None) -> dict:
     verif = settings.verification(doc)
     names = {c["name"] for c in verif["checks"]}
     steps = [s["name"] for s in verif.get("prepare") or []]
-    outcomes = setupguide._newest_outcomes(names) if names else {}
+    outcomes = setupbase.newest_outcomes(names) if names else {}
     driver = config.driver_path()
     runnable = bool(driver and os.access(driver, os.X_OK))
 
@@ -282,12 +184,12 @@ def gaps(found: dict | None = None) -> dict:
         gap("instructions",
             ("Project instructions could not be read; inspect and repair them "
              "before proposing a card." if any(
-                 n in found["unknown"] for n in setupguide.INSTRUCTION_FILES) else
+                 n in found["unknown"] for n in appinspect.INSTRUCTION_FILES) else
              "No agent workflow instructions were found at the application's "
              "root, so a run launched from this board works from its card alone."),
             [_ev(n, found["refs"][n]["finding"],
                   found["refs"][n].get("detail", "not at the application root"))
-             for n in setupguide.INSTRUCTION_FILES] + _from(cmds),
+             for n in appinspect.INSTRUCTION_FILES] + _from(cmds),
             ["An instructions file at the application root (AGENTS.md is read "
              "by every agent bench drives) describing this project's real "
              "conventions: layout, how to build, test and run it, and what a "
@@ -310,7 +212,7 @@ def gaps(found: dict | None = None) -> dict:
             "The application configures services or data its tests may need, "
             "and no disposable fixture directory or preparation step was found.",
             _from(found["services"])
-            + [_ev(rel, "absent", "no fixture directory") for rel in FIXTURE_DIRS[:3]]
+            + [_ev(rel, "absent", "no fixture directory") for rel in appinspect.FIXTURE_DIRS[:3]]
             + [_ev("profiles.json: prepare", "absent",
                    "no preparation step is declared", "policy")],
             ["Disposable test data (fixtures or seeds) the tests and the "
@@ -322,7 +224,6 @@ def gaps(found: dict | None = None) -> dict:
             runs=True)
 
     # preview
-    import previews
     preview_cfg = previews.read_config()
     if preview_cfg["valid"]:
         covered.append({"gap": "preview", "found": [_ev(
@@ -363,7 +264,7 @@ def gaps(found: dict | None = None) -> dict:
             "The application has a user interface and no browser test of it "
             "was found.",
             _from(found["ui"]) + [_ev(rel, "absent", "no browser test "
-                                      "configuration") for rel in BROWSER_FILES[:2]]
+                                      "configuration") for rel in appinspect.BROWSER_FILES[:2]]
             + _unread(found, ["package.json"]),
             ["A small browser smoke test that starts the app the way the "
              "driver does, loads its main page and fails on an error.",
@@ -431,17 +332,16 @@ def _cards() -> list[dict]:
                                                     errors="replace")
             except OSError:
                 continue
-            title = taskfiles._first(taskfiles.TITLE_RE, text) or name[:-3]
+            title = taskfiles.first_match(taskfiles.TITLE_RE, text) or name[:-3]
             mark = GAP_HEADER_RE.search(text)
             found.append({"filename": name, "stage": stage,
                           "number": taskfiles.NUMBER_RE.match(name).group(1),
                           "title": title, "gap": mark.group(1) if mark else None,
-                          "dependsOn": taskfiles._depends_on(text)})
+                          "dependsOn": taskfiles.depends_on(text)})
     return found
 
 
 def _failed_run(filename: str) -> bool:
-    import state
     with state.LOCK:
         runs = [r for r in state.AGENTS.values() if r.get("task") == filename]
     runs.sort(key=lambda r: r.get("started") or 0)
@@ -497,7 +397,7 @@ def _related(gap: str, cards: list[dict], linked: str | None) -> list[dict]:
 # ── the reading ────────────────────────────────────────────────────────
 
 def _fingerprint(entry: dict) -> str:
-    return setupguide._digest({"id": entry["id"], "certainty": entry["certainty"],
+    return setupbase.digest({"id": entry["id"], "certainty": entry["certainty"],
                                "evidence": [(e["ref"], e["finding"])
                                             for e in entry["evidence"]]})
 
@@ -507,7 +407,7 @@ def proposals(doc: dict | None = None, areas: dict | None = None) -> dict:
     a card if one exists and what became of it, related existing cards,
     and whether it is selected by default. Writes nothing."""
     if doc is None:
-        doc = setupguide.read_decisions()["doc"]
+        doc = setupbase.read_decisions()["doc"]
     decisions = doc.get("decisions") or {}
     links = doc.get("tasks") or {}
     held = doc.get("gaps") or {}
@@ -686,7 +586,7 @@ def _plan(payload: dict) -> dict:
     rows = {r["id"]: r for r in read["gaps"]}
     cards = {c["filename"]: c for c in _cards()}
     chosen = {e["gap"]: e for e in edits}
-    number = setupguide._next_number()
+    number = setupbase.next_number()
     planned, reused, warnings = {}, {}, []
     for gid in GAPS:                         # sequence order, so numbers ascend
         e = chosen.get(gid)
@@ -708,7 +608,7 @@ def _plan(payload: dict) -> dict:
                    f"({row['card']['word']})" if row["card"] else
                    "it cannot be created now")
             raise Refused(f"{TITLES[gid]}: {why}", 409)
-        filename = f"{number:02d}-{setupguide._slug(e['title'] or TITLES[gid])}.md"
+        filename = f"{number:02d}-{setupbase.slug(e['title'] or TITLES[gid])}.md"
         planned[gid] = {"filename": filename, "number": f"{number:02d}",
                         "edit": e, "row": row}
         number += 1
@@ -751,9 +651,11 @@ def _plan(payload: dict) -> dict:
 
 
 def preview(payload: dict) -> dict:
-    with setupguide.LOCK:
+    # in-process only: a preview writes nothing, not even a lock file;
+    # create re-checks the digest and revision under the full lock
+    with setupbase.LOCK.local:
         found = _plan(payload)
-    return dict(found, revision=setupguide.revision())
+    return dict(found, revision=setupbase.revision())
 
 
 # ── create ─────────────────────────────────────────────────────────────
@@ -768,29 +670,29 @@ def create(payload: dict) -> dict:
     if not isinstance(payload, dict):
         raise Refused("the request body must be a JSON object")
     request = payload.get("request")
-    if not isinstance(request, str) or not setupguide.REQUEST_RE.match(request):
+    if not isinstance(request, str) or not setupbase.REQUEST_RE.match(request):
         raise Refused("a mutation names a request identity (8–80 letters, "
                       "digits or ._:-) so a repeat answers rather than acts twice")
-    with setupguide.LOCK, taskfiles.WRITE_LOCK:
-        again = setupguide._replayed(request, "cards", "proposals")
+    with setupbase.LOCK, taskfiles.WRITE_LOCK:
+        again = setupbase.replayed(request, "cards", "proposals")
         if again and again.get("duplicate"):
             return again
-        read = setupguide.read_decisions()
-        setupguide._guard_integrity(read)
+        read = setupbase.read_decisions()
+        setupbase.guard_integrity(read)
         doc = read["doc"]
         written = []
         if again:                                   # resume what was planned
             plan = {"cards": again.get("cards") or [],
                     "reuse": again.get("reuse") or []}
         else:
-            setupguide._guard_revision(payload, read)
+            setupbase.guard_revision(payload, read)
             plan = _plan(payload)
             if payload.get("digest") != plan["digest"]:
                 raise Refused("what would be written differs from the preview "
                               "you confirmed (another card or decision landed "
                               "meanwhile); preview again", 409, stale=True,
                               digest=plan["digest"])
-            setupguide._journal_put(request, {
+            setupbase.journal_put(request, {
                 "kind": "cards", "area": "proposals", "status": "started",
                 "at": taskfiles.now_iso(), "cards": plan["cards"],
                 "reuse": plan["reuse"]})
@@ -798,7 +700,7 @@ def create(payload: dict) -> dict:
         backlog.mkdir(parents=True, exist_ok=True)
         for card in plan["cards"]:
             path = backlog / card["filename"]
-            taskfiles._refuse_escape(path)
+            taskfiles.refuse_escape(path)
             located = taskfiles.find_stage_of(card["filename"])
             if located is not None:
                 text = (config.TASKS / located / card["filename"]).read_text(
@@ -813,7 +715,7 @@ def create(payload: dict) -> dict:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(card["text"])
             written.append(path)
-        who = setupguide._actor()
+        who = setupbase.actor()
         now = taskfiles.now_iso()
         for card in plan["cards"]:
             previous = doc["tasks"].get(card["gap"])
@@ -838,9 +740,9 @@ def create(payload: dict) -> dict:
                                            ("gap", "filename", "number", "title",
                                             "dependsOn")} for c in plan["cards"]],
                   "reused": plan["reuse"], "stage": "backlog",
-                  "revision": setupguide.revision(), "committed": committed,
+                  "revision": setupbase.revision(), "committed": committed,
                   "started": "nothing"}
-        setupguide._journal_put(request, {"kind": "cards", "area": "proposals",
+        setupbase.journal_put(request, {"kind": "cards", "area": "proposals",
                                           "status": "done", "at": now,
                                           "result": result})
         return result
@@ -849,20 +751,20 @@ def create(payload: dict) -> dict:
 def _write_and_commit(doc: dict, cards: list[Path], plan: dict) -> bool:
     """The record and the cards in one commit, through the board's own
     scoped commit — so team mode publishes them like any move."""
-    path = setupguide.decisions_path()
+    path = setupbase.decisions_path()
     real = config.escapes_work(path)
     if real is not None:
         raise Refused(f"setup/decisions.json is a link to {real}, outside the "
                       f"work root; bench does not write through it", 409)
-    doc["kind"], doc["v"] = setupguide.DECISIONS_KIND, setupguide.DECISIONS_VERSION
-    setupguide._write_json(path, doc)
+    doc["kind"], doc["v"] = setupbase.DECISIONS_KIND, setupbase.DECISIONS_VERSION
+    setupbase.write_json(path, doc)
     if not config.COMMIT_MOVES:
         return False
     numbers = ", ".join(c["number"] for c in plan["cards"]) or \
         ", ".join(c["number"] for c in plan["reuse"])
     verb = "proposed" if plan["cards"] else "linked"
     paths = [str(p) for p in cards] + [str(path)]
-    return taskfiles._commit(
+    return taskfiles.commit_paths(
         "setup", f"board: setup cards {numbers} {verb} by the setup guide "
                  f"({taskfiles.actor_name() or 'board'})",
         paths, "setup cards written, but committing them failed")
@@ -879,20 +781,20 @@ def decide(payload: dict) -> dict:
     if gid not in GAPS:
         raise Refused(f"unknown setup gap {gid!r}; one of {', '.join(GAPS)}")
     request = payload.get("request")
-    if not isinstance(request, str) or not setupguide.REQUEST_RE.match(request):
+    if not isinstance(request, str) or not setupbase.REQUEST_RE.match(request):
         raise Refused("a mutation names a request identity (8–80 letters, "
                       "digits or ._:-) so a repeat answers rather than acts twice")
     choice = payload.get("decision")
     if choice not in ("defer", "reopen"):
         raise Refused("a setup gap decision is defer or reopen")
-    with setupguide.LOCK, taskfiles.WRITE_LOCK:
-        again = setupguide._replayed(request, "gap", gid)
+    with setupbase.LOCK, taskfiles.WRITE_LOCK:
+        again = setupbase.replayed(request, "gap", gid)
         if again and again.get("duplicate"):
             return again
-        read = setupguide.read_decisions()
-        setupguide._guard_integrity(read)
+        read = setupbase.read_decisions()
+        setupbase.guard_integrity(read)
         if not again:
-            setupguide._guard_revision(payload, read)
+            setupbase.guard_revision(payload, read)
         doc = read["doc"]
         held = doc.setdefault("gaps", {})
         if not isinstance(held, dict):
@@ -902,20 +804,20 @@ def decide(payload: dict) -> dict:
                 raise Refused(f"{TITLES[gid]} is not deferred", 409)
             held.pop(gid)
         else:
-            reason = setupguide._clean_reason(payload.get("reason"))
-            who = setupguide._actor()
+            reason = setupbase.clean_reason(payload.get("reason"))
+            who = setupbase.actor()
             record = dict(held.get(gid) or {})
             record.update({"status": "deferred", "reason": reason,
                            "actor": who["name"], "actorSource": who["source"],
                            "at": taskfiles.now_iso(), "request": request})
             held[gid] = record
-        setupguide._journal_put(request, {"kind": "gap", "area": gid,
+        setupbase.journal_put(request, {"kind": "gap", "area": gid,
                                           "status": "started",
                                           "at": taskfiles.now_iso()})
-        committed = setupguide._write_decisions(doc, f"gap {gid} {choice}")
+        committed = setupbase.write_decisions(doc, f"gap {gid} {choice}")
         result = {"ok": True, "gap": gid, "decision": choice,
-                  "revision": setupguide.revision(), "committed": committed}
-        setupguide._journal_put(request, {"kind": "gap", "area": gid,
+                  "revision": setupbase.revision(), "committed": committed}
+        setupbase.journal_put(request, {"kind": "gap", "area": gid,
                                           "status": "done",
                                           "at": taskfiles.now_iso(),
                                           "result": result})
@@ -934,16 +836,13 @@ def start(payload: dict) -> dict:
     Only then is the card moved to in-progress/ (the normal commitment)
     and `agents.start_agent` called; if that still refuses, the move is
     walked back, so a refused start leaves no partial launch behind."""
-    import agents
-    import plans
-    import templates
     if not isinstance(payload, dict):
         raise Refused("the request body must be a JSON object")
     gid = payload.get("gap")
     if gid not in GAPS:
         raise Refused(f"unknown setup gap {gid!r}; one of {', '.join(GAPS)}")
-    with setupguide.LOCK:
-        doc = setupguide.read_decisions()["doc"]
+    with setupbase.LOCK:
+        doc = setupbase.read_decisions()["doc"]
         link = (doc.get("tasks") or {}).get(gid)
         if not isinstance(link, dict) or not link.get("filename"):
             raise Refused(f"{TITLES[gid]} has no setup card to start — create "
@@ -966,17 +865,17 @@ def start(payload: dict) -> dict:
                           f"{', '.join('#' + n for n in waiting)}, not done yet; "
                           f"nothing was moved or launched", 409,
                           waiting=waiting)
-        agent = setupguide._agent()
+        agent = setupbase.agent()
         if agent["status"] == "blocked":
             raise Refused(f"the agent cannot be launched here: "
                           f"{agent['next'].get('detail') or agent['next']['label']}"
                           f"; nothing was moved or launched", 409)
         source = card["stage"]
         try:
-            agents._validate(filename, source, set(STARTABLE),
-                             phase=agents.PHASE_RUNS_WITH)
+            agents.validate_launch(filename, source, set(STARTABLE),
+                                   phase=agents.PHASE_RUNS_WITH)
             plans.require(plans.preflight(filename, source))
-            agents._preflight_profile("work", filename, source)
+            agents.preflight_profile("work", filename, source)
             templates.require("work.md")
         except ValueError as exc:
             raise Refused(f"{exc}; nothing was moved or launched", 409)

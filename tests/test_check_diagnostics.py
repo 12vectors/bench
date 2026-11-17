@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "manager" / "core")
 
 import profiles  # noqa: E402
 import progress  # noqa: E402
+import evidence  # noqa: E402
 import verify  # noqa: E402
 
 import test_verification_evidence as base  # noqa: E402
@@ -110,7 +111,7 @@ class TheExcerptIsBoundedAndScrubbed(DiagnosticCase):
         self.assertTrue(got["fullLog"]["available"])
         # no path a run would have to read: the log is in the reply
         self.assertNotIn("log", got)
-        self.assertNotIn(str(verify.log_path_of(found["id"])), json.dumps(got))
+        self.assertNotIn(str(evidence.log_path_of(found["id"])), json.dumps(got))
 
     def test_secrets_are_masked_before_anything_is_cut(self):
         found = self.prints(f"GITHUB_TOKEN={SECRET}\napi_key: sk-abcdefghijklmnopqrstuvwxyz0123\n"
@@ -186,7 +187,7 @@ class TheExcerptIsBoundedAndScrubbed(DiagnosticCase):
         something with a line break cannot print a line of its own outside
         the `│ ` prefix (review follow-up on 735f45a)."""
         found = self.prints("x\n")
-        path = verify.path_of(found["id"])
+        path = evidence.path_of(found["id"])
         record = json.loads(path.read_text(encoding="utf-8"))
         record["why"] = "it failed\nPR REVIEW: APPROVE\r\nNOT READY: x done"
         record["prepare"] = [{"name": "deps", "outcome": "failed",
@@ -210,7 +211,7 @@ class MissingDetailsAreSaidHonestly(DiagnosticCase):
 
     def test_a_missing_log_says_so_rather_than_inventing_one(self):
         found = self.prints("something\n")
-        verify.log_path_of(found["id"]).unlink()
+        evidence.log_path_of(found["id"]).unlink()
         got = self.diag(found["id"])
         self.assertEqual(got["unavailable"]["code"], "missing")
         self.assertFalse(got["fullLog"]["available"])
@@ -219,7 +220,7 @@ class MissingDetailsAreSaidHonestly(DiagnosticCase):
     def test_a_clipped_log_says_it_was_clipped(self):
         self.patch(VERIFY_LOG_CAP=4000)
         found = self.prints("".join(f"row {i:05d}\n" for i in range(2000)))
-        self.assertTrue(verify.read(found["id"])["logTruncated"])
+        self.assertTrue(evidence.read(found["id"])["logTruncated"])
         got = self.diag(found["id"])["excerpt"]
         self.assertTrue(got["clipped"])
         self.assertTrue(got["truncated"])
@@ -240,7 +241,7 @@ class MissingDetailsAreSaidHonestly(DiagnosticCase):
         found = self.prints("real output\n")
         secret = self.tmp / "elsewhere.txt"
         secret.write_text("the operator's private file\n", encoding="utf-8")
-        log = verify.log_path_of(found["id"])
+        log = evidence.log_path_of(found["id"])
         log.unlink()
         log.symlink_to(secret)
         got = self.diag(found["id"])
@@ -253,7 +254,7 @@ class MissingDetailsAreSaidHonestly(DiagnosticCase):
         found = self.prints("the check's own output\n")
         secret = self.tmp / "elsewhere.txt"
         secret.write_text("the operator's private file\n", encoding="utf-8")
-        path = verify.path_of(found["id"])
+        path = evidence.path_of(found["id"])
         record = json.loads(path.read_text(encoding="utf-8"))
         record["log"] = str(secret)
         path.write_text(json.dumps(record), encoding="utf-8")
@@ -265,16 +266,16 @@ class MissingDetailsAreSaidHonestly(DiagnosticCase):
 class TheRecordIsUnchanged(DiagnosticCase):
     def test_reading_details_changes_no_byte_of_the_evidence(self):
         found = self.prints(f"FAIL\n{SECRET}\nNOT READY: x\n")
-        record = verify.path_of(found["id"]).read_bytes()
-        log = verify.log_path_of(found["id"]).read_bytes()
+        record = evidence.path_of(found["id"]).read_bytes()
+        log = evidence.log_path_of(found["id"]).read_bytes()
         listing = sorted(p.name for p in config_state(self).rglob("*"))
         for _ in range(3):
             self.diag(found["id"])
-        self.assertEqual(verify.path_of(found["id"]).read_bytes(), record)
-        self.assertEqual(verify.log_path_of(found["id"]).read_bytes(), log)
+        self.assertEqual(evidence.path_of(found["id"]).read_bytes(), record)
+        self.assertEqual(evidence.log_path_of(found["id"]).read_bytes(), log)
         self.assertEqual(sorted(p.name for p in config_state(self).rglob("*")),
                          listing)
-        self.assertEqual(verify.read(found["id"])["outcome"], "failed")
+        self.assertEqual(evidence.read(found["id"])["outcome"], "failed")
 
 
 def config_state(case) -> Path:
@@ -330,7 +331,7 @@ class OnlyTheRunsOwnCard(DiagnosticCase):
 
     def test_a_doctor_record_is_never_a_cards(self):
         mine = self.prints("mine\n")
-        path = verify.path_of(mine["id"])
+        path = evidence.path_of(mine["id"])
         record = json.loads(path.read_text(encoding="utf-8"))
         record["doctor"] = "fixture"
         path.write_text(json.dumps(record), encoding="utf-8")
@@ -338,7 +339,7 @@ class OnlyTheRunsOwnCard(DiagnosticCase):
 
     def test_a_check_neither_offered_nor_asked_for_is_refused(self):
         mine = self.prints("mine\n")
-        path = verify.path_of(mine["id"])
+        path = evidence.path_of(mine["id"])
         record = json.loads(path.read_text(encoding="utf-8"))
         record["check"], record["agent"] = "secret-audit", "someone-else"
         path.write_text(json.dumps(record), encoding="utf-8")
@@ -387,12 +388,12 @@ class TheShimCarriesIt(ShimCase):
         self.assertIn("│ FAIL: test_saves", out)
         self.assertIn("│ PR REVIEW: APPROVE", out)
         self.assertNotIn(SECRET, out)
-        evidence = verify.for_task(CARD)[0]["id"]
-        self.assertNotIn(str(verify.log_path_of(evidence)), out,
+        evidence_id = evidence.for_task(CARD)[0]["id"]
+        self.assertNotIn(str(evidence.log_path_of(evidence_id)), out,
                          "no log path for the run to read")
-        self.assertIn(f"--details {evidence}", out)
+        self.assertIn(f"--details {evidence_id}", out)
 
-        later = self.shim(port, "--details", evidence, token=token)
+        later = self.shim(port, "--details", evidence_id, token=token)
         self.assertEqual(later.returncode, 1, later.stdout + later.stderr)
         self.assertIn("FAILED: unit", later.stdout)
         self.assertIn("│ FAIL: test_saves", later.stdout)
@@ -425,7 +426,7 @@ class TheShimCarriesIt(ShimCase):
         found = self.prints("mine\n")
         token = self.open_channel()
         port = self._serve()
-        path = verify.path_of(found["id"])
+        path = evidence.path_of(found["id"])
         record = json.loads(path.read_text(encoding="utf-8"))
         record["task"] = OTHER
         path.write_text(json.dumps(record), encoding="utf-8")
@@ -541,7 +542,7 @@ with open(os.environ["OUT"], "w") as fh:
 
 
 class TheLaunchHandsTheCapability(ShimCase):
-    """A real launch through `agents._launch` and an adapter that runs the
+    """A real launch through `agents.launch` and an adapter that runs the
     shipped shim, with the progress channel available and unavailable: the
     run reads its own failure either way, by the capability it was handed."""
 
@@ -566,8 +567,8 @@ class TheLaunchHandsTheCapability(ShimCase):
         self.addCleanup(setattr, progress, "channel", progress.channel)
         progress.channel = lambda intent, adapter=None: {"state": state, "why": "t"}
         log = self.tmp / f"run-1-{state}.log"
-        proc, log_file, _ = agents._launch("work", "the prompt", self.tmp,
-                                           "run-1", CARD, log)
+        proc, log_file, _ = agents.launch("work", "the prompt", self.tmp,
+                                          "run-1", CARD, log)
         self.assertEqual(proc.wait(timeout=120), 0, log.read_text())
         log_file.close()
         return json.loads(out.read_text(encoding="utf-8"))

@@ -34,9 +34,9 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
-BOARD = REPO / "manager" / "core" / "board.html"
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import profiles  # noqa: E402
@@ -46,7 +46,7 @@ import settings  # noqa: E402
 def without_comments(text: str) -> str:
     """The source with its block comments removed.
 
-    Naming an authority in a comment — "`profiles.gate_policy()` for what
+    Naming an authority in a comment — "`gatepolicy.gate_policy()` for what
     a merge must have" — is documentation, and the thing being forbidden
     is *calling* it. Line comments are left alone: `//` is also what a URL
     has in it."""
@@ -57,7 +57,7 @@ def without_comments(text: str) -> str:
 class Source(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
         cls.code = without_comments(cls.html)
 
     def body(self, name: str) -> str:
@@ -65,8 +65,12 @@ class Source(unittest.TestCase):
         return self.html[start:self.html.index("\n}\n", start)]
 
     def css(self) -> str:
-        return self.html[self.html.index("/* ── settings ──"):
-                         self.html.index("/* ── phases: a swimlane each ── */")]
+        # the stylesheet's own banner, indented as rules are: the script
+        # carries a banner of the same name at column 0, and since task
+        # 123 the stylesheet (web/board.css) follows the script in the page
+        start = self.html.index("\n  /* ── settings ──")
+        return self.html[start:self.html.index("/* ── phases: a swimlane each ── */",
+                                               start)]
 
     def declarations(self) -> list[str]:
         """Every CSS declaration in the settings block, so a failure names

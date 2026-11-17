@@ -20,11 +20,11 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 ROOT = Path(__file__).resolve().parents[1]
-BOARD = ROOT / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
-HTML = BOARD.read_text(encoding="utf-8")
+HTML = pagesource.page()
 
 
 def lift(pattern: str, what: str) -> str:
@@ -186,14 +186,7 @@ class Rendering(unittest.TestCase):
 @unittest.skipUnless(NODE, "node is needed to parse the page's script")
 class Script(unittest.TestCase):
     def test_the_page_script_parses(self):
-        script = lift(r"<script>\n(.*)</script>", "its script").split("\n", 1)[1]
-        script = script.rsplit("</script>", 1)[0]
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "board.js"
-            path.write_text(script, encoding="utf-8")
-            out = subprocess.run([NODE, "--check", str(path)], capture_output=True,
-                                 text=True)
-        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(pagesource.parse_problems(NODE), [])
 
 
 class SourceInvariants(unittest.TestCase):
@@ -216,58 +209,15 @@ class SourceInvariants(unittest.TestCase):
         # task 81: the Brief section draws the brief alone — the card's
         # history (reports, discussion, records) has destinations of its own
         body = function("briefHtml")
-        self.assertIn("cardSplit(t.body)", body)
+        self.assertIn("cardSplit(t)", body)
         self.assertIn("withoutDiscussion(parts.brief)", body)
         self.assertIn("briefHtml(t) + discussionPanel(t)", HTML)
 
 
-LOADER = "\n".join([
-    function("discStamp"),
-    function("loadDiscussion"),
-    "const S = { state: { refinements: {} }, disc: {}, selected: null };",
-    "const agentOnTask = () => null;",
-    "function renderDiscussion(t) {}",
-    "const pending = [];",
-    "global.fetch = (url) => new Promise(resolve => pending.push(resolve));",
-    "const reply = (i, body) => { pending[i]({ ok: true, json: async () => body }); };",
-    "const settle = () => new Promise(r => setTimeout(r, 0));",
-    "(async () => {",
-    "  const t = { file: '02-x.md', stage: 'to-do', mtime: 1 };",
-    "  S.selected = t;",
-    # the drawer opens: the first read is in flight
-    "  loadDiscussion(t);",
-    # a comment is saved meanwhile, and the page asks for a fresh read
-    "  loadDiscussion(t, true);",
-    # the first read answers with what the card held before the write
-    "  reply(0, { entries: [] });",
-    "  await settle(); await settle();",
-    "  if (pending.length > 1) { reply(1, { entries: [{ id: 'c-1' }] });",
-    "                            await settle(); await settle(); }",
-    "  process.stdout.write(JSON.stringify({ fetches: pending.length,",
-    "    shown: S.disc[t.file].data, loading: !!S.disc[t.file].loading }));",
-    "})();",
-])
-
-
-@unittest.skipUnless(NODE, "node is needed to run the page's own loader")
-class Loading(unittest.TestCase):
-    def test_a_refresh_asked_for_during_a_read_is_not_dropped(self):
-        """The browser case for card 65 failed intermittently with the saved
-        comment missing from the discussion. One way that happens: the
-        drawer's first read is still in flight when the comment is saved,
-        the forced refresh after the write is dropped because a read is
-        'loading', and the first read then answers with the card as it was
-        before the comment — so nothing ever shows it. A refresh asked for
-        during a read must be made once that read ends."""
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "loader.js"
-            path.write_text(LOADER, encoding="utf-8")
-            out = subprocess.run([NODE, str(path)], capture_output=True, text=True)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        got = json.loads(out.stdout)
-        self.assertEqual(2, got["fetches"], "the refresh after the write was dropped")
-        self.assertEqual([{"id": "c-1"}], got["shown"]["entries"])
-        self.assertFalse(got["loading"])
+# The loader itself — a refresh asked for during a read is made once that
+# read ends, so a saved comment always appears — is driven as the real
+# module in tests/node/requests_and_rendering.test.mjs (task 125):
+# "discussion: a refresh asked for during a read is not dropped".
 
 
 if __name__ == "__main__":

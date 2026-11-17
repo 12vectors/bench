@@ -19,14 +19,13 @@ from __future__ import annotations
 import re
 import unittest
 from pathlib import Path
-
-BOARD = Path(__file__).resolve().parents[1] / "manager" / "core" / "board.html"
+from tests import pagesource
 
 
 class LogResizeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
         m = re.search(r"#logbody\{([^}]*)\}", cls.html)
         assert m, "board.html lost its #logbody rule"

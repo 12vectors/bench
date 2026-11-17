@@ -10,7 +10,7 @@ checkout it is pointed at** and leaves a record of what it ran:
 | `verify/backend` | `python3 -m unittest discover -s tests -t . -v` — the whole suite, as CI runs it; **any skipped test is a setup error** | `node` on PATH and markdown-it-py, or their tests skip and the check refuses |
 | `verify/docs` | `site/build.py --out <artifacts>/site`, then requires a written file for every route in `site/pages.json` | markdown-it-py (`site/requirements.txt`) |
 | `verify/preflight` | `docs`: the docs interpreter imports markdown-it; `backend`: `node --version` runs on the check's PATH and markdown-it imports; `browser`: a Chromium starts with its sandbox. A profile's required `prepare` step | as the check it prepares |
-| `verify/browser` | the board UI in a sandboxed Chromium against a real disposable bench backend: stages and cards drawn, layout at 1440/1280/1024 px, the five views, keyboard reach and focus ring on the ⚕ Configuration check, its dialog inside the viewport at 1440×900, 1280×800, 1024×768 and 640×400, accessible names; the Configuration check (task 79) from the header and from Settings → Diagnostics — one specific result and one scope sentence, successful and untested rows folded apart and never read as passed, purposes switched with focus kept, paths one per left-aligned row with a working Copy, partial / unsupported / blocked / stale / not-completed / execution-failed states, controlled execution changing the scope sentence, no narrow columns or overflow at 390 px and at 200 % zoom; the card's launch check — Implementation, Review and the review card's default purpose, branch, PR target, harness and model from the resolvers, a stacked card showing its own branches at 1440, 390 and 200 %, a blocked launch with its fix and no button, and a sheet opened before the policy changed refused by the launch's own preflight with nothing started; and the Settings view — every section at 1440/1024/640×400/390 px, the empty, refused and configured states read from the backend's own resolution, the draft→validate→preview→apply round trip, Check configuration reporting `ran == ['inspect']`, and accessible names in all eight sections; Settings → Agents — the compact harness/model rows and their inheritance, a per-purpose override applied and read back from the backend, a prompt rendered, diffed, saved, reset and recoverable, a broken template refused with nothing written, a stale draft refused as a conflict, and keyboard reach at 1440 and 390 px; filed reports read as Markdown — a review round in both themes beside a rebuilt "before" at the same viewport, prose/code typefaces and contrast measured, hostile HTML and links inert, nothing posted or fetched off the board, wide code and tables scrolling in place at 390 px and real 200% zoom, the reading place kept across a live update; the setup guide's application preview — a disposable web app with a disposable fixture configured with an acknowledged call-out, prepared and started by armed clicks, its ready URL serving the fixture, shown stale after a later commit in the card's worktree, its log free of the secret it was given, Check readiness and Stop fired from the keyboard with no process of its group left behind, both themes and 390 px; one delivery status per card (task 99) — the card face, the Overview, the detail head and the merge dialog reading the backend's word and primary action for the #94 fixtures F1/F3/F7/F9/F13/F16/F18/F23/F30, the status before its action and the action full width at 390 px, Enter arming without firing and Escape returning focus, no alarm for a check that lies ahead on an in-progress card, nothing written by reading, and folds, scroll and a focused action kept across a live update; relevance reviews in Reviews (task 84) — a card-79-shaped card opened from Activity's link onto its exact review beside a PR-review empty state, in both themes beside a rebuilt "before", a comment saved against the review and kept across a reload, a draft and its focus kept while a new review arrives live, Update card from this review failing on the stub, retried, proposing a diff and applied with nothing else launched, then discarded, keyboard order and 390 px; screenshots required | a Chromium that can start its sandbox |
+| `verify/browser` | the board UI in a sandboxed Chromium against a real disposable bench backend: stages and cards drawn, layout at 1440/1280/1024 px, the five views, keyboard reach and focus ring on the ⚕ Configuration check, its dialog inside the viewport at 1440×900, 1280×800, 1024×768 and 640×400, accessible names; the Configuration check (task 79) from the header and from Settings → Diagnostics — one specific result and one scope sentence, successful and untested rows folded apart and never read as passed, purposes switched with focus kept, paths one per left-aligned row with a working Copy, partial / unsupported / blocked / stale / not-completed / execution-failed states, controlled execution changing the scope sentence, no narrow columns or overflow at 390 px and at 200 % zoom; the card's launch check — Implementation, Review and the review card's default purpose, branch, PR target, harness and model from the resolvers, a stacked card showing its own branches at 1440, 390 and 200 %, a blocked launch with its fix and no button, and a sheet opened before the policy changed refused by the launch's own preflight with nothing started; and the Settings view — every section at 1440/1024/640×400/390 px, the empty, refused and configured states read from the backend's own resolution, the draft→validate→preview→apply round trip, Check configuration reporting `ran == ['inspect']`, and accessible names in all eight sections; Settings → Agents — the compact harness/model rows and their inheritance, a per-purpose override applied and read back from the backend, a prompt rendered, diffed, saved, reset and recoverable, a broken template refused with nothing written, a stale draft refused as a conflict, and keyboard reach at 1440 and 390 px; filed reports read as Markdown — a review round in both themes beside a rebuilt "before" at the same viewport, prose/code typefaces and contrast measured, hostile HTML and links inert, nothing posted or fetched off the board, wide code and tables scrolling in place at 390 px and real 200% zoom, the reading place kept across a live update; the setup guide's application preview — a disposable web app with a disposable fixture configured with an acknowledged call-out, prepared and started by armed clicks, its ready URL serving the fixture, shown stale after a later commit in the card's worktree, its log free of the secret it was given, Check readiness and Stop fired from the keyboard with no process of its group left behind, both themes and 390 px; one delivery status per card (task 99) — the card face, the Overview, the detail head and the merge dialog reading the backend's word and primary action for the #94 fixtures F1/F3/F7/F9/F13/F16/F18/F23/F30, the status before its action and the action full width at 390 px, Enter arming without firing and Escape returning focus, no alarm for a check that lies ahead on an in-progress card, nothing written by reading, and folds, scroll and a focused action kept across a live update; relevance reviews in Reviews (task 84) — a card-79-shaped card opened from Activity's link onto its exact review beside a PR-review empty state, in both themes beside a rebuilt "before", a comment saved against the review and kept across a reload, a draft and its focus kept while a new review arrives live, Update card from this review failing on the stub, retried, proposing a diff and applied with nothing else launched, then discarded, keyboard order and 390 px; the page's own writes (task 112) on loopback, through an isolated loopback proxy whose origin is the backend's one `BOARD_ALLOWED_ORIGINS` entry, and refused with nothing changed through one whose origin is not; reference files (task 113) — an HTML and an SVG file under `reference/` whose scripts would read `/api/state`, first proved to run in a same-origin frame against a recording sink, then opened at their `/files/` URLs where each still renders and the sink hears nothing, and Settings → Installation's "Who calls this board" panel in report mode; screenshots required | a Chromium that can start its sandbox |
 
 The plain command still works and still needs nothing:
 `python3 -m unittest discover -s tests`. `verify/backend` wraps it; it
@@ -252,6 +252,15 @@ ask: `source` sees only what is committed. Activate no gate until these
 checks have actually run, with their dependencies, in the operator's own
 environment.
 
+Since task 131 each run of a `source` check gets a checkout of its own
+(`state/verify/src-run/`), so `bench-backend`, `bench-docs` and
+`bench-browser` may run at once on one card and commit without one
+removing another's source. A runner from before task 131 shared one
+checkout per card and commit, and on such an operator these three must
+still be asked for one at a time. What stays shared — the cache home,
+ports and services the scripts use, `review` and `worktree` roots — is
+listed in AGENTS.md, "One source checkout per run".
+
 ## Browser: what has and has not run
 
 **Local path (Chromium over CDP on the host): never run positively.**
@@ -324,7 +333,7 @@ product suites** rather than a runner of their own:
 
 - `tests/test_settings_sources.py` — the reading, across five fixtures
   (default/legacy, partial, full, invalid, unsupported), asserted as
-  equalities against `profiles.resolve`, `profiles.gate_policy_public`
+  equalities against `profiles.resolve`, `gatepolicy.gate_policy_public`
   and `profiles.document_checks` rather than against literals. Two cases
   record what `subprocess.run`/`Popen` launch during a page read and
   during Check configuration, and allow nothing but `git` and `gh`.
@@ -421,10 +430,74 @@ python3 verify/gate-compare run --snapshot <dir> \
   commit's outcome is now history) or E7 (an equivalence bench proved) —
   or it is **unaccounted** and the program exits 1. Stricter readings are
   reported, not refused.
+- `--expect runner-changed` (on `run` and `compare`) names a transition
+  whose whole effect is known: every changed requirement must read
+  `stale / runner-changed`, and any other change — a relaxation, a
+  requirement appearing or going, any other stale reason — is
+  **unexpected** and the program exits 1.
+
+### The runner-identity transition (task 121)
+
+The runner dimension of every result identity is a digest over the
+files in `resultidentity.RUNNER_FILES` (before task 121 it was the hash
+of `verify.py` alone). Promoting the core that changed that definition
+changes the value **once**: every recorded pass then reads `stale /
+runner-changed`, legacy records included, and each required check on an
+open card needs one fresh run. Nothing reruns by itself and no record is
+rewritten — the old evidence stays readable, visibly stale, and **Run
+required checks** (or `bench-verify` from a run) is the recovery. A
+rollback to the previous core costs the same invalidation again, in the
+other direction: passes recorded under the new runner read
+`runner-changed` to the old one.
+
+Before promoting, preview it on a copy of the board:
+
+```bash
+python3 verify/gate-compare snapshot --tool <install> --work <work root> \
+    --app <application> --out <empty dir>
+python3 verify/gate-compare run --snapshot <dir> \
+    --before-core <install>/manager/core --expect runner-changed \
+    --out <report dir>
+```
+
+Exit 0 means every changed reading is the runner transition and nothing
+else; the report lists the cards that will need a fresh run. Prefer a
+quiet review column, and promote with no agent running.
 
 Its regression tests (`tests/test_gate_compare.py`) run on fixture boards
 only. A comparison over an operator's real inventory is a separate act by
 whoever holds that data; a fixture run says nothing about that board.
+
+## The page's script policy (card 124)
+
+`verify/browser_cases/case_script_policy.py` is the browser half of the
+module conversion and the Content Security Policy. It tours every view,
+Settings section and the card detail and requires zero uncaught errors
+and zero CSP violations; reads the live document (one module script, no
+inline script, no handler attribute); injects an inline script and
+requires that it does not run and is reported; drives the `stale-page`
+refusal and the reload banner; and takes matched-view screenshots of the
+board, phases, sessions, focus and card detail at 1280x800 and 390x844 in
+both themes from the pre-change build (the launch base, run as a second
+board over the same application, work state and machine-local state) and
+the candidate, failing when more than 0.5% of a view's pixels differ.
+The Playwright adapter reports CSP violations apart from uncaught errors
+(`Browser.csp`); the local-Chromium path collects them from the `Log`
+domain and, like the rest of that path, has not run on this host.
+
+## Requests, announcements and the connection chip (card 125)
+
+`verify/browser_cases/case_requests.py` is the browser half of WP16's
+request and accessibility work; the policies themselves are driven as real
+modules under Node (`tests/node/requests_and_rendering.test.mjs`). In the
+running page it requires that thirty state reads asked at once are never
+more than one request out at a time and at most two in total; that a
+state read the test refuses keeps the last board drawn, puts *board not
+read* on the connection chip and announces the failure in the alert
+region, and that the next good read clears it; that the connection chip
+is a keyboard stop with a visible focus ring whose Enter opens Sessions;
+and that an error is announced in the persistent alert region, which a
+redraw does not remove.
 
 ## Not covered here
 

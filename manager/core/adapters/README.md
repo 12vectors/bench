@@ -22,7 +22,8 @@ An adapter is a directory with two executables, and may declare one file
 - env in: `AGENT_PROMPT` (the full prompt), `AGENT_MODE` (the launch
   intent, below), `AGENT_COMMANDS` (the project's allowed command
   prefixes, below), `AGENT_MODEL` (optional, below), `AGENT_PROFILE` and
-  `AGENT_CONTEXT` (optional, below), `AGENT_CWD`, and
+  `AGENT_CONTEXT` (optional, below), `AGENT_GUIDANCE` (optional,
+  below), `AGENT_CWD`, and
   the `BOARD_*` passthrough (`BOARD_AGENT_ID`, `BOARD_TASK`,
   `BOARD_PORT`) which your event bridge must forward with every event.
 - stdout is captured by the board as the job log. The prompts instruct the
@@ -94,6 +95,22 @@ prefix-pattern based, so the translation is mechanical:
   "allow"}}` in a generated config, wildcard rules, last match wins
   (`opencode/permission_config.py`)
 
+### The hosting provider's verbs (`AGENT_HOST`)
+
+Which host commands an intent may run is the **hosting provider's**
+knowledge (`core/providers/`, task 116), not the adapter's. Bench sets
+`AGENT_HOST` on every launch to one JSON object:
+`{"provider": "github", "allow": ["gh pr view", …], "publish": ["gh pr
+create", …]}`. Render `allow` as allow-rules after your own git prefixes
+(the same neutral prefix syntax as `AGENT_COMMANDS`) and, when the
+profile denies `publish`, render `publish` as deny-rules. With the GitHub
+provider both shipped adapters produce exactly the document they
+produced before this variable existed; with `BOARD_GIT_PROVIDER=none`
+both lists are empty and the run is granted no host verb. Absent (a
+board older than task 116) = GitHub's lists, which is what both adapters
+carried themselves; a value that does not parse grants no host verb and
+still denies GitHub's publication verbs.
+
 ### The model (`AGENT_MODEL`) — optional
 
 Absent = the vendor's own default: launch without any model argument and
@@ -159,8 +176,67 @@ rather than taking a run id on trust.
 
 `AGENT_CONTEXT` is the read-only inputs bench pinned for the run — `[{"name",
 "path", "source", "sha256", "access": "read-only"}]`, paths and hashes
-only, never content. The prompt already names them; an adapter that can
-grant reads narrowly may also use the list.
+only, never content. At a launch every input has been pinned, so `path`
+is the pinned copy and never the original the selection named: approving
+an input approves its copy, not its source. The exception is the
+doctor, which resolves a profile without pinning it: in its readings
+(`describe`, the stub conformance run and the separately authorised
+`--real-agent` probe) an input that resolved but has no copy carries its
+resolved source path and that path's hash, so what those readings
+describe or grant is the source selection itself. A card's launch always
+pins first and never takes that path.
+
+### Approved workflow briefs (`AGENT_GUIDANCE`) — optional
+
+The workflow briefs the prompt makes mandatory reading but that live
+**outside** the checkout — the work root's `AGENTS.md` and the install's
+`manager/local/AGENTS.md`, in an external layout — arrive in the same
+shape as `AGENT_CONTEXT`, by **canonical** path (the path the prompt
+names) and the hash bench approved: `[{"name": "workflow-brief-1",
+"path", "sha256", "access": "read-only", "kind": "workflow-brief",
+"approvedAt": "launch" | "pinned-context"}]`. Where the run's pinned
+context also holds a copy of a brief, its `sha256` is the *pinned*
+content, so an adapter that re-hashes the original proves it is the very
+file and content that was approved. Absent (every vendored board, where
+the brief is inside the checkout) means nothing to grant.
+
+### Turning approved inputs into actual reads
+
+A headless run has nobody at a permission prompt, so an approved file the
+vendor will not let the run read is not approved in any sense that
+matters. An adapter that can grant reads narrowly renders **one exact
+file grant per entry** of `AGENT_CONTEXT` and `AGENT_GUIDANCE`, for every
+intent that has a read tool, and nothing broader: no wildcard, no
+directory, no "add this directory" flag, no blanket read, no permission
+bypass. The claude adapter (`approved_reads` in `claude/hook_settings.py`):
+
+- renders `Read(//<absolute path>)` — in Claude Code's rule syntax `//`
+  is filesystem-root absolute; a single leading slash is relative to the
+  settings source and would grant a different (or no) file;
+- adds `Edit(//<absolute path>)` as a deny-rule, so a read grant can
+  never be read as licence to change the document;
+- validates every entry *before* any rule is made, and refuses the whole
+  launch (exit 65, before the vendor starts) rather than dropping or
+  widening one: malformed JSON or entry, no `read-only` access, a path
+  that is not absolute, not canonical (`.`/`..`, doubled or trailing
+  slash, a link anywhere along it), or carries a character outside
+  `[A-Za-z0-9._@+=,:~/-]` — which excludes every pattern character, the
+  rule delimiters, whitespace and control characters — a path that is
+  not a regular file, and content whose SHA-256 is not the approved one.
+  A brief edited after approval therefore fails closed;
+- with neither variable present, renders byte for byte the document it
+  always did.
+
+The grant is **permission text**, which is a different fact from the
+vendor honouring it. `describe` reports it under `reads` (and why `run`
+would refuse, under `refused`); the doctor's `context-reads` row checks
+the text, at the *generated* level, and says so. Whether the installed
+CLI actually lets a run read the approved files, refuses an unapproved
+neighbour and refuses a write is answered only by a real launch —
+`develop/claude-access-smoke.py --approve-real-claude`, opt-in and
+billable, at a disposable fixture, reading its verdict off the tool
+results and the disk rather than off the model's summary. None of this is
+an OS sandbox: `filesystem-sandbox` stays unsupported.
 
 ### The progress channel (`AGENT_PROGRESS` / `BOARD_PROGRESS_TOKEN`) — optional
 
@@ -243,7 +319,7 @@ learning anything about your vendor's rule syntax**. Two declarations:
   own directory as its working directory, so you name your own
   interpreter and core never guesses at one. Given a launch's environment
   (`AGENT_MODE`, `AGENT_PROMPT`, `AGENT_COMMANDS`, `AGENT_PROFILE`,
-  `AGENT_CONTEXT`, `AGENT_MODEL`, `AGENT_CWD`) it prints **one JSON
+  `AGENT_CONTEXT`, `AGENT_GUIDANCE`, `AGENT_MODEL`, `AGENT_CWD`) it prints **one JSON
   object** and launches nothing — no vendor binary, no model, no file
   written. The keys core reads:
 
@@ -257,6 +333,12 @@ learning anything about your vendor's rule syntax**. Two declarations:
       noShell   whether your vendor's shell is withheld — no command of
                 any kind can be launched (required true for `refine`)
       context   the pinned inputs as delivered: paths and hashes
+      reads     optional: the exact read grants generated for
+                `AGENT_CONTEXT` and `AGENT_GUIDANCE` — `name`, `path`,
+                `kind`, `sha256` and the `rule` text. Absent = this adapter
+                does not grant reads narrowly, and the doctor says so
+      refused   optional: why `run` would refuse this launch before the
+                vendor starts, or null
 
   Anything else is yours and is shown rather than interpreted. There is
   no `contextContents` key and there must never be one: an approved
@@ -309,7 +391,17 @@ POST to `http://127.0.0.1:$BOARD_PORT/api/events`:
 
     {"v": 1, "session": str, "kind": str, "summary": str,
      "id"?: str, "file"?: str, "cmd"?: str, "detail"?: str, "ok"?: bool,
-     "running"?: bool, "agent"?: $BOARD_AGENT_ID, "task"?: $BOARD_TASK}
+     "running"?: bool, "agent"?: $BOARD_AGENT_ID, "task"?: $BOARD_TASK,
+     "token"?: $BOARD_RUN_TOKEN}
+
+`token` is optional and additive: send `BOARD_RUN_TOKEN` beside `agent`
+when the environment has it. It is what proves the claim to be that run
+— the board compares it in constant time against the run's capability and
+removes it before anything is recorded. An event naming a run without it
+is counted as an unproven claim on the run's channel health; with
+`BOARD_RUN_IDENTITY=enforce` it is recorded as a session with no run link
+(no agent, no task). An adapter that never sends it keeps display-only
+events, exactly as before.
 
 kinds: `session end idle edit read search command test check git plan
 subagent web other`. `running: true` marks an in-flight action (shown as

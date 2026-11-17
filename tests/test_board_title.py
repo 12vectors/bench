@@ -21,10 +21,10 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 CORE = REPO / "manager" / "core"
-BOARD = CORE / "board.html"
 
 # BOARD_TITLE unset in the process environment is "nothing configured":
 # process env beats local/.env, so this also neutralizes a developer's own
@@ -105,10 +105,13 @@ class ServedTitle(unittest.TestCase):
         self.assertIn("&lt;script&gt;", title)
 
     def test_nothing_else_in_the_page_is_disturbed(self):
-        """Only the title element is rewritten; the rest is the file."""
-        page = _probe("httpd.page_bytes().decode('utf-8')",
-                      {"BOARD_TITLE": "payments"})
-        source = BOARD.read_text(encoding="utf-8")
+        """Only the title element is rewritten, and the build id written
+        where the page names its assets (task 123); the rest is the file —
+        the shell, since the stylesheet is served as an asset of its own."""
+        page, build = _probe("[httpd.page_bytes().decode('utf-8'), "
+                             "__import__('assets').current_build()]",
+                             {"BOARD_TITLE": "payments"})
+        source = pagesource.shell().replace("__BUILD__", build)
         strip = lambda s: re.sub(r"<title>.*?</title>", "", s, count=1,
                                  flags=re.DOTALL)
         self.assertEqual(strip(page), strip(source))
@@ -120,7 +123,7 @@ class PageInvariants(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_the_shipped_title_is_not_the_old_generic_string(self):
         """"Bench — task board" in two tabs was the bug."""

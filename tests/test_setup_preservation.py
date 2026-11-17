@@ -37,7 +37,7 @@ class DecisionsIntegrity(unittest.TestCase):
                         original = b'\xffUSER_DATA' if damage == "utf8" else b'{broken'
                         path.write_bytes(original)
                         if resumed:
-                            p.run("setupguide._journal_put('preserve-0001', "
+                            p.run("setupbase.journal_put('preserve-0001', "
                                   + repr(dict(kind=kind, area=area, status="started"))
                                   + ")\nR = True")
                         before = snapshot(p.work)

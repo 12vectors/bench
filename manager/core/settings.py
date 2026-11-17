@@ -15,7 +15,7 @@ already answers for it:
 | the question | the authority |
 | --- | --- |
 | what may this run do, and read | `profiles.resolve()` |
-| what does this board require before a merge | `profiles.gate_policy()` |
+| what does this board require before a merge | `gatepolicy.gate_policy()` |
 | what did the project's checks actually find | `verify.py`'s records |
 | may this merge happen | `gates.evaluate()` |
 | what would stop a launch, asked without paying | `doctor.report()` |
@@ -56,22 +56,30 @@ record on disk and this never touches it.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 
 import agentsettings
+import callers
 import config
 import doctor
+import evidence
+import gatepolicy
+import githost
 import gates
 import profiles
+import records
+import redact
 import required
+import state
 import sync
 import taskfiles
-import verify
 
 VERSION = 1
 
@@ -209,7 +217,7 @@ KINDS = {
                  "and cannot bind it to a check identity"),
         "who": "your CI provider, on its own runners",
         "gateable": False,
-        "authority": "github.py's poll of the pull request's check runs",
+        "authority": "changes.py's poll of the pull request's check runs",
     },
     "review": {
         "label": "Review requirements",
@@ -340,13 +348,8 @@ class Conflict(ValueError):
 
 MASK = "••••••••"
 
-# A value worth masking whatever its name: the shapes a credential pasted
-# into a settings file actually takes.
-SECRET_VALUES = re.compile(
-    r"(gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|"
-    r"sk-[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|"
-    r"AKIA[0-9A-Z]{12,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|"
-    r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})")
+# What a credential *value* looks like, whatever its name, is `redact`'s
+# one table; this module keeps only its own marker.
 
 # A setting name that holds a credential rather than a path or a flag.
 SECRET_KEYS = re.compile(
@@ -368,11 +371,12 @@ def secret_key(name: str) -> bool:
 def scrub(text: str) -> str:
     """Anything credential-shaped out of text on its way to a reader.
 
-    The same job `verify.log_text` does for a check's output, applied to
+    The same job `evidence.log_text` does for a check's output, applied to
     the one other place bytes bench did not write get through: a value
-    read out of a settings file.
+    read out of a settings file. The shapes are `redact`'s; the marker
+    is this page's own.
     """
-    return SECRET_VALUES.sub(MASK, str(text or ""))
+    return redact.scrub(text, MASK)
 
 
 def masked(name: str, value: str) -> tuple[str, bool]:
@@ -453,6 +457,11 @@ CATALOGUE = (
      "how often the pull beat runs"),
     ("BOARD_GH_BIN", "installation", "restart",
      "the gh binary PR operations use"),
+    ("BOARD_GIT_PROVIDER", "installation", "restart",
+     "which hosting provider change requests go through: github or none"),
+    ("BOARD_GITHUB_HOSTS", "installation", "restart",
+     "enterprise hosts the default hosting provider recognises besides its "
+     "public one"),
     ("BOARD_AGENT_ADAPTER", "agents", "next-launch",
      "which coding-agent harness headless jobs run through by default"),
     ("BOARD_AGENT_ADAPTER_WORK", "agents", "next-launch",
@@ -495,6 +504,20 @@ CATALOGUE = (
      "how often open pull requests are polled"),
     ("BOARD_FETCH_TIMEOUT", "installation", "restart",
      "how long a branch-point fetch may take before a launch gives up"),
+    ("BOARD_ALLOWED_ORIGINS", "installation", "restart",
+     "browser origins besides this board's own loopback page whose writes "
+     "it accepts, such as a local proxy's — exact scheme://host[:port] "
+     "values; an origin check is not authentication"),
+    ("BOARD_RUN_IDENTITY", "installation", "restart",
+     "whether a request naming a run without that run's token is only "
+     "counted (report) or refused (enforce); report is not a security pass"),
+    ("BOARD_HOST_CHECK", "installation", "restart",
+     "whether a request naming a Host this board does not answer to is "
+     "only counted (report) or refused (enforce); loopback always works"),
+    ("BOARD_ASSETS", "installation", "restart",
+     "whether the page's assets are served from the snapshot taken at "
+     "start (snapshot) or read from disk on every request, for editing "
+     "(disk)"),
 )
 
 APPLIES_AT = {
@@ -611,6 +634,20 @@ def _env_example() -> str:
 # ── the installation itself ────────────────────────────────────────────
 
 
+def _provider_reading() -> dict:
+    """The hosting provider in force, as `githost` reads it passively: no
+    probe process and no network, so `merge-conditional` reads `unknown`
+    until a merge asks. A remote the provider does not recognise carries
+    the diagnostic in `problem`, and nothing is run against it."""
+    info = githost.provider()
+    return {"name": info["name"], "configured": info["configured"],
+            "source": info["source"], "label": info["label"],
+            "remote": info["detected"].get("kind"),
+            "why": info["detected"].get("reason"),
+            "problem": info["problem"],
+            "capabilities": githost.capabilities()}
+
+
 def installation() -> dict:
     """What build is running, from where, in which layout.
 
@@ -648,6 +685,9 @@ def installation() -> dict:
                         "artifact has no commit of its own, and bench will "
                         "not invent one"),
         "mode": mode, "modeWhy": mode_why,
+        # who has been calling (WP05): the two caller-check modes and the
+        # Host and Origin values seen, bounded and sanitized
+        "callers": callers.observations(),
         "layout": config.layout(),
         "roots": [
             {"name": "the tool", "path": str(config.TM_ROOT),
@@ -666,8 +706,12 @@ def installation() -> dict:
                 "remote": config.git_remote(),
                 "remoteSetting": config.GIT_REMOTE or None,
                 "mergeOnOrigin": config.app_merge_on_origin(),
-                "ghAvailable": config.gh_available(),
-                "ghRepo": config.gh_repo(),
+                "ghAvailable": githost.available(),
+                "ghRepo": githost.slug(),
+                # Which hosting provider is in force, what it makes of the
+                # remote, and — for a remote it does not recognise — why
+                # nothing is run against it (task 116). Passive: no probe.
+                "provider": _provider_reading(),
                 "what": "branch, worktree, commit code, push, open, review "
                         "and merge a code pull request",
             },
@@ -792,13 +836,16 @@ def frozen_runs() -> list[dict]:
     The point this exists to make: an edit applied now does not reach any
     of these. Each one rode a manifest written before it started, that
     record is on disk, and nothing in this module touches it.
+
+    The run registry is `state.AGENTS` (task 122: read there rather than
+    by reaching up to `agents`). Each entry is read as the registry's
+    public row would read it — `file` is not a key either form carries,
+    so `task` stays empty exactly as it always has.
     """
     out = []
-    try:
-        import agents
-        live = agents.list_public()
-    except Exception:  # pragma: no cover - agents is always importable
-        live = []
+    with state.LOCK:
+        live = [dict(record, mode=record.get("mode", "work"))
+                for record in state.AGENTS.values()]
     for entry in live:
         frozen = profiles.recorded(entry.get("id") or "")
         if frozen is None:
@@ -826,7 +873,7 @@ def verification(doc: dict | None = None) -> dict:
     doc = profiles.document() if doc is None else doc
     steps, step_trouble = profiles.document_steps(doc)
     checks, check_trouble = profiles.document_checks(doc, steps)
-    policy = profiles.gate_policy(doc)
+    policy = gatepolicy.gate_policy(doc)
     required: dict[str, set[str | None]] = {}
     for scope, entry in policy["scopes"].items():
         for want in entry["checks"]:
@@ -910,8 +957,8 @@ def verification(doc: dict | None = None) -> dict:
         # they are passed through rather than relabelled here.
         "problems": [{"code": code, "why": why, "field": FIELD_OF.get(code)}
                      for code, why in [*step_trouble, *check_trouble]],
-        "outcomes": dict(verify.OUTCOMES),
-        "reasons": dict(verify.REASONS),
+        "outcomes": dict(evidence.OUTCOMES),
+        "reasons": dict(evidence.REASONS),
         "preparationIsNotVerification": (
             "A preparation step gets a disposable environment ready — "
             "approved dependencies, a test database. A preparation step that "
@@ -1010,11 +1057,11 @@ def acceptance(doc: dict | None = None) -> dict:
     commits. The two review records are drawn apart because they are two
     different records and neither stands in for the other.
     """
-    policy = profiles.gate_policy(doc)
-    public = profiles.gate_policy_public(policy)
-    gh = config.gh_available()
+    policy = gatepolicy.gate_policy(doc)
+    public = gatepolicy.gate_policy_public(policy)
+    gh = githost.available()
     modes = []
-    for word, why in profiles.REVIEW_POLICIES.items():
+    for word, why in gatepolicy.REVIEW_POLICIES.items():
         available, unavailable_why = True, None
         if word in ("github", "separate-reviewer") and not gh:
             available = False
@@ -1039,7 +1086,7 @@ def acceptance(doc: dict | None = None) -> dict:
         "remedies": dict(gates.REMEDIES),
         "reviewModes": modes,
         "signoffModes": [{"name": word, "why": why}
-                         for word, why in profiles.SIGNOFF_POLICIES.items()],
+                         for word, why in gatepolicy.SIGNOFF_POLICIES.items()],
         "signoff": {
             "what": (
                 "Off by default. The PR review already assesses the work "
@@ -1141,7 +1188,7 @@ def acceptance(doc: dict | None = None) -> dict:
             "no card and starts no automation — the mutation each gate "
             "guards is still a person's click or the phase runner's own "
             "beat."),
-        "gh": {"available": gh, "repo": config.gh_repo()},
+        "gh": {"available": gh, "repo": githost.slug()},
         # BOARD_VERIFY_ON_REVIEW (task 105): what it runs, what it costs,
         # how to turn it off, and where its value came from — the catalogue
         # row, so provenance has one reader
@@ -1234,16 +1281,16 @@ def ci(doc: dict | None = None) -> dict:
     """The three things a single tick would collapse, kept apart — and the
     mapping bench does not have, named as the follow-up it is."""
     doc = profiles.document() if doc is None else doc
-    policy = profiles.gate_policy(doc)
+    policy = gatepolicy.gate_policy(doc)
     reviewing = any(entry["review"] != "none"
                     for entry in policy["scopes"].values())
     gated = any(entry["gated"] for entry in policy["scopes"].values())
     return {
         "kinds": dict(KINDS),
         "limits": list(CI_LIMITS),
-        "bench": {"configured": bool(_checks_of(doc)), "gated": gated},
+        "bench": {"configured": bool(checks_of(doc)), "gated": gated},
         "ci": {"polled": True, "interval": config.PR_POLL_INTERVAL,
-               "ghAvailable": config.gh_available(),
+               "ghAvailable": githost.available(),
                "what": ("reviews, check runs and GitHub's mergeable state for "
                         "open pull requests of review-stage cards, folded "
                         "into one verdict: any changes-requested review or "
@@ -1416,7 +1463,7 @@ def recommendations(doc: dict | None = None) -> list[dict]:
     out: list[dict] = []
     steps, _ = profiles.document_steps(doc)
     checks, _ = profiles.document_checks(doc, steps)
-    policy = profiles.gate_policy(doc)
+    policy = gatepolicy.gate_policy(doc)
     acc = access(doc)
 
     if doc.get("problem"):
@@ -1495,10 +1542,21 @@ def recommendations(doc: dict | None = None) -> list[dict]:
                    "page can configure",
             section="access", state="unsupported"))
 
+    host_problem = githost.problem()
+    if host_problem:
+        out.append(_rec(
+            "hosting-provider-unrecognized", "high",
+            "The hosting provider does not act on this application's remote",
+            host_problem,
+            supply="a remote on a host the provider recognises, "
+                   "BOARD_GITHUB_HOSTS naming a GitHub Enterprise host, or "
+                   "BOARD_GIT_PROVIDER=none in manager/local/.env",
+            section="installation", state="blocked"))
+
     for scope, entry in sorted(policy["scopes"].items()):
         if any(word in ("github", "separate-reviewer")
                for word in entry.get("reviews") or []) \
-                and not config.gh_available():
+                and not githost.available():
             out.append(_rec(
                 f"review-unsatisfiable-{scope}", "high",
                 f"The {scope} gate asks for a formal GitHub review and this "
@@ -1640,7 +1698,7 @@ def revision_of(path: Path) -> str:
     detect that somebody else's save landed in between.
     """
     raw = _raw_at(path)
-    return profiles._digest(raw) if raw is not None else ""
+    return profiles.digest(raw) if raw is not None else ""
 
 
 def draft() -> dict:
@@ -1666,7 +1724,7 @@ def draft() -> dict:
         parsed = None
     return {
         "path": str(path),
-        "identity": profiles._tool_relative(path),
+        "identity": profiles.tool_relative(path),
         "exists": raw is not None,
         "revision": revision_of(path),
         "document": parsed if parsed is not None
@@ -1732,7 +1790,7 @@ def validate(payload: dict) -> dict:
                            "field": FIELD_OF.get(entry.get("code") or ""),
                            "intent": intent, "why": entry.get("why"),
                            "remedy": entry.get("remedy")})
-    gate = profiles.gate_policy(doc)
+    gate = gatepolicy.gate_policy(doc)
     for entry in gate["diagnostics"]:
         errors.append({"code": entry.get("code"),
                        "field": FIELD_OF.get(entry.get("code") or ""),
@@ -1747,11 +1805,11 @@ def validate(payload: dict) -> dict:
         unique.append(entry)
     return {
         "ok": not unique,
-        "revision": profiles._digest(raw),
+        "revision": profiles.digest(raw),
         "baseRevision": revision_of(path),
         "errors": unique,
         "intents": intents,
-        "gate": profiles.gate_policy_public(gate),
+        "gate": gatepolicy.gate_policy_public(gate),
         "wroteNothing": True,
         "unknownKeys": sorted(k for k in found if k not in KNOWN_KEYS),
     }
@@ -1771,10 +1829,10 @@ def preview(payload: dict) -> dict:
     after = profiles.document_from(after_raw, path)
     checked = validate(payload)
 
-    before_gate = profiles.gate_policy(before)
-    after_gate = profiles.gate_policy(after)
-    before_checks = _checks_of(before)
-    after_checks = _checks_of(after)
+    before_gate = gatepolicy.gate_policy(before)
+    after_gate = gatepolicy.gate_policy(after)
+    before_checks = checks_of(before)
+    after_checks = checks_of(after)
 
     changes: list[dict] = []
     for name in sorted(set(before_checks) | set(after_checks)):
@@ -1846,7 +1904,9 @@ def preview(payload: dict) -> dict:
     }
 
 
-def _checks_of(doc: dict) -> dict:
+def checks_of(doc: dict) -> dict:
+    """The checks a profile document defines, by name — read by the same
+    parser a launch uses (`profiles.document_checks`)."""
     steps, _ = profiles.document_steps(doc)
     checks, _ = profiles.document_checks(doc, steps)
     return checks
@@ -1890,7 +1950,7 @@ def _evidence_count(names: list[str]) -> int:
         return 0
     for group in collected.get("stages", []):
         for task in group.get("tasks", []):
-            for record in verify.for_task(task["file"]):
+            for record in evidence.for_task(task["file"]):
                 if record.get("check") in names \
                         and record.get("outcome") == "passed":
                     total += 1
@@ -1909,7 +1969,7 @@ def _pending_acceptance(after_gate: dict) -> list[dict]:
         collected = taskfiles.collect()
     except (OSError, ValueError):
         return out
-    current = profiles.gate_policy()
+    current = gatepolicy.gate_policy()
     for group in collected.get("stages", []):
         if group.get("slug") != "review":
             continue
@@ -1931,6 +1991,19 @@ def _pending_acceptance(after_gate: dict) -> list[dict]:
     return out
 
 
+# The policy document's single writer owner inside the board.
+_APPLY_LOCK = threading.Lock()
+
+
+def _serialized(fn):
+    @functools.wraps(fn)
+    def held(*args, **kwargs):
+        with _APPLY_LOCK:
+            return fn(*args, **kwargs)
+    return held
+
+
+@_serialized
 def apply(payload: dict, *, actor: str | None = None) -> dict:
     """Write the draft, once, atomically, and only over the revision the
     editor was shown.
@@ -1949,6 +2022,10 @@ def apply(payload: dict, *, actor: str | None = None) -> dict:
 
     Nothing else happens. This starts no agent, moves no card, merges
     nothing, reruns no check and restarts nothing.
+
+    Steps 3 to 5 run under `_APPLY_LOCK`: the board is this document's
+    one writer, and a revision comparison is only a guard while nothing
+    else can write between it and the replace (task 110).
     """
     found = read_draft(payload)
     path = document_target()
@@ -1983,16 +2060,9 @@ def apply(payload: dict, *, actor: str | None = None) -> dict:
             preserved.append(key)
 
     raw = json.dumps(merged, indent=2, sort_keys=False) + "\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + f".bench-{os.getpid()}.tmp")
     try:
-        temp.write_text(raw, encoding="utf-8")
-        os.replace(temp, path)
+        records.write_text(path, raw, durable=True)
     except OSError as exc:
-        try:
-            temp.unlink()
-        except OSError:
-            pass
         raise OSError(
             f"the document could not be written ({exc}). The previous "
             f"settings are intact: nothing was changed.") from exc
@@ -2003,7 +2073,7 @@ def apply(payload: dict, *, actor: str | None = None) -> dict:
         "revision": revision_of(path),
         "previousRevision": current,
         "path": str(path),
-        "identity": profiles._tool_relative(path),
+        "identity": profiles.tool_relative(path),
         "preservedKeys": preserved,
         "history": entry,
         "draft": draft(),
@@ -2045,7 +2115,7 @@ def _record_change(path: Path, *, before: str, after: str, document: dict,
         "actorWhy": (None if actor else
                      "this board records no authenticated identity, and git "
                      "config named none — so none is claimed"),
-        "document": profiles._tool_relative(path),
+        "document": profiles.tool_relative(path),
         "before": before or None,
         "after": after,
         "changedKeys": sorted(
@@ -2171,7 +2241,7 @@ def board_summary() -> dict:
     inputs.
     """
     doc = profiles.document()
-    policy = profiles.gate_policy(doc)
+    policy = gatepolicy.gate_policy(doc)
     steps, step_trouble = profiles.document_steps(doc)
     checks, check_trouble = profiles.document_checks(doc, steps)
     return {

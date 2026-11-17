@@ -345,7 +345,7 @@ START = (
     "    if os.environ.get('FAIL_LAUNCH'): raise ValueError('the launch refused')\n"
     "    return {'id': 'agent-1'}\n"
     "agents.start_agent = fake\n"
-    "setupguide._agent = lambda: {'status': 'configured', 'next': {}}\n"
+    "setupbase.agent = lambda: {'status': 'configured', 'next': {}}\n"
     "try:\n"
     "    R = {'ok': setuptasks.start(%r), 'calls': calls}\n"
     "except setupguide.Refused as e:\n"

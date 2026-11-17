@@ -23,7 +23,7 @@ BENCH = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCH / "manager" / "core"))
 
 import config  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import state  # noqa: E402
 import sync  # noqa: E402
 import taskfiles  # noqa: E402
@@ -235,8 +235,8 @@ class TwoExternalBoards(unittest.TestCase):
         split, and it matters more: the replica's application checkout is
         a different checkout of the code."""
         opened: list[str] = []
-        self.addCleanup(setattr, github, "open_pr_async", github.open_pr_async)
-        github.open_pr_async = opened.append
+        self.addCleanup(setattr, changes, "open_pr_async", changes.open_pr_async)
+        changes.open_pr_async = opened.append
 
         self.move("ada", "backlog", "to-do")
         self.move("ada", "to-do", "in-progress")
@@ -257,8 +257,8 @@ class TwoExternalBoards(unittest.TestCase):
         """The other half: the gate must not have turned the reaction off
         for everybody."""
         opened: list[str] = []
-        self.addCleanup(setattr, github, "open_pr_async", github.open_pr_async)
-        github.open_pr_async = opened.append
+        self.addCleanup(setattr, changes, "open_pr_async", changes.open_pr_async)
+        changes.open_pr_async = opened.append
 
         self.use("ada")
         before = self.sig("ada")
@@ -338,7 +338,7 @@ class TwoExternalBoards(unittest.TestCase):
         git(self.apps["ada"], "remote", "rename", "origin", "appfork")
         self.patch(GIT_REMOTE="appfork")
 
-        self.assertEqual(github.remote(), "appfork")
+        self.assertEqual(changes.remote(), "appfork")
         self.assertEqual(config.state_git_remote(), "origin")
         self.move("ada", "backlog", "to-do")
         self.assertEqual(sync.push_now(), "ok")

@@ -22,6 +22,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -34,7 +35,6 @@ import state  # noqa: E402
 from tests.test_phase_runs import (ONE, PHASE, PHASE_BRANCH, PhaseCase,  # noqa: E402
                                    card, git, wait_for)
 
-BOARD = REPO / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
 
 ALONE = "77-alone.md"
@@ -112,7 +112,7 @@ class TheWorkAgentRefusesAPhaseCard(LaunchCase):
         self.assertIn("phase card", str(caught.exception))
 
     def test_the_refusal_leaves_nothing_behind(self):
-        """Refused with `_validate`, so it costs nothing: no branch, no
+        """Refused with `validate_launch`, so it costs nothing: no branch, no
         worktree, no process, nothing for anyone to clean up."""
         with self.assertRaises(ValueError):
             agents.start_agent(PHASE, "in-progress")
@@ -293,7 +293,7 @@ class TheCardSaysWhichStateItIsIn(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
         parts = []
         for pattern in cls.PARTS:
             match = re.search(pattern, cls.html, re.S)
@@ -301,7 +301,7 @@ class TheCardSaysWhichStateItIsIn(unittest.TestCase):
                 raise AssertionError(f"board.html no longer defines {pattern!r}")
             parts.append(match.group(0))
         cls.src = "\n".join(parts)
-        cls.card_fn = re.search(r"function cardFor\(task\) \{.*?\n\}",
+        cls.card_fn = re.search(r"function cardSpec\(task\) \{.*?\nfunction mountCard\(spec\) \{.*?\n\}",
                                 cls.html, re.S).group(0)
 
     def flight(self, snapshot: dict | None, stage: str = "in-progress") -> object:

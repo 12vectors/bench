@@ -38,6 +38,9 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import urlsplit
+
+import gitproc
 
 CORE = Path(__file__).resolve().parent             # manager/core — replaceable
 MANAGER = CORE.parent                              # manager
@@ -64,7 +67,7 @@ REFINE_DIR = STATE / "refine"                      # card-refinement jobs and th
 PROGRESS_DIR: Path | None = None
 # Merges whose publication is unfinished. None means "beside the recorded
 # plans" (`STATE / "completions"`): a record that finishes a plan's work
-# lives wherever that plan does — see `github._recovery_dir`.
+# lives wherever that plan does — see `completion._recovery_dir`.
 COMPLETIONS_DIR: Path | None = None
 
 # Ordered — this is the column order on the board.
@@ -109,107 +112,40 @@ def flag(key: str, default: str = "") -> bool:
 
 # ── reading git without running anything else ──────────────────────────
 #
-# Reading the board asks git about refs, ancestry and uncommitted work,
-# and that has to stay a read. A repository's own configuration can make
-# an ordinary `git diff` or `git status` run a program: a textconv or an
-# external diff driver named by an attribute, a clean filter, an
-# fsmonitor hook, `log.showSignature` reaching for `gpg.program`. And a
-# `status` may refresh the index, which is a write. So every git a read
-# asks for goes through `git_argv` and `git_env`, which turn all of that
-# off for the read verbs below and touch nothing else: a merge, a push,
-# a worktree add or a fetch is the authorised side effect it always was,
-# run exactly as before.
-#
-# The settings ride `GIT_CONFIG_COUNT` rather than `-c`, because a filter
-# driver's name is whatever the repository says it is — `=` included —
-# and an environment pair carries any key verbatim.
-
-_GIT_READS = frozenset({
-    "rev-parse", "for-each-ref", "merge-base", "status", "diff", "diff-index",
-    "diff-files", "diff-tree", "ls-files", "ls-tree", "cat-file", "rev-list",
-    "show", "show-ref", "log", "remote", "symbolic-ref", "config", "describe",
-    "name-rev",
-})
-# Verbs that draw a diff, and so would ask a textconv or an external
-# diff driver. `--no-textconv --no-ext-diff` goes straight after the verb.
-_GIT_DIFFS = frozenset({"diff", "diff-index", "diff-files", "diff-tree",
-                        "show", "log"})
-# Verbs that compare the working tree's content with git's, and so would
-# run a clean filter or a long-running filter process.
-_GIT_FILTERS = frozenset({"diff", "diff-index", "diff-files", "status"})
-# Always off for a read: the hooks directory, the fsmonitor hook, the
-# global external diff command and signature verification.
-_GIT_READ_CONFIG = (("core.hooksPath", "/dev/null"), ("core.fsmonitor", "false"),
-                    ("diff.external", ""), ("log.showSignature", "false"))
-
-
-def _git_verb(args) -> str:
-    return str(args[0]) if args else ""
+# A read has to stay a read, whatever the repository's own configuration
+# says: no textconv, no external diff, no clean filter, no fsmonitor or
+# signature program, no optional index write. The hardening itself —
+# which verbs are reads, the switches a read gains and the environment it
+# runs in — lives in `gitproc`, a stdlib-only leaf. These three stay real
+# functions here, calling it, so a patch on `config.git_run`,
+# `config.git_argv` or `config.git_env` intercepts every git call made
+# through `config`, exactly as it did before the move (task 109).
 
 
 def git_argv(root: Path | str | None, *args: str) -> list[str]:
-    """The argv for `git [-C root] <args>`: a read verb gains
-    `--no-textconv --no-ext-diff` where it would draw a diff; anything
-    else is returned exactly as written."""
-    argv = list(args)
-    if _git_verb(argv) in _GIT_DIFFS:
-        argv[1:1] = ["--no-textconv", "--no-ext-diff"]
-    return ["git", *(["-C", str(root)] if root is not None else []), *argv]
-
-
-def _filter_drivers(root: Path | str | None) -> list[str]:
-    """Every filter driver the repository's configuration names, so a read
-    can switch each one off. Read with the read environment itself: a
-    `git config` read runs nothing."""
-    try:
-        result = subprocess.run(
-            ["git", *(["-C", str(root)] if root is not None else []), "config",
-             "--null", "--name-only", "--get-regexp", r"^filter\."],
-            capture_output=True, text=True, timeout=10, env=git_env(None, "config"))
-    except (OSError, subprocess.SubprocessError):
-        return []
-    names = set()
-    for key in result.stdout.split("\0"):
-        if key.startswith("filter.") and key.count(".") >= 2:
-            names.add(key[len("filter."):key.rindex(".")])
-    return sorted(names)
+    """The argv for `git [-C root] <args>` (`gitproc.git_argv`): a read
+    verb gains `--no-textconv --no-ext-diff` where it would draw a diff;
+    anything else is returned exactly as written."""
+    return gitproc.git_argv(root, *args)
 
 
 def git_env(root: Path | str | None, *args: str) -> dict | None:
-    """The environment for a git invocation: None (inherit, unchanged) for
-    anything that is not a read; for a read, no optional locks, no
-    `GIT_EXTERNAL_DIFF`, and `_GIT_READ_CONFIG` plus every filter driver
-    blanked for the verbs that would run one."""
-    verb = _git_verb(args)
-    if verb not in _GIT_READS:
-        return None
-    env = {k: v for k, v in os.environ.items() if k != "GIT_EXTERNAL_DIFF"}
-    env["GIT_OPTIONAL_LOCKS"] = "0"
-    pairs = list(_GIT_READ_CONFIG)
-    if verb in _GIT_FILTERS:
-        for name in _filter_drivers(root):
-            pairs += [(f"filter.{name}.clean", ""), (f"filter.{name}.smudge", ""),
-                      (f"filter.{name}.process", ""), (f"filter.{name}.required", "false")]
-    try:
-        count = int(env.get("GIT_CONFIG_COUNT", "0") or 0)
-    except ValueError:
-        count = 0
-    for key, value in pairs:
-        env[f"GIT_CONFIG_KEY_{count}"] = key
-        env[f"GIT_CONFIG_VALUE_{count}"] = value
-        count += 1
-    env["GIT_CONFIG_COUNT"] = str(count)
-    return env
+    """The environment for a git invocation (`gitproc.git_env`): None
+    (inherit, unchanged) for anything that is not a read; for a read, no
+    optional locks, no `GIT_EXTERNAL_DIFF`, and the read configuration
+    plus every filter driver blanked for the verbs that would run one."""
+    return gitproc.git_env(root, *args)
 
 
 def git_run(root: Path | str | None, *args: str, timeout: float = 30,
             cwd: Path | str | None = None) -> subprocess.CompletedProcess:
     """`git [-C root] <args>` with `git_argv` and `git_env`, captured as
     text. Raises what `subprocess.run` raises; callers keep their own
-    error handling."""
-    return subprocess.run(git_argv(root, *args), capture_output=True, text=True,
-                          timeout=timeout, env=git_env(root if root is not None else cwd, *args),
-                          cwd=None if cwd is None else str(cwd))
+    error handling. Both are built through this module's own functions,
+    so patching either here still changes what runs."""
+    return gitproc.run(git_argv(root, *args),
+                       git_env(root if root is not None else cwd, *args),
+                       timeout=timeout, cwd=cwd)
 
 
 # ── the roots ──────────────────────────────────────────────────────────
@@ -388,6 +324,101 @@ PROJECT = setting("BOARD_TITLE", "").strip() or REPO.name
 # ephemeral-safe 10000–30000 range, clear of the other local dev servers.
 PORT = int(setting("BOARD_PORT", "26071"))
 
+
+def parse_origins(raw: str) -> tuple[frozenset, list[str]]:
+    """`BOARD_ALLOWED_ORIGINS` read: the exact browser origins, beyond this
+    board's own loopback page, whose writes the board accepts — and why
+    any entry was not taken.
+
+    Each entry is one `scheme://host[:port]`, compared exactly (scheme and
+    host case-folded, a default port made explicit). Nothing that could
+    match more than one origin is taken: no wildcard, no path, no query, no
+    userinfo, no scheme but http or https. An entry that is not taken is
+    trusted for nothing, and named rather than dropped silently.
+    """
+    allowed, problems = set(), []
+    for entry in (part.strip() for part in raw.split(",")):
+        if not entry:
+            continue
+        try:
+            parts = urlsplit(entry)
+            port = parts.port
+        except ValueError:
+            problems.append(f"{entry!r} is not an origin")
+            continue
+        scheme = (parts.scheme or "").lower()
+        host = (parts.hostname or "").lower()
+        if scheme not in ("http", "https"):
+            problems.append(f"{entry!r}: an origin is http:// or https://")
+        elif not host or "*" in entry:
+            problems.append(f"{entry!r}: an origin names one host, exactly")
+        elif parts.path not in ("", "/") or parts.query or parts.fragment \
+                or parts.username is not None or parts.password is not None:
+            problems.append(f"{entry!r}: an origin is scheme://host[:port] "
+                            f"and nothing else")
+        else:
+            allowed.add((scheme, host,
+                         port or (443 if scheme == "https" else 80)))
+    return frozenset(allowed), problems
+
+
+# Browser origins allowed to make a write besides this board's own page on
+# loopback — a local proxy's, say. Empty by default. An origin check
+# protects against other pages in the operator's browser; it is not
+# authentication, and listing an origin here grants no peer anything the
+# proxy in front of it does not already admit.
+ALLOWED_ORIGINS, ALLOWED_ORIGIN_PROBLEMS = parse_origins(
+    setting("BOARD_ALLOWED_ORIGINS", ""))
+
+# Caller checks (WP05), each `report` or `enforce`. `report` — the
+# default, and what every board runs until an operator decides otherwise —
+# counts and shows what would be refused and refuses nothing; it is not a
+# security pass. `enforce` refuses. Nothing advances a board from one to
+# the other: not a timer, not an update, not a merge of the source. It is
+# an edit to manager/local/.env and a restart, made by a person.
+CALLER_MODES = ("report", "enforce")
+
+
+def parse_mode(key: str, raw: str) -> tuple[str, str | None]:
+    """A caller-check mode, and why the setting was not taken. Anything
+    but the two words reads `report` and is named — an operator who typed
+    something else must not believe the board enforces."""
+    value = (raw or "").strip().lower()
+    if value in ("", "report"):
+        return "report", None
+    if value == "enforce":
+        return "enforce", None
+    return "report", (f"{key}={raw.strip()!r} is not one of report or "
+                      f"enforce, so the board reports and refuses nothing")
+
+
+# A request naming a run (`/api/verify`, `/api/events`) proved by that
+# run's own BOARD_RUN_TOKEN.
+RUN_IDENTITY_MODE, RUN_IDENTITY_PROBLEM = parse_mode(
+    "BOARD_RUN_IDENTITY", setting("BOARD_RUN_IDENTITY", "report"))
+# The Host a request names: loopback on the served port, or a host of
+# BOARD_ALLOWED_ORIGINS.
+HOST_CHECK_MODE, HOST_CHECK_PROBLEM = parse_mode(
+    "BOARD_HOST_CHECK", setting("BOARD_HOST_CHECK", "report"))
+
+
+def parse_assets(raw: str) -> tuple[str, str | None]:
+    """How the page's assets are served (task 123), and why the setting
+    was not taken. `snapshot` — the default — serves what the board booted
+    with; `disk` reads every request from disk, for editing. Anything else
+    reads `snapshot` and is named, so a typo never loosens what is served."""
+    value = (raw or "").strip().lower()
+    if value in ("", "snapshot"):
+        return "snapshot", None
+    if value == "disk":
+        return "disk", None
+    return "snapshot", (f"BOARD_ASSETS={raw.strip()!r} is not one of "
+                        f"snapshot or disk, so the board serves its boot "
+                        f"snapshot")
+
+
+ASSETS_MODE, ASSETS_PROBLEM = parse_assets(setting("BOARD_ASSETS", "snapshot"))
+
 # Which agent adapter runs headless jobs. Resolution ladder: local wins.
 # The *startup* reading; a launch asks `agent_choice()`, which reads the
 # agent settings fresh (task 77).
@@ -460,13 +491,13 @@ def agent_model(mode: str) -> str:
 # reads. `refine` keeps the default harness (it has no harness override
 # of its own) but does have a model setting, as it did before.
 AGENT_PURPOSES = ("work", "act-pr", "review")
-_SUFFIX = {"work": "_WORK", "act-pr": "_ACT_PR", "review": "_REVIEW",
-           "refine": "_REFINE"}
+PURPOSE_SUFFIX = {"work": "_WORK", "act-pr": "_ACT_PR", "review": "_REVIEW",
+                  "refine": "_REFINE"}
 HARNESS_KEY = "BOARD_AGENT_ADAPTER"
 MODEL_KEY = "BOARD_AGENT_MODEL"
-HARNESS_KEYS = (HARNESS_KEY,) + tuple(HARNESS_KEY + _SUFFIX[p]
+HARNESS_KEYS = (HARNESS_KEY,) + tuple(HARNESS_KEY + PURPOSE_SUFFIX[p]
                                       for p in AGENT_PURPOSES)
-MODEL_KEYS = (MODEL_KEY,) + tuple(MODEL_KEY + _SUFFIX[p]
+MODEL_KEYS = (MODEL_KEY,) + tuple(MODEL_KEY + PURPOSE_SUFFIX[p]
                                   for p in (*AGENT_PURPOSES, "refine"))
 AGENT_KEYS = HARNESS_KEYS + MODEL_KEYS
 DEFAULT_HARNESS = "claude"
@@ -504,7 +535,7 @@ def _patched(key: str) -> str | None:
         return ADAPTER
     if key == MODEL_KEY and AGENT_MODEL != _BOOT["AGENT_MODEL"]:
         return AGENT_MODEL
-    for purpose, suffix in _SUFFIX.items():
+    for purpose, suffix in PURPOSE_SUFFIX.items():
         if key == MODEL_KEY + suffix:
             now = (AGENT_MODELS or {}).get(purpose, "")
             if now != _BOOT["AGENT_MODELS"].get(purpose, ""):
@@ -539,12 +570,12 @@ def agent_choice(intent: str, file_values: dict[str, str] | None = None) -> dict
     """The harness and model one launch intent rides, with provenance.
 
     The one resolver: `profiles.resolve` reads it for the manifest, so the
-    preflight, the doctor, the Settings page and `_launch` agree by
+    preflight, the doctor, the Settings page and `agents.launch` agree by
     construction. `file_values` lets a caller resolve a *draft* `.env`
     (Settings' preview) through exactly the same rules.
     """
     values = env_file_now() if file_values is None else file_values
-    suffix = _SUFFIX.get(intent)
+    suffix = PURPOSE_SUFFIX.get(intent)
     default_h = agent_setting(HARNESS_KEY, values)
     harness = dict(default_h, inherited=True, setting=HARNESS_KEY)
     if intent in AGENT_PURPOSES:
@@ -588,6 +619,15 @@ def adapters_installed() -> list[dict]:
 # GitHub plumbing: the gh CLI (stub-able for tests) and the git remote PRs
 # go to. Empty remote = auto-detect the first remote; no remote = no PRs.
 GH_BIN = setting("BOARD_GH_BIN", "gh")
+# Which hosting provider change requests go through (`githost`, task 116):
+# the default provider (today's behaviour) when empty, or `none`, git
+# alone. Read at start-up like its neighbours; `githost` names the default.
+GIT_PROVIDER = setting("BOARD_GIT_PROVIDER", "").strip().lower()
+# Enterprise hosts the default provider recognises besides its public
+# one, comma-separated (`BOARD_GITHUB_HOSTS`). A remote on any other host
+# is reported and never acted on.
+PROVIDER_HOSTS = [h.strip() for h in setting("BOARD_GITHUB_HOSTS", "").split(",")
+                  if h.strip()]
 GIT_REMOTE = setting("BOARD_GIT_REMOTE", "")
 PR_POLL_INTERVAL = float(setting("BOARD_PR_POLL_INTERVAL", "60"))
 
@@ -756,14 +796,6 @@ def state_remote_setting() -> str:
 # today's answer exactly (see `app_merge_on_origin`).
 APP_MERGE = setting("BOARD_APP_MERGE", "").strip().lower()
 
-# `owner/name` is only a thing for a real git host; a local path remote
-# (every test's bare upstream) is not one, and must not be turned into a
-# bogus `--repo` argument.
-_SLUG_RE = re.compile(
-    r"^(?:[a-z][a-z0-9+.\-]*://[^/]+/|[^/\s]+@[^/:\s]+:)"
-    r"([^/\s]+/[^/\s]+?)(?:\.git)?/?$", re.IGNORECASE)
-
-
 def app_merge_on_origin() -> bool:
     """Whether a card's branch is merged into the application's base *on
     origin* (`gh pr merge`) rather than in this checkout.
@@ -783,37 +815,9 @@ def app_merge_on_origin() -> bool:
         return False
     return SYNC and app_shares_state_repository()
 
-
-def gh_available() -> bool:
-    """Is the GitHub CLI on the path? Asked by `github` before it reaches
-    for it and by `plans` when it answers whether a run can actually
-    deliver a PR — one reading, so the preflight and the attempt can never
-    disagree about what this machine can do."""
-    return shutil.which(GH_BIN) is not None
-
-
-def gh_repo() -> str | None:
-    """`owner/name` for the application's configured remote, so every gh
-    command can be told which repository it acts on.
-
-    gh infers that from the checkout's remotes, and with more than one the
-    inference can land on a different repository than the one this board
-    rides — a `fork`, a `backup`, an upstream somebody added. Naming it
-    removes the guess. None when the url is not a recognisable
-    owner/name on a host (a local bare remote, as every test uses), and
-    then gh is left to infer exactly as it did before.
-    """
-    rname = git_remote()
-    if not rname:
-        return None
-    try:
-        result = git_run(REPO, "remote", "get-url", rname, timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    match = _SLUG_RE.match(result.stdout.strip())
-    return match.group(1) if match else None
+# Whether change requests can be opened here, and which repository a host
+# command names, are `githost`'s questions (task 116, WP08): the provider
+# recognises its own remote shapes, and core no longer parses one.
 
 
 # ── branches and worktrees of the application ──────────────────────────
@@ -822,23 +826,23 @@ TASK_BRANCH_PREFIX = "task/"
 PHASE_BRANCH_PREFIX = "phase/"
 
 
-def _app_git(*args: str, timeout: float = 30) -> subprocess.CompletedProcess:
-    try:
-        return git_run(REPO, *args, timeout=timeout)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return subprocess.CompletedProcess(args, 128, "", str(exc))
-
-
 def branch_for(stem: str) -> str:
     """The branch a card's work lives on: a phase's own `phase/<stem>`
     when that branch exists, `task/<stem>` otherwise.
 
     One answer in one place. A driver or a local command that assumed
-    `task/<stem>` attached to a branch a phase card never had."""
+    `task/<stem>` attached to a branch a phase card never had.
+
+    The body stays here, rather than in `gitrepo`, only because
+    `verify.py` calls it and is not edited before WP12; every other
+    caller asks `gitrepo.branch_for`. (The never-raising application git
+    it used, `_app_git`, is `gitrepo.app_git` since task 114.)"""
     phase = PHASE_BRANCH_PREFIX + stem
-    if _app_git("rev-parse", "--verify", "--quiet", phase).returncode == 0:
-        return phase
-    return TASK_BRANCH_PREFIX + stem
+    try:
+        found = git_run(REPO, "rev-parse", "--verify", "--quiet", phase)
+    except (OSError, subprocess.SubprocessError):
+        return TASK_BRANCH_PREFIX + stem
+    return phase if found.returncode == 0 else TASK_BRANCH_PREFIX + stem
 
 
 def _common_git_dir(path: Path) -> Path | None:
@@ -1213,7 +1217,11 @@ def problems(require_tasks: bool = True,
 def guidance_outside_app() -> list[Path]:
     """Workflow briefs a headless run cannot find by reading its own
     checkout: the work root's and the tool project's, when they exist and
-    are not inside the application already."""
+    are not inside the application already.
+
+    Named by their canonical path (task 126): the path the prompt tells a
+    run to read is the path the adapter is told to grant an exact read of,
+    so a link on the way cannot make the two disagree."""
     seen: set[Path] = set()
     found: list[Path] = []
     for candidate in (work_root() / "AGENTS.md", LOCAL / "AGENTS.md"):
@@ -1226,7 +1234,7 @@ def guidance_outside_app() -> list[Path]:
         if resolved in seen or _inside(resolved, REPO.resolve()):
             continue
         seen.add(resolved)
-        found.append(candidate)
+        found.append(resolved)
     return found
 
 

@@ -33,6 +33,7 @@ import json
 import shutil
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.test_check_reuse import COUNTED, ReuseCase  # noqa: E402
 from tests.test_integration_gates import CARD, git  # noqa: E402
@@ -45,6 +46,8 @@ import gates  # noqa: E402
 import profiles  # noqa: E402
 import settings  # noqa: E402
 import state  # noqa: E402
+import evidence  # noqa: E402
+import resultidentity  # noqa: E402
 import verify  # noqa: E402
 
 TWIN = "unit-twin"
@@ -131,7 +134,7 @@ class EquivalentEvidenceCounts(EquivalenceCase):
     def test_an_equivalent_pass_meets_the_gate_with_its_own_provenance(self):
         document = self.twins()
         twin = self.twin_passes(document, agent="rev-1")
-        stored = verify.path_of(twin["id"]).read_bytes()
+        stored = evidence.path_of(twin["id"]).read_bytes()
         row = self.row()
         self.assertEqual(row["state"], "met", row["why"])
         self.assertEqual(row["evidence"], twin["id"])
@@ -144,8 +147,8 @@ class EquivalentEvidenceCounts(EquivalenceCase):
         self.assertIn("accepts", row["why"])
         self.assertTrue(row["equivalents"][0]["equivalent"])
         # never copied, never relabelled as `unit`
-        self.assertEqual(verify.path_of(twin["id"]).read_bytes(), stored)
-        self.assertEqual(verify.read(twin["id"])["check"], TWIN)
+        self.assertEqual(evidence.path_of(twin["id"]).read_bytes(), stored)
+        self.assertEqual(evidence.read(twin["id"])["check"], TWIN)
         self.assertEqual(len(self.evidence_files()), 1)
         # the delivery reading carries the same provenance
         self.assertEqual(delivery._requirement(row, twin["source"]["commit"])
@@ -232,7 +235,7 @@ class SourceAndReviewAtOneHead(ReviewCase):
         self.assertEqual(person["reused"], found["id"])
         self.assertEqual(person["reuse"]["acceptedFrom"], "unit-review")
         self.assertEqual(person["reuse"]["commit"], head)
-        self.assertEqual(verify.read(found["id"])["root"]["path"],
+        self.assertEqual(evidence.read(found["id"])["root"]["path"],
                          record["path"], "the original checkout is kept")
 
     def test_a_review_command_that_differs_is_refused_and_named(self):
@@ -325,9 +328,9 @@ class TheRecordMustHoldToo(EquivalenceCase):
         self.assertEqual(row["staleReason"], "env-changed", row["why"])
         config._ENV["BENCH_TEST_DB"] = "one"
         self.assertEqual(self.row()["state"], "met")
-        self.addCleanup(setattr, verify, "RUNNER_REVISION",
-                        verify.RUNNER_REVISION)
-        verify.RUNNER_REVISION = "f" * 64
+        self.addCleanup(setattr, resultidentity, "RUNNER_REVISION",
+                        resultidentity.RUNNER_REVISION)
+        resultidentity.RUNNER_REVISION = "f" * 64
         self.assertEqual(self.row()["staleReason"], "runner-changed")
 
     def test_another_commit_is_history(self):
@@ -349,7 +352,7 @@ class TheRecordMustHoldToo(EquivalenceCase):
     def test_an_unbound_source_proves_nothing(self):
         document = self.twins(root="worktree")
         twin = self.twin_passes(document)
-        path = verify.path_of(twin["id"])
+        path = evidence.path_of(twin["id"])
         data = json.loads(path.read_text(encoding="utf-8"))
         data["source"]["bound"] = False
         path.write_text(json.dumps(data), encoding="utf-8")
@@ -360,7 +363,7 @@ class TheRecordMustHoldToo(EquivalenceCase):
     def test_a_legacy_record_cannot_be_shown_equivalent(self):
         document = self.twins()
         twin = self.twin_passes(document)
-        path = verify.path_of(twin["id"])
+        path = evidence.path_of(twin["id"])
         data = json.loads(path.read_text(encoding="utf-8"))
         for key in ("resultId", "identity"):
             data.pop(key, None)
@@ -370,16 +373,14 @@ class TheRecordMustHoldToo(EquivalenceCase):
         self.assertEqual(row["equivalence"]["dimension"], "legacy-record")
 
     def test_a_pinned_checkout_that_was_not_clean_is_not_fresh(self):
-        (self.wt / ".gitignore").write_text("cache/\n", encoding="utf-8")
-        self.commit_in(self.wt, "ignore the cache\n")
-        sha = git(self.wt, "rev-parse", "HEAD").stdout.strip()
-        root = config.VERIFY_DIR / "src" / f"{CARD[:-3]}-{sha[:12]}"
-        root.parent.mkdir(parents=True, exist_ok=True)
-        git(self.repo, "worktree", "add", "--detach", str(root), sha)
-        (root / "cache").mkdir()
-        (root / "cache" / "built").write_text("stale\n", encoding="utf-8")
+        """A `source` checkout is made for each run since card 131, so it
+        is fresh by construction; a pinned checkout that was not clean — a
+        review's, which outlives one check — reads `reused`. That reading
+        is stood in for here, at the one function that makes it."""
         document = self.twins()
-        twin = self.twin_passes(document)
+        with mock.patch.object(resultidentity, "root_class",
+                               return_value="reused"):
+            twin = self.twin_passes(document)
         self.assertEqual(twin["identity"]["rootClass"], "reused")
         row = self.row()
         self.assertEqual(row["equivalence"]["dimension"], "root-class")
@@ -466,10 +467,10 @@ class PrecedenceAndAuthorisation(EquivalenceCase):
         self.assertEqual(self.runs(), 2)
         # the gate reads a live equivalent record the same way
         verify.RUNNING.pop("ev:flight", None)
-        live = dict(verify.read(found["id"]), id="ev:live", check=TWIN,
+        live = dict(evidence.read(found["id"]), id="ev:live", check=TWIN,
                     outcome="running", requested=found["requested"] + 10,
                     source={"commit": head, "bound": True, "dirty": []})
-        verify.path_of("ev:live").write_text(json.dumps(live), encoding="utf-8")
+        evidence.path_of("ev:live").write_text(json.dumps(live), encoding="utf-8")
         row = self.row()
         self.assertEqual(row["state"], "pending", row["why"])
         self.assertEqual(row["acceptedFrom"]["check"], TWIN)
@@ -483,7 +484,7 @@ class PrecedenceAndAuthorisation(EquivalenceCase):
         refused = self.again(document, "rev-2", intent="review")
         self.assertEqual(refused["outcome"], "denied")
         self.assertNotIn("reused", refused)
-        self.assertEqual(verify.reuses_for_task(CARD), [])
+        self.assertEqual(evidence.reuses_for_task(CARD), [])
 
     def test_a_declaration_removed_from_the_policy_now_stops_counting(self):
         document = self.twins()

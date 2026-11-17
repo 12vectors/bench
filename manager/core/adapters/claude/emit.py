@@ -9,9 +9,10 @@ contract every adapter speaks — and POSTs it to /api/events.
 Normalized event (v1):
     {"v": 1, "session": str, "kind": str, "summary": str,
      "id"?: str, "file"?: str, "cmd"?: str, "detail"?: str, "ok"?: bool,
-     "running"?: bool, "agent"?: str, "task"?: str}
+     "running"?: bool, "agent"?: str, "task"?: str, "token"?: str}
 
-`id` is the raw event's stable identity (hook phase + tool-use id), so the
+`token` is the run's BOARD_RUN_TOKEN, which proves the `agent` claim; the
+board removes it before recording anything (WP05). `id` is the raw event's stable identity (hook phase + tool-use id), so the
 board records a replayed copy once; the board's reply may carry `remind`,
 a progress reminder handed back to the run as PostToolUse context.
 kinds: session end idle edit read search command test check git plan
@@ -275,6 +276,12 @@ def main():
                    tool_input if isinstance(tool_input, dict) else {},
                    payload.get("tool_response")),
     }
+    # The run's own capability proves the `agent` claim (WP05); the board
+    # removes it before anything is recorded. Absent — a person's session,
+    # or a run launched without one — the event carries no token at all.
+    token = os.environ.get("BOARD_RUN_TOKEN")
+    if token and event.get("agent"):
+        event["token"] = token
 
     reply = {}
     try:

@@ -91,7 +91,9 @@ class WhatEachRunLoses(unittest.TestCase):
 
     def test_review_pr_posts_its_verdict_inside_the_turn(self):
         text = " ".join(_text("review-pr.md").split())
-        self.assertIn("post your verdict to GitHub during the turn", text)
+        # where the verdict goes is the hosting provider's word (task 116);
+        # GitHub's is "GitHub", so the rendered prompt reads as it did
+        self.assertIn("post your verdict to {host_name} during the turn", text)
 
     def test_review_writes_its_report_inside_the_turn(self):
         text = " ".join(_text("review.md").split())

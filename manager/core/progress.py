@@ -71,7 +71,10 @@ import time
 from pathlib import Path
 
 import config
+import evidence
 import profiles
+import records
+import staleness
 import state
 import verify
 
@@ -245,10 +248,7 @@ def _store(record: dict) -> None:
     if path is None:
         return
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(record), encoding="utf-8")
-        tmp.replace(path)
+        records.write_json(path, record, indent=None, sort_keys=False)
     except OSError:
         pass
 
@@ -366,7 +366,7 @@ def _text(name: str, value, cap: int) -> str:
         raise Refused(400, "marker", f"'{name}' holds a line that reads as a "
                                      f"closing-report marker; a progress update "
                                      f"is never the run's ending")
-    return verify.scrub(value)
+    return evidence.scrub(value)
 
 
 def _refs(raw, task: str) -> tuple[list[dict], list[str]]:
@@ -388,8 +388,8 @@ def _refs(raw, task: str) -> tuple[list[dict], list[str]]:
         value = str(value or "").strip()
         if kind == "commit" and _SHA_RE.match(value.lower()):
             out.append({"kind": "commit", "id": value.lower()})
-        elif kind == "evidence" and verify.is_evidence_id(value):
-            record = verify.read(value)
+        elif kind == "evidence" and evidence.is_evidence_id(value):
+            record = evidence.read(value)
             if record is None or record.get("task") != task:
                 dropped.append(f"evidence {value} is not a record for this card")
                 continue
@@ -478,6 +478,48 @@ def authenticate(agent_id: str, token) -> None:
         raise _reject(record, "identity", 403,
                       "the request's token is not this run's capability — a "
                       "run may only read its own diagnostics")
+
+
+def proves(agent_id: str, token) -> str | None:
+    """Whether `token` is this run's own capability — the same contract
+    and the same constant-time comparison as `authenticate`, without
+    raising and without counting. None when it proves the run; otherwise
+    the reason's code: `unknown-run` (no record of that run),
+    `no-capability` (a run launched without one, or one that holds no
+    capability, such as a card refinement), `no-token` or `identity`.
+
+    The caller decides what an unproven claim costs (`callers.py`); this
+    answers only whether it was proved."""
+    with _LOCK:
+        record = RUNS.get(agent_id or "")
+        expected = (record or {}).get("capabilityHash")
+    if record is None:
+        return "unknown-run"
+    if not expected:
+        return "no-capability"
+    if not isinstance(token, str) or not token:
+        return "no-token"
+    if not hmac.compare_digest(_hash(token), expected):
+        return "identity"
+    return None
+
+
+def note_unproven(agent_id: str, where: str, code: str) -> bool:
+    """Count one unproven claim to be `agent_id` on that run's channel
+    health (`unproven`, per route), apart from refused progress reports.
+    Returns whether the board knows the run — a claim to be a run it has
+    no record of has no channel to count on."""
+    with _LOCK:
+        record = RUNS.get(agent_id or "")
+        if record is None:
+            return False
+        counts = record.setdefault("unproven", {})
+        counts[where] = counts.get(where, 0) + 1
+        record["lastUnproven"] = {"at": time.time(), "where": where,
+                                  "code": code}
+        _store(record)
+    _notify_health(agent_id)
+    return True
 
 
 def refused(agent_id: str, code: str, status: int, why: str) -> Refused:
@@ -732,10 +774,10 @@ def reminder(agent_id: str | None, now: float | None = None) -> str | None:
 def _evidence(ref: dict) -> dict:
     """A reference to an evidence record, resolved against the record as it
     reads *now*. The agent's words are never an input here."""
-    record = verify.read(ref["id"])
+    record = evidence.read(ref["id"])
     if record is None:
         return {**ref, "found": False}
-    now = verify.outcome_now(record)
+    now = staleness.outcome_now(record)
     source = record.get("source") or {}
     return {**ref, "found": True, "check": record.get("check"),
             "scope": record.get("scope"), "outcome": now.get("outcome"),
@@ -795,6 +837,10 @@ def public(agent_id: str, full: bool = False) -> dict | None:
         "counts": {k: record.get(k, 0) for k in
                    ("accepted", "coalesced", "duplicates", "rejected")},
         "lastRejection": record.get("lastRejection"),
+        # requests that named this run without its capability (WP05):
+        # counted per route, apart from refused reports
+        "unproven": dict(record.get("unproven") or {}),
+        "lastUnproven": record.get("lastUnproven"),
         "updates": len(record.get("history") or []),
         "milestones": milestones(record),
         "milestonesOmitted": len(record.get("milestonesOmitted") or []),

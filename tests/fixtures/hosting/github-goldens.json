@@ -1,0 +1,64 @@
+{
+  "about": "Task 116 (WP08): the exact gh argument lists bench built before the GitHub provider existed, the ticker lines and the **PR:** task-file write. Transcribed from the pre-move code (github.py and reviews.py at 8a592752ee95) and the prompt templates there; the provider must reproduce them byte for byte. <slug> rows run with the remote https://github.com/acme/widget.git, the others with a local path remote (no --repo).",
+  "argv": {
+    "find_change": {
+      "slug": ["gh", "pr", "view", "--repo", "acme/widget", "task/31-x", "--json", "url,baseRefName"],
+      "local": ["gh", "pr", "view", "task/31-x", "--json", "url,baseRefName"],
+      "timeout": 60
+    },
+    "change_status": {
+      "slug": ["gh", "pr", "view", "--repo", "acme/widget", "7", "--json", "reviews,reviewRequests,statusCheckRollup,state,mergeable,baseRefName,headRefOid,mergedAt,author"],
+      "local": ["gh", "pr", "view", "7", "--json", "reviews,reviewRequests,statusCheckRollup,state,mergeable,baseRefName,headRefOid,mergedAt,author"],
+      "timeout": 60
+    },
+    "change_identity": {
+      "slug": ["gh", "pr", "view", "--repo", "acme/widget", "7", "--json", "number,state,url,baseRefName,baseRefOid,headRefName,headRefOid,mergedAt,isCrossRepository"],
+      "local": ["gh", "pr", "view", "7", "--json", "number,state,url,baseRefName,baseRefOid,headRefName,headRefOid,mergedAt,isCrossRepository"],
+      "timeout": 60
+    },
+    "review_records": {
+      "slug": ["gh", "api", "--paginate", "repos/acme/widget/pulls/7/reviews"],
+      "local": ["gh", "api", "--paginate", "repos/{owner}/{repo}/pulls/7/reviews"],
+      "timeout": 60
+    },
+    "open_change": {
+      "slug": ["gh", "pr", "create", "--repo", "acme/widget", "--head", "task/31-x", "--base", "main", "--title", "31 — X", "--body", "the body"],
+      "local": ["gh", "pr", "create", "--head", "task/31-x", "--base", "main", "--title", "31 — X", "--body", "the body"],
+      "timeout": 120
+    },
+    "merge_change": {
+      "slug": ["gh", "pr", "merge", "--repo", "acme/widget", "7", "--merge", "--match-head-commit", "abc123"],
+      "local": ["gh", "pr", "merge", "7", "--merge"],
+      "timeout": 180
+    },
+    "merge_probe": {
+      "slug": ["gh", "pr", "merge", "--help"],
+      "local": ["gh", "pr", "merge", "--help"],
+      "timeout": 30
+    },
+    "request_external_review": {
+      "slug": ["gh", "api", "-X", "POST", "repos/acme/widget/pulls/7/requested_reviewers", "-f", "reviewers[]=copilot-pull-request-reviewer[bot]"],
+      "local": ["gh", "api", "-X", "POST", "repos/{owner}/{repo}/pulls/7/requested_reviewers", "-f", "reviewers[]=copilot-pull-request-reviewer[bot]"],
+      "timeout": 60
+    }
+  },
+  "open": {
+    "gh": [["pr", "view", "task/31-stand-up-site", "--json", "url,baseRefName"],
+           ["pr", "create", "--head", "task/31-stand-up-site", "--base", "main", "--title", "31 — Stand up site/", "--body", "Task: `31-stand-up-site.md` — tracked in `tasks/review/`.\n\nOpened by the board when the card moved to review."],
+           ["pr", "view", "7", "--json", "reviews,reviewRequests,statusCheckRollup,state,mergeable,baseRefName,headRefOid,mergedAt,author"]],
+    "ticker": ["PR opened for 31-stand-up-site.md into main: https://github.com/acme/widget/pull/7"],
+    "task": "# 31 — Stand up site/\n\n**Status:** Review\n**PR:** https://github.com/acme/widget/pull/7\n**Priority:** High\n\nWhat this card is for, at enough length to be a brief.\n"
+  },
+  "prompts": {
+    "act-pr.md": [
+      "- Read every review and comment on the PR: `gh pr view task/00-sample-card --json\n  reviews`, and the line comments via `gh api\n  repos/{owner}/{repo}/pulls/<number>/comments`.",
+      "- If the PR conflicts with its base `main` (check `gh pr view task/00-sample-card\n  --json mergeable` — CONFLICTING means yes), resolve it mechanically:"
+    ],
+    "review-pr.md": [
+      "So post your verdict to GitHub during the turn, before the reply that",
+      "- Read the diff: `gh pr diff task/00-sample-card` (or by PR number), or `git diff`",
+      "should run read-only commands (gh, git log, grep).",
+      "When you have a verdict, POST it to GitHub:\n- approve:          gh pr review task/00-sample-card --approve --body \"<your summary>\"\n- request changes:  gh pr review task/00-sample-card --request-changes --body \"<your findings>\""
+    ]
+  }
+}

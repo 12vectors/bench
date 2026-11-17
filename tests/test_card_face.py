@@ -18,16 +18,17 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
-BOARD = Path(__file__).resolve().parents[1] / "manager" / "core" / "board.html"
+BOARD = pagesource.SHELL
 sys.path.insert(0, str(BOARD.parent))
 
 
 class Source(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
-        cls.card = re.search(r"function cardFor\(task\) \{.*?\n\}\n",
+        cls.html = pagesource.page()
+        cls.card = re.search(r"function cardSpec\(task\) \{.*?\nfunction mountCard\(spec\) \{.*?\n\}\n",
                              cls.html, re.S).group(0)
 
     def body(self, name: str) -> str:
@@ -151,7 +152,7 @@ class EveryToolOneControlAway(Source):
         self.assertIn("role=\"group\"", self.card)
 
     def test_the_hover_actions_are_in_the_tools_too(self):
-        self.assertIn("wireAction(twin, `${task.file}::${act.label}`, act);", self.card,
+        self.assertIn("wireAction(twin, `${task.file}::${act.label}`, live);", self.card,
                       "the same key, so an armed window is one window")
 
     def test_the_detail_view_carries_every_tool(self):
@@ -168,7 +169,7 @@ class EveryToolOneControlAway(Source):
                       "closing the detail view returns focus to its card")
 
     def test_board_and_phases_draw_the_same_card(self):
-        self.assertEqual(len(re.findall(r"appendChild\(cardFor\(", self.html)), 2)
+        self.assertEqual(len(re.findall(r"(?<!function )keyedCard\(pool, ", self.html)), 2)
 
 
 class SignalsAreKeptApart(Source):
@@ -283,9 +284,12 @@ class OneStatusAcrossSurfaces(Source):
         self.assertIn("body.querySelector(`[data-dslot=\"${dslot}\"]`)", drawer)
 
     def test_the_full_reading_is_fetched_only_when_the_compact_one_moved(self):
+        # the reading is keyed by deliveryFullKey and asked only when that
+        # key moves (lib/resource.js; driven as a real module in
+        # tests/node/requests_and_rendering.test.mjs, task 125)
         body = self.body("loadDeliveryFull")
-        self.assertIn("cur.key === key", body)
-        self.assertIn("/api/card/delivery?file=", body)
+        self.assertIn("deliveryFull.read(task.file, deliveryFullKey(task)", body)
+        self.assertIn("/api/card/delivery?file=", self.html)
         self.assertNotIn("method: 'POST'", body)
 
 

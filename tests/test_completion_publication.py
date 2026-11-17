@@ -24,13 +24,15 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import config  # noqa: E402
 import drive as drive_mod  # noqa: E402
-import github  # noqa: E402
+import completion  # noqa: E402
+import changes  # noqa: E402
 import state  # noqa: E402
 
 FILENAME = "63-a-card-to-deliver.md"
@@ -49,25 +51,29 @@ REFUSE = "#!/bin/sh\necho 'protected branch hook declined: main is protected' >&
 # what the GH_MODE says GitHub did.
 FAKE_GH = f'''#!/usr/bin/env python3
 import json, os, sys
-sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})
-import fake_origin
+sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})
+from tests.product import fakehost
 args = sys.argv[1:]
 with open(os.environ["GH_LOG"], "a") as fh:
     fh.write(json.dumps(args) + "\\n")
 mode = os.environ.get("GH_MODE", "ok")
 if args[:2] == ["pr", "view"]:
     print(json.dumps({{"url": "{PR_URL}", "baseRefName": "main"}}))
+elif args[:2] == ["pr", "list"]:
+    # cleanup asks which open PRs target a branch before deleting it
+    # (task 117): none here, unless a test says otherwise
+    print(os.environ.get("GH_TARGETING", "[]"))
 elif args[:2] == ["pr", "merge"] and "--help" not in args:
     if mode == "refused":
         sys.stderr.write("GraphQL: Required status check is expected (mergePullRequest)\\n")
         sys.exit(1)
     if mode == "lost-reply":
-        fake_origin.merge_pr(fake_origin.origin_url(), "{BRANCH}")
+        fakehost.merge_pr(fakehost.origin_url(), "{BRANCH}")
         sys.stderr.write("Post https://api.github.com/graphql: net/http: timeout\\n")
         sys.exit(1)
     if mode == "silent":
         sys.exit(0)           # says merged; the remote holds nothing new
-    fake_origin.merge_pr(fake_origin.origin_url(), "{BRANCH}")
+    fakehost.merge_pr(fakehost.origin_url(), "{BRANCH}")
 sys.exit(0)
 '''
 
@@ -133,7 +139,7 @@ class Delivery(unittest.TestCase):
         self.work = git(self.worktree, "rev-parse", "HEAD").stdout.strip()
 
         for registry in (state.COMPLETING, state.BOARD_EVENTS,
-                         state.EXPECTED_MOVES, github.PR_STATE):
+                         state.EXPECTED_MOVES, changes.PR_STATE):
             registry.clear()
             self.addCleanup(registry.clear)
         self.addCleanup(setattr, drive_mod, "DRIVE", drive_mod.DRIVE)
@@ -162,7 +168,7 @@ class Delivery(unittest.TestCase):
         return None
 
     def complete(self) -> dict:
-        return github.complete_task(FILENAME, self.stage_of())
+        return completion.complete_task(FILENAME, self.stage_of())
 
     def remote_has(self, ref: str) -> str:
         return git(self.origin, "rev-parse", "--verify", "--quiet",
@@ -213,7 +219,7 @@ class Delivery(unittest.TestCase):
         self.assertTrue(self.worktree.is_dir(), "the worktree was removed")
         self.assertEqual(self.remote_has(BRANCH), self.work,
                          "the remote task branch was deleted")
-        self.assertEqual(github.recovery(FILENAME)["publication"], publication)
+        self.assertEqual(completion.recovery(FILENAME)["publication"], publication)
         self.assertEqual(state.COMPLETING, {}, "the card is given back")
 
 
@@ -231,7 +237,7 @@ class TheLocalMergeIsDeliveredOrHeld(Delivery):
         self.assertEqual(self.remote_has(BRANCH), "")
         self.assertTrue(result["moved"])
         self.assertEqual(self.stage_of(), "done")
-        self.assertIsNone(github.recovery(FILENAME), "a finished completion leaves no record")
+        self.assertIsNone(completion.recovery(FILENAME), "a finished completion leaves no record")
         self.assertIn(f"origin/main holds {self.work[:12]}", self.said())
 
     def test_a_rejected_push_keeps_everything_and_says_what_happened(self):
@@ -268,7 +274,7 @@ class TheLocalMergeIsDeliveredOrHeld(Delivery):
         self.assertTrue(self.remote_holds_work())
         self.assertEqual(self.stage_of(), "done")
         self.assertFalse(self.branch_here())
-        self.assertIsNone(github.recovery(FILENAME))
+        self.assertIsNone(completion.recovery(FILENAME))
 
     def test_a_restart_keeps_the_recovery_context(self):
         """The record is on disk: a board started afresh reads it, the page
@@ -276,19 +282,19 @@ class TheLocalMergeIsDeliveredOrHeld(Delivery):
         self.refuse_pushes()
         self.complete()
         state.BOARD_EVENTS.clear()
-        github.PR_STATE.clear()            # what a restart loses
+        changes.PR_STATE.clear()            # what a restart loses
 
-        self.assertIn(FILENAME, github.recoveries())
+        self.assertIn(FILENAME, completion.recoveries())
         import httpd
         self.assertIn(FILENAME, httpd.state_payload()["unpublished"])
-        self.assertEqual(github.recoveries()[FILENAME]["commit"], self.work)
+        self.assertEqual(completion.recoveries()[FILENAME]["commit"], self.work)
 
         self.accept_pushes()
         self.assertTrue(self.complete()["published"])
-        self.assertEqual(github.recoveries(), {})
+        self.assertEqual(completion.recoveries(), {})
 
     def test_a_reply_lost_after_the_push_landed_is_published(self):
-        original = github._run
+        original = completion._run
 
         def lossy(cmd, *args, **kwargs):
             done = original(cmd, *args, **kwargs)
@@ -297,8 +303,8 @@ class TheLocalMergeIsDeliveredOrHeld(Delivery):
                 return subprocess.CompletedProcess(
                     cmd, 128, "", "fatal: the remote end hung up unexpectedly")
             return done
-        self.addCleanup(setattr, github, "_run", original)
-        github._run = lossy
+        self.addCleanup(setattr, completion, "_run", original)
+        completion._run = lossy
 
         result = self.complete()
 
@@ -309,15 +315,15 @@ class TheLocalMergeIsDeliveredOrHeld(Delivery):
     def test_a_push_that_reports_success_but_delivers_nothing_is_not_published(self):
         """An unrelated success — the exit status of something that did not
         put the commit on the remote's base — is not delivery."""
-        original = github._run
+        original = completion._run
 
         def hollow(cmd, *args, **kwargs):
             if cmd[:2] == ["git", "push"] and "--delete" not in cmd \
                     and not any(str(p).startswith("--force") for p in cmd):
                 return subprocess.CompletedProcess(cmd, 0, "", "")
             return original(cmd, *args, **kwargs)
-        self.addCleanup(setattr, github, "_run", original)
-        github._run = hollow
+        self.addCleanup(setattr, completion, "_run", original)
+        completion._run = hollow
 
         result = self.complete()
 
@@ -357,15 +363,15 @@ class TheLocalMergeIsDeliveredOrHeld(Delivery):
         self.assertEqual(self.stage_of(), "done", "the work is delivered")
 
     def test_a_branch_git_will_not_delete_is_reported_not_claimed(self):
-        original = github._run
+        original = completion._run
 
         def stubborn(cmd, *args, **kwargs):
             if cmd[:3] == ["git", "branch", "-d"]:
                 return subprocess.CompletedProcess(
                     cmd, 1, "", f"error: cannot delete branch '{BRANCH}'")
             return original(cmd, *args, **kwargs)
-        self.addCleanup(setattr, github, "_run", original)
-        github._run = stubborn
+        self.addCleanup(setattr, completion, "_run", original)
+        completion._run = stubborn
 
         result = self.complete()
 
@@ -418,7 +424,7 @@ class TheLocalMergeIsDeliveredOrHeld(Delivery):
 
         self.assertIn("publication is unfinished", str(caught.exception))
         self.assertEqual(self.stage_of(), "review")
-        self.assertIsNotNone(github.recovery(FILENAME))
+        self.assertIsNotNone(completion.recovery(FILENAME))
 
     def test_forgetting_the_record_changes_no_git(self):
         self.refuse_pushes()
@@ -426,9 +432,9 @@ class TheLocalMergeIsDeliveredOrHeld(Delivery):
         before = (git(self.app, "rev-parse", "main").stdout,
                   git(self.app, "rev-parse", BRANCH).stdout)
 
-        self.assertTrue(github.forget_recovery(FILENAME))
+        self.assertTrue(completion.forget_recovery(FILENAME))
 
-        self.assertIsNone(github.recovery(FILENAME))
+        self.assertIsNone(completion.recovery(FILENAME))
         self.assertEqual(before, (git(self.app, "rev-parse", "main").stdout,
                                   git(self.app, "rev-parse", BRANCH).stdout))
         self.assertTrue(self.worktree.is_dir())
@@ -462,7 +468,7 @@ class ALocalOnlyApplication(Delivery):
         self.assertNotIn("PR marked merged", self.said())
 
     def test_the_sheet_is_told_there_is_nothing_to_publish(self):
-        facts = github.completion_facts(FILENAME, "review")
+        facts = completion.completion_facts(FILENAME, "review")
         self.assertEqual((facts["mode"], facts["publication"], facts["remote"]),
                          ("local", "none", ""))
 
@@ -490,7 +496,7 @@ class TheMergeOnOrigin(Delivery):
         self.assertEqual(self.stage_of(), "review")
         self.assertTrue(self.branch_here())
         self.assertEqual(self.remote_has(BRANCH), self.work)
-        self.assertIsNone(github.recovery(FILENAME), "nothing merged, nothing to recover")
+        self.assertIsNone(completion.recovery(FILENAME), "nothing merged, nothing to recover")
 
     def test_a_lost_reply_is_reconciled_not_refused(self):
         os.environ["GH_MODE"] = "lost-reply"
@@ -511,9 +517,8 @@ class TheMergeOnOrigin(Delivery):
 
         self.assert_held(result, "unconfirmed")
         self.assertIn("GitHub reported the merge", self.said())
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        import fake_origin
-        fake_origin.merge_pr(str(self.origin), BRANCH)   # it lands later
+        from tests.product import fakehost
+        fakehost.merge_pr(str(self.origin), BRANCH)   # it lands later
         asked = self.gh_merges()
 
         result = self.complete()
@@ -577,7 +582,7 @@ class ASeparateTicketRepository(Delivery):
 
     def test_the_sheet_says_ticket_sync_does_not_publish_code(self):
         self.patch(SYNC=True)
-        facts = github.completion_facts(FILENAME, "review")
+        facts = completion.completion_facts(FILENAME, "review")
         self.assertTrue(facts["ticketsSeparate"])
         self.assertTrue(facts["ticketSync"])
         self.assertEqual(facts["mode"], "local",
@@ -590,7 +595,7 @@ class TheSheetIsToldTheTruth(Delivery):
 
     def test_ticket_sync_with_a_local_app_merge_describes_a_local_merge(self):
         self.patch(SYNC=True, APP_MERGE="local")
-        facts = github.completion_facts(FILENAME, "review")
+        facts = completion.completion_facts(FILENAME, "review")
         self.assertEqual((facts["mode"], facts["publication"], facts["target"]),
                          ("local", "push", "main"))
         self.assertTrue(facts["ticketSync"])
@@ -598,14 +603,14 @@ class TheSheetIsToldTheTruth(Delivery):
     def test_origin_merge_is_described_whether_or_not_ticket_sync_is_on(self):
         for sync_on in (False, True):
             self.patch(SYNC=sync_on, APP_MERGE="origin")
-            facts = github.completion_facts(FILENAME, "review")
+            facts = completion.completion_facts(FILENAME, "review")
             self.assertEqual((facts["mode"], facts["publication"]),
                              ("origin", "pr-merge"))
 
     def test_a_configured_base_other_than_main_is_named(self):
         git(self.app, "branch", "trunk", "main")
         self.patch(APP_BASE="trunk")
-        facts = github.completion_facts(FILENAME, "review")
+        facts = completion.completion_facts(FILENAME, "review")
         self.assertEqual((facts["target"], facts["appBase"]), ("trunk", "trunk"))
         self.assertEqual(facts["refusal"], "")
 
@@ -618,7 +623,7 @@ class TheSheetIsToldTheTruth(Delivery):
             encoding="utf-8")
         for mode in ("local", "origin"):
             self.patch(APP_MERGE=mode)
-            facts = github.completion_facts(FILENAME, "review")
+            facts = completion.completion_facts(FILENAME, "review")
             self.assertTrue(facts["stacked"], mode)
             self.assertIn("is stacked on task/62-the-prerequisite", facts["refusal"])
             with self.assertRaises(ValueError):
@@ -628,7 +633,7 @@ class TheSheetIsToldTheTruth(Delivery):
     def test_an_unfinished_completion_reaches_the_sheet(self):
         self.refuse_pushes()
         self.complete()
-        facts = github.completion_facts(FILENAME, "review")
+        facts = completion.completion_facts(FILENAME, "review")
         self.assertEqual(facts["recovery"]["publication"], "failed")
         self.assertEqual(facts["recovery"]["commit"], self.work)
 
@@ -639,7 +644,7 @@ class TheSheetSource(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = (REPO / "manager" / "core" / "board.html").read_text(encoding="utf-8")
+        cls.html = pagesource.page()
         start = cls.html.index("function completeSheet")
         cls.sheet = cls.html[start:cls.html.index("\nfunction phaseSheet")]
 

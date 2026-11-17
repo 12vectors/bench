@@ -730,11 +730,12 @@ class Browser(PageOps):
         os.close(from_w)
         self._buf, self._id, self.session = b"", 0, None
         self.console: list[dict] = []
+        self.csp: list[dict] = []
         try:
             tid = self.call("Target.createTarget", {"url": "about:blank"})["targetId"]
             self.session = self.call("Target.attachToTarget",
                                      {"targetId": tid, "flatten": True})["sessionId"]
-            for domain in ("Page", "Runtime", "Accessibility"):
+            for domain in ("Page", "Runtime", "Accessibility", "Log"):
                 self.call(f"{domain}.enable")
         except SetupError as exc:
             text = log.read_text(errors="replace") if log.exists() else ""
@@ -759,6 +760,11 @@ class Browser(PageOps):
                     return reply.get("result", {})
                 if reply.get("method") == "Runtime.exceptionThrown":
                     self.console.append(reply["params"])
+                if reply.get("method") == "Log.entryAdded":
+                    entry = reply["params"].get("entry", {})
+                    if "Content Security Policy" in entry.get("text", ""):
+                        self.csp.append({"text": entry["text"][:500],
+                                         "url": entry.get("url", "")})
         raise SetupError(f"CDP {method} timed out")
 
     def _read(self):
@@ -943,6 +949,9 @@ class RemoteBrowser(PageOps):
         self.log = log
         self.argv = argv
         self.console: list[dict] = []
+        # Content Security Policy violation reports (task 124), kept apart
+        # from uncaught errors: a case reading one does not read the other
+        self.csp: list[dict] = []
         self._id, self._buf = 0, b""
         log.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -1002,6 +1011,7 @@ class RemoteBrowser(PageOps):
             if reply.get("id") == self._id:
                 break
         self.console.extend(reply.get("console") or [])
+        self.csp.extend(reply.get("csp") or [])
         if not reply.get("ok"):
             if reply.get("kind") == "page":
                 raise CheckFailed(f"page script error: {reply.get('error')}")

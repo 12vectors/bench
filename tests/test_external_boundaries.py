@@ -39,7 +39,10 @@ import agents  # noqa: E402
 import commands as commands_mod  # noqa: E402
 import config  # noqa: E402
 import drive as drive_mod  # noqa: E402
-import github  # noqa: E402
+import completion  # noqa: E402
+import githost  # noqa: E402
+import changes  # noqa: E402
+import gitrepo  # noqa: E402
 import phases  # noqa: E402
 import reports  # noqa: E402
 import state  # noqa: E402
@@ -192,7 +195,7 @@ class Workspace(unittest.TestCase):
         self.addCleanup(config._GIT_ROOTS.clear)
 
         for registry in (state.AGENTS, state.BOARD_EVENTS, state.EXPECTED_MOVES,
-                         github.PR_STATE, phases.SNAPSHOTS, state.COMPLETING):
+                         changes.PR_STATE, phases.SNAPSHOTS, state.COMPLETING):
             registry.clear()
             self.addCleanup(registry.clear)
         state.COMMIT_HOOKS.clear()
@@ -308,7 +311,7 @@ print("NOT READY: the card does not say which store to write to")
         worktree = self.worktrees / STEM
         (worktree / "unsaved.txt").write_text("mine\n", encoding="utf-8")
 
-        github.complete_task(CARD, "review")
+        completion.complete_task(CARD, "review")
 
         self.assertTrue(worktree.is_dir(), "the worktree was kept")
         self.assertEqual((worktree / "unsaved.txt").read_text(encoding="utf-8"),
@@ -324,7 +327,7 @@ print("NOT READY: the card does not say which store to write to")
         agents.start_agent(CARD, "in-progress")
         self.settle()
 
-        github.complete_task(CARD, "review")
+        completion.complete_task(CARD, "review")
 
         self.assertFalse((self.worktrees / STEM).exists())
         self.assertFalse(self.branch_exists(f"task/{STEM}"))
@@ -462,7 +465,7 @@ class MergingTheApplicationIsItsOwnDecision(Workspace):
         agents.start_agent(CARD, "in-progress")
         self.settle()
 
-        github.complete_task(CARD, "review")
+        completion.complete_task(CARD, "review")
 
         subjects = git(self.app, "log", "--format=%s", "main").stdout
         self.assertIn("built it", subjects, "the work is in the app's base")
@@ -482,7 +485,7 @@ class MergingTheApplicationIsItsOwnDecision(Workspace):
         git(self.app, "push", "-q", "origin", f"task/{STEM}")
         before = git(self.app, "rev-parse", "main").stdout.strip()
 
-        github.complete_task(CARD, "review")
+        completion.complete_task(CARD, "review")
 
         self.assertTrue(any(call[:2] == ["pr", "merge"]
                             for call in self.gh_calls()),
@@ -501,9 +504,9 @@ class MergingTheApplicationIsItsOwnDecision(Workspace):
         self.settle()
         taskfiles.append_to_task(CARD, "review", f"\n**PR:** {PR_URL}\n", "pr")
         git(self.app, "push", "-q", "origin", f"task/{STEM}")
-        github.complete_task(CARD, "review")
+        completion.complete_task(CARD, "review")
 
-        point, _ = agents._fresh_branch_point()
+        point, _ = gitrepo.fresh_branch_point()
 
         self.assertEqual(point, "origin/main")
         self.assertEqual(
@@ -518,7 +521,7 @@ class MergingTheApplicationIsItsOwnDecision(Workspace):
         git(self.app, "push", "-q", "origin", f"task/{STEM}")
         git(self.app, "checkout", "-q", "-b", "side")
 
-        github.complete_task(CARD, "review")
+        completion.complete_task(CARD, "review")
 
         self.assertEqual(git(self.app, "branch", "--show-current").stdout.strip(),
                          "side", "nothing switched the checkout under them")
@@ -543,7 +546,7 @@ class GhIsToldWhichRepository(unittest.TestCase):
     def slug_for(self, url: str) -> str | None:
         git(self.repo, "remote", "remove", "origin")
         git(self.repo, "remote", "add", "origin", url)
-        return config.gh_repo()
+        return githost.slug()
 
     def test_the_url_forms_a_remote_can_take(self):
         for url in ("https://github.com/acme/widget.git",
@@ -568,43 +571,59 @@ class GhIsToldWhichRepository(unittest.TestCase):
             "https://github.com/acme/widget.git")
         config.GIT_REMOTE = "fork"
 
-        self.assertEqual(config.gh_repo(), "acme/widget")
+        self.assertEqual(githost.slug(), "acme/widget")
 
     def test_no_remote_at_all_names_nothing(self):
-        self.assertIsNone(config.gh_repo())
+        self.assertIsNone(githost.slug())
+
+    def seen_by_the_provider(self) -> list[list[str]]:
+        seen: list[list[str]] = []
+        self.addCleanup(setattr, githost, "run", githost.run)
+        githost.run = lambda cmd, timeout=60: (
+            seen.append(cmd)
+            or subprocess.CompletedProcess(cmd, 0, "", ""))
+        config.GH_BIN = "gh"
+        return seen
 
     def test_the_slug_reaches_the_command_right_after_the_verb(self):
         git(self.repo, "remote", "add", "origin",
             "https://github.com/acme/widget.git")
-        seen: list[list[str]] = []
-        self.addCleanup(setattr, github, "_run", github._run)
-        github._run = lambda cmd, **kw: (
-            seen.append(cmd)
-            or subprocess.CompletedProcess(cmd, 0, "", ""))
-        config.GH_BIN = "gh"
+        seen = self.seen_by_the_provider()
 
-        github._gh_pr("create", "--head", "task/x", "--base", "main")
+        githost.module().open_change(githost.ctx(), "task/x", "main", "t", "b")
 
         self.assertEqual(seen[0][:5],
                          ["gh", "pr", "create", "--repo", "acme/widget"])
 
     def test_without_a_slug_the_command_is_exactly_what_it_was(self):
-        seen: list[list[str]] = []
-        self.addCleanup(setattr, github, "_run", github._run)
-        github._run = lambda cmd, **kw: (
-            seen.append(cmd)
-            or subprocess.CompletedProcess(cmd, 0, "", ""))
-        config.GH_BIN = "gh"
+        seen = self.seen_by_the_provider()
 
-        github._gh_pr("view", "7", "--json", "state")
+        githost.module().find_change(githost.ctx(), "7")
 
-        self.assertEqual(seen[0], ["gh", "pr", "view", "7", "--json", "state"])
+        self.assertEqual(seen[0], ["gh", "pr", "view", "7", "--json",
+                                   "url,baseRefName"])
 
     def test_the_api_path_carries_the_repository_or_ghs_placeholder(self):
-        self.assertEqual(github._api_repo(), "{owner}/{repo}")
+        provider = githost.module()
+        self.assertEqual(provider._api_repo(githost.ctx()), "{owner}/{repo}")
         git(self.repo, "remote", "add", "origin",
             "git@github.com:acme/widget.git")
-        self.assertEqual(github._api_repo(), "acme/widget")
+        self.assertEqual(provider._api_repo(githost.ctx()), "acme/widget")
+
+    def test_a_remote_on_another_host_is_refused_not_acted_on(self):
+        """Task 116: a url naming a host that is not GitHub is reported
+        and gh is never run against it."""
+        git(self.repo, "remote", "add", "origin",
+            "https://gitlab.example.org/acme/widget.git")
+        seen = self.seen_by_the_provider()
+        self.assertIsNone(githost.slug())
+        self.assertFalse(githost.available())
+        self.assertIn("gitlab.example.org", githost.problem())
+        self.assertIsNone(githost.find_change("task/x"))
+        self.assertIsNone(githost.change_status("7"))
+        with self.assertRaises(githost.Refused):
+            githost.open_change("task/x", "main", "t", "b")
+        self.assertEqual(seen, [], "nothing was run against another host")
 
 
 class BranchNamesComeFromOnePlace(Workspace):
@@ -614,7 +633,7 @@ class BranchNamesComeFromOnePlace(Workspace):
     def test_a_phase_cards_branch_is_its_own(self):
         git(self.app, "branch", "phase/60-ship-it")
         self.assertEqual(config.branch_for("60-ship-it"), "phase/60-ship-it")
-        self.assertEqual(github.branch_of("60-ship-it.md"), "phase/60-ship-it")
+        self.assertEqual(changes.branch_of("60-ship-it.md"), "phase/60-ship-it")
 
     def test_an_ordinary_card_is_unchanged(self):
         self.assertEqual(config.branch_for(STEM), f"task/{STEM}")

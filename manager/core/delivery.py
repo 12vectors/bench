@@ -19,16 +19,16 @@ nothing here is a second reading of any of them:
 | --- | --- |
 | stage, assignee, PR line, phase membership | `taskfiles` (the collected card) |
 | an agent running; the last run failed | `state.AGENTS`, the failure `agents` records |
-| completion in flight; merged but not published | `state.COMPLETING`, `github.recovery()` |
+| completion in flight; merged but not published | `state.COMPLETING`, `completion.recovery()` |
 | recorded plan; stacked target | `plans.recorded()`, `plans.declared()` |
 | which commit the merge would take, and its state | `gates.candidate()`, `gates.head_for()` |
 | requirements at that commit | `gates.evaluate()` |
-| the PR as last observed | `github.pr_snapshot()` (memory, or the persisted snapshot) |
+| the PR as last observed | `changes.pr_snapshot()` (memory, or the persisted snapshot) |
 | review findings | `acceptance.summary()` |
 | a phase run | the phase runner's last pass, handed in by the caller |
 
 **Mutations never read this result.** `agents.start_agent`,
-`verify.request`, `gates.override` and `github._complete` keep their own
+`verify.request`, `gates.override` and `completion._complete` keep their own
 checks and run them again at the moment they act. A cached reading here
 is presentation, never authorisation.
 
@@ -64,12 +64,18 @@ import threading
 import time
 
 import acceptance
+import completion as completion_mod   # `completion` names a reading here
 import config
+import evidence
+import gatepolicy
 import gates
-import github
+import githost
+import changes
+import gitrepo
 import plans
 import profiles
 import required
+import stacks
 import state
 import taskfiles
 import verify
@@ -97,6 +103,7 @@ WORDS = {
     "ready-to-start": ("Ready to start", "neutral"),
     "in-progress": ("In progress", "neutral"),
     "waiting-for-phase": ("Waiting for phase", "neutral"),
+    "waiting-for-parent": ("Waiting for parent", "neutral"),
     "merged-elsewhere": ("Merged on GitHub", "neutral"),
     "cannot-assess": ("Can't assess", "alarm"),
     "rules-invalid": ("Merge rules invalid", "alarm"),
@@ -136,6 +143,11 @@ ROWS = (
     (14, "review, a required check is needed", ("checks-needed",)),
     (15, "review, the required review is not met", ("review-needed",)),
     (16, "review, sign-off pending", ("signoff-needed",)),
+    # read before 18 and 19: a stacked card whose own requirements are met
+    # (or not configured) still cannot land before the card it is stacked
+    # on has (task 117)
+    (21, "review, stacked on a card whose work has not landed",
+     ("waiting-for-parent",)),
     (18, "review, every requirement met or overridden",
      ("ready-to-merge", "ready-overridden")),
     (19, "review, an ungated board", ("review",)),
@@ -216,7 +228,7 @@ def _remote_tips() -> dict[str, str]:
     if not remote:
         return {}
     found: dict[str, str] = {}
-    result = config._app_git("for-each-ref",
+    result = gitrepo.app_git("for-each-ref",
                              "--format=%(refname) %(objectname)",
                              f"refs/remotes/{remote}/")
     if result.returncode != 0:
@@ -238,18 +250,18 @@ def _context(phase_state: dict | None = None) -> dict:
     with state.LOCK:
         agents = [dict(record) for record in state.AGENTS.values()]
         completing = {k: dict(v) for k, v in state.COMPLETING.items()}
-    policy = profiles.gate_policy()
+    policy = gatepolicy.gate_policy()
     return {
-        "tips": gates._tips(),
+        "tips": gates.branch_tips(),
         "remoteTips": _remote_tips(),
         "policy": policy,
-        "records": verify.all_evidence(),
+        "records": evidence.all_evidence(),
         "agents": agents,
         "completing": completing,
         "phases": {k: dict(v) for k, v in (phase_state or {}).items()},
         "me": taskfiles.actor_name() if config.COMMIT_MOVES else "",
         "remote": config.app_remote(),
-        "gh": config.gh_available(),
+        "gh": githost.available(),
         "onOrigin": config.app_merge_on_origin(),
         "now": time.time(),
         # which checks a person's work reading may ask for — the reading
@@ -298,7 +310,7 @@ def _target(task: dict, plan: dict | None) -> str:
 def _completion(task: dict, plan: dict | None, target: str,
                 pr: dict | None, ctx: dict) -> dict:
     """What merge & clean up would do, from the same facts
-    `github.completion_facts` reads — minus anything that would reach a
+    `completion.completion_facts` reads — minus anything that would reach a
     remote. A target this checkout cannot see locally is said to be
     unconfirmed rather than looked up."""
     app_base = (plan or {}).get("appBase") or config.APP_BASE
@@ -314,8 +326,8 @@ def _completion(task: dict, plan: dict | None, target: str,
         refusal = ("this board merges on origin and the card has no PR — "
                    "open one first (↑ open PR)")
     elif ctx["onOrigin"] and not ctx["gh"]:
-        refusal = ("gh is not installed, and this board merges the "
-                   "application on origin (BOARD_APP_MERGE)")
+        refusal = (f"{changes.host_unavailable()}, and this board merges the "
+                   f"application on origin (BOARD_APP_MERGE)")
     return {"target": target, "appBase": app_base, "stacked": stacked,
             "targetSeen": seen, "refusal": refusal,
             "mode": "origin" if ctx["onOrigin"] else "local",
@@ -400,7 +412,7 @@ def _reviews(task: dict, candidate: dict, verdict_now: dict | None) -> dict:
 def _optional(policy_doc: dict, required: set[str], mine: list[dict]) -> int:
     """Checks this card may ask for, or has records of, that no gate
     requires — counted apart, never in a headline (design §7)."""
-    offered = set(verify._offered(policy_doc)) if policy_doc else set()
+    offered = set(verify.offered_checks(policy_doc)) if policy_doc else set()
     ran = {r.get("check") for r in mine if r.get("check")}
     return len((offered | ran) - required)
 
@@ -418,7 +430,7 @@ def _merged_covers(pr: dict, candidate: dict) -> bool:
     commit, head = candidate.get("commit"), (pr or {}).get("head")
     if not head:
         return False
-    return commit == head or gates._contained(commit, head)
+    return commit == head or gates.contained(commit, head)
 
 
 def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
@@ -427,8 +439,8 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
     ctx = ctx or _context()
     filename, stage = task["file"], task["stage"]
     plan = plans.recorded(filename)
-    pr = github.pr_snapshot(filename)
-    recovery = github.recovery_public(filename)
+    pr = changes.pr_snapshot(filename)
+    recovery = completion_mod.recovery_public(filename)
     scope = gates.scope_for(task)
     member = bool(task.get("phase")) and not task.get("isPhase")
     if member:
@@ -437,7 +449,7 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
     candidate = gates.candidate(
         filename, scope, task=task, tips=ctx["tips"], records=mine, pr=pr,
         completion=recovery, remote_tips=ctx["remoteTips"], plan=plan,
-        delivery_record=github.delivered_record(filename))
+        delivery_record=completion_mod.delivered_record(filename))
     alive, failure = _runs(task, ctx)
     target = _target(task, plan)
     completion = _completion(task, plan, target, pr, ctx)
@@ -498,7 +510,7 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
         open_findings=open_findings, on_board=on_board,
         others_hold=others_hold, holder=holder, member=member,
         merged_elsewhere=merged_elsewhere, gated=gated,
-        verdict_now=verdict_now)
+        verdict_now=verdict_now, waiting=stacks.waiting(_stack(task, ctx)))
 
     if pr and pr.get("merged") and not merged_elsewhere \
             and candidate["state"] == "present" and not member:
@@ -563,7 +575,7 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
 def _decide(*, task, ctx, candidate, decision, requirements, alive,
             failure, recovery, pr, completion, open_findings, on_board,
             others_hold, holder, member, merged_elsewhere, gated,
-            verdict_now=None):
+            verdict_now=None, waiting=None):
     """The precedence (design §3.3), first row that applies wins. Returns
     (word, sentence, primary, others)."""
     stage = task["stage"]
@@ -820,6 +832,33 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
                 f"{row['plain'][1:]}.",
                 action("confirm-criteria", label), [])
 
+    # 21 (read before 18 and 19). Stacked on a card whose work has not
+    # landed: whatever this card's own requirements say, it lands after
+    # its parent does. The edge's own words come with it when it is not
+    # simply sitting on its parent.
+    if waiting and (decision is None or decision.get("decision") in (
+            "allowed", "overridden", "ungated")):
+        parent = waiting["parent"]
+        who = f"#{parent['number']}" if parent.get("number") else parent["file"]
+        lead = (f"Requirements met for {here}. "
+                if decision and decision.get("decision") != "ungated"
+                else "No merge requirements are configured. That is not a "
+                     "pass. ")
+        edge = waiting.get("edge") or {}
+        said = (f" {edge.get('sentence')}"
+                if edge.get("state") not in (None, "on-parent") else "")
+        sentence = (f"{lead}Waiting for {who} to land: this card's change "
+                    f"request targets {waiting['target']}, and it lands in "
+                    f"{waiting['landing']} after its parent does.{said}")
+        if not has_pr and candidate["state"] == "present" and ctx["remote"]:
+            return ("waiting-for-parent", sentence,
+                    action("open-pr", "↑ open PR"), [])
+        rest = [review_pr] if review_pr else []
+        if pr_url:
+            return ("waiting-for-parent", sentence,
+                    action("open-pr-url", "Open the PR", url=pr_url), rest)
+        return ("waiting-for-parent", sentence, None, rest)
+
     # 18. met or overridden
     if decision and decision.get("decision") in ("allowed", "overridden"):
         overridden = decision["decision"] == "overridden"
@@ -1001,11 +1040,11 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
     is a different key, not a stale answer."""
     snaps = []
     for task in tasks:
-        snap = github.pr_snapshot(task["file"]) or {}
+        snap = changes.pr_snapshot(task["file"]) or {}
         snaps.append((task["file"], snap.get("head"), snap.get("merged"),
                       snap.get("prState"), snap.get("observed")))
     parts = {
-        "epochs": [_EPOCH, gates._EPOCH, verify._EPOCH],
+        "epochs": [_EPOCH, gates.epoch(), evidence.epoch()],
         "policy": ctx["policy"].get("revision"),
         "tips": sorted(ctx["tips"].items()),
         "remoteTips": sorted(ctx["remoteTips"].items()),
@@ -1019,16 +1058,19 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
         "batches": sorted((k, (v or {}).get("done"), (v or {}).get("total"))
                           for k, v in (ctx.get("batches") or {}).items()),
         "workChecks": sorted(ctx.get("workChecks") or ()),
-        "recoveries": github.recoveries(),
+        "recoveries": completion_mod.recoveries(),
         "phases": sorted((k, v.get("running"), v.get("halted"))
                          for k, v in ctx["phases"].items()),
         "snapshots": snaps,
+        # each stacked card's edge reads its parent's tip, records and
+        # snapshot, so the stack reading is part of every card's identity
+        "stacks": ctx.get("stacks") or {},
         # The recorded plan (a ⌖ replan rewrites it) and the delivered
         # record (a finished merge & clean up writes it) are both read by
         # every card's reading, so both are part of its identity.
         "plans": [(t["file"], _file_stamp(plans.plan_path(t["file"])))
                   for t in tasks],
-        "delivered": [(t["file"], github.delivered_record(t["file"]))
+        "delivered": [(t["file"], completion_mod.delivered_record(t["file"]))
                       for t in tasks],
         "records": len(ctx["records"]),
         "worktrees": sorted(p.name for p in config.WORKTREES.iterdir())
@@ -1055,14 +1097,21 @@ def compact(found: dict) -> dict:
     return out
 
 
-def board(collected: dict, phase_state: dict | None = None) -> dict:
+def board(collected: dict, phase_state: dict | None = None,
+          stack_state: dict | None = None) -> dict:
     """The compact reading for every card, for `/api/state`. Memoised by a
     fingerprint of every input and a time bucket — the cache is never
-    authority, and a mutation never reads it."""
+    authority, and a mutation never reads it. `stack_state` is the stack
+    reading `/api/state` already took (`stacks.board`); read here when the
+    caller has none."""
     global _BOARD
     tasks = [task for stage in collected.get("stages", [])
              for task in stage["tasks"]]
     ctx = _context(phase_state)
+    # an edge is about two cards, so with no reading handed in it is taken
+    # over the whole board — a caller may pass a subset of its cards
+    ctx["stacks"] = (stack_state if stack_state is not None
+                     else stacks.board(taskfiles.collect()))
     key = (_fingerprint(collected, ctx, tasks), int(time.time() / _TTL))
     with _LOCK:
         cached = _BOARD
@@ -1093,6 +1142,14 @@ def for_card(filename: str, stage: str | None = None,
     """The full reading for one card, always recomputed."""
     task = _find(filename, stage)
     return compute(task, _context(phase_state), full=True)
+
+
+def _stack(task: dict, ctx: dict) -> dict | None:
+    """This card's stack reading, taken once per pass for the whole board
+    (`stacks.board`) and kept in `ctx`."""
+    if ctx.get("stacks") is None:
+        ctx["stacks"] = stacks.board(taskfiles.collect())
+    return ctx["stacks"].get(task["file"])
 
 
 def _find(filename: str, stage: str | None) -> dict:
@@ -1199,11 +1256,11 @@ def seams() -> dict:
     tests, in the one place a reader looks for it."""
     return {
         "reads": ["taskfiles", "state.AGENTS", "state.COMPLETING",
-                  "github.recovery_public", "github.pr_snapshot",
-                  "github.delivered_record", "plans.recorded",
+                  "completion.recovery_public", "changes.pr_snapshot",
+                  "completion.delivered_record", "plans.recorded",
                   "plans.declared", "gates.candidate", "gates.evaluate",
                   "acceptance.summary", "phases.public_state (passed in)",
-                  "verify.all_evidence"],
+                  "evidence.all_evidence"],
         "never": ["fetches on a read", "calls GitHub", "runs a check",
                   "launches an agent", "writes a record on a read",
                   "authorises a mutation"],

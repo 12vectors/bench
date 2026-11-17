@@ -60,6 +60,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -67,13 +68,17 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 import agents  # noqa: E402
 import config  # noqa: E402
 import doctor  # noqa: E402
+import gatepolicy  # noqa: E402
 import gates  # noqa: E402
-import github  # noqa: E402
+import githost  # noqa: E402
+import completion  # noqa: E402
+import changes  # noqa: E402
 import httpd  # noqa: E402
 import phases  # noqa: E402
 import profiles  # noqa: E402
 import state  # noqa: E402
 import taskfiles  # noqa: E402
+import evidence  # noqa: E402
 import verify  # noqa: E402
 
 from tests.test_phase_runs import (ONE, PHASE, PHASE_BRANCH, TWO,  # noqa: E402
@@ -121,6 +126,34 @@ def wait_for(pred, timeout: float = 30.0) -> bool:
             return True
         time.sleep(0.02)
     return False
+
+
+def running_and_recorded() -> bool:
+    """A verification is truly under way: its child process exists and its
+    `running` record is readable on disk. `verify.RUNNING` alone is not
+    enough — a run is reserved there before its first record is written,
+    and a gate read in that gap finds no evidence at all."""
+    for ident, record in list(verify.RUNNING.items()):
+        if record.get("proc") is None:
+            continue
+        stored = evidence.read(ident)
+        if stored and stored.get("outcome") == "running":
+            return True
+    return False
+
+
+def stop_and_join(thread, timeout: float = 20.0) -> None:
+    """Cancel every verification this board runs until the request thread
+    has ended, so a run reserved after one cancel is not left behind for
+    the fixture's teardown."""
+    deadline = time.time() + timeout
+    while thread.is_alive() and time.time() < deadline:
+        for ident in list(verify.RUNNING):
+            try:
+                verify.cancel(ident)
+            except ValueError:
+                pass
+        thread.join(timeout=0.2)
 
 
 class GateCase(unittest.TestCase):
@@ -177,7 +210,7 @@ class GateCase(unittest.TestCase):
 
         for registry in (state.AGENTS, state.BOARD_EVENTS,
                          state.EXPECTED_MOVES, verify.RUNNING, verify._KEYS,
-                         github.PR_STATE, gates.REVIEW_STATE,
+                         changes.PR_STATE, gates.REVIEW_STATE,
                          phases.SNAPSHOTS):
             registry.clear()
             self.addCleanup(registry.clear)
@@ -284,14 +317,16 @@ class GateCase(unittest.TestCase):
         each with the commit it was given for, which is the field that
         makes a formal approval bindable at all."""
         return gates.observe_reviews(
-            filename, reviews=entries, author=author, head=head)
+            filename,
+            reviews=githost.load("github").normalize_reviews(entries),
+            author=author, head=head)
 
 
 # ── the policy is read once, where every other policy value is ─────────
 
 
 class ThePolicyIsOneReader(GateCase):
-    """`profiles.gate_policy` is the only thing that parses a gate block,
+    """`gatepolicy.gate_policy` is the only thing that parses a gate block,
     and a gate that cannot be satisfied is refused there rather than
     blocking every merge later."""
 
@@ -315,7 +350,7 @@ class ThePolicyIsOneReader(GateCase):
 
     def test_a_gate_requiring_an_undeclared_check_is_refused_by_code(self):
         self.declares({"v": 1, "gates": {"acceptance": {"checks": ["unit"]}}})
-        policy = profiles.gate_policy()
+        policy = gatepolicy.gate_policy()
         self.assertEqual([d["code"] for d in policy["diagnostics"]],
                          ["gate-check-undeclared"])
         self.assertIn("declares nowhere", policy["blockers"][0])
@@ -323,14 +358,14 @@ class ThePolicyIsOneReader(GateCase):
 
     def test_a_scope_that_is_not_a_scope_is_refused_by_name(self):
         self.declares({"v": 1, "gates": {"akceptance": {}}})
-        policy = profiles.gate_policy()
+        policy = gatepolicy.gate_policy()
         self.assertEqual([d["code"] for d in policy["diagnostics"]],
                          ["gate-scope-unknown"])
         self.assertIn("'akceptance'", policy["blockers"][0])
 
     def test_a_review_policy_bench_has_no_word_for_is_refused(self):
         self.declares({"v": 1, "gates": {"acceptance": {"review": "lgtm"}}})
-        policy = profiles.gate_policy()
+        policy = gatepolicy.gate_policy()
         self.assertEqual([d["code"] for d in policy["diagnostics"]],
                          ["gate-review-unknown"])
         self.assertIn("'lgtm'", policy["blockers"][0])
@@ -344,9 +379,9 @@ class ThePolicyIsOneReader(GateCase):
                          "an operator mid-edit is not handed an open gate")
 
     def test_the_four_review_policies_are_named_and_distinct(self):
-        self.assertEqual(set(profiles.REVIEW_POLICIES),
+        self.assertEqual(set(gatepolicy.REVIEW_POLICIES),
                          {"none", "bench", "github", "separate-reviewer"})
-        for word, why in profiles.REVIEW_POLICIES.items():
+        for word, why in gatepolicy.REVIEW_POLICIES.items():
             with self.subTest(word=word):
                 self.assertTrue(why.strip(), "each says what it means")
 
@@ -365,7 +400,7 @@ class ThePolicyIsOneReader(GateCase):
 
     def test_the_gate_has_no_second_parser(self):
         seams = gates.seams()
-        self.assertIn("profiles.gate_policy()", seams["evaluates"])
+        self.assertIn("gatepolicy.gate_policy()", seams["evaluates"])
         self.assertIn("parses no policy document itself", seams["evaluates"])
         self.assertIn("reads COMMENTED as an approval", seams["never"])
 
@@ -492,7 +527,7 @@ class EvidenceIsBoundToTheCommit(GateCase):
     def test_a_check_declared_against_the_application_is_refused(self):
         self.gated(root="app")
         self.commit_in(self.wt)
-        policy = profiles.gate_policy()
+        policy = gatepolicy.gate_policy()
         # Two codes, and both are true: the check is refused where checks
         # are read, and the gate then requires a name nothing declares.
         self.assertEqual([d["code"] for d in policy["diagnostics"]],
@@ -867,7 +902,7 @@ class AnOverrideIsNeverAPass(GateCase):
         self.assertEqual(found["overriddenGates"], ["unit"])
         # and it forged nothing: the evidence is exactly as absent as it
         # was before anybody clicked
-        self.assertEqual(verify.for_task(CARD), [])
+        self.assertEqual(evidence.for_task(CARD), [])
         self.assertEqual(found["requirements"][0]["reason"], "not-run")
 
     def test_a_second_click_does_not_record_a_second_override(self):
@@ -951,8 +986,10 @@ class AnOverrideIsNeverAPass(GateCase):
         self.assertEqual(self.decide()["decision"], "overridden")
         asking = threading.Thread(target=self.ask, daemon=True)
         asking.start()
-        self.assertTrue(wait_for(lambda: bool(verify.RUNNING)))
         try:
+            self.assertTrue(wait_for(running_and_recorded),
+                            "the check's child process and its persisted "
+                            "running record never both appeared")
             found = self.decide()
             self.assertFalse(gates.passable(found),
                              "an override does not widen over a check that "
@@ -962,9 +999,51 @@ class AnOverrideIsNeverAPass(GateCase):
                             "the running check is reported as what it is")
             self.assertIsNone(found["overrides"]["applied"])
         finally:
-            for ident in list(verify.RUNNING):
-                verify.cancel(ident)
-            asking.join(timeout=20)
+            stop_and_join(asking)
+        self.assertFalse(asking.is_alive(), "the request thread ended")
+
+    def test_a_slow_first_record_does_not_race_the_running_check(self):
+        """Regression for a CI failure of the test above: a run is reserved
+        in `verify.RUNNING` before its first `running` record is written,
+        so a reading taken in between found no evidence at all and read the
+        override as passable. Hold that first write back on purpose and
+        show the wait does not return until the record is readable — and
+        that the gate then holds the merge."""
+        import threading
+        self.gated(check="unit", body=HANGS, overrides={"allow": True},
+                   review="bench")
+        self.manifest()
+        gates.override(CARD, "acceptance", actor="istos",
+                       reason="no reviewer until Monday, and the suite hangs")
+        held, release = threading.Event(), threading.Event()
+        real_store = evidence.store
+
+        def slow_first_running_store(record):
+            if record.get("outcome") == "running" and not held.is_set():
+                held.set()
+                release.wait(timeout=30)
+            return real_store(record)
+
+        evidence.store = slow_first_running_store
+        asking = threading.Thread(target=self.ask, daemon=True)
+        asking.start()
+        try:
+            self.assertTrue(held.wait(timeout=30),
+                            "the first running record was never written")
+            self.assertTrue(verify.RUNNING, "the run is reserved already")
+            self.assertFalse(running_and_recorded(),
+                             "nothing is readable while the write is held")
+            release.set()
+            self.assertTrue(wait_for(running_and_recorded))
+            found = self.decide()
+            self.assertFalse(gates.passable(found))
+            self.assertTrue(found["pending"])
+            self.assertIsNone(found["overrides"]["applied"])
+        finally:
+            release.set()
+            evidence.store = real_store
+            stop_and_join(asking)
+        self.assertFalse(asking.is_alive(), "the request thread ended")
 
     def test_an_override_needs_a_reason_and_a_person(self):
         self.gated(overrides={"allow": True})
@@ -1007,7 +1086,7 @@ class AnOverrideIsNeverAPass(GateCase):
         self.declares({"v": 1, "gates": {"acceptance": {"checks": ["nope"]},
                                          "overrides": {"allow": True}}})
         self.assertFalse(
-            profiles.gate_policy()["overrides"]["allowed"],
+            gatepolicy.gate_policy()["overrides"]["allowed"],
             "a document with a refusal in it offers no way around itself")
         with self.assertRaises(ValueError):
             gates.override(CARD, "acceptance", actor="istos",
@@ -1033,7 +1112,7 @@ class TheBackendIsTheAuthority(GateCase):
     def test_merge_and_clean_up_refuses_an_unmet_gate(self):
         self.gated()
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         said = str(caught.exception)
         self.assertIn("blocked by this board's acceptance gate", said)
         self.assertIn("nothing has asked bench for 'unit'", said)
@@ -1042,7 +1121,7 @@ class TheBackendIsTheAuthority(GateCase):
     def test_a_refusal_leaves_the_card_the_branch_and_the_worktree(self):
         self.gated()
         with self.assertRaises(ValueError):
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertTrue((self.tasks / "review" / CARD).is_file())
         self.assertEqual(
             git(self.repo, "rev-parse", f"task/{STEM}").stdout.strip(),
@@ -1057,7 +1136,7 @@ class TheBackendIsTheAuthority(GateCase):
     def test_the_refusal_is_not_a_claim_left_on_the_card(self):
         self.gated()
         with self.assertRaises(ValueError):
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertEqual(state.completing_public(), {},
                          "the completing claim is given back on every exit")
 
@@ -1068,7 +1147,7 @@ class TheBackendIsTheAuthority(GateCase):
                          "passed")
         self.assertEqual(gates.evaluate(CARD, "acceptance")["decision"],
                          "allowed")
-        result = github.complete_task(CARD, "review")
+        result = completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
         self.assertEqual(
             0, git(self.repo, "merge-base", "--is-ancestor", self.head,
@@ -1082,11 +1161,11 @@ class TheBackendIsTheAuthority(GateCase):
         shown = payload["scopes"][0]
         self.assertEqual(shown["decision"], "blocked")
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertIn(shown["unmet"][0]["why"], str(caught.exception))
 
     def test_an_ungated_board_merges_exactly_as_it_always_did(self):
-        result = github.complete_task(CARD, "review")
+        result = completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
 
     def test_a_push_between_the_two_readings_is_a_refusal(self):
@@ -1105,7 +1184,7 @@ class TheBackendIsTheAuthority(GateCase):
         self.assertEqual(gates.evaluate(CARD, "acceptance")["decision"],
                          "allowed")
         landed: list[str] = []
-        original = github._assert_lands_in_the_base
+        original = completion._assert_lands_in_the_base
 
         def push_lands(filename, target):
             original(filename, target)
@@ -1114,11 +1193,11 @@ class TheBackendIsTheAuthority(GateCase):
                 verify.forget_cached()
                 gates.forget_cached()
 
-        self.addCleanup(setattr, github, "_assert_lands_in_the_base", original)
-        github._assert_lands_in_the_base = push_lands
+        self.addCleanup(setattr, changes, "_assert_lands_in_the_base", original)
+        completion._assert_lands_in_the_base = push_lands
 
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(CARD, "review")
+            completion.complete_task(CARD, "review")
         self.assertIn("the merge is blocked", str(caught.exception))
         self.assertNotEqual(
             0, git(self.repo, "merge-base", "--is-ancestor", landed[0],
@@ -1135,7 +1214,7 @@ class TheBackendIsTheAuthority(GateCase):
         self.assertEqual(gates.evaluate(CARD, "member")["decision"],
                          "blocked")
         # and acceptance is what merge & clean up asks for an ordinary card
-        result = github.complete_task(CARD, "review")
+        result = completion.complete_task(CARD, "review")
         self.assertTrue(result["merged"])
 
 
@@ -1290,7 +1369,7 @@ class AGatedPhase(PhaseCase):
         agent exit, and no CI result at all."""
         self.gate()
         self.start()
-        self.assertEqual(github.PR_STATE.get(ONE, {}).get("ci"), None)
+        self.assertEqual(changes.PR_STATE.get(ONE, {}).get("ci"), None)
         self.advance()
         self.assertIn("halted", " ".join(self.log()))
 
@@ -1353,7 +1432,7 @@ class AGatedPhase(PhaseCase):
         self.advance()                       # merge 32, open the phase PR
         self.assertEqual(self.stage_of(PHASE), "review")
         for member in (ONE, TWO):
-            rows = [r for r in verify.for_task(member)
+            rows = [r for r in evidence.for_task(member)
                     if r["outcome"] == "passed"]
             self.assertTrue(rows, f"{member} really did pass its check")
         found = gates.evaluate(PHASE, "integration")
@@ -1361,7 +1440,7 @@ class AGatedPhase(PhaseCase):
         self.assertEqual(found["unmet"][0]["reason"], "not-run")
         self.assertEqual(found["head"]["commit"], self.tip(PHASE_BRANCH))
         with self.assertRaises(ValueError) as caught:
-            github.complete_task(PHASE, "review")
+            completion.complete_task(PHASE, "review")
         self.assertIn("integration gate", str(caught.exception))
         self.assertEqual(self.stage_of(PHASE), "review",
                          "a refused acceptance moves nothing")
@@ -1380,7 +1459,7 @@ class AGatedPhase(PhaseCase):
                          "the phase's check ran in the integration head")
         self.assertEqual(gates.evaluate(PHASE, "integration")["decision"],
                          "allowed")
-        result = github.complete_task(PHASE, "review")
+        result = completion.complete_task(PHASE, "review")
         self.assertTrue(result["merged"])
         self.assertEqual(sorted(result["swept"]), sorted([ONE, TWO]))
 
@@ -1436,15 +1515,15 @@ class ThePageReadsTheDecision(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = (REPO / "manager" / "core" / "board.html").read_text(
-            encoding="utf-8")
+        cls.html = pagesource.page()
         # The gate's own code, so an invariant about it is asserted
         # against it rather than against the whole page — where a
         # perfectly good line of the verification panel would satisfy or
         # break it by accident.
-        start = cls.html.index("may this merge happen?")
-        end = cls.html.index("where a PR review ran", start)
-        cls.region = cls.html[start:end]
+        # Since task 124 that code is a module of its own.
+        module = next(p.read_text("utf-8") for p in pagesource.scripts()
+                      if "may this merge happen?" in p.read_text("utf-8"))
+        cls.region = module[module.index("may this merge happen?"):]
 
     def test_the_page_asks_the_server_for_the_decision(self):
         self.assertIn("'/api/gates?file='", self.html)

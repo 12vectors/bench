@@ -44,9 +44,10 @@ import time
 from pathlib import Path
 
 import config
+import evidence
 import progress
+import staleness
 import taskfiles
-import verify
 
 VERSION = 1
 
@@ -138,7 +139,7 @@ def _legacy_ticks(brief: str) -> dict:
     checklist, the only identity an untracked criterion has."""
     out, index, fenced = {}, 0, False
     for line in brief.splitlines():
-        if taskfiles._is_fence(line):
+        if taskfiles.is_fence(line):
             fenced = not fenced
             continue
         if fenced:
@@ -151,10 +152,10 @@ def _legacy_ticks(brief: str) -> dict:
 
 
 def _evidence_now(evidence_id: str, filename: str) -> dict:
-    record = verify.read(evidence_id) if verify.is_evidence_id(evidence_id) else None
+    record = evidence.read(evidence_id) if evidence.is_evidence_id(evidence_id) else None
     if record is None or record.get("task") != filename:
         return {"id": evidence_id, "found": False, "outcome": "missing"}
-    now = verify.outcome_now(record)
+    now = staleness.outcome_now(record)
     source = record.get("source") or {}
     return {"id": evidence_id, "found": True, "check": record.get("check"),
             "scope": record.get("scope"), "outcome": now.get("outcome"),
@@ -589,7 +590,7 @@ def track(filename: str, stage: str, *, brief_sha: str, request=None) -> dict:
         lines = parts["brief"].splitlines(keepends=True)
         fenced, items = False, []
         for index, line in enumerate(lines):
-            if taskfiles._is_fence(line):
+            if taskfiles.is_fence(line):
                 fenced = not fenced
                 continue
             if fenced:

@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -282,7 +283,7 @@ class CardFace(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = (REPO / "manager" / "core" / "board.html").read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_the_assignee_replaces_nobody_yet(self):
         self.assertIn("if (task.assignee) { who = task.assignee;", self.html)

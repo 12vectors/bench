@@ -24,16 +24,17 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
+import gatepolicy  # noqa: E402
 import gates  # noqa: E402
 import profiles  # noqa: E402
 
 from tests.test_integration_gates import CARD, PASSES, GateCase  # noqa: E402
 
-BOARD = REPO / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
 
 PARTS = (
@@ -70,7 +71,7 @@ const wireAction = () => {};
 
 
 def harness() -> str:
-    page = BOARD.read_text(encoding="utf-8")
+    page = pagesource.page()
     parts = []
     for pattern in PARTS:
         found = re.search(pattern, page, re.S)
@@ -101,11 +102,11 @@ class InvalidIsNotUngated(GateCase):
 
     def payload(self) -> dict:
         """What /api/gates sends the sheet, built the way httpd builds it."""
-        policy = profiles.gate_policy()
+        policy = gatepolicy.gate_policy()
         return {"task": CARD, "stage": "in-progress",
                 "scopes": [gates.public(gates.evaluate(CARD, "acceptance",
                                                        policy=policy))],
-                "policy": profiles.gate_policy_public(policy),
+                "policy": gatepolicy.gate_policy_public(policy),
                 "verdicts": [], "github": None, "overrides": [], "actor": "t"}
 
     def sheet(self, data: dict) -> str:

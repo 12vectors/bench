@@ -27,6 +27,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -34,7 +35,6 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 import config  # noqa: E402
 import taskfiles  # noqa: E402
 
-BOARD = REPO / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
 
 # The rules the Board view draws by, lifted from the page as written.
@@ -54,7 +54,7 @@ PARTS = (
 
 
 def harness() -> str:
-    html = BOARD.read_text(encoding="utf-8")
+    html = pagesource.page()
     out = []
     for pattern in PARTS:
         match = re.search(pattern, html, re.S)
@@ -442,7 +442,7 @@ class Wiring(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def body(self, pattern: str) -> str:
         match = re.search(pattern, self.html, re.S)
@@ -496,7 +496,7 @@ class Wiring(unittest.TestCase):
         self.assertIn("⟶", block)
 
     def test_the_phase_card_wears_a_running_phase_and_a_halted_one(self):
-        card_fn = self.body(r"function cardFor\(task\) \{.*?\n\}")
+        card_fn = self.body(r"function cardSpec\(task\) \{.*?\nfunction mountCard\(spec\) \{.*?\n\}")
         self.assertIn("const flight = task.isPhase ? phaseFlight(task) : null;", card_fn)
         self.assertIn("flight && !flight.bad", card_fn,
                       "a phase in flight breathes like any other live work")
@@ -514,13 +514,4 @@ class Wiring(unittest.TestCase):
 @unittest.skipUnless(NODE, "node is needed to parse the page")
 class ThePageStillParses(unittest.TestCase):
     def test_the_inline_script_parses(self):
-        html = BOARD.read_text(encoding="utf-8")
-        scripts = re.findall(r"<script[^>]*>(.*?)</script>", html, re.S)
-        self.assertTrue(scripts, "board.html has no inline script")
-        with tempfile.TemporaryDirectory() as tmp:
-            for index, script in enumerate(scripts):
-                source = Path(tmp) / f"page-{index}.js"
-                source.write_text(script, encoding="utf-8")
-                out = subprocess.run([NODE, "--check", str(source)],
-                                     capture_output=True, text=True)
-                self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(pagesource.parse_problems(NODE), [])

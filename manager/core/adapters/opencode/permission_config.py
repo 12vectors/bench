@@ -45,16 +45,62 @@ import json
 import os
 import sys
 
-# Universal git/gh prefixes per intent; project commands are appended.
-MODE_PREFIXES = {
+# Universal git prefixes per intent; the hosting provider's verbs follow
+# them, then the project's commands.
+GIT_PREFIXES = {
     "work": ["git add", "git commit", "git status", "git diff"],
     "act-pr": ["git add", "git commit", "git status", "git diff",
-               "git fetch", "git merge",
-               "git push", "gh pr view", "gh pr diff", "gh api"],
-    "review": ["git status", "git diff", "git log", "git show",
-               "gh pr view", "gh pr diff", "gh pr review", "gh pr comment"],
+               "git fetch", "git merge", "git push"],
+    "review": ["git status", "git diff", "git log", "git show"],
     "refine": [],
 }
+# The hosting provider's verbs arrive in AGENT_HOST (task 116) as neutral
+# prefixes — `{"provider", "allow": [...], "publish": [...]}` — and are
+# rendered here in opencode's glob syntax. A board too old to send it gets
+# GitHub's, which is what this adapter always carried; a value that does
+# not parse grants no host verb (a narrowing) and still denies GitHub's
+# publication verbs where `publish` is denied.
+DEFAULT_HOST_ALLOW = {
+    "work": [],
+    "act-pr": ["gh pr view", "gh pr diff", "gh api"],
+    "review": ["gh pr view", "gh pr diff", "gh pr review", "gh pr comment"],
+    "refine": [],
+}
+DEFAULT_HOST_PUBLISH = ["gh pr create", "gh pr merge", "gh pr close",
+                        "gh release", "gh api --method POST", "gh api -X POST"]
+# What an older reader of this module saw: git, then GitHub's verbs.
+MODE_PREFIXES = {mode: GIT_PREFIXES[mode] + DEFAULT_HOST_ALLOW[mode]
+                 for mode in GIT_PREFIXES}
+
+
+def host_verbs(mode: str, raw: str | None = None) -> dict:
+    """AGENT_HOST for this launch, as `{allow, publish}` prefix lists."""
+    raw = os.environ.get("AGENT_HOST") if raw is None else raw
+    if raw is None:
+        return {"allow": list(DEFAULT_HOST_ALLOW.get(mode, [])),
+                "publish": list(DEFAULT_HOST_PUBLISH)}
+    try:
+        found = json.loads(raw)
+    except (TypeError, ValueError):
+        found = None
+    if not isinstance(found, dict):
+        return {"allow": [], "publish": list(DEFAULT_HOST_PUBLISH)}
+    def prefixes(key):
+        return [str(p).strip() for p in found.get(key) or []
+                if isinstance(p, str) and str(p).strip()]
+    return {"allow": prefixes("allow"), "publish": prefixes("publish")}
+
+
+def publish_pattern(prefix: str) -> str:
+    """A neutral publication prefix as an opencode deny glob. Globs run
+    over the whole command line, so an option is matched wherever it sits:
+    `gh api --method POST` → `gh api * --method POST*`; a plain verb gains
+    a trailing `*` (`gh pr create` → `gh pr create*`)."""
+    words = prefix.split()
+    for index, word in enumerate(words):
+        if word.startswith("-") and index > 0:
+            return f"{' '.join(words[:index])} * {' '.join(words[index:])}*"
+    return f"{prefix}*"
 # The intents with no edit permission, and the one with no shell at all.
 READ_ONLY_MODES = {"review", "refine"}
 NO_SHELL_MODES = {"refine"}
@@ -80,8 +126,9 @@ DENY_CAPABILITY_PATTERNS = {
     "force-push": ["git push --force*", "git push * --force*", "git push -f",
                    "git push -f *", "git push * -f *"],
     "rebase": ["git rebase", "git rebase *"],
-    "publish": ["gh pr create*", "gh pr merge*", "gh pr close*", "gh release*",
-                "gh api * --method POST*", "gh api * -X POST*"],
+    # the hosting provider's publication verbs (AGENT_HOST's `publish`),
+    # through `publish_pattern`
+    "publish": [],
     "reshape-lifecycle": ["git worktree*", "git reset*", "git checkout*",
                           "git switch*", "git branch*", "git update-ref*",
                           "git remote*"],
@@ -146,7 +193,9 @@ def bash_rules(mode: str, commands: list[str],
     """
     if mode in NO_SHELL_MODES:
         return {"*": "deny"}
-    prefixes = list(MODE_PREFIXES.get(mode, []))
+    prefixes = list(GIT_PREFIXES.get(mode, []))
+    if mode in GIT_PREFIXES:
+        prefixes += [p for p in host_verbs(mode)["allow"] if p not in prefixes]
     if profile:
         prefixes += [c for c in profile_prefixes(profile) if c not in prefixes]
     elif mode in MODES_WITH_PROJECT_COMMANDS:
@@ -163,7 +212,10 @@ def bash_rules(mode: str, commands: list[str],
         rules[f"{shim} *"] = "allow"
     denies = list(MODE_DENY_PATTERNS.get(mode, []))
     for word in (profile or {}).get("deny") or []:
-        for pattern in DENY_CAPABILITY_PATTERNS.get(str(word), []):
+        named = DENY_CAPABILITY_PATTERNS.get(str(word), [])
+        if word == "publish":
+            named = [publish_pattern(p) for p in host_verbs(mode)["publish"]]
+        for pattern in named:
             if pattern not in denies:
                 denies.append(pattern)
     for pattern in denies:

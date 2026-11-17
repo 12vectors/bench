@@ -160,6 +160,15 @@ def body(run: bv.Run) -> str:
     if result.failures or result.errors:
         names = [o["case"].rsplit(".", 1)[-1] for o in result.outcomes
                  if o["outcome"] == "failed"]
+        # One line per failure — its case and the traceback's last line —
+        # so a run that cannot open the log still sees why (lines are
+        # clipped downstream, so each stays short).
+        for test, trace in [*result.failures, *result.errors]:
+            last = [l for l in trace.strip().splitlines() if l.strip()][-1:] or [""]
+            text = last[0].strip()
+            for at in range(0, min(len(text), 1200), 340):
+                print(f"bench-verify browser: {test.id().rsplit('.', 1)[-1][:40]}: "
+                      f"{text[at:at + 340]}", flush=True)
         raise bv.CheckFailed(f"{len(names)} of {result.testsRun} browser cases failed: "
                              f"{', '.join(names)} — see {log}")
     if result.testsRun != n:

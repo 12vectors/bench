@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 from tests.test_integration_gates import CARD, GateCase, card, git  # noqa: E402
 
@@ -40,6 +41,7 @@ import acceptance  # noqa: E402
 import agents  # noqa: E402
 import config  # noqa: E402
 import delivery  # noqa: E402
+import gatepolicy  # noqa: E402
 import gates  # noqa: E402
 import profiles  # noqa: E402
 import reports  # noqa: E402
@@ -404,8 +406,8 @@ class ScalarPoliciesAreUnchanged(SignoffCase):
 
     def old_revision(self, policy: dict, doc_revision: str) -> str:
         """The gate revision as the code before card 103 computed it."""
-        return profiles._digest(
-            str(profiles.GATE_POLICY_VERSION), doc_revision or "",
+        return profiles.digest(
+            str(gatepolicy.GATE_POLICY_VERSION), doc_revision or "",
             json.dumps({s: {"checks": [[c["revision"], c["gateScope"]]
                                        if c["gateScope"] else c["revision"]
                                        for c in v["checks"]],
@@ -438,7 +440,7 @@ class ScalarPoliciesAreUnchanged(SignoffCase):
             with self.subTest(document=document):
                 self.declares(document)
                 doc = profiles.document()
-                policy = profiles.gate_policy(doc)
+                policy = gatepolicy.gate_policy(doc)
                 self.assertEqual(policy["blockers"], [])
                 self.assertEqual(policy["revision"],
                                  self.old_revision(policy, doc["revision"]))
@@ -454,10 +456,10 @@ class ScalarPoliciesAreUnchanged(SignoffCase):
 
     def test_turning_signoff_on_is_a_policy_change_and_nothing_else(self):
         self.declares({"v": 1, "gates": {"acceptance": {"review": "bench"}}})
-        before = profiles.gate_policy()
+        before = gatepolicy.gate_policy()
         self.declares({"v": 1, "gates": {"acceptance": {
             "review": "bench", "signoff": "criteria"}}})
-        after = profiles.gate_policy()
+        after = gatepolicy.gate_policy()
         self.assertNotEqual(before["revision"], after["revision"])
         self.assertNotEqual(gates.scope_policy_id(before, "acceptance"),
                             gates.scope_policy_id(after, "acceptance"))
@@ -483,7 +485,7 @@ class ScalarPoliciesAreUnchanged(SignoffCase):
         """A policy dict built before `reviews` existed — one a caller
         hoisted and passed in — keeps its one review row."""
         self.declares({"v": 1, "gates": {"acceptance": {"review": "bench"}}})
-        policy = profiles.gate_policy()
+        policy = gatepolicy.gate_policy()
         for entry in policy["scopes"].values():
             entry.pop("reviews")
             entry.pop("signoff")
@@ -510,7 +512,7 @@ class ReviewListsAreConjunctions(SignoffCase):
 
     def codes(self, review) -> list[str]:
         self.declares({"v": 1, "gates": {"acceptance": {"review": review}}})
-        return [d["code"] for d in profiles.gate_policy()["diagnostics"]]
+        return [d["code"] for d in gatepolicy.gate_policy()["diagnostics"]]
 
     def test_malformed_and_duplicate_lists_are_refused_by_code(self):
         cases = {
@@ -528,7 +530,7 @@ class ReviewListsAreConjunctions(SignoffCase):
                 found = self.codes(review)
                 self.assertIn(code, found)
                 self.assertIn(code, profiles.DIAGNOSTICS)
-                policy = profiles.gate_policy()
+                policy = gatepolicy.gate_policy()
                 self.assertFalse(policy["overrides"]["allowed"])
                 self.assertEqual(self.decide()["decision"], "blocked",
                                  "a refused rule gates shut, never open")
@@ -540,11 +542,11 @@ class ReviewListsAreConjunctions(SignoffCase):
                     "signoff": value}}})
                 self.assertIn("gate-signoff-unknown",
                               [d["code"] for d in
-                               profiles.gate_policy()["diagnostics"]])
+                               gatepolicy.gate_policy()["diagnostics"]])
 
     def test_every_word_is_its_own_requirement(self):
         self.rule(review=["bench", "separate-reviewer"])
-        policy = profiles.gate_policy()
+        policy = gatepolicy.gate_policy()
         entry = policy["scopes"]["acceptance"]
         self.assertEqual(entry["review"], "bench+separate-reviewer")
         self.assertEqual(entry["reviews"], ["bench", "separate-reviewer"])
@@ -613,7 +615,7 @@ class ReviewListsAreConjunctions(SignoffCase):
         """`["bench"]` is accepted and reads as the word: one review row,
         one counter, met by the Bench verdict alone."""
         self.rule(review=["bench"])
-        policy = profiles.gate_policy()
+        policy = gatepolicy.gate_policy()
         self.assertFalse(policy["diagnostics"])
         entry = policy["scopes"]["acceptance"]
         self.assertEqual((entry["review"], entry["reviews"]),
@@ -703,7 +705,7 @@ class SettingsOffersItOptIn(SignoffCase):
         self.assertEqual(entry["reviewForm"], "list")
 
     def test_the_editor_writes_signoff_only_when_ticked(self):
-        source = (config.CORE / "board.html").read_text(encoding="utf-8")
+        source = pagesource.page()
         write = source[source.index("function writeField("):]
         write = write[:write.index("\nfunction ")]
         self.assertIn("if (value) gate.signoff = 'criteria'; "

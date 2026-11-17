@@ -115,7 +115,7 @@ PRELUDE = (
     # directory, so a test never writes into the checkout it is testing
     "config.STATE = Path(os.environ['TEST_STATE'])\n"
     "config.EVIDENCE_DIR = config.STATE / 'evidence'\n"
-    "import profiles, settings, httpd\n"
+    "import gatepolicy, profiles, settings, httpd\n"
 )
 
 
@@ -193,10 +193,10 @@ class EveryValueComesFromTheResolver(unittest.TestCase):
                       [g["name"] for g in found["work"][0]],
                       "a configured check reaches no grant to ask for it")
 
-    def test_the_gate_policy_equals_profiles_gate_policy(self):
+    def test_the_gate_policy_equals_gatepolicy_gate_policy(self):
         same = run("page = settings.page()\n"
                    "R = page['acceptance']['policy'] == "
-                   "profiles.gate_policy_public(profiles.gate_policy())",
+                   "gatepolicy.gate_policy_public(gatepolicy.gate_policy())",
                    doc=FULL)
         self.assertTrue(same, "the page shows a gate policy of its own")
 
@@ -391,15 +391,32 @@ class BenchChecksCiAndReviewStayThree(unittest.TestCase):
     def test_the_three_kinds_name_the_authority_each_comes_from(self):
         found = page(doc=FULL)["ci"]["kinds"]
         self.assertIn("verify.py", found["bench"]["authority"])
-        self.assertIn("github.py", found["ci"]["authority"])
+        self.assertIn("changes.py", found["ci"]["authority"])
         self.assertIn("gates.py", found["review"]["authority"])
 
 
 class ReviewModesAreOnlyOfferedWhereTheyCanBeEnforced(unittest.TestCase):
+    def test_a_board_on_the_none_provider_offers_no_github_review(self):
+        """Task 116: with BOARD_GIT_PROVIDER=none there is no host whose
+        review objects could be read, so neither GitHub review policy is
+        offered, and Settings names the provider in force."""
+        found = run("page = settings.page()\n"
+                    "R = [page['acceptance']['reviewModes'],\n"
+                    "     settings.installation()['git']['application']['provider']]",
+                    doc=FULL, extra={"BOARD_GIT_PROVIDER": "none"})
+        modes, provider = found
+        by_name = {m["name"]: m for m in modes}
+        self.assertFalse(by_name["github"]["available"])
+        self.assertTrue(by_name["bench"]["available"])
+        self.assertEqual(provider["name"], "none")
+        self.assertIsNone(provider["problem"])
+        self.assertEqual({c["state"] for c in provider["capabilities"].values()},
+                         {"unavailable"})
+
     def test_a_board_without_gh_is_told_github_review_cannot_be_read(self):
         found = run("page = settings.page()\n"
                     "R = [page['acceptance']['reviewModes'],\n"
-                    "     config.gh_available()]", doc=FULL,
+                    "     __import__('githost').available()]", doc=FULL,
                     extra={"BOARD_GH_BIN": "definitely-not-a-binary"})
         modes, gh = found
         self.assertFalse(gh)

@@ -49,19 +49,68 @@ Drivers know apps, adapters know vendors, `local/` knows this project.
 `tasks/` holds only state and works as a plain folder kanban even if
 `manager/` is deleted; the board narrates hand-moves when it happens to run.
 
-Module map for `manager/core/` (dependencies flow strictly left to right):
+Module map for `manager/core/`, lowest layer first: a module imports
+only modules to its left, at least at the top level. The authoritative
+layer table, the convention (`A → B` means A imports B, so B is lower),
+the proposed target layers and the reviewed, shrink-only list of
+exceptions live in
+[`manager/core/ARCHITECTURE.md`](manager/core/ARCHITECTURE.md), held by
+`tests/test_architecture.py`. Since task 122 (WP13) that list is empty:
+no core module imports another from inside a function, none reaches a
+private name of another, and `board.py` imports every core module at
+startup:
 
 ```
-config → state / reports / templates → taskfiles → plans / profiles → reviews → verify → progress → acceptance → gates → required → doctor → events / github / drive / sync → delivery → agentsettings → settings → setupguide → agents → setuptasks → readiness → previews → phases → refine → watch / httpd → board.py
+gitproc / records / redact < config < githost / assets < state / reports / templates / gitrepo < taskfiles < plans / profiles < gatepolicy / reviews < evidence / resultidentity < staleness < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
 ```
 
-- `config.py` — paths, stages, settings, prompt/adapter/driver resolution
-- `state.py` — shared registries, event log persistence, SSE fan-out
+- `gitproc.py` — running git so a read stays a read: the read verbs, the
+  `--no-textconv --no-ext-diff` switches, the hardened environment and
+  the one subprocess call. Stdlib only; imports no core module
+- `records.py` — how a record reaches the disk whole: a unique temporary
+  file in the same directory and `os.replace`, `durable=True` adding the
+  file and directory flush, tolerant reads, and the interprocess lock a
+  record family with more than one writing process holds. Stdlib only;
+  takes paths as arguments and knows no record family
+- `redact.py` — what a credential looks like: one pattern table, the
+  union of the ones `settings`, `agentsettings`, `previews` and
+  `bootstrap.py` used to keep apart, masking only the secret part of a
+  match. The marker is the caller's, so each page keeps its own words.
+  Stdlib only; `verify.py` adopts it with the verify train (WP12)
+- `config.py` — paths, stages, settings, prompt/adapter/driver resolution;
+  `git_argv`, `git_env` and `git_run` as patchable wrappers over `gitproc`
+- `githost.py` — the hosting provider in force (`BOARD_GIT_PROVIDER`:
+  `github`, the default, or `none`), what it can do here and refusing by
+  name; it loads `providers/<name>/provider.py` by path and dispatches
+  every change-request operation, returning normalized values. The `gh`
+  argument lists, GitHub url and payload shapes live in
+  `providers/github/` and nowhere else; a remote the provider does not
+  recognise is reported and never acted on. Contract:
+  `manager/core/providers/README.md`. Imports `config` only
+- `assets.py` — the page's static assets (task 123): `web/manifest.json`
+  lists every file under `web/` with its sha256, size and the one type
+  its suffix is served as, and the build id is a digest of that manifest.
+  At start the board reads `board.html` and every listed asset into
+  memory, verifies them and refuses to serve when one is missing, linked,
+  oversized or changed; then it serves that snapshot under
+  `/web/<build>/`, immutable, whatever an update does to the disk.
+  `BOARD_ASSETS=disk` reads from disk, uncached, for editing. Imports
+  `config` and `records`
+- `state.py` — shared registries, event log persistence, SSE fan-out,
+  and the board revision every `board` frame and state reading carries
+  (task 128)
 - `reports.py` — what the record keeps of an agent's closing report: one
   cap, one clip, for the task file and the PR body alike
 - `templates.py` — the four launch prompt templates: what each may and
   must contain, which text a launch actually used (name, source, hash),
   and the contract check asked before a save and before every launch
+- `gitrepo.py` — local git on the two repositories, each named rather
+  than reached for by path: application git (`app()`) and work-state git
+  (`state()`, card 62's `app_shares_state_repository()` deciding whether
+  they are one). A never-raising `git`, the worktree primitives, one
+  `ensure_worktree` for every "recreate it from its branch", and
+  `fresh_branch_point` — the default branch point, below `plans` and
+  `agents` so neither reaches up for it. Imports `config` only
 - `taskfiles.py` — reading and moving task files; the only code touching tasks/
 - `plans.py` — one card's execution plan: which application branch its work
   starts from, which branch its PR targets, what selected each, and the
@@ -70,15 +119,41 @@ config → state / reports / templates → taskfiles → plans / profiles → re
 - `profiles.py` — the other half of the same decision: what a run may do
   in that checkout and which files it is guaranteed to have read. One
   profile per launch intent, the approved context it pins read-only, and
-  the manifest recording what each run actually rode
+  the manifest recording what each run actually rode. Its request-scoped
+  read context (`read_scope`, task 127) lets one board read ask the
+  document, each resolution and every approved input once rather than
+  once per evidence record; only `routes.state_payload` opens one, and it
+  ends with the request
+- `gatepolicy.py` — the merge rules as written: reading and validating
+  the policy document's `"gates"` block (each scope's checks, review and
+  sign-off policy, the override path), its public form, and the lines a
+  committing run is told the rules require. It reads the document and
+  the check definitions through `profiles` and evaluates nothing —
+  `gates` does (task 120)
 - `reviews.py` — the checkout a PR review runs in: the pull request's
   repository, base and head resolved before anything is created, a
   detached worktree of that exact head owned by the run, and whether the
   review still speaks for the head the pull request proposes
+- `evidence.py` — the verification record: where it lives, how it is
+  stored (through `records`, durably once its outcome is final) and read
+  back, the reuse records, the outcome vocabulary every reader branches
+  on, and the evidence epoch a memo keys on (`epoch()`); a log is
+  scrubbed by `redact`'s table (task 121)
+- `resultidentity.py` — what a verdict is about: every dimension of a
+  result identity (source, check, coverage, programs, preparation,
+  inputs, root class, environment) and the one owner of the runner
+  revision, a digest over the declared `RUNNER_FILES`, with
+  `BOUND_ELSEWHERE` saying why every other dependency is outside it
+  (task 121)
+- `staleness.py` — whether a stored pass still holds (`freshness`,
+  `outcome_now`, `identity_drift`) and whether a record of another check
+  may answer for this one (declared equivalence) (task 121)
 - `verify.py` — the named checks bench runs itself, on a run's request:
   the argument list built here rather than composed by a model, the
-  environment the check is given, and the evidence it leaves — the
-  runner's own exit status, bound to the source it ran against
+  environment the check is given, the reservation registry and reuse
+  selection held under one lock, cancellation and recovery — and the
+  evidence it leaves, the runner's own exit status bound to the source it
+  ran against
 - `progress.py` — what a run *says* about its own work: the one
   run-scoped channel it reports through, each report validated whole at
   ingestion, ordered, de-duplicated and coalesced, closed by the run's
@@ -89,6 +164,13 @@ config → state / reports / templates → taskfiles → plans / profiles → re
   carried through fix and recheck; and the three explicit, attributed
   writes (track, decide, a finding event) — never a tick inferred from a
   lane, an exit or a green suite
+- `callers.py` — who is calling, at the HTTP boundary: whether a
+  request naming a run (`/api/verify`, `/api/events`) proves it with that
+  run's own `BOARD_RUN_TOKEN`, whether the `Host` a request names is this
+  board on loopback or a host of `BOARD_ALLOWED_ORIGINS`, each in an
+  explicit `report` or `enforce` mode; and the bounded, sanitized Host and
+  Origin values Settings → Installation shows (see "Callers: run identity
+  and Host, reported before enforced")
 - `gates.py` — may this merge happen? The operator's requirement per
   guarded mutation, read against evidence bound to the exact commit about
   to move; bench's own review verdict kept apart from GitHub's formal
@@ -104,10 +186,39 @@ config → state / reports / templates → taskfiles → plans / profiles → re
   without paying for a model: the same resolver a launch rides, read at
   four honest distances, with every diagnostic's remedy and a coverage
   table that says which distances were *not* taken
+- `commands.py` — local commands: a project's chores run against a
+  task's worktree
 - `events.py` — ingests NORMALIZED events (the adapter contract), session registry
-- `github.py` — PR opening, Copilot requests, review/CI polling
-- `drive.py` — runs the project driver, tracks the one live drive
+- `drive.py` — runs the project driver, tracks the one live drive; owns
+  scrubbing a drive's log (`scrub`), and calls what composition
+  registered with `on_ended` when a drive's outcome changes
 - `sync.py` — origin/main as the shared board: push on move, pull on a beat
+- `changes.py` — the change-request lifecycle (task 116 renamed it from
+  `github.py`): opening or adopting a PR, the external-review request,
+  the poll and its fold into one verdict, the persisted observation, and
+  the owner accessors the layer above asks about a card's PR through. It
+  speaks no host shape: it asks `githost`
+- `completion.py` — merge & clean up: the merge (locally, or on origin
+  through `changes`), its publication confirmed on the remote, the
+  recovery record a retry finishes from, the card's cleanup and a
+  phase's sweep, and the delivered record (it imports `drive`, to park a
+  drive before merging, and `changes`, which is why it sits above both)
+- `stacks.py` — the derived stack reading (task 117): for a card whose
+  `**Base branch:**` names another card's work branch, its parent, the
+  cards stacked on it, its place on its path (`2/3` along a chain, `step
+  2` where the stack branches), its selected base, review target and
+  landing target, and each edge's state in the server's words — from
+  local refs, the recorded plans, the PR snapshots and the delivered
+  records only. The graph itself is `taskfiles.weave_stacks`; a read
+  fetches, writes and runs nothing (see "Stacked cards")
+- `stackactions.py` — the three explicit stack actions (task 119), each
+  a person's confirmed click bound to the identities its sheet showed:
+  **Retarget onto <target>** (on the host only where `retarget` reads
+  `available`, otherwise the exact manual step), **Update from
+  <parent>** (an additive merge in the child's worktree) and **Finish:
+  clean up** (after the remote application base is seen to hold the
+  work). Beside `delivery`; only `routes` imports it (see "Maintaining a
+  stack: three confirmed actions")
 - `delivery.py` — one delivery status per card, computed server-side
   from the authorities above: what is happening, the one next action and
   who holds it, and the merge requirements that apply at the current
@@ -123,15 +234,16 @@ config → state / reports / templates → taskfiles → plans / profiles → re
   modules above and nowhere else: it names the states so nothing reads as
   a pass, compares two resolutions so a change can be previewed, and
   writes one file. No second parser, by construction
-- `setupguide.py` — the project setup guide: six areas read from the
-  authorities above, eight status words and no percentage, and the only
-  two writes it owns — a person's decision about an area and a proposed
-  setup card — held to a revision and a request identity
-- `agents.py` — headless work/review jobs, launched through the adapter
-- `setuptasks.py` — setup cards from discovered gaps: what inspecting
-  the application's files found absent, previewed exactly, created
-  idempotently by stable gap identity, and started only through the
-  normal start-work path (so it sits right of `agents`, which it calls)
+- `setupbase.py` — what every setup surface stands on (task 122): the
+  portable setup decisions record and the machine-local journal, request
+  identity, the revision and integrity guards every setup mutation is
+  held to, the actor, and the coding agent's area reading
+- `appinspect.py` — what the application's files hold that bears on
+  setup, read file by file and running nothing: present, absent or
+  `unknown`. Imports `config` only
+- `agents.py` — headless work/review jobs, launched through the adapter;
+  its public launch primitive (`launch`, `pick_name`, `finish`) is what
+  `refine` rides
 - `readiness.py` — verification readiness: candidate checks discovered
   from scripts, CI and docs without running them, registration and
   merge-rule drafts handed to Settings' own validate, preview and apply,
@@ -144,6 +256,16 @@ config → state / reports / templates → taskfiles → plans / profiles → re
   explicit acts. A started preview is a drive (`drive.py` takes its launch
   spec), bound to its source, ready only when its check answers, and
   stopped and re-adopted only when it is provably bench's own group
+- `setuptasks.py` — setup cards from discovered gaps: what inspecting
+  the application's files found absent, previewed exactly, created
+  idempotently by stable gap identity, and started only through the
+  normal start-work path (so it sits right of `agents`, which it calls,
+  and of `previews`, whose configuration says a preview gap is covered)
+- `setupguide.py` — the project setup guide: six areas read from the
+  authorities above, eight status words and no percentage, and the only
+  two writes it owns — a person's decision about an area and a proposed
+  setup card — held to a revision and a request identity. It composes
+  `readiness`, `previews` and `setuptasks`, so it sits right of all three
 - `phases.py` — a phase run: its own branch, its cards merged into it one
   at a time. A beat, not an agent; it holds no registry of where a phase is
 - `refine.py` — refining a card on the board: comments, the one
@@ -152,8 +274,18 @@ config → state / reports / templates → taskfiles → plans / profiles → re
   card; this holds only machine-local job state
 - `watch.py` — 2s disk poller narrating moves made outside the API, and
   the gate that keeps a move a pull applied from triggering anything
-- `httpd.py` — HTTP routes, the SSE stream, serving the page
-- `board.py` — argparse + startup wiring only
+- `routes.py` — every HTTP route: its method and path, its request
+  class, and its handler, in one literal table the architecture test
+  reads
+- `httpd.py` — the socket: finds a request's route, applies the door its
+  class names and checks the body before any handler runs, refusing a
+  browser's write from a page of another build (`stale-page`, task 124);
+  the SSE stream and serving the page
+- `board.py` — argparse + startup wiring only: it imports every core
+  module at the top and loads the selected hosting provider before it
+  serves, so a running board executes the code that was on disk when it
+  started, and `wire` is the one place a lower module is told about a
+  higher one (`drive.on_ended` ← `previews.record_last`)
 
 ## Agent adapters
 
@@ -234,6 +366,35 @@ stopped at the disk would silently hold up every later move on that board,
 and the archived card would exist in one working tree only. The same law
 covers every write the board makes to a task file: the `**PR:**` line, a
 claim, and an agent's closing report all reach git the same way.
+
+**The card leaves on the reply, not on a reload** (task 128). Nothing is
+shown archived before the board says so: the chip stays busy until
+`/api/archive` answers. Its answer is the confirmation the page paints
+from — the card and the stage it left, the archive count it left behind,
+whether git recorded the move (`committed`: `false` is a moved card
+whose commit failed, said in an alarm toast; `null` with
+`BOARD_COMMIT_MOVES` off) and the **board revision** whose reading will
+hold it. The whole-board reading that reconciles everything else is
+asked for in the background, and the action does not wait for it.
+⌘Z answers the same way and puts the card back where it stood.
+
+Board revisions are what make that safe. Every `board` frame carries the
+next revision (`state.broadcast`), `/api/state` carries the revision it
+read *before* reading the disk (`boardRev`, with `boardBoot` naming the
+process), so a reading holds every change announced at or below its
+revision. A confirmed write is laid over any reading older than its
+revision and retired by the first that holds it, so a reading sent
+before the archive cannot put the card back; a reading from a restarted
+board read the disk afresh and holds everything. A frame naming a
+revision already painted, or one the reading already out was sent after,
+asks for nothing — so an archive's confirmation and its own frame cost
+one reading between them, and one archive causes at most two (that one,
+or one follow-up behind a reading sent before it; and the watcher's
+later frame). A refusal, no answer, or an answer that names no card
+paints nothing from the reply: the toast says nothing is known to have
+happened, and a reading says what did. A second archive of a card
+already on its way joins the first, and ⌘Z waits for every archive in
+flight. The timings are in `develop/perf/README.md`.
 
 ## Local commands
 
@@ -886,7 +1047,17 @@ and colour that only ever means state: `--accent` (surf) an agent alive,
 HIGH, `--idle` (driftwood) done. The one looping animation ("breathe") means
 an agent is working; a blinking caret means output is still arriving. Night
 theme by default; the header button switches to Daylight. Tokens live at the
-top of `manager/board.html`.
+top of `manager/core/web/board.css`.
+
+The board serves both Plex families itself, from `manager/core/web/fonts/`:
+every subset the page once linked from Google Fonts (latin, latin-ext,
+cyrillic, cyrillic-ext, greek, vietnamese, and Mono's box-drawing set),
+the upstream files unmodified, with their licence and a provenance record
+(`SOURCES.txt`). So the page makes no request to anyone but the board.
+Symbols Plex does not have — `⌖ ◫ ⚖ ⟶` and the like — are drawn by a
+system font, as they always were; `tests/fixtures/page-symbols.json`
+lists them and `verify/browser_cases/case_fonts.py` checks which glyphs
+come from where.
 
 The board has five views (header switcher):
 
@@ -944,6 +1115,48 @@ The board has five views (header switcher):
   configuration, and changing it safely"). The switcher carries a mark
   when this board's execution policy refuses something, for the reason
   the Phases mark exists: the thing it refuses is the next launch.
+
+### The page's script: modules under a policy
+
+The page's script is native ES modules under `manager/core/web/`, loaded
+from the build like every other asset (task 124). No npm, no bundler, no
+framework: the files the board serves are the files in the tree.
+
+- **One side-effectful module.** `board.html` loads `web/main.js` as a
+  module and carries no script of its own. `main.js` is the composition
+  root: it wires the listeners, applies the theme, reads the state and
+  opens the stream. Every other module only imports, declares and
+  exports, so importing one starts nothing.
+- **Import direction.** `lib/` (`dom`, `time`, `toast`, `keep`, `md`,
+  `api`) imports only `lib/`; `words.js` and `app/state.js` import
+  nothing; nothing imports `main.js`. Every other edge from `app/` or
+  `views/` to anything but those is listed in
+  `tests/fixtures/web-imports.json`, a reviewed baseline that may only
+  shrink. `tests/test_script_policy.py` holds the page to all of it, and
+  `tests/node/board_modules.test.mjs` imports every module but `main.js`
+  under Node, so an import that names nothing, or a module reading
+  another's binding before it exists, fails there and not in a browser.
+- **A console seam.** Modules make no globals. `main.js` puts a short,
+  named list of them (`S`, `render`, `loadState`, `toast` and a few
+  more) on `window` for the browser suite and a person at the console.
+  Replacing one there does not replace it inside a module.
+- **The policy.** The page is sent with a Content Security Policy
+  (`assets.PAGE_POLICY`): `script-src 'self'` — the build's modules and
+  nothing else, no inline script, no `eval`, no handler attribute —
+  `connect-src 'self'`, and `'none'` for objects, frames, workers, the
+  base and forms. Inline styles stay allowed: the templates write tints
+  and heights into `style` attributes, and a style runs nothing. The one
+  image is the favicon, a `data:` SVG. A plans/ or reference/ document is
+  opened in a tab of its own under its own sandbox policy, or fetched as
+  Markdown into the drawer.
+- **A page from another build.** Every mutation the page sends names its
+  build (`X-Bench-Build`, from `lib/api.js`). After a restart into
+  another build, the board refuses a browser's write from an older page —
+  `409 stale-page`, nothing changed — and the page shows a banner: it is
+  out of date, reload to update, and what a reload would discard (an
+  unsent comment, a note, a Settings draft). Only a request that states a
+  browser (an `Origin` or `Sec-Fetch-Site`) is asked for a build: the run
+  shims, the event bridges and `curl` are never refused for it.
 
 ### The card face and its tools
 
@@ -1066,6 +1279,26 @@ verdict, a finding or an acceptance. Report text is untrusted: raw HTML
 arrives as text, a link is followed only to the web, mail, an anchor or
 a relative path, and an image is drawn as a link to it, never fetched.
 
+**The board lists cards; a card's text is read when it is opened**
+(task 129). `/api/state` carries every card's fields — identity, stage,
+headers, phase and stack membership, the verdict and assignee read out
+of its text — and its revision (`rev`, the first 16 hex digits of the
+text's sha256), but not the text itself: every server section that reads
+a card's text (delivery, acceptance and findings, verdicts, phase
+progress) is computed from the full board before the list is made, so no
+signal is lost and the page infers nothing from what is left out. A
+phase card's log travels as `phaseLogs`. Opening a card asks `GET
+/api/card?file=&stage=` for its text, where it splits and its revision.
+The answer is about that name in that stage only: a card that has since
+moved reads `409 moved` with the stage it is in, an archived one `410
+archived`, a deleted one `404 gone`, and the page then reads the board
+again so the view follows the card or closes. The text is keyed by card
+and asked again when the listed stage or revision moves, through the
+same race policy as the other on-demand readings — a late reply never
+lands on another card or over a newer one — and the brief says
+*Reading the card…* (announced as busy) or why it could not be read,
+with **Try again**. `/api/tasks` still serves every card's whole text.
+
 A live update keeps your place: each section keeps its own scroll
 position, open folds and unsent text survive a redraw, and a record
 arriving above what you are reading moves the page rather than you.
@@ -1073,6 +1306,19 @@ Cards are reachable by keyboard. Tab lands on a card, Enter or Space
 opens its detail view, focusing a card shows the same actions as hovering
 it, and closing the detail view returns focus to the card. Board and
 Phases draw the same card.
+
+**A card is redrawn only when what it shows changed** (task 130). The
+card builder writes a card as markup first (`cardSpec`), and that markup
+— with its actions and their armed or busy windows — is the card's
+signature. A paint keeps every card node whose signature is unchanged,
+moves one whose place changed, replaces one that changed and removes one
+that left (`lib/keyed.js`); the Board's columns and each phase lane are
+built once and kept. So a session event, or a reading that changes one
+card, leaves every other card's node — its focus, its open tools, a drag
+in flight — exactly as it was, and a replaced card takes focus with it.
+At 1000 cards one changed card is visible in about 25 ms where it took
+about 300 ms (`develop/perf/README.md`). The first paint still builds
+every card; nothing is windowed or left out of the page.
 
 The header carries one more chip, and unlike the sync and phase chips it
 is always there: **⚕ configuration** opens the Configuration check. Those two
@@ -1460,6 +1706,154 @@ commits itself and sync fast-forwards `main`. One layout answers both with
 the same checkout, and asking through separate doors is what keeps
 filesystem layout from changing branch-selection semantics.
 
+### Stacked cards
+
+A card whose `**Base branch:**` names another card's work branch —
+`task/<stem>` for an ordinary card, `phase/<stem>` for a phase card — is
+**stacked** on that card, its **parent**. No header is added and nothing
+is stored twice: the graph is derived once per read
+(`taskfiles.weave_stacks`), beside phase membership, and runs one way, so
+it cannot disagree with itself. A parent may carry several children; a
+child has one parent. A loop of bases has no bottom to start from, so it
+is `plan drift` and the launch refuses. A base no card owns is an
+**external** base, a card-shaped name with no card is **missing**, and a
+name with two readings is **ambiguous** — each said, none guessed. A
+phase member's relation to its phase stays **integration**, with the
+phase's own semantics.
+
+`/api/state` carries `stacks` (task 117): per card with something to say,
+its parent, the cards stacked on it, its path from the bottom of the
+stack, its place on that path, and three targets named apart — the
+**selected base** (the branch and commit the work was cut from), the
+**review target** (what its change request targets) and the **landing
+target** (where it must end up for `done/`: the application base, after
+its parent lands). Each edge has a state in the server's words:
+
+| state | what it means | next, and who |
+| --- | --- | --- |
+| `on-parent` | the child contains its parent's tip | nothing |
+| `parent-moved` | the parent has commits the child does not contain | you: **Update from <parent>** (additive) — bench will not rebase |
+| `parent-rewritten` | the parent no longer contains the commit the child was cut from | you: settle it by hand |
+| `parent-landed` | the parent was delivered; the child may still target its branch | you: **Retarget onto <target>** |
+| `parent-landed-differently` | the host says merged, and the parent's tip is not in its target (a squash or rebase merge) | you: bring the target in first, then retarget |
+| `retargeted` | the parent landed and the child now targets where it landed | nothing |
+| `parent-closed` / `parent-gone` | closed unmerged, or the branch is gone with no delivery record | you: decide the base, then ⌖ replan |
+| `parent-retargeted` | the parent's change request targets another branch than its plan | you: settle the parent's target first |
+| `target-changed-on-host` | the child's own change request targets another branch than its plan | you: ⌖ replan, or change it back |
+| `parent-not-started`, `not-started` | no work yet on one side | — |
+| `external-base`, `parent-missing`, `parent-ambiguous`, `cycle`, `integration` | the mapping itself, as above | fix the header where it says so |
+
+**A position is about a path.** Along a chain (every card in it carries
+at most one child) a card reads `2/3`; once the stack branches there is
+no single order, so a card reads `step 2` — its depth on its own path —
+and no count of the whole is invented. The ⌖ chip says it (`⌖ on #56 ·
+2/3`, `⌖ under #57 · 1/2`), and the Overview's **Stack** block lists the
+path with each card's change request and state, the cards stacked on
+this one, and the three targets. The page computes none of it.
+
+**Reading is free.** The reading uses this checkout's own refs and
+remote-tracking refs (the last fetch, never a new one), the recorded
+plans, the PR snapshots the poll persisted and the delivered records —
+no fetch, no hosting-provider call, no write, no check and no worktree.
+**Check the remote** is the explicit action that refreshes the refs it
+reads. Nothing here rebases, force-pushes, retargets or merges a child
+into its parent; a stacked card whose own requirements are met (or not
+configured) reads `waiting-for-parent` until its parent has landed.
+
+The recorded plan is version 2: it adds `stack` (the parent card, the
+branch and that branch's tip when the work was cut) and `landing`, and
+changes nothing else. A version-1 record is read unchanged and its stack
+reading is derived from the card; a reader that predates version 2
+ignores the new keys.
+
+**Two safety rules hold the stack's branches.**
+
+- **Opening a child publishes nothing of its parent.** A change request
+  whose base is another card's branch is opened only when that branch is
+  on the remote, and only when the child carries none of the parent's
+  commits the remote lacks; otherwise it is refused, naming the parent's
+  own publication as the remedy. A phase member's PR keeps publishing its
+  phase branch as before, and a base no card owns is unchanged.
+- **Cleanup keeps a branch something targets.** Merge & clean up deletes
+  a branch on the remote only when no card on the board still targets it
+  and the hosting provider says no open change request does
+  (`changes_targeting`). An open change, a dependant card, or a provider
+  that cannot answer keeps the branch, and the ticker says which.
+
+### Maintaining a stack: three confirmed actions
+
+The reading offers, and a person acts (task 119). A stacked card's
+**Stack** block carries a button for each action its edge makes worth a
+look — and only on an ordinary card stacked on a card: a phase member's
+relation to its phase is the phase runner's, and a phase card lands as a
+whole. A button opens the action's **sheet** (`POST
+/api/card/stack/preview`): the identities it is bound to — this card's
+head, the parent's tip, what it targets now and would target, the
+target's tip, the change request — what it does, what stops it and, for
+a retarget bench may not make, the exact manual step. Opening it changes
+nothing. Confirming is a second, armed click (`POST
+/api/card/stack/action` with the identities the sheet showed); the server
+reads everything again and refuses, naming what moved, when any of it
+differs. Every action is refused while an agent works on the card, while
+it is being merged and cleaned up, and while its worktree is dirty, on
+another branch or not this repository's. Nothing calls an action but the
+click: no beat, no move and no read.
+
+- **Retarget onto <target>** — once the parent has landed, the card's
+  change request targets where it landed. Where there is a change request
+  and the provider's `retarget` reads `available` at that moment (the
+  installed CLI's own `--help`, read locally), bench changes the base on
+  the host and reads the change back; the recorded plan and the card's
+  `**PR base:**` follow what was read back, never what was hoped. The
+  edit is **not** conditional on the head (STACKING.md, C8): bench reads
+  the head and base immediately before and after, refuses drift that was
+  already there rather than "correcting" someone else's edit, and a host
+  that did not take the edit, or could not be read back, records nothing
+  and says so — nothing is undone on the host. `unavailable` or
+  `unknown` makes **no** provider mutation call at all: the sheet names
+  the manual step (on GitHub, Edit → base, or `gh pr edit <n> --base
+  <target>` by hand), and once the host is seen targeting the new branch
+  the same action *adopts* it, with no edit. A card with no change
+  request yet changes its plan alone. A parent that landed by squash or
+  rebase needs its target brought into this branch first; bench will not
+  rebase.
+- **Update from <parent>** — an additive merge of the parent's tip into
+  the card's own worktree (recreated from its branch when it was cleaned
+  up). A conflict is aborted, the conflicting files named, and the branch
+  left exactly as it was. The new head is published with a plain push
+  only when the parent's tip is already on the remote, so a child never
+  publishes its parent's work for it. Nothing is reset or force-pushed.
+- **Finish: clean up** — for a card whose head the application base on
+  the remote already holds, read off the remote itself rather than the
+  last fetch: the workspace is cleared under merge & clean up's rules
+  (uncommitted work keeps the worktree and its branch, a branch something
+  still targets is kept on the remote), the card moves to `done/` and a
+  delivered record is written. Nothing is merged. A child with no commits
+  of its own — its head still the commit its work was cut from, or one
+  that commit already contained — is not offered it: there is no work of
+  its own to have delivered. That is read from the recorded cut, never
+  from where the parent is now, so a child whose work landed through its
+  parent's branch is still finished.
+
+**A retarget is a new review context.** It changes the change's diff and
+integration even when the head did not move, so it is recorded on the
+plan (`retargets`: from, to, the head, when, how) and the merge rules
+stop counting a Bench verdict or a formal approval given before it
+(`verdict-before-retarget`, `approval-before-retarget`, both *needed*).
+A **⌖ replan** that changes the target records one too, and the history
+is carried whenever the plan is recorded again — **▸ start work** on an
+existing branch and **↻ act on PR** re-record it — so a later launch at
+the same head cannot make an earlier approval count again. Check evidence
+keeps its own identity rules: a pass whose declared identity still holds
+is still a pass. An update from the parent is a new head, and everything
+about the old head is history under the existing rule.
+
+Nothing here restacks, rebases, force-pushes or merges a child into its
+parent, and nothing relies on what a host does by itself when a parent
+merges or its branch is deleted: those cells of the evidence matrix are
+still *not observed*, and the reading reports whatever the host did
+(`target-changed-on-host`, `parent-closed`) rather than assuming it.
+
 ## Execution profiles and approved context
 
 A plan says *which checkout* a run works in. A **profile** says what that
@@ -1583,6 +1977,23 @@ Approval covers those files and nothing beside them. It is not permission
 to edit them, to read what sits next to them, or to publish their
 contents — and no diagnostic ever quotes one: refusals name paths,
 revisions and hashes, never bytes.
+
+**Approved means actually readable.** A headless run has nobody to answer
+a permission prompt, so a file the vendor will not let it read is not
+approved in any sense that matters. The pinned copies (`AGENT_CONTEXT`)
+and, in an external layout, the workflow briefs the prompt names outside
+the checkout (`AGENT_GUIDANCE`, by canonical path and approved hash) are
+each rendered by the claude adapter as one exact file read —
+`Read(//<absolute path>)` — with an edit of the same path denied. Nothing
+broader: no wildcard, no directory, no blanket read, no bypass. An entry
+that cannot be granted exactly — malformed, not canonical, a link, not a
+regular file, or no longer the approved content — refuses the launch
+before the vendor starts rather than being dropped or widened, so a brief
+edited after the pin fails closed. The source a selection was copied from
+is never granted because the selection names it. That is generated
+permission text, and the doctor's `context-reads` row says so; whether the
+installed CLI honours it is the opt-in, billable
+`develop/claude-access-smoke.py` (see `core/adapters/README.md`).
 
 What the copy guarantees is worth stating narrowly, because the obvious
 phrasing claims more: an edit to the source cannot change what a run was
@@ -1828,6 +2239,27 @@ commit's outcome that is now history, or an equivalence bench proved —
 or the comparison fails. It writes nothing it read from, asks GitHub
 nothing, and leaves out `.env`, secrets, logs and the HMAC key.
 
+**The runner-identity transition (task 121).** The `runner` dimension of
+every result identity is now a digest over the files in
+`resultidentity.RUNNER_FILES` — the runner, the identity, the record and
+its freshness, and the record and git leaves they stand on — rather than
+the hash of `verify.py` alone. Promoting that core changes the value
+once: every recorded pass reads `stale / runner-changed`, legacy records
+included, and each required check on an open card needs one fresh run.
+Nothing reruns by itself and nothing is rewritten; **Run required
+checks** is the recovery. A rollback costs the same invalidation in the
+other direction. `gate-compare run … --expect runner-changed` previews
+it on a copy and fails if anything other than that transition changes.
+See `verify/README.md`.
+
+**Task 131 is one such transition.** Per-run source checkouts change
+`verify.py`, a runner file, so promoting that core reads every recorded
+pass `stale / runner-changed` once, exactly as above, and each required
+check on an open card needs one fresh run. No other dimension moves: the
+checkout path was never part of an identity. Historical evidence is not
+rewritten; a record made in a shared `verify/src/` checkout keeps naming
+that path.
+
 ### Every status word
 
 The words a card can wear, from `delivery.WORDS`, with the precedence
@@ -1847,6 +2279,7 @@ holds this table to the module's own list.
 | `ready-to-start` | Ready to start | neutral | 8 |
 | `in-progress` | In progress | neutral | 8 |
 | `waiting-for-phase` | Waiting for phase | neutral | 9 |
+| `waiting-for-parent` | Waiting for parent | neutral | 21 (read before 18–19) |
 | `merged-elsewhere` | Merged on GitHub | neutral | 17 (read before 10–16) |
 | `cannot-assess` | Can't assess | alarm | 6, 10 |
 | `rules-invalid` | Merge rules invalid | alarm | 11 |
@@ -2242,6 +2675,74 @@ verification. A preparation step that declares `"network": true` runs
 with whatever network the machine has and the evidence says so —
 `network-policy` is pending, and a profile requiring it refuses.
 
+### One source checkout per run (task 131)
+
+A `source` check runs in a detached checkout of one exact commit that
+bench makes **for that run alone**: `local/state/verify/src-run/<card>-
+<commit>-<run>`, beside an ownership record (`<same name>.owner.json`)
+naming the run's evidence id, the card, the commit and the path. The
+record is written durably *before* `git worktree add`, so a checkout
+exists only once a run owns it. Two different checks of one card at one
+commit — a backend suite and a browser suite started together, say — get
+two checkouts pinned to the same commit, and the one that finishes first
+cannot remove or alter the other's files. They used to share
+`verify/src/<card>-<commit>`, and the first to finish deleted the source
+the other was still running in.
+
+- **Every executing run owns one; a join makes none.** A forced rerun
+  (`--again`) and another scope of the same check each get their own. A
+  duplicate request for a run already in flight joins it before any
+  checkout is made, and a request answered by an equal result already on
+  record (`REUSED`) makes no checkout at all.
+- **Release is proved, never assumed.** Every cleanup path — a pass, a
+  failure, a preparation failure, a program that could not start, a
+  timeout, a cancellation, a caller's stop — releases only the checkout
+  whose ownership record names *this* run and *this* path, inside
+  `src-run/`, not through a link, still this application's worktree, still
+  at the commit it was made at, with nothing uncommitted in it, and
+  through `git worktree remove` without `--force`. Anything else is kept
+  and the record's `root` says why. No prefix, card-wide or directory-wide
+  deletion exists.
+- **Interrupted creation is conservative.** A `git worktree add` that
+  failed before making anything leaves nothing, not even the ownership
+  record; one that left a partial directory is kept and named in the
+  refusal. A board restart releases what an earlier board's runs provably
+  owned under the same guards, tells that run's own evidence what became
+  of its checkout (and no other record), and keeps the rest. Recovery
+  proves ownership from the record and the checkout, not from whether the
+  dead board's check process is still alive: a clean, owned checkout is
+  removed even if an orphaned process is still running in it. That run's
+  evidence is already closed as `error`, so no result rides on it.
+- **What is kept, accumulates.** A checkout kept for a reason — a check
+  that left untracked, non-ignored files, say — is kept per run, so a
+  check that always does that leaves one kept checkout under `src-run/`
+  per run rather than one per card and commit. Each is named in its own
+  run's evidence; nothing bounds or prunes the total, and removing them is
+  a person's `git worktree remove` once nothing uses them.
+- **The old shared paths are never adopted.** A checkout under
+  `verify/src/` was shared by design, so no run can prove it owns one:
+  bench neither runs in, reuses, migrates nor removes it. The restart's
+  ticker line counts what is left (`verify.source_leftovers` lists it), and
+  removing it is a person's `git worktree remove` once nothing uses it.
+- **The path is provenance, not identity.** A unique directory does not
+  make an equal result different: the result identity binds the commit and
+  a digest of everything uncommitted, never the path, so a pass recorded
+  in one run's checkout is reused after that checkout is gone, and a new
+  commit still makes it `stale / source-changed`. A fresh checkout is
+  always `fresh` as its root class.
+
+What this does **not** isolate, said plainly: the git object database is
+shared (it is immutable), and so is the cache home a check's `HOME` and
+cache variables point at, which is keyed on the card and commit as it
+always was — so a `pip` or `npm` cache can be written by two runs at
+once. A check's own side effects (files it writes by absolute path,
+services, databases, ports it binds) are as shared as they ever were. And
+the `worktree` and `review` roots are unchanged: a `worktree` check runs
+in the card's own checkout and a `review` check in the review's pinned
+checkout, neither made nor removed by the verification, so two checks of
+those roots still share one directory. Independent source checkouts
+prevent one run deleting another's checkout; they are not a sandbox.
+
 ### The evidence
 
 One JSON record per verification under `local/state/evidence/`, written
@@ -2340,7 +2841,10 @@ Four things it guarantees:
   cancelled rather than as failures; a duplicate request for a check
   already in flight joins it rather than doubling it; and a `source`
   checkout with uncommitted work in it is kept and reported rather than
-  forced out.
+  forced out. Each record's `root` names the checkout that run actually
+  ran in (`checkout: "per-run"`, its ownership record) and what became of
+  it — `removed`, or `kept` with the reason — and one run's cleanup never
+  writes another run's record.
 
 ### On the board
 
@@ -3518,7 +4022,7 @@ should I configure next?**
 
 It owns no policy. Every value in it comes from the authority that
 already answers for that question — `profiles.resolve()` for what a run
-may do and read, `profiles.gate_policy()` for what a merge must have,
+may do and read, `gatepolicy.gate_policy()` for what a merge must have,
 `verify`'s own records for what the project's checks found,
 `gates.evaluate()` for whether a merge may happen, `config` for the roots
 and each setting's provenance. There is deliberately no second reader of
@@ -3866,6 +4370,99 @@ an `Origin`/`Sec-Fetch-Site` check for the browsers that send them. A
 loopback client that is not a browser sends the header and is allowed,
 which is correct: it already has the operator's own filesystem access.
 
+**Every other write passes the same door, minus the header.** Each route
+is declared once in `manager/core/routes.py` with a request class, and
+the server applies that class's door before the route's handler runs —
+so a route cannot skip it by forgetting to ask:
+
+| class | routes | what a request must show |
+| --- | --- | --- |
+| `read` | every GET | nothing; reading changes nothing |
+| `browser-mutation` | every person-operated POST | a JSON object body within a size cap; `Sec-Fetch-Site` same-origin or none when sent; an `Origin`, when sent, that is this board on the port it actually serves or exactly one of `BOARD_ALLOWED_ORIGINS`; `Origin: null` refused; and no run named by a request that says it is a browser's |
+| `policy-mutation` | the 25 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
+| `run-authenticated` | `/api/progress`, `/api/verify/details` | the same door, then the run's own token |
+| `event-ingest` | `/api/events` | the same door; a run the event names is proved by that run's token (next section) |
+
+The body is checked before anything happens: a missing, negative or
+non-numeric `Content-Length`, a chunked body, a body over the cap (1 MiB;
+16 KiB for a progress report), JSON that does not parse and JSON that is
+not an object are each refused with nothing changed. "This board" is the
+port the board serves on, not `BOARD_PORT`, so a board started with
+`--port` accepts its own page. A shim, a hook bridge or `curl` states no
+`Origin` and no `Sec-Fetch-Site`, which is how a trusted local caller is
+told from a stated foreign one; a run's claim to be a run is the run
+token's to prove, never the route's class. `OPTIONS` is never answered.
+
+`BOARD_ALLOWED_ORIGINS` (empty by default) lists the exact
+`scheme://host[:port]` origins besides loopback whose writes are
+accepted — a local proxy in front of the board, say. No wildcard, path or
+near match is taken. **An origin check is not authentication:** it keeps
+other pages in your browser from writing, and it admits no peer that the
+proxy in front of the board does not already admit. `Host`, `Forwarded`
+and `X-Forwarded-*` decide nothing. A board reached through a proxy whose
+origin is not listed reads fine and refuses every write, naming the
+origin it saw; loopback always works as the way back.
+
+### Callers: run identity and Host, reported before enforced
+
+Two more checks sit at the same door (`callers.py`), and each ships in
+two explicit modes: `report`, the default, counts and shows what it would
+refuse and refuses nothing; `enforce` refuses. **Report is an
+observation, not a security pass.** Nothing moves a board from one to the
+other by itself — no timer, no update and no merge of the source. It is
+an operator's edit to `manager/local/.env` and a restart, and Settings →
+Installation shows which mode is in force. A value that is neither word
+reads `report` and is named there, so a typo never looks like
+enforcement.
+
+- **`BOARD_RUN_IDENTITY` — a request naming a run.** `/api/verify` with
+  an `agent` asks under that run's frozen manifest, and `/api/events`
+  with one links a session to that run. Each must carry the run's own
+  `BOARD_RUN_TOKEN` as `token` — the capability `progress` issues at
+  launch and keeps only the hash of, compared in constant time. The
+  `bench-verify` shim always sent it; both event bridges now forward it
+  as an optional field. An unproven claim — no token, a wrong one, a run
+  this board never launched, or one launched without a capability — is
+  counted on that run's channel health (Focus: *unproven claims*) and
+  narrated once in the ticker. Enforced, an unproven verification is
+  refused (`run-unproven`, nothing run), and an unproven event is
+  recorded as a session with no run link: no agent, no task. A token is
+  removed from an event before anything is recorded, so it reaches no
+  session log, no task file and no page. A card refinement is launched
+  with no capability, so under enforcement its events are recorded
+  unlinked.
+- **`BOARD_HOST_CHECK` — the `Host` a request names.** Allowed:
+  `127.0.0.1`, `localhost` and `[::1]` on the port this board serves, and
+  the host of each `BOARD_ALLOWED_ORIGINS` entry on its port (or with the
+  port omitted, where the origin's port is its scheme's default). The
+  comparison is exact: the host case-folded, IPv6 in brackets, no
+  trailing-dot or other normalization, an unbracketed IPv6 address or a
+  missing `Host` not a host. Enforced, any other `Host` is answered
+  `421` and nothing is read or changed — loopback on the served port
+  always works as the way back.
+
+Settings → Installation lists the distinct `Host` and `Origin` values
+seen since the board started (at most 24 of each, printable ASCII,
+clipped to 160 characters), whether each is allowed and why, how often,
+and the *names* of any `Forwarded`/`X-Forwarded-*` headers that arrived —
+never their values, and never any other header. That is the inventory to
+configure a proxy from before enforcing: read what the proxy actually
+forwards, list its origin, then switch. Neither check authenticates a
+person, and tailnet membership authorizes nothing: an approved-device
+boundary in front of the board stays exactly where it is.
+
+### Reference files render inert
+
+`/files/plans/…` and `/files/reference/…` serve what people and agents
+wrote. Every file goes out with `X-Content-Type-Options: nosniff`, so it
+is never read as a type it was not served as (an unknown suffix is
+`application/octet-stream`). `.html` and `.svg` also carry
+`Content-Security-Policy: sandbox; script-src 'none'; …`: they render
+— markup, styles and images — in an opaque origin with no script, form or
+plugin, so a script inside one cannot call this board's API. A reference
+document that needs script will not run it. A PDF is not sandboxed, since
+Chromium's viewer is a plugin the sandbox would refuse.
+
 Check registration is not a file-write or shell endpoint either. A
 compound command, a pipeline, a redirection, a substitution, a relative
 executable, a path climbing out, the application checkout as an execution
@@ -3884,7 +4481,7 @@ same reading in a terminal, for a person or their coding agent. It is
 not a second configuration store and owns no setting: every fact in it is
 asked of the module that already answers for it (`config` for the layout,
 the remotes, `gh` and the driver; `config.agent_choice` for the harness
-and model; `settings.verification` and `profiles.gate_policy` for checks
+and model; `settings.verification` and `gatepolicy.gate_policy` for checks
 and merge rules; `verify.outcome_now` for what a check last found), so the
 guide cannot disagree with a launch.
 
@@ -4187,7 +4784,7 @@ can trust by keeping five acts apart, each its own control:
 | **Stop** | SIGTERM to the group bench started, SIGKILL after its grace period, then reports what is left | no | the drive record |
 
 Discovery is not an act. It reads the application's files through the
-setup cards' own inspection (`setuptasks.inspect`) and **proposes**: start
+setup cards' own inspection (`appinspect.inspect`) and **proposes**: start
 commands with port hints, a dependency step, environment names from an
 `.env.example` (secrets marked as references, values never read), and data
 prerequisites. Nothing is run, installed or started by reading the guide,
@@ -4353,6 +4950,35 @@ branch — additively, never rebasing or force-pushing — in a dedicated
 resolution commit, and refuses semantic ones, naming the collision for a
 human to settle. GitHub computes mergeability lazily, so an UNKNOWN
 reading keeps the chip's last state rather than flapping.
+
+### Which host: hosting providers
+
+Everything above goes through a **hosting provider** (task 116):
+`githost.py` picks the one in force and `providers/<name>/` holds what
+bench knows about that host — for GitHub, every `gh` argument list, url
+and payload shape. `changes.py` (formerly `github.py`) keeps the
+lifecycle and reads normalized values back, so the words on the board,
+the `**PR:**` line, the ticker sentences and the `github` /
+`separate-reviewer` review policies are exactly what they were.
+
+- **`BOARD_GIT_PROVIDER`** — `github` by default; `none` works the
+  application with git alone: no PR is opened, polled, reviewed on a host
+  or merged there, no PR chip appears, no launch is granted a `gh` verb,
+  and a plan reads `local-only` with that reason. Merge & clean up's
+  local merge is unaffected.
+- **An unrecognised remote is refused, not guessed at.** The GitHub
+  provider acts on a remote on `github.com` (or a host named in
+  `BOARD_GITHUB_HOSTS`) and on a local path remote; a remote on any other
+  host is reported in Settings and in the Configuration check, and `gh`
+  is never run against it.
+- **Unknown authorizes nothing.** Reading a status or opening a page runs
+  no probe and no fetch; whether a merge can be made conditional on a
+  head is asked only when a merge needs to know, and a capability that
+  reads `unknown` refuses the mutation by name.
+
+The contract is `manager/core/providers/README.md`; how the provider's
+verbs reach a coding agent (`AGENT_HOST`) is in
+`manager/core/adapters/README.md`.
 
 ### A review runs in the revision it is of
 

@@ -174,5 +174,6 @@ after="$(cat "$TM/manager/core/VERSION" 2>/dev/null || echo '?')"
 echo "Updated core from $tag: version $before → $after."
 echo "Now run: python3 $TM/install.py   (re-wires the project; idempotent)"
 echo "Then restart the board: $TM/stop.sh && $TM/start.sh"
+echo "A running board keeps serving the code and page it started with until it restarts."
 exit 0
 }

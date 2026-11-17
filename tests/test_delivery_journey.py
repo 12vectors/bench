@@ -45,6 +45,7 @@ from tests.test_integration_gates import (CARD, PASSES,  # noqa: E402
 
 import delivery  # noqa: E402  (on sys.path once the case modules are imported)
 import gates  # noqa: E402
+import evidence  # noqa: E402
 import verify  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -364,7 +365,7 @@ def executions() -> int:
     """Check executions on record for the card. A reuse is not evidence
     (`all_evidence()` never lists one), so this counts runs, not asks."""
     verify.forget_cached()
-    return len(verify.for_task(CARD))
+    return len(evidence.for_task(CARD))
 
 
 class TheSafer36JourneyCounted(GateCase):
@@ -392,8 +393,8 @@ class TheSafer36JourneyCounted(GateCase):
         gates.forget_cached()
 
     def strip_identity(self) -> None:
-        for record in verify.for_task(CARD):
-            path = verify.path_of(record["id"])
+        for record in evidence.for_task(CARD):
+            path = evidence.path_of(record["id"])
             data = json.loads(path.read_text(encoding="utf-8"))
             for key in ("resultId", "identity", "provenance", "inputs",
                         "prepareSteps", "checkSubstance"):

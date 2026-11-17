@@ -25,6 +25,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -36,7 +37,6 @@ import state  # noqa: E402
 from tests.test_phase_runs import (DIES, ONE, PHASE, PHASE_BRANCH, TWO,  # noqa: E402
                                    PhaseCase, card, wait_for)
 
-BOARD = REPO / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
 
 # An agent that is still working when the hold arrives.
@@ -318,7 +318,7 @@ class TheHeaderChip(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def func(self, name: str) -> str:
         match = re.search(rf"^function {name}\(.*?\n\}}\n", self.html,
@@ -383,7 +383,7 @@ class WhatTheChipSays(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        html = BOARD.read_text(encoding="utf-8")
+        html = pagesource.page()
         source = ""
         for name in ("phaseProgress", "clip", "phaseChipDetail", "phasesInFlight"):
             match = re.search(rf"^function {name}\(.*?\n\}}\n", html, re.M | re.S)
@@ -480,7 +480,7 @@ class TheCardsActions(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
         block = re.search(r"if \(task\.stage === 'in-progress' && task\.isPhase\)"
                           r" \{.*?\n    \} else if \(task\.stage === 'in-progress'\)",
                           cls.html, re.S)
@@ -535,7 +535,7 @@ class ThePhaseCardsSheet(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
         cls.block = re.search(r"function phaseMembers\(t\) \{.*?\n\}\n",
                               cls.html, re.S).group(0)
 
@@ -570,7 +570,7 @@ class ThePhaseCardsSheet(unittest.TestCase):
 class TheTickerReadsPhaseEvents(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_a_phase_event_has_a_glyph_of_its_own(self):
         glyphs = re.search(r"const GLYPHS = \{.*?\};", self.html, re.S).group(0)
@@ -585,7 +585,7 @@ class TheTickerReadsPhaseEvents(unittest.TestCase):
 
 class TheApiHasAStop(unittest.TestCase):
     def test_the_route_exists(self):
-        source = (REPO / "manager" / "core" / "httpd.py").read_text(encoding="utf-8")
+        source = (REPO / "manager" / "core" / "routes.py").read_text(encoding="utf-8")
         self.assertIn('"/api/phase/stop"', source)
         self.assertIn("phases.stop_phase", source)
 

@@ -20,18 +20,11 @@ from __future__ import annotations
 import re
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
-BOARD = REPO / "manager" / "core" / "board.html"
 
-# What the page was already allowed to fetch before the logo landed. The list
-# is the point: a logo that needed a font would have to grow it.
-KNOWN_EXTERNALS = {
-    "https://fonts.googleapis.com",
-    "https://fonts.gstatic.com",
-    "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500"
-    "&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap",
-}
+REPO_WEB = REPO / "manager" / "core" / "web"
 
 # Colour only ever means state, so none of these may appear in the mark.
 STATE_TOKENS = ("var(--accent)", "var(--calm)", "var(--alarm)", "var(--idle)")
@@ -40,7 +33,7 @@ STATE_TOKENS = ("var(--accent)", "var(--calm)", "var(--alarm)", "var(--idle)")
 class Fixture(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def mark(self) -> str:
         """The inline wordmark, markup and all."""
@@ -76,13 +69,20 @@ class TheWordmark(Fixture):
 
     def test_nothing_is_fetched_for_it(self):
         """The whole reason it is outlines. If this fails, the page grew a
-        request (or an @font-face) that the acceptance forbids."""
+        request (or an @font-face of its own) that the acceptance forbids.
+        The Plex faces are the board's own since task 123, declared in
+        web/fonts/plex.css — which is not page source — and none of them is
+        Zilla Slab."""
         externals = set(re.findall(r'(?:href|src)="(https?://[^"]+)"', self.html))
-        self.assertEqual(externals, KNOWN_EXTERNALS,
-                         "board.html gained an external resource")
+        self.assertEqual(externals, set(),
+                         "board.html links an external resource")
         for forbidden in ("@font-face", ".woff", ".ttf", "family=Zilla"):
             self.assertNotIn(forbidden, self.html,
                              f"the logo may not bring in {forbidden}")
+        self.assertNotIn("Zilla", (REPO_WEB / "fonts" / "plex.css")
+                         .read_text(encoding="utf-8"))
+        # that no asset references a url off the board at all is
+        # tests/test_font_page.py's
         # Naming the source face in a comment is documentation; setting text
         # in it would be a font the page hasn't got.
         self.assertIsNone(re.search(r"font-family:[^;}\n]*Zilla", self.html),

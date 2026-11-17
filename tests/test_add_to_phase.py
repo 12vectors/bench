@@ -19,6 +19,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -27,7 +28,6 @@ import config  # noqa: E402
 import state  # noqa: E402
 import taskfiles  # noqa: E402
 
-BOARD = REPO / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
 
 
@@ -380,7 +380,7 @@ class TheActionOnTheCard(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def offer(self) -> str:
         match = re.search(r"function joinablePhases\(task\) \{.*?\n\}", self.html, re.S)
@@ -439,24 +439,18 @@ class TheActionOnTheCard(unittest.TestCase):
 
     @unittest.skipUnless(NODE, "node is needed to parse the page")
     def test_the_page_still_parses(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            for index, script in enumerate(
-                    re.findall(r"<script[^>]*>(.*?)</script>", self.html, re.S)):
-                source = Path(tmp) / f"page-{index}.js"
-                source.write_text(script, encoding="utf-8")
-                out = subprocess.run([NODE, "--check", str(source)],
-                                     capture_output=True, text=True)
-                self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(pagesource.parse_problems(NODE), [])
 
 
 class TheRouteBehindIt(unittest.TestCase):
     """The one place the action reaches the write path."""
 
     def test_the_route_narrates_what_it_wrote(self):
-        source = (REPO / "manager" / "core" / "httpd.py").read_text(encoding="utf-8")
-        match = re.search(r'elif path == "/api/phase/add":.*?self\._json\(200, result\)',
+        source = (REPO / "manager" / "core" / "routes.py").read_text(encoding="utf-8")
+        self.assertIn('Route("POST", "/api/phase/add", ', source)
+        match = re.search(r'def post_phase_add\(req\).*?req\.reply\(200, result\)',
                           source, re.S)
-        self.assertIsNotNone(match, "httpd.py has no /api/phase/add route")
+        self.assertIsNotNone(match, "routes.py has no /api/phase/add handler")
         route = match.group(0)
         self.assertIn("taskfiles.add_to_phase", route)
         self.assertIn("record_board_event", route)

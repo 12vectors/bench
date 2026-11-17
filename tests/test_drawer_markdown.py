@@ -25,12 +25,12 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 ROOT = Path(__file__).resolve().parents[1]
-BOARD = ROOT / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
 
-HTML = BOARD.read_text(encoding="utf-8")
+HTML = pagesource.page()
 
 
 def lift(pattern: str, what: str) -> str:
@@ -382,7 +382,10 @@ class SourceInvariantTests(unittest.TestCase):
     def test_the_renderer_is_still_dependency_free(self):
         """board.html makes no network requests; this stays a function in
         it, not a library."""
-        self.assertNotRegex(HTML, r"<script[^>]+src=")
+        # the page's scripts are the board's own build (task 124), never a
+        # library from elsewhere
+        for src in pagesource.shell().split(' src="')[1:]:
+            self.assertTrue(src.startswith("/web/__BUILD__/"), src[:80])
         self.assertNotIn("cdn.", HTML)
 
 

@@ -221,6 +221,25 @@ class Progress(unittest.TestCase):
         self.assertIn("verifying unit (fixture)", text)
         shot("progress-focus-blocked-verification-1440x900")
 
+    def test_a_fold_opened_just_before_a_repaint_stays_open(self):
+        # 'toggle' is queued, so a repaint landing before it fires used to
+        # redraw the timeline closed. Open it and repaint in one task: the
+        # toggle cannot have run, and the fold must still be open.
+        now = time.time()
+        board()
+        current = dict(MILESTONE, at=now - 30)
+        install(fixture(now, current=current, history=[current],
+                        verify=[(200, "unit — failed (fixture)")]))
+        view("focus")
+        b = S["browser"]
+        self.assertTrue(b.wait("document.querySelector('#cgrid .prog details.fold') !== null", 10))
+        still_open = b.eval("(() => { const d = document.querySelector('#cgrid .prog details.fold');"
+                            " d.open = true; renderFocus();"
+                            " const n = document.querySelector('#cgrid .prog details.fold');"
+                            " return n !== d && n.open; })()")
+        self.assertTrue(still_open, focus_text())
+        self.assertIn("unit — failed (fixture)", focus_text())
+
     def test_a_terminal_failure_supersedes_doing_now(self):
         now = time.time()
         board()

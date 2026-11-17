@@ -57,7 +57,8 @@ from pathlib import Path
 import agents
 import config
 import gates
-import github
+import changes
+import gitrepo
 import state
 import taskfiles
 
@@ -80,12 +81,10 @@ _LOCK = threading.Lock()          # one pass at a time, whoever asks for it
 
 
 def _git(*args: str, cwd=None, timeout: float = 60) -> subprocess.CompletedProcess:
-    try:
-        return config.git_run(cwd or config.REPO, *args, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(args, 128, "", "timed out")
-    except OSError as exc:
-        return subprocess.CompletedProcess(args, 128, "", str(exc))
+    """git in the application (or a phase worktree), never raising; a
+    timeout reads exactly "timed out", as it always has here."""
+    return gitrepo.git(cwd or gitrepo.app(), *args, timeout=timeout,
+                       timed_out="timed out")
 
 
 def _branch_exists(branch: str) -> bool:
@@ -117,6 +116,38 @@ def log_entries(text: str) -> list[str]:
         if match:
             entries.append(match.group(1))
     return entries
+
+
+LOG_DATED_RE = re.compile(
+    r"^-\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s+·\s+(.+?)\s*$")
+
+
+def log_dated(text: str) -> list[dict]:
+    """The phase log as the Phases view draws it under a lane: each entry
+    with the time it was written (task 129). The board list carries this
+    for a phase card instead of the card's whole text."""
+    section = re.search(rf"^##\s+{LOG_HEADING}\s*$(.*?)(?=^##\s|\Z)", text,
+                        re.MULTILINE | re.DOTALL)
+    if not section:
+        return []
+    entries = []
+    for line in section.group(1).splitlines():
+        match = LOG_DATED_RE.match(line.strip())
+        if match:
+            entries.append({"at": match.group(1), "text": match.group(2)})
+    return entries
+
+
+def board_logs(collected: dict) -> dict:
+    """Per phase card with a log, its dated entries."""
+    found = {}
+    for stage in collected["stages"]:
+        for task in stage["tasks"]:
+            if task.get("isPhase"):
+                entries = log_dated(task.get("body") or "")
+                if entries:
+                    found[task["file"]] = entries
+    return found
 
 
 def _write_log(phase: dict, entry: str) -> bool:
@@ -279,7 +310,7 @@ def _member_state(task: dict, branch: str,
         # Green means the checks are not against it: red halts, running
         # waits, and a member with no checks at all advances — a project
         # without CI must not deadlock every phase it runs.
-        ci = (github.PR_STATE.get(task["file"]) or {}).get("ci")
+        ci = (changes.pr_state(task["file"]) or {}).get("ci")
         if ci == "fail":
             return "halt", "its CI is red", None
         if ci == "running":
@@ -368,6 +399,36 @@ def public_state() -> dict:
     return {name: dict(snapshot) for name, snapshot in SNAPSHOTS.items()}
 
 
+MERGED_ENTRY_RE = re.compile(r"^(\d+) merged into ")
+
+
+def merged_members(task: dict, snapshot: dict | None = None) -> list[str]:
+    """Which members a phase's branch already holds, as canonical card
+    numbers in ascending order (task 125). Two durable sources for one
+    fact: while a run is on, the runner's last pass has just read it off
+    git; once the phase leaves in-progress/ there are no more passes — and
+    the log, written by the same runner as it merged them, still
+    remembers. That is what keeps a phase in review/ from drawing a lane
+    where nothing ever landed. The page used to work this out itself."""
+    merged = set()
+    for member in (snapshot or {}).get("members") or []:
+        if member.get("state") == "merged" and member.get("number"):
+            merged.add(taskfiles.canonical_number(member["number"]))
+    for entry in log_entries(task.get("body") or ""):
+        match = MERGED_ENTRY_RE.match(entry)
+        if match:
+            merged.add(taskfiles.canonical_number(match.group(1)))
+    return sorted(merged, key=int)
+
+
+def board_merged(collected: dict) -> dict:
+    """`merged_members` for every phase card on the board, by file."""
+    snapshots = public_state()
+    return {task["file"]: merged_members(task, snapshots.get(task["file"]))
+            for stage in collected.get("stages", []) for task in stage.get("tasks", [])
+            if task.get("isPhase")}
+
+
 # ── the phase branch ───────────────────────────────────────────────────
 
 
@@ -385,18 +446,16 @@ def _worktree(phase: dict) -> Path:
     arrangement every other branch here gets, recreated from the branch if
     it was cleaned up."""
     branch = agents.phase_branch(phase["file"])
-    path = config.WORKTREES / phase["file"][:-3]
-    mismatch = config.worktree_mismatch(path)
-    if mismatch:
-        raise _Halt(mismatch)
-    if path.exists():
-        return path
-    config.WORKTREES.mkdir(parents=True, exist_ok=True)
-    result = _git("worktree", "add", str(path), branch)
-    if result.returncode != 0:
+    # No separate branch check: git's own refusal is the halt's reason.
+    made = gitrepo.ensure_worktree(phase["file"][:-3], branch,
+                                   check_branch=False, timeout=60,
+                                   timed_out="timed out")
+    if made["problem"] == "mismatch":
+        raise _Halt(made["detail"])
+    if made["problem"]:
         raise _Halt(f"could not put a worktree on {branch}: "
-                    f"{result.stderr.strip()[:140]}")
-    return path
+                    f"{made['detail'][:140]}")
+    return made["path"]
 
 
 def _merge_into_phase(phase: dict, branch: str, what: str,
@@ -433,7 +492,7 @@ def _merge_into_phase(phase: dict, branch: str, what: str,
 def _push_phase(phase: dict) -> None:
     """Publish the phase branch. Best effort: a phase runs perfectly well
     with no remote, and a member's PR simply does not open without one."""
-    rname = github.remote()
+    rname = changes.remote()
     if not rname:
         return
     _git("push", "-u", rname, agents.phase_branch(phase["file"]), timeout=180)
@@ -443,7 +502,7 @@ def _freshen(phase: dict) -> None:
     """Merge main into the phase branch on the beat, so a phase that runs
     for hours does not drift into one enormous conflict at the end. A
     conflict here halts the phase like any other."""
-    point, _ = agents._fresh_branch_point()
+    point, _ = gitrepo.fresh_branch_point()
     if _merge_into_phase(phase, point or config.APP_BASE, config.APP_BASE):
         _say(phase["file"], f"merged main into {agents.phase_branch(phase['file'])}")
         _push_phase(phase)
@@ -574,7 +633,7 @@ def _finish(phase: dict) -> None:
         taskfiles.move_task(phase["file"], phase["stage"], "review", actor="phase")
     _say(phase["file"], f"{phase['file']}: every card merged — "
                         f"{agents.phase_branch(phase['file'])} is ready for review")
-    github.maybe_open_pr(phase["file"])
+    changes.maybe_open_pr(phase["file"])
 
 
 def _halt(phase: dict, member: dict | None, reason: str) -> None:
@@ -724,18 +783,17 @@ def _start(phase: dict, filename: str) -> dict:
     # Before the branch is cut: the path the phase's worktree wants may
     # already hold a checkout of something else, and git's own refusal
     # would arrive as an unreadable "fatal: ... already exists".
-    mismatch = config.worktree_mismatch(config.WORKTREES / filename[:-3])
+    mismatch = gitrepo.worktree_mismatch(config.WORKTREES / filename[:-3])
     if mismatch:
         raise ValueError(mismatch)
     if not _branch_exists(branch):
         # The same rule and the same timeout a task branch is cut by: the
         # newest main this checkout can see, and never a wait on the network.
-        point, note = agents._fresh_branch_point()
+        point, note = gitrepo.fresh_branch_point()
         worktree = config.WORKTREES / filename[:-3]
         config.WORKTREES.mkdir(parents=True, exist_ok=True)
-        result = (_git("worktree", "add", "--no-track", "-b", branch,
-                       str(worktree), point) if point
-                  else _git("worktree", "add", "-b", branch, str(worktree)))
+        result = gitrepo.worktree_add(worktree, branch, new=True, start=point,
+                                      timeout=60, timed_out="timed out")
         if result.returncode != 0:
             raise ValueError(f"could not cut {branch}: {result.stderr.strip()[:200]}")
         _push_phase(phase)

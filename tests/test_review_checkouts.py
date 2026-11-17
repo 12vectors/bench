@@ -46,21 +46,23 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import agents  # noqa: E402
 import config  # noqa: E402
-import github  # noqa: E402
+import changes  # noqa: E402
 import httpd  # noqa: E402
 import profiles  # noqa: E402
 import reviews  # noqa: E402
 import state  # noqa: E402
 import templates  # noqa: E402
+import evidence  # noqa: E402
+import staleness  # noqa: E402
 import verify  # noqa: E402
 
-BOARD = REPO / "manager" / "core" / "board.html"
 
 CARD = "69-provision-pinned-review-checkouts.md"
 STEM = CARD[:-3]
@@ -248,7 +250,7 @@ class ReviewCase(unittest.TestCase):
                    VERIFY_LOG_CAP=4 * 1024 * 1024)
 
         for registry in (state.AGENTS, state.BOARD_EVENTS, state.EXPECTED_MOVES,
-                         github.PR_STATE, verify.RUNNING, verify._KEYS,
+                         changes.PR_STATE, verify.RUNNING, verify._KEYS,
                          reviews.OBSERVED):
             registry.clear()
             self.addCleanup(registry.clear)
@@ -860,7 +862,7 @@ class AHeadThatMovedIsNotCurrent(ReviewCase):
         self.proposes(self.proposed_commit("a later head\n"))
         reviews.resolve_head(CARD, self.card_now())
         verify.forget_cached()
-        reading = verify.outcome_now(verify.read(found["id"]))
+        reading = staleness.outcome_now(evidence.read(found["id"]))
 
         self.assertEqual(reading["outcome"], "stale")
         self.assertEqual(reading["reason"], "head-changed")
@@ -876,7 +878,7 @@ class AHeadThatMovedIsNotCurrent(ReviewCase):
         self.proposes(status="MERGED", merged="2026-11-04T00:00:00Z")
         reviews.resolve_head(CARD, self.card_now())
         verify.forget_cached()
-        reading = verify.outcome_now(verify.read(found["id"]))
+        reading = staleness.outcome_now(evidence.read(found["id"]))
 
         self.assertEqual(reading["outcome"], "stale")
         self.assertEqual(reading["reason"], "pr-ended")
@@ -1230,9 +1232,9 @@ class WhatTheBoardSays(ReviewCase):
         self.proposes()
         self.review()
 
-        evidence = [r for r in verify.for_task(CARD)
-                    if (r.get("root") or {}).get("policy") == "review"]
-        self.assertEqual(evidence, [], "no check ran, so there is no evidence")
+        pinned = [r for r in evidence.for_task(CARD)
+                  if (r.get("root") or {}).get("policy") == "review"]
+        self.assertEqual(pinned, [], "no check ran, so there is no evidence")
         rollup = verify.rollup(CARD, profiles.manifest("review", CARD, "review"))
         self.assertFalse(rollup["verified"])
         self.assertFalse(any(row["outcome"] == "passed"
@@ -1275,7 +1277,7 @@ class ThePageSaysWhereAReviewRan(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_the_review_glyph_is_its_own_and_takes_nobody_elses(self):
         """Colour means state here and a glyph means one thing: `⌸` is the
@@ -1292,7 +1294,7 @@ class ThePageSaysWhereAReviewRan(unittest.TestCase):
         self.assertIn("S.state.reviews", self.html)
         self.assertIn('data-review="1"', self.html)
         self.assertRegex(self.html,
-                         r"\[data-review\][\s\S]{0,200}reviewSheet\(task\)")
+                         r"\[data-review\][\s\S]{0,200}reviewSheet\(cur\(\)\)")
 
     def test_a_refusal_reaches_the_person_who_clicked(self):
         """Every refusal in this feature is the server's sentence — a head

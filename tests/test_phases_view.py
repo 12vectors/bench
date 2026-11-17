@@ -26,14 +26,15 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import config  # noqa: E402
+import phases  # noqa: E402
 import taskfiles  # noqa: E402
 
-BOARD = REPO / "manager" / "core" / "board.html"
 NODE = shutil.which("node")
 
 # The rules a lane is drawn by, lifted from the page as written.
@@ -55,7 +56,7 @@ PARTS = (
 
 
 def harness() -> str:
-    html = BOARD.read_text(encoding="utf-8")
+    html = pagesource.page()
     out = []
     for pattern in PARTS:
         match = re.search(pattern, html, re.S)
@@ -103,7 +104,14 @@ class LaneCase(unittest.TestCase):
         (self.tasks / stage / filename).write_text(text, encoding="utf-8")
 
     def state(self, **extra) -> dict:
-        return {"board": taskfiles.collect(), "agents": [], "phases": {}, **extra}
+        board = taskfiles.collect()
+        # which members each phase's branch holds is the server's answer
+        # (task 125), computed here as `/api/state` computes it — from the
+        # runner's snapshot the test hands in and the card's own log
+        snaps = extra.get("phases") or {}
+        merged = {t["file"]: phases.merged_members(t, snaps.get(t["file"]))
+                  for stage in board["stages"] for t in stage["tasks"] if t.get("isPhase")}
+        return {"board": board, "agents": [], "phases": {}, "phaseMerged": merged, **extra}
 
     def run_js(self, expression: str, **extra) -> object:
         script = (self.src + "\nvar S = { state: " + json.dumps(self.state(**extra))
@@ -392,7 +400,7 @@ class Wiring(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def body(self, pattern: str) -> str:
         match = re.search(pattern, self.html, re.S)
@@ -428,14 +436,14 @@ class Wiring(unittest.TestCase):
     def test_the_cards_are_the_cards(self):
         """Full fidelity is the advantage a whole view buys: the lane builds
         the same nodes the Board does, not a shrunken token."""
-        lane = self.body(r"function laneFor\(task\) \{.*?\n\}")
-        self.assertIn("cardFor(m.task)", lane)
-        self.assertEqual(len(re.findall(r"appendChild\(cardFor\(", self.html)), 2,
-                         "cardFor() builds the cards for the two views that draw "
+        lane = self.body(r"function laneFor\(task, el\) \{.*?\n\}")
+        self.assertIn("keyedCard(pool, m.task, replaced)", lane)
+        self.assertEqual(len(re.findall(r"(?<!function )keyedCard\(pool, ", self.html)), 2,
+                         "keyedCard() paints the cards for the two views that draw "
                          "them — the Board's columns and a lane's")
 
     def test_the_lane_head_holds_the_phase_and_the_log_sits_under_it(self):
-        lane = self.body(r"function laneFor\(task\) \{.*?\n\}")
+        lane = self.body(r"function laneFor\(task, el\) \{.*?\n\}")
         self.assertIn("holdPhase(task)", lane)
         self.assertIn("data-open", lane)
         self.assertIn("branch", lane)
@@ -446,25 +454,25 @@ class Wiring(unittest.TestCase):
         """Clearing a halt should mean having read what caused it, so the
         action sits beneath the reason — and the Board's phase card points
         at the room rather than offering the launch itself."""
-        lane = self.body(r"function laneFor\(task\) \{.*?\n\}")
+        lane = self.body(r"function laneFor\(task, el\) \{.*?\n\}")
         self.assertIn("'run again'", lane)
         self.assertIn("runPhase(task)", lane)
         self.assertIn(".lhalt .lacts", lane,
                       "▸ run again is inside the halt, under its reason")
-        card_fn = self.body(r"function cardFor\(task\) \{.*?\n\}")
+        card_fn = self.body(r"function cardSpec\(task\) \{.*?\nfunction mountCard\(spec\) \{.*?\n\}")
         self.assertIn("else if (ph && ph.halted) actions.push(room, hold);", card_fn)
         self.assertIn("setView('phases')", card_fn)
 
     def test_holding_stops_the_run_and_unwinds_nothing(self):
         hold = self.body(r"async function holdPhase\(task\) \{.*?\n\}")
         self.assertIn("/api/phase/stop", hold)
-        lane = self.body(r"function laneFor\(task\) \{.*?\n\}")
+        lane = self.body(r"function laneFor\(task, el\) \{.*?\n\}")
         self.assertIn("stay exactly as they are", lane)
 
     def test_nothing_here_ends_the_phase(self):
         """Merging is a board move on the phase card: one place where work
         leaves the board, and this is not it."""
-        for pattern in (r"function laneFor\(task\) \{.*?\n\}",
+        for pattern in (r"function laneFor\(task, el\) \{.*?\n\}",
                         r"function renderLanes\(\) \{.*?\n\}"):
             body = self.body(pattern)
             for forbidden in ("completeSheet", "/api/task/complete", "rawMove(",
@@ -487,7 +495,7 @@ class Wiring(unittest.TestCase):
 @unittest.skipUnless(NODE, "node is needed to parse the page")
 class ThePageStillParses(unittest.TestCase):
     def test_the_inline_script_parses(self):
-        html = BOARD.read_text(encoding="utf-8")
+        html = pagesource.page()
         scripts = re.findall(r"<script[^>]*>(.*?)</script>", html, re.S)
         self.assertTrue(scripts, "board.html has no inline script")
         with tempfile.TemporaryDirectory() as tmp:

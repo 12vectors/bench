@@ -27,9 +27,9 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from tests import pagesource
 
 REPO = Path(__file__).resolve().parents[1]
-BOARD = REPO / "manager" / "core" / "board.html"
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import httpd  # noqa: E402
@@ -39,7 +39,7 @@ import profiles  # noqa: E402
 class OneResolver(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_the_sheet_asks_the_server_for_the_resolved_profile(self):
         # the launch check (task 79) asks the same route for the same card
@@ -95,7 +95,7 @@ class OneResolver(unittest.TestCase):
 class ConfiguredIsNotEnforced(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_the_page_never_calls_a_prefix_rule_a_sandbox(self):
         shown = self.html.lower()
@@ -129,7 +129,7 @@ class ConfiguredIsNotEnforced(unittest.TestCase):
 class AFrozenPolicyIsNotTheCurrentOne(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_the_panel_says_when_the_settings_have_moved(self):
         self.assertIn("settings have moved", self.html)
@@ -148,7 +148,7 @@ class AFrozenPolicyIsNotTheCurrentOne(unittest.TestCase):
 class TheChipOnlyAppearsWhenThereIsSomethingToSay(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_a_legacy_board_gets_no_chip(self):
         """The same law the plan chip follows: a board that configured
@@ -168,7 +168,7 @@ class TheChipOnlyAppearsWhenThereIsSomethingToSay(unittest.TestCase):
     def test_the_chip_opens_the_profile_sheet(self):
         self.assertIn('data-profile="1"', self.html)
         self.assertRegex(self.html,
-                         r"\[data-profile\][\s\S]{0,200}profileSheet\(task\)")
+                         r"\[data-profile\][\s\S]{0,200}profileSheet\(cur\(\)\)")
 
     def test_the_sheet_offers_each_intent(self):
         self.assertIn("INTENT_LABEL", self.html)
@@ -186,7 +186,7 @@ class TheChipOnlyAppearsWhenThereIsSomethingToSay(unittest.TestCase):
 class NoContentsReachThePage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = BOARD.read_text(encoding="utf-8")
+        cls.html = pagesource.page()
 
     def test_the_page_has_no_way_to_fetch_an_approved_documents_contents(self):
         """`/files/` serves plans/ and reference/ for the drawer, and that

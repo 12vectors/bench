@@ -1347,6 +1347,21 @@ class TheLaunchRecordsWhatItRode(ProfileCase):
         self.assertEqual(self.launched()["AGENT_COMMANDS"],
                          config.AGENT_COMMANDS)
 
+    def test_a_gated_board_tells_the_launch_its_required_checks(self):
+        """The merge rules are read in `gatepolicy`, above `profiles`
+        (task 120); a launch still hands them to the prompt."""
+        self.declares({"v": 1, "checks": [
+            {"name": "unit", "run": "python3 -m unittest",
+             "root": "worktree"}],
+            "profiles": {"work": {"verify": ["unit"]}},
+            "gates": {"acceptance": {"checks": ["unit"]}}})
+        self.run_agent()
+        prompt = " ".join(self.launched()["prompt"].split())
+        self.assertIn("This board gates its merges on those checks", prompt)
+        self.assertIn("Ask for every required check after your last "
+                      "commit", prompt)
+        self.assertIn("require: `unit`", prompt)
+
     def test_the_prompt_names_the_pinned_input(self):
         self.run_agent()
         prompt = self.launched()["prompt"]
