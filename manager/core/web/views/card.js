@@ -1413,14 +1413,10 @@ async function rawMove(file, from, to) {
     body: JSON.stringify({ file, from, to }),
   });
   const data = await res.json();
-  if (!res.ok) {
-    toast(data.error || 'move failed', true);
-    await loadState();
-    // refused for its information (task 132): the refusal links to the
-    // place it is fixed — the card's Inputs tab
-    if (data.code === 'information') openInputs(file);
-    return false;
-  }
+  // refused for its information (task 132): the refusal opens the place
+  // it is fixed — the card's Inputs tab
+  if (!res.ok && data.code === 'information') openInputs(file);
+  if (!res.ok) { toast(data.error || 'move failed', true); await loadState(); return false; }
   toast(`${file} → ${to}/`);
   if (S.selected && S.selected.file === file) S.selected = data.task;
   await loadState();
