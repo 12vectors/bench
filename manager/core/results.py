@@ -419,15 +419,39 @@ def capture_checks() -> dict:
                     "\"outputs\": true (Settings → Checks).")}
 
 
-def availability(filename: str, stage: str, commit: str | None) -> list[dict]:
+def candidate_commit(filename: str) -> tuple[str | None, str | None]:
+    """The commit outputs are read against, and where it came from.
+
+    The card's branch while it exists. Once merge & clean up has deleted
+    it, the commit this board recorded delivering — otherwise a delivered
+    card would read every output, every check and its own implementation
+    as about nothing at all. A branch that exists again (work reopened)
+    wins: its tip is the newer question."""
+    commit = gates.head_for(filename, "acceptance")["commit"]
+    if commit:
+        return commit, "branch"
+    delivered = completion.delivered_record(filename)
+    if delivered and delivered.get("commit"):
+        return str(delivered["commit"]), "delivered"
+    return None, None
+
+
+def availability(filename: str, stage: str, commit: str | None,
+                 commit_from: str | None = "branch") -> list[dict]:
     """Implemented, merged, installed, deployed — each from what bench
     actually knows, and unknown where it knows nothing."""
     delivered = completion.delivered_record(filename)
     pr = changes.pr_snapshot(filename) or {}
+    if commit and commit_from == "delivered":
+        implemented = (f"at {commit[:12]}, the commit this board delivered "
+                       f"(its branch has been cleaned up)")
+    elif commit:
+        implemented = f"on a branch at {commit[:12]}"
+    else:
+        implemented = "no implementation commit on this board"
     rows = [{"fact": "implemented", "state": "yes" if commit else
              ("unknown" if delivered else "no"),
-             "words": (f"on a branch at {commit[:12]}" if commit else
-                       "no implementation commit on this board")}]
+             "words": implemented}]
     if delivered:
         rows.append({"fact": "merged", "state": "yes",
                      "words": f"merged into {delivered.get('target') or 'the base'} "
@@ -469,7 +493,7 @@ def reading(filename: str, stage: str, *, text: str | None = None) -> dict:
     parts = taskfiles.card_parts(text)
     brief = parts["brief"]
     found = setting(brief)
-    commit = gates.head_for(filename, "acceptance")["commit"]
+    commit, commit_from = candidate_commit(filename)
     criteria = {c["id"]: {"text": c["text"], "rev": acceptance.criterion_rev(c["text"])}
                 for c in taskfiles.criteria(brief) if c.get("id")}
     rows = []
@@ -533,7 +557,8 @@ def reading(filename: str, stage: str, *, text: str | None = None) -> dict:
         "acceptance": ({"accepted": acc["accepted"], "total": acc["total"]}
                        if acc else None),
         "gaps": gaps,
-        "availability": availability(filename, stage, commit),
+        "commitFrom": commit_from,
+        "availability": availability(filename, stage, commit, commit_from),
         "capture": capture,
         "activeRun": run,
         "suggest": suggestion(text, filename, found),
@@ -583,10 +608,19 @@ def handoff_refusal(filename: str, source: str, target: str) -> str | None:
         text = (config.TASKS / source / filename).read_text(encoding="utf-8")
     except OSError:
         return None
-    found = setting(taskfiles.card_parts(text)["brief"])
-    if not found["enforced"]:
-        return None
-    read = reading(filename, source, text=text)
+    try:
+        found = setting(taskfiles.card_parts(text)["brief"])
+        if not found["enforced"]:
+            return None
+        read = reading(filename, source, text=text)
+    except Exception as exc:  # noqa: BLE001 — a hold must not crash its caller
+        # An agreed Required that cannot be read is not known to be met.
+        # The card stays where it is and says why, rather than the reaper
+        # dying before its move and its ticker line, or the hold opening.
+        return (f"{filename}: Show the result is required for handoff, and "
+                f"bench could not read whether its output exists "
+                f"({type(exc).__name__}) — the card stays where it is; open "
+                f"its Overview, or change Show the result to Requested or Off")
     if read["status"] != "required-missing":
         return None
     return f"{filename}: Show the result is required for handoff — {read['remedy']}"
@@ -739,7 +773,7 @@ def board(collected: dict) -> dict:
             found = setting(taskfiles.card_parts(body)["brief"])
             if found["mode"] == "off" and not has_artifacts:
                 continue
-            count = len(artifacts.for_task(name)) if has_artifacts else 0
+            count = artifacts.count(name) if has_artifacts else 0
             out[name] = {"mode": found["mode"], "enforced": found["enforced"],
                          "artifacts": count}
     return out

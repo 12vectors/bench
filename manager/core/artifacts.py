@@ -439,6 +439,20 @@ def state_of(record: dict) -> str:
     return "available"
 
 
+def count(task: str) -> int:
+    """How many records this board keeps for a card, by name alone: the
+    board-wide reading asks this on every state read, so it opens no
+    record. The card's own reading (`for_task`) is what validates them."""
+    try:
+        directory = card_dir(task)
+    except Refused:
+        return 0
+    if not directory.is_dir():
+        return 0
+    return sum(1 for path in directory.glob("a-*.json")
+               if ID_RE.match(path.stem))
+
+
 def for_task(task: str) -> list[dict]:
     """Every record this board keeps for a card, oldest first. Reading is
     reading: no bytes are hashed, nothing is swept, nothing written."""

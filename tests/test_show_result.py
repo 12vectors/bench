@@ -77,6 +77,7 @@ class ResultCase(base.VerifyCase):
         super().setUp()
         self.patch(ARTIFACTS_DIR=self.state / "artifacts",
                    RESULTS_DIR=self.state / "results",
+                   GATES_DIR=self.state / "gates",
                    ARTIFACT_MAX_BYTES=64 * 1024, ARTIFACT_CARD_BYTES=1024 * 1024,
                    ARTIFACT_RUN_FILES=24, ARTIFACT_RETENTION_DAYS=90.0)
         self.spec = self.tmp / "demo-spec.json"
@@ -688,7 +689,149 @@ class ThroughTheServer(ResultCase):
         self.assertEqual(status, 200)
 
 
+class ADeliveredCard(ResultCase):
+    """Merge & clean up deletes the card's branch. The commit this board
+    recorded delivering is then the one outputs and checks are read
+    against — not nothing at all."""
+
+    def deliver(self) -> str:
+        import completion
+        head = git(config.WORKTREES / STEM, "rev-parse", "HEAD").stdout.strip()
+        completion._record_delivered(CARD, head, "main", "local")
+        git(self.repo, "worktree", "remove", str(config.WORKTREES / STEM))
+        git(self.repo, "branch", "-D", f"task/{STEM}")
+        (self.tasks / "in-progress" / CARD).rename(self.tasks / "done" / CARD)
+        return head
+
+    def test_outputs_and_checks_stay_current_after_the_branch_is_gone(self):
+        self.setup_run()
+        self.write_card(brief_card("## Show the result\n\n- mode: requested\n"))
+        self.commit_in_worktree()
+        self.run_demo({"after.png": PNG})
+        head = self.deliver()
+        reading = self.reading("done")
+        self.assertEqual(reading["commit"], head)
+        self.assertEqual(reading["commitFrom"], "delivered")
+        self.assertEqual(reading["artifacts"][0]["relevance"], ["current"])
+        self.assertEqual(reading["status"], "requested-shown")
+        self.assertTrue(all(c["atCandidate"] for c in reading["checks"]))
+        facts = {f["fact"]: f for f in reading["availability"]}
+        self.assertEqual(facts["implemented"]["state"], "yes")
+        self.assertIn("delivered", facts["implemented"]["words"])
+        self.assertEqual(facts["merged"]["state"], "yes")
+        self.assertEqual(facts["deployed"]["state"], "unknown")
+
+    def test_a_branch_that_exists_again_is_the_newer_question(self):
+        self.setup_run()
+        self.write_card(brief_card())
+        self.commit_in_worktree()
+        self.run_demo({"after.png": PNG})
+        old = self.deliver()
+        git(self.repo, "branch", f"task/{STEM}", old)
+        tree = config.WORKTREES / STEM
+        git(self.repo, "worktree", "add", str(tree), f"task/{STEM}")
+        (tree / "code.txt").write_text("reopened\n", encoding="utf-8")
+        git(tree, "commit", "-qam", "more")
+        reading = self.reading("done")
+        self.assertEqual(reading["commitFrom"], "branch")
+        self.assertIn("earlier-head", reading["artifacts"][0]["relevance"])
+
+
+class ASyncedCardWithoutLocalBytes(ResultCase):
+    def test_another_board_shows_the_request_and_no_outputs(self):
+        # the card's text arrived by sync; this board kept nothing for it
+        self.write_card(brief_card("## Show the result\n\n- mode: requested\n"
+                                   "- want: Screenshots of Settings\n"))
+        reading = self.reading()
+        self.assertEqual(reading["artifacts"], [])
+        self.assertEqual(reading["status"], "requested-pending")
+        self.assertEqual(reading["setting"]["want"], "Screenshots of Settings")
+        self.assertTrue(any("this board only" in b for b in reading["boundaries"]))
+        compact = results.board({"stages": [{"tasks": [
+            {"file": CARD, "body": (self.tasks / "in-progress" / CARD).read_text()}]}]})
+        self.assertEqual(compact[CARD]["artifacts"], 0)
+
+    def test_the_board_wide_reading_counts_without_opening_records(self):
+        self.setup_run()
+        self.write_card(brief_card())
+        self.run_demo({"a.png": PNG, "b.png": PNG + b"x"})
+        self.addCleanup(setattr, artifacts, "for_task", artifacts.for_task)
+        artifacts.for_task = lambda task: self.fail("board() opened records")
+        compact = results.board({"stages": [{"tasks": [
+            {"file": CARD, "body": (self.tasks / "in-progress" / CARD).read_text()}]}]})
+        self.assertEqual(compact[CARD]["artifacts"], 2)
+
+
 class AgentHandoff(ResultCase):
+    def reap(self, required: bool = True) -> list[dict]:
+        """A work run ending cleanly with a commit, reaped as the board
+        reaps it — no real agent: the process is an interpreter exiting 0."""
+        import subprocess
+        import agents
+        self.setup_run()
+        self.write_card(brief_card())
+        if required:
+            results.write_setting(CARD, "in-progress", brief_sha=self.brief_sha(),
+                                  mode="required", want="Screenshot of the narrow Settings screen",
+                                  expects="screenshots", agree=True)
+        base_commit = git(config.WORKTREES / STEM, "rev-parse", "HEAD").stdout.strip()
+        self.commit_in_worktree()
+        log = self.state / "agent" / "logs" / "reap.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text("work done\n", encoding="utf-8")
+        state.AGENTS["reap-1"] = {
+            "id": "reap-1", "task": CARD, "branch": f"task/{STEM}", "name": "Wren",
+            "kind": "work", "status": "running", "log": str(log), "origin": "to-do",
+            "worktree": str(config.WORKTREES / STEM), "base": base_commit,
+            "session": None}
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        agents._reap_agent("reap-1", proc, open(log, "a", encoding="utf-8"))
+        return list(state.BOARD_EVENTS)
+
+    def test_a_work_run_is_held_in_progress_without_the_agreed_output(self):
+        events_seen = self.reap(required=True)
+        self.assertTrue((self.tasks / "in-progress" / CARD).exists(), "held")
+        self.assertFalse((self.tasks / "review" / CARD).exists())
+        line = events_seen[-1]["summary"]
+        self.assertIn("stays in in-progress", line)
+        self.assertIn("required for handoff", line)
+
+    def test_a_work_run_without_a_requirement_is_handed_to_review(self):
+        self.reap(required=False)
+        self.assertTrue((self.tasks / "review" / CARD).exists())
+
+    def test_a_reading_that_fails_holds_and_does_not_kill_the_reaper(self):
+        self.addCleanup(setattr, results, "reading", results.reading)
+
+        def broken(*a, **k):
+            raise RuntimeError("unreadable")
+        results.reading = broken
+        events_seen = self.reap(required=True)
+        self.assertTrue((self.tasks / "in-progress" / CARD).exists())
+        line = events_seen[-1]["summary"]
+        self.assertIn("could not read whether its output exists", line)
+
+    def test_the_request_reaches_a_launch_manifest_and_its_prompt(self):
+        import agents
+        self.demo_check()
+        tree = self.worktree()
+        self.write_card(brief_card("## Show the result\n\n- mode: requested\n"
+                                   "- want: Screenshots of Settings\n"))
+        found = agents._profiled("work", CARD, "in-progress", worktree=tree,
+                                 information=True)
+        self.assertEqual(found["demonstration"]["mode"], "requested")
+        self.assertEqual(found["demonstration"]["want"], "Screenshots of Settings")
+        block = agents._context_block(found)
+        self.assertIn("## Show the result", block)
+        self.assertIn("Screenshots of Settings", block)
+        self.assertIn("`demo`", block)
+        # Off asks for nothing
+        self.write_card(brief_card())
+        off = agents._profiled("work", CARD, "in-progress", worktree=tree,
+                               information=True)
+        self.assertEqual(off["demonstration"]["mode"], "off")
+        self.assertNotIn("## Show the result", agents._context_block(off))
+
     def test_prompt_block_appears_only_when_asked(self):
         self.assertEqual(results.prompt_block({"mode": "off"}), "")
         self.assertEqual(results.prompt_block(None), "")
@@ -696,6 +839,80 @@ class AgentHandoff(ResultCase):
                                       "expects": "screenshots"})
         self.assertIn("not handed to review", block)
         self.assertIn("not evidence", block)
+
+
+# ── the same lifecycle in each layout ──────────────────────────────────
+
+
+class _InLayout(ResultCase):
+    """Every case above runs in the external layout (three roots). These
+    move the tool and the work state to where the other two layouts put
+    them — vendored (both inside the application checkout) and the
+    application root alone (the work state is the tool install) — and run
+    the lifecycle once: keep, read, hold, survive the worktree, serve."""
+
+    KIND = "external"
+
+    def setUp(self):
+        super().setUp()
+        if self.KIND == "external":
+            return
+        tool = (self.repo / ".task-manager" if self.KIND == "vendored"
+                else self.tmp / "bench")
+        tasks = tool / "tasks"
+        for slug in (*config.STAGE_DIRS, "archive"):
+            (tasks / slug).mkdir(parents=True)
+        (tool / "reference").mkdir()
+        (self.tasks / "in-progress" / CARD).rename(tasks / "in-progress" / CARD)
+        local = tool / "manager" / "local"
+        (local / "adapters" / config.ADAPTER).mkdir(parents=True)
+        (local / "commands").mkdir(parents=True)
+        st = local / "state"
+        self.tool, self.work, self.tasks, self.local, self.state = (
+            tool, tool, tasks, local, st)
+        self.patch(TASKS=tasks, TM_ROOT=tool, LOCAL=local,
+                   PLANS_DIR=st / "plans", MANIFESTS_DIR=st / "manifests",
+                   CONTEXT_DIR=st / "context", EVIDENCE_DIR=st / "evidence",
+                   VERIFY_DIR=st / "verify", AGENT_DIR=st / "agent",
+                   SESSIONS_DIR=st / "sessions", ARTIFACTS_DIR=st / "artifacts",
+                   RESULTS_DIR=st / "results", GATES_DIR=st / "gates",
+                   WORK_SETTING="",
+                   APP_SETTING="" if self.KIND == "vendored" else str(self.repo),
+                   EXTERNAL=self.KIND != "vendored")
+
+    def test_the_lifecycle_reads_alike(self):
+        self.setup_run()
+        self.write_card(brief_card())
+        results.write_setting(CARD, "in-progress", brief_sha=self.brief_sha(),
+                              mode="required", want="Screenshot of the narrow Settings screen",
+                              expects="screenshots", agree=True)
+        self.commit_in_worktree()
+        self.assertIsNotNone(results.handoff_refusal(CARD, "in-progress", "review"))
+        self.run_demo({"after.png": PNG}, {"outputs": [
+            {"file": "after.png", "caption": "Settings at 390px", "target": "candidate"}]})
+        self.assertIsNone(results.handoff_refusal(CARD, "in-progress", "review"))
+        stored = artifacts.for_task(CARD)
+        self.assertEqual(len(stored), 1)
+        self.assertTrue(str(artifacts.card_dir(CARD)).startswith(str(self.state)))
+        git(self.repo, "worktree", "remove", "--force", str(config.WORKTREES / STEM))
+        reading = self.reading()
+        row = reading["artifacts"][0]
+        self.assertEqual(row["state"], "available")
+        self.assertEqual(row["caption"], "Settings at 390px")
+        _record, served = artifacts.content(CARD, row["id"])
+        self.assertEqual(served, PNG)
+
+
+class InTheVendoredLayout(_InLayout):
+    KIND = "vendored"
+
+
+class InTheAppOnlyLayout(_InLayout):
+    KIND = "app-only"
+
+
+class InTheExternalLayout(_InLayout):
+    KIND = "external"
 
 
 if __name__ == "__main__":
