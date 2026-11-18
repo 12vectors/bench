@@ -2629,6 +2629,17 @@ it is handed one more variable (`BENCH_VERIFY_OUTPUTS`), whose name is
 bound like every other variable's, so its first run after the
 declaration is a new result identity.
 
+**Task 135 is another.** The verifier report contract adds
+`verifierreport.py` to `resultidentity.RUNNER_FILES` and changes
+`verify.py`, so promoting that core reads every recorded pass `stale /
+runner-changed` once, and each required check on an open card needs one
+fresh run. A check that does not declare `"report"` keeps its revision,
+id and substance byte for byte; one that declares it changes all three,
+so its earlier passes read `check-changed`. Freshness and reuse now also
+name `BENCH_VERIFY_OUTPUTS` for a check declaring `"outputs"`, as the
+runner always handed it, so an outputs check's pass no longer reads
+`env-changed` against itself.
+
 ### Every status word
 
 The words a card can wear, from `delivery.WORDS`, with the precedence
@@ -2785,6 +2796,16 @@ not an operating-system sandbox: do not assume an arbitrary test script
 cannot access other files or services. Use the documented trust limits
 below; guarantees the installed backend cannot enforce must not be treated
 as protection.
+
+**When a red check is not enough.** A check can do more than pass or
+fail. With the operator's opt-in it can say *why*: that its own safety
+check refused to run against the target it was given, that its fixtures
+would not load, or which line produced which wrong value — and keep the
+diff or screenshot that shows it. An agent then reads those findings,
+fixes the code and asks for the same check again. Your team adds a few
+lines to its existing wrapper; see "Verifier reports: actionable evidence
+from the check itself" below. What the check says is still the project's
+own account, labelled as such.
 
 **Existing projects remain compatible:** with no configured gate, Bench
 keeps its ungated behavior. Nothing is required and nothing is proved by
@@ -3411,6 +3432,159 @@ sentence the confirmation uses, and how to turn it on and off. It is
 listed under **Installation** with every other `.env` setting. Applying
 a policy change in Settings writes the policy document only, so it
 neither changes this setting nor any grant.
+
+### Verifier reports: actionable evidence from the check itself
+
+A red check tells a coding agent that something is wrong and very little
+about what. And an exit status cannot tell a test that failed from a
+wrapper that refused to run against an unsafe target, or from one whose
+fixture would not load: all three exit non-zero, so all three read as
+`failed`. The **verifier report contract** (task 135) lets a check that
+opts in say which it was, what it found and where, in a small JSON
+report bench keeps beside the log. Projects keep their commands and
+their safety wrappers; the wrapper adds a few lines that write the report.
+
+**Opting in is the operator's, per check.** `"report": "v1"` on a check
+in the policy document. Nothing else changes: registering the contract
+makes no check required (that is still a merge rule's decision), grants
+no run anything, and is frozen into a run's manifest at launch like the
+rest of its policy. No request parameter turns it on, off or to another
+version, and an edit to the document after a launch reaches the next
+launch only.
+
+**What the check is handed.** `$BENCH_VERIFY_REPORT_DIR`, a directory
+made empty for this invocation alone inside the run's own temporary
+directory, and `$BENCH_VERIFY_REPORT`, the `report.json` inside it. The
+verifier writes one JSON object:
+
+```json
+{"v": 1, "outcome": "failed", "summary": "1 of 4 fixture totals is wrong",
+ "findings": [{"message": "case c1: the total is wrong",
+               "location": {"path": "rules.json", "line": 3},
+               "expected": "110.00", "actual": "120.00",
+               "evidence": ["diff.txt"], "severity": "error"}],
+ "artifacts": [{"path": "diff.txt", "label": "expected and actual totals"}],
+ "extensions": {"cicero.checks": {"cases": 4}}}
+```
+
+`v`, `outcome` and `summary` are required. `outcome` is one of
+`passed`, `failed` (an assertion), `setup-failed` (the verifier's own
+setup failed, so its checks did not run), `refused` (it was launched and
+declined to run its checks) and `incomplete`. Findings are diagnostic
+data — a message, a location relative to the candidate checkout, expected
+and actual observations and the artifacts that show them — not an
+assertion framework. `extensions` holds bounded, namespaced data bench
+keeps and never interprets.
+
+**One rule decides the outcome.** Bench's own endings come first: a
+timeout, a signal, a cancellation, a program that could not start and a
+required preparation step bench ran are bench's reading whatever the
+report says. Otherwise:
+
+| report | exit status | recorded as |
+| --- | --- | --- |
+| none, unreadable, or not this contract | any | `error` — `report-missing`, `report-invalid`, `report-unsupported` |
+| `passed` | 0 | `passed` — `report-passed` |
+| `failed` | non-zero | `failed` — `report-failed` |
+| `setup-failed` | non-zero | `prepare-failed` — `verifier-setup` |
+| `refused` | non-zero | `error` — `verifier-refused` |
+| `incomplete` | non-zero | `error` — `report-incomplete` |
+| anything else: the two disagree | | `error` — `report-contradicts-exit` |
+
+So exit zero alone never passes a contract check, and a passing report
+never overrides a non-zero exit. Ordinary checks are untouched: without
+the opt-in an exit status means exactly what it always did.
+
+**A refusal after launch is an answer, not a denial.** `denied` means a
+request was refused before anything ran, and an older pass at the same
+commit still stands beside one. A verifier that was launched and refused,
+failed its setup or stopped part way *ran*, and its record is the newest
+answer for that check at that commit: it holds the merge rule unmet and
+stops an older pass from being reused, for a check's own name and for a
+declared equivalent alike. Nothing new decides this; it is the gate's and
+the reuse rule's existing reading of `error` and `prepare-failed`.
+
+**Whose words they are.** The record keeps the two voices apart, and so
+does every surface that shows them: *bench observed* — the exit status,
+the timing, the preparation and which row of the rule decided — and *the
+verifier reported* — its outcome, summary, findings and any account of a
+refusal or setup failure. The approved verifier's classification is the
+project's own evidence. Bench does not observe a wrapper's internal
+checks or safety controls, and a report that says it refused is evidence
+that the program said so.
+
+**What is kept, and where.** The log always, report or not. The report
+file, and each artifact it declares, collected only from inside this
+invocation's report directory: a relative path, no `..`, no absolute
+path, no link anywhere along it, a regular file of text, JSON or an image
+(PNG, JPEG, GIF, WebP) within `BOARD_ARTIFACT_MAX_BYTES` and
+`BOARD_ARTIFACT_RUN_FILES`. Anything else is refused and named, and
+nothing outside the directory is read, followed or deleted because a
+report named it. A malformed report — over 256 KiB, more than 50
+findings, a string over its limit, an unknown key, an artifact path
+that climbs out, a finding citing an artifact the report does not
+declare — is refused whole with the exact problem as its protocol error,
+and only its raw file is kept. Kept files live under
+`manager/local/state/artifacts/<card>/diagnostic/`, outside the run's
+scratch and apart from the card's demonstration outputs (so Show the
+result never reads a failing run's diff as a demonstration), bound to
+the run's evidence id, check, outcome and source, with the same retention
+and withholding as any artifact. Text is scrubbed of anything
+credential-shaped on the way in; that is pattern matching, not a promise
+that every secret is found, and an image is kept as made.
+
+**A run reads it through the door it already has.** When a contract
+check does not pass, `bench-verify` prints the report after the verdict:
+its state and any protocol error, the reported outcome, the summary, each
+finding with its location, expected and actual values and the ids of the
+artifacts it cites, and every kept artifact by id. `bench-verify
+--artifact <evidence-id> <artifact-id>` prints one kept text or JSON
+artifact, bounded (200 lines, 16 KiB) and prefixed like the log excerpt;
+an image is described, not returned, and a person opens it from the ◫
+sheet. Both ride `/api/verify/details` under the access contract above —
+the run's own token, its own card, a check it was offered or asked for,
+and an artifact that record's report kept — so no path is handed out and
+no host file becomes readable. Every string the verifier wrote is
+printed after `│ `, so none of it can sit where a marker is parsed, and
+a suggested command in a finding is text, never an instruction bench
+acts on. The loop is: ask for the check, read the findings, fetch the
+evidence, fix, commit, ask for the same check again.
+
+**On the board.** The card's ◫ evidence sheet lists each reported run
+under **Verifier reports**: the outcome in words, what bench observed and
+which row of the rule decided, any protocol error with its remedy, the
+verifier's summary, each finding expandable with its location and
+expected and actual values, the kept artifacts (served by `/api/artifact`
+with `purpose=diagnostic`, sandboxed and `nosniff`), what was not kept
+and why, and the log. Settings → Checks shows `Verifier report: contract
+v1` on a check that opted in and explains the contract and its trust
+limits in a fold. Reading any of it runs nothing.
+
+**Identity and freshness.** The contract is part of what a check is: it
+is inside the check's revision, its id and its substance, so declaring
+it, removing it or changing its version reads every earlier pass of that
+check `stale / check-changed`, and a contract check and a plain one are
+never equivalent (`check_differences` names the `report` dimension). The
+report variables' names are bound like every other variable's. An
+unrelated policy edit leaves a pass standing, exactly as before. The
+contract module (`verifierreport.py`) is inside the runner revision, so
+promoting this core reads every recorded pass `stale / runner-changed`
+once and each required check on an open card needs one fresh run — the
+same transition as tasks 121, 131 and 133. Records written before it have
+no `report` block and read exactly as they did.
+
+**Adapting a wrapper.** `verify/examples/report-contract/` holds a
+stdlib-only emitter (`bench_report.py`) to copy beside an existing
+wrapper, and a disposable, Cicero-shaped wrapper that keeps its own
+safety checks — an unsafe target is refused, missing fixtures are a setup
+failure — and reports failing totals as findings with a cited diff. Its
+README is the step-by-step. Outside bench the same wrapper writes
+nothing and exits as it always did.
+
+**What it is not.** Not an isolated runner, a sandbox, a dependency or
+service framework, or a way to prove a verifier honest. It contains no
+hostile code, gives no run a new permission, applies no fix a finding
+suggests, and activates no merge rule.
 
 ## Gates: nothing merges on a report
 
