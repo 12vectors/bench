@@ -67,11 +67,11 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import threading
 from pathlib import Path
 
 import config
+import gitrepo
 import taskfiles
 
 KIND = "bench-movement-eligibility"
@@ -227,9 +227,8 @@ def _git_history() -> dict:
     if repo is None:
         return {"events": {}, "ids": set(), "complete": True,
                 "problem": "no-repository", "head": None}
-    try:
-        head = config.git_run(repo, "rev-parse", "--verify", "-q", "HEAD", timeout=10)
-    except (OSError, subprocess.SubprocessError):
+    head = gitrepo.git(repo, "rev-parse", "--verify", "-q", "HEAD", timeout=10)
+    if head.returncode not in (0, 1):     # 1: a repository with no commits
         return {"events": {}, "ids": set(), "complete": False,
                 "problem": "history-unreadable", "head": None}
     if head.returncode != 0:
@@ -242,18 +241,14 @@ def _git_history() -> dict:
         return {"events": {}, "ids": set(), "complete": False,
                 "problem": "history-unreadable", "head": sha}
     prefix = "" if prefix == "." else prefix
-    key = (str(repo), sha, prefix)
+    key = (str(repo), sha, prefix, HISTORY_LIMIT)
     with _MEMO_LOCK:
         if key in _MEMO:
             return _MEMO[key]
-    try:
-        result = config.git_run(
-            repo, "log", f"-n{HISTORY_LIMIT}", "-M", "--name-status",
-            "--no-color", "--format=%x1e%H%x1f%an%x1f%cI%x1f%B%x1f",
-            "--", prefix or ".", timeout=20)
-    except (OSError, subprocess.SubprocessError):
-        return {"events": {}, "ids": set(), "complete": False,
-                "problem": "history-unreadable", "head": sha}
+    result = gitrepo.git(
+        repo, "log", f"-n{HISTORY_LIMIT}", "-M", "--name-status",
+        "--no-color", "--format=%x1e%H%x1f%an%x1f%cI%x1f%B%x1f",
+        "--", prefix or ".", timeout=20)
     if result.returncode != 0:
         return {"events": {}, "ids": set(), "complete": False,
                 "problem": "history-unreadable", "head": sha}

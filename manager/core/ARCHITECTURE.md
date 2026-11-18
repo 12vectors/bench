@@ -173,8 +173,8 @@ designation in the work state, the non-blocking OS lock, controlled
 handover and adoption; it never reads a heartbeat as authority.
 `orchestrator` (L13, above `gates`) composes them with the board and the
 merge rules into one deterministic `authorize` and the public `reading`
-that `GET /api/orchestration` serves. `movements` (L5, `config` and
-`taskfiles`, task 138) is whose a card is by its last person's stage
+that `GET /api/orchestration` serves. `movements` (L5, `config`,
+`gitrepo` and `taskfiles`, task 138) is whose a card is by its last person's stage
 move: it reads back the `Bench-Move` trailers and the uncommitted-move
 journal `taskfiles` writes, and `orchestrator` asks it for both the
 launch path and the reading. None of them launches anything;
