@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 92411,
-   "sha256": "f80ea4854174076ec42baa83ca6d2dc087adc46605eac16c2c2d009324a3c4aa",
+   "bytes": 93021,
+   "sha256": "ba56aa925b9a429b40bd487db5e27065f71e60130faadb3c028d6e70b54e9544",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -226,8 +226,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {
-   "bytes": 93845,
-   "sha256": "42fe16ace583f2b61629b757de4ce922b184fbcc51c28ddea32013a861a6caa9",
+   "bytes": 95046,
+   "sha256": "d056aaeda8ce3453fb5c7850f8a75b5ce39639e34332f67e5e99215f36d08345",
    "type": "text/javascript; charset=utf-8"
   },
   "views/delivery.js": {
@@ -316,8 +316,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/settings/checks.js": {
-   "bytes": 8977,
-   "sha256": "5080a9539260aecc0f12f9eb52d225298a786f9a85fa2538911555fc0f85796a",
+   "bytes": 11191,
+   "sha256": "fb3672af3177bc1016b386599ba24c97f0a9e3df4756bac954665db7c4d38e8e",
    "type": "text/javascript; charset=utf-8"
   },
   "views/settings/draft.js": {
@@ -376,8 +376,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/verification.js": {
-   "bytes": 4916,
-   "sha256": "d3b633210f7b8aec22dfff1c4d28f78425699db20622b42915c477f28151845b",
+   "bytes": 11342,
+   "sha256": "9bbcff12ed304f294d1a211cf13dc5cd3e8dcbd9eae0076c4d48daab16e763c4",
    "type": "text/javascript; charset=utf-8"
   },
   "words.js": {

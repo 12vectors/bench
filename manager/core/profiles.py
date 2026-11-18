@@ -126,6 +126,7 @@ from pathlib import Path
 
 import config
 import records
+import verifierreport
 
 # The schema a document declares itself in, and the resolver that reads
 # it. Both travel in every manifest: a profile recorded by one revision of
@@ -1319,7 +1320,8 @@ VERIFY_ENV_SET = ("HOME", "TMPDIR", "TEMP", "TMP", "XDG_CACHE_HOME",
                   "PIP_CACHE_DIR", "NPM_CONFIG_CACHE", "YARN_CACHE_FOLDER",
                   "CARGO_HOME", "GOCACHE", "GOMODCACHE", "BENCH_VERIFY",
                   "BENCH_VERIFY_CHECK", "BENCH_VERIFY_ROOT",
-                  "BENCH_VERIFY_INPUTS", "PWD")
+                  "BENCH_VERIFY_INPUTS", "BENCH_VERIFY_OUTPUTS",
+                  "BENCH_VERIFY_REPORT", "BENCH_VERIFY_REPORT_DIR", "PWD")
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 # A bound, not a policy: a check is handed its inputs as copies, and an
 # identity over hundreds of variables is no longer something a reader can
@@ -1528,6 +1530,9 @@ def _check_problem(raw: dict, known_prepare: set[str],
                 f"the check '{name}' declares \"outputs\" that is not true or "
                 f"false — true hands the check $BENCH_VERIFY_OUTPUTS, where "
                 f"what it writes is kept as demonstration output (task 133)")
+    trouble = verifierreport.contract_problem(raw.get("report"))
+    if trouble:
+        return ("check-invalid", f"the check '{name}' declares {trouble}")
     return _env_problem(name, raw.get("env"))
 
 
@@ -1545,18 +1550,21 @@ def _step_problem(raw: dict) -> tuple[str, str] | None:
 def _check_revision(name: str, run: str, root: str, scopes: dict,
                     prepare: list[str], timeout: float,
                     inputs: list | None = None,
-                    env: list | None = None) -> str:
-    # Inputs and env only when declared, so a check that declares neither
-    # keeps the revision — and the checkId — it has always had.
+                    env: list | None = None,
+                    report: str | None = None) -> str:
+    # Inputs, env and a report contract only when declared, so a check
+    # that declares none keeps the revision — and the checkId — it has
+    # always had.
     extra = [json.dumps(inputs, sort_keys=True)] if inputs else []
     extra += [json.dumps(env)] if env else []
+    extra += [f"report:{report}"] if report else []
     return digest(name, run, root,
                    json.dumps(scopes, sort_keys=True),
                    json.dumps(prepare), f"{timeout:.0f}", *extra)
 
 
 def check_substance(run: str, root: str, timeout: float, inputs: list,
-                    env: list) -> str:
+                    env: list, report: str | None = None) -> str:
     """What a check *is*, without what it is called: its argument list, the
     root it runs in, its time limit, and the inputs and environment
     variables it declares. Unlike its revision this excludes the name, so
@@ -1569,10 +1577,14 @@ def check_substance(run: str, root: str, timeout: float, inputs: list,
     its class, so a `source` and a `review` check of one command can be
     the same while a `worktree` one never is. Coverage and preparation are
     separate dimensions of a result, and are not part of it."""
+    # A verifier report contract (task 135) decides how an exit status
+    # becomes an outcome, so it is part of what the check is — added only
+    # when declared, so every other check keeps the substance it had.
+    extra = [f"report:{report}"] if report else []
     return "subst:" + digest(
         "check-substance/1", run, root, f"{timeout:.0f}",
         json.dumps([[i["name"], i["source"], i["required"]] for i in inputs]),
-        json.dumps(list(env)))[:16]
+        json.dumps(list(env)), *extra)[:16]
 
 
 def _step(raw: dict, *, source: str) -> dict:
@@ -1619,22 +1631,29 @@ def _check(raw: dict, steps: dict, *, source: str, scale: float,
                        "source": str(selection.get("path") or "").strip(),
                        "required": selection.get("required", True) is not False})
     env = [str(n) for n in (raw.get("env") or [])]
+    report = verifierreport.declared(raw)
     revision = _check_revision(str(raw.get("name")).strip(), shlex.join(parts),
                                root, scopes, prepare, timeout,
                                [[i["name"], i["source"], i["required"]]
-                                for i in inputs], env)
+                                for i in inputs], env, report)
     # A check that keeps demonstration output (task 133) says so with
     # `"outputs": true`. Carried only when declared, and outside the
     # revision, the check id and the substance: declaring it stales no
     # pass, and a document that does not use it resolves byte for byte as
     # before. The runner hands such a check $BENCH_VERIFY_OUTPUTS.
     extra = {"outputs": True} if raw.get("outputs") is True else {}
+    # A verifier report contract (task 135): the operator's opt-in, read
+    # from the document and frozen with the run's manifest. Unlike
+    # "outputs" it is inside the revision, the check id and the substance,
+    # because it changes how the runner reads an exit status.
+    if report:
+        extra["report"] = report
     return {
         **extra,
         "inputs": inputs,
         "env": env,
         "checkSubstance": check_substance(shlex.join(parts), root, timeout,
-                                          inputs, env),
+                                          inputs, env, report),
         "name": str(raw.get("name")).strip(),
         "run": shlex.join(parts),
         "executable": parts[0],
@@ -1856,7 +1875,7 @@ def _accepts(name: str, raw, checks: dict,
 # interpreters, input contents, environment values, the runner and the
 # source are the record's own result identity, compared separately.
 EQUIVALENCE_DIMENSIONS = ("command", "root", "timeout", "inputs", "env",
-                          "prepare", "scope")
+                          "report", "prepare", "scope")
 
 
 def root_class_of(root: str) -> str:
@@ -1915,6 +1934,12 @@ def check_differences(mine: dict, theirs: dict,
         out.append(("env",
                     f"'{b}' binds a different environment from '{a}', so it "
                     f"is not the same check"))
+    if verifierreport.declared(mine) != verifierreport.declared(theirs):
+        out.append(("report",
+                    f"'{b}' and '{a}' read their exit status differently — "
+                    f"one declares a verifier report contract and the other "
+                    f"does not, or another version — so they are not the "
+                    f"same check"))
     if _prepare_shape(mine) != _prepare_shape(theirs):
         out.append(("prepare",
                     f"'{b}' runs a different preparation, so it is not the "

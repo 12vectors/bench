@@ -933,6 +933,9 @@ def verification(doc: dict | None = None) -> dict:
             # whether bench keeps what it writes to $BENCH_VERIFY_OUTPUTS
             # as demonstration output (task 133)
             "outputs": bool(check.get("outputs")),
+            # the verifier report contract it opted into, or None (task
+            # 135): how its exit status becomes an outcome
+            "report": check.get("report"),
             "timeout": check["timeout"],
             "checkId": check["checkId"],
             "checkSubstance": check.get("checkSubstance"),

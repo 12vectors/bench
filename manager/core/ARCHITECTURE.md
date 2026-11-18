@@ -41,7 +41,7 @@ composition.
 L0  gitproc records redact
 L1  config
 L2  githost assets
-L3  state reports templates gitrepo
+L3  state reports templates gitrepo verifierreport
 L4  taskfiles
 L5  plans profiles
 L6  gatepolicy reviews inputs
@@ -132,6 +132,15 @@ nothing above them: `agents` asks it before a launch and adds its inputs
 to the manifest before the pin, `routes` asks it before a move into
 in-progress and for the Inputs tab. The policy lives here and not in
 `taskfiles.move_task`, which stays a primitive.
+
+`verifierreport` (task 135) sits beside `reports`, low enough that
+`profiles` (which validates a check's `"report"` declaration), `evidence`
+(which merges its reasons into the outcome vocabulary) and `verify`
+(which reads a report and combines it with the exit status) can all
+import it. It owns the version-1 verifier report contract — the envelope,
+its bounds and the one consistency rule between a report and an exit
+status — and imports `redact` only. It is inside the runner revision
+(`resultidentity.RUNNER_FILES`), because it decides outcomes.
 
 `artifacts` (task 133) sits beside `evidence`, directly below the
 runner: retained demonstration outputs — what a check declaring
@@ -268,7 +277,7 @@ be checked against it when they land. Not enforced.
 ```architecture proposed
 L0  gitproc records redact
 L1  config
-L2  state reports templates gitrepo assets
+L2  state reports templates gitrepo assets verifierreport
 L3  githost
 L4  taskfiles
 L5  profiles plans
@@ -383,6 +392,7 @@ to the code by `tests/test_records_adoption.py`:
 
 ```records durable
 artifacts.ingest
+artifacts.ingest_report
 artifacts.sweep
 artifacts.withhold
 completion._record_delivered

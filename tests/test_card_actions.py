@@ -173,9 +173,10 @@ class OneSlotBuilderTests(unittest.TestCase):
         cls.html = pagesource.page()
 
     def test_hover_actions_and_command_chips_share_the_machine(self):
-        self.assertEqual(len(re.findall(r"(?<!function )wireAction\(btn,", self.html)), 12,
-                         "exactly twelve call sites: Show the result's "
-                         "Withhold (task 133), the delivery status's "
+        self.assertEqual(len(re.findall(r"(?<!function )wireAction\(btn,", self.html)), 13,
+                         "exactly thirteen call sites: Show the result's "
+                         "Withhold (task 133), a verifier report's "
+                         "Withhold (task 135), the delivery status's "
                          "own actions (task 99), the slot builder, the "
                          "$-command chips, the ⌸ archive chip, a phase "
                          "lane's head, the ↻ rerun of a named check, the "

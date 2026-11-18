@@ -103,7 +103,11 @@ class ResultCase(base.VerifyCase):
         self.spec.write_text(json.dumps({
             "files": {k: v.hex() for k, v in files.items()},
             "manifest": manifest, "rc": rc, "links": links or {}}), encoding="utf-8")
-        found = self.ask("demo")
+        # always a new run: since task 135 an outputs check's pass is
+        # reusable at the same commit like any other, and these cases
+        # want the program to write again
+        found = verify.request(check="demo", agent="run-1", actor="agent",
+                               again=True)
         self.assertTrue(found.get("id"), found)
         return found
 

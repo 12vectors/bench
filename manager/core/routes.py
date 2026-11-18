@@ -186,9 +186,13 @@ def run_diagnostic(payload: dict, evidence_id, *, count: bool = True) -> dict:
     agent = str(payload.get("agent") or "")
     try:
         progress.authenticate(agent, payload.get("token"))
+        # `artifact` (task 135): one artifact the verification's report
+        # kept, by id, under the same access contract — never a path
         return verify.diagnostic_reply(verify.diagnostic(
             evidence_id, agent=agent,
-            task=(payload.get("file") or None) if count else None))
+            task=(payload.get("file") or None) if count else None,
+            artifact=(payload.get("artifact") if count
+                      and payload.get("artifact") is not None else None)))
     except progress.Refused as exc:
         if count:
             raise
@@ -1537,8 +1541,11 @@ ARTIFACT_POLICY = ("default-src 'none'; img-src 'self'; style-src 'unsafe-inline
 
 def get_artifact(req) -> None:
     card, artifact = _q(req, "card"), _q(req, "id")
+    # a verifier report's artifact (task 135) is kept apart from the
+    # card's demonstrations, and served by the same rules
+    purpose = artifacts.DIAGNOSTIC if _q(req, "purpose") == "diagnostic" else None
     try:
-        record, data = artifacts.content(card, artifact)
+        record, data = artifacts.content(card, artifact, purpose)
     except artifacts.Refused as exc:
         req.send(404, str(exc).encode("utf-8"), "text/plain; charset=utf-8",
                  {"X-Content-Type-Options": "nosniff"})
@@ -1594,11 +1601,16 @@ def post_card_result(req) -> None:
             return
         else:
             who = taskfiles.actor_name() or "you"
-            record = artifacts.withhold(name, str(payload.get("id") or ""),
-                                        actor=who,
-                                        reason=str(payload.get("reason") or ""))
+            # a verifier report's kept files are withheld the same way as
+            # a demonstration's, named by the same purpose the read takes
+            diagnostic = payload.get("purpose") == "diagnostic"
+            record = artifacts.withhold(
+                name, str(payload.get("id") or ""), actor=who,
+                reason=str(payload.get("reason") or ""),
+                purpose=artifacts.DIAGNOSTIC if diagnostic else None)
             result = {"artifact": artifacts.public(record)}
-            said = f"{name}: an output was withheld by {who}"
+            said = (f"{name}: a verifier report's artifact was withheld by {who}"
+                    if diagnostic else f"{name}: an output was withheld by {who}")
     except taskfiles.StaleCard as exc:
         req.reply(409, {"error": str(exc), "stale": True})
         return

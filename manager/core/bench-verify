@@ -10,6 +10,17 @@
     bench-verify --details <evidence-id>
                                   reprint a result this run may read, with
                                   the tail of the check's output
+    bench-verify --artifact <evidence-id> <artifact-id>
+                                  print one artifact that check's verifier
+                                  report kept (text and JSON, bounded and
+                                  scrubbed; an image is described only)
+
+A check the operator opted into the verifier report contract (task 135)
+also prints its report: the outcome the verifier reported, its summary,
+each finding with its location, expected and actual values, and the ids
+of the artifacts bench kept. Those are the verifier's own words, printed
+after `│ ` like the check's output; the outcome itself is bench's rule
+over the exit status it observed and the report.
 
 An equal, current pass already on record for this card — the same check,
 coverage and commit, with the same result identity in every dimension —
@@ -95,6 +106,18 @@ def show_details(found: dict | None) -> None:
         print(line)
 
 
+def artifact(evidence_id: str, artifact_id: str, agent: str, token: str,
+             port: str) -> int:
+    body = {"agent": agent, "evidence": evidence_id, "artifact": artifact_id}
+    if token:
+        body["token"] = token
+    found = ask("/api/verify/details", body, port, 30).get("diagnostic") or {}
+    print(f"evidence: {found.get('evidence')} ({found.get('check')}, "
+          f"{found.get('outcome')})")
+    show_details(found)
+    return 0
+
+
 def details(evidence_id: str, agent: str, token: str, port: str) -> int:
     body = {"agent": agent, "evidence": evidence_id}
     if token:
@@ -130,6 +153,7 @@ def main() -> int:
     again = "--again" in args
     args = [a for a in args if a != "--again"]
     want_details = bool(args) and args[0] == "--details"
+    want_artifact = bool(args) and args[0] == "--artifact"
     if args and args[0] in ("-h", "--help"):
         print(__doc__.strip())
         return 0
@@ -143,8 +167,15 @@ def main() -> int:
         print("bench-verify: --details takes exactly one evidence id — the "
               "ev:verification@… that bench-verify printed", file=sys.stderr)
         return 2
+    if want_artifact and len(args) != 3:
+        print("bench-verify: --artifact takes an evidence id and an artifact "
+              "id — the ev:verification@… and the a-… that bench-verify "
+              "printed", file=sys.stderr)
+        return 2
 
     try:
+        if want_artifact:
+            return artifact(args[1], args[2], agent, token, port)
         if want_details:
             return details(args[1], agent, token, port)
         if not args:

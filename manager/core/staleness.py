@@ -379,6 +379,13 @@ def _env_now(record: dict) -> dict:
                        str(record.get("id") or ""), str(record.get("check") or ""))
     if record.get("inputs"):
         env["BENCH_VERIFY_INPUTS"] = "/nonexistent"
+    # the directories a declaring check is handed, by name: demonstration
+    # outputs (task 133) and the verifier report contract (task 135)
+    if (record.get("outputs") or {}).get("declared"):
+        env["BENCH_VERIFY_OUTPUTS"] = "/nonexistent"
+    if (record.get("report") or {}).get("contract"):
+        env["BENCH_VERIFY_REPORT_DIR"] = "/nonexistent"
+        env["BENCH_VERIFY_REPORT"] = "/nonexistent"
     return env
 
 

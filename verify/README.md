@@ -211,7 +211,11 @@ both paths.
 
 `verify/examples/` holds two profile documents in the installed schema
 (`manager/core/profiles.example.json`). Neither is active anywhere until a
-person installs it.
+person installs it. Beside them, `verify/examples/report-contract/` is a
+worked example of the verifier report contract (task 135): a small
+report emitter around a disposable, Cicero-shaped wrapper that keeps its
+own safety checks. It is a project's example, not one of bench's checks,
+and its README is the how-to.
 
 - `profiles.registration.json` — declares three named checks,
   `bench-backend`, `bench-docs` and `bench-browser`, each at execution
