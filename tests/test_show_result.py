@@ -357,6 +357,16 @@ class TheSetting(ResultCase):
         # an existing card with no section is untouched by the setting
         self.write_card(brief_card())
         self.assertEqual(self.reading()["setting"]["mode"], "off")
+        # the board's own UI setup cards carry it; others do not
+        import setuptasks
+        row = {"id": "ui-smoke", "why": "x.", "evidence": [], "deliverables": ["a"],
+               "acceptance": ["b"], "authority": {"needs": ["c"], "missing": [], "notes": []}}
+        text = setuptasks.card_text(row, "90", "UI smoke", "Medium", "", [])
+        self.assertEqual(results.setting(taskfiles.card_parts(text)["brief"])["mode"],
+                         "requested")
+        row["id"] = "fixtures"
+        text = setuptasks.card_text(row, "91", "Fixtures", "Medium", "", [])
+        self.assertNotIn("Show the result", text)
 
     def test_dismissing_the_suggestion_writes_nothing_into_the_card(self):
         self.write_card(brief_card())

@@ -60,6 +60,7 @@ import config
 import plans
 import previews
 import profiles
+import results
 import settings
 import setupbase
 import state
@@ -566,6 +567,12 @@ def card_text(row: dict, number: str, title: str, priority: str, notes: str,
               "re-inspects the project, and the capability counts as tested "
               "only when bench's own check run passes against the delivered "
               "code."]
+    # A card about a user interface asks for a demonstration only where the
+    # project opted in (BOARD_RESULT_DEFAULT_UI=requested, task 133) — and
+    # then Requested, never Required. Without the opt-in nothing is added.
+    shown = results.new_card_section(row["id"] in ("ui-smoke", "preview"))
+    if shown:
+        lines += ["", shown.rstrip("\n")]
     if notes:
         lines += ["", "## Notes", "", notes]
     return settings.scrub("\n".join(lines) + "\n")
