@@ -458,8 +458,10 @@ def assess(task: dict, reading: dict, ops: list[dict],
     reviewed = False
     if verdict:
         counted = verdict_independence(verdict, filename, cache)
+        # whether the verdict on record counts: its own run's model, read
+        # apart from whether a review launched now would be independent
         item["review"].update(verdict=verdict.get("verdict"),
-                              independence=_public_independence(counted))
+                              counted=_public_independence(counted))
         if verdict.get("verdict") == "REQUEST CHANGES":
             return _repair(item, task, here, head, mine, ops, "changes-requested",
                            f"the review at {head[:12]} asked for changes")
