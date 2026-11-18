@@ -87,7 +87,7 @@ setRouteSource(() => routeOf(S));
    never swapped for another card. */
 function openCardLink(id, tab, badTab) {
   S.cardLink = null;
-  if (!S.state) { S.selected = null; S.cardLink = { id, tab, state: 'waiting' }; return; }
+  if (!S.state) { S.selected = null; S.cardLink = { id, tab, badTab, state: 'waiting' }; return; }
   const found = findCard(id, S.state);
   if (found.task) {
     S.dtab[found.task.file] = tab || 'overview';
@@ -238,13 +238,12 @@ async function copyValue(btn, value, link) {
   }
 }
 document.addEventListener('click', (e) => {
-  const btn = e.target.closest && e.target.closest('[data-copy],[data-copy-link],#copylink');
+  const btn = e.target.closest && e.target.closest('[data-copy],[data-copy-link]');
   if (!btn) return;
   e.stopPropagation();
   // a link is the destination's address on the board this page came from,
   // made when it is copied — never a hostname written into the page
-  if (btn.id === 'copylink') copyValue(btn, linkFor(routeOf(S)), true);
-  else if (btn.dataset.copyLink) copyValue(btn, location.origin + btn.dataset.copyLink, true);
+  if (btn.dataset.copyLink) copyValue(btn, linkFor(parseRoute(new URL(btn.dataset.copyLink, location.origin))), true);
   else copyValue(btn, btn.dataset.copy, false);
 });
 
@@ -385,8 +384,8 @@ if (entry.alias || entry.invalid === 'tab') replaceRoute(entry);
 loadState().then(() => {
   // a card can only be found once the board has been read
   if (S.cardLink && S.cardLink.state === 'waiting') {
-    const { id, tab } = S.cardLink;
-    holdRoute(() => openCardLink(id, tab, null));
+    const { id, tab, badTab } = S.cardLink;
+    holdRoute(() => openCardLink(id, tab, badTab));
   }
   routeReady();
   connectStream({ onBoard: () => { if (S.setup) fetchSetup(true); } });

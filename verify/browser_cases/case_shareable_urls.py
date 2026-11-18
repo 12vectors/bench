@@ -38,6 +38,9 @@ TITLE = "310 — A linkable card"
 ARCHIVED = "311-an-archived-card.md"
 PHASE = "312-a-linkable-phase.md"
 TWINS = ("313-one-of-two.md", "313-the-other.md")
+# the phase's member: a phase's members leave the Board view, so the card
+# the Board tests open is not one
+MEMBER = "314-a-phase-member.md"
 LIVE_SID = "url-session-live"
 ENDED_SID = "url-session-ended"
 
@@ -83,13 +86,15 @@ class ShareableUrls(unittest.TestCase):
             cls.tasks / "to-do" / PHASE,
             cls.tasks / "backlog" / TWINS[0],
             cls.tasks / "done" / TWINS[1],
+            cls.tasks / "to-do" / MEMBER,
         ]
+        cls.made[5].write_text(card_text("314 — A phase member", "To Do"), encoding="utf-8")
         cls.made[0].write_text(card_text(TITLE, "Backlog"), encoding="utf-8")
         cls.made[1].write_text(card_text("311 — An archived card", "Archived",
                                          "ARCHIVED-ONLY-TEXT\n"), encoding="utf-8")
         cls.made[2].write_text(
             "# 312 — A linkable phase\n\n**Status:** To Do\n**Priority:** Low\n"
-            "**Type:** Phase\n\n## Cards\n\n- 310 — A linkable card\n", encoding="utf-8")
+            "**Type:** Phase\n\n## Cards\n\n- 314 — A phase member\n", encoding="utf-8")
         cls.made[3].write_text(card_text("313 — One of two", "Backlog"), encoding="utf-8")
         cls.made[4].write_text(card_text("313 — The other", "Done"), encoding="utf-8")
         # two sessions: one still reporting, one that ended
@@ -162,8 +167,10 @@ class ShareableUrls(unittest.TestCase):
     # ── 2. history ──────────────────────────────────────────────────────
 
     def test_2_back_and_forward_walk_the_destinations(self):
+        # history.length is capped by the browser (50 in Chromium), so the
+        # entries are counted as the page's own writes, and walked
         b = self.open("/board", f"!!document.querySelector('#board article.card[data-file=\"{CARD}\"]')")
-        start = b.eval("history.length")
+        start = b.eval("routeWrites()")
         b.eval(f"document.querySelector('#board article.card[data-file=\"{CARD}\"]').click()")
         self.assertTrue(b.wait("location.pathname === '/cards/310'", 5), self.here())
         self.assertTrue(b.wait("!!document.querySelector('#dtab-reviews')", 5))
@@ -177,7 +184,7 @@ class ShareableUrls(unittest.TestCase):
         self.assertTrue(b.wait("document.querySelectorAll('#snav [data-ssection]').length > 3", 15))
         b.click('#snav [data-ssection="installation"]')
         self.assertTrue(b.wait("location.pathname === '/settings/installation'", 5), self.here())
-        self.assertEqual(start + 5, b.eval("history.length"), "one entry per destination")
+        self.assertEqual(start + 5, b.eval("routeWrites()"), "one entry per destination")
         writes = b.eval("routeWrites()")
         walk = [("/settings", "document.querySelector('#view-settings.on') && "
                  "document.querySelector('#snav [data-ssection=\"overview\"]').getAttribute('aria-current') === 'page'"),
@@ -198,7 +205,10 @@ class ShareableUrls(unittest.TestCase):
                             f"Forward did not reach {want}: {self.here()}")
             self.assertTrue(b.wait(shown, 5), f"{want} is the address but not what is shown")
         self.assertEqual(writes, b.eval("routeWrites()"), "Back or Forward wrote an entry")
-        self.assertEqual(start + 5, b.eval("history.length"), "Back and Forward changed the history")
+        # and the walk is repeatable: no entry was added or lost on the way
+        b.eval("history.forward()")
+        self.assertTrue(b.wait("location.pathname === '/settings/installation'", 5), self.here())
+        self.assertEqual(writes, b.eval("routeWrites()"))
 
     # ── 3. a card's address follows the card ────────────────────────────
 
@@ -306,9 +316,15 @@ class ShareableUrls(unittest.TestCase):
         origin = b.eval("location.origin")
         self.assertEqual(f"{origin}/cards/310?tab=reviews", b.eval("__copied[0]"))
         self.assertTrue(b.wait("document.querySelector('#toastmsg').textContent.includes('link copied')", 5))
-        b.click("#copylink")
-        self.assertTrue(b.wait("__copied.length === 2", 5))
-        self.assertEqual(f"{origin}/cards/310?tab=reviews", b.eval("__copied[1]"))
+        for path, control in ((f"/focus/{LIVE_SID}", "#cgrid [data-copy-link]"),
+                              (f"/sessions/{LIVE_SID}", "#fsession [data-copy-link]"),
+                              ("/phases/312", f".lane[data-phase=\"{PHASE}\"] [data-copy-link]"),
+                              ("/settings/agents", "#shead [data-copy-link]")):
+            self.open(path, f"!!document.querySelector({json.dumps(control)})")
+            b.eval(capture)
+            b.click(control)
+            self.assertTrue(b.wait("__copied.length === 1", 5), f"{control} copied nothing")
+            self.assertEqual(f"{origin}{path}", b.eval("__copied[0]"))
         self.open(f"/focus/{LIVE_SID}", "!!document.querySelector('#cgrid [data-copy-link]')")
         b.eval(capture)
         b.click("#cgrid [data-copy-link]")
@@ -318,7 +334,7 @@ class ShareableUrls(unittest.TestCase):
         b.eval("""(() => { Object.defineProperty(navigator, 'clipboard', { configurable: true,
           value: { writeText: async () => { throw new Error('no'); } } });
           document.execCommand = () => false; return true; })()""")
-        b.click("#copylink")
+        b.click("#cgrid [data-copy-link]")
         self.assertTrue(b.wait("document.querySelector('#toastmsg').textContent.includes('refused the clipboard')", 5))
         # a link carries no token, draft or secret: only the path and a tab
         for link in b.eval("[...document.querySelectorAll('[data-copy-link]')].map(x => x.dataset.copyLink)"):
@@ -328,15 +344,17 @@ class ShareableUrls(unittest.TestCase):
 
     def test_7_the_setup_alias_still_opens_the_guide(self):
         b = S["browser"]
-        length = None
         b.goto("/#setup")
         self.assertTrue(b.wait("location.pathname === '/settings/setup' && !location.hash", 10), self.here())
         self.assertTrue(b.wait("document.querySelector('#snav [data-ssection=\"setup\"]')"
                                "?.getAttribute('aria-current') === 'page'", 15))
-        length = b.eval("history.length")
         b.goto("/")
         self.assertTrue(b.wait("location.pathname === '/board'", 10), "/ is not the Board's address")
-        self.assertEqual(length + 1, b.eval("history.length"), "the alias was corrected with an extra entry")
+        # the alias was corrected in place: Back leaves `/board` for the
+        # entry before it, not for a `/` entry left behind
+        b.eval("history.back()")
+        self.assertTrue(b.wait("location.pathname === '/settings/setup'", 10),
+                        f"the alias left an entry of its own: {self.here()}")
 
     # ── 8. the server's boundary, seen from the browser ──────────────────
 
