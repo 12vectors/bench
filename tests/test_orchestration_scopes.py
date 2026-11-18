@@ -536,10 +536,17 @@ class PublicReading(Sandbox):
             def reply(self, code, payload):
                 replies.append((code, payload))
 
+        import scheduler
+        import taskfiles
         with mock.patch.object(orchestrator, "reading",
-                               lambda: {"status": "off"}):
+                               lambda board=None: {"status": "off"}), \
+                mock.patch.object(scheduler, "projection",
+                                  lambda board=None: {"status": "off"}), \
+                mock.patch.object(taskfiles, "collect",
+                                  lambda: {"stages": []}):
             routes.get_orchestration(Req())
-        self.assertEqual(replies, [(200, {"orchestration": {"status": "off"}})])
+        self.assertEqual(replies, [(200, {"orchestration": {"status": "off"},
+                                          "schedule": {"status": "off"}})])
         rows = {(r.method, r.path): r.klass for r in routes.ROUTES
                 if r.path.startswith("/api/orchestration")}
         self.assertEqual(rows[("GET", "/api/orchestration")], "read")

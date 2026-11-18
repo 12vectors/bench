@@ -22,6 +22,7 @@ task files, but the tasks work as a plain folder kanban without it. See
     phases.py     a phase run: its own branch, its members merged into it
     refine.py     card comments, refinement jobs, Apply and Discard
     reasoning.py  orchestrator reasoning jobs: pinned context, one public response
+    scheduler.py  bounded orchestration passes over a durable operation ledger
     watch.py      2s disk poller narrating moves made outside the API
     httpd.py      HTTP routes, SSE stream, the page itself
     .prompts/     agent prompt templates (read fresh on every launch)
@@ -75,6 +76,7 @@ import gitproc  # noqa: F401
 import gitrepo  # noqa: F401
 import httpd
 import inputs  # noqa: F401
+import operations  # noqa: F401
 import orchestrator  # noqa: F401
 import phases
 import plans  # noqa: F401
@@ -92,6 +94,7 @@ import resultidentity  # noqa: F401
 import results  # noqa: F401
 import reviews
 import routes  # noqa: F401
+import scheduler
 import settings  # noqa: F401
 import setupbase  # noqa: F401
 import setupguide
@@ -264,6 +267,11 @@ def main() -> None:
     threading.Thread(target=changes.poller, daemon=True).start()
     threading.Thread(target=changes.reconcile, daemon=True).start()
     threading.Thread(target=phases.beat, daemon=True).start()
+    # The orchestration beat (task 141): with no agreement in force, or one
+    # whose Bench scope is not enabled, each pass reads one file and does
+    # nothing. Its first pass waits one interval, so a restart never
+    # launches anything in the moment it comes up.
+    threading.Thread(target=scheduler.beat, daemon=True).start()
     if config.SYNC:
         # Team mode: board commits publish themselves and a beat pulls what
         # the other boards published. Off, neither thread nor hook exists.
