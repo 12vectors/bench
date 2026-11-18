@@ -982,6 +982,7 @@ COMMIT_MOVES = flag("BOARD_COMMIT_MOVES") or SYNC
 # phase needs and do the one next thing. A beat, not an agent — it costs a
 # handful of git commands and nothing at all when no phase is running.
 PHASE_INTERVAL = float(setting("BOARD_PHASE_INTERVAL", "30"))
+ORCHESTRATE_INTERVAL = float(setting("BOARD_ORCHESTRATE_INTERVAL", "30"))
 
 WATCH_INTERVAL = float(setting("BOARD_WATCH_INTERVAL", "2"))
 EVENTS_CAP = int(setting("BOARD_EVENTS_CAP", "800"))

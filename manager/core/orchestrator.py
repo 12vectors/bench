@@ -8,9 +8,10 @@ answers **may this action happen now, here, for this card** — and why
 not. Semantic reasoning (interpreting a brief, planning, drafting
 questions, proposing a recovery) is never done here: it is a launched
 coding-agent job (D2), and the launch is an action this module
-authorizes like any other. The scheduler, the durable operation ledger,
-the reasoning contract and the UI are later members of phase 136; this
-module is what each of them asks.
+authorizes like any other. The scheduler (`scheduler`, task 141) asks it
+before every side effect; the durable operation ledger (`operations`) is
+read here so a reserved launch occupies its slot and spends its start
+before anything runs.
 
 **Every action is authorized again when it is about to happen.** Nothing
 here caches a grant: the agreement is read from disk on every call, so a
@@ -53,6 +54,7 @@ import execowner
 import gatepolicy
 import gates
 import movements
+import operations
 import records
 import state
 import taskfiles
@@ -120,14 +122,14 @@ def scope_of(task: dict, reading: dict) -> tuple[str | None, str | None]:
     return sid, None
 
 
-def _pool(word: str, scope_reading: dict) -> str:
+def pool_for(word: str, scope_reading: dict) -> str:
     """Reasoning without slots of its own takes an implementation slot."""
     if word == "reasoning" and scope_reading["capacity"]["reasoning"]["own"] == 0:
         return "implementation"
     return word
 
 
-def usage(reading: dict, tasks: list[dict]) -> dict:
+def usage(reading: dict, tasks: list[dict], exclude: str | None = None) -> dict:
     """What is running and launched, per scope and pool. Every running
     agent counts — a person's own launch, an agent this board did not
     schedule, a run of a card no scope manages — because capacity is an
@@ -146,7 +148,7 @@ def usage(reading: dict, tasks: list[dict]) -> dict:
         sid = scope_of(task, reading)[0] if task else None
         scope_reading = agreements.scope(reading, sid) if sid else None
         if scope_reading is not None:
-            pool = _pool(pool, scope_reading)
+            pool = pool_for(pool, scope_reading)
         elif pool == "reasoning":
             pool = "implementation"
         totals[pool] = totals.get(pool, 0) + 1
@@ -155,13 +157,41 @@ def usage(reading: dict, tasks: list[dict]) -> dict:
         else:
             running.setdefault(sid, {}).setdefault(pool, 0)
             running[sid][pool] += 1
+    # Reservations (task 141): an operation recorded as an intent, held
+    # as unknown, or launched by a board that has since restarted and
+    # whose process is still alive occupies its slot exactly as a running
+    # agent does, so capacity is reserved *before* a launch and never
+    # freed by a crash, a restart or a lost receipt.
+    # `exclude` is the one operation whose own reservation is being
+    # re-authorized: it must not count against itself.
+    ops = [op for op in operations.all_ops() if op["key"] != exclude]
+    reserved = 0
+    for op in operations.reserved(ops):
+        if op.get("status") == "unobserved" and not op.get("alive"):
+            continue
+        sid, pool = op.get("scope"), op.get("pool") or "implementation"
+        if pool not in totals:
+            pool = "implementation"
+        totals[pool] = totals.get(pool, 0) + 1
+        running.setdefault(sid, {}).setdefault(pool, 0)
+        running[sid][pool] += 1
+        reserved += 1
     starts, per_card = {}, {}
     today = _today()
     for line in _ledger():
         per_card[line["card"]] = per_card.get(line["card"], 0) + 1
         if line.get("day") == today:
             starts[line["scope"]] = starts.get(line["scope"], 0) + 1
+    # every operation that may have launched spent a start and a launch of
+    # its card; one that provably ran nothing (refused, a transient
+    # failure, abandoned on reconciliation) spent neither
+    for op in operations.consumed(ops):
+        if op.get("card"):
+            per_card[op["card"]] = per_card.get(op["card"], 0) + 1
+        if op.get("day") == today:
+            starts[op["scope"]] = starts.get(op["scope"], 0) + 1
     return {"running": running, "unscoped": unscoped, "totals": totals,
+            "reserved": reserved,
             "startsToday": starts, "startsTodayTotal": sum(starts.values()),
             "launchesPerCard": per_card}
 
@@ -208,7 +238,8 @@ def _refuse(code: str, reason: str, **extra) -> dict:
 
 
 def authorize(action: str, filename: str, *, board: dict | None = None,
-              gate_reading: dict | None = None) -> dict:
+              gate_reading: dict | None = None,
+              operation: str | None = None) -> dict:
     """May the orchestrator take `action` on `filename` now?
 
     The answer, never cached, with the code and the scope that decided:
@@ -218,7 +249,10 @@ def authorize(action: str, filename: str, *, board: dict | None = None,
     after a handover, the authority word (an intersection, with who
     decided), capacity (slots, daily starts, launches per card), and for a
     merge the merge rules the user configured. `gate_reading` is a test's
-    seam for `gates.evaluate`; the mutation path passes nothing."""
+    seam for `gates.evaluate`; the mutation path passes nothing.
+    `operation` names an operation already reserved for this very action
+    (task 141): re-authorizing it immediately before its side effect must
+    not count its own reservation against it."""
     if action not in ACTIONS:
         return _refuse("unknown-action", f"{action!r} is not an orchestrator action")
     owner = execowner.authorizes()
@@ -293,7 +327,7 @@ def authorize(action: str, filename: str, *, board: dict | None = None,
                        by=grant["by"], **base)
     provenance = [f"{word}: granted by {grant['by']}"]
     if action in LAUNCHES:
-        refusal = _capacity(action, here, reading, tasks, number)
+        refusal = _capacity(action, here, reading, tasks, number, operation)
         if refusal:
             return {**refusal, **base}
     label = None
@@ -326,9 +360,9 @@ def authorize(action: str, filename: str, *, board: dict | None = None,
 
 
 def _capacity(action: str, here: dict, reading: dict, tasks: list[dict],
-              number: str | None) -> dict | None:
-    used = usage(reading, tasks)
-    pool = _pool(LAUNCHES[action], here)
+              number: str | None, operation: str | None = None) -> dict | None:
+    used = usage(reading, tasks, exclude=operation)
+    pool = pool_for(LAUNCHES[action], here)
     bench = agreements.scope(reading, agreements.BENCH)
     own = here["capacity"][pool]["own"]
     mine = used["running"].get(here["id"], {}).get(pool, 0)
@@ -438,6 +472,8 @@ def reading(board: dict | None = None) -> dict:
         | {"thisInstallation": owner["installation"],
            "executes": execowner.authorizes()["allowed"]},
         "usage": usage(effective, tasks) if effective["configured"] else None,
+        # the durable operation ledger (task 141), as files on disk say it
+        "operations": operations.summary(),
         "cards": managed,
         "mergeRules": merge_rules(),
         "grants": ("A run keeps the grants frozen in its manifest at launch. "
@@ -466,11 +502,15 @@ def _notes(effective: dict) -> list[str]:
 
 def handover(expected, actor: str | None = None) -> dict:
     """Hand execution over, with quiescence established from what this
-    board can see: every run it is tracking must have ended. Outstanding
-    operations will join this check when the durable ledger exists
-    (task 141); until then a run in flight is the whole of it."""
+    board can see: every run it is tracking must have ended, and every
+    operation in the durable ledger must be settled — an intent with no
+    receipt, an unknown outcome or a run whose ending was not observed is
+    outstanding, and the handover is refused until it is reconciled
+    (task 141)."""
     with state.LOCK:
         flight = [r.get("task") for r in state.AGENTS.values()
                   if r.get("status") == "running"]
-    return execowner.handover(expected, {"inFlight": flight, "unreconciled": []},
-                              actor)
+    open_ = [op["key"] for op in operations.all_ops()
+             if op["status"] in operations.OPEN]
+    return execowner.handover(expected, {"inFlight": flight,
+                                         "unreconciled": open_}, actor)

@@ -61,6 +61,10 @@ PR_VERDICT_RE = re.compile(r"^PR REVIEW:\s*(APPROVE|REQUEST CHANGES)", re.MULTIL
 DEPENDS_RE = re.compile(r"^\*\*Depends on:\*\*\s*(.+?)\s*$", re.MULTILINE)
 BASE_BRANCH_RE = re.compile(r"^\*\*Base branch:\*\*\s*(.+?)\s*$", re.MULTILINE)
 PR_BASE_RE = re.compile(r"^\*\*PR base:\*\*\s*(.+?)\s*$", re.MULTILINE)
+# What a card's work declares it touches (D10, task 141): paths or areas,
+# comma-separated. Optional; absent means *unknown*, never "nothing".
+TOUCHES_RE = re.compile(r"^\*\*Touches:\*\*\s*(.+?)\s*$", re.MULTILINE)
+TOUCHES_CAP = 40
 NUMBER_RE = re.compile(r"^(\d+)[-_]")
 
 # A branch name as a card may write one. Deliberately narrower than
@@ -121,6 +125,29 @@ def depends_on(text: str) -> list[str]:
         if match:
             numbers.append(canonical_number(match.group(1)))
     return numbers
+
+
+def touches(text: str) -> list[str] | None:
+    """The `**Touches:**` header (D10): the paths or areas a card's work
+    declares it changes, normalised for comparison — backticks, a leading
+    `./` and trailing slashes dropped, case kept. `None` when the card
+    declares nothing, which is *unknown overlap* and is said so; an empty
+    list only when the header is there and names nothing usable. Nothing
+    is inferred from the brief's prose."""
+    line = first_match(TOUCHES_RE, text)
+    if line is None:
+        return None
+    found: list[str] = []
+    for part in line.split(","):
+        item = part.strip().strip("`").strip()
+        while item.startswith("./"):
+            item = item[2:]
+        item = item.rstrip("/")
+        if item and len(item) <= 200 and item not in found:
+            found.append(item)
+        if len(found) >= TOUCHES_CAP:
+            break
+    return found
 
 
 def ref_problem(value: str) -> str | None:
@@ -226,6 +253,9 @@ def read_task(path: Path, stage: str) -> dict:
         # What runs next is the phase's list; what may run is this line —
         # parsed here, acted on nowhere yet.
         "dependsOn": depends_on(text),
+        # What the work declares it touches, for the scheduler's overlap
+        # rule (task 141); None is unknown, not safe.
+        "touches": touches(text),
         # Explicit execution metadata: which application branch this card's
         # work starts from, and which branch its PR targets. `None` on both
         # is the established default — the application base — and that is
