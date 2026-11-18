@@ -133,14 +133,11 @@ function renderFocus() {
   $('#cstrip').innerHTML = S.state.board.stages.map(s =>
     `<div class="c-seg${s.slug === hot ? ' hot' : ''}"><span class="lbl">${s.label}</span><span class="n">${s.tasks.length}</span></div>`).join('');
 
-  if (!meta && sid) {
-    $('#cgrid').innerHTML = `<div class="panel">${sessionUnavailable(sid)}</div>`;
-    $('#calso').innerHTML = '';
-    putBack();
-    return;
-  }
   if (!meta) {
-    $('#cgrid').innerHTML = `<div class="panel"><div class="phead"><span class="dot"></span>` +
+    // a session an address named that is not here is said to be not here
+    // (task 134); with none named, the page has none to show yet
+    $('#cgrid').innerHTML = sid ? `<div class="panel">${sessionUnavailable(sid)}</div>` :
+      `<div class="panel"><div class="phead"><span class="dot"></span>` +
       `<span class="label">Right now</span></div>` +
       `<p style="margin:0;color:var(--dim);font-size:12.5px">Nothing yet. Start an agent from a card, ` +
       `or open a claude session in this repo — it shows up here as it works.</p></div>`;
