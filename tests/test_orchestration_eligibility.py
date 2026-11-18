@@ -489,6 +489,18 @@ class OneAnswerForLaunchAndPage(Board):
         self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
         self.assertEqual(git(self.repo, "status", "--porcelain", "--", "tasks"), "")
 
+    def test_a_reading_of_many_cards_reads_the_history_once(self):
+        for n in range(10, 16):
+            self.create("to-do", by=ELENA, filename=f"{n}-c.md", number=str(n))
+        self.orchestrate()
+        calls = []
+        real = movements._git_history
+        with mock.patch.object(movements, "_git_history",
+                               lambda: calls.append(1) or real()):
+            found = orchestrator.reading()
+        self.assertEqual(len(found["cards"]), 6)
+        self.assertEqual(len(calls), 1, "one history read per reading")
+
     def test_a_phase_delegates_its_members_and_no_second_scope_acquires_them(self):
         self.phase()
         self.move("backlog", "to-do", by=ADA, filename="50-ship.md")

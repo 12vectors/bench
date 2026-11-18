@@ -407,6 +407,7 @@ def reading(board: dict | None = None) -> dict:
         status = ("off" if not bench["enabled"] else
                   "paused" if bench["paused"] else "enabled")
     managed = []
+    snap = movements.snapshot()   # one identity, one history, every card
     for task in tasks:
         sid, why = scope_of(task, effective) if effective["configured"] else (None, "off")
         if task["stage"] in MANAGED_STAGES:
@@ -414,7 +415,8 @@ def reading(board: dict | None = None) -> dict:
                             "stage": task["stage"], "scope": sid,
                             "why": why,
                             # the same answer authorize() reads (task 138)
-                            "eligibility": movements.eligibility(task, tasks)})
+                            "eligibility": movements.eligibility(task, tasks,
+                                                                 snap)})
     return {
         "kind": KIND, "v": VERSION, "status": status,
         "effective": {"configured": effective["configured"],
@@ -442,7 +444,7 @@ def reading(board: dict | None = None) -> dict:
                    "The agreement authorizes new actions only, and is read "
                    "again before each one."),
         "notes": _notes(effective),
-        "identity": {**movements.identity(),
+        "identity": {**snap["identity"],
                      "attribution": movements.NOT_AUTHENTICATION},
     }
 

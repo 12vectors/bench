@@ -91,9 +91,11 @@ class Sandbox(unittest.TestCase):
                       # (test_orchestration_eligibility); here every card
                       # is this board's by its last move
                       mock.patch.object(movements, "eligibility",
-                                        lambda task, tasks=None: {
+                                        lambda task, tasks=None, snap=None: {
                                             "eligible": True, "code": "own-move",
-                                            "via": "own"})):
+                                            "via": "own"}),
+                      mock.patch.object(movements, "snapshot", lambda: {
+                          "identity": {"name": "tester", "source": "test"}})):
             patch.start()
             self.addCleanup(patch.stop)
         self.addCleanup(execowner.release_lock)

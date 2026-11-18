@@ -297,16 +297,27 @@ def _journal() -> list[dict]:
     return found
 
 
-def history(filename: str) -> dict:
+def snapshot() -> dict:
+    """Everything an answer reads, read once: this board's identity, the
+    committed history and the journal. A reading of many cards asks for
+    one and passes it to each; a single answer makes its own."""
+    git = _git_history()
+    local: dict = {}
+    for entry in _journal():
+        if entry["id"] not in git["ids"]:
+            local.setdefault(card_key(entry["file"]), []).append(entry)
+    return {"identity": identity(), "git": git, "journal": local}
+
+
+def history(filename: str, snap: dict | None = None) -> dict:
     """Every recorded movement of one card, newest first, and how complete
     that is. Committed movements first (git's own order), then the
     journal's uncommitted ones on top — a journal line whose move id a
     commit carries is the commit's, and is not counted twice."""
-    git = _git_history()
-    key = card_key(filename)
+    snap = snapshot() if snap is None else snap
+    git, key = snap["git"], card_key(filename)
     committed = list(git["events"].get(key, []))
-    local = [e for e in _journal() if card_key(e["file"]) == key
-             and e["id"] not in git["ids"]]
+    local = snap["journal"].get(key, [])
     return {"events": list(reversed(local)) + committed,
             "complete": git["complete"], "problem": git["problem"],
             "head": git["head"]}
@@ -349,10 +360,11 @@ def _answer(eligible: bool, code: str, reason: str, me: dict, *,
             "attribution": NOT_AUTHENTICATION, **extra}
 
 
-def own(task: dict, me: dict | None = None) -> dict:
+def own(task: dict, snap: dict | None = None) -> dict:
     """The card's own movement ownership, phase membership aside."""
-    me = identity() if me is None else me
-    found = history(task["file"])
+    snap = snapshot() if snap is None else snap
+    me = snap["identity"]
+    found = history(task["file"], snap)
     events = found["events"]
     if events and events[0].get("to") != task["stage"]:
         return _answer(False, "unrecorded-move", f"it was moved to "
@@ -395,16 +407,19 @@ def own(task: dict, me: dict | None = None) -> dict:
                    "is not a move", me, remedy=REMEDY_MOVE)
 
 
-def eligibility(task: dict, tasks: list[dict] | None = None) -> dict:
+def eligibility(task: dict, tasks: list[dict] | None = None,
+                snap: dict | None = None) -> dict:
     """May this board's orchestrator act on this card, by movement?
 
     One answer for the launch path and the page. `tasks` is the board
-    (`orchestrator` passes what it already read); a phase member is
+    (`orchestrator` passes what it already read) and `snap` what the
+    history reads (`snapshot()`, once per reading); a phase member is
     answered from its phase card's move, and then held to its own."""
-    me = identity()
+    snap = snapshot() if snap is None else snap
+    me = snap["identity"]
     phase = task.get("phase") if not task.get("isPhase") else None
     if not phase:
-        mine = own(task, me)
+        mine = own(task, snap)
         holder = task.get("assignee")
         if mine["eligible"] and holder and holder != me["name"]:
             # the move is this board's, but somebody else holds the card:
@@ -424,7 +439,7 @@ def eligibility(task: dict, tasks: list[dict] | None = None) -> dict:
     if parent is None:
         return _answer(False, "phase-unknown", f"its phase {number} is not on "
                        f"this board", me, via=via)
-    delegated = own(parent, me)
+    delegated = own(parent, snap)
     if not delegated["eligible"]:
         return _answer(False, "phase-not-delegated", f"its phase {number} is "
                        f"not delegated here: {delegated['reason']}", me,
@@ -436,7 +451,7 @@ def eligibility(task: dict, tasks: list[dict] | None = None) -> dict:
                        f"(its Assignee); a phase never acquires it silently", me,
                        remedy=f"reconcile it: take it over, or leave it to "
                               f"{holder}", via=via, phase=delegated)
-    mine = own(task, me)
+    mine = own(task, snap)
     if mine["code"] in ("foreign-move", "ambiguous-move", "unrecorded-move"):
         return _answer(False, "member-unreconciled", f"the member's own latest "
                        f"move is not this board's: {mine['reason']}", me,
