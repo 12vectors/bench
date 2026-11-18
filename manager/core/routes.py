@@ -33,6 +33,7 @@ import agentsettings
 import commands
 import completion
 import config
+import decisions
 import delivery
 import doctor
 import drive
@@ -387,6 +388,12 @@ def _state_payload() -> dict:
         # card's own records, never from its column. Empty on a board that
         # tracks nothing; the whole reading is `/api/card/acceptance`.
         "acceptance": acceptance.board(collected),
+        # per card with orchestration history, how many of its questions
+        # are open, need re-evaluation or were answered, its open blockers
+        # and its responses (task 140) — read from the card's own records,
+        # never from a local index. The whole reading is
+        # /api/card/decisions. Empty on a board with no such history
+        "decisions": decisions.board(collected),
         # per card that names supporting information, whether a run could
         # use all of it now (task 132): Ready, Needs information, Checking
         # or Unchecked, with counts. The same resolver every launch and the
@@ -872,6 +879,61 @@ def get_card_acceptance(req) -> None:
         req.reply(200, found)
     except (ValueError, OSError) as exc:
         req.reply(409, {"error": str(exc)})
+
+
+def get_card_decisions(req) -> None:
+    # A card's orchestration history (task 140): its questions, open and
+    # resolved with their options kept, the answers and who gave them,
+    # the reasoning responses, blockers, recovery attempts and actions —
+    # read from the card's own records, and for a phase card its members'
+    # questions linked to the member that owns each. A GET: it writes,
+    # launches and sends nothing.
+    name = _q(req, "file")
+    stage = _q(req, "stage") or taskfiles.find_stage_of(name) or ""
+    try:
+        req.reply(200, decisions.for_card(name, stage))
+    except (ValueError, OSError) as exc:
+        req.reply(409, {"error": str(exc)})
+
+
+def post_card_decisions(req) -> None:
+    # A person's answer to an open question, or withdrawing one — bound to
+    # the question's newest record, the brief and the identity the page
+    # showed. The actor is this board's identity, never a field in the
+    # body; nothing is launched or sent because a question was answered.
+    payload = req.body
+    name, stage = str(payload["file"]), str(payload["stage"])
+    question = str(payload.get("question") or "")
+    try:
+        if req.path.endswith("/answer"):
+            choice = payload.get("choice")
+            result = decisions.answer(
+                name, stage, question=question, basis=payload.get("basis") or None,
+                brief_sha=str(payload.get("briefSha") or ""),
+                actor_seen=str(payload.get("actor") or ""),
+                choice=choice if isinstance(choice, int) else None,
+                note=payload.get("note"), request=payload.get("request"))
+            said = f"{name}: question {question} answered"
+        else:
+            result = decisions.withdraw(
+                name, stage, question=question, basis=payload.get("basis") or None,
+                note=payload.get("note"), request=payload.get("request"))
+            said = f"{name}: question {question} withdrawn"
+    except taskfiles.StaleCard as exc:
+        req.reply(409, {"error": str(exc), "stale": True})
+        return
+    except decisions.Refused as exc:
+        req.reply(403, {"error": str(exc), "refused": True})
+        return
+    if result.get("written"):
+        who = decisions.actor()["name"] or "you"
+        state.record_board_event({
+            "kind": "agent", "actor": "you", "file": name,
+            "summary": f"{said} by {who}" + (
+                "" if result.get("committed") else
+                " (written to the card, not committed)")})
+        state.broadcast({"type": "board"})
+    req.reply(200, result)
 
 
 def get_card_inputs(req) -> None:
@@ -1927,6 +1989,7 @@ ROUTES = (
     Route("GET", "/api/card/locate", "read", get_card_locate),
     Route("GET", "/api/card/discussion", "read", get_card_discussion),
     Route("GET", "/api/card/acceptance", "read", get_card_acceptance),
+    Route("GET", "/api/card/decisions", "read", get_card_decisions),
     Route("GET", "/api/card/inputs", "read", get_card_inputs),
     Route("GET", "/api/card/result", "read", get_card_result),
     Route("GET", "/api/artifact", "read", get_artifact),
@@ -2017,6 +2080,8 @@ ROUTES = (
     Route("POST", "/api/card/acceptance/track", "browser-mutation", post_card_acceptance),
     Route("POST", "/api/card/acceptance/decide", "browser-mutation", post_card_acceptance),
     Route("POST", "/api/card/finding", "browser-mutation", post_card_acceptance),
+    Route("POST", "/api/card/decisions/answer", "browser-mutation", post_card_decisions),
+    Route("POST", "/api/card/decisions/withdraw", "browser-mutation", post_card_decisions),
     Route("POST", "/api/card/inputs/check", "browser-mutation", post_card_inputs),
     Route("POST", "/api/card/inputs/classify", "browser-mutation", post_card_inputs),
     Route("POST", "/api/card/result/setting", "browser-mutation", post_card_result),

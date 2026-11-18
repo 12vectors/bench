@@ -247,7 +247,8 @@ def rounds(text: str) -> list[dict]:
 
 
 _SECTION_RE = re.compile(
-    r"^##\s+(?:Discussion|Phase log|Acceptance record|Review findings)[ \t]*$",
+    r"^##\s+(?:Discussion|Phase log|Acceptance record|Review findings"
+    r"|Orchestration record)[ \t]*$",
     re.MULTILINE)
 
 

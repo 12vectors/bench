@@ -1308,7 +1308,8 @@ TITLE_LINE_RE = re.compile(r"^#\s")
 # A report the board appended: `## Work report — 2026-11-08 15:20 (Juno)`.
 STAMPED_HEADING_RE = re.compile(r"^##\s+.+\s[—–-]\s\d{4}-\d{2}-\d{2}\b")
 HISTORY_HEADING_RE = re.compile(
-    r"^##\s+(?:Discussion|Phase log|Acceptance record|Review findings)\s*$")
+    r"^##\s+(?:Discussion|Phase log|Acceptance record|Review findings"
+    r"|Orchestration record)\s*$")
 DISCUSSION_SECTION_RE = re.compile(r"^##\s+Discussion[ \t]*$.*?(?=^##\s|\Z)",
                                    re.MULTILINE | re.DOTALL)
 ENTRY_MARK_RE = re.compile(r"^<!-- bench:entry (\{.*\}) -->[ \t]*$", re.MULTILINE)
@@ -1856,8 +1857,9 @@ def brief_problems(before: str, after) -> list[str]:
                         "card, code blocks included)")
     if any(_starts_history(line) for line in lines):
         problems.append("the proposed brief contains a history heading (a "
-                        "dated report, Discussion, Phase log or Acceptance "
-                        "record) — history is preserved, never rewritten")
+                        "dated report, Discussion, Phase log, Acceptance "
+                        "record or Orchestration record) — history is "
+                        "preserved, never rewritten")
     mark = BENCH_MARK_RE.search(prose)
     if mark:
         line_no = prose.count("\n", 0, mark.start()) + 1

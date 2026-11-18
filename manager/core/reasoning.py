@@ -56,9 +56,11 @@ usage the vendor reported (none, today: said as `not reported`, never
 as zero).
 
 Runtime state is machine-local (`state/reasoning/`), like refinement
-jobs: job records, facts documents, retained raw responses. The card is
-not written here; the on-card history is the next member's (task 140),
-and it reads `public()`.
+jobs: job records, facts documents, retained raw responses. They are not
+the record a person reads: when a job settles, its public outcome — the
+validated response, or why it was refused or ended — goes onto its card
+through `decisions.record_response` (task 140), and a valid response's
+questions are opened there for the owner. Raw text never goes to a card.
 """
 
 from __future__ import annotations
@@ -74,6 +76,7 @@ from pathlib import Path
 import agents
 import agreements
 import config
+import decisions
 import evidence
 import movements
 import orchestrator
@@ -272,11 +275,14 @@ def binding(filename: str, board: dict | None = None) -> dict:
     task = cards["task"]
 
     def rev(card: dict | None) -> str | None:
+        # the card's text without the orchestration records bench itself
+        # wrote, plus every decision a person made (task 140): putting this
+        # response on the card does not make it stale; an answer does
         if card is None:
             return None
         try:
-            return _sha(_card_file(card).read_bytes())[:16]
-        except OSError:
+            return decisions.card_rev(_card_file(card).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
             return "unreadable"
 
     text = _card_file(task).read_text(encoding="utf-8")
@@ -712,7 +718,7 @@ PUBLIC = ("v", "id", "need", "task", "card", "stage", "via", "scope", "actor",
           "attempt", "retryOf", "status", "created", "started", "ended",
           "agent", "name", "harness", "model", "policyId", "binding",
           "inputs", "response", "diagnostics", "raw", "error", "usage",
-          "fingerprint", "provenance")
+          "fingerprint", "provenance", "cardRecord")
 
 
 def public(job: dict) -> dict:
@@ -941,6 +947,8 @@ def settle(job_id: str, record: dict, stopped: bool, rc: int) -> dict:
         _save(job)
         status, filename = job["status"], job["task"]
         name = job.get("name") or "the agent"
+        settled = dict(job)
+    on_card(settled)
     state.record_board_event({
         "kind": "agent", "actor": "agent", "file": filename,
         "summary": {
@@ -956,6 +964,26 @@ def settle(job_id: str, record: dict, stopped: bool, rc: int) -> dict:
     state.broadcast({"type": "board"})
     state.broadcast({"type": "agents"})
     return public(job)
+
+
+def on_card(job: dict) -> dict:
+    """Put a settled job's public outcome on its card (task 140) and note
+    on the job what became of that, truthfully. A card write that fails —
+    the card was archived, a record over its bound — never changes the
+    job's outcome; the job says the card does not hold it."""
+    try:
+        result = decisions.record_response(job)
+        found = {"written": bool(result.get("written")) or bool(result.get("duplicate")),
+                 "committed": result.get("committed"), "record": result.get("id"),
+                 "opened": result.get("opened") or []}
+    except (ValueError, OSError) as exc:
+        found = {"written": False, "error": str(exc)[:300]}
+    with LOCK:
+        current = JOBS.get(job["id"])
+        if current is not None:
+            current["cardRecord"] = found
+            _save(current)
+    return found
 
 
 def cancel(job_id: str) -> dict:

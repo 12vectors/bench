@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine / reasoning < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine / reasoning < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -220,6 +220,14 @@ gitproc / records / redact < config < githost / assets / agreements < state / re
   and a phase member answered from its phase card's move. The one
   resolver `orchestrator.authorize` and `GET /api/orchestration` both ask
   (see "Last mover, not last editor")
+- `decisions.py` — the card keeps everything (task 140, D11/D12): the
+  owner's questions, their answers, reasoning responses, blockers,
+  recovery attempts and actions as bounded, versioned records in the
+  card's `## Orchestration record`, read back field by field from the
+  card alone, and the two writes a person makes (answer, withdraw),
+  each bound to what the page showed. Imports `config`, `redact` and
+  `taskfiles`; reading it sends and launches nothing (see "The card
+  keeps everything: decisions and public history")
 - `doctor.py` — what this board would grant, run and refuse, asked
   without paying for a model: the same resolver a launch rides, read at
   four honest distances, with every diagnostic's remedy and a coverage
@@ -5809,8 +5817,99 @@ vendor reported — `not reported` today, never zero.
 the job (status, binding, inputs, validated response or diagnostics,
 usage, provenance) and the facts document each run read. A restart
 closes a run in flight as failed and re-runs nothing. `reasoning.public`
-is what the on-card history (task 140) and the Orchestrator view read: no
-path, no private reasoning, no credential.
+is what the Orchestrator view reads: no path, no private reasoning, no
+credential. That local record is not the one a person reads: when a job
+settles, its public outcome goes onto its card (next section), and the
+job's `cardRecord` says whether the card holds it.
+
+### The card keeps everything: decisions and public history
+
+An orchestrator's questions to the product owner, the owner's answers,
+the reasoning responses, blockers, recovery attempts and actions live
+**on the card they are about** (D11, task 140) — never only in a
+machine-local ledger. So a board that lost its local state, a restarted
+board and a replica a sync reached all read the same open questions and
+answers. The board is the only communication surface (D12): nothing here
+notifies anyone, sends a message or listens for a reply.
+
+**Where.** A history section, `## Orchestration record`, in the card's
+history half, so a refinement never touches it (a proposed brief that
+contains the heading is refused). One record per entry: a
+`<!-- bench:orchestration {…} -->` line, `"v": 1`, and under it one
+readable line the board writes from the record and never reads back
+(`- 2026-11-18 10:02 UTC · Question q-… (agent-reported) — …`). Records
+are appended, never edited; the newest about a question is its state.
+
+| kind | holds | source |
+| --- | --- | --- |
+| `question` | the question, its options, recommendation, why, evidence references (`input:`, `card:`, `evidence:`), the brief revision it was asked against, its owner, the operation and need that drafted it | `agent-reported`, or `person` |
+| `answer` | the option chosen and/or a note, the actor, the question's newest record it answered (`basis`), the brief revision, the scope | `person` |
+| `resolution` | `withdrawn` by a person, or `superseded` by a newer response to the same need — the question's text and options stay | `person` / `observed` |
+| `response` | a reasoning run's validated public response (summary, findings, proposed actions — `executable: false` — blockers, the questions it opened), or a refusal's codes, or why it ended | `agent-reported` |
+| `blocker`, `attempt`, `action` | a blocker opened or cleared; one recovery attempt (`n of m`) and its outcome; an action's intent, then its observed receipt | `observed` or `agent-reported` |
+
+**Who writes.** A settled reasoning job (`reasoning.on_card`) writes its
+`response`; a valid one opens its questions, addressed to the person
+whose board asked, and supersedes the open questions an earlier response
+to the same need opened. A person answers or withdraws
+(`POST /api/card/decisions/answer`, `/withdraw`). The engine's later
+members record facts through `decisions.note`, with an idempotency key so
+a restart replaying a receipt writes it once. Each write is one
+`board: <n> …` commit under `BOARD_COMMIT_MOVES`, synced like any board
+edit.
+
+**An answer is bound to what the person saw.** The request names the
+question, its newest record (`basis`), the brief's revision, the identity
+the page showed (`actor`) and a request identity. The actor is this
+board's git identity, never a body field. Refused, nothing written: a
+newer record about the question (`409 stale`), a brief edited since the
+page read it, a page showing another identity, a question already
+answered, withdrawn or superseded, and a question asked against an older
+brief — it needs re-evaluation first, and reads `needsReevaluation`. A
+question addressed to someone else is `403 refused`: readable, not
+answerable from this board. The same request identity again returns the
+first record (`duplicate`), and of concurrent answers exactly one is
+recorded.
+
+**A phase aggregates; members own.** A member's question is on the
+member card. The phase card's reading (`aggregated`) lists its members'
+questions, each with its origin (file, stage, number); the answer is
+posted to — and stored on — the member, with its actor and revisions.
+Nothing is copied onto the phase card.
+
+**Card text is data.** Records are read only from that section of the
+history; one anywhere else (a brief, a quoted report) is counted
+`misplaced` and ignored. A line that does not parse, an unknown kind, a
+wrong version or a missing identity is counted `malformed` and skipped.
+Each kind is read field by field, so an unknown key — `reasoning`, say —
+never reaches a reader; strings are stripped of control and
+bidirectional characters and credential-shaped text is masked on the way
+in *and* out; every angle bracket in a record line is escaped and the
+readable line keeps none, starting with `- <date>` so no reader takes
+it for a header, heading, marker or criterion. Nothing read here grants,
+launches, moves or merges anything. Masking is pattern matching, not a
+promise that every secret is found; the raw text of a refused response,
+transcripts and approved inputs' contents never go onto a card.
+
+**Bounded.** Text fields are capped (2,000 characters; 6 options; 8
+references; 20 items), one record at 32 KiB and a card's section at
+1 MiB. Over any of them the write is refused with nothing written and
+the card's other history intact; the reasoning job keeps its response
+locally and its `cardRecord` names the refusal.
+
+**Revisions.** The reasoning binding's card revision
+(`decisions.card_rev`) is the card's text without the records bench
+itself wrote, plus every decision a person made: putting a response on
+the card does not make it stale, and an owner's answer — like a brief
+or hand edit — is a new input, so the same need is a new question.
+
+**Reading is free.** `GET /api/card/decisions` (the whole reading:
+questions open and resolved with their history, responses, blockers,
+attempts, actions, the counts and the sources' meanings) and
+`/api/state`'s `decisions` (per card: open, needing re-evaluation,
+answered, open blockers, responses — absent on a card with no such
+history) read card text and write, launch and send nothing. There is no
+index to lose: the reading is the card.
 
 **What is proved where.** `tests/test_reasoning.py` launches through the
 Claude adapter's real `run` against a stub vendor that answers from the
