@@ -3530,8 +3530,12 @@ scratch and apart from the card's demonstration outputs (so Show the
 result never reads a failing run's diff as a demonstration), bound to
 the run's evidence id, check, outcome and source, with the same retention
 and withholding as any artifact. Text is scrubbed of anything
-credential-shaped on the way in; that is pattern matching, not a promise
-that every secret is found, and an image is kept as made.
+credential-shaped on the way in — the report's strings, and each string
+inside its extension data one by one — and that is pattern matching, not
+a promise that every secret is found; an image is kept as made. When a
+secret gets through, **Withhold** (below) removes the file's bytes. A
+report nested deeper than the contract reads is a protocol error like any
+other, never a reason the run fails to record its outcome.
 
 **A run reads it through the door it already has.** When a contract
 check does not pass, `bench-verify` prints the report after the verdict:
@@ -3556,7 +3560,11 @@ which row of the rule decided, any protocol error with its remedy, the
 verifier's summary, each finding expandable with its location and
 expected and actual values, the kept artifacts (served by `/api/artifact`
 with `purpose=diagnostic`, sandboxed and `nosniff`), what was not kept
-and why, and the log. Settings → Checks shows `Verifier report: contract
+and why, and the log. Under the kept files, **Withhold a kept file**
+takes a reason and, armed, removes one file's bytes for good through
+`POST /api/artifact/withhold` with `"purpose": "diagnostic"`; the record
+that it existed stays, with who withheld it and why, and a run asking for
+it afterwards is told it is not available. Settings → Checks shows `Verifier report: contract
 v1` on a check that opted in and explains the contract and its trust
 limits in a fold. Reading any of it runs nothing.
 

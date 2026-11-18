@@ -180,7 +180,18 @@ function reportBlock(task, r) {
     findings.map((f, i) => reportFinding(task, f, i, kept)).join('') +
     ((rep.kept || []).length
       ? `<div class="why">Kept from this run: ` +
-        rep.kept.map(k => reportArtifactLink(task, k)).join(', ') + `</div>` : '') +
+        rep.kept.map(k => reportArtifactLink(task, k)).join(', ') + `</div>` +
+        // withholding is the remedy when the scrubber missed a secret: the
+        // bytes go, the record that the file existed stays
+        `<details class="fold report-withhold"><summary>Withhold a kept file</summary>` +
+        `<p class="why">Removes the file's bytes from this board for good; ` +
+        `the record that it existed stays, with who withheld it and why.</p>` +
+        rep.kept.filter(k => k && k.id).map(k =>
+          `<div class="why"><span class="mono">${esc(k.path || k.id)}</span> ` +
+          `<input type="text" data-rep-why="${esc(k.id)}" aria-label="why withhold ${esc(k.path || k.id)}" ` +
+          `placeholder="why it is withheld"> ` +
+          `<button class="chip2" data-rep-withhold="${esc(k.id)}">Withhold</button></div>`).join('') +
+        `</details>` : '') +
     ((rep.refused || []).length
       ? `<div class="why">Not kept: ` + rep.refused.map(x =>
           `<span class="mono">${esc(x.path)}</span> (${esc(x.why)})`).join('; ') +

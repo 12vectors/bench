@@ -181,6 +181,17 @@ class AReportReadsAsTwoVoices(unittest.TestCase):
         status, body = S["backend"].get(link)
         self.assertEqual(200, status)
         self.assertEqual(b"-110.00\n+120.00\n", body)
+        # each kept file can be withheld — a labelled reason and an armed
+        # button — and drawing the control withholds nothing
+        withhold = b.eval("(() => [...document.querySelectorAll("
+                          "'#sheetwrap .report-withhold [data-rep-withhold]')]"
+                          ".map(b => [b.textContent, !!b.parentElement.querySelector("
+                          "'input[data-rep-why][aria-label]')]))()")
+        self.assertTrue(withhold, "no Withhold control under the kept files")
+        self.assertTrue(all(t == "Withhold" and labelled for t, labelled in withhold),
+                        withhold)
+        status, _ = S["backend"].get(link)
+        self.assertEqual(200, status, "the file is still served")
         b.key("Escape")
         self.assertEqual(before, len(evidence()), "reading started no check")
 

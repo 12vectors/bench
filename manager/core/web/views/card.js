@@ -262,6 +262,16 @@ async function verifySheet(task) {
   $('#sh-nover').addEventListener('click', closeSheet);
   wrap.querySelectorAll('[data-ev]').forEach(btn =>
     btn.addEventListener('click', () => fetchVerifyLog(btn.dataset.ev, $('#evlog'))));
+  // a verifier report's kept file, withheld: deletes bytes for good, so it
+  // arms on the first click and fires on the second
+  wrap.querySelectorAll('[data-rep-withhold]').forEach(btn => {
+    const id = btn.dataset.repWithhold;
+    const why = btn.parentElement && btn.parentElement.querySelector('input[data-rep-why]');
+    wireAction(btn, `${task.file}::rep-withhold:${id}`, {
+      label: 'Withhold', confirm: true,
+      run: () => withholdDiagnostic(task, id, why ? why.value : ''),
+    });
+  });
   wrap.querySelectorAll('[data-rerun]').forEach(btn =>
     wireAction(btn, `${task.file}::verify::${btn.dataset.rerun}`, {
       label: '↻ ' + btn.dataset.rerun, confirm: 'run it?', busy: 'running…',
@@ -303,6 +313,19 @@ function reuseDetail(reuses) {
     `${r.agent || r.actor || '—'} (${r.intent || '—'}), answered by ` +
     `${r.reused} (run for ${(r.original || {}).agent || (r.original || {}).actor || '—'}); ` +
     `nothing was run`).join('\n');
+}
+
+async function withholdDiagnostic(task, id, reason) {
+  const res = await fetch('/api/artifact/withhold', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: task.file, stage: task.stage, id, reason,
+                           purpose: 'diagnostic' }),
+  });
+  const data = await res.json().catch(() => ({}));
+  toast(res.ok ? 'file withheld — its record stays'
+               : (data.error || 'nothing was withheld'), !res.ok);
+  if (res.ok && S.view === 'board') verifySheet(task);
+  return res.ok;
 }
 
 async function rerunCheck(task, check) {

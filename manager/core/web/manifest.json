@@ -226,8 +226,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {
-   "bytes": 93981,
-   "sha256": "ae674f66954e705ef2352a33bfe652981b832af8c32f7e1718dcaf69a6547a91",
+   "bytes": 95046,
+   "sha256": "d056aaeda8ce3453fb5c7850f8a75b5ce39639e34332f67e5e99215f36d08345",
    "type": "text/javascript; charset=utf-8"
   },
   "views/delivery.js": {
@@ -376,8 +376,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/verification.js": {
-   "bytes": 10541,
-   "sha256": "568bd13219967cb15dbf33fcea5da858379dd475e0792465920e1a9909862daf",
+   "bytes": 11342,
+   "sha256": "9bbcff12ed304f294d1a211cf13dc5cd3e8dcbd9eae0076c4d48daab16e763c4",
    "type": "text/javascript; charset=utf-8"
   },
   "words.js": {

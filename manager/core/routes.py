@@ -1601,11 +1601,16 @@ def post_card_result(req) -> None:
             return
         else:
             who = taskfiles.actor_name() or "you"
-            record = artifacts.withhold(name, str(payload.get("id") or ""),
-                                        actor=who,
-                                        reason=str(payload.get("reason") or ""))
+            # a verifier report's kept files are withheld the same way as
+            # a demonstration's, named by the same purpose the read takes
+            diagnostic = payload.get("purpose") == "diagnostic"
+            record = artifacts.withhold(
+                name, str(payload.get("id") or ""), actor=who,
+                reason=str(payload.get("reason") or ""),
+                purpose=artifacts.DIAGNOSTIC if diagnostic else None)
             result = {"artifact": artifacts.public(record)}
-            said = f"{name}: an output was withheld by {who}"
+            said = (f"{name}: a verifier report's artifact was withheld by {who}"
+                    if diagnostic else f"{name}: an output was withheld by {who}")
     except taskfiles.StaleCard as exc:
         req.reply(409, {"error": str(exc), "stale": True})
         return
