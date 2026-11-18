@@ -348,8 +348,13 @@ class ShowTheResult(unittest.TestCase):
         kept = json.loads(record.read_text())
         self.assertEqual(kept["state"], "withheld")
         self.assertFalse((self.store / f"{aid}.bin").exists(), "the bytes stayed")
-        self.assertTrue(b.wait(f"(() => {{ const li = {li}; return !!li && /withheld/.test(li.textContent); }})()", 10),
+        # its caption went with its description; the record is still drawn
+        self.assertTrue(b.wait(f"(() => {{ const s = {SECTION}; return !!s && "
+                               f"[...s.querySelectorAll('.resitem')].some(li => /withheld by a person/.test(li.textContent)); }})()", 10),
                         "the record of the output was not drawn as withheld")
+        self.assertFalse(self.js(f"[...{SECTION}.querySelectorAll('.resitem')]"
+                                 f".some(li => li.textContent.includes('Settings API response'))"),
+                         "the withheld output's description is still shown")
 
     def test_a_done_card_request_previews_and_reopens_nothing(self):
         b = S["browser"]
