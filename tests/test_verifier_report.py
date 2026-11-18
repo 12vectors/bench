@@ -761,6 +761,28 @@ class IdentityFollowsTheContract(ReportCase):
                          ["outcome"], "passed")
         self.assertEqual(self.gate_row()["state"], "met")
 
+    def test_the_handed_directories_are_bound_by_name_and_hold_against_themselves(self):
+        """The report variables, and the outputs variable a check declaring
+        "outputs" is handed (task 133), are named when freshness and reuse
+        re-derive the environment — so a pass of such a check is not
+        `env-changed` against itself and can meet a merge rule."""
+        for extra in ({"report": "v1"}, {"outputs": True},
+                      {"report": "v1", "outputs": True}):
+            with self.subTest(extra):
+                document = self.contract(report_v=None)
+                document["checks"][0].update(extra)
+                self.says(report(), rc=0)
+                passed = self.go(document, again=True)
+                self.assertEqual(passed["outcome"], "passed", passed.get("why"))
+                now = staleness.outcome_now(evidence.read(passed["id"]))
+                self.assertEqual(now["outcome"], "passed", now)
+                self.assertEqual(self.gate_row()["state"], "met")
+                names = passed["env"]["passed"]
+                if "report" in extra:
+                    self.assertIn("BENCH_VERIFY_REPORT", names)
+                if "outputs" in extra:
+                    self.assertIn("BENCH_VERIFY_OUTPUTS", names)
+
     def test_a_legacy_record_without_a_report_block_still_reads(self):
         document = self.contract(report_v=None)
         passed = self.go(document)
