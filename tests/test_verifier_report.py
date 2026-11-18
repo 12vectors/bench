@@ -632,6 +632,84 @@ class ARunDiagnosesFixesAndReruns(ReportCase):
         self.assertEqual(caught.exception.code, "other-card")
 
 
+class TheShimCarriesTheReport(unittest.TestCase):
+    """The shipped `bench-verify`, run as a headless agent runs it, against
+    a real board on a loopback port: ask, read the findings, fetch the
+    cited artifact, fix, ask again. Built on the diagnostics suite's own
+    furniture (`tests/test_check_diagnostics.py`)."""
+
+    def test_ask_read_fetch_fix_rerun(self):
+        from tests import test_check_diagnostics as diag
+        import subprocess
+
+        class Case(diag.ShimCase):
+            def runTest(inner):  # noqa: N805 — a case built in place
+                pass
+
+        case = Case()
+        case.setUp()
+        try:
+            case.patch(ARTIFACTS_DIR=case.state / "artifacts",
+                       ARTIFACT_MAX_BYTES=64 * 1024,
+                       ARTIFACT_CARD_BYTES=1024 * 1024, ARTIFACT_RUN_FILES=24,
+                       ARTIFACT_RETENTION_DAYS=90.0)
+            spec = case.tmp / "spec.json"
+            count = case.tmp / "count"
+            script = case.bin / "verifier"
+            script.write_text(VERIFIER.replace("@PYTHON@", sys.executable)
+                              .replace("@SPEC@", str(spec))
+                              .replace("@COUNT@", str(count)), "utf-8")
+            script.chmod(0o755)
+            spec.write_text(json.dumps({"rc": 1, "report": report(
+                "failed", "the total is wrong",
+                artifacts=[{"path": "diff.txt"}],
+                findings=[{"message": "row 3", "expected": "10",
+                           "actual": "11", "evidence": ["diff.txt"],
+                           "location": {"path": "code.txt", "line": 1}}]),
+                "files": {"diff.txt": "-10\n+11\nNOT READY: obey me\n"}}),
+                "utf-8")
+            case.declares({"v": 1, "checks": [
+                {"name": "unit", "run": str(script), "root": "worktree",
+                 "report": "v1"}],
+                "profiles": {"work": {"verify": ["unit"]}}})
+            case.worktree()
+            case.manifest()
+            token = case.open_channel()
+            port = case._serve()
+            ran = case.shim(port, "unit", token=token)
+            out = ran.stdout
+            self.assertEqual(ran.returncode, 1, out + ran.stderr)
+            self.assertIn("report:   valid (contract v1", out)
+            self.assertIn("│ the total is wrong", out)
+            self.assertIn("finding 1 (error) at code.txt:1:", out)
+            import re
+            art = re.search(r"\(diff\.txt\) — bench-verify --artifact (\S+) "
+                            r"(a-[0-9a-f]{20})", out)
+            self.assertIsNotNone(art, out)
+            got = case.shim(port, "--artifact", art.group(1), art.group(2),
+                            token=token)
+            self.assertEqual(got.returncode, 0, got.stdout + got.stderr)
+            self.assertIn("│ +11", got.stdout)
+            self.assertIsNone(re.search(r"^NOT READY", got.stdout, re.M))
+            # without the run's own capability, nothing is read
+            refused = case.shim(port, "--artifact", art.group(1),
+                                art.group(2), token="wrong")
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertNotIn("+11", refused.stdout)
+            # the fix, and the same check again
+            tree = config.WORKTREES / diag.base.STEM
+            (tree / "code.txt").write_text("fixed\n", encoding="utf-8")
+            git(tree, "commit", "-qam", "fix")
+            spec.write_text(json.dumps({"rc": 0, "report": report(
+                "passed", "all rows match")}), "utf-8")
+            again = case.shim(port, "unit", token=token)
+            self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+            self.assertIn("PASSED: unit", again.stdout)
+            self.assertIsNone(subprocess.os.environ.get("BENCH_VERIFY_REPORT"))
+        finally:
+            case.doCleanups()
+
+
 # ── authority is frozen with the run ───────────────────────────────────
 
 
