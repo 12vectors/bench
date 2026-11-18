@@ -445,7 +445,10 @@ function loadResult(t, force) {
 
 function shortSha(s) { return s ? String(s).slice(0, 12) : 'unknown'; }
 
-function artifactHtml(t, a, i) {
+/* `where` names the list an output is drawn in ('top' for the curated
+   selection and its pairs, 'all' for the fold of every output): one output
+   may be drawn in both, and each drawing's ids and kept places are its own. */
+function artifactHtml(t, a, i, where = 'top') {
   const caption = a.caption || a.name || 'output';
   const badge = a.current ? `<span class="cbadge ok">Current</span>`
     : `<span class="cbadge ${a.state === 'available' ? '' : 'dim'}">${esc((a.relevanceWords || [])[0] || a.stateWords)}</span>`;
@@ -477,7 +480,11 @@ function artifactHtml(t, a, i) {
   ].filter(Boolean).join(' · ');
   const depicts = a.depicts || {};
   const open = S.accOpen[`${t.file}:res-${a.id}`];
-  return `<li class="resitem" data-keep="res-${esc(a.id)}"><figure>` + media +
+  const uid = `${where}-${i}`;
+  const evLink = p.evidence
+    ? `<button class="dlink mono" data-dview="evidence" title="Open the ◫ evidence sheet">${esc(p.evidence)}</button>`
+    : `<span class="mono">unknown</span>`;
+  return `<li class="resitem" data-keep="res-${where}-${esc(a.id)}"><figure>` + media +
     `<figcaption>${badge} <b>${esc(caption)}</b>` +
     (a.scenario ? `<div>Scenario: ${esc(a.scenario)}</div>` : '') +
     (a.criterion ? `<div>Criterion: <span class="mono">${esc(a.criterion)}</span>` +
@@ -485,10 +492,12 @@ function artifactHtml(t, a, i) {
     `<div class="dim">${esc(meta)}</div>` +
     ((a.relevanceWords || []).length && !a.current
       ? `<div class="dim">${a.relevanceWords.map(esc).join('; ')}</div>` : '') +
+    (a.described === false
+      ? `<div class="dim resundescribed">The program did not describe this output: what it shows, its data and whether it is of this checkout or an already running service are not stated.</div>` : '') +
     `</figcaption></figure>` +
-    `<details class="rpt" data-keep="res-d-${esc(a.id)}"${open ? ' open' : ''} data-res-fold="${esc(a.id)}">` +
+    `<details class="rpt" data-keep="res-d-${where}-${esc(a.id)}"${open ? ' open' : ''} data-res-fold="${esc(a.id)}">` +
     `<summary>Provenance</summary><div style="padding:6px 10px">` +
-    `<p>Bench recorded: the run <span class="mono">${esc(p.evidence || 'unknown')}</span>, its check and outcome, and the source it ran against (commit ${esc(shortSha(src.commit))}${src.bound ? '' : ', not bound'}). ` +
+    `<p>Bench recorded: the run ${evLink}, its check and outcome, and the source it ran against (commit ${esc(shortSha(src.commit))}${src.bound ? '' : ', not bound'}). ` +
     `The output's hash is <span class="mono">${esc(shortSha(a.sha256))}</span>, ${esc(String(a.size))} bytes, ${esc(a.kind)}.</p>` +
     `<p>The program's account: it shows revision ${esc(shortSha(depicts.revision))}` +
     `${depicts.claimed ? ' (stated by the program)' : ''}; target ${esc(a.target || 'unknown')}. ` +
@@ -496,9 +505,9 @@ function artifactHtml(t, a, i) {
     (a.kind === 'image' ? `<p class="dim">Images are kept as they were made; their pixels are not inspected for secrets.</p>` : '') +
     (a.scrubbed ? `<p class="dim">Credential-shaped text was scrubbed from this output when it was kept.</p>` : '') +
     (a.state === 'available'
-      ? `<p><label for="res-why-${i}">Withhold this output</label> <input id="res-why-${i}" placeholder="why — e.g. shows personal data" ` +
-        `value="${esc(S.accDraft[`res-why:${a.id}`] || '')}"> <button data-res-withhold="${i}">Withhold</button> ` +
-        `<span class="dim">Removes its bytes and description; the record that it existed stays.</span></p>` : '') +
+      ? `<p><label for="res-why-${uid}">Withhold this output</label> <input id="res-why-${uid}" data-res-why="${i}" placeholder="why — e.g. shows personal data" ` +
+        `value="${esc(S.accDraft[`res-why:${a.id}`] || '')}"> <button data-res-withhold="${i}">${actLabel('Withhold', 'Confirm: withhold', 'Withholding…')}</button> ` +
+        `<span class="dim">Removes its bytes and description for good; the record that it existed stays. Click twice to confirm.</span></p>` : '') +
     `</div></details></li>`;
 }
 
@@ -557,7 +566,7 @@ function resultHtml(t) {
   const facts = (d.availability || []).map(a =>
     `<dt>${esc(FACT_WORDS[a.fact] || a.fact)}</dt><dd><span class="cbadge ${a.state === 'yes' ? 'ok' : a.state === 'unknown' ? 'dim' : ''}">${esc(a.state)}</span> ${esc(a.words)}</dd>`).join('');
   const checks = (d.checks || []).length
-    ? `<ul class="reschecks">` + d.checks.map(c => `<li><b>${esc(c.check)}</b> — ${esc(c.outcome || 'unknown')}` +
+    ? `<ul class="reschecks">` + d.checks.map(c => `<li><button class="dlink" data-dview="evidence" title="Open the ◫ evidence sheet${c.evidence ? ' — ' + esc(c.evidence) : ''}"><b>${esc(c.check)}</b> — ${esc(c.outcome || 'unknown')}</button>` +
         ` <span class="dim">at ${esc(shortSha(c.commit))}${c.atCandidate ? ' (current commit)' : ' (another commit — history)'}</span></li>`).join('') + `</ul>`
     : `<p class="dnote">Bench has run no check for this card.</p>`;
   const acc = d.acceptance
@@ -598,7 +607,7 @@ function resultHtml(t) {
     (singles.length ? `<ul class="resgallery">${singles.map(a => artifactHtml(t, a, byId[a.id])).join('')}</ul>` : '') +
     (rows.length > curated.length || rows.some(a => !a.current)
       ? `<details class="rpt" data-keep="res-all" data-res-fold="all"${allOpen ? ' open' : ''}><summary>All outputs on this board (${rows.length}), with history</summary>` +
-        `<ul class="resgallery">${rows.map((a, i) => artifactHtml(t, a, i)).join('')}</ul></details>` : '') +
+        `<ul class="resgallery">${rows.map((a, i) => artifactHtml(t, a, i, 'all')).join('')}</ul></details>` : '') +
     `<h4>What ran</h4>` + checks +
     `<p>${acc}</p>` + gaps +
     `<h4>Where the change is</h4><dl class="dfacts resfacts">${facts}</dl>` +
@@ -709,19 +718,26 @@ function wireResult(t) {
     loadResult(t, true);
   });
   const rows = d.artifacts || [];
-  body.querySelectorAll('input[id^="res-why-"]').forEach(input => input.addEventListener('input', () => {
-    const a = rows[Number(input.id.slice('res-why-'.length))];
+  body.querySelectorAll('input[data-res-why]').forEach(input => input.addEventListener('input', () => {
+    const a = rows[Number(input.dataset.resWhy)];
     if (a) S.accDraft[`res-why:${a.id}`] = input.value;
   }));
-  body.querySelectorAll('[data-res-withhold]').forEach(btn => btn.addEventListener('click', async () => {
+  // Withholding deletes bytes for good, so it arms on the first click and
+  // fires on the second, like every other action that cannot be taken back
+  body.querySelectorAll('[data-res-withhold]').forEach(btn => {
     const a = rows[Number(btn.dataset.resWithhold)];
     if (!a) return;
-    btn.disabled = true;
-    const data = await postCard('/api/artifact/withhold', {
-      file: t.file, stage: t.stage, id: a.id, reason: S.accDraft[`res-why:${a.id}`] || '' });
-    if (data) { delete S.accDraft[`res-why:${a.id}`]; toast('output withheld — its record stays'); }
-    loadResult(t, true);
-  }));
+    wireAction(btn, `${t.file}::res-withhold:${a.id}`, {
+      label: 'Withhold', confirm: true,
+      run: async () => {
+        const data = await postCard('/api/artifact/withhold', {
+          file: t.file, stage: t.stage, id: a.id, reason: S.accDraft[`res-why:${a.id}`] || '' });
+        if (data) { delete S.accDraft[`res-why:${a.id}`]; toast('output withheld — its record stays'); }
+        loadResult(t, true);
+        return !!data;
+      },
+    });
+  });
   body.querySelectorAll('[data-res-view]').forEach(btn => btn.addEventListener('click', () => {
     const a = rows[Number(btn.dataset.resView)];
     if (!a || !a.url) return;
