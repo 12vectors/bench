@@ -33,6 +33,11 @@ holds (`requirements-pending`), and an ungated rule allows the merge with
 the label *ungated* — nothing required, nothing verified. Nothing here
 activates a gate, grants an override or reads agent prose as evidence.
 
+**Last mover, not last editor (D1).** A card is acted on only when its
+latest stage move by a person was this board's identity — asked of
+`movements.eligibility`, the same answer `reading()` carries per card,
+so a launch and the page cannot disagree (task 138).
+
 **Reading is free.** `reading()` — what `GET /api/orchestration` serves —
 reads the agreement, the draft, the designation and the run registry. It
 launches nothing, runs no check, asks no remote and writes nothing.
