@@ -41,7 +41,10 @@ class TheGuideIsASettingsSection(unittest.TestCase):
         self.assertIn("'Enter'", HTML[HTML.index("function onActivate("):][:300])
 
     def test_the_handoff_link_opens_the_guide(self):
-        self.assertIn("location.hash === '#setup'", HTML)
+        # `#setup` on the board's root is read by the one route parser as
+        # Settings → Setup guide (task 134), and the boot opens the guide
+        self.assertIn("if (root && hash === '#setup') return { view: 'settings', section: 'setup', alias: true };", HTML)
+        self.assertIn("fetchSetup().then(() => { if (setupAlias) openSetupGuide(); });", HTML)
         boot = (REPO / "bootstrap.py").read_text(encoding="utf-8")
         self.assertIn('"setup": url + "#setup"', boot)
 
