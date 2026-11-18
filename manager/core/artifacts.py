@@ -170,6 +170,18 @@ def artifact_id(evidence_id: str, name: str) -> str:
 # ── what a file is, read from its own bytes ────────────────────────────
 
 
+def _parses_as_json(text: str) -> bool:
+    """Whether `text` is JSON this reader can hold. A document nested too
+    deeply for the parser raises `RecursionError`, not `ValueError`; it is
+    answered "no" like any other text that is not JSON, never raised, so a
+    file's shape can never stop a run recording its outcome."""
+    try:
+        json.loads(text)
+    except (ValueError, RecursionError):
+        return False
+    return True
+
+
 def classify(data: bytes, name: str) -> dict:
     """The kind a file is served as. Its bytes decide, never its name — a
     name can only make a file *less* trusted (an `.svg` that happens to be
@@ -196,12 +208,9 @@ def classify(data: bytes, name: str) -> dict:
         if text is not None:
             head = text.lstrip()[:1]
             if suffix == ".json" or (head in ("{", "[") and suffix in ("", ".json")):
-                try:
-                    json.loads(text)
+                if _parses_as_json(text):
                     return {"kind": "json", "mime": "application/json",
                             "active": False}
-                except ValueError:
-                    pass
             if re.search(r"(?i)<\s*(script|html|svg|iframe|object)\b", text[:65536]):
                 return {"kind": "file", "mime": "application/octet-stream",
                         "active": True}
@@ -235,7 +244,7 @@ def read_manifest(outdir: Path) -> dict:
             found["problems"].append("manifest.json is over 256 KiB and was not read")
             return found
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, UnicodeDecodeError):
+    except (OSError, ValueError, UnicodeDecodeError, RecursionError):
         found["problems"].append("manifest.json could not be read as JSON")
         return found
     if not isinstance(data, dict):
@@ -376,12 +385,9 @@ def ingest(outdir, *, task: str, run: dict) -> dict:
             if clean != text:
                 scrubbed = len(redact.found(text)) or 1
                 data = clean.encode("utf-8")
-                if kind["kind"] == "json":
-                    try:
-                        json.loads(clean)
-                    except ValueError:
-                        kind = {"kind": "text", "mime": "text/plain; charset=utf-8",
-                                "active": False}
+                if kind["kind"] == "json" and not _parses_as_json(clean):
+                    kind = {"kind": "text", "mime": "text/plain; charset=utf-8",
+                            "active": False}
         meta = manifest["entries"].get(rel) or manifest["entries"].get(name) or {}
         aid = artifact_id(evidence_id, rel)
         criterion = meta.get("criterion")
@@ -536,13 +542,10 @@ def ingest_report(outdir, *, task: str, run: dict,
             if clean != text:
                 scrubbed = len(redact.found(text)) or 1
                 data = clean.encode("utf-8")
-                if kind["kind"] == "json":
-                    try:
-                        json.loads(clean)
-                    except ValueError:
-                        kind = {"kind": "text",
-                                "mime": "text/plain; charset=utf-8",
-                                "active": False}
+                if kind["kind"] == "json" and not _parses_as_json(clean):
+                    kind = {"kind": "text",
+                            "mime": "text/plain; charset=utf-8",
+                            "active": False}
         aid = artifact_id(evidence_id, "report/" + rel)
         label = _clean(entry.get("label"), 200)
         record = {

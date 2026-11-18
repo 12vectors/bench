@@ -2197,7 +2197,10 @@ def _keep_outputs(record: dict) -> dict:
             "agent": record.get("agent"), "intent": record.get("intent"),
             "actor": record.get("actor"), "root": record.get("rootPolicy"),
             "source": record.get("source") or {}})
-    except (OSError, ValueError) as exc:
+    except Exception as exc:                 # noqa: BLE001 — keeping never decides
+        # Whatever the files are shaped like, the run must still record its
+        # outcome, release its checkout and close its record: a keeping
+        # that fails is said on the record, never raised out of `_finish`.
         out["error"] = f"the outputs could not be kept: {exc.__class__.__name__}"
         return out
     out.update(kept=kept["kept"], refused=kept["refused"][:24],
@@ -2228,7 +2231,9 @@ def _keep_report(record: dict) -> dict:
             "agent": record.get("agent"), "intent": record.get("intent"),
             "actor": record.get("actor"), "root": record.get("rootPolicy"),
             "source": record.get("source") or {}}, declared=declared)
-    except (OSError, ValueError) as exc:
+    except Exception as exc:                 # noqa: BLE001 — keeping never decides
+        # As `_keep_outputs`: a report or artifact of any shape cannot stop
+        # the run recording the outcome the rule gave it.
         block["keptError"] = (f"the report could not be kept: "
                               f"{exc.__class__.__name__}")
         block["kept"] = []

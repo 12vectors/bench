@@ -3535,7 +3535,10 @@ inside its extension data one by one — and that is pattern matching, not
 a promise that every secret is found; an image is kept as made. When a
 secret gets through, **Withhold** (below) removes the file's bytes. A
 report nested deeper than the contract reads is a protocol error like any
-other, never a reason the run fails to record its outcome.
+other, and a kept file too deeply nested to parse is kept as a plain file
+or refused, never as JSON. Neither is a reason the run fails to record
+its outcome: a keeping that fails for any reason is said on the record
+(`keptError`) and the outcome stands.
 
 **A run reads it through the door it already has.** When a contract
 check does not pass, `bench-verify` prints the report after the verdict:

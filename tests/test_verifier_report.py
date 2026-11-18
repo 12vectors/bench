@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from tests.test_check_reuse import ReuseCase  # noqa: E402
@@ -598,6 +599,50 @@ class ArtifactsFailSafely(ReportCase):
         self.assertEqual((found["outcome"], found["reason"]),
                          ("error", "report-invalid"))
         self.assertIn("nests", found["report"]["problem"])
+
+    def test_deep_nesting_at_the_shipped_size_cap_records_its_outcome(self):
+        # The case above is refused by the 64 KiB cap this harness sets
+        # before a byte of it is classified. At the shipped 8 MiB cap the
+        # raw report reaches `artifacts.classify`, whose JSON parser raises
+        # RecursionError on it: that must be "not JSON", never a raise.
+        self.patch(ARTIFACT_MAX_BYTES=8 * 1024 * 1024,
+                   ARTIFACT_CARD_BYTES=64 * 1024 * 1024)
+        deep = '{"v": 1, "outcome": "passed", "summary": "s", "extensions": ' \
+               '{"a.b": ' + "[" * 100_000 + "]" * 100_000 + "}}"
+        self.assertEqual(artifacts.classify(deep.encode(), "report.json")["kind"],
+                         "file")
+        self.says(None, rc=0, raw=deep)
+        found = self.go(self.contract())
+        self.assertEqual((found["outcome"], found["reason"]),
+                         ("error", "report-invalid"))
+        self.assertNotIn("keptError", found["report"])
+        self.assertEqual(evidence.read(found["id"])["outcome"], "error")
+
+    def test_a_declared_deep_json_artifact_does_not_stop_the_record(self):
+        self.patch(ARTIFACT_MAX_BYTES=8 * 1024 * 1024,
+                   ARTIFACT_CARD_BYTES=64 * 1024 * 1024)
+        deep = "[" * 100_000 + "]" * 100_000
+        self.says(report("passed", "fine", artifacts=[{"path": "deep.json"}]),
+                  rc=0, files={"deep.json": deep})
+        found = self.go(self.contract())
+        self.assertEqual((found["outcome"], found["reason"]),
+                         ("passed", "report-passed"))
+        self.assertNotIn("keptError", found["report"])
+        self.assertEqual(evidence.read(found["id"])["outcome"], "passed")
+        self.assertNotIn("deep.json",
+                         [k["path"] for k in found["report"]["kept"]
+                          if k.get("kind") == "json"])
+
+    def test_a_keeping_that_raises_is_said_and_never_raised(self):
+        def boom(*_a, **_k):
+            raise RecursionError("maximum recursion depth exceeded")
+        self.says(report("failed", "x"), rc=1)
+        with mock.patch.object(verify.artifacts, "ingest_report", boom):
+            found = self.go(self.contract())
+        self.assertEqual((found["outcome"], found["reason"]),
+                         ("failed", "report-failed"))
+        self.assertIn("RecursionError", found["report"]["keptError"])
+        self.assertEqual(evidence.read(found["id"])["outcome"], "failed")
 
 
 class DiagnosticArtifactsCanBeWithheld(ReportCase):
