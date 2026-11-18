@@ -81,7 +81,8 @@ class Source(unittest.TestCase):
 
 class ReachableThroughNormalNavigation(Source):
     def test_the_header_switcher_carries_settings(self):
-        self.assertIn('<button data-view="settings">Settings</button>',
+        # a link to its address since task 134
+        self.assertIn('<a href="/settings" data-view="settings">Settings</a>',
                       self.html)
         self.assertIn('<div class="view" id="view-settings">', self.html)
 
@@ -129,7 +130,7 @@ class ReachableThroughNormalNavigation(Source):
         the same section only, so a new section starts closed."""
         body = self.body("renderSettingsNow")
         keep = body.index("openSettingsFolds(body)")
-        paint = body.index("body.innerHTML = notice + settingsSection")
+        paint = body.index("body.innerHTML = notice + (unknown")
         reopen = body.index("if (keepOpen.has(settingsFoldKey(d))) d.open = true")
         self.assertLess(keep, paint)
         self.assertLess(paint, reopen)
@@ -462,8 +463,9 @@ class ASurfaceOfItsOwn(Source):
                       self.html)
         body = self.body("renderSettingsNow")
         # told to assistive technology as well as drawn: aria-current="page"
-        self.assertIn("aria-current=\"${key === section ? 'page' : 'false'}\"", body)
-        self.assertIn('.s-nav button[aria-current="page"]', self.css())
+        # (and a section an address named that is not one marks none, task 134)
+        self.assertIn("aria-current=\"${key === section && !unknown ? 'page' : 'false'}\"", body)
+        self.assertIn('.s-nav a[aria-current="page"]', self.css())
         # grouped, every group named for a screen reader
         self.assertIn('role="group" aria-labelledby="snavg-${n}"', body)
 

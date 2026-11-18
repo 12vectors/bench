@@ -408,7 +408,8 @@ class Wiring(unittest.TestCase):
         return match.group(0)
 
     def test_the_switcher_offers_a_fourth_view(self):
-        self.assertIn('<button data-view="phases">Phases</button>', self.html)
+        # a link to its address since task 134
+        self.assertIn('<a href="/phases" data-view="phases">Phases</a>', self.html)
         self.assertIn('id="view-phases"', self.html)
         self.assertIn("phases: 'phases'", self.body(r"const VIEW_TITLES = [^\n]*"),
                       "the tab title names the view like the other three")
