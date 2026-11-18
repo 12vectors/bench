@@ -40,10 +40,10 @@ composition.
 ```architecture current
 L0  gitproc records redact
 L1  config
-L2  githost assets
+L2  githost assets agreements
 L3  state reports templates gitrepo verifierreport
 L4  taskfiles
-L5  plans profiles
+L5  plans profiles execowner
 L6  gatepolicy reviews inputs
 L7  evidence resultidentity artifacts
 L8  staleness
@@ -51,7 +51,7 @@ L9  verify
 L10 progress
 L11 acceptance callers
 L12 gates
-L13 required
+L13 required orchestrator
 L14 doctor
 L15 commands drive events sync
 L16 changes
@@ -159,6 +159,23 @@ deployed. It imports `acceptance`, `artifacts`, `changes`, `completion`,
 `staleness`, `state` and `taskfiles`; `agents` asks it for the prompt
 paragraph, the manifest's frozen request and the handoff rule, and
 `routes` for the Overview's reading and the move into review.
+
+The scoped orchestration engine (task 137, phase 136) is three modules,
+each below its callers. `agreements` (L2, `config`, `records` and
+`redact` only) is the operating agreement: the versioned document, its
+validation, its revision, and the effective reading — authority as the
+intersection of the Bench scope and a phase scope, pooled capacity as
+allocations of the parent's total, ceilings that may only be lowered,
+pause inherited downward — plus draft, preview, apply and the
+operational toggles, each under a revision guard. `execowner` (L5,
+`config`, `records`, `taskfiles`) is who executes: the portable
+designation in the work state, the non-blocking OS lock, controlled
+handover and adoption; it never reads a heartbeat as authority.
+`orchestrator` (L13, above `gates`) composes them with the board and the
+merge rules into one deterministic `authorize` and the public `reading`
+that `GET /api/orchestration` serves. None of them launches anything;
+the scheduler, ledger and reasoning contract are later members of the
+phase and ask `orchestrator`.
 
 `profiles.read_scope` (task 127) is a request-scoped memo, not a layer:
 a `ContextVar` that `routes.state_payload` sets for the length of one
@@ -277,10 +294,10 @@ be checked against it when they land. Not enforced.
 ```architecture proposed
 L0  gitproc records redact
 L1  config
-L2  state reports templates gitrepo assets verifierreport
+L2  state reports templates gitrepo assets verifierreport agreements
 L3  githost
 L4  taskfiles
-L5  profiles plans
+L5  profiles plans execowner
 L6  gatepolicy reviews inputs
 L7  evidence resultidentity artifacts
 L8  staleness
@@ -288,7 +305,7 @@ L9  verify
 L10 progress
 L11 acceptance callers
 L12 gates
-L13 required doctor
+L13 required doctor orchestrator
 L14 events drive sync commands
 L15 changes
 L16 completion
@@ -386,11 +403,16 @@ neither.
 | setup journal (machine-local) | `setupbase` | `setupbase.LOCK`, interprocess | no |
 | execution policy document | `settings` | `settings._APPLY_LOCK` (single writer) | yes |
 | agent keys in `.env`, local prompt templates | `agentsettings` | `agentsettings._APPLY_LOCK` (single writer) | no |
+| operating agreement (machine-local) and its draft (task 137) | `agreements` | `agreements._LOCK`, interprocess | the agreement yes; the draft no |
+| execution designation (portable), installation id | `execowner` | `execowner._LOCK`, interprocess; execution itself is the non-blocking `flock` on `execution.lock` | yes |
+| orchestrated launch ledger (append-only) | `orchestrator` | append | no |
 
 **Durable writers** — the call sites passing `durable=True`, held equal
 to the code by `tests/test_records_adoption.py`:
 
 ```records durable
+agreements.apply
+agreements.set_scope
 artifacts.ingest
 artifacts.ingest_report
 artifacts.sweep
@@ -398,6 +420,8 @@ artifacts.withhold
 completion._record_delivered
 completion._remember
 evidence.store
+execowner._write_designation
+execowner.ensure_installation_id
 gates.override
 gates.record_verdict
 plans.record
@@ -585,5 +609,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 181
-routes 115
+routes 123
 ```

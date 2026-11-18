@@ -810,6 +810,8 @@ ROUTES: dict[str, str] = {
     "GET /api/session": "read",
     "GET /api/settings": "read",
     "GET /api/settings/history": "read",
+    # the orchestrator's effective state (task 137): a read that stays one
+    "GET /api/orchestration": "read",
     "GET /api/setup": "read",
     "GET /api/setup/verification": "read",
     "GET /api/state": "read",
@@ -878,6 +880,14 @@ ROUTES: dict[str, str] = {
     "POST /api/setup/cards/decide": "policy-mutation",
     "POST /api/setup/cards/preview": "policy-mutation",
     "POST /api/setup/cards/start": "policy-mutation",
+    # operating agreements and the execution installation (task 137)
+    "POST /api/orchestration/agreement/validate": "policy-mutation",
+    "POST /api/orchestration/agreement/draft": "policy-mutation",
+    "POST /api/orchestration/agreement/preview": "policy-mutation",
+    "POST /api/orchestration/agreement/discard": "policy-mutation",
+    "POST /api/orchestration/agreement/apply": "policy-mutation",
+    "POST /api/orchestration/scope": "policy-mutation",
+    "POST /api/orchestration/installation": "policy-mutation",
     "POST /api/setup/decide": "policy-mutation",
     "POST /api/setup/task": "policy-mutation",
     "POST /api/setup/verification/activate": "policy-mutation",

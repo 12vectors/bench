@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -202,6 +202,16 @@ gitproc / records / redact < config < githost / assets < state / reports / templ
   joined, a failure is not rerun behind anyone's back, the candidate and
   the rule are re-read between requests, and nothing is retried or
   scheduled by itself
+- `agreements.py`, `execowner.py`, `orchestrator.py` — the scoped
+  orchestration engine (task 137): the operating agreement and its
+  effective reading (authority intersected from Bench to phase scope,
+  capacity allocated from one shared total, D7 defaults written out,
+  draft → preview → apply under revision guards, pause, exclusion and
+  hand-back); the one designated execution installation and its OS lock,
+  handed over only after quiescence and adopted explicitly, never by a
+  heartbeat; and the deterministic `authorize` and public `reading`
+  (`GET /api/orchestration`). Absent agreement means off; reading
+  launches nothing (see "Orchestration: scopes and operating agreements")
 - `doctor.py` — what this board would grant, run and refuse, asked
   without paying for a model: the same resolver a launch rides, read at
   four honest distances, with every diagnostic's remedy and a coverage

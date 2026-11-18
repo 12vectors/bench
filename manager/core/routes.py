@@ -25,6 +25,7 @@ from html import escape
 from typing import Callable, NamedTuple
 
 import acceptance
+import agreements
 import agents
 import artifacts
 import assets
@@ -36,11 +37,13 @@ import delivery
 import doctor
 import drive
 import events
+import execowner
 import evidence
 import gatepolicy
 import gates
 import changes
 import inputs
+import orchestrator
 import phases
 import plans
 import profiles
@@ -1309,6 +1312,102 @@ def post_setup(req) -> None:
     req.reply(200, {"result": result})
 
 
+def get_orchestration(req) -> None:
+    # The orchestrator's public effective state (task 137): the
+    # agreement in force against the draft, every scope's authority
+    # and capacity with provenance, who executes. A read that stays
+    # one — it launches no agent, runs no check and writes nothing.
+    req.reply(200, {"orchestration": orchestrator.reading()})
+
+
+def _orchestration_refused(req, exc) -> None:
+    extra = dict(exc.extra)
+    if isinstance(exc, execowner.Refused):
+        extra["code"] = exc.code
+    req.reply(exc.status, {"error": str(exc), **extra})
+
+
+def post_orchestration_agreement(req) -> None:
+    # Draft, validate, preview, apply and discard an operating
+    # agreement. Only apply changes what is in force, bound to the
+    # draft and effective revisions the page read. No card, branch,
+    # worktree or run is touched by any of them.
+    body, action = req.body, req.path.rsplit("/", 1)[1]
+    actor = taskfiles.actor_name() or None
+    try:
+        if action == "validate":
+            result = agreements.validate(body.get("document"))
+        elif action == "draft":
+            document = body.get("document")
+            if document == "new":
+                document = agreements.new_draft()
+            result = agreements.save_draft(document, body.get("expected"))
+        elif action == "preview":
+            result = agreements.preview(body.get("document"))
+        elif action == "discard":
+            result = agreements.discard_draft(body.get("expected"))
+        else:
+            result = agreements.apply(body.get("expected"),
+                                      body.get("draft"), actor)
+            state.record_board_event({
+                "kind": "other", "actor": "you",
+                "summary": f"orchestration: agreement {result['revision']} "
+                           f"applied"})
+            state.broadcast({"type": "board"})
+    except agreements.Refused as exc:
+        _orchestration_refused(req, exc)
+        return
+    req.reply(200, {"result": result})
+
+
+def post_orchestration_scope(req) -> None:
+    # A person's pause, resume, exclusion or hand-back on one scope.
+    # A pause stops new scheduling; work in flight is observed, never
+    # cancelled. Hand-back leaves the card's branch and worktree as
+    # they are.
+    body = req.body
+    try:
+        result = agreements.set_scope(
+            str(body.get("scope") or ""), str(body.get("action") or ""),
+            body.get("expected"), body.get("card"),
+            taskfiles.actor_name() or None)
+    except agreements.Refused as exc:
+        _orchestration_refused(req, exc)
+        return
+    state.record_board_event({
+        "kind": "other", "actor": "you",
+        "summary": f"orchestration: {result['action']} {result['scope']}"
+                   + (f" card {result['card']}" if result.get("card") else "")})
+    state.broadcast({"type": "board"})
+    req.reply(200, {"result": result})
+
+
+def post_orchestration_installation(req) -> None:
+    # Designate this installation, hand execution over after
+    # establishing quiescence, or adopt a working card after an
+    # adoption. No failover: nothing here reads a heartbeat.
+    body, action = req.body, str(req.body.get("action") or "")
+    actor = taskfiles.actor_name() or None
+    try:
+        if action == "designate":
+            result = execowner.designate(body.get("expected"), actor)
+        elif action == "handover":
+            result = orchestrator.handover(body.get("expected"), actor)
+        elif action == "adopt-card":
+            result = execowner.adopt_card(body.get("expected"),
+                                          str(body.get("card") or ""), actor)
+        else:
+            req.reply(400, {"error": "action is designate, handover or adopt-card"})
+            return
+    except execowner.Refused as exc:
+        _orchestration_refused(req, exc)
+        return
+    state.record_board_event({"kind": "other", "actor": "you",
+                              "summary": f"orchestration: {action}"})
+    state.broadcast({"type": "board"})
+    req.reply(200, {"result": result})
+
+
 def post_setup_cards(req) -> None:
     # Gap-specific setup cards (task 89), behind the same door.
     # Preview writes nothing; create writes cards and links and
@@ -1803,6 +1902,7 @@ ROUTES = (
     Route("GET", "/api/verify/checks", "read", get_verify_checks),
     Route("GET", "/api/doctor", "read", get_doctor),
     Route("GET", "/api/settings", "read", get_settings),
+    Route("GET", "/api/orchestration", "read", get_orchestration),
     Route("GET", "/api/setup", "read", get_setup),
     Route("GET", "/api/setup/verification", "read", get_setup_verification),
     Route("GET", "/api/preview", "read", get_preview),
@@ -1849,6 +1949,20 @@ ROUTES = (
     Route("POST", "/api/verify/details", "run-authenticated", post_verify_details),
     Route("POST", "/api/doctor/run", "browser-mutation", post_doctor_run),
     Route("POST", "/api/gates/override", "browser-mutation", post_gates_override),
+    Route("POST", "/api/orchestration/agreement/validate", "policy-mutation",
+          post_orchestration_agreement),
+    Route("POST", "/api/orchestration/agreement/draft", "policy-mutation",
+          post_orchestration_agreement),
+    Route("POST", "/api/orchestration/agreement/preview", "policy-mutation",
+          post_orchestration_agreement),
+    Route("POST", "/api/orchestration/agreement/discard", "policy-mutation",
+          post_orchestration_agreement),
+    Route("POST", "/api/orchestration/agreement/apply", "policy-mutation",
+          post_orchestration_agreement),
+    Route("POST", "/api/orchestration/scope", "policy-mutation",
+          post_orchestration_scope),
+    Route("POST", "/api/orchestration/installation", "policy-mutation",
+          post_orchestration_installation),
     Route("POST", "/api/setup/decide", "policy-mutation", post_setup),
     Route("POST", "/api/setup/task", "policy-mutation", post_setup),
     Route("POST", "/api/setup/cards/preview", "policy-mutation", post_setup_cards),
