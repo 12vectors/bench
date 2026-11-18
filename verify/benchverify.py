@@ -1118,10 +1118,16 @@ class Backend:
         # The vendor CLI is a stub too, so no case can launch a model. It
         # answers only a refinement, and only with what a case wrote to
         # `refine_reply` first; everything else is refused.
+        # While `refine_hold` exists a refinement waits (bounded at a
+        # minute) before answering, so a case can see a run in flight.
         self.refine_reply = base / "refine-reply.txt"
+        self.refine_hold = base / "refine-hold"
         claude = bindir / "claude"
         claude.write_text(
             "#!/bin/sh\n"
+            f"if [ \"$AGENT_MODE\" = refine ]; then\n"
+            f"  n=0; while [ -f '{self.refine_hold}' ] && [ $n -lt 600 ]; do sleep 0.1; n=$((n+1)); done\n"
+            "fi\n"
             f"if [ \"$AGENT_MODE\" = refine ] && [ -f '{self.refine_reply}' ]; then\n"
             f"  cat '{self.refine_reply}'; exit 0\nfi\n"
             "echo 'bench-verify claude stub: no model here' >&2\nexit 1\n")

@@ -66,6 +66,16 @@ SUGGEST = """# Tidy the header layout on the settings page
 
 The header buttons wrap badly on a narrow screen; tidy the layout.
 """
+DONE = "11-result-done.md"
+DONE_CARD = """# Result done fixture
+
+**Status:** Done
+**Priority:** Low
+
+## Context
+
+An internal change, delivered.
+"""
 DRAWER = "document.querySelector('#drawerbody')"
 SECTION = "document.querySelector('#dsec-overview .showresult')"
 
@@ -123,10 +133,17 @@ class ShowTheResult(unittest.TestCase):
                   outcome="failed", at=now - 20)
         self.keep("gone.png", PNG_A + b"2", "image", "image/png", caption="Expired capture",
                   expired=True, at=now - 10)
+        self.keep("half.png", PNG_A + b"3", "image", "image/png", caption="Partial capture",
+                  partial=True, at=now - 9)
+        self.keep("older.png", PNG_A + b"4", "image", "image/png", caption="Earlier commit capture",
+                  commit="f" * 40, at=now - 8)
+        self.keep("absent.png", PNG_A + b"5", "image", "image/png", caption="Bytes not here",
+                  missing=True, at=now - 7)
 
     def keep(self, name, data, kind, mime, *, caption, role="single", pair=None,
              viewport=None, revision=None, criterion=None, outcome="passed",
-             active=False, expired=False, at=0.0):
+             active=False, expired=False, partial=False, commit=None,
+             missing=False, at=0.0):
         """One output, exactly as `artifacts.ingest` would have kept it."""
         aid = "a-" + hashlib.sha256(f"ev-fixture\0{name}".encode()).hexdigest()[:20]
         record = {
@@ -136,19 +153,19 @@ class ShowTheResult(unittest.TestCase):
             "caption": caption, "scenario": "narrow settings", "viewport": viewport,
             "criterion": criterion, "criterionRev": None, "role": role, "pair": pair,
             "data": "fixture", "environment": "local", "target": "candidate",
-            "note": None, "partial": False, "described": True, "scrubbed": 0,
+            "note": None, "partial": partial, "described": True, "scrubbed": 0,
             "pixelsInspected": False if kind == "image" else None,
             "producer": {"evidence": "ev-fixture", "check": "ui-demo", "scope": None,
                          "outcome": outcome, "reason": None, "resultId": None,
                          "agent": None, "intent": "work", "actor": "agent", "root": "worktree"},
-            "source": {"commit": self.head, "branch": None, "dirty": False, "bound": True,
+            "source": {"commit": commit or self.head, "branch": None, "dirty": False, "bound": True,
                        "sourceId": None},
             "depicts": {"revision": revision or self.head, "claimed": bool(revision),
                         "verified": False, "why": "fixture"},
         }
         if expired:
             record["expired"] = {"at": at, "why": "older than 90 days (BOARD_ARTIFACT_RETENTION_DAYS)"}
-        else:
+        elif not missing:
             (self.store / f"{aid}.bin").write_bytes(data)
         (self.store / f"{aid}.json").write_text(json.dumps(record), encoding="utf-8")
         return aid
@@ -218,6 +235,26 @@ class ShowTheResult(unittest.TestCase):
                                  f".filter(li => li.textContent.includes('Expired capture'))"
                                  f".map(li => li.querySelectorAll('a,img').length)[0]"), 0,
                          "expired bytes are not offered")
+        # partial, from an earlier commit, and bytes not on this board: each
+        # said in its own words, none Current, none offered as a download
+        for caption, words in (("Partial capture", "partial"),
+                               ("Earlier commit capture", "earlier commit"),
+                               ("Bytes not here", "not on this board")):
+            row = next((r for r in rows if caption in r), None)
+            self.assertIsNotNone(row, rows)
+            self.assertNotIn("Current", row, caption)
+            self.assertIn(words, row, caption)
+        self.assertEqual(self.js(f"[...{SECTION}.querySelectorAll('details[data-res-fold=\"all\"] .resitem')]"
+                                 f".filter(li => li.textContent.includes('Bytes not here'))"
+                                 f".map(li => li.querySelectorAll('a,img').length)[0]"), 0,
+                         "bytes that are not on this board are not offered")
+        # one output drawn in two lists keeps its ids apart
+        self.assertTrue(self.js("(() => { const ids = [...document.querySelectorAll('#drawerbody [id]')]"
+                                ".map(e => e.id); return ids.length === new Set(ids).size; })()"),
+                        "duplicate element ids in the detail view")
+        # a check's outcome opens the evidence sheet
+        self.assertTrue(self.js(f"{SECTION}.querySelectorAll('[data-dview=\"evidence\"]').length > 0"),
+                        "no evidence link in Show the result")
         svg = next((r for r in rows if "Generated diagram" in r), None)
         self.assertIsNotNone(svg, rows)
         self.assertIn("download only", svg)
@@ -280,6 +317,86 @@ class ShowTheResult(unittest.TestCase):
         self.assertGreaterEqual(self.js(f"{SECTION}.querySelectorAll('.resthumb img').length"), 2)
         self.assertFalse(self.js(f"!!{SECTION}.querySelector('[role=alert]')"),
                          "Off raised an alarm")
+
+    def test_withhold_arms_first_and_keeps_the_record(self):
+        b = S["browser"]
+        aid = "a-" + hashlib.sha256(b"ev-fixture\0response.json").hexdigest()[:20]
+        record = self.store / f"{aid}.json"
+        self.open_card()
+        self.open_fold("all")
+        li = (f"[...{SECTION}.querySelectorAll('details[data-res-fold=\"all\"] .resitem')]"
+              f".find(li => li.textContent.includes('Settings API response'))")
+
+        def mark():
+            self.js(f"(() => {{ const li = {li}; li.querySelector('details').open = true;"
+                    f" const i = li.querySelector('input[data-res-why]');"
+                    f" i.value = 'shows a fixture token'; i.dispatchEvent(new Event('input'));"
+                    f" li.querySelector('[data-res-withhold]').setAttribute('data-case', 'withhold');"
+                    f" return true; }})()")
+        mark()
+        b.click('[data-case="withhold"]')
+        self.assertTrue(b.wait("(document.querySelector('[data-case=\"withhold\"]') || {classList: {contains: () => true}})"
+                               ".classList.contains('armed')", 5), "Withhold did not arm")
+        self.assertEqual(json.loads(record.read_text())["state"], "available",
+                         "one click withheld the output")
+        if not self.js("!!document.querySelector('[data-case=\"withhold\"]')"):
+            mark()
+        b.click('[data-case="withhold"]')
+        deadline = time.time() + 10
+        while time.time() < deadline and json.loads(record.read_text()).get("state") != "withheld":
+            time.sleep(0.1)
+        kept = json.loads(record.read_text())
+        self.assertEqual(kept["state"], "withheld")
+        self.assertFalse((self.store / f"{aid}.bin").exists(), "the bytes stayed")
+        self.assertTrue(b.wait(f"(() => {{ const li = {li}; return !!li && /withheld/.test(li.textContent); }})()", 10),
+                        "the record of the output was not drawn as withheld")
+
+    def test_a_done_card_request_previews_and_reopens_nothing(self):
+        b = S["browser"]
+        done = S["backend"].work / "tasks" / "done" / DONE
+        done.write_text(DONE_CARD, encoding="utf-8")
+        self.addCleanup(done.unlink, True)
+        self.open_card(DONE)
+        self.open_fold("edit")
+        self.assertIn("Request a demonstration", self.text())
+        b.click("#resPreview")
+        self.assertTrue(b.wait(f"/does not reopen/.test({SECTION}.innerText)", 10),
+                        "the preview did not say what saving would and would not do")
+        self.assertTrue(b.wait("!!document.querySelector('#resSave')", 5))
+        b.click("#resSave")
+        self.assertTrue(b.wait("/^Requested/.test((document.querySelector('#resState') || {}).innerText || '')", 15),
+                        f"the request read {self.state_word()!r}")
+        self.assertTrue(done.exists(), "saving the request moved the card")
+        self.assertIn("- mode: requested", done.read_text(encoding="utf-8"))
+        code, body = S["backend"].get("/api/state")
+        self.assertEqual(code, 200)
+        running = [a for a in json.loads(body).get("agents") or []
+                   if a.get("task") == DONE and a.get("status") == "running"]
+        self.assertEqual(running, [], "saving the request launched something")
+
+    def test_a_mid_run_edit_says_the_run_keeps_what_it_launched_with(self):
+        b = S["browser"]
+        backend = S["backend"]
+        backend.refine_hold.write_text("hold", encoding="utf-8")
+        self.addCleanup(backend.refine_hold.unlink, True)
+        code, body = backend.post("/api/card/refine", {
+            "file": FILE, "stage": "in-progress", "text": "Tighten the wording",
+            "request": f"case-133-{time.time()}"})
+        self.assertEqual(code, 200, body[:300])
+        self.open_card()
+        self.open_fold("edit")
+        self.assertTrue(b.wait(f"/keeps the instructions and authority it launched with/.test({SECTION}.innerText)", 15),
+                        "a run in flight was not disclosed beside the setting")
+        shot("result-mid-run-1280x900")
+        backend.refine_hold.unlink()
+        # let the held run end before the card is removed
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            code, body = backend.get("/api/state")
+            agents = json.loads(body).get("agents") or [] if code == 200 else []
+            if not any(a.get("task") == FILE and a.get("status") == "running" for a in agents):
+                break
+            time.sleep(0.2)
 
     def test_not_now_writes_nothing(self):
         b = S["browser"]
