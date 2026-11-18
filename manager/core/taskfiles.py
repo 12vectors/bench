@@ -249,7 +249,9 @@ def read_task(path: Path, stage: str) -> dict:
         # directory it is in — the board should never quietly paper over that.
         "declaredStatus": declared,
         "statusMismatch": bool(declared)
-        and declared.lower() != config.STAGE_LABELS[stage].lower(),
+        # an archived card is read too (task 134), and its Status is
+        # `Archived` — tasks/archive/ is not a stage
+        and declared.lower() != config.STAGE_LABELS.get(stage, "Archived").lower(),
         "mtime": path.stat().st_mtime,
         "words": len(text.split()),
         # which text this reading is of (task 129): the list carries it in
@@ -336,6 +338,67 @@ def card_detail(filename: str, stage: str) -> dict:
             "mtime": mtime, "words": len(text.split()),
             "bytes": len(text.encode("utf-8", "replace")),
             "body": text, "parts": part_offsets(text)}
+
+
+# What a card's address may name (task 134): its number, or its file's
+# stem. The same narrow alphabet the page's own parser accepts.
+CARD_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~-]{0,199}$")
+
+
+def locate_card(card_id: str) -> dict:
+    """The card an address names, wherever it is now (task 134): a stage
+    of the board, or the archive. By number — leading zeros are the same
+    number — when the identifier is one, else by file stem. A read: it
+    writes, moves and launches nothing.
+
+    Returns `{"card": <the card's fields>, "stage": <stage or "archive">,
+    "archived": bool}`; an archived card also carries its text (`body`,
+    `parts`), because no other read serves an archived card's text and an
+    address to one must show the actual card. Raises `ValueError` for an
+    identifier that is not one, `CardNotHere("gone")` when nothing on the
+    board or in the archive has it, and `CardNotHere("ambiguous")` — with
+    the files in `files` — when a number names more than one card."""
+    if not isinstance(card_id, str) or not CARD_ID_RE.match(card_id):
+        raise ValueError(f"{card_id!r} is not a card's number or file name")
+    places = [(slug, config.TASKS / slug) for slug, _ in config.STAGES]
+    places.append(("archive", config.TASKS / "archive"))
+    numeric = card_id.isdigit()
+    hits = []
+    for slug, directory in places:
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("*.md")):
+            if path.name.startswith(".") or not path.is_file():
+                continue
+            if numeric:
+                match = NUMBER_RE.match(path.name)
+                if match and canonical_number(match.group(1)) == canonical_number(card_id):
+                    hits.append((slug, path))
+            elif path.stem == card_id:
+                hits.append((slug, path))
+    if not hits and numeric:
+        # a stem made only of digits ("2026.md") is a stem, not a number
+        for slug, directory in places:
+            path = directory / f"{card_id}.md"
+            if path.is_file():
+                hits.append((slug, path))
+    if not hits:
+        raise CardNotHere("gone", f"no card on this board or in its archive is {card_id}")
+    if len(hits) > 1:
+        error = CardNotHere("ambiguous", f"{len(hits)} cards carry the number {card_id} — "
+                            "name one by its file instead")
+        error.files = [f"{slug}/{path.name}" for slug, path in hits]
+        raise error
+    slug, path = hits[0]
+    task = read_task(path, slug)
+    if slug == "archive":
+        found = {**list_card(task), "body": task["body"],
+                 "parts": part_offsets(task["body"])}
+    else:
+        # a card on the board is opened as the board lists it; its text is
+        # the detail read's, asked by name and stage as ever
+        found = list_card(task)
+    return {"card": found, "stage": slug, "archived": slug == "archive"}
 
 
 def _utf16_len(text: str) -> int:

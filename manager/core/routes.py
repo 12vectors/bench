@@ -452,6 +452,64 @@ def get_page(req) -> None:
               "X-Content-Type-Options": "nosniff"})
 
 
+# The page's own addresses (task 134): every destination the page can show
+# has a path, and opening that path — directly, or by refreshing — is the
+# page itself. Only these shapes are; anything else is a 404 as it always
+# was, so `/api/…`, `/web/…` and `/files/…` keep their own answers and an
+# address nobody documented is not a page.
+UI_PATHS = {"board", "phases", "sessions", "focus", "settings"}
+UI_ITEM_PREFIXES = {"cards", "phases", "sessions", "focus", "settings"}
+UI_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~-]{0,199}$")
+UI_SECTION_RE = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+
+
+def ui_path(path: str) -> bool:
+    """Whether `path` is one of the page's addresses: `/board`, `/phases`,
+    `/sessions`, `/focus`, `/settings`, or one of `/cards/<card>`,
+    `/phases/<card>`, `/sessions/<session>`, `/focus/<session>` and
+    `/settings/<section>` with a single segment of the narrow alphabet an
+    identifier is written in. A trailing slash, an empty or second
+    segment, and anything percent-encoded are not."""
+    parts = path.split("/")
+    if len(parts) == 2:
+        return parts[1] in UI_PATHS
+    if len(parts) != 3 or parts[1] not in UI_ITEM_PREFIXES:
+        return False
+    pattern = UI_SECTION_RE if parts[1] == "settings" else UI_ID_RE
+    return bool(pattern.match(parts[2]))
+
+
+def get_ui_page(req) -> None:
+    # The same page `/` serves, and nothing more: what it shows is read by
+    # the page, through the same GETs every view already makes. Opening an
+    # address launches, moves, applies and replays nothing.
+    if not ui_path(req.path):
+        req.send(404, b"not found", "text/plain")
+        return
+    get_page(req)
+
+
+def get_card_locate(req) -> None:
+    # Where the card an address names is now — a stage, or the archive —
+    # by number or file stem (task 134). A read of the task files only.
+    try:
+        found = taskfiles.locate_card(_q(req, "id"))
+    except ValueError as exc:
+        req.reply(400, {"error": str(exc), "code": "invalid"})
+        return
+    except taskfiles.CardNotHere as exc:
+        answer = {"error": str(exc), "code": exc.code}
+        if exc.code == "ambiguous":
+            answer["files"] = getattr(exc, "files", [])
+        req.reply(409 if exc.code == "ambiguous" else 404, answer)
+        return
+    except OSError as exc:
+        req.reply(500, {"error": f"the card could not be read: {exc}",
+                        "code": "unreadable"})
+        return
+    req.reply(200, found)
+
+
 def get_web(req) -> None:
     """`/web/<build>/<path>`: one asset of the build in force, from the
     boot snapshot (immutable) or, under BOARD_ASSETS=disk, from disk
@@ -1717,6 +1775,17 @@ ROUTES = (
     Route("GET", "/", "read", get_page),
     Route("GET", "/index.html", "read", get_page),
     Route("GET", "/board.html", "read", get_page),
+    # the page's own addresses (task 134): the shell, for exactly these
+    Route("GET", "/board", "read", get_ui_page),
+    Route("GET", "/cards/*", "read", get_ui_page),
+    Route("GET", "/phases", "read", get_ui_page),
+    Route("GET", "/phases/*", "read", get_ui_page),
+    Route("GET", "/sessions", "read", get_ui_page),
+    Route("GET", "/sessions/*", "read", get_ui_page),
+    Route("GET", "/focus", "read", get_ui_page),
+    Route("GET", "/focus/*", "read", get_ui_page),
+    Route("GET", "/settings", "read", get_ui_page),
+    Route("GET", "/settings/*", "read", get_ui_page),
     Route("GET", "/web/*", "read", get_web),
     Route("GET", "/api/tasks", "read", get_tasks),
     Route("GET", "/api/state", "read", get_state),
@@ -1739,6 +1808,7 @@ ROUTES = (
     Route("GET", "/api/preview", "read", get_preview),
     Route("GET", "/api/preview/log", "read", get_preview_log),
     Route("GET", "/api/card", "read", get_card),
+    Route("GET", "/api/card/locate", "read", get_card_locate),
     Route("GET", "/api/card/discussion", "read", get_card_discussion),
     Route("GET", "/api/card/acceptance", "read", get_card_acceptance),
     Route("GET", "/api/card/inputs", "read", get_card_inputs),

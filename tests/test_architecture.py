@@ -776,7 +776,19 @@ PROVIDER_VOCABULARY: dict[str, int] = {
 # runs; a route changing class is a reviewed edit of this snapshot.
 ROUTES: dict[str, str] = {
     "GET /": "read",
+    # the page's own addresses (task 134): the shell for these shapes only
+    "GET /board": "read",
+    "GET /cards/*": "read",
+    "GET /phases": "read",
+    "GET /phases/*": "read",
+    "GET /sessions": "read",
+    "GET /sessions/*": "read",
+    "GET /focus": "read",
+    "GET /focus/*": "read",
+    "GET /settings": "read",
+    "GET /settings/*": "read",
     "GET /api/card": "read",
+    "GET /api/card/locate": "read",
     "GET /api/card/acceptance": "read",
     "GET /api/card/delivery": "read",
     "GET /api/card/discussion": "read",
