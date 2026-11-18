@@ -61,6 +61,8 @@ CARD = "04-check-keyboard-focus.md"
 CHANGED_ON_PURPOSE = {
     "detail-390x844-night": "task 132 added the Inputs tab; at 390px the tab row wraps",
     "detail-390x844-day": "task 132 added the Inputs tab; at 390px the tab row wraps",
+    "detail-1280x800-night": "task 133 added Show the result to the Overview",
+    "detail-1280x800-day": "task 133 added Show the result to the Overview",
 }
 
 

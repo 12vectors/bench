@@ -573,6 +573,14 @@ function resultHtml(t) {
       `${p.current ? '' : ' Not current.'}</p>` +
       `<ul class="resgallery">${[b, a].filter(Boolean).map(x => artifactHtml(t, x, byId[x.id])).join('')}</ul></div>`;
   }).join('');
+  if (nothing && !d.suggest) {
+    // Off with nothing kept: one line and the way to change it — Off asks
+    // for no extra work, so it earns no more of the Overview than that
+    return `<section class="showresult" data-keep="result" aria-labelledby="res-h">` +
+      `<h3 id="res-h">Show the result <span class="cbadge" id="resState">${esc(d.label)}</span></h3>` +
+      `<p class="dim">No demonstration was asked for and none is kept on this board.</p>` +
+      resultSettingHtml(t, d) + `</section>`;
+  }
   const pairedIds = new Set(pairs.flatMap(p => [p.before, p.after]));
   const singles = curated.filter(a => !pairedIds.has(a.id));
   const allOpen = S.accOpen[`${t.file}:res-all`];
@@ -600,9 +608,30 @@ function resultHtml(t) {
     `<details class="rpt" data-keep="res-about" data-res-fold="about"${S.accOpen[`${t.file}:res-about`] ? ' open' : ''}>` +
     `<summary>What a demonstration is, and is not</summary><div style="padding:6px 10px">` +
     (d.boundaries || []).map(b => `<p>${esc(b)}</p>`).join('') + `</div></details>` +
-    `<dialog class="resview" id="resView" aria-labelledby="resViewCap"><figure><img id="resViewImg" alt=""><figcaption id="resViewCap"></figcaption></figure>` +
-    `<p><a id="resViewOpen" target="_blank" rel="noopener noreferrer">Open in a new tab</a> · <button id="resViewClose">Close</button></p></dialog>` +
     `</section>`;
+}
+
+/* The full-size view: one native dialog, made once on the page rather than
+   inside the drawer, so a live redraw of the drawer does not close it.
+   Escape closes it (the dialog's own behaviour) and focus goes back to the
+   thumbnail that opened it, found again by its index after any redraw. */
+function resultViewer() {
+  let dialog = document.getElementById('resView');
+  if (dialog) return dialog;
+  dialog = document.createElement('dialog');
+  dialog.className = 'resview';
+  dialog.id = 'resView';
+  dialog.setAttribute('aria-labelledby', 'resViewCap');
+  dialog.innerHTML = `<figure><img id="resViewImg" alt=""><figcaption id="resViewCap"></figcaption></figure>` +
+    `<p><a id="resViewOpen" target="_blank" rel="noopener noreferrer">Open in a new tab</a> · ` +
+    `<button id="resViewClose">Close</button></p>`;
+  document.body.appendChild(dialog);
+  dialog.querySelector('#resViewClose').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => {
+    const back = document.querySelector(`[data-res-view="${dialog.dataset.from}"]`);
+    if (back) back.focus();
+  });
+  return dialog;
 }
 
 async function saveResult(t, d, fields) {
@@ -690,26 +719,19 @@ function wireResult(t) {
     if (data) { delete S.accDraft[`res-why:${a.id}`]; toast('output withheld — its record stays'); }
     loadResult(t, true);
   }));
-  const dialog = body.querySelector('#resView');
   body.querySelectorAll('[data-res-view]').forEach(btn => btn.addEventListener('click', () => {
     const a = rows[Number(btn.dataset.resView)];
-    if (!a || !dialog || !a.url) return;
-    body.querySelector('#resViewImg').src = a.url;
-    body.querySelector('#resViewImg').alt = a.caption || a.name || 'output';
-    body.querySelector('#resViewCap').textContent = (a.caption || a.name || '') +
+    if (!a || !a.url) return;
+    const dialog = resultViewer();
+    const img = dialog.querySelector('#resViewImg');
+    img.src = a.url;
+    img.alt = a.caption || a.name || 'output';
+    dialog.querySelector('#resViewCap').textContent = (a.caption || a.name || '') +
       (a.current ? ' — current' : ` — ${(a.relevanceWords || [])[0] || ''}`);
-    body.querySelector('#resViewOpen').href = a.url;
-    dialog.showModal();
+    dialog.querySelector('#resViewOpen').href = a.url;
     dialog.dataset.from = btn.dataset.resView;
+    if (!dialog.open) dialog.showModal();
   }));
-  const close = body.querySelector('#resViewClose');
-  if (close && dialog) {
-    close.addEventListener('click', () => dialog.close());
-    dialog.addEventListener('close', () => {
-      const back = body.querySelector(`[data-res-view="${dialog.dataset.from}"]`);
-      if (back) back.focus();
-    });
-  }
 }
 
 /* The Overview's one line about the card's information: the same state the

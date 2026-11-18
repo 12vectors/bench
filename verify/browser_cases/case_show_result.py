@@ -167,11 +167,25 @@ class ShowTheResult(unittest.TestCase):
         self.assertTrue(b.wait("!!document.querySelector('#resState')", 15),
                         "Show the result never drew")
 
+    def js(self, expression: str):
+        """An expression over the page that names what was missing rather
+        than throwing: a script error mid-case says nothing useful."""
+        got = S["browser"].eval(
+            "(() => { try { return {ok: true, v: (" + expression + ")}; }"
+            " catch (e) { return {ok: false, v: String(e && e.message)}; } })()")
+        self.assertTrue(got and got.get("ok"), f"{expression[:160]} — {got}")
+        return got["v"]
+
+    def open_fold(self, name: str) -> None:
+        self.js(f"(() => {{ const s = {SECTION}; const d = s && s.querySelector("
+                f"'[data-res-fold=\"{name}\"]'); if (!d) throw new Error('no {name} fold');"
+                f" d.open = true; return true; }})()")
+
     def text(self) -> str:
-        return S["browser"].eval(f"{SECTION}.innerText")
+        return self.js(f"({SECTION} || {{innerText: ''}}).innerText")
 
     def state_word(self) -> str:
-        return S["browser"].eval("document.querySelector('#resState').innerText")
+        return self.js("(document.querySelector('#resState') || {innerText: ''}).innerText")
 
     def test_outputs_full_view_and_honest_labels(self):
         b = S["browser"]
@@ -184,32 +198,35 @@ class ShowTheResult(unittest.TestCase):
         self.assertIn("Settings at 390px, after", text)
         self.assertIn("Installed", text)
         self.assertIn("unknown", text)
-        self.assertGreaterEqual(b.eval(f"{SECTION}.querySelectorAll('.resthumb img').length"), 2)
+        self.assertGreaterEqual(self.js(f"{SECTION}.querySelectorAll('.resthumb img').length"), 2)
         shot("result-overview-1280x900")
 
         # the earlier attempt and the expired capture are never Current
-        b.eval(f"(() => {{ const d = {SECTION}.querySelector('[data-res-fold=\"all\"]');"
-               f" d.open = true; return true; }})()")
-        rows = b.eval(f"[...{SECTION}.querySelectorAll('details[data-res-fold=\"all\"] .resitem')]"
-                      f".map(li => li.innerText)")
-        failed = next(r for r in rows if "An earlier attempt" in r)
+        self.open_fold("all")
+        rows = self.js(f"[...{SECTION}.querySelectorAll('details[data-res-fold=\"all\"] .resitem')]"
+                       f".map(li => li.textContent)")
+        failed = next((r for r in rows if "An earlier attempt" in r), None)
+        self.assertIsNotNone(failed, rows)
         self.assertNotIn("Current", failed)
         self.assertIn("did not pass", failed)
-        gone = next(r for r in rows if "Expired capture" in r)
+        gone = next((r for r in rows if "Expired capture" in r), None)
+        self.assertIsNotNone(gone, rows)
         self.assertNotIn("Current", gone)
         self.assertIn("expired", gone)
-        self.assertEqual(b.eval(f"[...{SECTION}.querySelectorAll('details[data-res-fold=\"all\"] .resitem')]"
-                                f".filter(li => li.innerText.includes('Expired capture'))"
-                                f".map(li => li.querySelectorAll('a,img').length)[0]"), 0,
+        self.assertEqual(self.js(f"[...{SECTION}.querySelectorAll('details[data-res-fold=\"all\"] .resitem')]"
+                                 f".filter(li => li.textContent.includes('Expired capture'))"
+                                 f".map(li => li.querySelectorAll('a,img').length)[0]"), 0,
                          "expired bytes are not offered")
-        svg = next(r for r in rows if "Generated diagram" in r)
+        svg = next((r for r in rows if "Generated diagram" in r), None)
+        self.assertIsNotNone(svg, rows)
         self.assertIn("download only", svg)
-        self.assertTrue(b.eval(f"[...{SECTION}.querySelectorAll('a[download]')].some(a => /page\\.svg|Download page/.test(a.innerText))"))
+        self.assertTrue(self.js(f"[...{SECTION}.querySelectorAll('a[download]')]"
+                                f".some(a => a.textContent.includes('page.svg'))"))
 
         # the full image by keyboard; Escape closes and focus returns
-        b.eval(f"{SECTION}.querySelector('.resthumb').focus()")
+        self.js(f"{SECTION}.querySelector('.resthumb').focus()")
         b.key("Enter")
-        self.assertTrue(b.wait("document.querySelector('#resView').open", 5),
+        self.assertTrue(b.wait("document.querySelector('#resView') && document.querySelector('#resView').open", 5),
                         "the full view did not open")
         self.assertTrue(b.wait("document.querySelector('#resViewImg').naturalWidth > 0", 5),
                         "the full image did not load through the board")
@@ -219,8 +236,10 @@ class ShowTheResult(unittest.TestCase):
         self.assertTrue(b.wait("document.activeElement && document.activeElement.classList.contains('resthumb')", 5),
                         "focus did not return to the thumbnail")
 
-        # a text output is served as plain text, sandboxed
-        url = b.eval(f"[...{SECTION}.querySelectorAll('a')].find(a => /as text/.test(a.innerText)).getAttribute('href')")
+        # a text output is served as plain text, under the board's policy
+        url = self.js(f"([...{SECTION}.querySelectorAll('a')].find(a => a.textContent.includes('as text'))"
+                      f" || {{getAttribute: () => null}}).getAttribute('href')")
+        self.assertTrue(url, "the response has no 'as text' link")
         code, body = S["backend"].get(url)
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(body), {"status": 200})
@@ -228,8 +247,7 @@ class ShowTheResult(unittest.TestCase):
     def test_modes_save_and_enforce_only_when_agreed(self):
         b = S["browser"]
         self.open_card()
-        b.eval(f"(() => {{ const d = {SECTION}.querySelector('[data-res-fold=\"edit\"]');"
-               f" d.open = true; return true; }})()")
+        self.open_fold("edit")
         b.click('input[data-res-mode][value="required"]')
         self.assertTrue(b.wait("!!document.querySelector('#res-agree')", 5),
                         "Required did not offer agreement")
@@ -240,8 +258,7 @@ class ShowTheResult(unittest.TestCase):
         self.assertNotIn("- agreed:", self.card.read_text(encoding="utf-8"))
         shot("result-required-unagreed-1280x900")
 
-        b.eval(f"(() => {{ const d = {SECTION}.querySelector('[data-res-fold=\"edit\"]');"
-               f" d.open = true; return true; }})()")
+        self.open_fold("edit")
         b.click('[data-res-shortcut="screenshots"]')
         self.assertTrue(b.wait("!!document.querySelector('#res-agree')", 5))
         b.click("#res-agree")
@@ -255,13 +272,12 @@ class ShowTheResult(unittest.TestCase):
         self.assertEqual(self.state_word(), "Required — present")
 
         # Off holds nothing and still shows the outputs
-        b.eval(f"(() => {{ const d = {SECTION}.querySelector('[data-res-fold=\"edit\"]');"
-               f" d.open = true; return true; }})()")
+        self.open_fold("edit")
         b.click('input[data-res-mode][value="off"]')
         b.click("#resSave")
-        self.assertTrue(b.wait("document.querySelector('#resState').innerText === 'Off'", 15))
-        self.assertGreaterEqual(b.eval(f"{SECTION}.querySelectorAll('.resthumb img').length"), 2)
-        self.assertFalse(b.eval(f"!!{SECTION}.querySelector('[role=alert]')"),
+        self.assertTrue(b.wait("(document.querySelector('#resState') || {}).innerText === 'Off'", 15))
+        self.assertGreaterEqual(self.js(f"{SECTION}.querySelectorAll('.resthumb img').length"), 2)
+        self.assertFalse(self.js(f"!!{SECTION}.querySelector('[role=alert]')"),
                          "Off raised an alarm")
 
     def test_not_now_writes_nothing(self):
