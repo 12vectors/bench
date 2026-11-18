@@ -50,6 +50,7 @@ from http.server import ThreadingHTTPServer
 import acceptance  # noqa: F401  (eager: see the docstring)
 import agents  # noqa: F401
 import agentsettings  # noqa: F401
+import agreements  # noqa: F401
 import artifacts  # noqa: F401
 import appinspect  # noqa: F401
 import assets
@@ -63,6 +64,7 @@ import doctor
 import drive
 import events
 import evidence  # noqa: F401
+import execowner  # noqa: F401
 import gatepolicy  # noqa: F401
 import gates  # noqa: F401
 import githost
@@ -70,6 +72,7 @@ import gitproc  # noqa: F401
 import gitrepo  # noqa: F401
 import httpd
 import inputs  # noqa: F401
+import orchestrator  # noqa: F401
 import phases
 import plans  # noqa: F401
 import previews

@@ -223,6 +223,10 @@ IN_PLACE = {
                                 "recovery directory, written before anything is replaced",
     ("agentsettings", "_record"): "append-only sanitized history (open 'a')",
     ("settings", "_record_change"): "append-only sanitized history (open 'a')",
+    ("agreements", "_history"): "append-only sanitized agreement history "
+                                "(open 'a')",
+    ("orchestrator", "record_launch"): "append-only launch ledger (open 'a'); "
+                                       "a torn last line is skipped on read",
     ("taskfiles", "append_to_task"): "append under WRITE_LOCK (open 'a')",
     ("state", "persist"): "append-only session JSONL (open 'a')",
     ("agents", "launch"):"the run's own log stream (open 'wb')",

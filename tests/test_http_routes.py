@@ -258,8 +258,9 @@ class EveryMutationRefusesAHostilePage(unittest.TestCase):
         classes = set(self.routes.values())
         self.assertLessEqual(classes, {"browser-mutation", "policy-mutation",
                                        "run-authenticated", "event-ingest"})
-        self.assertEqual(69, len(self.routes))
-        self.assertEqual(25, sum(1 for k in self.routes.values()
+        # task 137 added seven orchestration writes, all policy-mutation
+        self.assertEqual(76, len(self.routes))
+        self.assertEqual(32, sum(1 for k in self.routes.values()
                                  if k == "policy-mutation"))
 
     def test_a_cross_origin_form_is_refused(self):

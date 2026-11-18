@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -202,6 +202,16 @@ gitproc / records / redact < config < githost / assets < state / reports / templ
   joined, a failure is not rerun behind anyone's back, the candidate and
   the rule are re-read between requests, and nothing is retried or
   scheduled by itself
+- `agreements.py`, `execowner.py`, `orchestrator.py` — the scoped
+  orchestration engine (task 137): the operating agreement and its
+  effective reading (authority intersected from Bench to phase scope,
+  capacity allocated from one shared total, D7 defaults written out,
+  draft → preview → apply under revision guards, pause, exclusion and
+  hand-back); the one designated execution installation and its OS lock,
+  handed over only after quiescence and adopted explicitly, never by a
+  heartbeat; and the deterministic `authorize` and public `reading`
+  (`GET /api/orchestration`). Absent agreement means off; reading
+  launches nothing (see "Orchestration: scopes and operating agreements")
 - `doctor.py` — what this board would grant, run and refuse, asked
   without paying for a model: the same resolver a launch rides, read at
   four honest distances, with every diagnostic's remedy and a coverage
@@ -5030,7 +5040,7 @@ so a route cannot skip it by forgetting to ask:
 | --- | --- | --- |
 | `read` | every GET | nothing; reading changes nothing |
 | `browser-mutation` | every person-operated POST | a JSON object body within a size cap; `Sec-Fetch-Site` same-origin or none when sent; an `Origin`, when sent, that is this board on the port it actually serves or exactly one of `BOARD_ALLOWED_ORIGINS`; `Origin: null` refused; and no run named by a request that says it is a browser's |
-| `policy-mutation` | the 25 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
+| `policy-mutation` | the 32 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
 | `run-authenticated` | `/api/progress`, `/api/verify/details` | the same door, then the run's own token |
 | `event-ingest` | `/api/events` | the same door; a run the event names is proved by that run's token (next section) |
 
@@ -5527,6 +5537,93 @@ and start also need `"approve": true`, and configure, prepare and start
 carry the configuration revision the page read (`expected`), so a stale
 page is refused. Records are machine-local under
 `manager/local/state/preview/`.
+
+## Orchestration: scopes and operating agreements
+
+Phase 136 builds orchestrators: a Bench scope that coordinates
+standalone cards and phase scopes, and a phase scope that coordinates
+one phase's members, both instances of one engine. Task 137 is its
+foundation — what a scope may do, how much, and who may execute — and
+it schedules and launches nothing itself. The later members (attribution,
+the reasoning contract, on-card history, the scheduler and ledger,
+review and repair, phase migration, recovery, the view) ask it.
+
+**Off until a person turns it on.** With no agreement in force
+(`manager/local/orchestration.json`, machine-local like the execution
+policy) there are no scopes, nothing is authorized and no card or run
+is touched; a fresh install is off. A draft
+(`POST /api/orchestration/agreement/draft`, `"document": "new"` for the
+starting point) is kept under `state/orchestration/`, **preview**
+compares two resolutions and writes nothing, and **apply** puts the
+previewed draft in force, refused when the draft or the agreement moved
+since the page read it. There is no shadow stage: an applied agreement
+whose Bench scope is enabled and grants an authority can authorize that
+action.
+
+**The agreement, v1.** A `bench` scope — `enabled`, `paused`,
+`authority` (`readiness`, `reasoning`, `implement`, `review`, `repair`,
+`recovery`, `integrate`, `merge`, each true or false, false when
+unnamed), `capacity`, `exclusions`, `handback` — and `phases`, keyed by
+phase card number, each with `authority`, `allocation`, `ceilings` and
+the same toggles. The D7 defaults are written into every new draft:
+2 implementation slots, 1 review slot, 0 reasoning slots (reasoning and
+recovery then take implementation slots — counted, never free),
+20 launches a day, 6 launches per card, 2 repair rounds, 2 transient
+retries, a 120-minute run-age threshold (a warning, never a kill).
+
+**Only narrowing, only two levels.** A phase's authority is the
+intersection with the Bench scope's, every word carrying the scope that
+decided it; a phase asking for more is refused (`authority-expansion`).
+Ceilings may only be lowered (`ceiling-expansion`). Slots and daily
+starts are **allocations** of the Bench scope's total: the phases'
+allocations may not exceed it (`capacity-overcommitted`), the Bench
+scope keeps the rest, and every running agent — a person's own launch
+included — counts against the scope that holds its card and the board's
+total, and is never cancelled to make a limit look met. A phase entry
+naming phases is refused (`nesting-refused`). Any refusal turns every
+scope off.
+
+**One scope per card.** A standalone card is the Bench scope's; a phase
+card and its members are their phase scope's when the agreement names
+the phase. A phase the agreement does not name stays with the existing
+phase runner and no orchestrator scope schedules it (`legacy-phase`), so
+two schedulers never share members. Backlog and Done are never managed.
+
+**Pause, exclusion and hand-back** (`POST /api/orchestration/scope`) are
+a person's direct changes under the same revision guard. A Bench pause
+reaches every phase scope; a phase pause reaches that phase only; work
+already running is observed, not cancelled. Hand-back gives a card to
+manual work without touching its branch, worktree or run. Every action
+is authorized again immediately before it happens — the agreement is
+read from disk each time — which is a different fact from a run's
+grants, frozen in its manifest at launch.
+
+**Merge delegation is the user's choice (D4).** Granting `merge` (or
+`integrate`) needs no new gate. A delegated merge waits for exactly the
+requirements already configured: unmet refuses, running holds, and an
+ungated rule allows it labelled *ungated — not verified*. Nothing here
+activates a gate or grants an override.
+
+**One execution installation (D13, D14).** Execution needs both a
+portable **designation** naming this installation
+(`<work root>/orchestration/designation.json`, committed like any board
+edit) and the non-blocking **OS lock** on
+`state/orchestration/execution.lock`, so a second process here is
+refused and a replica only reads. Git is not a lock and no heartbeat is
+read as authority: another installation's designation is never taken
+over, however stale it looks. It moves by a **controlled handover**
+(`POST /api/orchestration/installation`, `handover`: refused unless no
+run is in flight) and an explicit **adoption** elsewhere (`designate`),
+after which working cards need `adopt-card` before automation touches
+them. A former owner that is gone for good is a person's call: confirm
+its processes stopped, then remove the designation by hand.
+
+**Reading it is free.** `GET /api/orchestration` returns the effective
+agreement and the draft side by side (revisions, problems, the preview's
+changes), each scope's authority with provenance, capacity allocations
+and current usage, the installation's role, and what each merge rule
+would require. It names no path, scrubs free text, launches nothing and
+writes nothing.
 
 ## Pull requests
 
