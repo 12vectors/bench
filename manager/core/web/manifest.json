@@ -301,8 +301,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/profile.js": {
-   "bytes": 21494,
-   "sha256": "0aaf8700bc60ba9d9aa7bf51f09f5713825f5b7578c7017597de1dc0087220c8",
+   "bytes": 21553,
+   "sha256": "54e59d8f990fb69b0244fc3b421ecb85c1a60000752359414d3bedbe7541e818",
    "type": "text/javascript; charset=utf-8"
   },
   "views/progress.js": {
@@ -326,8 +326,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/settings/agents.js": {
-   "bytes": 31529,
-   "sha256": "172504106e3500333669d6b2bf94336da67b84caafe39be83196c57f0bf21ed6",
+   "bytes": 32267,
+   "sha256": "7efcb4720b58f0a7c47e9d620adecbdc01d74cceaf299fad0d8638136bfd8898",
    "type": "text/javascript; charset=utf-8"
   },
   "views/settings/checks.js": {
@@ -351,8 +351,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/settings/policy.js": {
-   "bytes": 19751,
-   "sha256": "7c57f4ee914a6cc29cf5fb17bc18f106a5dee224080fb6f8cc9eac29342b8e6b",
+   "bytes": 20100,
+   "sha256": "a8a52346c986c146ec15bb9271768df8bf1dd905034a5d9831d67e1e8dd8c8e2",
    "type": "text/javascript; charset=utf-8"
   },
   "views/settings/preview.js": {

@@ -40,7 +40,7 @@ function profileIntentFor(task) {
    every purpose is — the board-wide configuration check. */
 const INTENT_LABEL = { work: 'Implementation', 'act-pr': 'PR fixes',
                        review: 'Review', 'refine': 'Card refinement',
-                       reason: 'Orchestrator reasoning' };
+                       'reason': 'Orchestrator reasoning' };
 const LAUNCH_INTENTS = ['work', 'act-pr', 'review'];
 
 /* An input's readable status, as the row's own state. `pinned` is the

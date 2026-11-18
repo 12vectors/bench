@@ -408,8 +408,10 @@ def attach(found: dict, filename: str, need: str, operation: str, bound: dict,
     written = facts(filename, need, operation, bound, tasks)
     facts_path = _dir() / "facts" / f"{operation}.json"
     records.write_json(facts_path, written)
+    # named by what it is rather than by a path: the facts are bench's
+    # own document, written for this operation alone
     context.append(_input_item("reason-facts", "facts",
-                               f"tool:{profiles.tool_relative(facts_path)}",
+                               f"bench:reasoning/facts/{operation}.json",
                                facts_path, facts_path.read_bytes()))
     return found
 
