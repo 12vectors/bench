@@ -122,7 +122,7 @@ def card_text() -> str:
 
 def view(name: str):
     b = S["browser"]
-    b.click(f'#views button[data-view="{name}"]')
+    b.click(f'#views [data-view="{name}"]')
     b.wait(f"document.querySelector('#view-{name}') && "
            f"getComputedStyle(document.querySelector('#view-{name}')).display !== 'none'", 5)
 

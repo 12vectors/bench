@@ -140,7 +140,7 @@ class AnAcceptedRecordKeepsItsOwnName(unittest.TestCase):
 
     def test_3_settings_lists_what_unit_accepts(self):
         b = load(1440, 900)
-        b.click('#views button[data-view="settings"]')
+        b.click('#views [data-view="settings"]')
         if not b.wait("document.querySelectorAll('#snav [data-ssection]').length >= 3", 15):
             raise bv.CheckFailed("the settings sections never arrived")
         before = self.policy.read_bytes()

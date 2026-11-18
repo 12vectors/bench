@@ -114,7 +114,7 @@ def open_settings(section: str, width=1440, height=900):
     b.goto("/")
     if not b.wait("document.querySelectorAll('.drop[data-stage]').length >= 5", 15):
         raise bv.CheckFailed("the board never drew its five stage columns")
-    b.click('#views button[data-view="settings"]')
+    b.click('#views [data-view="settings"]')
     if not b.wait("document.querySelectorAll('#snav [data-ssection]').length >= 3", 15):
         raise bv.CheckFailed("the settings sections never arrived")
     item = f'#snav [data-ssection="{section}"]'

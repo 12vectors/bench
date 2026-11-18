@@ -199,7 +199,7 @@ class ReferenceFilesRenderInert(unittest.TestCase):
 
     def test_4_settings_shows_who_calls_this_board(self):
         b = self.board()
-        b.click('#views button[data-view="settings"]')
+        b.click('#views [data-view="settings"]')
         if not b.wait("document.querySelectorAll('#snav [data-ssection]').length >= 5", 15):
             raise bv.CheckFailed("the settings sections never arrived")
         item = '#snav [data-ssection="installation"]'

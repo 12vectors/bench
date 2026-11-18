@@ -218,7 +218,7 @@ class AReportReadsAsTwoVoices(unittest.TestCase):
     def test_4_settings_shows_the_contract_and_writes_nothing(self):
         b = load(1440, 900)
         before = self.policy.read_bytes()
-        b.click('#views button[data-view="settings"]')
+        b.click('#views [data-view="settings"]')
         if not b.wait("document.querySelectorAll('#snav [data-ssection]').length >= 3", 15):
             raise bv.CheckFailed("the settings sections never arrived")
         item = '#snav [data-ssection="verification"]'

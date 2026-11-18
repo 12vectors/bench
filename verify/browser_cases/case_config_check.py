@@ -380,7 +380,7 @@ class GlobalStates(unittest.TestCase):
 
 def go_settings_diagnostics(width=1440, height=900):
     b = load(width, height)
-    b.click('#views button[data-view="settings"]')
+    b.click('#views [data-view="settings"]')
     if not b.wait("document.querySelectorAll('#snav [data-ssection]').length >= 5", 15):
         raise bv.CheckFailed("the settings sections never arrived")
     b.eval("(() => { S.settingsSection = 'diagnostics'; renderSettings(); return true; })()")

@@ -93,7 +93,7 @@ def open_settings(width=1440, height=900, section="overview", theme="dark"):
     if not b.wait("document.querySelectorAll('.drop[data-stage]').length >= 5", 15):
         raise bv.CheckFailed("the board never drew its five stage columns")
     set_theme(theme)
-    b.click('#views button[data-view="settings"]')
+    b.click('#views [data-view="settings"]')
     if not b.wait("document.querySelector('#view-settings')"
                   ".classList.contains('on')", 5):
         raise bv.CheckFailed("the Settings switcher opened no view")
@@ -573,8 +573,8 @@ CONTRAST_JS = """(() => {
   return out; })()"""
 
 CONTRAST_TEXT = ["#shead h1", "#shead .s-sub", "#shead .s-ident", ".s-navhead",
-                 '#snav button[aria-current="page"]',
-                 '#snav button[aria-current="false"]', "#sbody .s-ptitle",
+                 '#snav a[aria-current="page"]',
+                 '#snav a[aria-current="false"]', "#sbody .s-ptitle",
                  "#sbody .sline .sval", "#sbody .shelp", "#sbody .sb.link",
                  "#sbody .sb.primary", "#sbody .sb:not(.link):not(.primary)",
                  "#sbody .sbadge.warn", "#sbody .sbadge.dim", "#sbody .sw",
@@ -710,7 +710,7 @@ class SurfaceThemesAndHitAreas(unittest.TestCase):
         b = open_settings(1440, 900, "overview", "light")
         self.assertEqual("rgb(255, 255, 255)", b.eval(
             "getComputedStyle(document.querySelector('#sbody .panel')).backgroundColor"))
-        b.click('#views button[data-view="board"]')
+        b.click('#views [data-view="board"]')
         self.assertTrue(b.wait("document.querySelector('#view-board').classList.contains('on')", 5))
         leaks = b.eval("['#view-board', '#view-phases', '#view-flight', '#view-focus', 'header']"
                        ".map(s => [s, getComputedStyle(document.querySelector(s))"

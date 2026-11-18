@@ -302,7 +302,7 @@ class LongChips(unittest.TestCase):
         load(w, h)
         b = S["browser"]
         if which != "board":
-            b.click(f'#views button[data-view="{which}"]')
+            b.click(f'#views [data-view="{which}"]')
         stem = "75-a-member-of-the-long-phase" if which == "phases" else \
             "71-gate-integration-and-acceptance"
         self.assertTrue(b.wait(f"!!document.querySelector('#view-{which}.on "
@@ -463,12 +463,12 @@ class Views(unittest.TestCase):
         b = S["browser"]
         seen = {}
         for view in ["phases", "flight", "focus", "board"]:
-            b.click(f'#views button[data-view="{view}"]')
+            b.click(f'#views [data-view="{view}"]')
             ok = b.wait(f"document.querySelector('#view-{view}').classList.contains('on')"
                         f" && document.querySelectorAll('.view.on').length === 1", 5)
             self.assertTrue(ok, f"the {view} view did not become the only visible view")
             m = measure([f"#view-{view}", "#views"])
-            pressed = b.eval(f"document.querySelector('#views button[data-view=\"{view}\"]')"
+            pressed = b.eval(f"document.querySelector('#views [data-view=\"{view}\"]')"
                              ".classList.contains('on')")
             self.assertTrue(pressed, f"the {view} switcher button is not marked current")
             box = m["boxes"][f"#view-{view}"]

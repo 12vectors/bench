@@ -228,7 +228,7 @@ class TheScriptRunsClean(unittest.TestCase):
         b = load()
         toured = []
         for view in VIEWS:
-            b.click(f'#views button[data-view="{view}"]')
+            b.click(f'#views [data-view="{view}"]')
             if not b.wait(f"document.querySelector('#view-{view}').classList.contains('on')", 10):
                 raise bv.CheckFailed(f"the {view} view never opened")
             toured.append(view)
@@ -347,7 +347,7 @@ class TheScriptRunsClean(unittest.TestCase):
                         if view == "detail":
                             open_detail(b)
                         elif view != "board":
-                            b.click(f'#views button[data-view="{view}"]')
+                            b.click(f'#views [data-view="{view}"]')
                             b.wait(f"document.querySelector('#view-{view}').classList.contains('on')", 10)
                         b.eval(STILL_JS)
                         time.sleep(0.4)
