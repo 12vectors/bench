@@ -43,7 +43,7 @@ L1  config
 L2  githost assets agreements
 L3  state reports templates gitrepo verifierreport
 L4  taskfiles
-L5  plans profiles execowner movements
+L5  plans profiles execowner movements decisions
 L6  gatepolicy reviews inputs
 L7  evidence resultidentity artifacts
 L8  staleness
@@ -308,7 +308,7 @@ L1  config
 L2  state reports templates gitrepo assets verifierreport agreements
 L3  githost
 L4  taskfiles
-L5  profiles plans execowner movements
+L5  profiles plans execowner movements decisions
 L6  gatepolicy reviews inputs
 L7  evidence resultidentity artifacts
 L8  staleness
@@ -621,5 +621,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 181
-routes 124
+routes 127
 ```

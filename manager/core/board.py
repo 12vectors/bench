@@ -60,6 +60,7 @@ import changes
 import commands  # noqa: F401
 import completion  # noqa: F401
 import config
+import decisions  # noqa: F401
 import delivery  # noqa: F401
 import doctor
 import drive

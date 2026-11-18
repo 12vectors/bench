@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine / reasoning < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine / reasoning < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -220,6 +220,14 @@ gitproc / records / redact < config < githost / assets / agreements < state / re
   and a phase member answered from its phase card's move. The one
   resolver `orchestrator.authorize` and `GET /api/orchestration` both ask
   (see "Last mover, not last editor")
+- `decisions.py` — the card keeps everything (task 140, D11/D12): the
+  owner's questions, their answers, reasoning responses, blockers,
+  recovery attempts and actions as bounded, versioned records in the
+  card's `## Orchestration record`, read back field by field from the
+  card alone, and the two writes a person makes (answer, withdraw),
+  each bound to what the page showed. Imports `config`, `redact` and
+  `taskfiles`; reading it sends and launches nothing (see "The card
+  keeps everything: decisions and public history")
 - `doctor.py` — what this board would grant, run and refuse, asked
   without paying for a model: the same resolver a launch rides, read at
   four honest distances, with every diagnostic's remedy and a coverage
