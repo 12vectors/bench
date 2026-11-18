@@ -64,12 +64,17 @@ function settingsPolicy(page) {
             : `<p>No check is declared yet, so there is nothing for this ` +
               `intent to ask for.</p>`) + `</div>`;
       }).join('') +
-      // the fourth intent asks for nothing, and says so rather than
+      // the proposal-only intents ask for nothing, and say so rather than
       // offering boxes the policy would refuse (intent-restricted)
       `<div class="item"><div class="ihead"><span class="label">` +
       `<code>${esc('refine')}</code></span></div><p>A card refinement runs ` +
       `no command and asks for no check: it reads and proposes a brief, and ` +
-      `bench writes it.</p></div>`
+      `bench writes it.</p></div>` +
+      `<div class="item"><div class="ihead"><span class="label">` +
+      `<code>${esc('reason')}</code></span></div><p>An orchestrator reasoning ` +
+      `run runs no command and asks for no check: it reads its pinned context ` +
+      `and answers with one public response, which bench validates and never ` +
+      `executes.</p></div>`
     : '';
 
   const gateItems = Object.keys(page.acceptance.scopes).map(scope => {

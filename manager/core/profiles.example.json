@@ -508,6 +508,28 @@
         {"name": "brief-style", "path": "work:reference/brief-style.md",
          "required": false}
       ]
+    },
+    "reason": {
+      "_doc": [
+        "Orchestrator reasoning (task 139): one bounded question about one",
+        "card — readiness, the owner's questions, a plan, a recovery",
+        "analysis — answered with one public, versioned response on stdout",
+        "that bench validates and never executes. The refine stance exactly:",
+        "no worktree, no command, no check, no edit tool, no shell, so",
+        "`commands`, `verify` and `prepare` are refused here by name",
+        "(intent-restricted).",
+        "",
+        "Bench pins the card, its phase, its dependencies and a facts",
+        "document for every run itself; approved context here is added to",
+        "that — the project's own guidance for orchestration, say. An",
+        "adapter must also deliver pinned files by exact read",
+        "(inputs.delivery: exact-read) — reasoning over context the run may",
+        "not be able to read is refused (intent-unsupported)."
+      ],
+      "context": [
+        {"name": "orchestration-guide",
+         "path": "work:reference/orchestration-guide.md", "required": false}
+      ]
     }
   }
 }

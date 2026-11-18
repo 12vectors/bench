@@ -171,7 +171,7 @@ class TheSettingsPageIsTheEnvFile(BuiltSite):
                          "on the page")
 
     def test_the_keys_are_grouped_the_way_the_file_groups_them(self):
-        """The five model keys sit under one comment in the file, so they
+        """The six model keys sit under one comment in the file, so they
         are one entry on the page — and the three headings below are the
         shape "grouped as that file groups them" takes."""
         headings = [text for _, text in HEADING_ID.findall(self.html)]
@@ -179,7 +179,7 @@ class TheSettingsPageIsTheEnvFile(BuiltSite):
         self.assertIn("BOARD_CLAUDE_BIN, BOARD_OPENCODE_BIN", headings)
         self.assertIn("BOARD_AGENT_MODEL, BOARD_AGENT_MODEL_WORK, "
                       "BOARD_AGENT_MODEL_ACT_PR, BOARD_AGENT_MODEL_REVIEW, "
-                      "BOARD_AGENT_MODEL_REFINE",
+                      "BOARD_AGENT_MODEL_REFINE, BOARD_AGENT_MODEL_REASON",
                       headings)
 
     def test_a_default_is_the_files_own_line_and_says_it_is_one(self):

@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine / reasoning < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -316,6 +316,13 @@ gitproc / records / redact < config < githost / assets / agreements < state / re
   refinement job a person asks for, its validated proposal, and the
   explicit Apply or Discard. The brief and the decisions live in the
   card; this holds only machine-local job state
+- `reasoning.py` — orchestrator reasoning (task 139, D2): one bounded
+  `reason`-intent coding-agent job per need and input binding, its
+  context (card, phase, dependencies, bench's facts) pinned and granted
+  by exact reads, and its one public, versioned response validated —
+  identity, scope, evidence references, bounds and binding — before it
+  is kept. It executes nothing a response proposes (see "Orchestrator
+  reasoning: launched agents, public responses")
 - `watch.py` — 2s disk poller narrating moves made outside the API, and
   the gate that keeps a move a pull applied from triggering anything
 - `routes.py` — every HTTP route: its method and path, its request
@@ -5713,6 +5720,104 @@ refuses with `not-eligible` and the whole answer, and the orchestration
 reading carries the same answer per managed card (`cards[].eligibility`)
 and this board's identity (`identity`), so the launch path and the page
 cannot disagree.
+
+### Orchestrator reasoning: launched agents, public responses
+
+Every semantic judgement an orchestrator makes — is this card ready, what
+must the owner decide, how should it be sequenced, what happened to a
+stalled run — is a **launched coding-agent job** with the card's context
+delivered to it (D2, task 139), never a bare model call inside a
+scheduler or a renderer. `reasoning.py` owns the job; the scheduler that
+decides *when* to ask is a later member (task 141).
+
+**The `reason` intent** is the refine stance exactly — no worktree, no
+command, no check, no edit tool, no shell, cwd the application checkout —
+plus one requirement: its context must be *delivered*. Bench pins the
+card (its brief and its public decision history), its phase card (or a
+phase card's members), its dependency cards and a facts document of its
+own public readings (the card's scope and the authority the agreement
+gives it, its movement eligibility, the evidence bench recorded, the
+input binding and the response contract) through `profiles.pin`, and the
+adapter grants each pinned copy by one exact read. So an adapter must
+declare `inputs.delivery: exact-read` as well as `read-only-tools` and
+`shell-withheld`. Claude does; opencode does not, lists the intent under
+`refusedIntents` with its reason, and every launch through it is refused
+by name (`intent-unsupported`) — shown in **Settings → Agents** beside
+the effective model, and in the Configuration check. A profile document
+may add approved context to `reason`; `commands`, `verify` and `prepare`
+are refused there (`intent-restricted`).
+
+**Which model.** `BOARD_AGENT_MODEL_REASON`; empty, the review model
+when reviews ride the same harness (D2: reasoning and review follow one
+configured model), else `BOARD_AGENT_MODEL`, else the harness default.
+The job records the model and the setting it came from, and the run's
+manifest records the whole selection, like every launch.
+
+**The response, version 1.** One JSON object between `<<<REASONING` and
+`REASONING>>>` at the end of the run's output (or `REASONING DECLINED:
+<reason>`):
+
+```text
+v, kind ("bench-reasoning-response"), operation, need, card, inputs  — identity and binding, echoed
+summary                                                              — public, ≤ 1200 characters
+findings   [{id, statement, severity, evidence}]                     — ≤ 20
+questions  [{id, question, options, recommendation, why, evidence}]  — ≤ 10
+actions    [{id, action, card, why, evidence}]                       — ≤ 10, proposals only
+blockers   [{id, blocker, evidence}]                                 — ≤ 10
+```
+
+There is no field for internal reasoning, and an unknown key anywhere is
+refused, so a chain-of-thought dump is refused rather than kept.
+Evidence references are `input:<name>` (an input delivered to this run),
+`card:<number>` (a card in its context) or `evidence:<id>` (a record in
+its facts) — nothing else. An action names an orchestrator action word,
+`ask-owner` or `hold`, and a card in the run's own scope (the card, or a
+member of this phase).
+
+**What bench does with it.** Validates bounds, identity (operation, need,
+card), scope, references and the binding — the revisions the run was
+launched with, and the board's revisions again when the run ends. A
+response that fails reads `invalid`, one about a card that changed while
+the run reasoned reads `stale`; both are kept as diagnostics with the raw
+text bounded, scrubbed and marked inert, and neither is ever read as an
+instruction. A `valid` response is a proposal: every action carries
+`executable: false`, nothing here executes one, and anything that later
+acts on it asks `orchestrator.authorize` again. A response cannot edit
+the agreement, move a card, authorize a command, relax a merge rule or
+answer the owner's question for them. A repair is a different, expressly
+authorized `work` or `act-pr` launch through its own path.
+
+**Asked on a need, once.** `reasoning.request(card, need)` is the only
+thing that launches. A request is keyed by a fingerprint of the need and
+the input binding: the same question about unchanged inputs — a repeated
+scheduler tick, a double click, two concurrent callers — answers with the
+job already there (`duplicate`); a changed card, phase, dependency or
+agreement is a new question. A failed or cancelled attempt is asked again
+only with `retry`, and one reasoning run per card is in flight at a time.
+Opening a card, `/api/state`, `/api/orchestration` and `GET
+/api/orchestration/reasoning` read records and launch nothing.
+
+**Accounted, not hidden.** An orchestrator's request is authorized by
+`orchestrator.authorize("reason", …)` — slots, daily starts, launches
+per card — and appended to the launch ledger; a running reasoning run
+occupies the reasoning pool (an implementation slot where none is
+allocated), a person's own request included. Each job records its pool,
+harness, model, policy, pinned bundle and inputs, and the usage the
+vendor reported — `not reported` today, never zero.
+
+**The record.** Machine-local under `manager/local/state/reasoning/`:
+the job (status, binding, inputs, validated response or diagnostics,
+usage, provenance) and the facts document each run read. A restart
+closes a run in flight as failed and re-runs nothing. `reasoning.public`
+is what the on-card history (task 140) and the Orchestrator view read: no
+path, no private reasoning, no credential.
+
+**What is proved where.** `tests/test_reasoning.py` launches through the
+Claude adapter's real `run` against a stub vendor that answers from the
+files it was granted, and holds every refusal above. Whether the
+*installed* CLI honours the exact-read grants with a real model is the
+opt-in, billable `develop/reasoning-probe.py --approve-real-agent`,
+which nothing runs by itself.
 
 ## Pull requests
 

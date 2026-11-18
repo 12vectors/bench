@@ -214,7 +214,8 @@ class NothingUntestedReadsAsPassed(unittest.TestCase):
     def test_purposes_use_the_agents_settings_names(self):
         self.assertEqual(doctor.PURPOSES, {
             "work": "Implementation", "act-pr": "PR fixes",
-            "review": "Reviews", "refine": "Card refinement"})
+            "review": "Reviews", "refine": "Card refinement",
+            "reason": "Orchestrator reasoning"})
 
 
 class EachProblemOnce(unittest.TestCase):

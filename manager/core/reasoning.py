@@ -1,0 +1,971 @@
+"""Orchestrator reasoning: bounded coding-agent jobs with a public,
+versioned response (task 139, D2).
+
+Every semantic judgement an orchestrator makes — interpreting a card's
+readiness, drafting the owner's questions, planning, analysing a stall
+for recovery — is a **launched coding-agent job** through the adapter
+machinery, never a bare model call hidden in a scheduler or a renderer.
+This module owns that job's whole lifecycle and nothing else:
+
+- **What the run is given.** One reasoning *need* about one card, and
+  the context it is about, *delivered*: the card itself (its brief and
+  its public decision history), its phase card, its dependency cards and
+  a facts document bench writes from its own public readings (the
+  card's scope and the authority the agreement gives it, its movement
+  eligibility, the evidence bench recorded for it, the binding below and
+  the response contract). Each is pinned through the existing
+  approved-context machinery (`profiles.pin`) and granted by one exact
+  read, so delivery is proved by the adapter's own grant rather than by
+  the operator being able to read the file. An adapter that cannot
+  deliver that way refuses the intent (`profiles.REASON_DELIVERY`).
+- **What the run may do.** The `reason` intent: no worktree, no command,
+  no shell, no edit tool — the refine stance exactly. It proposes; it
+  never executes, edits the agreement, moves a card or authorizes
+  anything. A later, expressly authorized repair run is a different
+  intent (`work`/`act-pr`), launched through its own path.
+- **What the run must answer.** One JSON object between
+  `<<<REASONING` and `REASONING>>>` (`CONTRACT`): a public summary,
+  findings with evidence references, proposed questions and actions,
+  blockers, and the input binding it was given, echoed back. There is no
+  field for private reasoning and an unknown key is refused, so a
+  chain-of-thought dump is refused rather than kept.
+- **What bench does with it.** Validates it — bounds, identity
+  (operation, need, card), scope (an action may name only this card, or
+  a member of this phase), evidence references (only inputs delivered to
+  this run, cards in its context and evidence bench recorded for the
+  card), and the input binding against the one the run was launched
+  with *and* against the board now. A response that fails any of these
+  is retained as a diagnostic outcome (`invalid`, `stale`), its raw text
+  kept bounded and scrubbed, and never read as an instruction. A valid
+  response is still only a proposal: `executable` is false on every
+  action, and nothing here executes one.
+
+**Triggered by a need, not by a read.** `request()` is the only thing
+that launches, and nothing on a read path calls it: opening a card,
+`/api/state`, `/api/orchestration` and `for_card` read records and
+launch nothing. A request is keyed by a fingerprint of the need and the
+input binding, so a repeated unchanged scheduler tick, a double click or
+two concurrent callers get the one job back (`duplicate`); a changed
+input is a new question.
+
+**Usage is accounted.** An orchestrator's request is authorized by
+`orchestrator.authorize("reason", …)` — slots, daily starts and
+launches per card included — and counted in its launch ledger. Every
+job records which pool it used, the harness and model it rode and what
+usage the vendor reported (none, today: said as `not reported`, never
+as zero).
+
+Runtime state is machine-local (`state/reasoning/`), like refinement
+jobs: job records, facts documents, retained raw responses. The card is
+not written here; the on-card history is the next member's (task 140),
+and it reads `public()`.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import secrets
+import threading
+import time
+from pathlib import Path
+
+import agents
+import agreements
+import config
+import evidence
+import movements
+import orchestrator
+import profiles
+import records
+import redact
+import state
+import taskfiles
+
+KIND = "bench-reasoning-response"
+FACTS_KIND = "bench-reasoning-facts"
+VERSION = 1
+
+# The reasoning needs an orchestrator has (D2), each one question.
+NEEDS = {
+    "readiness": "Is this card ready to be worked on as written? Interpret "
+                 "its brief, inputs, dependencies and decision history, and "
+                 "say what stops it, if anything.",
+    "questions": "What must the product owner decide before this card can "
+                 "proceed? Draft each question with options and your "
+                 "recommendation.",
+    "plan": "How should this card's delivery be sequenced under the "
+            "authority it has? Propose the next actions.",
+    "recovery": "This card's work appears stalled or failed. From the facts "
+                "and evidence, what happened, and what bounded recovery "
+                "action do you propose?",
+}
+
+# queued → running → valid | invalid | stale
+#                  ↘ failed | cancelled
+STATUSES = ("queued", "running", "valid", "invalid", "stale", "failed",
+            "cancelled")
+ACTIVE = {"queued", "running"}
+# endings a new request with the same fingerprint answers with, rather than
+# launching again: the same question about the same inputs has an answer
+SETTLED = {"valid", "invalid", "stale"}
+
+# What a response may propose. The orchestrator's own action words, plus
+# asking the owner and holding. A proposal is never a grant: each is
+# authorized again, by `orchestrator.authorize`, when anything acts on it.
+PROPOSABLE = tuple(orchestrator.ACTIONS) + ("ask-owner", "hold")
+SEVERITIES = ("info", "warning", "blocker")
+
+# Bounds, every one refused rather than clipped: a response over a bound
+# is not a shorter response, it is a response the run did not keep to.
+MAX_BLOCK = 64 * 1024
+MAX_SUMMARY = 1200
+MAX_TEXT = 800
+MAX_ITEMS = {"findings": 20, "questions": 10, "actions": 10, "blockers": 10}
+MAX_OPTIONS = 6
+MAX_REFS = 8
+MAX_DEPENDENCIES = 6
+MAX_EVIDENCE_FACTS = 20
+MAX_RAW = 16 * 1024
+ITEM_ID = re.compile(r"^[a-z][a-z0-9-]{0,23}$")
+REF_RE = re.compile(r"^(input|card|evidence):[A-Za-z0-9._@:+-]{1,120}$")
+# control characters other than newline and tab, and the bidi overrides
+# that make a string read as something it is not
+_UNSAFE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f‪-‮⁦-⁩]")
+
+TOP_KEYS = {"v", "kind", "operation", "need", "card", "inputs", "summary",
+            "findings", "questions", "actions", "blockers"}
+ITEM_KEYS = {
+    "findings": ({"id", "statement", "severity", "evidence"},
+                 {"id", "statement"}),
+    "questions": ({"id", "question", "options", "recommendation", "why",
+                   "evidence"}, {"id", "question"}),
+    "actions": ({"id", "action", "card", "why", "evidence"},
+                {"id", "action", "card", "why"}),
+    "blockers": ({"id", "blocker", "evidence"}, {"id", "blocker"}),
+}
+
+BLOCK_RE = re.compile(r"<<<REASONING[ \t]*\r?\n(?P<body>.*?)\r?\nREASONING>>>",
+                      re.DOTALL)
+DECLINED_RE = re.compile(r"^REASONING DECLINED:\s*(.*)$", re.MULTILINE)
+
+LOCK = threading.RLock()
+JOBS: dict[str, dict] = {}
+_loaded = False
+
+
+class Conflict(ValueError):
+    """The request is valid; its last attempt already ended, and asking
+    again is a deliberate retry."""
+
+
+# ── persistence ────────────────────────────────────────────────────────
+
+
+def _dir() -> Path:
+    return config.REASONING_DIR
+
+
+def _path(job_id: str) -> Path:
+    return _dir() / "jobs" / f"{job_id}.json"
+
+
+def _save(job: dict) -> None:
+    records.write_json(_path(job["id"]), job)
+
+
+def _load() -> None:
+    global _loaded
+    if _loaded:
+        return
+    _loaded = True
+    directory = _dir() / "jobs"
+    if not directory.is_dir():
+        return
+    for path in sorted(directory.glob("*.json")):
+        found = records.read_json(path)
+        if isinstance(found, dict) and found.get("id"):
+            JOBS.setdefault(found["id"], found)
+
+
+def reset() -> None:
+    """Forget memory so the next read is from disk — a restart, for tests."""
+    global _loaded
+    with LOCK:
+        JOBS.clear()
+        _loaded = False
+
+
+def recover() -> int:
+    """At board start: a job recorded as queued or running belongs to a
+    process this board no longer has. It is closed as failed, naming the
+    restart, and never re-run by itself — the scheduler asks again when
+    the need is still there, under the same fingerprint, deliberately."""
+    closed = 0
+    with LOCK:
+        _load()
+        for job in JOBS.values():
+            if job.get("status") in ACTIVE:
+                job.update({"status": "failed", "ended": time.time(),
+                            "error": "the board restarted while this reasoning "
+                                     "run was in flight, so its response was "
+                                     "lost; nothing was acted on"})
+                _save(job)
+                closed += 1
+    return closed
+
+
+# ── what a run is about: the card, its context, its binding ────────────
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _tasks(board: dict | None) -> list[dict]:
+    board = taskfiles.collect() if board is None else board
+    return [t for stage in board["stages"] for t in stage["tasks"]]
+
+
+def _number(task: dict | None) -> str | None:
+    if not task or not task.get("number"):
+        return None
+    return taskfiles.canonical_number(task["number"])
+
+
+def _card_file(task: dict) -> Path:
+    return config.TASKS / task["stage"] / task["file"]
+
+
+def context_cards(filename: str, tasks: list[dict]) -> dict:
+    """The cards one reasoning run is about: the card, its phase (or, for
+    a phase card, its members), and the cards it depends on — each read
+    off the board as it is now."""
+    by_file = {t["file"]: t for t in tasks}
+    by_number = {_number(t): t for t in tasks if _number(t)}
+    task = by_file.get(filename)
+    if task is None:
+        raise ValueError(f"{filename} is not on this board — refresh the board")
+    phase = None
+    if task.get("phase") and not task.get("isPhase"):
+        phase = by_file.get(task["phase"]["file"])
+    members = ([by_file[m["file"]] for m in task.get("members") or []
+                if m["file"] in by_file] if task.get("isPhase") else [])
+    deps = []
+    for raw in task.get("dependsOn") or []:
+        dep = by_number.get(taskfiles.canonical_number(str(raw)))
+        if dep is not None and dep["file"] != filename and dep not in deps:
+            deps.append(dep)
+    return {"task": task, "phase": phase, "members": members,
+            "dependencies": deps[:MAX_DEPENDENCIES]}
+
+
+def binding(filename: str, board: dict | None = None) -> dict:
+    """The revisions a response is bound to: the card's whole text (its
+    brief and its decision history), its stage, its phase card and its
+    dependency cards, and the operating agreement in force. Computed
+    again when a response comes back and whenever one is read, so a
+    response about a card that has since changed reads stale."""
+    tasks = _tasks(board)
+    cards = context_cards(filename, tasks)
+    task = cards["task"]
+
+    def rev(card: dict | None) -> str | None:
+        if card is None:
+            return None
+        try:
+            return _sha(_card_file(card).read_bytes())[:16]
+        except OSError:
+            return "unreadable"
+
+    text = _card_file(task).read_text(encoding="utf-8")
+    return {
+        "card": _number(task) or task["file"],
+        "file": task["file"],
+        "stage": task["stage"],
+        "cardRev": rev(task),
+        "briefRev": taskfiles.brief_sha(taskfiles.card_parts(text)["brief"])[:16],
+        "phaseRev": rev(cards["phase"]),
+        "memberRevs": {(_number(m) or m["file"]): rev(m) for m in cards["members"]},
+        "dependencyRevs": {(_number(d) or d["file"]): rev(d)
+                           for d in cards["dependencies"]},
+        "agreementRev": agreements.effective()["revision"],
+    }
+
+
+def fingerprint(need: str, bound: dict) -> str:
+    return profiles.digest("reasoning", str(VERSION), need,
+                           json.dumps(bound, sort_keys=True))[:16]
+
+
+def _scope_facts(task: dict, tasks: list[dict]) -> dict:
+    reading = agreements.effective()
+    if not reading["configured"]:
+        return {"configured": False, "scope": None}
+    sid, why = orchestrator.scope_of(task, reading)
+    here = agreements.scope(reading, sid) if sid else None
+    if here is None:
+        return {"configured": True, "scope": None, "why": why}
+    return {"configured": True, "scope": sid,
+            "authority": {k: {"allowed": v["allowed"], "by": v["by"]}
+                          for k, v in here["authority"].items()},
+            "paused": bool(here.get("pausedBy")),
+            "ceilings": {k: v.get("value") for k, v in
+                         (here.get("ceilings") or {}).items()
+                         if isinstance(v, dict)}}
+
+
+def _evidence_facts(filename: str) -> list[dict]:
+    out = []
+    try:
+        found = evidence.for_task(filename)
+    except (OSError, ValueError):
+        return out
+    for record in sorted(found, key=lambda r: str(r.get("requested") or ""),
+                         reverse=True)[:MAX_EVIDENCE_FACTS]:
+        out.append({"id": record.get("id"), "check": record.get("check"),
+                    "scope": record.get("scope"),
+                    "outcome": record.get("outcome"),
+                    "commit": ((record.get("source") or {}).get("commit") or "")[:12]
+                    or None})
+    return out
+
+
+def _card_fact(card: dict) -> dict:
+    return {"number": _number(card), "file": card["file"],
+            "title": card.get("title"), "stage": card["stage"]}
+
+
+def facts(filename: str, need: str, operation: str, bound: dict,
+          tasks: list[dict]) -> dict:
+    """What bench tells the run in its own words: public readings only —
+    no path, no environment value, no credential — scrubbed again on the
+    way out because a title is a person's text."""
+    cards = context_cards(filename, tasks)
+    task = cards["task"]
+    try:
+        eligible = movements.eligibility(task, tasks)
+        eligible = {"eligible": eligible["eligible"], "code": eligible["code"],
+                    "reason": eligible["reason"]}
+    except (OSError, ValueError, KeyError):
+        eligible = {"eligible": None, "code": "unknown",
+                    "reason": "movement history could not be read"}
+    out = {
+        "kind": FACTS_KIND, "v": VERSION,
+        "operation": operation, "need": need, "question": NEEDS[need],
+        "card": _card_fact(task),
+        "phase": _card_fact(cards["phase"]) if cards["phase"] else None,
+        "members": [_card_fact(m) for m in cards["members"]],
+        "dependencies": [_card_fact(d) for d in cards["dependencies"]],
+        "orchestration": _scope_facts(task, tasks),
+        "eligibility": eligible,
+        "evidence": _evidence_facts(filename),
+        "binding": bound,
+        "contract": CONTRACT_FIELDS,
+        "notes": ["Every fact here is bench's own reading at the moment the "
+                  "run was prepared. Agent-reported claims are not in it."],
+    }
+    return json.loads(redact.scrub(json.dumps(out, sort_keys=True), "«redacted»"))
+
+
+def _input_item(name: str, role: str, source: str, path: Path,
+                data: bytes) -> dict:
+    sha = _sha(data)
+    return {"name": name, "source": source, "root": "work" if role != "facts" else "tool",
+            "required": True, "readable": True, "status": "resolved",
+            "sha256": sha, "bytes": len(data), "revision": f"sha:{sha[:12]}",
+            "contextId": profiles.context_id(name, sha), "pinned": None,
+            "path": str(path), "why": None, "remedy": None,
+            "access": "read-only", "kind": "reasoning-input", "role": role}
+
+
+def attach(found: dict, filename: str, need: str, operation: str, bound: dict,
+           tasks: list[dict]) -> dict:
+    """Add the reasoning context to a launch's manifest, before the pin,
+    the way a card's own inputs are added (`inputs.attach`) — so each is
+    copied, hashed and granted by one exact read exactly as an approved
+    input is. A file over the pin cap refuses the request."""
+    cards = context_cards(filename, tasks)
+    context = found.setdefault("context", [])
+    entries = [("reason-card", "card", cards["task"])]
+    if cards["phase"] is not None:
+        entries.append(("reason-phase", "phase", cards["phase"]))
+    for number, member in enumerate(cards["members"][:12], 1):
+        entries.append((f"reason-member-{number}", "member", member))
+    for number, dep in enumerate(cards["dependencies"], 1):
+        entries.append((f"reason-dependency-{number}", "dependency", dep))
+    for name, role, card in entries:
+        path = _card_file(card)
+        data = path.read_bytes()
+        if len(data) > profiles.MAX_CONTEXT_BYTES:
+            raise ValueError(f"{card['file']} is over the "
+                             f"{profiles.MAX_CONTEXT_BYTES}-byte pin cap, so it "
+                             f"cannot be delivered to a reasoning run")
+        context.append(_input_item(name, role,
+                                   f"work:tasks/{card['stage']}/{card['file']}",
+                                   path, data))
+    written = facts(filename, need, operation, bound, tasks)
+    facts_path = _dir() / "facts" / f"{operation}.json"
+    records.write_json(facts_path, written)
+    # named by what it is rather than by a path: the facts are bench's
+    # own document, written for this operation alone
+    context.append(_input_item("reason-facts", "facts",
+                               f"bench:reasoning/facts/{operation}.json",
+                               facts_path, facts_path.read_bytes()))
+    return found
+
+
+def delivered(found: dict) -> list[dict]:
+    """After the pin: every reasoning input landed as the bytes bench read,
+    or the launch refuses — a card that changed while the launch was
+    prepared would be reasoned about at a revision the binding does not
+    name."""
+    out = []
+    for item in found.get("context") or []:
+        if item.get("kind") != "reasoning-input":
+            continue
+        if item.get("status") != "pinned" or item.get("pinnedSha256") != item["sha256"]:
+            raise ValueError(f"the reasoning input {item['source']} changed or "
+                             f"could not be pinned while the launch was being "
+                             f"prepared — nothing was started")
+        out.append({"name": item["name"], "role": item["role"],
+                    "source": item["source"], "sha256": item["sha256"],
+                    "pinned": item["pinned"]})
+    return out
+
+
+# ── the response contract ──────────────────────────────────────────────
+
+CONTRACT_FIELDS = {
+    "v": VERSION, "kind": KIND,
+    "required": ["v", "kind", "operation", "need", "card", "inputs", "summary"],
+    "lists": {k: {"max": MAX_ITEMS[k], "keys": sorted(ITEM_KEYS[k][0]),
+                  "required": sorted(ITEM_KEYS[k][1])} for k in ITEM_KEYS},
+    "actions": list(PROPOSABLE), "severities": list(SEVERITIES),
+    "evidence": ["input:<name of an input delivered to this run>",
+                 "card:<number of a card in this run's context>",
+                 "evidence:<id of an evidence record in the facts>"],
+    "bounds": {"block": MAX_BLOCK, "summary": MAX_SUMMARY, "text": MAX_TEXT,
+               "options": MAX_OPTIONS, "references": MAX_REFS},
+}
+
+
+def contract_text(job: dict) -> str:
+    """The response shape a run is told, filled with its own identity and
+    binding so the example is the answer's frame, not a template."""
+    example = {
+        "v": VERSION, "kind": KIND, "operation": job["id"], "need": job["need"],
+        "card": job["binding"]["card"], "inputs": job["binding"],
+        "summary": "two to five public sentences: what you found and propose",
+        "findings": [{"id": "f1", "statement": "one observed fact",
+                      "severity": "info", "evidence": ["input:reason-card"]}],
+        "questions": [{"id": "q1", "question": "a decision only the owner can make",
+                       "options": ["option A", "option B"],
+                       "recommendation": "option A", "why": "because …",
+                       "evidence": ["input:reason-card"]}],
+        "actions": [{"id": "a1", "action": "ask-owner",
+                     "card": job["binding"]["card"], "why": "because …",
+                     "evidence": ["input:reason-facts"]}],
+        "blockers": [],
+    }
+    return json.dumps(example, indent=2, ensure_ascii=False)
+
+
+def parse(log: str) -> dict:
+    """The run's answer off its output: the last response block, or the
+    last decline. Anything else is no answer."""
+    found = list(BLOCK_RE.finditer(log))
+    if found:
+        return {"kind": "response", "raw": found[-1].group("body")}
+    declines = [m.group(1).strip() for m in DECLINED_RE.finditer(log)
+                if not m.group(1).strip().startswith("<")]
+    if declines:
+        return {"kind": "declined", "reason": declines[-1][:MAX_TEXT] or "no reason given"}
+    return {"kind": "none"}
+
+
+def _text(value, where: str, problems: list, limit: int = MAX_TEXT,
+          required: bool = True) -> str | None:
+    if value is None and not required:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        problems.append(f"{where} must be a non-empty string")
+        return None
+    if len(value) > limit:
+        problems.append(f"{where} is {len(value)} characters, over the {limit} bound")
+        return None
+    if _UNSAFE.search(value):
+        problems.append(f"{where} carries a control or bidirectional character")
+        return None
+    if "<!--" in value:
+        problems.append(f"{where} carries an HTML comment, which the board "
+                        f"reserves for its own records")
+        return None
+    return redact.scrub(value, "«redacted»")
+
+
+def _refs(value, where: str, problems: list, allowed: dict) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > MAX_REFS:
+        problems.append(f"{where} must be a list of at most {MAX_REFS} references")
+        return []
+    out = []
+    for ref in value:
+        if not isinstance(ref, str) or not REF_RE.match(ref):
+            problems.append(f"{where} holds {str(ref)[:60]!r}, which is not a "
+                            f"reference (input:, card: or evidence:)")
+            continue
+        kind, _, name = ref.partition(":")
+        if name not in allowed[kind]:
+            problems.append(f"{where} cites {ref}, which this run was not given "
+                            f"— a reference must name something delivered to it")
+            continue
+        out.append(ref)
+    return out
+
+
+def validate(job: dict, answer: dict, now_binding: dict | None) -> dict:
+    """Server-side: what a response may become. Returns the job's new
+    status with the validated public response, or the diagnostics that
+    refused it. Nothing here executes anything, whatever it says."""
+    if answer["kind"] == "declined":
+        return {"status": "invalid", "diagnostics": [
+            {"code": "declined", "why": f"the run declined: {answer['reason']}"}]}
+    if answer["kind"] != "response":
+        return {"status": "invalid", "diagnostics": [
+            {"code": "no-response", "why": "the run ended without a response in "
+                                          "the required shape"}]}
+    raw = answer["raw"]
+    if len(raw.encode("utf-8")) > MAX_BLOCK:
+        return {"status": "invalid", "diagnostics": [
+            {"code": "oversized", "why": f"the response is over {MAX_BLOCK} bytes"}],
+            "raw": _raw(raw)}
+    try:
+        doc = json.loads(raw)
+    except ValueError as exc:
+        return {"status": "invalid", "diagnostics": [
+            {"code": "malformed", "why": f"the response is not JSON: {exc}"}],
+            "raw": _raw(raw)}
+    problems: list[str] = []
+    codes: list[str] = []
+    if not isinstance(doc, dict):
+        return {"status": "invalid", "diagnostics": [
+            {"code": "malformed", "why": "the response is not a JSON object"}],
+            "raw": _raw(raw)}
+    unknown = sorted(set(doc) - TOP_KEYS)
+    if unknown:
+        codes.append("unknown-field")
+        problems.append(f"unknown field(s) {', '.join(unknown[:6])} — the contract "
+                        f"has no place for private reasoning or anything else")
+    for key in CONTRACT_FIELDS["required"]:
+        if key not in doc:
+            codes.append("malformed")
+            problems.append(f"the required field {key!r} is missing")
+    if doc.get("v") != VERSION or doc.get("kind") != KIND:
+        codes.append("unsupported-version")
+        problems.append(f"the response must say v {VERSION}, kind {KIND}")
+    # identity: the response is about this operation, this need, this card
+    if doc.get("operation") != job["id"]:
+        codes.append("forged-identity")
+        problems.append("the response names another operation than the one "
+                        "this run was launched for")
+    if doc.get("need") != job["need"]:
+        codes.append("forged-identity")
+        problems.append("the response answers another need than the one asked")
+    if str(doc.get("card")) != str(job["binding"]["card"]):
+        codes.append("out-of-scope")
+        problems.append("the response is about another card than this run's")
+    # binding: the revisions it echoes are the ones it was given
+    if doc.get("inputs") != job["binding"]:
+        codes.append("binding-mismatch")
+        problems.append("the input revisions the response names are not the "
+                        "ones this run was launched with")
+
+    allowed = {"input": {i["name"] for i in job.get("inputs") or []},
+               "card": set(job.get("cards") or []),
+               "evidence": {e for e in job.get("evidenceIds") or [] if e}}
+    in_scope = set(job.get("scopeCards") or [])
+    out = {"v": VERSION, "kind": KIND, "operation": job["id"],
+           "need": job["need"], "card": job["binding"]["card"],
+           "summary": _text(doc.get("summary"), "summary", problems, MAX_SUMMARY)}
+    for key, (keys, needed) in ITEM_KEYS.items():
+        items = doc.get(key, [])
+        if not isinstance(items, list):
+            problems.append(f"{key} must be a list")
+            continue
+        if len(items) > MAX_ITEMS[key]:
+            codes.append("oversized")
+            problems.append(f"{key} holds {len(items)} items, over the "
+                            f"{MAX_ITEMS[key]} bound")
+            continue
+        kept, ids = [], set()
+        for n, item in enumerate(items):
+            where = f"{key}[{n}]"
+            if not isinstance(item, dict):
+                problems.append(f"{where} is not an object")
+                continue
+            extra = sorted(set(item) - keys)
+            missing = sorted(needed - set(item))
+            if extra:
+                codes.append("unknown-field")
+                problems.append(f"{where} has unknown field(s) {', '.join(extra[:4])}")
+            if missing:
+                problems.append(f"{where} is missing {', '.join(missing)}")
+            if extra or missing:
+                continue
+            if not isinstance(item["id"], str) or not ITEM_ID.match(item["id"]) \
+                    or item["id"] in ids:
+                problems.append(f"{where} needs a unique short id")
+                continue
+            ids.add(item["id"])
+            entry = {"id": item["id"],
+                     "evidence": _refs(item.get("evidence"), f"{where}.evidence",
+                                       problems, allowed)}
+            if key == "findings":
+                entry["statement"] = _text(item["statement"], f"{where}.statement", problems)
+                severity = item.get("severity", "info")
+                if severity not in SEVERITIES:
+                    problems.append(f"{where}.severity must be one of "
+                                    f"{', '.join(SEVERITIES)}")
+                entry["severity"] = severity
+            elif key == "questions":
+                entry["question"] = _text(item["question"], f"{where}.question", problems)
+                options = item.get("options", [])
+                if not isinstance(options, list) or len(options) > MAX_OPTIONS:
+                    problems.append(f"{where}.options must be a list of at most "
+                                    f"{MAX_OPTIONS}")
+                    options = []
+                entry["options"] = [_text(o, f"{where}.options", problems)
+                                    for o in options]
+                entry["recommendation"] = _text(item.get("recommendation"),
+                                                f"{where}.recommendation",
+                                                problems, required=False)
+                entry["why"] = _text(item.get("why"), f"{where}.why", problems,
+                                     required=False)
+            elif key == "actions":
+                if item["action"] not in PROPOSABLE:
+                    codes.append("action-unknown")
+                    problems.append(f"{where}.action {str(item['action'])[:40]!r} "
+                                    f"is not one of {', '.join(PROPOSABLE)}")
+                    continue
+                if str(item["card"]) not in in_scope:
+                    codes.append("out-of-scope")
+                    problems.append(f"{where} proposes acting on card "
+                                    f"{str(item['card'])[:20]}, outside this "
+                                    f"run's scope")
+                    continue
+                entry.update({"action": item["action"], "card": str(item["card"]),
+                              "why": _text(item["why"], f"{where}.why", problems),
+                              # a proposal, never a grant: whatever acts on it
+                              # asks orchestrator.authorize again first
+                              "executable": False})
+            else:
+                entry["blocker"] = _text(item["blocker"], f"{where}.blocker", problems)
+            kept.append(entry)
+        out[key] = kept
+    if problems:
+        return {"status": "invalid",
+                "diagnostics": [{"code": c, "why": c} for c in sorted(set(codes))]
+                + [{"code": "problem", "why": p} for p in problems[:30]],
+                "raw": _raw(raw)}
+    if now_binding is not None and now_binding != job["binding"]:
+        changed = sorted(k for k in set(now_binding) | set(job["binding"])
+                         if now_binding.get(k) != job["binding"].get(k))
+        return {"status": "stale", "response": out, "diagnostics": [
+            {"code": "stale", "why": f"the inputs changed while the run "
+                                     f"reasoned ({', '.join(changed)}); the "
+                                     f"response is kept as history and the "
+                                     f"need must be re-evaluated"}]}
+    return {"status": "valid", "response": out, "diagnostics": []}
+
+
+def _raw(text: str) -> dict:
+    """What is kept of a refused response: bounded, scrubbed, hashed —
+    retained to diagnose, never read as an instruction."""
+    data = text.encode("utf-8")
+    kept = redact.scrub(data[:MAX_RAW].decode("utf-8", "replace"), "«redacted»")
+    return {"sha256": _sha(data), "bytes": len(data), "clipped": len(data) > MAX_RAW,
+            "text": _UNSAFE.sub("?", kept), "inert": True}
+
+
+# ── reading ────────────────────────────────────────────────────────────
+
+
+def freshness(job: dict, board: dict | None = None) -> dict:
+    """Whether a settled response still describes the card. Compared,
+    never repaired: a stale response is history, and the need is asked
+    again under a new fingerprint."""
+    try:
+        now = binding(job["task"], board)
+    except (OSError, ValueError):
+        return {"fresh": False, "why": f"{job['task']} is no longer on the board"}
+    if now != job["binding"]:
+        changed = sorted(k for k in set(now) | set(job["binding"])
+                         if now.get(k) != job["binding"].get(k))
+        return {"fresh": False, "why": f"changed since: {', '.join(changed)}"}
+    return {"fresh": True, "why": None}
+
+
+PUBLIC = ("v", "id", "need", "task", "card", "stage", "via", "scope", "actor",
+          "attempt", "retryOf", "status", "created", "started", "ended",
+          "agent", "name", "harness", "model", "policyId", "binding",
+          "inputs", "response", "diagnostics", "raw", "error", "usage",
+          "fingerprint", "provenance")
+
+
+def public(job: dict) -> dict:
+    """What later members (on-card history, the Orchestrator view) read:
+    status, usage, the validated response or the diagnostics, and
+    provenance — no path, no private reasoning, no credential."""
+    out = {key: job[key] for key in PUBLIC if key in job}
+    out["inputs"] = [{k: i[k] for k in ("name", "role", "source", "sha256")
+                      if k in i} for i in job.get("inputs") or []]
+    if job.get("status") == "valid":
+        out["fresh"] = freshness(job)
+    return out
+
+
+def for_card(filename: str) -> list[dict]:
+    """Every reasoning job this board holds for a card, newest first.
+    A read: it launches nothing and writes nothing."""
+    with LOCK:
+        _load()
+        found = [j for j in JOBS.values() if j.get("task") == filename]
+    return [public(j) for j in sorted(found, key=lambda j: (j.get("created") or 0,
+                                                            j["id"]), reverse=True)]
+
+
+def board() -> dict:
+    """Per card, the newest job's status — what a card face needs."""
+    out: dict = {}
+    with LOCK:
+        _load()
+        for job in sorted(JOBS.values(), key=lambda j: j.get("created") or 0):
+            out[job["task"]] = {"id": job["id"], "need": job["need"],
+                                "status": job["status"]}
+    return out
+
+
+def readiness() -> dict:
+    """Whether this board can launch a reasoning run at all, through the
+    resolver a launch rides — and nothing launched to find out."""
+    found = profiles.resolve("reason")
+    return {"ready": not found["blockers"], "blockers": list(found["blockers"]),
+            "codes": [d["code"] for d in found.get("diagnostics") or []],
+            "selection": found["selection"]}
+
+
+# ── asking ─────────────────────────────────────────────────────────────
+
+
+def request(filename: str, need: str, *, via: str = "orchestrator",
+            retry: bool = False, board: dict | None = None,
+            actor: str | None = None) -> dict:
+    """Ask one reasoning question about one card, at most once per input
+    binding.
+
+    `via` is who asks: `orchestrator` (authorized by the agreement, with
+    its capacity, and counted in the launch ledger) or `person` (an
+    explicit click; no agreement needed, still resolved through the same
+    profile and refused where the harness cannot run it). The same
+    question about unchanged inputs answers with the job it already has —
+    running, or settled — so a scheduler tick, a refresh or a concurrent
+    caller never launches twice; a job that failed or was cancelled is
+    asked again only with `retry`."""
+    if need not in NEEDS:
+        raise ValueError(f"unknown reasoning need {need!r} — one of "
+                         f"{', '.join(NEEDS)}")
+    if via not in ("orchestrator", "person"):
+        raise ValueError("a reasoning request comes from the orchestrator or a person")
+    with LOCK:
+        _load()
+        board = taskfiles.collect() if board is None else board
+        tasks = _tasks(board)
+        bound = binding(filename, board)
+        print_ = fingerprint(need, bound)
+        prior = sorted((j for j in JOBS.values() if j.get("fingerprint") == print_),
+                       key=lambda j: (j.get("created") or 0, j["id"]))
+        last = prior[-1] if prior else None
+        if last is not None and (last["status"] in ACTIVE | SETTLED):
+            return {"job": public(last), "duplicate": True}
+        if last is not None and not retry:
+            raise Conflict(f"this question about these inputs was asked already "
+                           f"and its last attempt {last['status']} — retry it "
+                           f"deliberately")
+        busy = [j for j in JOBS.values() if j.get("task") == filename
+                and j.get("status") in ACTIVE]
+        if busy:
+            raise ValueError(f"a reasoning run is already in flight for "
+                             f"{filename} ({busy[0]['need']}); one at a time per card")
+
+        authorized = None
+        if via == "orchestrator":
+            authorized = orchestrator.authorize("reason", filename, board=board)
+            if not authorized["allowed"]:
+                raise ValueError(f"not authorized: {authorized['reason']} "
+                                 f"({authorized['code']})")
+
+        stage = bound["stage"]
+        operation = f"rs-{print_[:10]}-{len(prior) + 1}"
+        # resolved, context attached, pinned and confirmed before anything
+        # is recorded: a refusal leaves no job and no launch
+        found = profiles.manifest("reason", filename, stage)
+        profiles.require(found)
+        attach(found, filename, need, operation, bound, tasks)
+        profiles.pin(found)
+        inputs_ = delivered(found)
+
+        cards = context_cards(filename, tasks)
+        scope_cards = {bound["card"]} | {(_number(m) or m["file"])
+                                         for m in cards["members"]}
+        context_numbers = {(_number(c) or c["file"]) for c in
+                           [cards["task"], *([cards["phase"]] if cards["phase"] else []),
+                            *cards["members"], *cards["dependencies"]]}
+        selection = found["selection"]
+        job = {
+            "v": VERSION, "id": operation, "need": need, "task": filename,
+            "card": bound["card"], "stage": stage, "via": via,
+            "scope": (authorized or {}).get("scope"),
+            "actor": actor or (taskfiles.actor_name() or "unattributed"),
+            "attempt": len(prior) + 1,
+            "retryOf": last["id"] if last is not None else None,
+            "fingerprint": print_, "binding": bound, "status": "queued",
+            "created": time.time(), "inputs": inputs_,
+            "cards": sorted(context_numbers), "scopeCards": sorted(scope_cards),
+            "evidenceIds": [e["id"] for e in _evidence_facts(filename)],
+            "harness": selection["harness"]["name"],
+            "model": selection["model"]["value"] or None,
+            "policyId": found["policyId"],
+            "usage": {"launches": 1, "pool": "reasoning",
+                      "counted": ("the orchestrator launch ledger" if via == "orchestrator"
+                                  else "running-agent capacity only (a person's launch)"),
+                      "tokens": "not reported", "cost": "not reported"},
+            "provenance": {
+                "authorized": (authorized or {}).get("provenance")
+                if authorized else ["a person's explicit request"],
+                "modelSource": selection["model"]["source"],
+                "modelSetting": selection["model"]["setting"],
+                "bundle": (found.get("bundle") or {}).get("revision")},
+        }
+        JOBS[job["id"]] = job
+        _save(job)
+        try:
+            _launch(job, found)
+        except ValueError as exc:
+            job.update({"status": "failed", "ended": time.time(),
+                        "error": f"the reasoning run could not be launched: {exc}"})
+            _save(job)
+            raise
+        if via == "orchestrator":
+            orchestrator.record_launch(job["scope"], bound["card"], "reason", job["id"])
+        return {"job": public(job), "duplicate": False}
+
+
+def _inputs_text(job: dict) -> str:
+    lines = []
+    for item in job["inputs"]:
+        lines.append(f"- `input:{item['name']}` ({item['role']}, from "
+                     f"{item['source']}, sha256 {item['sha256'][:12]}): "
+                     f"`{item['pinned']}`")
+    return "\n".join(lines)
+
+
+def _launch(job: dict, found: dict) -> None:
+    filename = job["task"]
+    agent_id = (f"reason-{filename[:-3][:40]}-{time.strftime('%H%M%S')}-"
+                f"{secrets.token_hex(2)}")
+    log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = profiles.record(agent_id, found)
+    fields = config.prompt_fields(filename, job["stage"])
+    prompt = config.prompt("reason.md").format(
+        operation=job["id"], need=job["need"], question=NEEDS[job["need"]],
+        filename=filename, stage=job["stage"], card=job["card"],
+        inputs=_inputs_text(job), contract=contract_text(job),
+        guidance_read_only=fields["guidance_read_only"],
+        context=profiles.prompt_block(manifest))
+    proc, log_file, model = agents.launch("reason", prompt, config.REPO,
+                                          agent_id, filename, log_path, manifest)
+    name = agents.pick_name(filename)
+    record = {
+        "id": agent_id, "task": filename, "branch": None, "worktree": None,
+        "base": None, "status": "running", "rc": None, "started": time.time(),
+        "session": None, "log": str(log_path), "proc": proc,
+        "origin": job["stage"], "mode": "reason", "name": name,
+        "model": model or None, "profile": profiles.summary(manifest),
+        "reasoningJob": job["id"],
+    }
+    with state.LOCK:
+        state.AGENTS[agent_id] = record
+    job.update({"status": "running", "started": time.time(), "agent": agent_id,
+                "name": name})
+    _save(job)
+    state.record_board_event({
+        "kind": "agent", "actor": "agent", "file": filename,
+        "summary": (f"{name} is reasoning about {filename} ({job['need']}, "
+                    f"{job['id']}) — it proposes; nothing is acted on from it")})
+    threading.Thread(target=_reap, args=(job["id"], agent_id, proc, log_file),
+                     daemon=True).start()
+
+
+def _reap(job_id: str, agent_id: str, proc, log_file) -> None:
+    record, stopped, rc = agents.finish(agent_id, proc, log_file)
+    settle(job_id, record, stopped, rc)
+
+
+def settle(job_id: str, record: dict, stopped: bool, rc: int) -> dict:
+    """Close a job from its run's ending: cancelled, failed, or the
+    validated response (valid, invalid or stale). Public for the reaper
+    and for a test that plays one."""
+    with LOCK:
+        job = JOBS[job_id]
+        if stopped:
+            job.update({"status": "cancelled",
+                        "error": "cancelled — no response, nothing acted on"})
+        elif rc != 0:
+            job.update({"status": "failed",
+                        "error": f"the run exited rc={rc}: {agents.died_on(record)}"})
+        else:
+            try:
+                log = Path(record["log"]).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                log = ""
+            try:
+                now = binding(job["task"])
+            except (OSError, ValueError):
+                now = {}
+            job.update(validate(job, parse(log), now))
+        job["ended"] = time.time()
+        _save(job)
+        status, filename = job["status"], job["task"]
+        name = job.get("name") or "the agent"
+    state.record_board_event({
+        "kind": "agent", "actor": "agent", "file": filename,
+        "summary": {
+            "valid": f"{name} answered {job['need']} for {filename} — a proposal; "
+                     f"nothing was acted on",
+            "invalid": f"{name}'s reasoning about {filename} was refused and "
+                       f"kept as a diagnostic — nothing was acted on",
+            "stale": f"{name}'s reasoning about {filename} is stale — the card "
+                     f"changed while it ran; kept as history",
+            "cancelled": f"{name}'s reasoning about {filename} was cancelled",
+        }.get(status, f"{name}'s reasoning about {filename} failed — "
+                      f"{job.get('error')}")[:300]})
+    state.broadcast({"type": "board"})
+    state.broadcast({"type": "agents"})
+    return public(job)
+
+
+def cancel(job_id: str) -> dict:
+    with LOCK:
+        _load()
+        job = JOBS.get(job_id)
+        if job is None:
+            raise ValueError("unknown reasoning job")
+        if job["status"] not in ACTIVE or not job.get("agent"):
+            raise ValueError(f"the reasoning job is {job['status']}, not running")
+        agent_id = job["agent"]
+    agents.stop_agent(agent_id)
+    return public(job)

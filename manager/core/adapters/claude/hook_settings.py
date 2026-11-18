@@ -26,6 +26,10 @@ is isolated, the shell is not.
           edit tools *and* the shell (DISALLOWED_TOOLS), so no command
           can be launched however a rule is spelled. Bench validates the
           proposal and owns every write.
+  reason  an orchestrator reasoning run (task 139): the refine stance
+          exactly. Its context arrives as pinned copies, each granted by
+          one exact Read rule; it answers with one public response on
+          stdout, which bench validates and never executes.
 
 The project's test/check commands arrive in AGENT_COMMANDS as comma-
 separated neutral command prefixes (set BOARD_AGENT_COMMANDS in
@@ -66,6 +70,7 @@ GIT_PREFIXES = {
                "git fetch", "git merge", "git push"],
     "review": ["git status", "git diff", "git log", "git show"],
     "refine": [],
+    "reason": [],
 }
 # The hosting provider's verbs arrive in AGENT_HOST (task 116): one JSON
 # object per launch, `{"provider", "allow": [prefixes], "publish":
@@ -78,6 +83,7 @@ DEFAULT_HOST_ALLOW = {
     "act-pr": ["gh pr view", "gh pr diff", "gh api"],
     "review": ["gh pr view", "gh pr diff", "gh pr review", "gh pr comment"],
     "refine": [],
+    "reason": [],
 }
 DEFAULT_HOST_PUBLISH = ["gh pr create", "gh pr merge", "gh pr close",
                         "gh release", "gh api --method POST", "gh api -X POST"]
@@ -110,10 +116,16 @@ READ_ONLY_TOOLS = ["Edit", "Write", "NotebookEdit"]
 DISALLOWED_TOOLS = {
     "review": READ_ONLY_TOOLS,
     "refine": READ_ONLY_TOOLS + ["Bash"],
+    # orchestrator reasoning (task 139): the refine stance exactly — it
+    # reads its pinned context through exact Read grants and answers on
+    # stdout; it has no tool that writes and no shell
+    "reason": READ_ONLY_TOOLS + ["Bash"],
 }
 # The intents this adapter launches. Anything else is refused by `run`
 # rather than guessed into one of these stances.
-INTENTS = ("work", "act-pr", "review", "refine")
+INTENTS = ("work", "act-pr", "review", "refine", "reason")
+# The proposal-only intents: no allow-rule of any kind but exact reads.
+NO_RULE_MODES = {"refine", "reason"}
 # History must never rewrite under a public PR: deny the canonical force
 # and rebase spellings even though nothing allows them — `git push` alone
 # would otherwise cover `git push --force` by prefix. (Prefix rules can't
@@ -218,7 +230,7 @@ def allow_rules(mode: str, commands: list[str],
     against, and a rule nothing can use is still a rule a reader has to
     reason about.
     """
-    if mode == "refine":
+    if mode in NO_RULE_MODES:
         return []
     prefixes = list(GIT_PREFIXES.get(mode, []))
     if mode in GIT_PREFIXES:

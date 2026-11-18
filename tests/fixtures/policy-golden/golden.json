@@ -302,6 +302,26 @@
         "verification": "",
         "verify": []
       },
+      "reason": {
+        "blockers": [
+          "the golden adapter does not list 'reason' among the intents it can launch, so the launch is refused rather than handed to it to run under whatever stance it defaults to",
+          "the check 'bad' contains '&' in its \"run\" — a check is one executable and fixed arguments, not a shell line: compound commands, pipelines, redirections, globs and substitutions are refused because bench runs it with no shell and there is nothing to expand them"
+        ],
+        "codes": [
+          "intent-unsupported",
+          "check-invalid"
+        ],
+        "guarantees": [
+          "read-only-tools",
+          "shell-withheld",
+          "verified-outputs",
+          "working-directory"
+        ],
+        "policyId": "profile:reason@90359aaccc49",
+        "revision": "90359aaccc49e33c5ce12aeb1ec545c35c7aa97508cf6df70359627e8e35e116",
+        "verification": "",
+        "verify": []
+      },
       "refine": {
         "blockers": [
           "the check 'bad' contains '&' in its \"run\" \u2014 a check is one executable and fixed arguments, not a shell line: compound commands, pipelines, redirections, globs and substitutions are refused because bench runs it with no shell and there is nothing to expand them"
@@ -510,6 +530,34 @@
         ],
         "policyId": "profile:act-pr@514f1502758e",
         "revision": "514f1502758eaeba6f6b8770cb91a9aa03feedbb0281017f929c9f204b6d0de1",
+        "verification": "",
+        "verify": []
+      },
+      "reason": {
+        "blockers": [
+          "the golden adapter does not list 'reason' among the intents it can launch, so the launch is refused rather than handed to it to run under whatever stance it defaults to",
+          "the context input 'gone' is required and tool:manager/local/missing.md does not exist (looked in <tmp>/tool/manager/local/missing.md). create <tmp>/tool/manager/local/missing.md, point the selection at a file that exists, or mark the selection \"required\": false if the run can do without it",
+          "the context input 'secret' names .env, which reads as a credential. approving a document never approves a secret — if this file genuinely is not one, rename it or copy the part an agent needs into a file that is not named like a key",
+          "the preparation step 'deps' contains '|' in its \"run\" — a check is one executable and fixed arguments, not a shell line: compound commands, pipelines, redirections, globs and substitutions are refused because bench runs it with no shell and there is nothing to expand them",
+          "the check 'unit' names the execution root 'app' — one of worktree, source, review. A check never runs in the application checkout: that is the live code and the live services, and verifying in it is how a test suite takes a working tree down with it",
+          "the profile requires 'filesystem-sandbox', and nothing on this board enforces it (no shipped adapter or verification backend can confine a run's reads to a named set of files; the pinned bundle is a guaranteed *input*, not a boundary on reading, and an isolated execution root is a directory rather than a jail) — the launch is refused rather than run under a restriction that exists only in the prompt"
+        ],
+        "codes": [
+          "intent-unsupported",
+          "context-unreadable",
+          "context-refused",
+          "prepare-invalid",
+          "check-root-unsafe",
+          "requirement-unsupported"
+        ],
+        "guarantees": [
+          "read-only-tools",
+          "shell-withheld",
+          "verified-outputs",
+          "working-directory"
+        ],
+        "policyId": "profile:reason@ed7051226a7c",
+        "revision": "ed7051226a7c92aeddada2f5147f1a712442a9740ea19718403d3610078e5715",
         "verification": "",
         "verify": []
       },
@@ -786,6 +834,25 @@
           "check:unit@4b5a4206b88a"
         ]
       },
+      "reason": {
+        "blockers": [
+          "the golden adapter does not list 'reason' among the intents it can launch, so the launch is refused rather than handed to it to run under whatever stance it defaults to"
+        ],
+        "codes": [
+          "intent-unsupported"
+        ],
+        "guarantees": [
+          "pinned-context",
+          "read-only-tools",
+          "shell-withheld",
+          "verified-outputs",
+          "working-directory"
+        ],
+        "policyId": "profile:reason@1eb65a72ca60",
+        "revision": "1eb65a72ca60a24db46530bb3b7d9760b278b06748436b40072d29764d93b9f3",
+        "verification": "",
+        "verify": []
+      },
       "refine": {
         "blockers": [],
         "codes": [],
@@ -940,6 +1007,23 @@
         ],
         "policyId": "profile:act-pr@8f36cf81f50b",
         "revision": "8f36cf81f50b0604612d3e51720ca977dc04e92eac1e403473b39baceb5bf902",
+        "verification": "",
+        "verify": []
+      },
+      "reason": {
+        "blockers": [
+          "the golden adapter does not list 'reason' among the intents it can launch, so the launch is refused rather than handed to it to run under whatever stance it defaults to"
+        ],
+        "codes": [
+          "intent-unsupported"
+        ],
+        "guarantees": [
+          "read-only-tools",
+          "shell-withheld",
+          "working-directory"
+        ],
+        "policyId": "profile:reason@8f9ab95145b0",
+        "revision": "8f9ab95145b029f3bde1f88780205a7ecc65e27b50405afa8a3dd29fdb98ab98",
         "verification": "",
         "verify": []
       },
@@ -1099,6 +1183,25 @@
         ],
         "policyId": "profile:act-pr@7344687ac3cd",
         "revision": "7344687ac3cdd4caa58205c48c2f79dd22a6bef65e0965ddd5e94d127255ea44",
+        "verification": "",
+        "verify": []
+      },
+      "reason": {
+        "blockers": [
+          "the profile document manager/local/profiles.json is not valid JSON (line 2, column 1: Expecting value) — nothing was resolved from it",
+          "the golden adapter does not list 'reason' among the intents it can launch, so the launch is refused rather than handed to it to run under whatever stance it defaults to"
+        ],
+        "codes": [
+          "policy-unreadable",
+          "intent-unsupported"
+        ],
+        "guarantees": [
+          "read-only-tools",
+          "shell-withheld",
+          "working-directory"
+        ],
+        "policyId": "profile:reason@ca9e5672b930",
+        "revision": "ca9e5672b930dd245fd8601ae218880d269dd00827072c64c18ca8d3afadbac5",
         "verification": "",
         "verify": []
       },
@@ -1277,6 +1380,24 @@
         "verification": "",
         "verify": []
       },
+      "reason": {
+        "blockers": [
+          "the golden adapter does not list 'reason' among the intents it can launch, so the launch is refused rather than handed to it to run under whatever stance it defaults to"
+        ],
+        "codes": [
+          "intent-unsupported"
+        ],
+        "guarantees": [
+          "read-only-tools",
+          "shell-withheld",
+          "verified-outputs",
+          "working-directory"
+        ],
+        "policyId": "profile:reason@0795a3d7c94e",
+        "revision": "0795a3d7c94e9ef7ba77cbff78aaaa1bafd80e4be889219ead3759b5da8d5ffe",
+        "verification": "",
+        "verify": []
+      },
       "refine": {
         "blockers": [],
         "codes": [],
@@ -1441,6 +1562,25 @@
         ],
         "policyId": "profile:act-pr@d6daf1feaaf7",
         "revision": "d6daf1feaaf7f1bd864201771200bdde30997928ab3d7d502cc3da090f402897",
+        "verification": "",
+        "verify": []
+      },
+      "reason": {
+        "blockers": [
+          "the profile document manager/local/profiles.json declares \"v\": 2, and this bench reads v1 — nothing was resolved from it. An unreadable policy refuses; it does not quietly become the old one",
+          "the golden adapter does not list 'reason' among the intents it can launch, so the launch is refused rather than handed to it to run under whatever stance it defaults to"
+        ],
+        "codes": [
+          "policy-unreadable",
+          "intent-unsupported"
+        ],
+        "guarantees": [
+          "read-only-tools",
+          "shell-withheld",
+          "working-directory"
+        ],
+        "policyId": "profile:reason@3a31cd8d6330",
+        "revision": "3a31cd8d6330e3a70d86606a2a9f0943d44a2a0bd863cc932e8b4a53db029e0f",
         "verification": "",
         "verify": []
       },

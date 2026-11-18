@@ -30,6 +30,20 @@ import { renderSettings } from './shell.js';
 
 const AGENT_ROWS = ['default', 'work', 'act-pr', 'review'];
 
+/* Orchestrator reasoning (task 139): read-only here, like a refinement.
+   Its harness, its effective model and — when the harness cannot launch
+   it — the refusal, in the server's words. */
+function reasonRow(r) {
+  const sel = r.effective.selection;
+  const refused = (r.effective.blockers || []).map(b => b.why).join(' ');
+  return `<div class="srow sline"><span class="sname">${esc(r.label)}</span>` +
+    `<span class="sval">${esc(sel.harness.name)} · ` +
+    `${esc(sel.model.value || 'harness default')}` +
+    `<span class="shelp">${esc(r.why)}</span>` +
+    (refused ? `<span class="shelp">Not supported here: ${esc(refused)}</span>` : '') +
+    `</span></div>`;
+}
+
 function agentsSummary(a) {
   if (!a) return '';
   const d = a.rows.default;
@@ -235,7 +249,8 @@ function settingsAgents(page) {
       `<div class="srow sline"><span class="sname">${esc(a.rows.refine.label)}</span>` +
       `<span class="sval">${esc(a.rows.refine.effective.selection.harness.name)} · ` +
       `${esc(a.rows.refine.effective.selection.model.value || 'harness default')}` +
-      `<span class="shelp">${esc(a.rows.refine.why)}</span></span></div>`) +
+      `<span class="shelp">${esc(a.rows.refine.why)}</span></span></div>` +
+      (a.rows.reason ? reasonRow(a.rows.reason) : '')) +
     spanel('Prompt templates', 'local overrides only — the built-ins are never edited',
       a.templates.map(t => agentTemplate(a, d, t)).join('')) +
     spanel('Save', '', steps, 'sdraft') +

@@ -70,6 +70,16 @@ side effects its prompt demands, and never a blanket allow-everything
   publish nothing. Bench parses the proposal, validates it and owns every
   write. Claude: `--disallowedTools Edit Write NotebookEdit Bash` and no
   allow-rule; opencode: `"edit": "deny"` and `"bash": {"*": "deny"}`.
+- `reason` — an orchestrator reasoning run (task 139): the `refine`
+  stance exactly, plus one requirement. Its context — the card, its phase,
+  its dependencies and a facts document bench writes — arrives only as
+  pinned copies in `AGENT_CONTEXT`, so the adapter must grant each one by
+  an exact read (`inputs.delivery: exact-read`, below). It prints one
+  public JSON response between `<<<REASONING` and `REASONING>>>`; bench
+  validates it and executes nothing in it. Claude: the refine flags, and
+  each pinned input as one `Read(//path)` rule. opencode renders no exact
+  read for a file outside the checkout, so it does not list `reason`,
+  names why under `refusedIntents`, and its `run` exits 64 on the mode.
 
 **An intent you do not recognise must be refused, not defaulted.** Both
 shipped `run` scripts exit 64 on an unknown `AGENT_MODE` before launching
@@ -273,7 +283,7 @@ understands: `enforced`, `prefix-allowlist` (a prefix match over the
 command line — narrowing, **not** a sandbox), `prompt-only`, `pending`.
 
     {"v": 1, "adapter": "claude", "version": "1",
-     "intents": ["work", "act-pr", "review", "refine"],
+     "intents": ["work", "act-pr", "review", "refine", "reason"],
      "capabilities": {"command-allowlist": "prefix-allowlist",
                       "command-denylist": "prefix-allowlist",
                       "read-only-tools": "enforced",
@@ -293,7 +303,12 @@ ran before the list existed — and nothing newer. To be handed `refine`
 you must list it **and** declare `read-only-tools` and `shell-withheld`
 as `enforced`: withholding the edit tools and the shell in your vendor's
 own tool roster is what makes a refinement read-only, and a deny-rule a
-command line could be shaped around is not the same guarantee.
+command line could be shaped around is not the same guarantee. To be
+handed `reason` you need both of those **and** `inputs.delivery:
+exact-read` — reasoning over context the vendor might not be allowed to
+read is refused (`intent-unsupported`). `refusedIntents` (optional) maps
+an intent you deliberately do not run to one sentence saying why; core
+quotes it in the refusal.
 
 This is not a grant and it changes no rule. It is what lets a profile's
 `requires` list **refuse** a launch rather than report a guarantee the
