@@ -40,7 +40,7 @@ composition.
 ```architecture current
 L0  gitproc records redact
 L1  config
-L2  githost assets agreements
+L2  githost assets agreements operations
 L3  state reports templates gitrepo verifierreport
 L4  taskfiles
 L5  plans profiles execowner movements decisions
@@ -66,9 +66,10 @@ L24 setuptasks
 L25 setupguide
 L26 phases
 L27 refine reasoning
-L28 routes watch
-L29 httpd
-L30 board
+L28 scheduler
+L29 routes watch
+L30 httpd
+L31 board
 composition: board httpd routes watch
 ```
 
@@ -188,6 +189,23 @@ validates against the binding it launched with. It asks
 `orchestrator.authorize` before an orchestrator's launch and records it
 in the launch ledger; it executes nothing a response proposes.
 
+The engine's acting half is two more (task 141). `operations` (L2,
+`config` and `records` only) is the durable operation ledger: one
+versioned record per orchestrated side effect, written durably as an
+*intent* before it and updated with the observed *receipt* after, under
+an interprocess lock; its statuses say which records reserve a slot and
+which spent a start, so `orchestrator.usage` counts reservations and
+budgets from it and a restart, a pause or a lost reply resets nothing.
+`scheduler` (L28, directly below `routes`) is the bounded pass —
+observe run endings, reconcile intents without a receipt against the run
+registry, the recorded plan and the process table, plan by dependencies,
+priority, fairness and declared `**Touches:**` overlap, then execute
+through `taskfiles.move_task` and `agents.start_agent` with
+`orchestrator.authorize` asked again immediately before each side effect.
+It has no git of its own and no second launch path. `board` starts its
+beat; `routes` serves its read-only projection and a person's settlement
+of a held operation.
+
 `profiles.read_scope` (task 127) is a request-scoped memo, not a layer:
 a `ContextVar` that `routes.state_payload` sets for the length of one
 board read, inside which `document()`, `resolve()` without a draft, an
@@ -305,7 +323,7 @@ be checked against it when they land. Not enforced.
 ```architecture proposed
 L0  gitproc records redact
 L1  config
-L2  state reports templates gitrepo assets verifierreport agreements
+L2  state reports templates gitrepo assets verifierreport agreements operations
 L3  githost
 L4  taskfiles
 L5  profiles plans execowner movements decisions
@@ -330,9 +348,10 @@ L23 setuptasks
 L24 setupguide
 L25 phases
 L26 refine reasoning
-L27 watch routes
-L28 httpd
-L29 board
+L27 scheduler
+L28 watch routes
+L29 httpd
+L30 board
 composition: board httpd routes
 retired:
 new:
@@ -370,7 +389,7 @@ One owner per question; `AGENTS.md` describes each module in full.
 | stack maintenance | `stackactions` | the three confirmed stack actions — retarget, update from parent, clean up after proven delivery — each bound to the identities its sheet showed |
 | setup base | `setupbase`, `appinspect` | the setup decisions record, its journal, request identity and revision guards, and the agent area; the read-only inspection of the application's files |
 | surfaces | `agentsettings`, `settings`, `setupguide`, `setuptasks`, `readiness`, `previews` | configuration pages and the setup guide's areas (`setupguide` composes the other three) |
-| runs | `agents`, `phases`, `refine`, `reasoning` | headless launches; the phase beat; refinement jobs; orchestrator reasoning jobs and their validated responses |
+| runs | `agents`, `phases`, `refine`, `reasoning`, `scheduler` | headless launches; the phase beat; refinement jobs; orchestrator reasoning jobs and their validated responses; the orchestration beat |
 | composition | `watch`, `routes`, `httpd`, `board` | the disk poller; every route with its request class and handler; the socket, the class doors and the body checks; startup wiring |
 
 Standalone programs — `adapters/*/` and the `bench-verify` and
@@ -418,6 +437,7 @@ neither.
 | operating agreement (machine-local) and its draft (task 137) | `agreements` | `agreements._LOCK`, interprocess | the agreement yes; the draft no |
 | execution designation (portable), installation id | `execowner` | `execowner._LOCK`, interprocess; execution itself is the non-blocking `flock` on `execution.lock` | yes |
 | orchestrated launch ledger (append-only) | `orchestrator` | append | no |
+| orchestration operations: intent and receipt (task 141) | `operations` (`scheduler` decides) | `operations._LOCK`, interprocess | yes |
 
 **Durable writers** — the call sites passing `durable=True`, held equal
 to the code by `tests/test_records_adoption.py`:
@@ -436,6 +456,8 @@ execowner._write_designation
 execowner.ensure_installation_id
 gates.override
 gates.record_verdict
+operations.begin
+operations.update
 plans.record
 plans.restore
 profiles.record
@@ -621,5 +643,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 181
-routes 127
+routes 128
 ```

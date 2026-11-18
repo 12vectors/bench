@@ -56,6 +56,7 @@ import refine
 import required
 import results
 import reviews
+import scheduler
 import settings
 import setupguide
 import setuptasks
@@ -1380,7 +1381,11 @@ def get_orchestration(req) -> None:
     # agreement in force against the draft, every scope's authority
     # and capacity with provenance, who executes. A read that stays
     # one — it launches no agent, runs no check and writes nothing.
-    req.reply(200, {"orchestration": orchestrator.reading()})
+    # The schedule (task 141) is the scheduler's plan as it stands, read
+    # the same way: no pass runs, nothing is reserved or acquired.
+    board = taskfiles.collect()
+    req.reply(200, {"orchestration": orchestrator.reading(board),
+                    "schedule": scheduler.projection(board)})
 
 
 def get_orchestration_reasoning(req) -> None:
@@ -1481,6 +1486,29 @@ def post_orchestration_installation(req) -> None:
         return
     state.record_board_event({"kind": "other", "actor": "you",
                               "summary": f"orchestration: {action}"})
+    state.broadcast({"type": "board"})
+    req.reply(200, {"result": result})
+
+
+def post_orchestration_operation(req) -> None:
+    # A person settles an operation the scheduler held (task 141): an
+    # unknown outcome was in fact launched or not, or a refused launch is
+    # released to be tried again. Resolving launches nothing.
+    body = req.body
+    try:
+        result = scheduler.resolve(str(body.get("operation") or ""),
+                                   str(body.get("decision") or ""),
+                                   taskfiles.actor_name() or None)
+    except LookupError as exc:
+        req.reply(404, {"error": str(exc)})
+        return
+    except ValueError as exc:
+        req.reply(409, {"error": str(exc)})
+        return
+    state.record_board_event({
+        "kind": "other", "actor": "you",
+        "summary": f"orchestration: operation {result['key']} settled "
+                   f"({body.get('decision')})"})
     state.broadcast({"type": "board"})
     req.reply(200, {"result": result})
 
@@ -2042,6 +2070,8 @@ ROUTES = (
           post_orchestration_scope),
     Route("POST", "/api/orchestration/installation", "policy-mutation",
           post_orchestration_installation),
+    Route("POST", "/api/orchestration/operation", "policy-mutation",
+          post_orchestration_operation),
     Route("POST", "/api/setup/decide", "policy-mutation", post_setup),
     Route("POST", "/api/setup/task", "policy-mutation", post_setup),
     Route("POST", "/api/setup/cards/preview", "policy-mutation", post_setup_cards),

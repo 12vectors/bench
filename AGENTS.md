@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine / reasoning < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine / reasoning < scheduler < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -212,6 +212,11 @@ gitproc / records / redact < config < githost / assets / agreements < state / re
   heartbeat; and the deterministic `authorize` and public `reading`
   (`GET /api/orchestration`). Absent agreement means off; reading
   launches nothing (see "Orchestration: scopes and operating agreements")
+- `operations.py` — the durable operation ledger (task 141): one
+  versioned record per orchestrated side effect, written as an intent
+  before it and updated with the observed receipt after; which statuses
+  reserve a slot and which spent a start, so a restart, a pause or a lost
+  reply resets no budget. Imports `config` and `records` only
 - `movements.py` — who last moved a card, and whether that makes it this
   board's to orchestrate (task 138, D1): each move's provenance read back
   from the `Bench-Move` trailers `taskfiles` writes on a move's commit and
@@ -331,6 +336,13 @@ gitproc / records / redact < config < githost / assets / agreements < state / re
   identity, scope, evidence references, bounds and binding — before it
   is kept. It executes nothing a response proposes (see "Orchestrator
   reasoning: launched agents, public responses")
+- `scheduler.py` — bounded orchestration passes (task 141): observe run
+  endings, reconcile operations left without a receipt, plan by
+  dependencies, priority, fairness and declared `**Touches:**` overlap,
+  and launch through ▸ start work's own path with
+  `orchestrator.authorize` asked again before every side effect. A beat
+  that does nothing while no agreement is enabled; its reading is a read
+  (see "Scheduling: bounded passes, durable operations")
 - `watch.py` — 2s disk poller narrating moves made outside the API, and
   the gate that keeps a move a pull applied from triggering anything
 - `routes.py` — every HTTP route: its method and path, its request
@@ -5063,7 +5075,7 @@ so a route cannot skip it by forgetting to ask:
 | --- | --- | --- |
 | `read` | every GET | nothing; reading changes nothing |
 | `browser-mutation` | every person-operated POST | a JSON object body within a size cap; `Sec-Fetch-Site` same-origin or none when sent; an `Origin`, when sent, that is this board on the port it actually serves or exactly one of `BOARD_ALLOWED_ORIGINS`; `Origin: null` refused; and no run named by a request that says it is a browser's |
-| `policy-mutation` | the 32 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
+| `policy-mutation` | the 33 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
 | `run-authenticated` | `/api/progress`, `/api/verify/details` | the same door, then the run's own token |
 | `event-ingest` | `/api/events` | the same door; a run the event names is proved by that run's token (next section) |
 
@@ -5917,6 +5929,111 @@ files it was granted, and holds every refusal above. Whether the
 *installed* CLI honours the exact-read grants with a real model is the
 opt-in, billable `develop/reasoning-probe.py --approve-real-agent`,
 which nothing runs by itself.
+
+### Scheduling: bounded passes, durable operations
+
+An enabled agreement is launch-capable (D16, task 141). Every
+`BOARD_ORCHESTRATE_INTERVAL` seconds (30 by default) the designated
+installation runs one **pass** (`scheduler.py`): observe, reconcile,
+plan, execute. With no agreement, an invalid one, or a Bench scope that
+is not enabled, a pass reads the agreement and returns; a replica, or a
+board that is not designated, returns before observing anything. The
+designated installation takes its own execution lock on its first pass
+after a restart, and never another's. The first pass waits one interval,
+so starting a board never launches anything in the moment it comes up.
+
+**What is launched, and how.** Today the scheduler launches
+implementation work — the `implement` authority — and nothing else; the
+review, repair, recovery and phase-integration steps are later members
+of phase 136. A card is a candidate when it sits in To Do or In Progress
+under a scope that manages it, has no run, is not a phase card, and
+nothing in the ledger holds it. A To Do card is moved into In Progress by
+the board (an automated move, so the person's delegation stands, D1) and
+then started through **▸ start work**'s own path, `agents.start_agent`,
+with every preflight it has — plan, profile, required inputs, template
+and claim. There is no second way to cut a branch or make a worktree. A
+launch the board's own move preceded and that is then refused walks the
+card back to To Do.
+
+**Who goes first.** Within a scope: dependencies first (a card whose
+`**Depends on:**` names unfinished work waits, a card on a dependency
+cycle is blocked by name, a number not on the board is said so), then
+priority, a phase member's run order, then card number. Across scopes,
+round-robin, the scope with fewest starts today first. A phase's members
+are only ever its phase scope's; the Bench scope never schedules them,
+and a phase the agreement does not name stays the legacy runner's.
+
+**Declared overlap (D10).** An optional `**Touches:**` header lists what
+a card's work changes — `**Touches:** src/api, docs/guide.md` — compared
+by path segment (`src/api` overlaps `src/api/users.py`, not
+`src/apis`). A card whose declaration overlaps running or already chosen
+work waits (`touches-overlap`). A card that declares nothing has
+*unknown* overlap: it is not blocked, and the schedule says `overlap:
+unknown` beside it with the cards it is unknown against — never safe.
+Nothing is inferred from a brief's prose.
+
+**Capacity is reserved before the launch.** The authorization is asked
+first; then the **intent** is written durably to the operation ledger
+(`manager/local/state/orchestration/operations/<key>.json`), which
+occupies the slot and spends the start; then the side effect; then the
+**receipt**. `orchestrator.authorize` counts a recorded intent, an
+unknown outcome and a run still alive after a restart exactly as it
+counts a running agent — a person's own run included, which is counted
+and never cancelled. Daily starts and launches per card are counted from
+the ledger, so a restart, a pause and resume, or an agreement edit
+resets nothing; a phase's starts are its allocation and the Bench
+total's alike.
+
+**Re-checked immediately before every side effect.** The agreement, the
+card's last mover and holder, exclusions, hand-back and pauses (a Bench
+pause reaching every phase scope) are read again before the move and
+again before the launch, each time from disk. A person's move or
+takeover between the two wins: the launch is refused and recorded as
+such. A pause starts nothing new and observes what is already running.
+
+**An operation's key is the decision.** `op-…` is a digest of the
+action, the card, the brief's revision and the attempt, so the same
+decision taken twice — a second pass, a restart, two callers — is one
+record, and the second is answered as a duplicate. A report, a review
+or a receipt appended to the card is history, not the brief: it never
+makes the same brief a new question.
+
+**When a pass dies half-way.** The next pass reconciles every intent
+that has no receipt against what bench can observe:
+
+| found | settled as |
+| --- | --- |
+| a run on the card started after the intent | `launched`, the run is its receipt |
+| no plan recorded since the intent | `abandoned` — start work records its plan before any process starts, so nothing ran; it counts as a transient retry |
+| a plan recorded, no run tracked | `unknown` — held, the slot kept, the card not launched again |
+| a launched run whose board restarted, its process still alive | `unobserved` — it keeps its slot |
+| the same, its process gone | `ended`, outcome `unobserved` |
+
+A launch that raised something unexplained is `unknown` too. Nothing is
+retried blindly and nothing claims exactly-once from a local file: an
+unknown outcome is a person's to settle with `POST
+/api/orchestration/operation` (`{"operation", "decision": "launched" |
+"not-launched"}`), and a refused launch may be `release`d to be tried
+again on the same brief. Settling launches nothing; a handover is
+refused while any operation is unsettled.
+
+**Failures, classified (D9).** A refusal before anything happened — a
+preflight said no — is `refused` and not retried until the brief
+changes or a person releases it. A failure whose message marks it as
+transient (a process that could not start, a wait that timed out) is
+`retry`: tried again up to the scope's `transientRetries` ceiling, with
+exponential backoff from 60 seconds, and three in a row open a circuit
+breaker for ten minutes. A run that ended — finished, failed, declined,
+held — is never relaunched by a pass on the same brief.
+
+**On the card, and on the page.** Each operation's intent and receipt
+are `action` records in the card's `## Orchestration record` (see the
+section above), keyed by the operation so a replay writes once. `GET
+/api/orchestration` carries `schedule`: every candidate with its state
+(`ready`, `chosen`, `waiting`, `held`, `blocked`, `working`,
+`unmanaged`), its code and its reason, the circuit breaker, the last
+pass and the ledger's counts — read from files, with nothing reserved,
+acquired, written or launched.
 
 ## Pull requests
 
@@ -7278,6 +7395,7 @@ Every header field, and who writes it:
 | **PR base** | no | the branch this card's PR targets (defaults to **Base branch**) | you |
 | **PR** | no | the pull request url | the board when it opens one |
 | **Setup gap** | no | the setup gap a card answers (`instructions`, `fixtures`, `preview`, `ui-smoke`, `verification`) | the setup guide when it proposes the card |
+| **Touches** | no | paths or areas the work changes, comma-separated; absent is *unknown* overlap, never safe | you |
 
 **Status** is the field the board holds you to: a header that disagrees
 with the directory the file sits in is flagged `status drift`.
