@@ -541,7 +541,11 @@ def execute(task: dict, item: dict, board: dict | None = None,
                 "code": answer["code"], "reason": answer["reason"]}
     here_basis = basis(task)
     prior = operations.for_card(filename, ACTION)
-    attempt = len([o for o in prior if o.get("basis") == here_basis]) + 1
+    # The attempt counts only attempts that provably ran nothing, so the
+    # same decision taken again while its first attempt is open, launched
+    # or ended has the same key — and `begin` refuses it as a duplicate.
+    attempt = len([o for o in prior if o.get("basis") == here_basis
+                   and o["status"] in operations.NOTHING_RAN]) + 1
     key = operations.key_for(ACTION, filename, here_basis, attempt)
     try:
         op = operations.begin(key, action=ACTION, card=filename,
