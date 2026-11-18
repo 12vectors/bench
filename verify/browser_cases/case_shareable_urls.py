@@ -295,8 +295,10 @@ class ShareableUrls(unittest.TestCase):
         left = b.eval(f"""(() => {{
           const a = document.querySelector('#board article.card[data-file="{CARD}"] a.ref');
           let seen = null;
+          // after the page's own listener on the link: what it did, then
+          // cancel, so the synthetic click opens nothing
           const last = (e) => {{ seen = e.defaultPrevented; e.preventDefault(); }};
-          window.addEventListener('click', last, {{ once: true }});
+          a.addEventListener('click', last, {{ once: true }});
           a.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true, ctrlKey: true }}));
           return {{ seen, selected: !!S.selected, at: location.pathname }};
         }})()""")
@@ -351,8 +353,11 @@ class ShareableUrls(unittest.TestCase):
         b.goto("/")
         self.assertTrue(b.wait("location.pathname === '/board'", 10), "/ is not the Board's address")
         # the alias was corrected in place: Back leaves `/board` for the
-        # entry before it, not for a `/` entry left behind
-        b.eval("history.back()")
+        # entry before it, not for a `/` entry left behind. Deferred: going
+        # back to another document ends the page this script runs in
+        b.eval("(() => { setTimeout(() => history.back(), 50); return true; })()")
+        time.sleep(0.5)
+        b.wait("document.readyState === 'complete'", 10)
         self.assertTrue(b.wait("location.pathname === '/settings/setup'", 10),
                         f"the alias left an entry of its own: {self.here()}")
 

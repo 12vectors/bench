@@ -1371,6 +1371,103 @@ against their contract in **Settings → Agents**, and an override that
 breaks it refuses the launch rather than reaching the agent (see "Agents:
 harness, model and prompt per purpose").
 
+## Addresses: a link to every view and card
+
+Every place the page can show has an address (task 134). Open a card,
+switch to its Reviews, choose a session or a Settings section, and the
+address bar follows; open that address in a fresh tab, refresh it, or
+send it to a teammate on the same board, and the same destination opens
+once the board has been read.
+
+| Address | What it opens |
+| --- | --- |
+| `/board` | the Board. `/` is the same page, and the bar is corrected to `/board` |
+| `/cards/<card>` | the card's detail view, on its Overview, over the Board |
+| `/cards/<card>?tab=<section>` | one of its sections: `brief`, `inputs`, `acceptance`, `reviews`, `activity` |
+| `/phases`, `/phases/<card>` | the Phases view, and one phase's lane selected and scrolled to |
+| `/sessions`, `/sessions/<session>` | Sessions, and one session |
+| `/focus`, `/focus/<session>` | Focus, and one session |
+| `/settings`, `/settings/<section>` | Settings → Overview, or one section: `setup`, `verification` (Checks), `acceptance` (Merge rules), `agents`, `access`, `diagnostics`, `installation`, `policy` |
+| `/#setup` | kept from the terminal handoff: Settings → Setup guide, corrected to `/settings/setup` |
+
+**What names what.** A card is named by its **number** — allocated in
+creation order and kept for life — so its address survives a move to
+another stage and a title edit: `/cards/134`, with `0134` read as the
+same number. A card with no number, or whose number another card on the
+board also carries, is named by its file's stem instead (the file name
+without `.md`, say `/cards/134-add-shareable-urls`), which is also how
+either of two cards sharing a number is reached. Never its lane, its
+title or its place in a column. A phase is a card, so it is named the
+same way. A session is named by its id — the one Sessions shows the first
+eight characters of. An identifier is one path segment of letters,
+digits, `.`, `_`, `~` and `-`; anything else is not an address.
+
+**Links that behave like links.** The view switcher, the Settings
+sidebar, a session in the Sessions list, a phase's number on its lane and
+a card's number on its face and in its detail view are real links: a
+middle-click, a modifier-click or **Open in new tab** opens the
+destination in a new tab, and **Copy link address** copies it. A plain
+click is the page's, as it always was. **Copy link** buttons sit in a
+card's detail view, on each phase's lane, in a session's header in
+Sessions and in Focus, and in the head of every Settings section; each
+copies the destination's canonical address on the origin this page was
+served from — never a hostname written into the page — and says so, or
+says the browser refused the clipboard and shows the link to copy by
+hand. An address carries a path and, for a card, a section: never a
+draft, a comment, a token or a credential.
+
+**History.** Opening and closing a card, switching its sections,
+changing view and choosing a session, a phase or a Settings section each
+add one entry; Back and Forward walk them, restoring the view and the
+selection, and add none of their own. One gesture is one entry however
+many steps it takes (opening a phase card from the header chip switches
+to the Board and opens the card: one entry). An address the bar already
+shows is never written again, so a live reading of the board, a stream
+frame, a reconnect and the periodic reading neither move the address nor
+add to history. A card opened over the Phases view returns over the
+Phases view on Back; opened fresh, its background is the Board. Leaving
+the two card views closes the detail view, and everything unsent in it —
+a comment, a note — is kept as it is on any close. A Settings draft is
+kept across every history step exactly as the sidebar keeps it: the
+section you go to says there is one, and nothing is applied or discarded.
+
+**When the destination is not there, the page says so.** It does not
+pick something else and does not wait for ever:
+
+- a card the board does not list is asked of the board once (`GET
+  /api/card/locate`, a read of the task files). One on the board after
+  all opens; an **archived** card opens read-only, its text and nothing
+  else — no tools, no actions, no tabs — with how it comes back; two
+  cards sharing a number are listed, each by its own address; a number
+  or name no card has reads **No card #… on this board**;
+- a section a card does not have is said in a toast, and the card opens
+  on its Overview at its canonical address;
+- a session this board does not have — its history removed, or recorded
+  on another board — reads **not on this board** in Sessions and Focus,
+  with nothing selected in its place. An ended session whose history is
+  kept stays linkable and says **ended**;
+- a phase the board does not have, a card that is not a phase, and a
+  Settings section that does not exist each say so above or in place of
+  the content.
+
+**Opening an address only reads.** Direct entry and refresh serve the
+same page `/` does, for exactly the shapes above, with the page's own
+policy; what is shown is read through the GETs the views already make.
+No agent is launched, no check is run, no card moves, no setting is
+applied, no armed action is replayed and nothing is fetched from a
+remote. Every other path keeps its answer: an unknown path, a malformed
+identifier, a second path segment, a missing `/api/…` endpoint and an
+unlisted asset are `404`, and the Host check applies first, as it does
+to every request. A link grants nothing: whoever opens it reaches the
+board only if they could already reach the board.
+
+**Limits.** Addresses name destinations, not moments: a menu, a sheet, a
+fold, a scroll position and a half-typed field are not part of one. An
+address is about the board that served it; another board resolves the
+same number against its own cards. The Board, Phases, Sessions and Focus
+with nothing chosen have no **Copy link** button of their own — their
+links in the view switcher are copied the browser's way.
+
 ## Agents working the board
 
 Card actions appear on hover, taking over the status pill's slot (never

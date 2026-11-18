@@ -184,6 +184,17 @@
       "to": "## Pull requests"
     },
     {
+      "path": "/concepts/addresses/",
+      "title": "Links to views and cards",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "Every card, card section, phase, session and Settings section has an address: open it in a new tab, refresh it, share it, and Back and Forward walk them.",
+      "lede": "The board's address bar follows what you are looking at. Which addresses there are, what names a card or a session in one, how history behaves, and what the page says when a destination is archived or not there — opening an address only ever reads.",
+      "source": "AGENTS.md",
+      "from": "## Addresses: a link to every view and card",
+      "to": "## Agents working the board"
+    },
+    {
       "path": "/concepts/pull-requests/",
       "title": "PRs and review",
       "layout": "article",
