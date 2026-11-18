@@ -2346,6 +2346,14 @@ shows another revision*, *the criterion it is about was reworded*, or
 *expired / withheld / not on this board*. A new commit or a reworded
 criterion never inherits a current claim.
 
+The current commit is the tip of the card's branch while it exists. Once
+merge & clean up has deleted the branch, it is the commit this board
+recorded delivering, so a delivered card's outputs and checks keep their
+reading; a branch that exists again (the work reopened) is the newer
+question. An output whose program wrote no `manifest.json` entry for it
+says so beside it: what it shows, its data and whether it is of this
+checkout or an already running service are not stated.
+
 A demonstration, a check result and an acceptance are three records.
 Output never accepts a criterion, never turns a failed check into a pass
 and never completes a card; the section shows acceptance counts beside it
