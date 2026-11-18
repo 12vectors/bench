@@ -79,7 +79,7 @@ LAUNCHES = {"reason": "reasoning", "recover": "reasoning",
             "implement": "implementation", "repair": "implementation",
             "review": "review"}
 # Which pool a running agent occupies, by the mode its record carries.
-MODE_POOL = {"review": "review", "refine": "reasoning"}
+MODE_POOL = {"review": "review", "refine": "reasoning", "reason": "reasoning"}
 # The stages an orchestrator acts in. Backlog is the owner's space and
 # Done is delivered: neither is ever pulled back silently.
 MANAGED_STAGES = ("to-do", "in-progress", "review")

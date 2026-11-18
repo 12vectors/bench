@@ -1106,8 +1106,9 @@ def _conformance_rows(adapter: dict, seam: dict, intent: str,
                     "its vendor's own tool names."
                     if not described.get("readOnly") else None)))
 
-    # — a refinement: reads and proposes, and nothing else at all —
-    if intent == "refine":
+    # — a refinement, or an orchestrator reasoning run (task 139): reads and
+    # proposes, and nothing else at all —
+    if intent in profiles.PROPOSAL_INTENTS:
         # An exact read grant of an approved file is not a command.
         reading = {str(r.get("rule")) for r in described.get("reads") or []}
         allowed = [str(r) for r in (described.get("allow") or [])
@@ -1117,7 +1118,7 @@ def _conformance_rows(adapter: dict, seam: dict, intent: str,
             "failed" if allowed else "passed",
             "whether a card refinement was given any rule that lets it run "
             "a command",
-            (f"'refine' may run {', '.join(allowed[:4])}"
+            (f"'{intent}' may run {', '.join(allowed[:4])}"
              + (" …" if len(allowed) > 4 else "") if allowed else
              "the generated document allows nothing — no git, no gh, no "
              "project command and no bench-verify"),
@@ -1766,7 +1767,8 @@ def coverage(findings: list[dict], asked: list[str]) -> list[dict]:
 # reads "Configuration valid" and never "passed" in the sense of "runs".
 
 PURPOSES = {"work": "Implementation", "act-pr": "PR fixes",
-            "review": "Reviews", "refine": "Card refinement"}
+            "review": "Reviews", "refine": "Card refinement",
+            "reason": "Orchestrator reasoning"}
 
 STATE_WORDS = {
     "valid": "Configuration valid",

@@ -21,6 +21,7 @@ task files, but the tasks work as a plain folder kanban without it. See
     agents.py     headless work/review agents: launch, reap, stop, diff
     phases.py     a phase run: its own branch, its members merged into it
     refine.py     card comments, refinement jobs, Apply and Discard
+    reasoning.py  orchestrator reasoning jobs: pinned context, one public response
     watch.py      2s disk poller narrating moves made outside the API
     httpd.py      HTTP routes, SSE stream, the page itself
     .prompts/     agent prompt templates (read fresh on every launch)
@@ -80,6 +81,7 @@ import previews
 import profiles  # noqa: F401
 import progress
 import readiness  # noqa: F401
+import reasoning
 import records  # noqa: F401
 import redact  # noqa: F401
 import refine
@@ -249,6 +251,10 @@ def main() -> None:
     # process. It is closed as failed, naming the restart, and never re-run
     # — a proposal waiting for Apply or Discard survives as it was.
     refine.recover()
+    # An orchestrator reasoning run a dead board left in flight lost its
+    # response with the process: closed as failed, naming the restart, and
+    # never re-run by itself (task 139).
+    reasoning.recover()
     # Agent-reported progress survives the restart as history. A run this
     # board was tracking is closed `unobserved` — its ending will not be
     # seen, so its last update must stop reading as "doing now".

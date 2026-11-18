@@ -65,7 +65,7 @@ L23 agents previews readiness
 L24 setuptasks
 L25 setupguide
 L26 phases
-L27 refine
+L27 refine reasoning
 L28 routes watch
 L29 httpd
 L30 board
@@ -178,8 +178,15 @@ that `GET /api/orchestration` serves. `movements` (L5, `config`,
 move: it reads back the `Bench-Move` trailers and the uncommitted-move
 journal `taskfiles` writes, and `orchestrator` asks it for both the
 launch path and the reading. None of them launches anything;
-the scheduler, ledger and reasoning contract are later members of the
-phase and ask `orchestrator`.
+the scheduler and ledger are later members of the phase and ask
+`orchestrator`. `reasoning` (L27, beside `refine`, task 139) is the
+reasoning contract: a bounded `reason`-intent coding-agent job through
+`agents.launch`, its context (the card, its phase, its dependencies and a
+facts document from bench's public readings) pinned by `profiles.pin`
+and granted by exact reads, and the one public, versioned response bench
+validates against the binding it launched with. It asks
+`orchestrator.authorize` before an orchestrator's launch and records it
+in the launch ledger; it executes nothing a response proposes.
 
 `profiles.read_scope` (task 127) is a request-scoped memo, not a layer:
 a `ContextVar` that `routes.state_payload` sets for the length of one
@@ -322,7 +329,7 @@ L22 agents readiness previews
 L23 setuptasks
 L24 setupguide
 L25 phases
-L26 refine
+L26 refine reasoning
 L27 watch routes
 L28 httpd
 L29 board
@@ -363,7 +370,7 @@ One owner per question; `AGENTS.md` describes each module in full.
 | stack maintenance | `stackactions` | the three confirmed stack actions — retarget, update from parent, clean up after proven delivery — each bound to the identities its sheet showed |
 | setup base | `setupbase`, `appinspect` | the setup decisions record, its journal, request identity and revision guards, and the agent area; the read-only inspection of the application's files |
 | surfaces | `agentsettings`, `settings`, `setupguide`, `setuptasks`, `readiness`, `previews` | configuration pages and the setup guide's areas (`setupguide` composes the other three) |
-| runs | `agents`, `phases`, `refine` | headless launches; the phase beat; refinement jobs |
+| runs | `agents`, `phases`, `refine`, `reasoning` | headless launches; the phase beat; refinement jobs; orchestrator reasoning jobs and their validated responses |
 | composition | `watch`, `routes`, `httpd`, `board` | the disk poller; every route with its request class and handler; the socket, the class doors and the body checks; startup wiring |
 
 Standalone programs — `adapters/*/` and the `bench-verify` and
@@ -400,6 +407,7 @@ neither.
 | progress records | `progress` | `progress._LOCK` | no |
 | required-check batches, review-entry record | `required` | `required._LOCK`, `_ON_REVIEW_LOCK` | no |
 | refinement jobs | `refine` | the refine registry | no |
+| orchestrator reasoning jobs, facts documents, retained responses (task 139) | `reasoning` | `reasoning.LOCK` | no |
 | drive record, scrubbed drive log | `drive` | the one drive | no |
 | preview configuration and records, scrubbed logs | `previews` | `previews.LOCK` | no |
 | session identity | `state` | per session | no |
@@ -613,5 +621,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 181
-routes 123
+routes 124
 ```

@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine / reasoning < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -316,6 +316,13 @@ gitproc / records / redact < config < githost / assets / agreements < state / re
   refinement job a person asks for, its validated proposal, and the
   explicit Apply or Discard. The brief and the decisions live in the
   card; this holds only machine-local job state
+- `reasoning.py` — orchestrator reasoning (task 139, D2): one bounded
+  `reason`-intent coding-agent job per need and input binding, its
+  context (card, phase, dependencies, bench's facts) pinned and granted
+  by exact reads, and its one public, versioned response validated —
+  identity, scope, evidence references, bounds and binding — before it
+  is kept. It executes nothing a response proposes (see "Orchestrator
+  reasoning: launched agents, public responses")
 - `watch.py` — 2s disk poller narrating moves made outside the API, and
   the gate that keeps a move a pull applied from triggering anything
 - `routes.py` — every HTTP route: its method and path, its request

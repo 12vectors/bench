@@ -812,6 +812,9 @@ ROUTES: dict[str, str] = {
     "GET /api/settings/history": "read",
     # the orchestrator's effective state (task 137): a read that stays one
     "GET /api/orchestration": "read",
+    # reasoning jobs and their validated responses (task 139): a read
+    # that launches no reasoning run
+    "GET /api/orchestration/reasoning": "read",
     "GET /api/setup": "read",
     "GET /api/setup/verification": "read",
     "GET /api/state": "read",

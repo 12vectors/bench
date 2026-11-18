@@ -50,6 +50,7 @@ import profiles
 import progress
 import readiness
 import previews
+import reasoning
 import refine
 import required
 import results
@@ -1320,6 +1321,20 @@ def get_orchestration(req) -> None:
     req.reply(200, {"orchestration": orchestrator.reading()})
 
 
+def get_orchestration_reasoning(req) -> None:
+    # Orchestrator reasoning jobs (task 139): status, usage, the validated
+    # public response or its diagnostics, and provenance — for one card, or
+    # the newest per card. A read: it launches no reasoning run, however
+    # often it is asked; only a concrete need does (`reasoning.request`).
+    name = _q(req, "file")
+    if name:
+        req.reply(200, {"reasoning": reasoning.for_card(name),
+                        "readiness": reasoning.readiness()})
+    else:
+        req.reply(200, {"reasoning": reasoning.board(),
+                        "readiness": reasoning.readiness()})
+
+
 def _orchestration_refused(req, exc) -> None:
     extra = dict(exc.extra)
     if isinstance(exc, execowner.Refused):
@@ -1903,6 +1918,7 @@ ROUTES = (
     Route("GET", "/api/doctor", "read", get_doctor),
     Route("GET", "/api/settings", "read", get_settings),
     Route("GET", "/api/orchestration", "read", get_orchestration),
+    Route("GET", "/api/orchestration/reasoning", "read", get_orchestration_reasoning),
     Route("GET", "/api/setup", "read", get_setup),
     Route("GET", "/api/setup/verification", "read", get_setup_verification),
     Route("GET", "/api/preview", "read", get_preview),

@@ -482,6 +482,9 @@ CATALOGUE = (
     ("BOARD_AGENT_MODEL_REFINE", "agents", "next-launch",
      "the model a card refinement rides, when it should differ from the "
      "general one"),
+    ("BOARD_AGENT_MODEL_REASON", "agents", "next-launch",
+     "the model an orchestrator reasoning run rides; empty follows the "
+     "review model on the same harness, else the general one"),
     ("BOARD_AGENT_COMMANDS", "access", "restart",
      "the legacy command prefixes a work or act-pr run may launch, used "
      "only where the execution policy configures nothing for that intent"),

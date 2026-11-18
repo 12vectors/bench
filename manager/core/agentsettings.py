@@ -209,6 +209,16 @@ def rows(values: dict | None = None) -> dict:
                 "BOARD_AGENT_MODEL_REFINE in manager/local/.env"),
         "effective": {"selection": profiles.agent_selection(refine)},
     }
+    # orchestrator reasoning (task 139): read-only here, shown with its
+    # effective model and, when its harness cannot launch it, the refusal
+    out["reason"] = {
+        "label": "Orchestrator reasoning",
+        "readOnly": True,
+        "why": ("reasoning rides the default harness; its model is "
+                "BOARD_AGENT_MODEL_REASON in manager/local/.env, else the "
+                "review model on the same harness, else the default"),
+        "effective": _intent_reading("reason", file_values),
+    }
     return out
 
 

@@ -144,17 +144,39 @@ RUNNER_VERSION = 1
 # runs only through an adapter that says it can launch it that way — see
 # REFINE_REQUIRES. An adapter that has never heard of it is refused rather
 # than handed AGENT_MODE=refine and left to guess a stance.
-INTENTS = ("work", "act-pr", "review", "refine")
+#
+# `reason` (task 139) is the orchestrator's reasoning intent (D2): a
+# bounded coding-agent job that reads the card, its phase, its
+# dependencies, the operating agreement and bench's own public facts —
+# all delivered as pinned read-only copies — and answers with one public,
+# versioned response on stdout that bench validates (`reasoning.py`). It
+# is exactly as narrow as `refine` — no worktree, no command, no shell, no
+# edit tool — and one thing narrower: it needs its context *delivered*,
+# so it runs only through an adapter that grants a pinned file by an exact
+# read (`inputs.delivery: exact-read`). An adapter that cannot is refused
+# by name rather than launched with context it may not be able to read.
+INTENTS = ("work", "act-pr", "review", "refine", "reason")
 
 # The intents with no worktree of their own: they read, and a card's
 # checkout is not made for them.
-READ_ONLY_INTENTS = ("review", "refine")
+READ_ONLY_INTENTS = ("review", "refine", "reason")
 
 # What an adapter must declare, as `enforced`, before a refinement may be
 # launched through it. Both are the vendor's own tool roster, which is the
 # only place "cannot write" and "cannot run a command" are real rather
 # than a sentence in a prompt.
 REFINE_REQUIRES = ("read-only-tools", "shell-withheld")
+
+# The proposal-only intents: they read and propose on stdout, and bench
+# owns every write. Each is launched only where the adapter enforces
+# REFINE_REQUIRES, never with a command, a check or a preparation step.
+PROPOSAL_INTENTS = ("refine", "reason")
+
+# What reasoning additionally needs: its context delivered as pinned
+# copies granted by one exact read each. "The operator can read the file"
+# is not "the launched agent can" (D2), so a harness declaring no such
+# route refuses the intent rather than reasoning without its inputs.
+REASON_DELIVERY = "exact-read"
 
 # ── identity types ─────────────────────────────────────────────────────
 #
@@ -658,9 +680,9 @@ DIAGNOSTICS = {
         "it might run with a wider stance, such as implementation's."),
     "intent-restricted": (
         "a profile gives an intent something that intent never has",
-        "Remove it. A refinement reads and proposes; it runs no command, asks "
-        "for no check and writes nothing — bench validates its proposal and "
-        "owns the write."),
+        "Remove it. A refinement or an orchestrator reasoning run reads and "
+        "proposes; it runs no command, asks for no check and writes nothing — "
+        "bench validates what it proposes and owns every write."),
     "gate-review-unknown": (
         "a gate asks for a review policy bench has no word for",
         "Use one of the review policy words. `none` gates nothing, `bench` "
@@ -787,6 +809,12 @@ def adapter_identity(name: str | None = None) -> dict:
                             for k, v in (data.get("unsupported") or {}).items()}
     if isinstance(data.get("intents"), list):
         found["intents"] = [str(i) for i in data["intents"]]
+    # intents the adapter declares it deliberately cannot launch, each with
+    # its own reason — so a refusal says why, not only "not listed"
+    refused = data.get("refusedIntents")
+    if isinstance(refused, dict):
+        found["refusedIntents"] = {str(k): str(v)[:600]
+                                   for k, v in refused.items()}
     # what this harness needs before it can run anything — the adapter's
     # own words, shown beside its selection in Settings → Agents
     if isinstance(data.get("setup"), str):
@@ -2289,6 +2317,16 @@ BASELINE = {
         "why": ("read the card and the code, and propose a new brief; bench "
                 "validates the proposal and a person applies or discards it"),
     },
+    "reason": {
+        "cwd": "app",
+        "writable": [],
+        "publication": {"commit": False, "push": False, "publish": False},
+        "deny": ["edit", "shell", "commit", "push", "publish", "force-push",
+                 "rebase", "reshape-lifecycle"],
+        "why": ("read the pinned card, phase, dependency, agreement and fact "
+                "inputs and answer with one public response; bench validates "
+                "it, and nothing it proposes is executed or granted by it"),
+    },
 }
 
 # What each denied word means, so a refusal and a UI row read alike and an
@@ -2470,7 +2508,9 @@ def _resolve_now(intent: str, *, worktree: Path | str | None = None,
     # adapter lists it, and a refinement additionally needs the two
     # restrictions that make it read-only to be the vendor's, not a
     # sentence: no edit tool, no shell.
-    restricted = intent == "refine"
+    restricted = intent in PROPOSAL_INTENTS
+    label = {"refine": "a refinement",
+             "reason": "an orchestrator reasoning run"}.get(intent)
     if not adapter.get("path"):
         # Before anything else about the adapter: a harness that is not
         # installed refuses here, in the reading every launch takes before
@@ -2488,26 +2528,42 @@ def _resolve_now(intent: str, *, worktree: Path | str | None = None,
                      f"the {adapter['name']} adapter does not list '{intent}' "
                      f"among the intents it can launch, so the launch is "
                      f"refused rather than handed to it to run under whatever "
-                     f"stance it defaults to")
+                     f"stance it defaults to"
+                     + (f". The adapter says: "
+                        f"{adapter['refusedIntents'][intent]}"
+                        if intent in (adapter.get("refusedIntents") or {})
+                        else ""))
     elif restricted:
         for need in REFINE_REQUIRES:
             if (table.get(need) or {}).get("enforcement") != "enforced":
                 blockers.add("intent-unsupported",
-                             f"a refinement needs '{need}' enforced by the "
+                             f"{label} needs '{need}' enforced by the "
                              f"adapter, and the {adapter['name']} adapter does "
                              f"not declare it — refused rather than run with a "
                              f"restriction that exists only in the prompt")
+        delivery = (adapter.get("inputs") or {}).get("delivery") or "none"
+        if intent == "reason" and delivery != REASON_DELIVERY:
+            why = (adapter.get("inputs") or {}).get("why")
+            blockers.add("intent-unsupported",
+                         f"orchestrator reasoning is grounded in pinned "
+                         f"context the launched agent must be able to read, "
+                         f"and the {adapter['name']} adapter declares no "
+                         f"exact-read delivery route ({delivery}"
+                         + (f": {why}" if why else "") + ") — refused rather "
+                         f"than reasoning over inputs only the operator can "
+                         f"read. Choose a harness whose capabilities.json "
+                         f"declares inputs.delivery = {REASON_DELIVERY}")
     if restricted and isinstance(declared, dict):
         for key in ("commands", "verify", "prepare"):
             if declared.get(key):
                 blockers.add("intent-restricted",
-                             f"'refine' declares \"{key}\", and a refinement "
+                             f"'{intent}' declares \"{key}\", and {label} "
                              f"runs no command and asks for no check — it reads, "
                              f"proposes, and bench writes")
     if restricted and doc["kind"] == "file" and (doc.get("commands")
                                                  or doc.get("verify")):
-        notes.append("the document's shared commands and checks do not apply "
-                     "to 'refine': it is never granted a command")
+        notes.append(f"the document's shared commands and checks do not apply "
+                     f"to '{intent}': it is never granted a command")
 
     # — command grants —
     grants: list[dict] = []
@@ -2758,7 +2814,8 @@ def _resolve_now(intent: str, *, worktree: Path | str | None = None,
             # than shown as a denial nothing carries out.
             blockers.add("deny-unknown",
                          f"'{intent}' denies 'shell', which the adapters "
-                         f"only withhold for a refinement — a work, act-pr "
+                         f"only withhold for a refinement or a reasoning "
+                         f"run — a work, act-pr "
                          f"or review run cannot be launched without one here")
             continue
         if word not in deny_words:

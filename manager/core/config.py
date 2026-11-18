@@ -61,6 +61,7 @@ REVIEWS_DIR = STATE / "reviews"                    # run-owned pinned PR-review 
 DOCTOR_DIR = STATE / "doctor"                      # fixtures a diagnosis makes and removes
 GATES_DIR = STATE / "gates"                        # Bench review verdicts and gate overrides
 REFINE_DIR = STATE / "refine"                      # card-refinement jobs and their proposals
+REASONING_DIR = STATE / "reasoning"                # orchestrator reasoning jobs, facts and responses
 # Agent-reported progress, one record per run. None = beside the agent
 # logs (`AGENT_DIR / "progress"`), so whatever relocates a run's log
 # relocates what it reported with it — see `progress._dir`.
@@ -454,6 +455,11 @@ AGENT_MODELS = {
     "review": setting("BOARD_AGENT_MODEL_REVIEW", ""),
     # a card refinement (task 65): reads and proposes a brief, nothing else
     "refine": setting("BOARD_AGENT_MODEL_REFINE", ""),
+    # orchestrator reasoning (task 139): reads pinned context and answers
+    # with one public response. Unset, it follows the review model (D2:
+    # reasoning and review ride the same configured model) where both run
+    # through the same harness, else the default
+    "reason": setting("BOARD_AGENT_MODEL_REASON", ""),
 }
 
 
@@ -492,13 +498,13 @@ def agent_model(mode: str) -> str:
 # of its own) but does have a model setting, as it did before.
 AGENT_PURPOSES = ("work", "act-pr", "review")
 PURPOSE_SUFFIX = {"work": "_WORK", "act-pr": "_ACT_PR", "review": "_REVIEW",
-                  "refine": "_REFINE"}
+                  "refine": "_REFINE", "reason": "_REASON"}
 HARNESS_KEY = "BOARD_AGENT_ADAPTER"
 MODEL_KEY = "BOARD_AGENT_MODEL"
 HARNESS_KEYS = (HARNESS_KEY,) + tuple(HARNESS_KEY + PURPOSE_SUFFIX[p]
                                       for p in AGENT_PURPOSES)
 MODEL_KEYS = (MODEL_KEY,) + tuple(MODEL_KEY + PURPOSE_SUFFIX[p]
-                                  for p in (*AGENT_PURPOSES, "refine"))
+                                  for p in (*AGENT_PURPOSES, "refine", "reason"))
 AGENT_KEYS = HARNESS_KEYS + MODEL_KEYS
 DEFAULT_HARNESS = "claude"
 
@@ -590,6 +596,15 @@ def agent_choice(intent: str, file_values: dict[str, str] | None = None) -> dict
         own = agent_setting(MODEL_KEY + suffix, values)
         if own["value"]:
             model = dict(own, inherited=False, setting=own["key"])
+        elif intent == "reason":
+            # D2: reasoning follows the review model unless it has its own.
+            # Only across one harness: a model name is the vendor's own
+            # vocabulary, so another harness's review model is not passed.
+            review = agent_choice("review", values)
+            if (review["model"]["setting"] != MODEL_KEY
+                    and review["harness"]["value"] == harness["value"]):
+                model = dict(review["model"], inherited=True)
+                model.pop("harnessDefault", None)
     model["harnessDefault"] = not model["value"]
     return {"intent": intent, "harness": harness, "model": model}
 
