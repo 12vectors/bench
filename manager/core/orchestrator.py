@@ -47,6 +47,7 @@ import agreements
 import execowner
 import gatepolicy
 import gates
+import movements
 import records
 import state
 import taskfiles
@@ -265,6 +266,14 @@ def authorize(action: str, filename: str, *, board: dict | None = None,
         return _refuse("stage-not-managed", f"{task['stage']}/ is not an "
                        f"orchestrated stage; Backlog is the owner's and Done is "
                        f"delivered", **base)
+    # D1: the card is this board's only when its latest stage move by a
+    # person was this board's identity (task 138) — the one resolver the
+    # page reads too, so the two cannot disagree
+    eligible = movements.eligibility(task, tasks)
+    if not eligible["eligible"]:
+        return _refuse("not-eligible", f"card {number} is not this board's to "
+                       f"orchestrate: {eligible['reason']}",
+                       eligibility=eligible, **base)
     designation = execowner.reading()
     if designation["adoptionRequired"] and task["stage"] in WORKING_STAGES \
             and number not in designation["adoptedCards"]:
@@ -305,9 +314,10 @@ def authorize(action: str, filename: str, *, board: dict | None = None,
                  "overridden": "you overrode unmet requirements; not a pass",
                  }[word_]
         provenance.append(f"merge rules ({gate_scope}): {word_}")
+    provenance.append(f"eligibility: {eligible['code']} ({eligible['via']})")
     return {"allowed": True, "code": "authorized",
             "reason": f"{word} is delegated to the {sid} scope", "label": label,
-            "provenance": provenance, **base}
+            "provenance": provenance, "eligibility": eligible, **base}
 
 
 def _capacity(action: str, here: dict, reading: dict, tasks: list[dict],
@@ -397,7 +407,9 @@ def reading(board: dict | None = None) -> dict:
         if task["stage"] in MANAGED_STAGES:
             managed.append({"card": task["file"], "number": _number(task),
                             "stage": task["stage"], "scope": sid,
-                            "why": why})
+                            "why": why,
+                            # the same answer authorize() reads (task 138)
+                            "eligibility": movements.eligibility(task, tasks)})
     return {
         "kind": KIND, "v": VERSION, "status": status,
         "effective": {"configured": effective["configured"],
@@ -425,6 +437,8 @@ def reading(board: dict | None = None) -> dict:
                    "The agreement authorizes new actions only, and is read "
                    "again before each one."),
         "notes": _notes(effective),
+        "identity": {**movements.identity(),
+                     "attribution": movements.NOT_AUTHENTICATION},
     }
 
 

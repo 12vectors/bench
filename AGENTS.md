@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
