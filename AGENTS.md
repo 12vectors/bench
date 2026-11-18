@@ -147,6 +147,12 @@ gitproc / records / redact < config < githost / assets < state / reports / templ
   back, the reuse records, the outcome vocabulary every reader branches
   on, and the evidence epoch a memo keys on (`epoch()`); a log is
   scrubbed by `redact`'s table (task 121)
+- `artifacts.py` — retained demonstration outputs (task 133): what a
+  check declaring `"outputs": true` wrote to `$BENCH_VERIFY_OUTPUTS`,
+  kept per card under `state/artifacts/` with the run that made it,
+  classified by its own bytes, bounded, withheld or expired with its
+  record kept, and served only through the board (see "Show the result:
+  demonstrations, not proof")
 - `resultidentity.py` — what a verdict is about: every dimension of a
   result identity (source, check, coverage, programs, preparation,
   inputs, root class, environment) and the one owner of the runner
@@ -233,6 +239,12 @@ gitproc / records / redact < config < githost / assets < state / reports / templ
   commit. It owns no policy and no enforcement, and a read of it fetches,
   launches and writes nothing (see "Delivery status: one answer per
   card")
+- `results.py` — a card's **Show the result** (task 133): the `## Show
+  the result` request in its brief (Off, Requested, Required for
+  handoff), its kept outputs read against the current commit, the checks
+  bench ran, acceptance counts and what is known of merged, installed and
+  deployed; the prompt paragraph a run is given, and the one hold — an
+  agreed Required whose output is missing, at the move into review
 - `agentsettings.py` — Settings → Agents: the harness and model each
   purpose rides and the local prompt overrides, read from the one
   launch-time resolver and written only as the agent keys of
@@ -2193,6 +2205,193 @@ which public hosts may be retrieved from (`BOARD_INPUT_FETCH_HOSTS`, empty
 by default) and which checks, commands and harness a run gets (Settings).
 Bench discovers, checks, delivers and records; it does not decide that a
 card's list is complete.
+
+## Show the result: demonstrations, not proof
+
+A passing log says a program exited zero, and a card in `done/` says the
+work moved. Neither lets a person *see* what changed. The card Overview's
+**Show the result** section does (task 133): a short outcome, a few
+captioned screenshots or other outputs, which requirement and scenario
+each is about, the checks bench actually ran, and where the change is —
+on a branch, merged, installed, deployed. Input readiness (the section
+above) is what a run needs before it starts; this is what it leaves
+behind. The two are separate capabilities.
+
+### An example, end to end
+
+A card fixes the Settings screen overflowing at 390px. Someone opens its
+Overview, **Edit Show the result**, chooses **Required for handoff**,
+clicks **Before/after** and writes *Before/after screenshots of the
+narrow Settings screen*, ticks **This is the agreed output** and saves.
+That writes four lines into the brief:
+
+```markdown
+## Show the result
+
+- mode: required
+- want: Before/after screenshots of the narrow Settings screen
+- expects: before-after
+- agreed: 1a2b3c4d5e6f
+```
+
+The team already has a browser suite; the operator registers it as a
+check with `"outputs": true`. The work run is told about the request,
+commits, and asks bench for that check. The suite writes `before.png`,
+`after.png` and a `manifest.json` into `$BENCH_VERIFY_OUTPUTS`; bench keeps
+them. The Overview shows the pair side by side at the same viewport,
+captioned, naming the revision each shows, linked to the check run that
+made them, with *on a branch, not merged; installed and deployed unknown*.
+Had the run ended without them, the card would have stayed in
+in-progress with the exact remedy, and a person's drag into review would
+have been refused with the same sentence.
+
+### Three modes, and only one holds anything
+
+| mode | extra work | what is missing means |
+| --- | --- | --- |
+| **Off** (the default; no section reads as Off) | none | nothing — outputs a check kept anyway are still shown |
+| **Requested** | the run is asked to capture something useful through an approved check, and to say what it could not | nothing is held; the status reads *Requested* until output exists |
+| **Required for handoff** | the agreed output must exist for the current commit | the move into `review/` is refused — a person's move and a work run's own — with the remedy |
+
+**Required needs agreement first.** An empty or subjective request
+(*something convincing*) is not enforced: the status reads *Required —
+agree what to show*, and saving with **This is the agreed output** is
+refused until the description names a screen, a scenario or an output.
+The `agreed` line is a hash of the description and its kind, so editing
+either by hand withdraws the agreement. **What is checked is the kind and
+the commit**: an image for Screenshots, text, structured data or a file
+for Example output, a before and an after with the same pair name and
+viewport for Before/after — current output of that kind from a passing
+bench-run check at the card's head commit. Whether it shows what was
+agreed is the reviewer's judgement, not bench's.
+
+**Nothing else changes.** Required is not a merge gate, not a definition
+of done and not a sign-off: it holds one move. Requested and Off never
+acquire blocking semantics. Selecting Required grants the run no capture
+capability and no broader execution. A card with no section, and every
+card that existed before, is Off; `BOARD_RESULT_DEFAULT_UI=requested` is a
+project's opt-in that makes the user-interface setup cards the board
+itself writes start as Requested — never Required, and never applied to
+an existing card. On a card that reads as visual, the Overview offers
+*Would screenshots help you review this change?* — **Request screenshots**
+opens the editor and saves nothing; **Not now** is remembered on this
+board and writes nothing into the card.
+
+**A run keeps what it launched with.** The request is frozen in the run's
+manifest (`demonstration`) and told to it in one paragraph of its prompt;
+an edit afterwards reaches the next run. Changing the setting while an
+agent works says so. On a `done/` card, **Request a demonstration** first
+shows what existing output could be reused and what new capture would
+need — the branch checked out again and a check run against it — and
+saving it neither reopens the card nor launches anything.
+
+### Who provides what
+
+Your team provides the demonstration programs — a browser suite that
+takes screenshots, an API check that keeps its request and response, an
+export check that keeps the file it generated. An agent can help write
+them; its sentence that something works is not output. The operator
+registers a program as a named check with `"outputs": true` (Settings →
+Checks), which is the approval: only such a check is handed
+`$BENCH_VERIFY_OUTPUTS`, and declaring it changes no check identity and
+stales no pass. With no such check, the Overview says capture is
+unsupported and how to get it; nothing is invented. Bench runs the check,
+keeps its outputs, binds them to the run and presents them.
+
+Suitable output by task type: a UI change — screenshots, before and after
+at the same viewport for a comparative claim; an API change — the
+sanitized request and response the check asserted on; a bug fix — the
+reproduction before and after; a performance change — comparable
+measurements with their conditions; an export — the generated file. An
+internal refactor needs no picture: leave it Off, and the Overview's
+*What ran* list and the work report are the behaviour-preservation
+summary.
+
+### What a program writes
+
+Files go in `$BENCH_VERIFY_OUTPUTS`, two directory levels at most. An
+optional `manifest.json` beside them describes each:
+
+```json
+{"v": 1, "summary": "Settings no longer overflows at 390px",
+ "outputs": [{"file": "after.png", "caption": "Settings at 390px",
+              "scenario": "narrow settings", "viewport": "390x844",
+              "criterion": "narrow", "role": "after", "pair": "settings",
+              "data": "fixture", "target": "candidate"}]}
+```
+
+`role` is `before`, `after` or `single`; `data` is `fixture`, `mock`,
+`synthetic`, `local`, `staging`, `production` or `unknown`; `target` is
+`candidate` (the program started this checkout) or `running-service`;
+`revision` names the commit a picture shows when it is not the one the
+check ran on (a before); `partial: true` says the capture is incomplete.
+
+### How far each output can be trusted
+
+Every output records its id, hash, kind, size, the run and check that
+produced it, the card, the commit and whether the source had uncommitted
+work, the capture time, and the manifest's description. Two strengths are
+kept apart: what **bench recorded** — the run, its outcome and the source
+it was bound to — and what **the program said** — the scenario, the
+viewport, the data, and which build the picture shows. Bench does not
+watch an application start, so that binding is always shown as the
+program's account.
+
+Only an output from a passing run at the current commit, on clean source,
+complete, from non-mock data and of the candidate reads **Current**. Every
+other reads what it is: *from an earlier commit*, *from a check that did
+not pass*, *partial*, *captured with uncommitted work*, *mocked or
+synthetic data*, *of an already running service*, *the program says it
+shows another revision*, *the criterion it is about was reworded*, or
+*expired / withheld / not on this board*. A new commit or a reworded
+criterion never inherits a current claim.
+
+A demonstration, a check result and an acceptance are three records.
+Output never accepts a criterion, never turns a failed check into a pass
+and never completes a card; the section shows acceptance counts beside it
+and links to the Acceptance tab, and says *installed* and *deployed* are
+unknown — a merge is not a deployment.
+
+### Where outputs live, and for how long
+
+Under `manager/local/state/artifacts/<card>/`, one record and one bytes
+file per output: run-owned, machine-local, outliving the run's temporary
+directory, a restart and the card's worktree, and never committed into
+ticket history. They are served only through the board
+(`/api/artifact`), so another device that can reach the board can open
+them; a path in a log is not a deliverable. Another board that only syncs
+the card shows the request and no outputs, rather than claiming bytes it
+does not have.
+
+Limits, each in `manager/local/.env`: `BOARD_ARTIFACT_MAX_BYTES` per file
+(8 MiB), `BOARD_ARTIFACT_RUN_FILES` per run (24),
+`BOARD_ARTIFACT_CARD_BYTES` per card (64 MiB; the oldest bytes expire
+first) and `BOARD_ARTIFACT_RETENTION_DAYS` (90). Expiry removes the bytes
+and keeps the record, marked expired with the reason. **Withhold** (in an
+output's Provenance fold) removes a sensitive output's bytes and
+description and keeps the fact that it existed, with who and why.
+
+### Safe capture and safe viewing
+
+Capture only through an approved check, in its execution root, with
+fixture data: no production mutation, real email, payment, credential or
+public upload is authorised by a demonstration, and an unavailable
+browser, application or fixture is a prerequisite to report, not a
+reason to broaden access. Files are classified by their bytes — PNG,
+JPEG, GIF and WebP are images; UTF-8 text and JSON are shown as plain
+text, scrubbed of anything credential-shaped; everything else downloads
+as `application/octet-stream`. HTML, SVG, XML and scripts are downloads
+only, executables, links, files outside the directory, oversized files
+and credential-shaped names are refused and the refusal recorded. Every
+reply is `nosniff` and sandboxed. Scrubbing text does not sanitize pixels:
+an image is kept as made, and the Overview says nothing inspected it.
+
+**Opening the result runs nothing.** The Overview, `GET /api/card/result`
+and `GET /api/artifact` read files; no capture, check, checkout or agent
+starts. The writes are `POST /api/card/result/setting` (bound to the
+brief shown), `/dismiss`, `/preview` (reads, says what a request would
+need) and `POST /api/artifact/withhold`, all behind the browser-mutation
+door.
 
 ## From evidence to merge: the whole journey
 
