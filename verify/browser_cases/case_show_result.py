@@ -174,7 +174,8 @@ class ShowTheResult(unittest.TestCase):
             "(() => { try { return {ok: true, v: (" + expression + ")}; }"
             " catch (e) { return {ok: false, v: String(e && e.message)}; } })()")
         self.assertTrue(got and got.get("ok"), f"{expression[:160]} — {got}")
-        return got["v"]
+        # an undefined value comes back without its key
+        return got.get("v")
 
     def open_fold(self, name: str) -> None:
         self.js(f"(() => {{ const s = {SECTION}; const d = s && s.querySelector("
