@@ -1320,7 +1320,8 @@ VERIFY_ENV_SET = ("HOME", "TMPDIR", "TEMP", "TMP", "XDG_CACHE_HOME",
                   "PIP_CACHE_DIR", "NPM_CONFIG_CACHE", "YARN_CACHE_FOLDER",
                   "CARGO_HOME", "GOCACHE", "GOMODCACHE", "BENCH_VERIFY",
                   "BENCH_VERIFY_CHECK", "BENCH_VERIFY_ROOT",
-                  "BENCH_VERIFY_INPUTS", "PWD")
+                  "BENCH_VERIFY_INPUTS", "BENCH_VERIFY_OUTPUTS",
+                  "BENCH_VERIFY_REPORT", "BENCH_VERIFY_REPORT_DIR", "PWD")
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 # A bound, not a policy: a check is handed its inputs as copies, and an
 # identity over hundreds of variables is no longer something a reader can

@@ -101,7 +101,14 @@ VERDICT_PATH = {
 # Where a scrubbed text is made for a reader. Nothing else may scrub.
 DISPLAY = {("evidence", "scrub"), ("evidence", "log_text"),
            ("verify", "_clean_line"), ("verify", "_bench_words"),
-           ("verify", "_diagnose")}
+           ("verify", "_diagnose"), ("verify", "_artifact_diagnostic"),
+           # a verifier report's strings are cleaned as they are read
+           # (task 135): what a reader is shown, never the outcome word
+           ("verifierreport", "clean"), ("verifierreport", "_extensions")}
+# Where `redact` itself may be named in a runner file: evidence's one
+# scrubber, and the report contract's cleaning of the verifier's words.
+REDACT_USERS = {("evidence", "scrub"), ("verifierreport", "clean"),
+                ("verifierreport", "_extensions")}
 
 
 class RunnerRevisionHasOneOwner(unittest.TestCase):
@@ -222,7 +229,7 @@ class TheBoundaryIsAudited(unittest.TestCase):
                         or (isinstance(node.func, ast.Name)
                             and node.func.id == "scrub")))
                     if uses_redact:
-                        self.assertEqual((module, name), ("evidence", "scrub"))
+                        self.assertIn((module, name), REDACT_USERS)
                     if scrubs:
                         self.assertIn((module, name), DISPLAY,
                                       f"{module}.{name} scrubs text")

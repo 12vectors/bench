@@ -96,6 +96,7 @@ import state
 import sync
 import taskfiles  # noqa: F401
 import templates  # noqa: F401
+import verifierreport  # noqa: F401
 import verify
 import watch
 

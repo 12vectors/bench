@@ -71,6 +71,8 @@ RUNNER_FILES = (
     "gitproc.py",         # the hardened git a source identity and a root
                           # class are read through (task 121 routed the
                           # runner's git here directly, not via config)
+    "verifierreport.py",  # the verifier report contract: how a report is
+                          # read and combined with an exit status (task 135)
 )
 
 # Every other core module the runner files import, and why its effect on
@@ -105,9 +107,12 @@ BOUND_ELSEWHERE = {
               "The reservation race is held by real workers in "
               "tests/test_runner_identity.py"),
     "redact": ("display only: what a scrubbed log or diagnostic excerpt "
-               "shows a reader. It is reached from `evidence.scrub` alone, "
-               "and no function on the verdict path calls that — held by "
-               "tests/test_runner_identity.py"),
+               "shows a reader. It is reached from `evidence.scrub` and from "
+               "the verifier report contract's cleaning of the verifier's "
+               "own words (`verifierreport.clean`, task 135), which runs "
+               "after the report's outcome word is read and changes no "
+               "outcome; no function on the verdict path calls either — "
+               "held by tests/test_runner_identity.py"),
 }
 
 

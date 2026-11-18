@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets < state / reports / templates / gitrepo < taskfiles < plans / profiles < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -101,6 +101,12 @@ gitproc / records / redact < config < githost / assets < state / reports / templ
   (task 128)
 - `reports.py` — what the record keeps of an agent's closing report: one
   cap, one clip, for the task file and the PR body alike
+- `verifierreport.py` — the verifier report contract, version 1 (task
+  135): the bounded JSON envelope a check that opts in with `"report":
+  "v1"` writes to `$BENCH_VERIFY_REPORT`, its validation, and the one
+  rule that combines it with the exit status bench observed. Imports
+  `redact` only; inside the runner revision (see "Verifier reports:
+  actionable evidence from the check itself")
 - `templates.py` — the four launch prompt templates: what each may and
   must contain, which text a launch actually used (name, source, hash),
   and the contract check asked before a save and before every launch

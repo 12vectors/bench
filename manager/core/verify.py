@@ -1383,6 +1383,12 @@ def _prospective(shell: dict, check: dict, task: str, manifest: dict,
                        check["name"])
     if check.get("inputs"):
         env["BENCH_VERIFY_INPUTS"] = "/nonexistent"
+    # named as `_execute` would name them, so an equal result is equal
+    if check.get("outputs") and task:
+        env["BENCH_VERIFY_OUTPUTS"] = "/nonexistent"
+    if verifierreport.declared(check):
+        env["BENCH_VERIFY_REPORT_DIR"] = "/nonexistent"
+        env["BENCH_VERIFY_REPORT"] = "/nonexistent"
     env_id = resultidentity.env_identity(env, list(check.get("env") or []), env_key)["envId"]
     search = env.get("PATH")
     program = resultidentity.program_identity(shell["argv"], root, search)
