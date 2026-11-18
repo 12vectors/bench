@@ -104,11 +104,11 @@ DISPLAY = {("evidence", "scrub"), ("evidence", "log_text"),
            ("verify", "_diagnose"), ("verify", "_artifact_diagnostic"),
            # a verifier report's strings are cleaned as they are read
            # (task 135): what a reader is shown, never the outcome word
-           ("verifierreport", "clean"), ("verifierreport", "_extensions")}
+           ("verifierreport", "clean"), ("verifierreport", "_scrubbed")}
 # Where `redact` itself may be named in a runner file: evidence's one
 # scrubber, and the report contract's cleaning of the verifier's words.
 REDACT_USERS = {("evidence", "scrub"), ("verifierreport", "clean"),
-                ("verifierreport", "_extensions")}
+                ("verifierreport", "_scrubbed")}
 
 
 class RunnerRevisionHasOneOwner(unittest.TestCase):
