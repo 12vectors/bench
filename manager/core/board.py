@@ -22,6 +22,7 @@ task files, but the tasks work as a plain folder kanban without it. See
     phases.py     a phase run: its own branch, its members merged into it
     refine.py     card comments, refinement jobs, Apply and Discard
     reasoning.py  orchestrator reasoning jobs: pinned context, one public response
+    coordinate.py a review card's checks, independent review, repair and merge
     scheduler.py  bounded orchestration passes over a durable operation ledger
     watch.py      2s disk poller narrating moves made outside the API
     httpd.py      HTTP routes, SSE stream, the page itself
@@ -61,6 +62,7 @@ import changes
 import commands  # noqa: F401
 import completion  # noqa: F401
 import config
+import coordinate  # noqa: F401
 import decisions  # noqa: F401
 import delivery  # noqa: F401
 import doctor

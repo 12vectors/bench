@@ -62,6 +62,7 @@ from pathlib import Path
 import agents
 import agreements
 import config
+import coordinate
 import decisions
 import execowner
 import operations
@@ -389,9 +390,11 @@ def projection(board: dict | None = None) -> dict:
     """What `GET /api/orchestration` shows of the scheduler: the plan, the
     circuit breaker and the last pass. A read — it launches, reserves,
     writes and acquires nothing."""
+    board = taskfiles.collect() if board is None else board
     found = plan(board)
     found.pop("_chosen", None)
-    return {**found, "breaker": breaker(), "lastPass": LAST["pass"],
+    return {**found, "delivery": coordinate.projection(board),
+            "breaker": breaker(), "lastPass": LAST["pass"],
             "interval": config.ORCHESTRATE_INTERVAL,
             "executes": execowner.authorizes()["allowed"],
             "operations": operations.summary()}
@@ -438,6 +441,9 @@ def observe(ops: list[dict] | None = None) -> list[dict]:
     """Record what became of launched runs. Writes receipts only."""
     changed = []
     for op in operations.all_ops() if ops is None else ops:
+        # delivery steps (checks, review, repair, merge) are `coordinate`'s
+        if op.get("action", ACTION) != ACTION:
+            continue
         if op["status"] not in ("launched", "unobserved"):
             continue
         with state.LOCK:
@@ -477,6 +483,8 @@ def reconcile(ops: list[dict] | None = None) -> list[dict]:
     bench's own ordering makes it one."""
     changed = []
     for op in operations.all_ops() if ops is None else ops:
+        if op.get("action", ACTION) != ACTION:
+            continue
         if op["status"] != "intent":
             continue
         with state.LOCK:
@@ -645,8 +653,9 @@ def run_pass(board: dict | None = None, start=None) -> dict:
         return {"ran": False, "why": "busy"}
     try:
         started = time.time()
-        observed = observe()
-        reconciled = reconcile()
+        observed = observe() + coordinate.observe()
+        reconciled = reconcile() + coordinate.reconcile()
+        given = board
         board = taskfiles.collect() if board is None else board
         found = plan(board)
         results = []
@@ -656,6 +665,11 @@ def run_pass(board: dict | None = None, start=None) -> dict:
         else:
             for task, _item in found.get("_chosen", []):
                 results.append(execute(task, _item, None, start))
+            # then the cards already in review/: their checks, independent
+            # review, repair and merge (task 142), on the board as it is
+            # after this pass's own moves
+            results.extend(coordinate.run(
+                taskfiles.collect() if given is None else given))
         summary = {"at": operations.now_iso(), "seconds": round(time.time() - started, 3),
                    "observed": len(observed), "reconciled": len(reconciled),
                    "chosen": found.get("chosen", []),
