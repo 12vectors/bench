@@ -228,6 +228,9 @@ IN_PLACE = {
     ("orchestrator", "record_launch"): "append-only launch ledger (open 'a'); "
                                        "a torn last line is skipped on read",
     ("taskfiles", "append_to_task"): "append under WRITE_LOCK (open 'a')",
+    ("taskfiles", "record_movement"): "append-only uncommitted-move journal "
+                                      "under WRITE_LOCK (open 'a'); a torn "
+                                      "line is skipped on read (task 138)",
     ("state", "persist"): "append-only session JSONL (open 'a')",
     ("agents", "launch"):"the run's own log stream (open 'wb')",
     ("commands", "run"): "the command's own log stream (open 'wb')",

@@ -67,6 +67,7 @@ import evidence  # noqa: F401
 import execowner  # noqa: F401
 import gatepolicy  # noqa: F401
 import gates  # noqa: F401
+import movements  # noqa: F401
 import githost
 import gitproc  # noqa: F401
 import gitrepo  # noqa: F401

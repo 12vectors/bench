@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -212,6 +212,14 @@ gitproc / records / redact < config < githost / assets / agreements < state / re
   heartbeat; and the deterministic `authorize` and public `reading`
   (`GET /api/orchestration`). Absent agreement means off; reading
   launches nothing (see "Orchestration: scopes and operating agreements")
+- `movements.py` — who last moved a card, and whether that makes it this
+  board's to orchestrate (task 138, D1): each move's provenance read back
+  from the `Bench-Move` trailers `taskfiles` writes on a move's commit and
+  the machine-local journal of uncommitted moves, the board's automated
+  moves skipped, ambiguous or unrecorded history refused with a remedy,
+  and a phase member answered from its phase card's move. The one
+  resolver `orchestrator.authorize` and `GET /api/orchestration` both ask
+  (see "Last mover, not last editor")
 - `doctor.py` — what this board would grant, run and refuse, asked
   without paying for a model: the same resolver a launch rides, read at
   four honest distances, with every diagnostic's remedy and a coverage
@@ -5624,6 +5632,87 @@ changes), each scope's authority with provenance, capacity allocations
 and current usage, the installation's role, and what each merge rule
 would require. It names no path, scrubs free text, launches nothing and
 writes nothing.
+
+### Last mover, not last editor
+
+An orchestrator acts only on a card whose **latest stage move by a
+person** was made by this board's own identity (D1, task 138) —
+`git config user.name` in the work-state repository, the identity every
+claim and every sync attribution already uses. Not who wrote the card,
+not who last edited it, not its assignee alone, not whose commit a pull
+carried, and not the board's own automatic stage changes. Someone else
+creates an idea in Backlog and you move it into To Do: it is yours to
+orchestrate. A teammate moves a card into To Do and it syncs here: it is
+theirs, and it reads that way on your board.
+
+**Every board move says who made it.** A committed move ends its message
+with trailers — the subject line is unchanged:
+
+```text
+board: 7 → to-do (ada)
+
+Bench-Move: 1
+Bench-Move-Id: m-4d494a3755fa
+Bench-Mover: ada
+Bench-Mover-Kind: person
+```
+
+`person` is a move made through the page (or a merge & clean up a person
+clicked); `automated` is the board's own bookkeeping — an agent's run
+moving its card to review or back, the phase runner, a launch walked
+back, a phase's sweep. A move that was not committed (`BOARD_COMMIT_MOVES`
+off, or a commit that failed) is one line in the machine-local journal
+`manager/local/state/movements/journal.jsonl` instead. Trailers travel
+with their commit through a push, a pull and sync's replay, so a move you
+made on another machine reads as yours here.
+
+**How a card's history reads** (`movements.eligibility`, the one
+resolver):
+
+| the record | reads as |
+| --- | --- |
+| trailers, kind `person`, the name equal to the commit's author | that person's move |
+| trailers, kind `automated` | skipped: the delegation before it stands |
+| trailers naming someone other than the commit's author | `ambiguous-move` (attribution conflict) |
+| a `board: ` commit with no trailers, written before task 138 | `ambiguous-move` — it cannot say whether a person or an agent moved the card |
+| any other commit renaming a card between stages (a person's `git mv`) | its author's move, as sync attributes an arrival |
+| a merge commit | nothing: the commit it merged is the record |
+| a card whose newest record is not where the card now is | `unrecorded-move` — moved by hand after the last record |
+| a card created in its stage and never moved | `no-movement` — creating or editing is not a move |
+
+Eligible is `own-move`; a phase member reads `phase-delegated`. Every
+other answer is ineligible and says why, who and what to do:
+`foreign-move` (another person moved it last), `held-by-other` (your
+move, but someone else is its Assignee), `no-identity`,
+`history-incomplete` (no person's move within the 500 commits read),
+`history-unavailable`. The remedy is always an act a person can see —
+move the card yourself, or take it over. Identities are compared
+literally: no case folding, and a changed `user.name` is a different
+person to this board until the card is moved again. **Attribution is
+Git's**: a name in a commit, not cryptographic authentication.
+
+**Content never moves ownership.** A comment, a refinement, a report, a
+claim, the phase log, any edit by anyone — none of them is a stage move,
+so none can take a card over or give it back. A later move by someone
+else revokes eligibility before the next action; it is not undone and
+work already running is not stopped. Backlog and Done stay out of every
+scope, whoever moved the card there.
+
+**Phases delegate, members stay their own.** A phase's members are
+delegated by the phase card's own qualifying move, inside the phase
+scope only — the Bench scope never acquires them, and a phase the
+agreement does not name stays the phase runner's whatever its movement.
+A member someone else holds (`member-held`) or whose own latest move was
+someone else's or ambiguous (`member-unreconciled`) needs reconciling —
+take it over, or move it yourself — before a child execution touches it.
+
+**Reading is passive.** One `git log` of at most 500 commits over
+`tasks/`, memoised by the repository's head, and the journal's newest
+lines; nothing is fetched, written or launched. `orchestrator.authorize`
+refuses with `not-eligible` and the whole answer, and the orchestration
+reading carries the same answer per managed card (`cards[].eligibility`)
+and this board's identity (`identity`), so the launch path and the page
+cannot disagree.
 
 ## Pull requests
 

@@ -37,6 +37,7 @@ sys.path.insert(0, str(CORE))
 import agreements  # noqa: E402
 import config  # noqa: E402
 import execowner  # noqa: E402
+import movements  # noqa: E402
 import orchestrator  # noqa: E402
 import state  # noqa: E402
 
@@ -85,7 +86,16 @@ class Sandbox(unittest.TestCase):
         for patch in (mock.patch.object(config, "LOCAL", self.local),
                       mock.patch.object(config, "STATE", self.local / "state"),
                       mock.patch.object(config, "COMMIT_MOVES", False),
-                      mock.patch.object(config, "work_root", lambda: self.work)):
+                      mock.patch.object(config, "work_root", lambda: self.work),
+                      # movement eligibility (task 138) has its own tests
+                      # (test_orchestration_eligibility); here every card
+                      # is this board's by its last move
+                      mock.patch.object(movements, "eligibility",
+                                        lambda task, tasks=None, snap=None: {
+                                            "eligible": True, "code": "own-move",
+                                            "via": "own"}),
+                      mock.patch.object(movements, "snapshot", lambda: {
+                          "identity": {"name": "tester", "source": "test"}})):
             patch.start()
             self.addCleanup(patch.stop)
         self.addCleanup(execowner.release_lock)
