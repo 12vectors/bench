@@ -54,6 +54,12 @@ function checkBlock(page, c, editor) {
       c.accepts.map(s => `<code>${esc(s)}</code>`).join(', '),
       'only a run whose definition is the same in every dimension, in the ' +
       'same kind of checkout, counts — a name alone never does') : '') +
+    // the verifier report contract (task 135): how its exit status
+    // becomes an outcome, and whose words its findings are
+    (c.report ? fact('Verifier report', `contract <code>${esc(c.report)}</code>`,
+      'the check writes a report to $BENCH_VERIFY_REPORT; it passes only with ' +
+      'exit 0 and a passing report. Its summary and findings are the ' +
+      'verifier\'s own account, not something bench observed') : '') +
     `</dl>` +
     `<details class="fold scmd"><summary>Command <code>${esc(c.run)}</code></summary>` +
     `<div class="srefbody"><div class="skv">` +
@@ -123,6 +129,32 @@ function settingsVerification(page) {
       `</ul>` +
       (v.checks.length ? '' : `<p>Without a registered check, an agent saying ` +
         `the tests pass is its own word, not evidence.</p>`)) +
+    // the opt-in contract and what it does and does not mean (task 135)
+    sref('Verifier reports — an opt-in contract',
+      `<ul>` +
+      `<li><b>Opt in per check.</b> Add <code>"report": "v1"</code> to a check ` +
+      `in the policy. Nothing becomes required, and no run gains a ` +
+      `permission: whether a merge needs the check is still the merge rule's ` +
+      `decision, and a run can neither switch it on nor off.</li>` +
+      `<li><b>What the check is handed.</b> <code>$BENCH_VERIFY_REPORT_DIR</code>, ` +
+      `an empty directory for this run alone, and <code>$BENCH_VERIFY_REPORT</code>, ` +
+      `the report file inside it. It writes a small JSON report: an outcome ` +
+      `(passed, failed, setup-failed, refused, incomplete), a summary, and ` +
+      `optional findings and artifacts.</li>` +
+      `<li><b>How the outcome is decided.</b> A pass needs exit 0 <i>and</i> a ` +
+      `passing report. A missing, malformed or contradicting report is ` +
+      `<b>no verdict reached</b>, never a pass. A timeout, a cancellation or a ` +
+      `program that could not start is bench's reading whatever the report ` +
+      `says.</li>` +
+      `<li><b>Whose words.</b> The summary, the findings and any refusal or ` +
+      `setup failure the verifier describes are the project's own account. ` +
+      `Bench records them and does not observe the verifier's internal checks ` +
+      `or safety controls.</li>` +
+      `<li><b>What is kept.</b> The report and the text, JSON and image files ` +
+      `it declares inside its directory, beside the log, on this board only. ` +
+      `Text is scrubbed of anything credential-shaped; that is not a promise ` +
+      `that every secret is found, and an image is kept as made.</li>` +
+      `</ul>`) +
     spanel('Preparation steps', `${v.prepare.length} declared`,
       `<p>${esc(v.preparationIsNotVerification)}</p>` +
       (v.prepare.length ? steps

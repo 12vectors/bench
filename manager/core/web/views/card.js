@@ -224,7 +224,10 @@ async function verifySheet(task) {
     `<b>not run</b>.</p>` +
     `<div class="panel"><div class="phead"><span class="label">Named checks</span>` +
     `<span class="r">${esc(rollup.location === 'local' ? 'local to this board' : String(rollup.location || ''))}</span></div>` +
-    verifyRows(rollup, { links: true }) + `</div>` +
+    // with the verifier reports beside the rows (task 135), when any
+    // record carries one
+    verifyRows(rollup, { links: true, task, reports: data.evidence || [] }) +
+    `</div>` +
     `<div class="panel"><div class="phead"><span class="label">Run one again</span>` +
     `<span class="r">a person's action</span></div>` +
     (names.length
