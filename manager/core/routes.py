@@ -26,6 +26,7 @@ from typing import Callable, NamedTuple
 
 import acceptance
 import agents
+import artifacts
 import assets
 import agentsettings
 import commands
@@ -48,6 +49,7 @@ import readiness
 import previews
 import refine
 import required
+import results
 import reviews
 import settings
 import setupguide
@@ -382,6 +384,10 @@ def _state_payload() -> dict:
         # or Unchecked, with counts. The same resolver every launch and the
         # move into in-progress ask; the whole reading is /api/card/inputs
         "information": inputs.board(collected),
+        # per card that asks to be shown, or has kept output, its Show the
+        # result mode and how many outputs this board keeps (task 133);
+        # the whole reading is /api/card/result
+        "results": results.board(collected),
         "branches": changes.task_branches(),
         "commands": config.commands(),
         "commandRuns": commands.public(),
@@ -904,6 +910,14 @@ def post_move(req) -> None:
     if held:
         req.reply(409, {"error": held, "code": "information",
                         "file": payload["file"], "view": "inputs"})
+        return
+    # The review handoff of a card whose agreed "Show the result" is
+    # Required for handoff waits for that output (task 133). Requested and
+    # Off never hold a move.
+    held = results.handoff_refusal(payload["file"], payload["from"], payload["to"])
+    if held:
+        req.reply(409, {"error": held, "code": "demonstration",
+                        "file": payload["file"], "view": "overview"})
         return
     task = taskfiles.move_task(payload["file"], payload["from"], payload["to"])
     if payload["to"] == "to-do" and payload["from"] != "to-do":
@@ -1497,6 +1511,110 @@ def post_card_acceptance(req) -> None:
     req.reply(200, result)
 
 
+def get_card_result(req) -> None:
+    # One card's Show the result, read now: the request in its brief, the
+    # outputs kept for it with what each is and how far it can be trusted,
+    # the checks bench ran, acceptance counts and what is known about
+    # merged, installed and deployed. Passive — no capture, no check, no
+    # checkout and no agent.
+    name = _q(req, "file")
+    stage = _q(req, "stage") or taskfiles.find_stage_of(name) or ""
+    try:
+        req.reply(200, results.reading(name, stage))
+    except FileNotFoundError:
+        req.reply(404, {"error": f"{name} is not in {stage}/"})
+    except (ValueError, OSError) as exc:
+        req.reply(409, {"error": str(exc)})
+
+
+# How an artifact's bytes go out. Never as a page of this board: every
+# answer is nosniff and sandboxed, an image is drawn inline, text and JSON
+# are sent as plain text, and anything else — HTML, SVG, scripts, unknown
+# bytes — is an attachment typed application/octet-stream.
+ARTIFACT_POLICY = ("default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; "
+                   "sandbox")
+
+
+def get_artifact(req) -> None:
+    card, artifact = _q(req, "card"), _q(req, "id")
+    try:
+        record, data = artifacts.content(card, artifact)
+    except artifacts.Refused as exc:
+        req.send(404, str(exc).encode("utf-8"), "text/plain; charset=utf-8",
+                 {"X-Content-Type-Options": "nosniff"})
+        return
+    headers = {"X-Content-Type-Options": "nosniff",
+               "Content-Security-Policy": ARTIFACT_POLICY,
+               "Cross-Origin-Resource-Policy": "same-origin",
+               "Referrer-Policy": "no-referrer"}
+    download = _q(req, "download") == "1"
+    kind = record.get("kind")
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", str(record.get("name") or "artifact"))
+    if kind == "image" and not download:
+        mime = record.get("mime") or "application/octet-stream"
+        headers["Content-Disposition"] = f'inline; filename="{safe_name}"'
+    elif kind in ("text", "json") and not download:
+        mime = "text/plain; charset=utf-8"
+        headers["Content-Disposition"] = f'inline; filename="{safe_name}"'
+    else:
+        mime = "application/octet-stream"
+        headers["Content-Disposition"] = f'attachment; filename="{safe_name}"'
+    req.send(200, data, mime, headers)
+
+
+def post_card_result(req) -> None:
+    # A person's choices about Show the result: the setting written into
+    # the brief (bound to the brief they saw), "Not now" on the suggestion
+    # (this board only, nothing written to the card), the preview of what
+    # asking after the fact would mean, and withholding one output.
+    payload = req.body
+    path = req.path
+    name = str(payload.get("file") or "")
+    stage = str(payload.get("stage") or "")
+    try:
+        if path.endswith("/setting"):
+            result = results.write_setting(
+                name, stage, brief_sha=str(payload.get("briefSha") or ""),
+                mode=str(payload.get("mode") or ""),
+                want=str(payload.get("want") or ""),
+                expects=str(payload.get("expects") or "any"),
+                agree=payload.get("agree") is True)
+            run = results.active_run(name)
+            if run:
+                result["activeRun"] = run
+                result["note"] = ("the run in flight keeps the instructions and "
+                                  "authority it launched with; this reaches the "
+                                  "next run")
+            said = f"{name}: Show the result set to {result['mode']}"
+        elif path.endswith("/dismiss"):
+            result = results.dismiss(name)
+            said = None
+        elif path.endswith("/preview"):
+            req.reply(200, results.request_preview(name, stage))
+            return
+        else:
+            who = taskfiles.actor_name() or "you"
+            record = artifacts.withhold(name, str(payload.get("id") or ""),
+                                        actor=who,
+                                        reason=str(payload.get("reason") or ""))
+            result = {"artifact": artifacts.public(record)}
+            said = f"{name}: an output was withheld by {who}"
+    except taskfiles.StaleCard as exc:
+        req.reply(409, {"error": str(exc), "stale": True})
+        return
+    except FileNotFoundError:
+        req.reply(404, {"error": f"{name} is not in {stage}/"})
+        return
+    except (ValueError, OSError) as exc:
+        req.reply(409, {"error": str(exc)})
+        return
+    if said:
+        state.record_board_event({"kind": "card", "actor": "you", "file": name,
+                                  "summary": said})
+        state.broadcast({"type": "board"})
+    req.reply(200, result)
+
+
 def post_verify_cancel(req) -> None:
     payload = req.body
     req.reply(200, verify.cancel(payload["id"]))
@@ -1612,6 +1730,8 @@ ROUTES = (
     Route("GET", "/api/card/discussion", "read", get_card_discussion),
     Route("GET", "/api/card/acceptance", "read", get_card_acceptance),
     Route("GET", "/api/card/inputs", "read", get_card_inputs),
+    Route("GET", "/api/card/result", "read", get_card_result),
+    Route("GET", "/api/artifact", "read", get_artifact),
     Route("GET", "/api/card/delivery", "read", get_card_delivery),
     Route("GET", "/api/settings/history", "read", get_settings_history),
     Route("GET", "/api/diff", "read", get_diff),
@@ -1687,6 +1807,10 @@ ROUTES = (
     Route("POST", "/api/card/finding", "browser-mutation", post_card_acceptance),
     Route("POST", "/api/card/inputs/check", "browser-mutation", post_card_inputs),
     Route("POST", "/api/card/inputs/classify", "browser-mutation", post_card_inputs),
+    Route("POST", "/api/card/result/setting", "browser-mutation", post_card_result),
+    Route("POST", "/api/card/result/dismiss", "browser-mutation", post_card_result),
+    Route("POST", "/api/card/result/preview", "browser-mutation", post_card_result),
+    Route("POST", "/api/artifact/withhold", "browser-mutation", post_card_result),
     Route("POST", "/api/verify/cancel", "browser-mutation", post_verify_cancel),
     Route("POST", "/api/verify/required", "policy-mutation", post_verify_required),
     Route("POST", "/api/verify/required/cancel", "policy-mutation",

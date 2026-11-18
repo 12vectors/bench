@@ -69,6 +69,7 @@ from pathlib import Path
 import config
 import records
 import redact
+import taskfiles
 
 VERSION = 1
 MARKER = "«redacted»"
@@ -269,6 +270,26 @@ def _walk(outdir: Path) -> list[tuple[str, Path]]:
 # ── keeping what a run left ────────────────────────────────────────────
 
 
+def criterion_rev(task: str, criterion: str) -> str | None:
+    """The wording of the criterion an output names, as it was when the
+    output was kept — the same revision `acceptance.criterion_rev` gives a
+    decision, so a reworded criterion does not silently inherit an
+    output made about its old wording. None when the card does not have
+    that criterion."""
+    stage = taskfiles.find_stage_of(task)
+    if not stage:
+        return None
+    try:
+        text = (config.TASKS / stage / task).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for item in taskfiles.criteria(taskfiles.card_parts(text)["brief"]):
+        if item.get("id") == criterion:
+            return hashlib.sha256(" ".join(item["text"].split()).encode(
+                "utf-8")).hexdigest()[:12]
+    return None
+
+
 def ingest(outdir, *, task: str, run: dict) -> dict:
     """Keep what one check run wrote to its outputs directory.
 
@@ -308,12 +329,12 @@ def ingest(outdir, *, task: str, run: dict) -> dict:
             refuse("outside the outputs directory")
             continue
         name = path.name
+        if SECRET_NAME_RE.search(name):
+            refuse("its name reads as a credential")
+            continue
         if not NAME_RE.match(name) or ".." in rel:
             refuse("a name bench will not serve (letters, digits, '.', '_', "
                    "'-' and spaces, at most 120 characters)")
-            continue
-        if SECRET_NAME_RE.search(name):
-            refuse("its name reads as a credential")
             continue
         if info.st_size > config.ARTIFACT_MAX_BYTES:
             refuse(f"{info.st_size} bytes, over BOARD_ARTIFACT_MAX_BYTES "
@@ -347,6 +368,7 @@ def ingest(outdir, *, task: str, run: dict) -> dict:
                                 "active": False}
         meta = manifest["entries"].get(rel) or manifest["entries"].get(name) or {}
         aid = artifact_id(evidence_id, rel)
+        criterion = meta.get("criterion")
         depicted = meta.get("revision")
         record = {
             "v": VERSION, "id": aid, "task": task, "name": name, "path": rel,
@@ -356,7 +378,9 @@ def ingest(outdir, *, task: str, run: dict) -> dict:
             "capturedAt": now, "state": "available",
             "caption": meta.get("caption") or None,
             "scenario": meta.get("scenario"), "viewport": meta.get("viewport"),
-            "criterion": meta.get("criterion"), "role": meta.get("role") or "single",
+            "criterion": criterion,
+            "criterionRev": criterion_rev(task, criterion) if criterion else None,
+            "role": meta.get("role") or "single",
             "pair": meta.get("pair"), "data": meta.get("data") or "unknown",
             "environment": meta.get("environment"),
             "target": meta.get("target") or "unknown",

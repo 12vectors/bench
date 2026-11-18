@@ -56,6 +56,7 @@ import profiles
 import progress
 import records
 import reports
+import results
 import reviews
 import state
 import templates
@@ -438,15 +439,22 @@ def _profiled(intent: str, filename: str, stage: str, *,
     profiles.pin(found)
     if information:
         inputs.confirm_delivery(found)
+        # The card's Show the result request (task 133), frozen with the
+        # run: a later edit reaches the next launch, never this one.
+        found["demonstration"] = results.frozen(filename, stage)
     return found
 
 
 def _context_block(manifest: dict) -> str:
     """The `{context}` placeholder: the operator's pinned inputs, then the
-    card's own Inputs and required tools (task 132) — one field, so a local
-    prompt override written before cards had inputs still receives them."""
+    card's own Inputs and required tools (task 132), then what the card
+    asks to be shown (task 133) — one field, so a local prompt override
+    written before cards had either still receives them."""
     return "\n".join(part for part in (profiles.prompt_block(manifest),
-                                       inputs.prompt_block(manifest)) if part)
+                                       inputs.prompt_block(manifest),
+                                       results.prompt_block(
+                                           manifest.get("demonstration")))
+                     if part)
 
 
 def _with_template(manifest: dict, template: dict) -> dict:
@@ -965,7 +973,13 @@ def _reap_agent(agent_id: str, proc: subprocess.Popen, log_file) -> None:
                        f"NOTHING to {branch} — card stays in in-progress; "
                        f"read the report before relaunching")
         else:
-            if find_stage_of(filename) == "in-progress":
+            # An agreed "Show the result: required for handoff" whose
+            # output is missing for this commit holds the handoff (task
+            # 133): the card stays in in-progress and the ticker names the
+            # remedy. Requested and Off never hold anything.
+            held = (results.handoff_refusal(filename, "in-progress", "review")
+                    if find_stage_of(filename) == "in-progress" else None)
+            if held is None and find_stage_of(filename) == "in-progress":
                 try:
                     move_task(filename, "in-progress", "review", actor="agent")
                 except ValueError:
@@ -977,6 +991,9 @@ def _reap_agent(agent_id: str, proc: subprocess.Popen, log_file) -> None:
             # got us here, and silent on a board that gates nothing.
             summary = (f"{name} finished {filename} — review branch {branch}"
                        f"{_gate_note(filename)}")
+            if held:
+                summary = (f"{name} finished {filename} on {branch}; the card "
+                           f"stays in in-progress — {held}")
     elif stopped:
         summary = f"{name} was held on {filename} — nothing is lost"
     else:

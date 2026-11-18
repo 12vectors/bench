@@ -45,7 +45,7 @@ L3  state reports templates gitrepo
 L4  taskfiles
 L5  plans profiles
 L6  gatepolicy reviews inputs
-L7  evidence resultidentity
+L7  evidence resultidentity artifacts
 L8  staleness
 L9  verify
 L10 progress
@@ -57,7 +57,7 @@ L15 commands drive events sync
 L16 changes
 L17 completion
 L18 stacks
-L19 delivery stackactions
+L19 delivery stackactions results
 L20 agentsettings
 L21 settings
 L22 setupbase appinspect
@@ -132,6 +132,24 @@ nothing above them: `agents` asks it before a launch and adds its inputs
 to the manifest before the pin, `routes` asks it before a move into
 in-progress and for the Inputs tab. The policy lives here and not in
 `taskfiles.move_task`, which stays a primitive.
+
+`artifacts` (task 133) sits beside `evidence`, directly below the
+runner: retained demonstration outputs — what a check declaring
+`"outputs": true` wrote to `$BENCH_VERIFY_OUTPUTS`, kept under
+`state/artifacts/<card>/` with the run that made it, classified by its own
+bytes, bounded, withheld or expired with its record kept. It imports
+`config`, `records`, `redact` and `taskfiles`; `verify` asks it to keep a
+run's outputs once the verdict is already written (it is named in
+`resultidentity.BOUND_ELSEWHERE`, not in `RUNNER_FILES`), and `results`
+and `routes` read it. `results` (task 133) sits beside `delivery`: a
+card's **Show the result** — the `## Show the result` request in its
+brief, its kept outputs read against the current commit, the checks bench
+ran, acceptance counts and what is known of merged, installed and
+deployed. It imports `acceptance`, `artifacts`, `changes`, `completion`,
+`config`, `evidence`, `gates`, `profiles`, `records`, `redact`,
+`staleness`, `state` and `taskfiles`; `agents` asks it for the prompt
+paragraph, the manifest's frozen request and the handoff rule, and
+`routes` for the Overview's reading and the move into review.
 
 `profiles.read_scope` (task 127) is a request-scoped memo, not a layer:
 a `ContextVar` that `routes.state_payload` sets for the length of one
@@ -255,7 +273,7 @@ L3  githost
 L4  taskfiles
 L5  profiles plans
 L6  gatepolicy reviews inputs
-L7  evidence resultidentity
+L7  evidence resultidentity artifacts
 L8  staleness
 L9  verify
 L10 progress
@@ -266,7 +284,7 @@ L14 events drive sync commands
 L15 changes
 L16 completion
 L17 stacks
-L18 delivery stackactions
+L18 delivery stackactions results
 L19 agentsettings
 L20 settings
 L21 setupbase appinspect
@@ -552,5 +570,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 181
-routes 98
+routes 104
 ```

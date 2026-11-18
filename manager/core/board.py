@@ -50,6 +50,7 @@ from http.server import ThreadingHTTPServer
 import acceptance  # noqa: F401  (eager: see the docstring)
 import agents  # noqa: F401
 import agentsettings  # noqa: F401
+import artifacts  # noqa: F401
 import appinspect  # noqa: F401
 import assets
 import callers  # noqa: F401
@@ -81,6 +82,7 @@ import refine
 import reports  # noqa: F401
 import required
 import resultidentity  # noqa: F401
+import results  # noqa: F401
 import reviews
 import routes  # noqa: F401
 import settings  # noqa: F401
