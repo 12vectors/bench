@@ -3,6 +3,7 @@ import { allTasks } from '../../app/data.js';
 import { S } from '../../app/state.js';
 import { fetch } from '../../lib/api.js';
 import { $, esc } from '../../lib/dom.js';
+import { syncRoute } from '../../lib/nav.js';
 import { fmtShort } from '../../lib/time.js';
 import { toast } from '../../lib/toast.js';
 import { BOARD_ACT, actLabel, wireAction } from '../card.js';
@@ -563,6 +564,7 @@ async function inspectConfiguration() {
   S.settingsSection = 'diagnostics';
   S.doctorReading = true;
   renderSettings();
+  syncRoute();
   try {
     const res = await fetch('/api/doctor');
     const data = await res.json();

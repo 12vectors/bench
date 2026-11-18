@@ -5,6 +5,8 @@ import { phaseOf } from '../lib/arm.js';
 import { $, esc } from '../lib/dom.js';
 import { markScroll, restoreScroll, scrollMarks } from '../lib/keep.js';
 import { emptyNote, holdFocus, keyedPool, placeChildren, setHtml } from '../lib/keyed.js';
+import { plainClick, syncRoute } from '../lib/nav.js';
+import { cardId, findCard, formatRoute } from '../lib/route.js';
 import { phaseFlight } from './board.js';
 import { actLabel, holdPhase, keyedCard, runPhase, showDetail, wireAction } from './card.js';
 import { renderDrawer } from './detail/drawer.js';
@@ -165,7 +167,10 @@ function laneFor(task, el) {
   const at = laneProgress(members);
   const halted = !!(snap && snap.halted);
   const running = !!(snap && snap.running);
-  el.className = 'lane' + (halted ? ' halted' : running ? ' running' : '');
+  const id = cardId(task, S.state);
+  const chosen = !!S.phaseSel && id === S.phaseSel;
+  el.className = 'lane' + (halted ? ' halted' : running ? ' running' : '') + (chosen ? ' sel' : '');
+  if (chosen) el.setAttribute('aria-current', 'true'); else el.removeAttribute('aria-current');
   el.dataset.phase = task.file;
 
   const branch = (snap && snap.branch) || 'phase/' + task.file.replace(/\.md$/, '');
@@ -177,7 +182,10 @@ function laneFor(task, el) {
     `<div class="lhead">` +
     `<span class="mark${running ? ' breathing' : ''}" style="background:${
       halted ? 'var(--alarm)' : running ? 'var(--accent)' : STAGE_TINT[task.stage]}"></span>` +
-    (task.number ? `<span class="lref">#${esc(task.number)}</span>` : '') +
+    // the phase's address (task 134): selects this lane, and a new tab
+    // takes it
+    `<a class="lref" href="${esc(formatRoute({ view: 'phases', phase: id }))}" data-phaselink="${esc(id)}" ` +
+      `title="This phase's address">${task.number ? '#' + esc(task.number) : esc(id)}</a>` +
     `<button class="ltitle" data-open="1" title="Open the phase card — its text, ` +
       `its list and its PR">${esc(task.title)}</button>` +
     `<span class="lprog">${at.total ? `${at.done} of ${at.total} merged`
@@ -187,6 +195,8 @@ function laneFor(task, el) {
       ? 'The phase branch has not been cut yet — running the phase cuts it from the newest main'
       : "The phase's integration branch: every member is branched from its tip and merged back into it"
       }">${esc(branch)}</span>` +
+    `<button class="chip2" data-copy-link="${esc(formatRoute({ view: 'phases', phase: id }))}" ` +
+      `aria-label="copy a link to this phase">Copy link</button>` +
     `<span class="lacts"></span></div>`;
 
   // the card the phase stopped on, named rather than left as a number
@@ -247,6 +257,15 @@ function laneFor(task, el) {
     el.__topSig = topSig;
     el.querySelectorAll('[data-open]').forEach(btn =>
       btn.addEventListener('click', () => showDetail(el.__task)));
+    // choosing a lane by its address: selected here, written as one entry
+    el.querySelectorAll('[data-phaselink]').forEach(a =>
+      a.addEventListener('click', (e) => {
+        if (!plainClick(e)) return;
+        e.preventDefault();
+        S.phaseSel = a.dataset.phaselink;
+        renderLanes();
+        syncRoute();
+      }));
 
     // ▸ run again lives here and nowhere else: clearing a halt should mean
     // having read what caused it, and the reason is the line above it
@@ -316,6 +335,34 @@ function laneAction(slot, task, act) {
   slot.appendChild(btn);
 }
 
+/* A phase an address named that has no lane here (task 134): said above
+   the lanes, never swapped for another phase — a number no card has, a
+   card that is not a phase (with its own address), two cards sharing the
+   number, or an identifier that is not one. */
+function phaseNote(phases) {
+  const note = $('#phasenote');
+  if (!note) return;
+  const id = S.phaseSel;
+  const here = id && phases.some(t => cardId(t, S.state) === id);
+  if (!id || here) { note.hidden = true; note.innerHTML = ''; return; }
+  const found = findCard(id, S.state);
+  const label = /^\d+$/.test(id) ? '#' + id : id;
+  let say;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._~-]{0,199}$/.test(id)) {
+    say = `<b>That is not a phase address.</b> A phase is named by its card's number or file name.`;
+  } else if (found.task) {
+    say = `<b>${esc(label)} is a card, not a phase.</b> ` +
+      `<a href="${esc(formatRoute({ card: cardId(found.task, S.state) }))}" data-route>Open the card</a>.`;
+  } else if (found.ambiguous) {
+    say = `<b>${found.ambiguous.length} cards carry the number ${esc(id)}.</b> Name the phase by its file instead.`;
+  } else {
+    say = `<b>No phase ${esc(label)} on this board.</b> No card in its five stages has that ` +
+      `${/^\d+$/.test(id) ? 'number' : 'name'}; an archived phase has no lane.`;
+  }
+  note.innerHTML = say + ' Every phase on this board is below.';
+  note.hidden = false;
+}
+
 function renderLanes() {
   const view = $('#view-phases'), wrap = $('#lanes');
   // where you were looking, taken before the wipe throws the nodes away:
@@ -331,6 +378,7 @@ function renderLanes() {
   wrap.querySelectorAll('.plines').forEach(el =>
     markScroll('v:phaselog:' + el.dataset.phase, el));
   const phases = lanePhases();
+  phaseNote(phases);
   if (!phases.length) {
     // an empty grid of five columns would be a room pretending to be full
     setHtml(wrap, '<div class="empty">No phases yet. A phase is an ordinary card ' +
@@ -352,6 +400,14 @@ function renderLanes() {
     });
   }
   restoreScroll('v:phases', view);
+  // an address that chose a lane brings it into view, once
+  if (S.phaseScroll) {
+    const sel = wrap.querySelector('.lane.sel');
+    if (sel && view.classList.contains('on')) {
+      S.phaseScroll = false;
+      sel.scrollIntoView({ block: 'start' });
+    }
+  }
   wrap.querySelectorAll('.lstages').forEach(el =>
     restoreScroll('v:lanestages:' + el.dataset.phase, el));
   wrap.querySelectorAll('.plines').forEach(el => {
@@ -364,6 +420,8 @@ function renderLanes() {
   });
   if (S.selected) {
     S.selected = allTasks().find(t => t.file === S.selected.file) || null;
+    // as on the Board (task 134): the address follows, in place
+    if (!S.selected) syncRoute({ replace: true });
   }
   renderDrawer();
 }

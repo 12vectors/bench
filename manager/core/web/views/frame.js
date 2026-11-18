@@ -2,6 +2,8 @@
 import { S } from '../app/state.js';
 import { $, esc } from '../lib/dom.js';
 import { forgetViewScroll } from '../lib/keep.js';
+import { syncRoute } from '../lib/nav.js';
+import { CARD_VIEWS } from '../lib/route.js';
 import { renderBar, renderLog } from './activity.js';
 import { phaseLabel, renderBoard } from './board.js';
 import { forgetActsOfVanishedCards, showDetail } from './card.js';
@@ -93,7 +95,7 @@ function renderPhases() {
    halt, in the alarm every other stopped thing wears. A board with no
    phase in flight has a switcher that reads exactly as it always did. */
 function renderViews() {
-  const btn = document.querySelector('#views button[data-view="phases"]');
+  const btn = document.querySelector('#views [data-view="phases"]');
   if (!btn) return;
   const all = Object.values(S.state?.phases || {});
   const running = all.filter(p => p.running).length;
@@ -117,7 +119,7 @@ function renderViews() {
    payload says there is something to say — a board on the legacy settings
    has a switcher that reads exactly as it did before this view existed. */
 function renderSettingsTab() {
-  const btn = document.querySelector('#views button[data-view="settings"]');
+  const btn = document.querySelector('#views [data-view="settings"]');
   if (!btn) return;
   const s = S.state?.settings || {};
   btn.innerHTML = 'Settings' + (s.invalid ? '<span class="vhalt"></span>' : '');
@@ -138,9 +140,23 @@ function setView(view) {
   // restoring a position from a visit that has since gone stale
   if (view !== S.view) forgetViewScroll();
   S.view = view;
-  document.querySelectorAll('#views button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
+  // A card's detail view belongs to the two views that draw cards. Going
+  // anywhere else is leaving it, so the address and the page agree on
+  // where you are (task 134); its unsent text is kept in S as ever.
+  if (!CARD_VIEWS.includes(view) && (S.selected || S.cardLink)) {
+    S.selected = null;
+    S.cardLink = null;
+    const drawer = $('#drawer');
+    if (drawer && !S.fileView) drawer.classList.remove('open');
+  }
+  document.querySelectorAll('#views [data-view]').forEach(b => {
+    b.classList.toggle('on', b.dataset.view === view);
+    if (b.dataset.view === view) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'view-' + view));
   render();
+  syncRoute();
 }
 
 /* The tab says which bench this is: the project first (tab truncation eats

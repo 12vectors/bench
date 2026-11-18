@@ -1,6 +1,7 @@
 /* One draft: the contextual editors. */
 import { S } from '../../app/state.js';
 import { esc } from '../../lib/dom.js';
+import { syncRoute } from '../../lib/nav.js';
 import { toast } from '../../lib/toast.js';
 import { actLabel } from '../card.js';
 import { checkbox, field, select } from './policy.js';
@@ -35,6 +36,7 @@ function openEditor(page, kind, name) {
             `the advanced editor`, true);
       S.settingsSection = 'policy';
       renderSettings();
+      syncRoute();
       return;
     }
     S.sedit = { kind, index, anchor: name };

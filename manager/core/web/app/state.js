@@ -6,6 +6,15 @@ const S = {
   running: {},           // sid -> in-flight Bash event (PreToolUse)
   view: 'board',
   selected: null,        // task open in the drawer
+  // A card an address named that the board does not list (task 134):
+  // {id, tab, state: 'waiting'|'loading'|'archived'|'missing'|'ambiguous'
+  // |'invalid'|'failed', card?, files?, error?}. Drawn by the detail view
+  // in place of a card — never replaced by another card.
+  cardLink: null,
+  // The phase an address selected on the Phases view (its card number or
+  // stem), and whether the next paint should bring its lane into view
+  phaseSel: null,
+  phaseScroll: false,
   disc: {},              // file -> {data, stamp, error}: the card's discussion
   commentDraft: {},      // file -> unsent comment text, kept across redraws
   refineKey: {},         // file -> the request key for that text's refinement
@@ -21,8 +30,13 @@ const S = {
   accOpen: {},           // `${file}:${criterion|finding}` -> expanded in the detail view
   accDraft: {},          // form key -> unsent note text, kept across redraws
   dwide: false,          // the detail view's expanded reading width
+  // the session Sessions and Focus show when one was chosen or named by an
+  // address; null means "the page's pick", which is kept apart
+  // (flightAuto, focusAuto) because a pick is not a destination
   flightSid: null,
   focusSid: null,
+  flightAuto: null,
+  focusAuto: null,
   filter: 'all',
   diffCache: {},         // agentId -> {at, files, fetching}
   // agentId -> {at, manifest, freshness, fetching}: the policy and inputs

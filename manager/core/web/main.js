@@ -7,14 +7,16 @@
 import { connectStream, loadState, scheduleRender, sessionElapsed, sessionMeta } from './app/data.js';
 import { S } from './app/state.js';
 import { applyTheme } from './app/theme.js';
-import { onStalePage, post } from './lib/api.js';
+import { fetch, onStalePage, post } from './lib/api.js';
 import { $ } from './lib/dom.js';
+import { holdRoute, linkFor, onCardLink, plainClick, replaceRoute, routeReady, routeWrites, setRouteSource, syncRoute } from './lib/nav.js';
+import { CARD_VIEWS, findCard, parseRoute, routeOf } from './lib/route.js';
 import { onRender } from './lib/schedule.js';
 import { ago } from './lib/time.js';
 import { toast } from './lib/toast.js';
 import { archiveCard, renderBar, renderLog, unarchiveLast } from './views/activity.js';
 import { STACK_SHEETS } from './views/board.js';
-import { acts, closeSheet, focusCard, move, rawMove, requiredSheet } from './views/card.js';
+import { acts, closeSheet, focusCard, move, rawMove, requiredSheet, showDetail } from './views/card.js';
 import { FACE_WORDS, deliveryOf } from './views/delivery.js';
 import { renderDrawer } from './views/detail/drawer.js';
 import { doctorSheet, paintDoctorSheet } from './views/doctor.js';
@@ -69,8 +71,132 @@ document.addEventListener('click', async ev => {
 
 /* ── boot ─────────────────────────────────────────────────────────────── */
 
-document.querySelectorAll('#views button').forEach(b =>
-  b.addEventListener('click', () => setView(b.dataset.view)));
+/* ── addresses (task 134) ─────────────────────────────────────────────
+
+   Where the page is, written by one boundary (lib/nav.js) from the page's
+   own state (lib/route.js). Reading an address — on entry, on Back or
+   Forward, from a link followed in this tab — is applied here, under a
+   hold, so applying one never writes another. Opening an address only
+   reads: the card, session and section it names are looked up through
+   the same GETs the views already make. */
+setRouteSource(() => routeOf(S));
+
+/* Open the card an address names, once the board has been read: a card
+   on the board opens as a click would open it; one the board does not
+   list is looked up by the detail view (archived, or not there at all) —
+   never swapped for another card. */
+function openCardLink(id, tab, badTab) {
+  S.cardLink = null;
+  if (!S.state) { S.selected = null; S.cardLink = { id, tab, state: 'waiting' }; return; }
+  const found = findCard(id, S.state);
+  if (found.task) {
+    S.dtab[found.task.file] = tab || 'overview';
+    showDetail(found.task);
+  } else {
+    S.selected = null;
+    S.cardLink = found.ambiguous
+      ? { id, tab, state: 'ambiguous', files: found.ambiguous }
+      : { id, tab, state: 'loading' };
+    renderCards();
+  }
+  if (badTab) toast(`a card has no section called “${clip(badTab, 30)}” — showing its Overview`, true);
+}
+
+/* The board is asked once where a card the listing lacks is now
+   (`/api/card/locate`, a read of the task files), and the detail view
+   draws what it said. An answer about a card nobody is looking at any
+   more is dropped. */
+async function locateCard(link) {
+  link.state = 'loading';
+  let res = null, data = {};
+  try {
+    res = await fetch('/api/card/locate?id=' + encodeURIComponent(link.id));
+    data = await res.json().catch(() => ({}));
+  } catch (e) { res = null; }
+  if (S.cardLink !== link) return;
+  if (res && res.ok && data.card && !data.archived) {
+    // on the board after all — a move the listing had not caught up with
+    await loadState();
+    if (S.cardLink !== link) return;
+    const task = findTask(data.card.file);
+    if (task) {
+      S.dtab[task.file] = link.tab || 'overview';
+      holdRoute(() => showDetail(task));
+      return;
+    }
+    link.state = 'failed';
+    link.error = `the board says ${data.card.file} is in ${data.stage}/, but this page could not find it there`;
+  } else if (res && res.ok && data.card) {
+    link.state = 'archived';
+    link.card = data.card;
+    // an archived card has one reading and no sections: its address says so
+    if (link.tab && link.tab !== 'overview') replaceRoute(routeOf(S));
+  } else if (res && res.status === 404) {
+    link.state = 'missing';
+  } else if (res && res.status === 409 && data.code === 'ambiguous') {
+    link.state = 'ambiguous';
+    link.files = data.files || [];
+  } else if (res && res.status === 400) {
+    link.state = 'invalid';
+  } else {
+    link.state = 'failed';
+    link.error = (data && data.error) || (res ? `the board answered ${res.status}` : 'the board could not be asked');
+  }
+  renderDrawer();
+}
+onCardLink(locateCard);
+
+function applyRoute(route, background) {
+  if ($('#sheetwrap').classList.contains('open')) closeSheet();
+  holdRoute(() => {
+    if (route.card) {
+      const bg = CARD_VIEWS.includes(background) ? background : 'board';
+      if (S.view !== bg) setView(bg);
+      openCardLink(route.card, route.tab, route.invalid === 'tab' ? route.raw : null);
+      return;
+    }
+    S.selected = null;
+    S.cardLink = route.invalid === 'card' ? { id: route.raw, state: 'invalid' } : null;
+    const named = (key) => route[key] || (route.invalid === key ? route.raw : null);
+    if (route.view === 'phases') { S.phaseSel = named('phase'); S.phaseScroll = !!S.phaseSel; }
+    if (route.view === 'flight') S.flightSid = named('session');
+    if (route.view === 'focus') S.focusSid = named('session');
+    if (route.view === 'settings') {
+      S.settingsSection = route.invalid === 'section' ? route.raw : route.section || 'overview';
+    }
+    setView(route.view);
+    // a different section is a different page: an unsaved draft is kept,
+    // as the sidebar keeps it, and the notice says where it is
+    if (S.state && route.view === 'settings') renderSettings();
+    if (S.state) renderCards();
+  });
+}
+
+/* A link followed in this tab: applied, then written as one new entry. */
+function go(href) {
+  const url = new URL(href, location.href);
+  if (url.origin !== location.origin) { location.href = url.href; return; }
+  applyRoute(parseRoute(url), S.view);
+  syncRoute();
+}
+
+window.addEventListener('popstate', (e) => {
+  applyRoute(parseRoute(location), e.state && e.state.view);
+});
+document.addEventListener('click', (e) => {
+  const a = e.target.closest && e.target.closest('a[data-route]');
+  if (!a || !plainClick(e)) return;
+  e.preventDefault();
+  go(a.getAttribute('href'));
+});
+
+document.querySelectorAll('#views [data-view]').forEach(b =>
+  b.addEventListener('click', (e) => {
+    // a new tab, a new window: the browser's, with the view's address
+    if (!plainClick(e)) return;
+    e.preventDefault();
+    setView(b.dataset.view);
+  }));
 /* Keyboard as well as pointer: every header chip that opens something —
    the configuration check, the setup guide and the connection chip —
    takes Enter and Space through the one key handler (task 125). */
@@ -85,11 +211,7 @@ onActivate($('#livechip'), () => setView('flight'));
    sheet or in Settings. The value is the control's own attribute, never
    read off the page around it. Clipboard access needs a secure context,
    which a loopback board is; a refusal is said rather than swallowed. */
-document.addEventListener('click', async (e) => {
-  const btn = e.target.closest && e.target.closest('[data-copy]');
-  if (!btn) return;
-  e.stopPropagation();
-  const value = btn.dataset.copy;
+async function copyValue(btn, value, link) {
   let copied = false;
   try {
     await navigator.clipboard.writeText(value);
@@ -107,17 +229,29 @@ document.addEventListener('click', async (e) => {
     btn.focus();
   }
   if (copied) {
-    btn.textContent = 'Copied';
-    toast('copied ' + clip(value, 60));
+    if (!link) btn.textContent = 'Copied';
+    toast((link ? 'link copied — ' : 'copied ') + clip(value, 70));
   } else {
-    toast('the browser refused the clipboard — select the path and copy it by hand', true);
+    toast(link
+      ? `the browser refused the clipboard — the link is ${value}`
+      : 'the browser refused the clipboard — select the path and copy it by hand', true);
   }
+}
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest && e.target.closest('[data-copy],[data-copy-link],#copylink');
+  if (!btn) return;
+  e.stopPropagation();
+  // a link is the destination's address on the board this page came from,
+  // made when it is copied — never a hostname written into the page
+  if (btn.id === 'copylink') copyValue(btn, linkFor(routeOf(S)), true);
+  else if (btn.dataset.copyLink) copyValue(btn, location.origin + btn.dataset.copyLink, true);
+  else copyValue(btn, btn.dataset.copy, false);
 });
 
 onActivate($('#doctorchip'), () => doctorSheet(null));
 onActivate($('#setupchip'), openSetupGuide);
 $('#themebtn').addEventListener('click', () => { S.dark = !S.dark; applyTheme(); });
-$('#focussel').addEventListener('change', (e) => { S.focusSid = e.target.value; render(); });
+$('#focussel').addEventListener('change', (e) => { S.focusSid = e.target.value; render(); syncRoute(); });
 $('#refresh').addEventListener('click', loadState);
 window.addEventListener('focus', loadState);
 document.addEventListener('keydown', (e) => {
@@ -131,6 +265,12 @@ document.addEventListener('keydown', (e) => {
     S.selected = null;
     renderCards();
     focusCard(file);
+    syncRoute();
+  } else if (S.cardLink) {
+    // an address's card that is archived, ambiguous or not there
+    S.cardLink = null;
+    renderCards();
+    syncRoute();
   }
 });
 
@@ -232,15 +372,31 @@ setInterval(() => {
 }, 5000);
 
 applyTheme();
+// The address the page was opened at, applied before the first reading so
+// the first paint is the destination; an alias (`/`, `#setup`, a number
+// written with leading zeros, the Overview tab named) is corrected in
+// place, adding no history entry.
+const entry = parseRoute(location);
+const setupAlias = entry.alias && entry.section === 'setup';
+applyRoute(entry, history.state && history.state.view);
+if (entry.alias || entry.invalid === 'tab') replaceRoute(entry);
 // another client's setup decision arrives as a board frame; the guide
 // re-reads so this page cannot act on a revision it lost
-loadState().then(() => connectStream({ onBoard: () => { if (S.setup) fetchSetup(true); } }));
+loadState().then(() => {
+  // a card can only be found once the board has been read
+  if (S.cardLink && S.cardLink.state === 'waiting') {
+    const { id, tab } = S.cardLink;
+    holdRoute(() => openCardLink(id, tab, null));
+  }
+  routeReady();
+  connectStream({ onBoard: () => { if (S.setup) fetchSetup(true); } });
+});
 // the setup guide is read once on load for the header's invitation; the
 // terminal handoff names `#setup`, which opens the guide itself
-fetchSetup().then(() => { if (location.hash === '#setup') openSetupGuide(); });
+fetchSetup().then(() => { if (setupAlias) openSetupGuide(); });
 
 /* The console and test seam. A classic script made every top-level
    name a global; modules make none. The browser suite (and a person
    at the console) reaches the page through these names and no
    others. Replacing one here does not replace it inside a module. */
-Object.assign(globalThis, { ago, applyTheme, checkbox, closeSheet, deliveryOf, ensureDraft, FACE_WORDS, fetchSetup, field, findTask, fold, gateSheet, isolated, loadState, move, paintDoctorSheet, rawMove, render, renderChip, renderDoctor, renderDrawer, renderFocus, renderSettings, requiredSheet, S, scheduleRender, SETTINGS_HEADERS, setView, toast });
+Object.assign(globalThis, { ago, applyTheme, checkbox, closeSheet, deliveryOf, ensureDraft, FACE_WORDS, fetchSetup, field, findTask, fold, gateSheet, isolated, loadState, move, paintDoctorSheet, rawMove, render, renderChip, renderDoctor, renderDrawer, renderFocus, renderSettings, requiredSheet, routeOf, routeWrites, S, scheduleRender, SETTINGS_HEADERS, setView, toast });

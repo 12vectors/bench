@@ -37,16 +37,18 @@
     <span class="path" id="root"></span>
   </div>
   <nav class="views" id="views">
-    <button data-view="board" class="on">Board</button>
+    <!-- links, not buttons (task 134): each view has an address, so a
+         modifier-click or a middle-click opens it in a new tab -->
+    <a href="/board" data-view="board" class="on" aria-current="page">Board</a>
     <!-- the label is written by renderViews(): the running count, and the
          mark that says a phase halted while you were somewhere else -->
-    <button data-view="phases">Phases</button>
-    <button data-view="flight">Sessions</button>
-    <button data-view="focus">Focus</button>
+    <a href="/phases" data-view="phases">Phases</a>
+    <a href="/sessions" data-view="flight">Sessions</a>
+    <a href="/focus" data-view="focus">Focus</a>
     <!-- the label is written by renderViews(): the mark that says this
          board's execution policy refuses something, learned from whichever
          view you are on -->
-    <button data-view="settings">Settings</button>
+    <a href="/settings" data-view="settings">Settings</a>
   </nav>
   <span class="spacer"></span>
   <div class="phasechips" id="phasechips" hidden></div>
@@ -68,6 +70,9 @@
        read. A keyboard stop like the two chips above (task 125) -->
   <div class="livechip" id="livechip" role="button" tabindex="0" title="open Sessions"
        aria-label="open Sessions"></div>
+  <!-- the address of whatever is shown now, on this board's origin -->
+  <button id="copylink" aria-label="copy a link to what is shown now"
+          title="Copy a link to what is shown now — the open card, session, phase or Settings section included">Copy link</button>
   <button id="themebtn">Daylight</button>
   <button id="refresh">Refresh</button>
 </header>
@@ -80,6 +85,8 @@
 
   <!-- phases: one swimlane each -->
   <div class="view" id="view-phases">
+    <!-- a phase an address named that is not on this board (task 134) -->
+    <div id="phasenote" role="status" hidden></div>
     <div id="lanes"></div>
   </div>
 

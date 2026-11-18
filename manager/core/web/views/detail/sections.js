@@ -4,6 +4,7 @@ import { S } from '../../app/state.js';
 import { fetch } from '../../lib/api.js';
 import { $, esc } from '../../lib/dom.js';
 import { md } from '../../lib/md.js';
+import { syncRoute } from '../../lib/nav.js';
 import { resource, staleWords } from '../../lib/resource.js';
 import { ago } from '../../lib/time.js';
 import { toast } from '../../lib/toast.js';
@@ -1106,6 +1107,7 @@ function reviewsHtml(t, acc) {
    fold of earlier ones holding it), scrolled to and focused. */
 function openReview(t, id) {
   S.dtab[t.file] = 'reviews';
+  syncRoute();
   S.accOpen[`${t.file}:${id}`] = true;
   const acc = (S.acc[t.file] || {}).data;
   if (acc) {
@@ -1253,6 +1255,8 @@ function wireDetail(t) {
   const go = (key, focus) => {
     S.dtab[t.file] = key;
     renderDrawer();
+    // each section has its own address (task 134): ?tab=<section>
+    syncRoute();
     if (focus) requestAnimationFrame(() => { const b = document.getElementById('dtab-' + key); if (b) b.focus(); });
   };
   tabs.forEach((btn, i) => {

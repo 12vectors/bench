@@ -3,6 +3,8 @@ import { agentFor, agentOnTask, allTasks, isLiveSession, loadSession, modelChip,
 import { S } from '../app/state.js';
 import { $, esc } from '../lib/dom.js';
 import { markScroll, restoreScroll } from '../lib/keep.js';
+import { sessionStatusWord, sessionUnavailable } from '../lib/linkwords.js';
+import { formatRoute } from '../lib/route.js';
 import { fmtShort } from '../lib/time.js';
 import { evRow } from './activity.js';
 import { readinessPanel } from './doctor.js';
@@ -13,12 +15,16 @@ import { pillFor } from '../words.js';
 
 /* ── focus ────────────────────────────────────────────────────────────── */
 
+/* As Sessions picks (task 134): a chosen or addressed session is shown
+   as chosen, or said to be not there; the page's own pick is kept apart
+   in S.focusAuto, because a pick has no address. */
 function pickFocusSid() {
-  if (S.focusSid && sessionMeta(S.focusSid)) return S.focusSid;
+  if (S.focusSid) return S.focusSid;
+  if (S.focusAuto && sessionMeta(S.focusAuto)) return S.focusAuto;
   const live = sessionsOf(isLiveSession);
   const agentLive = live.find(m => m.agentId);
-  S.focusSid = (agentLive || live[0] || (S.state.sessions || [])[0] || {}).id || null;
-  return S.focusSid;
+  S.focusAuto = (agentLive || live[0] || (S.state.sessions || [])[0] || {}).id || null;
+  return S.focusAuto;
 }
 
 /* The run's own policy, in the Focus view's side column.
@@ -106,8 +112,8 @@ function reviewRows(found) {
 function renderFocus() {
   keepFolds('#cgrid');
   const sid = pickFocusSid();
-  if (sid) loadSession(sid);
   const meta = sessionMeta(sid);
+  if (sid && meta) loadSession(sid);
 
   // the view itself scrolls, and so does the stage strip across the top
   const view = $('#view-focus'), strip = $('#cstrip');
@@ -117,12 +123,22 @@ function renderFocus() {
 
   const options = (S.state.sessions || []).map(m =>
     `<option value="${esc(m.id)}"${m.id === sid ? ' selected' : ''}>${esc(m.label || m.id.slice(0, 8))}${m.task ? ' — ' + esc(m.task) : ''}</option>`).join('');
-  $('#focussel').innerHTML = options || '<option>no sessions yet</option>';
+  // a session an address named that is not here is an option of its own,
+  // so the selector does not claim another one is shown (task 134)
+  const absent = sid && !meta
+    ? `<option value="${esc(sid)}" selected>not on this board — ${esc(String(sid).slice(0, 12))}</option>` : '';
+  $('#focussel').innerHTML = (absent + options) || '<option>no sessions yet</option>';
 
   const hot = meta && meta.task ? findTask(meta.task)?.stage : 'in-progress';
   $('#cstrip').innerHTML = S.state.board.stages.map(s =>
     `<div class="c-seg${s.slug === hot ? ' hot' : ''}"><span class="lbl">${s.label}</span><span class="n">${s.tasks.length}</span></div>`).join('');
 
+  if (!meta && sid) {
+    $('#cgrid').innerHTML = `<div class="panel">${sessionUnavailable(sid)}</div>`;
+    $('#calso').innerHTML = '';
+    putBack();
+    return;
+  }
   if (!meta) {
     $('#cgrid').innerHTML = `<div class="panel"><div class="phead"><span class="dot"></span>` +
       `<span class="label">Right now</span></div>` +
@@ -186,7 +202,10 @@ function renderFocus() {
   const nowPanel =
     `<div class="panel"><div class="phead">` +
     `<span class="dot${live ? ' live' : ''}"></span><span class="label">Right now</span>` +
-    `<span class="r" id="celapsed">${sessionElapsed(meta)} on this</span>${stopBtn}</div>` +
+    `<span class="r" id="celapsed">${sessionElapsed(meta)} on this</span>` +
+    `<span class="r" data-sstatus>${esc(sessionStatusWord(meta, live))}</span>` +
+    `<button class="copylink" data-copy-link="${esc(formatRoute({ view: 'focus', session: sid }))}" ` +
+    `aria-label="copy a link to Focus on this session">Copy link</button>${stopBtn}</div>` +
     `<div class="refline">${refBits.join('<span>·</span>')}</div>` +
     `<h1 class="focus-title">${esc(task ? task.title : 'Session')}</h1>` +
     progressSection(agent, meta, task) +

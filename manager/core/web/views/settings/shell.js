@@ -2,6 +2,8 @@
 import { S } from '../../app/state.js';
 import { $, esc } from '../../lib/dom.js';
 import { markScroll, restoreScroll } from '../../lib/keep.js';
+import { plainClick, syncRoute } from '../../lib/nav.js';
+import { formatRoute } from '../../lib/route.js';
 import { toast } from '../../lib/toast.js';
 import { inspectConfiguration, wireAgents, wireDiagnostics } from './agents.js';
 import { openEditor } from './draft.js';
@@ -147,9 +149,13 @@ function renderSettingsNow() {
         `Nothing is being run.</p></div>`;
     return;
   }
-  const section = SETTINGS_SECTIONS.some(([k]) => k === S.settingsSection)
-    ? S.settingsSection : 'overview';
-  const [, title, , subtitle] = SETTINGS_SECTIONS.find(([k]) => k === section);
+  // a section an address named that is not one is said to be not one
+  // (task 134): the sidebar marks none current, and nothing is chosen for it
+  const unknown = !SETTINGS_SECTIONS.some(([k]) => k === S.settingsSection);
+  const section = unknown ? 'overview' : S.settingsSection;
+  const [, known, , knownSub] = SETTINGS_SECTIONS.find(([k]) => k === section);
+  const title = unknown ? 'No such section' : known;
+  const subtitle = unknown ? 'This address names a Settings section this board does not have.' : knownSub;
   head.innerHTML =
     `<div class="s-titles"><h1 id="s-title" tabindex="-1">${esc(title)}</h1>` +
     `<p class="s-sub">${esc(subtitle)}</p>` +
@@ -163,6 +169,8 @@ function renderSettingsNow() {
     (section === 'diagnostics' ? '' :
       `<button class="sb" id="s-inspect" aria-label="check configuration">` +
       `Check configuration</button>`) +
+    `<button class="sb" data-copy-link="${esc(formatRoute({ view: 'settings', section: S.settingsSection }))}" ` +
+    `aria-label="copy a link to this settings section">Copy link</button>` +
     `<button class="sb link" id="s-reread" aria-label="re-read the settings">` +
     `Re-read</button></div>`;
   // grouped as the sidebar reads, in SETTINGS_SECTIONS order; the current
@@ -176,10 +184,11 @@ function renderSettingsNow() {
   nav.innerHTML = groups.map((g, n) =>
     `<div class="s-navgroup" role="group" aria-labelledby="snavg-${n}">` +
     `<span class="s-navhead" id="snavg-${n}">${esc(g.name)}</span>` +
+    // each section is a link to its address (task 134), drawn as before
     g.items.map(([key, label]) =>
-      `<button data-ssection="${esc(key)}" ` +
-      `aria-current="${key === section ? 'page' : 'false'}" ` +
-      `aria-label="${esc(label)} settings">${esc(label)}</button>`).join('') +
+      `<a data-ssection="${esc(key)}" href="${esc(formatRoute({ view: 'settings', section: key }))}" ` +
+      `aria-current="${key === section && !unknown ? 'page' : 'false'}" ` +
+      `aria-label="${esc(label)} settings">${esc(label)}</a>`).join('') +
     `</div>`).join('');
   nav.classList.toggle('open', !!S.settingsNavOpen);
   const toggle = $('#snavtoggle');
@@ -208,8 +217,13 @@ function renderSettingsNow() {
   // section; a different section starts with its own folds closed
   const keepOpen = body.dataset.ssection === section ? openSettingsFolds(body)
     : new Set();
-  body.innerHTML = notice + settingsSection(section, page);
-  body.dataset.ssection = section;
+  body.innerHTML = notice + (unknown
+    ? `<div class="panel" role="alert"><p class="lead"><b>There is no Settings section called ` +
+      `“${esc(String(S.settingsSection || '').slice(0, 40))}”.</b> Nothing was opened in its place.</p>` +
+      `<p>The sections are: ${SETTINGS_SECTIONS.map(([key, label]) =>
+        `<a href="${esc(formatRoute({ view: 'settings', section: key }))}" data-route>${esc(label)}</a>`).join(', ')}.</p></div>`
+    : settingsSection(section, page));
+  body.dataset.ssection = unknown ? '' : section;
   body.querySelectorAll('details').forEach(d => {
     if (keepOpen.has(settingsFoldKey(d))) d.open = true;
   });
@@ -223,6 +237,7 @@ function renderSettingsNow() {
   const inspect = $('#s-inspect');
   if (inspect) inspect.addEventListener('click', () => {
     S.settingsSection = 'diagnostics';
+    syncRoute();
     inspectConfiguration();
     // the head's button is not drawn on Diagnostics; its heading takes focus
     $('#shead h1').focus({ preventScroll: true });
@@ -232,9 +247,12 @@ function renderSettingsNow() {
   // a link in the content goes to another section, and focus goes with it
   // to that section's heading, so the next Tab reads on from there
   body.querySelectorAll('[data-ssection]').forEach(btn =>
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      if (!plainClick(e)) return;
+      e.preventDefault();
       S.settingsSection = btn.dataset.ssection;
       renderSettings();
+      syncRoute();
       $('#view-settings').scrollTop = 0;
       $('#shead h1').focus({ preventScroll: true });
     }));
@@ -242,10 +260,14 @@ function renderSettingsNow() {
   // section they chose, or — below 760px, where the list closes — on the
   // button that opens it again
   nav.querySelectorAll('[data-ssection]').forEach(btn =>
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      // a new tab is the browser's: the section's address
+      if (!plainClick(e)) return;
+      e.preventDefault();
       S.settingsSection = btn.dataset.ssection;
       S.settingsNavOpen = false;
       renderSettings();
+      syncRoute();
       $('#view-settings').scrollTop = 0;
       const toggle = $('#snavtoggle');
       if (toggle.offsetParent !== null) toggle.focus();
@@ -269,6 +291,7 @@ function renderSettingsNow() {
       S.settingsSection = S.sedit
         ? (S.sedit.kind === 'check' ? 'verification' : 'acceptance') : 'policy';
       renderSettings();
+      syncRoute();
     }));
   if (body.querySelector('#s-steps')) wirePolicyEditor(page);
   if (section === 'diagnostics') wireDiagnostics();

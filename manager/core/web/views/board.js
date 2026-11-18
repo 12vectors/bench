@@ -6,6 +6,7 @@ import { isArmed } from '../lib/arm.js';
 import { $, esc } from '../lib/dom.js';
 import { markScroll, restoreScroll } from '../lib/keep.js';
 import { emptyNote, holdFocus, keyedPool, placeChildren, setHtml } from '../lib/keyed.js';
+import { syncRoute } from '../lib/nav.js';
 import { closeSheet, keyedCard, move, replan } from './card.js';
 import { renderDrawer } from './detail/drawer.js';
 import { findTask } from './focus.js';
@@ -133,6 +134,9 @@ function renderBoard() {
   }
   if (S.selected) {
     S.selected = allTasks().find(t => t.file === S.selected.file) || null;
+    // a card that left the board while open (archived, deleted) closes its
+    // view; the address follows in place, adding no entry (task 134)
+    if (!S.selected) syncRoute({ replace: true });
   }
   renderDrawer();
 }

@@ -76,14 +76,25 @@
   .brand{min-width:0}
   .brand .path{min-width:0;overflow-wrap:anywhere}
   .views{display:flex;gap:2px;padding:3px;background:var(--sunken);border:1px solid var(--border-soft);border-radius:8px}
-  .views button{padding:5px 12px;border:1px solid transparent;border-radius:6px;font-size:12.5px;font-weight:500;color:var(--muted)}
-  .views button:hover{color:var(--text);border-color:transparent}
-  .views button.on{background:var(--surface);border-color:var(--border);color:var(--text)}
+  /* each view is a link to its address (task 134), drawn as the switch it is */
+  .views a{padding:5px 12px;border:1px solid transparent;border-radius:6px;font-size:12.5px;font-weight:500;color:var(--muted);text-decoration:none}
+  .views a:hover{color:var(--text);border-color:transparent;text-decoration:none}
+  .views a.on{background:var(--surface);border-color:var(--border);color:var(--text)}
+  .views a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
   /* the crossing: a phase halting is learned from whatever view you are on,
      so the switcher carries how many are running and whether one stopped */
-  .views button{display:flex;align-items:center;gap:6px}
+  .views a{display:flex;align-items:center;gap:6px}
   .views .vcount{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
-  .views button.on .vcount{color:var(--accent)}
+  .views a.on .vcount{color:var(--accent)}
+  /* the page's own links (task 134) read as the text they replaced */
+  a.sess-row,a.sess-row:hover{color:inherit;text-decoration:none}
+  .card a.ref,.lhead a.lref,.dhead a.dref{color:var(--dim);text-decoration:none}
+  .card a.ref:hover,.lhead a.lref:hover,.dhead a.dref:hover{color:var(--accent);text-decoration:underline}
+  .lane.sel{box-shadow:0 0 0 2px var(--accent)}
+  #phasenote{margin:0 0 12px;padding:10px 12px;border:1px solid var(--alarm);border-radius:8px;color:var(--text);background:var(--surface)}
+  .dmissing{padding:14px 2px}
+  .dmissing h2{margin:0 0 8px;font-size:16px}
+  .dmissing ul{margin:6px 0 0;padding-left:18px}
   .views .vhalt{width:6px;height:6px;border-radius:99px;background:var(--alarm);flex:none}
   .livechip{
     display:flex;align-items:center;gap:9px;padding:5px 12px 5px 10px;cursor:pointer;
@@ -588,14 +599,14 @@
   .s-nav{display:flex;flex-direction:column;gap:18px}
   .s-navgroup{display:flex;flex-direction:column;gap:2px}
   .s-navhead{padding:0 12px 4px;font-size:13px;font-weight:500;color:var(--s-faint)}
-  .s-nav button{display:flex;align-items:center;gap:10px;min-height:40px;
+  .s-nav a{display:flex;align-items:center;gap:10px;min-height:40px;
     padding:8px 12px;border:none;border-left:3px solid transparent;
     border-radius:0 8px 8px 0;background:transparent;text-align:left;
-    font-size:14.5px;font-weight:400;color:var(--s-muted)}
-  .s-nav button:hover{background:var(--s-subtle);color:var(--s-ink);
-    border-left-color:transparent}
+    font-size:14.5px;font-weight:400;color:var(--s-muted);text-decoration:none}
+  .s-nav a:hover{background:var(--s-subtle);color:var(--s-ink);
+    border-left-color:transparent;text-decoration:none}
   /* current is told three ways: the bar, the weight, and aria-current */
-  .s-nav button[aria-current="page"]{background:var(--s-current);color:var(--s-ink);
+  .s-nav a[aria-current="page"]{background:var(--s-current);color:var(--s-ink);
     font-weight:600;border-left-color:var(--s-primary)}
   .s-navtoggle{display:none}
   .s-main{display:flex;flex-direction:column;min-width:0;padding:0 28px 40px 14px}
@@ -734,7 +745,7 @@
   #view-settings .sb.link:hover{text-decoration-thickness:2px;border-color:transparent}
   #view-settings .sb:disabled{cursor:not-allowed;background:var(--s-subtle);
     border-color:var(--s-line);color:var(--s-faint);filter:none}
-  #view-settings .sb:focus-visible,#view-settings .s-nav button:focus-visible,
+  #view-settings .sb:focus-visible,#view-settings .s-nav a:focus-visible,
   #view-settings summary:focus-visible{outline:2px solid var(--s-primary);outline-offset:2px}
   #view-settings button.sb.armed{color:var(--alarm);border-color:var(--alarm);
     background:var(--s-panel)}
@@ -873,7 +884,7 @@
     .s-nav{display:none;padding:10px 6px;background:var(--s-panel);
       border:1px solid var(--s-line);border-radius:10px}
     .s-nav.open{display:flex}
-    .s-nav button{min-height:46px}
+    .s-nav a{min-height:46px}
     .s-main{padding:0 16px 32px}
     .s-top{padding-top:18px}
     .s-head h1{font-size:23px}

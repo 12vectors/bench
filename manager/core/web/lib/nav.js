@@ -103,7 +103,19 @@ function plainClick(e) {
    the console */
 function routeWrites() { return writes; }
 
+/* Looking up a card an address names that the board does not list. The
+   detail view draws the answer; the composition root does the asking
+   (it reads the board again when the card turns out to be on it), and
+   registers how here — so the view asks without importing the reader. */
+let cardFinder = null;
+function onCardLink(fn) { cardFinder = fn; }
+function askCardLink(link) {
+  if (!cardFinder || !link || link.asked) return;
+  link.asked = true;
+  cardFinder(link);
+}
+
 export {
-  holdRoute, linkFor, plainClick, replaceRoute, routeReady, routeWrites,
-  setRouteSource, syncRoute
+  askCardLink, holdRoute, linkFor, onCardLink, plainClick, replaceRoute,
+  routeReady, routeWrites, setRouteSource, syncRoute
 };

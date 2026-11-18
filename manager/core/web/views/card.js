@@ -6,6 +6,8 @@ import { ARM_MS, arming, BUSY_MS, phaseOf } from '../lib/arm.js';
 import { $, esc } from '../lib/dom.js';
 import { scrollMarks } from '../lib/keep.js';
 import { keyedNode } from '../lib/keyed.js';
+import { plainClick, syncRoute } from '../lib/nav.js';
+import { cardId, formatRoute } from '../lib/route.js';
 import { ago, elapsed } from '../lib/time.js';
 import { toast } from '../lib/toast.js';
 import { archiveCard, renderBar } from './activity.js';
@@ -641,7 +643,12 @@ function cardSpec(task) {
   const high = (task.priority || '').toLowerCase() === 'high';
   const top = [
     `<span class="mark${working || completing ? ' breathing' : ''}" style="background:${tint}"></span>`,
-    `<span class="ref">${task.number ? '#' + esc(task.number) : esc(task.file.slice(0, 10))}</span>`,
+    // the card's address (task 134): a real link, so a modifier-click or a
+    // middle-click opens the card in a new tab; a plain click is the card's
+    // own, as it always was. Not a second keyboard stop: the card is one.
+    `<a class="ref" href="${esc(formatRoute({ card: cardId(task, S.state) }))}" data-cardlink ` +
+      `tabindex="-1" draggable="false" title="This card's address — open it in a new tab, or copy it">` +
+      `${task.number ? '#' + esc(task.number) : esc(task.file.slice(0, 10))}</a>`,
     '<span class="spacer"></span>',
     high ? '<span class="high">HIGH</span>' : '',
     task.statusMismatch ? `<span class="pill drift" title="File says ${esc(task.declaredStatus)}">drift</span>` : '',
@@ -1084,6 +1091,13 @@ function mountCard(spec) {
       focusCard(file, '[data-more]');
     }
   });
+  // the address in the top row: a plain click opens the card here, as a
+  // click anywhere on it does; any other click is the browser's
+  const link = el.querySelector('a[data-cardlink]');
+  if (link) link.addEventListener('click', (e) => {
+    if (plainClick(e)) e.preventDefault();
+    else e.stopPropagation();
+  });
   // a click between two tools is not a click on the card
   el.querySelector('.cardtools').addEventListener('click', (e) => e.stopPropagation());
   el.querySelectorAll('a.chip2').forEach(a =>
@@ -1108,7 +1122,7 @@ function mountCard(spec) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       S.dtab[file] = btn.dataset.section;
-      if (S.selected && S.selected.file === file) renderDrawer();
+      if (S.selected && S.selected.file === file) { renderDrawer(); syncRoute(); }
       else showDetail(cur());
     }));
   el.querySelectorAll('[data-drive]').forEach(btn =>
@@ -1695,8 +1709,11 @@ async function addToPhase(task, phase) {
 function showDetail(task) {
   const changed = !S.selected || S.selected.file !== task.file;
   S.selected = task;
+  S.cardLink = null;
   renderCards();
   if (changed) $('#drawerbody').scrollTop = 0;
+  // opening a card is a destination: its address (task 134)
+  syncRoute();
 }
 
 /* The runner's word for a member, in the vocabulary the rest of the board

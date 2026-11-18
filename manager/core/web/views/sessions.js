@@ -4,6 +4,9 @@ import { S } from '../app/state.js';
 import { fetch } from '../lib/api.js';
 import { $, esc } from '../lib/dom.js';
 import { markScroll, restoreScroll } from '../lib/keep.js';
+import { sessionStatusWord, sessionUnavailable } from '../lib/linkwords.js';
+import { plainClick, syncRoute } from '../lib/nav.js';
+import { formatRoute } from '../lib/route.js';
 import { ago, fmtClock, fmtShort } from '../lib/time.js';
 import { toast } from '../lib/toast.js';
 import { render } from './frame.js';
@@ -12,27 +15,37 @@ import { FILTERS, GLYPHS } from '../words.js';
 
 /* ── sessions ─────────────────────────────────────────────────────────── */
 
+/* The session Sessions shows. One chosen — clicked, or named by an
+   address — is shown as chosen, and one that is not on this board is
+   said to be not there (task 134); it is never swapped for another. With
+   none chosen, the page picks the live one, and keeps its pick apart
+   (S.flightAuto): a pick is not a destination, so it has no address. */
 function pickFlightSid() {
-  if (S.flightSid && sessionMeta(S.flightSid)) return S.flightSid;
+  if (S.flightSid) return S.flightSid;
+  if (S.flightAuto && sessionMeta(S.flightAuto)) return S.flightAuto;
   const live = sessionsOf(isLiveSession);
   const agentLive = live.find(m => m.agentId);
-  S.flightSid = (agentLive || live[0] || (S.state.sessions || [])[0] || {}).id || null;
-  return S.flightSid;
+  S.flightAuto = (agentLive || live[0] || (S.state.sessions || [])[0] || {}).id || null;
+  return S.flightAuto;
 }
 
 function renderFlight() {
   const sid = pickFlightSid();
-  if (sid) loadSession(sid);
+  const meta0 = sid ? sessionMeta(sid) : null;
+  if (sid && meta0) loadSession(sid);
 
   const rows = (S.state.sessions || []).map(m => {
     const active = isLiveSession(m) && m.status === 'active';
-    return `<div class="sess-row${m.id === sid ? ' sel' : ''}" data-sid="${esc(m.id)}" role="button" tabindex="0">` +
+    // a link to the session's address (task 134): a new tab takes it
+    return `<a class="sess-row${m.id === sid ? ' sel' : ''}" data-sid="${esc(m.id)}" ` +
+      `href="${esc(formatRoute({ view: 'flight', session: m.id }))}"` +
+      `${m.id === sid ? ' aria-current="true"' : ''}>` +
       `<span class="top"><span class="dot${active ? ' live' : ''}"></span>` +
       `<span>${esc((m.label || m.id.slice(0, 8)).split(' · ')[0])}</span>` +
       `<span class="sid">${esc(m.id.slice(0, 8))}</span>${modelChip(agentFor(m.id))}</span>` +
       `<span class="sub">${m.task ? 'on ' + esc(m.task) + ' · ' : ''}${m.count || 0} events · ${m.last ? ago(m.last) + ' ago' : ''}</span>` +
       (m.lastSummary ? `<span class="sub">${esc(m.lastSummary)}</span>` : '') +
-      `</div>`;
+      `</a>`;
   }).join('');
   const rail = $('#frail');
   markScroll('v:rail', rail);
@@ -40,11 +53,18 @@ function renderFlight() {
     (rows || '<div class="f-empty">None yet. Start an agent, or open a claude session in this repo.</div>');
   restoreScroll('v:rail', rail);
   document.querySelectorAll('#frail .sess-row').forEach(el =>
-    el.addEventListener('click', () => { S.flightSid = el.dataset.sid; render(); }));
+    el.addEventListener('click', (e) => {
+      if (!plainClick(e)) return;   // a new tab is the browser's
+      e.preventDefault();
+      S.flightSid = el.dataset.sid;
+      render();
+      syncRoute();
+    }));
 
   const meta = sessionMeta(sid);
   if (!meta) {
-    $('#fsession').innerHTML = '<span style="color:var(--dim)">no session selected</span>';
+    $('#fsession').innerHTML = sid ? sessionUnavailable(sid)
+      : '<span style="color:var(--dim)">no session selected</span>';
     $('#ffilters').innerHTML = '';
     $('#ftl').innerHTML = '';
     return;
@@ -65,8 +85,11 @@ function renderFlight() {
     `<div><div class="s-title">${esc((meta.label || sid).split(' · ')[0])}` +
     `<span class="sid">${esc(sid.slice(0, 8))}</span>${modelChip(agent)}</div>` +
     `<div class="s-line">${meta.task ? 'on ' + esc(meta.task) + ' · ' : ''}` +
+    `<span data-sstatus>${esc(sessionStatusWord(meta, isLiveSession(meta)))}</span> · ` +
     `started ${fmtShort(meta.started)} · ${meta.count || 0} events · ` +
     `${files.size} files edited · ${checks} check runs${branch}${model}</div></div>` +
+    `<button class="copylink" data-copy-link="${esc(formatRoute({ view: 'flight', session: sid }))}" ` +
+    `aria-label="copy a link to this session">Copy link</button>` +
     stopBtn + spark(events, meta);
   const stop = $('#stopagent');
   if (stop) stop.addEventListener('click', () => stopAgent(stop.dataset.aid));

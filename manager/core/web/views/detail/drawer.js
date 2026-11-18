@@ -4,6 +4,8 @@ import { S } from '../../app/state.js';
 import { $, esc } from '../../lib/dom.js';
 import { markScroll, restoreScroll } from '../../lib/keep.js';
 import { md } from '../../lib/md.js';
+import { askCardLink, syncRoute } from '../../lib/nav.js';
+import { cardId, formatRoute, routeOf, stemOf } from '../../lib/route.js';
 import { ago } from '../../lib/time.js';
 import { cardFor, cardTitle, focusCard, phaseMembers, planBlock, showDetail, verifySheet } from '../card.js';
 import { deliveryActions, deliveryOf, deliveryPill, wireDeliveryButtons } from '../delivery.js';
@@ -56,6 +58,7 @@ function renderDrawer() {
     $('#closeDrawer').addEventListener('click', () => { S.fileView = null; renderDrawer(); });
     return;
   }
+  if (!S.selected && S.cardLink) { renderCardLink(panel, body); return; }
   if (!S.selected) { panel.classList.remove('open'); body.innerHTML = ''; return; }
   const t = S.selected;
   const agent = agentOnTask(t.file);
@@ -107,10 +110,15 @@ function renderDrawer() {
   // existing tools all reach it — the others are `hidden`, not absent.
   body.innerHTML =
     `<div class="dhead dsticky">` +
-    `<span class="mono" style="font-size:12px;color:var(--dim)">${t.number ? '#' + esc(t.number) : ''}</span>` +
+    // the card's address, as a link a new tab can take (task 134)
+    `<a class="mono dref" style="font-size:12px" href="${esc(formatRoute({ card: cardId(t, S.state) }))}" ` +
+    `data-route title="This card's address">${t.number ? '#' + esc(t.number) : esc(stemOf(t.file))}</a>` +
     `<h2 class="dtitle" id="dtitle">${esc(cardTitle(t))}</h2>` +
     `<span class="pill" style="background:${pill.bg};color:${pill.tint}"` +
     `${pill.word ? ` data-word="${esc(pill.word)}"` : ''}>${esc(pill.text)}</span>` +
+    `<button id="dcopylink" data-copy-link="${esc(formatRoute(routeOf(S)))}" ` +
+    `aria-label="copy a link to this card${tab === 'overview' ? '' : `'s ${esc(tab)} section`}" ` +
+    `title="Copy this card's address — it follows the card through moves and title edits">Copy link</button>` +
     `<button id="dwide" aria-pressed="${S.dwide ? 'true' : 'false'}" ` +
     `title="A wider reading view for long briefs and reports">${S.dwide ? 'Narrow' : 'Expand'}</button>` +
     `<button id="closeDrawer">Close</button>` +
@@ -174,7 +182,89 @@ function renderDrawer() {
     renderCards();
     // back to the card the detail view was opened from
     focusCard(t.file);
+    syncRoute();
   });
+}
+
+/* ── a card an address named, that the board does not list (task 134) ──
+
+   An address names a card by number or stem; the board lists only the
+   cards in its five stages. Anything else is asked of the board once —
+   `GET /api/card/locate`, a read of the task files — and said as what it
+   is: the card, found in another stage after all (a move the listing had
+   not caught up with); the card, archived, shown read-only with none of
+   its actions; two cards sharing the number, each by its own address; or
+   no such card. Never another card in its place, and never a loading
+   state with nothing behind it. */
+const LINK_WORDS = {
+  waiting: 'Reading the board…',
+  loading: 'Looking for the card…',
+};
+
+function linkHead(label, extra) {
+  return `<div class="dhead dsticky">` +
+    `<span class="mono" style="font-size:12px;color:var(--dim)">${esc(label)}</span>` +
+    `${extra || ''}<span class="spacer"></span>` +
+    `<button id="dcopylink" data-copy-link="${esc(formatRoute(routeOf(S)))}" ` +
+    `aria-label="copy this address">Copy link</button>` +
+    `<button id="closeDrawer">Close</button></div>`;
+}
+
+function renderCardLink(panel, body) {
+  const link = S.cardLink;
+  const label = /^\d+$/.test(link.id || '') ? '#' + link.id : String(link.id || '');
+  let html;
+  if (link.state === 'waiting' || link.state === 'loading') {
+    if (link.state === 'loading') askCardLink(link);
+    html = linkHead(label) +
+      `<div class="dmissing dload" role="status" aria-busy="true">${esc(LINK_WORDS[link.state])}</div>`;
+  } else if (link.state === 'archived') {
+    const t = link.card;
+    html = linkHead(t.number ? '#' + t.number : stemOf(t.file),
+        `<h2 class="dtitle" id="dtitle">${esc(cardTitle(t))}</h2>` +
+        `<span class="pill" data-word="archived" style="background:var(--sunken);color:var(--idle)">Archived</span>`) +
+      `<div class="well" id="darchived"><span class="lead">·</span><div class="wbody">` +
+      `<b>This card is archived.</b> It is out of every column and was never deleted. ` +
+      `Nothing on it can be started, moved or reviewed from here: an archived card has no actions. ` +
+      `It comes back to the board through ⌘Z on the board that archived it, or by moving ` +
+      `<span class="mono">tasks/archive/${esc(t.file)}</span> into a stage.</div></div>` +
+      `<div class="dbody rmd">${md(String(t.body || ''))}</div>` +
+      `<div class="dmeta">archive/${esc(t.file)} · ${esc(String(t.words || 0))} words</div>`;
+  } else {
+    const say = {
+      missing: [`No card ${label} on this board`,
+        `No card in any stage or in the archive has that ${/^\d+$/.test(link.id || '') ? 'number' : 'name'}. ` +
+        'It may have been deleted, or the address was made on another board.'],
+      ambiguous: [`${(link.files || []).length} cards are ${label}`,
+        'More than one card carries this number, so the address does not say which one is meant. ' +
+        'Each has an address of its own:'],
+      invalid: ['Not a card address',
+        `“${clipText(String(link.id || ''), 60)}” is not a card's number or file name.`],
+      failed: [`Card ${label} could not be looked up`, link.error || 'the board could not be asked'],
+    }[link.state] || ['Not available', ''];
+    const files = link.state === 'ambiguous'
+      ? `<ul>${(link.files || []).map(f => {
+          const name = f.split('/').pop();
+          return `<li><a href="${esc(formatRoute({ card: stemOf(name) }))}" data-route>${esc(f)}</a></li>`;
+        }).join('')}</ul>` : '';
+    const retry = link.state === 'failed' ? `<p><button id="dlinkretry">Try again</button></p>` : '';
+    html = linkHead(label) +
+      `<div class="dmissing" role="alert"><h2>${esc(say[0])}</h2><p>${esc(say[1])}</p>${files}${retry}` +
+      `<p><a href="/board" data-route>Back to the Board</a></p></div>`;
+  }
+  body.innerHTML = html;
+  panel.classList.add('open');
+  const retry = $('#dlinkretry');
+  if (retry) retry.addEventListener('click', () => { link.asked = false; link.state = 'loading'; renderDrawer(); });
+  $('#closeDrawer').addEventListener('click', () => {
+    S.cardLink = null;
+    renderDrawer();
+    syncRoute();
+  });
+}
+
+function clipText(text, n) {
+  return text.length > n ? text.slice(0, n - 1) + '…' : text;
 }
 
 export {
