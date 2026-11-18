@@ -365,6 +365,8 @@ neither.
 | reuse records | `evidence` (`verify._record_reuse` decides) | `state.LOCK`, the same hold as the reuse decision | no |
 | a clipped check log | `verify` | the run's own end | no |
 | source checkout ownership (one per run, task 131) | `verify` | the run's reservation: written before `git worktree add`, removed only by the run it names or a restart that proves it | yes |
+| retained demonstration outputs and their records (task 133) | `artifacts` (`verify` decides when; `routes` for a withholding) | `artifacts._LOCK` | yes |
+| suggestion dismissals (task 133) | `results` | the board's one writer | no |
 | progress records | `progress` | `progress._LOCK` | no |
 | required-check batches, review-entry record | `required` | `required._LOCK`, `_ON_REVIEW_LOCK` | no |
 | refinement jobs | `refine` | the refine registry | no |
@@ -380,6 +382,9 @@ neither.
 to the code by `tests/test_records_adoption.py`:
 
 ```records durable
+artifacts.ingest
+artifacts.sweep
+artifacts.withhold
 completion._record_delivered
 completion._remember
 evidence.store
