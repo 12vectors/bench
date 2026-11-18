@@ -78,8 +78,10 @@ KIND = "bench-movement-eligibility"
 VERSION = 1
 HISTORY_LIMIT = 500
 JOURNAL_LIMIT = 5000
-_TRAILER_RE = re.compile(r"^Bench-Move(?:-(Id|Mover|Mover-Kind))?:[ \t]?(.*)$",
+_TRAILER_RE = re.compile(r"^Bench-(Move|Move-Id|Mover|Mover-Kind):[ \t]?(.*)$",
                          re.MULTILINE)
+_TRAILER_KEYS = {"Move": "version", "Move-Id": "Id", "Mover": "Mover",
+                 "Mover-Kind": "Mover-Kind"}
 _LOCATIONS = set(config.STAGE_DIRS) | {"archive"}
 IDENTITY_SOURCE = "git config user.name in the work-state repository"
 NOT_AUTHENTICATION = ("Attribution is Git's: a name in a commit or on this "
@@ -137,7 +139,7 @@ def card_key(filename: str) -> str:
 def _trailers(body: str) -> dict | None:
     found = {}
     for match in _TRAILER_RE.finditer(body or ""):
-        found[match.group(1) or "version"] = match.group(2).rstrip("\r")
+        found[_TRAILER_KEYS[match.group(1)]] = match.group(2).rstrip("\r")
     return found if "version" in found else None
 
 

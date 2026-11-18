@@ -390,7 +390,9 @@ class DeterministicHistory(Board):
     def test_identity_is_literal_and_a_changed_name_is_somebody_else(self):
         self.create("backlog", by=ELENA)
         self.move("backlog", "to-do", by=ADA)
-        for other in ("Ada", "ada ", "Ada Lovelace"):
+        # literal, as every claim compares it: no case folding, and a
+        # renamed identity is a different person to this board
+        for other in ("Ada", "ADA", "Ada Lovelace"):
             self.as_user(other)
             self.assertEqual(self.answer()["code"], "foreign-move", other)
         git(self.repo, "config", "--unset", "user.name")
@@ -491,19 +493,30 @@ class OneAnswerForLaunchAndPage(Board):
         self.phase()
         self.move("backlog", "to-do", by=ADA, filename="50-ship.md")
         self.orchestrate(phases={"50": {"enabled": True, "authority": {
-            w: True for w in agreements.AUTHORITIES}}})
+            w: True for w in agreements.AUTHORITIES},
+            "allocation": {"implementation": 1, "dailyStarts": 4}}})
         member = orchestrator.authorize("implement", "51-member.md")
         self.assertTrue(member["allowed"], member)
         self.assertEqual(member["scope"], "phase:50", "the phase's, never Bench's")
         self.assertEqual(member["eligibility"]["code"], "phase-delegated")
-        # elena moving the member makes it hers until reconciled
-        self.move("to-do", "in-progress", by=ELENA, filename="51-member.md")
+        # ada works the member; then elena moves it on by hand: the member's
+        # own last move is elena's, and the phase does not override it
+        self.move("to-do", "in-progress", by=ADA, filename="51-member.md")
+        self.move("in-progress", "review", by=ELENA, filename="51-member.md")
         self.as_user(ADA)
-        refused = orchestrator.authorize("implement", "51-member.md")
+        refused = orchestrator.authorize("review", "51-member.md")
+        self.assertEqual(refused["code"], "not-eligible")
         self.assertEqual(refused["eligibility"]["code"], "member-unreconciled")
+        self.assertEqual(refused["eligibility"]["movement"]["mover"], ELENA)
         # ada moving it herself is the visible reconciliation
-        self.move("in-progress", "to-do", by=ADA, filename="51-member.md")
+        self.move("review", "in-progress", by=ADA, filename="51-member.md")
         self.assertTrue(orchestrator.authorize("implement", "51-member.md")["allowed"])
+        # and a forward move from to-do by elena claims it: held, not taken
+        self.move("in-progress", "to-do", by=ADA, filename="51-member.md")
+        taskfiles.move_task("51-member.md", "to-do", "backlog")
+        self.move("backlog", "to-do", by=ELENA, filename="51-member.md")
+        self.as_user(ADA)
+        self.assertEqual(self.answer("51-member.md")["code"], "member-held")
 
     def test_a_member_someone_else_holds_needs_reconciliation(self):
         self.phase()

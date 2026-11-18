@@ -918,8 +918,8 @@ def movement_trailers(move_id: str, name: str, kind: str) -> str:
     literal = re.sub(r"[\r\n]", " ", name or "")
     return (f"\n\n{MOVE_TRAILER}: {MOVE_TRAILER_VERSION}\n"
             f"{MOVE_TRAILER}-Id: {move_id}\n"
-            f"{MOVE_TRAILER}-Mover: {literal}\n"
-            f"{MOVE_TRAILER}-Mover-Kind: {kind}\n")
+            f"Bench-Mover: {literal}\n"
+            f"Bench-Mover-Kind: {kind}\n")
 
 
 def movement_journal() -> Path:
