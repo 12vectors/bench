@@ -867,11 +867,81 @@ def _move_spec(src: Path, dst: Path) -> list[str]:
 
 
 def _commit_move(filename: str, target: str, src: Path, dst: Path, who: str,
-                 number: str | None) -> bool:
-    """The move and the claim in one commit."""
+                 number: str | None, trailers: str = "") -> bool:
+    """The move and the claim in one commit, its movement provenance in
+    the message's trailers (task 138)."""
     return commit_paths(
-        filename, f"board: {number or filename[:-3]} → {target} ({who or 'board'})",
+        filename, f"board: {number or filename[:-3]} → {target} ({who or 'board'})"
+        + trailers,
         _move_spec(src, dst), f"{filename} moved, but committing it failed")
+
+
+# ── movement provenance (task 138) ─────────────────────────────────────
+#
+# Who moved a card between stages, and whether a person did it, is what
+# an orchestrator's eligibility rests on (D1: last mover, not last
+# editor). The board is the only place that knows the second half — git
+# sees a commit author, not whether a person dragged the card or an agent
+# run ended — so every move the board makes says so where it is recorded:
+#
+# - **committed**, as trailers on the move's own commit, which travel with
+#   it through a push, a pull and sync's replay (a rebase keeps the
+#   message and the author);
+# - **not committed** (`BOARD_COMMIT_MOVES` off, or the commit failed), as
+#   one line in a machine-local journal, because then the commit that
+#   would have carried it does not exist.
+#
+# `movements` reads both back. Git authorship is not authentication: the
+# name is `git config user.name`, the same identity every claim uses.
+
+MOVE_TRAILER = "Bench-Move"
+MOVE_TRAILER_VERSION = "1"
+# The actor a move is made for, and the kind of mover that is. A move a
+# person made through the page (or a merge & clean up they clicked) is a
+# person's; everything else — an agent's run ending, the phase runner, a
+# launch walked back, a phase's sweep — is the board's own bookkeeping.
+PERSON_ACTORS = frozenset({"you"})
+
+
+def mover_kind(actor: str) -> str:
+    return "person" if actor in PERSON_ACTORS else "automated"
+
+
+def new_move_id() -> str:
+    return "m-" + secrets.token_hex(6)
+
+
+def movement_trailers(move_id: str, name: str, kind: str) -> str:
+    """The trailer block a move's commit message ends with. The name is
+    kept literally — only a line break, which a trailer cannot carry, is
+    replaced — so the identity compared later is the one git was given."""
+    literal = re.sub(r"[\r\n]", " ", name or "")
+    return (f"\n\n{MOVE_TRAILER}: {MOVE_TRAILER_VERSION}\n"
+            f"{MOVE_TRAILER}-Id: {move_id}\n"
+            f"{MOVE_TRAILER}-Mover: {literal}\n"
+            f"{MOVE_TRAILER}-Mover-Kind: {kind}\n")
+
+
+def movement_journal() -> Path:
+    return config.STATE / "movements" / "journal.jsonl"
+
+
+def record_movement(filename: str, source: str, target: str, name: str,
+                    kind: str, move_id: str) -> None:
+    """One uncommitted move, kept where `movements` can read it back. Never
+    raises: the move has happened on disk either way, and a journal that
+    cannot be written leaves the card reading *unrecorded*, which is the
+    safe direction."""
+    entry = {"v": 1, "id": move_id, "at": now_iso(), "file": filename,
+             "number": _number(filename), "from": source, "to": target,
+             "mover": name, "kind": kind}
+    try:
+        path = movement_journal()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with WRITE_LOCK, path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, sort_keys=True) + "\n")
+    except OSError:
+        pass
 
 
 def _relocate(filename: str, src: Path, dst: Path, text: str, target: str,
@@ -906,10 +976,19 @@ def _relocate(filename: str, src: Path, dst: Path, text: str, target: str,
     dst.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write(src, text)
     shutil.move(str(src), str(dst))
-    if config.COMMIT_MOVES and commit:
-        return _commit_move(filename, target, src, dst,
-                            actor_name() if who is None else who, _number(filename))
-    return None
+    if not commit:      # a batch: its caller records the movement once
+        return None
+    name = actor_name() if not who else who
+    kind, move_id = mover_kind(actor), new_move_id()
+    committed = None
+    if config.COMMIT_MOVES:
+        committed = _commit_move(filename, target, src, dst, name,
+                                 _number(filename),
+                                 movement_trailers(move_id, name, kind))
+    if committed is not True:
+        record_movement(filename, src.parent.name, dst.parent.name, name, kind,
+                        move_id)
+    return committed
 
 
 def commit_edit(filename: str, stage: str, what: str) -> bool:
@@ -1158,7 +1237,7 @@ def move_together(moves: list[tuple[str, str]], target: str, note: str,
     already landed in `main`, and finishing four cards beats abandoning
     the sweep over the fifth.
     """
-    moved, spec = [], []
+    moved, spec, sources = [], [], []
     for filename, source in moves:
         src = config.TASKS / source / filename
         dst = config.TASKS / target / filename
@@ -1167,13 +1246,26 @@ def move_together(moves: list[tuple[str, str]], target: str, note: str,
                                    commit=False, quiet=True))
         except (ValueError, OSError):
             continue
+        sources.append((filename, source))
         spec += _move_spec(src, dst)
-    if moved and config.COMMIT_MOVES:
+    if not moved:
+        return moved
+    # a sweep is the board's consequence of one person's click, never a
+    # person's move of each card it carried (task 138)
+    name = actor_name()
+    committed = None
+    if config.COMMIT_MOVES:
         numbers = ", ".join(task["number"] or task["file"][:-3] for task in moved)
-        commit_paths(moved[0]["file"],
-                f"board: {numbers} → {target}" + (f" {note}" if note else "")
-                + f" ({actor_name() or 'board'})",
-                spec, f"{len(moved)} cards moved, but committing them failed")
+        committed = commit_paths(
+            moved[0]["file"],
+            f"board: {numbers} → {target}" + (f" {note}" if note else "")
+            + f" ({name or 'board'})"
+            + movement_trailers(new_move_id(), name, "automated"),
+            spec, f"{len(moved)} cards moved, but committing them failed")
+    if committed is not True:
+        for filename, source in sources:
+            record_movement(filename, source, target, name, "automated",
+                            new_move_id())
     return moved
 
 
