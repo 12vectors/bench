@@ -79,6 +79,7 @@ MAX_ARTIFACTS = 16
 MAX_EVIDENCE_REFS = 8
 MAX_EXTENSION_BYTES = 16 * 1024
 MAX_EXTENSIONS = 8
+MAX_EXTENSION_DEPTH = 32
 CAPS = {"summary": 500, "message": 2000, "expected": 2000, "actual": 2000,
         "label": 200, "path": 300, "id": 80}
 
@@ -318,9 +319,28 @@ def _extensions(raw) -> dict:
             raise Invalid(f"extensions[{key!r}] is {size} bytes, over "
                           f"{MAX_EXTENSION_BYTES}")
         # kept as the program wrote it, scrubbed, and never interpreted:
-        # nothing in an extension reaches an outcome
-        out[key] = json.loads(redact.scrub(json.dumps(value), MARKER))
+        # nothing in an extension reaches an outcome. The string leaves are
+        # scrubbed one by one, never the serialized text: a credential
+        # pattern runs to the next space, so scrubbing JSON text would eat
+        # the closing quote and leave something that does not parse
+        out[key] = _scrubbed(value, f"extensions[{key!r}]", 0)
     return out
+
+
+def _scrubbed(value, where: str, depth: int):
+    """An extension value with every string in it — keys included —
+    scrubbed of anything credential-shaped, its structure unchanged.
+    Nesting deeper than `MAX_EXTENSION_DEPTH` is refused."""
+    if depth > MAX_EXTENSION_DEPTH:
+        raise Invalid(f"{where} nests deeper than {MAX_EXTENSION_DEPTH} levels")
+    if isinstance(value, str):
+        return redact.scrub(value, MARKER)
+    if isinstance(value, list):
+        return [_scrubbed(v, where, depth + 1) for v in value]
+    if isinstance(value, dict):
+        return {redact.scrub(str(k), MARKER): _scrubbed(v, where, depth + 1)
+                for k, v in value.items()}
+    return value
 
 
 def parse(data: bytes) -> dict:
@@ -332,6 +352,8 @@ def parse(data: bytes) -> dict:
                       f"{MAX_REPORT_BYTES} the contract reads")
     try:
         raw = json.loads(data.decode("utf-8"))
+    except RecursionError:
+        raise Invalid("the report nests too deeply to be read")
     except (UnicodeDecodeError, ValueError) as exc:
         raise Invalid(f"the report is not JSON ({exc.__class__.__name__})")
     if not isinstance(raw, dict):
@@ -399,6 +421,12 @@ def read(report_dir: Path) -> dict:
         return {"state": "unsupported", "problem": str(exc)}
     except Invalid as exc:
         return {"state": "invalid", "problem": str(exc)}
+    except (RecursionError, ValueError, TypeError) as exc:
+        # a shape the checks above did not anticipate is still a report
+        # bench could not read, never a reason for the run to raise
+        return {"state": "invalid",
+                "problem": f"the report could not be read "
+                           f"({exc.__class__.__name__})"}
 
 
 # ── the consistency rule ───────────────────────────────────────────────

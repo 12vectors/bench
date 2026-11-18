@@ -545,6 +545,98 @@ class ArtifactsFailSafely(ReportCase):
         self.assertNotIn("‮", flat)
         self.assertIn("«redacted»", flat)
 
+    def test_credential_shaped_extension_strings_are_masked_not_fatal(self):
+        # a key=value credential pattern runs to the next space, so scrubbing
+        # the serialized JSON would eat the closing quote; each string leaf
+        # is scrubbed on its own instead, and the report stays a report
+        values = ["password=hunter2abc", "https://x.example/a?token=abcdef123",
+                  f"api_key={SECRET}"]
+        body = report("passed", "fine", extensions={"cicero.env": {
+            "notes": values, "password=k3y9secret": {"nested": values[0]}}})
+        parsed = verifierreport.parse(json.dumps(body).encode())
+        flat = json.dumps(parsed, ensure_ascii=False)
+        for secret in ("hunter2abc", "abcdef123", SECRET, "k3y9secret"):
+            self.assertNotIn(secret, flat)
+        kept = parsed["extensions"]["cicero.env"]
+        self.assertEqual(len(kept["notes"]), 3)
+        self.assertTrue(all("«redacted»" in v for v in kept["notes"]))
+
+    def test_a_credential_in_an_extension_leaves_the_rule_s_outcome(self):
+        self.says(report("passed", "fine", extensions={
+            "cicero.env": {"url": "https://x.example/?token=abcdef123",
+                           "password": "password=hunter2abc"}}), rc=0)
+        found = self.go(self.contract())
+        self.assertEqual((found["outcome"], found["reason"]),
+                         ("passed", "report-passed"))
+        self.assertEqual(found["report"]["state"], "valid")
+        self.says(report("failed", "1 wrong", extensions={
+            "cicero.env": {"note": "password=hunter2abc"}}), rc=1)
+        failed = self.go(self.contract(), agent="run-2", again=True)
+        self.assertEqual((failed["outcome"], failed["reason"]),
+                         ("failed", "report-failed"))
+        self.assertNotIn("hunter2abc", json.dumps(failed))
+
+    def test_deep_nesting_is_a_protocol_error_never_a_raise(self):
+        deep = b'{"v": 1, "outcome": "passed", "summary": "s", "extensions": ' \
+               b'{"a.b": ' + b"[" * 100_000 + b"]" * 100_000 + b"}}"
+        bounded = report("passed", "s", extensions={"a.b": [[[[[]]]]]})
+        nested = bounded["extensions"]["a.b"]
+        for _ in range(verifierreport.MAX_EXTENSION_DEPTH + 2):
+            nested = [nested]
+        bounded["extensions"]["a.b"] = nested
+        for name, data in (("json", deep),
+                           ("depth", json.dumps(bounded).encode())):
+            with self.subTest(name):
+                out = self.tmp / f"rep-{name}"
+                out.mkdir()
+                (out / "report.json").write_bytes(data)
+                read = verifierreport.read(out)
+                self.assertEqual(read["state"], "invalid")
+                self.assertTrue(read["problem"])
+        self.says(None, rc=0, raw=deep.decode())
+        found = self.go(self.contract())
+        self.assertEqual((found["outcome"], found["reason"]),
+                         ("error", "report-invalid"))
+        self.assertIn("nests", found["report"]["problem"])
+
+
+class DiagnosticArtifactsCanBeWithheld(ReportCase):
+    """The remedy when the scrubber misses a secret: a person withholds a
+    kept file through the same route Show the result's outputs use."""
+
+    def test_the_route_withholds_a_diagnostic_artifact(self):
+        import routes
+        self.says(report("failed", "x", artifacts=[{"path": "diff.txt"}]),
+                  rc=1, files={"diff.txt": f"token={SECRET}-leaked\n"})
+        found = self.go(self.contract())
+        kept = next(k for k in found["report"]["kept"]
+                    if k["path"] == "diff.txt")
+        replies = []
+
+        class Req:
+            path = "/api/artifact/withhold"
+            body = {"file": CARD, "stage": "in-progress", "id": kept["id"],
+                    "reason": "a secret the scrubber missed",
+                    "purpose": "diagnostic"}
+
+            def reply(self, status, payload):
+                replies.append((status, payload))
+
+        routes.post_card_result(Req())
+        self.assertEqual(replies[0][0], 200, replies)
+        self.assertEqual(replies[0][1]["artifact"]["state"], "withheld")
+        record = artifacts.read(CARD, kept["id"], artifacts.DIAGNOSTIC)
+        self.assertEqual(record["state"], "withheld")
+        with self.assertRaises(artifacts.Refused):
+            artifacts.content(CARD, kept["id"], artifacts.DIAGNOSTIC)
+        # a run asking for it afterwards is told it is not available
+        art = verify.diagnostic(found["id"], agent="run-1", artifact=kept["id"])
+        self.assertIsNone(art.get("excerpt"))
+        # without the purpose the id names nothing among the outputs
+        Req.body = {**Req.body, "purpose": None}
+        routes.post_card_result(Req())
+        self.assertEqual(replies[1][0], 409)
+
 
 # ── a restricted run reads it, and can fix and rerun ───────────────────
 
