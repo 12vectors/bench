@@ -432,9 +432,7 @@ def start(filename: str, stage: str | None = None, *,
     _store(batch)
     state.record_board_event({
         "kind": "verify", "actor": actor, "file": filename,
-        "summary": (("" if batch["trigger"] == "click" else
-                     f"{filename} entered review with "
-                     f"BOARD_VERIFY_ON_REVIEW on: ")
+        "summary": (TRIGGER_WORDS[batch["trigger"]].format(file=filename)
                     + f"run required checks on {filename} at "
                     f"{str(batch['head'])[:12]} — "
                     f"{_names(batch, ('queued',))}")})
@@ -468,9 +466,17 @@ def join(timeout: float | None = None) -> None:
 # join, skip and stop is that click's. What it adds is the answer to
 # "whose move was this, and has this commit been asked for already?"
 
-# Why a batch was started: a person's click, or a person's move into
-# review/ on a board that opted in. Recorded on the batch and shown.
-TRIGGERS = ("click", "review-entry")
+# Why a batch was started: a person's click, a person's move into
+# review/ on a board that opted in, or an orchestrator's delivery pass
+# under an agreement that delegates `review` (task 142) — the same plan
+# and the same person's work reading in every case. Recorded on the batch
+# and shown.
+TRIGGERS = ("click", "review-entry", "orchestrator")
+TRIGGER_WORDS = {
+    "click": "",
+    "review-entry": "{file} entered review with BOARD_VERIFY_ON_REVIEW on: ",
+    "orchestrator": "the orchestrator, under your operating agreement: ",
+}
 
 ON_REVIEW_KEY = "BOARD_VERIFY_ON_REVIEW"
 

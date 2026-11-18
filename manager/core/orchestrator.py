@@ -68,6 +68,10 @@ ACTIONS = {
     "reason": "reasoning",
     "implement": "implement",
     "review": "review",
+    # Asking bench for the candidate's required checks (task 142). Not a
+    # launch — no slot, no start — and delegated by the same word as the
+    # independent review it precedes: both are assessing the exact head.
+    "verify": "review",
     "repair": "repair",
     "recover": "recovery",
     "integrate": "integrate",
@@ -164,7 +168,11 @@ def usage(reading: dict, tasks: list[dict], exclude: str | None = None) -> dict:
     # freed by a crash, a restart or a lost receipt.
     # `exclude` is the one operation whose own reservation is being
     # re-authorized: it must not count against itself.
-    ops = [op for op in operations.all_ops() if op["key"] != exclude]
+    # Only launches occupy a slot or spend a start: asking for checks and
+    # merging (task 142) are operations with intents and receipts too, but
+    # no coding agent runs for them.
+    ops = [op for op in operations.all_ops() if op["key"] != exclude
+           and op.get("action", "implement") in LAUNCHES]
     reserved = 0
     for op in operations.reserved(ops):
         if op.get("status") == "unobserved" and not op.get("alive"):
