@@ -535,7 +535,34 @@ class DistinctEndings(Sandbox):
         self.assertEqual("refused", self.ops("merge")[0]["status"])
         receipts = [n for n in self.card_notes("action") if n["phase"] == "receipt"]
         self.assertEqual("authority-revoked", receipts[-1]["outcome"])
-        self.assertEqual("merge-refused", self.item()["code"])
+        # the next pass asks the agreement afresh rather than holding the head
+        self.assertEqual("merge", self.item()["code"])
+
+    def test_a_refused_launch_is_not_asked_again_at_the_same_head(self):
+        self.enable()
+
+        def refuse(filename, stage):
+            self.calls["review"].append((filename, stage))
+            raise ValueError("the PR's head could not be resolved")
+
+        with mock.patch.object(agents, "start_pr_review", refuse):
+            self.tick()
+            self.tick()
+        self.assertEqual(1, len(self.calls["review"]))
+        found = self.item()
+        self.assertEqual("step-refused", found["code"])
+        self.heads[CARD] = B              # a new head is a new question
+        self.assertEqual("review", self.item()["code"])
+
+    def test_a_merge_that_left_the_card_in_review_is_not_merged_twice(self):
+        self.enable()
+        self.approve()
+        self.merge_result = {"merged": True, "published": True, "moved": False,
+                             "partial": True}
+        self.tick()
+        self.tick()
+        self.assertEqual(1, len(self.calls["merge"]))
+        self.assertEqual("partial", self.item()["code"])
 
     def test_a_card_that_is_not_ours_is_neither_read_into_nor_written(self):
         self.enable()

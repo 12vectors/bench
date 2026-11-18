@@ -103,6 +103,10 @@ NO_CHECKS = "No checks required by your policy"
 # word for this particular step is not delegated. Every other refusal
 # (ownership, pause, exclusion, the last mover...) means hands off.
 CARD_LEVEL_OK = ("not-authorized",)
+# Refusals the plan itself re-reads every pass, so a refused operation
+# with one of these codes does not hold the head: authority, and the
+# reviewer's independence, are asked again before anything acts.
+ANSWERED_AFRESH = ("authority-revoked", "review-not-independent")
 
 # Every code an item can carry, with the state it puts the card in. The
 # words are what the page and the card's record say.
@@ -136,6 +140,7 @@ CODES = {
     "repair-no-change": "blocked",
     "requirements-unmet": "blocked",
     "merge-refused": "blocked",
+    "step-refused": "blocked",
     "not-published": "blocked",
     "partial": "blocked",
 }
@@ -405,6 +410,16 @@ def assess(task: dict, reading: dict, ops: list[dict],
             code = "checks-running" if op["action"] == "verify" else "in-flight"
             return _set(item, code, f"operation {op['key']} ({op['action']}) "
                         f"is {op['status']}", operation=op["key"])
+    # a step refused at this head is not asked again until the head moves
+    # or a person releases it — except authority withdrawn before the act,
+    # which the next authorization answers afresh
+    for op in mine:
+        if op["status"] == "refused" and op.get("basis") == head \
+                and op["action"] != "merge" \
+                and op.get("code") not in ANSWERED_AFRESH:
+            return _set(item, "step-refused", f"the {op['action']} step was "
+                        f"refused at {head[:12]}: {op.get('reason')} — change "
+                        f"what it names, or release it", operation=op["key"])
     gate = gates.evaluate(filename, scope, task=task)
     item["gate"] = {"decision": gate.get("decision"), "scope": scope,
                     "summary": gate.get("summary")}
@@ -504,11 +519,17 @@ def assess(task: dict, reading: dict, ops: list[dict],
              }.get(decision, decision)
     item["label"] = label
     for op in _same(mine, "merge", head):
-        if op["status"] == "refused":
+        if op["status"] == "refused" and op.get("code") not in ANSWERED_AFRESH:
             return _set(item, "merge-refused", f"the merge was refused: "
                         f"{op.get('reason')}", operation=op["key"])
         if op["status"] == "ended" and op.get("outcome") in (
-                "not-published", "partial"):
+                "not-published", "partial", "merged", "reconciled"):
+            # a merge that ended and left the card here is a person's to
+            # finish; asking again would be a second merge of one head
+            if op.get("outcome") in ("merged", "reconciled"):
+                return _set(item, "partial", f"a merge of {head[:12]} ended "
+                            f"and the card is still in review/ — finish it by "
+                            f"hand", operation=op["key"])
             return _set(item, op["outcome"], op.get("observed") or
                         "the merge did not deliver this head", operation=op["key"])
     if not here["authority"]["merge"]["allowed"]:
@@ -636,6 +657,8 @@ def record_blockers(items: list[dict], board: dict) -> None:
     clear the delivery blockers a card no longer has."""
     texts = {t["file"]: t.get("body") for s in board["stages"] for t in s["tasks"]}
     for item in items:
+        if item.get("state") == "unmanaged":
+            continue      # not this scope's card: nothing is written on it
         filename, head = item["card"], (item.get("head") or "nohead")[:12]
         open_now = set()
         body = texts.get(filename)
@@ -813,6 +836,10 @@ def _merge(op: dict, filename: str, head: str, task: dict,
         held, _tip, _why = completion.remote_holds(rname, target, head)
         if held is True:
             result = completion.complete_delivered(filename, STAGE, head)
+            if not result.get("moved"):
+                return _merged(op, result, "partial", f"{rname}/{target} holds "
+                               f"{head[:12]}, and the card could not be "
+                               f"finished: {result.get('why') or 'see the ticker'}")
             return _merged(op, result, "reconciled",
                            f"{rname}/{target} already held {head[:12]}; "
                            f"cleaned up without merging again")
@@ -827,7 +854,8 @@ def _merge(op: dict, filename: str, head: str, task: dict,
     if result.get("merged") and not result.get("published"):
         return _merged(op, result, "not-published", "merged and not seen on "
                        "the remote; the completion's recovery record finishes it")
-    return _merged(op, result, "ended", "merge & clean up ended without a move")
+    return _merged(op, result, "partial", "merge & clean up ended without "
+                   "moving the card")
 
 
 def _merged(op: dict, result: dict, outcome: str, words: str) -> dict:

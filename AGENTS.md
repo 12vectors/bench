@@ -6117,6 +6117,7 @@ on), and every step's intent and receipt are `action` records:
 | `checks-unanswered` | checks asked at this head ended without answering; asking again is yours |
 | `authority-revoked` | the agreement, a pause, an exclusion or another person's move withdrew the step between the decision and the act |
 | `review-not-independent` | as above |
+| `step-refused` | a check batch, review or repair launch was refused at this head (its preflight said no); it is not asked again until the head moves or a person releases the operation |
 | `requirements-unmet`, `merge-refused`, `not-published`, `partial` | the merge rules, `complete_task` or publication said no |
 
 **Uncertain merges reconcile, never repeat.** A merge's intent is written
