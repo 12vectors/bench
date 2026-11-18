@@ -627,6 +627,9 @@ function resultViewer() {
     `<button id="resViewClose">Close</button></p>`;
   document.body.appendChild(dialog);
   dialog.querySelector('#resViewClose').addEventListener('click', () => dialog.close());
+  // Escape closes this view only: the page's own Escape (closing the
+  // detail view) listens on the document, so it is not told
+  dialog.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.stopPropagation(); });
   dialog.addEventListener('close', () => {
     const back = document.querySelector(`[data-res-view="${dialog.dataset.from}"]`);
     if (back) back.focus();
