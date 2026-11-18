@@ -1456,6 +1456,35 @@
   .inprow .dim{color:var(--dim)}
   .inpcls{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:4px}
 
+  /* Show the result (task 133): a small captioned gallery in the Overview */
+  .showresult{margin:12px 0;padding:10px 12px;border:1px solid var(--border);border-radius:8px;
+    min-width:0;overflow-wrap:anywhere}
+  .showresult h3{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:0}
+  .showresult .dim{color:var(--dim)}
+  .resgallery{list-style:none;margin:6px 0 10px;padding:0;display:grid;gap:10px;
+    grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+  .resitem{border:1px solid var(--border);border-radius:8px;padding:8px;font-size:12.5px;line-height:1.5;min-width:0}
+  .resitem figure{margin:0}
+  .resitem figcaption{margin-top:6px}
+  .resthumb{display:block;width:100%;padding:0;border:1px solid var(--border);border-radius:6px;
+    background:transparent;cursor:zoom-in}
+  .resthumb img{display:block;width:100%;max-height:180px;object-fit:contain}
+  .resthumb:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .respair h4{margin:8px 0 2px}
+  .ressetting fieldset{border:0;padding:0;margin:0 0 6px;display:flex;flex-wrap:wrap;gap:10px}
+  .ressetting .reswant{width:100%;max-width:520px;box-sizing:border-box}
+  .ressetting [aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+  .ressuggest{border:1px dashed var(--border);border-radius:8px;padding:6px 10px;margin:6px 0}
+  .reschecks{margin:4px 0 8px;padding-left:18px}
+  .resview{max-width:min(96vw,1200px);max-height:92vh;padding:12px;border:1px solid var(--border);
+    border-radius:8px;background:var(--surface);color:var(--text)}
+  .resview img{display:block;max-width:100%;max-height:78vh;object-fit:contain;margin:0 auto}
+  .resview::backdrop{background:rgba(0,0,0,.6)}
+  @media (max-width:520px){
+    .resgallery{grid-template-columns:1fr}
+    .showresult{padding:8px}
+  }
+
   /* announced, not drawn (task 125): the live regions beside the toast */
   .sronly{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
           clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}

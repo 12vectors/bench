@@ -6,8 +6,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "app/state.js": {
-   "bytes": 4838,
-   "sha256": "7598247034b37b806a654cd84d52fce734e5f387ea996fede46ceaac2f01d5f4",
+   "bytes": 4940,
+   "sha256": "784b5f6ccfa7243fd43a84367bd646769dc75a2f0d9109cf7fc1e4f10a3d6ec6",
    "type": "text/javascript; charset=utf-8"
   },
   "app/theme.js": {
@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 90609,
-   "sha256": "97b354bc3e0092de2ea6c2e86f2579239c113e58c3c7c3c32037a6aca5f8ed89",
+   "bytes": 92411,
+   "sha256": "f80ea4854174076ec42baa83ca6d2dc087adc46605eac16c2c2d009324a3c4aa",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -246,8 +246,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/sections.js": {
-   "bytes": 62460,
-   "sha256": "ffa8a66927bdf2f93a00c69c92aa03353ca46e0ea3b179122534b0c877c12a45",
+   "bytes": 81639,
+   "sha256": "86670cdff1b3564571ff1850b22bd4199ba5e4ad05be5160a3c326946317fab0",
    "type": "text/javascript; charset=utf-8"
   },
   "views/doctor.js": {

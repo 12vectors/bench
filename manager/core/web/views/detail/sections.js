@@ -190,6 +190,7 @@ function overviewHtml(t, acc, failBlock, signals, plan, members) {
   const fact = (dt, dd) => dd ? `<dt>${dt}</dt><dd>${dd}</dd>` : '';
   return deliveryStatusHtml(t, d, 'ov') + failBlock +
     requirementsHtml(t, d, full, 'ov') +
+    resultHtml(t) +
     `<dl class="dfacts">` +
     fact('Stage', esc(STAGE_WORDS[t.stage] || t.stage) + (t.assignee ? ` · held by ${esc(t.assignee)}` : '')) +
     fact('Progress', esc(progressFact(t))) +
@@ -402,6 +403,312 @@ function wireInputs(t) {
     loadDetail(t, true);
     loadState();
   }));
+}
+
+/* ── Show the result (task 133) ─────────────────────────────────────────
+
+   What the card delivered and what shows it, as the server reads it
+   (`results.reading`): the card's own request (Off, Requested or Required
+   for handoff), the outputs bench kept from checks that declare them —
+   each with how far it can be trusted — the checks bench ran, acceptance
+   counts and what is known of merged, installed and deployed. Reading it
+   runs nothing; the only writes are the setting (into the brief), "Not
+   now" on the suggestion and withholding one output. Every word a program
+   or a person wrote is drawn through esc(); an image is an <img> of the
+   board's own sandboxed, nosniff URL, and anything active is a download. */
+const RES_TONE = { neutral: '', calm: 'ok', alarm: 'bad', working: 'accent' };
+const RES_MODES = [['off', 'Off'], ['requested', 'Requested'], ['required', 'Required for handoff']];
+const RES_SHORTCUTS = [['screenshots', 'Screenshots', 'Screenshots of the changed screen'],
+                       ['output', 'Example output', 'Example output from the changed behaviour'],
+                       ['before-after', 'Before/after', 'Before/after screenshots of the changed screen']];
+const FACT_WORDS = { implemented: 'Implemented', merged: 'Merged', installed: 'Installed', deployed: 'Deployed' };
+
+const resultRes = resource({
+  store: S.result,
+  url: (file, t) => `/api/card/result?file=${encodeURIComponent(file)}` +
+    `&stage=${encodeURIComponent(t.stage)}`,
+  ask: (url) => fetch(url),
+});
+
+function resultStamp(t) {
+  const r = ((S.state || {}).results || {})[t.file];
+  return `${t.stage}:${t.mtime}:${t.rev || ''}:${r ? JSON.stringify(r) : '-'}`;
+}
+
+function loadResult(t, force) {
+  resultRes.read(t.file, resultStamp(t), {
+    force, arg: t,
+    done: () => { if (S.selected && S.selected.file === t.file && !S.fileView) renderDrawer(); },
+  });
+}
+
+function shortSha(s) { return s ? String(s).slice(0, 12) : 'unknown'; }
+
+function artifactHtml(t, a, i) {
+  const caption = a.caption || a.name || 'output';
+  const badge = a.current ? `<span class="cbadge ok">Current</span>`
+    : `<span class="cbadge ${a.state === 'available' ? '' : 'dim'}">${esc((a.relevanceWords || [])[0] || a.stateWords)}</span>`;
+  let media;
+  if (a.url && a.kind === 'image') {
+    media = `<button class="resthumb" data-res-view="${i}" aria-label="View full size: ${esc(caption)}">` +
+      `<img src="${esc(a.url)}" alt="${esc(caption)}" loading="lazy"></button>`;
+  } else if (a.url && (a.kind === 'text' || a.kind === 'json')) {
+    media = `<p><a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">Open ${esc(a.name)} as text</a>` +
+      ` · <a href="${esc(a.url)}&download=1" download>Download</a></p>`;
+  } else if (a.url) {
+    media = `<p><a href="${esc(a.url)}&download=1" download>Download ${esc(a.name)}</a>` +
+      (a.active ? ` <span class="dim">— active content (HTML, SVG or script): download only, never opened here</span>` : '') + `</p>`;
+  } else {
+    media = `<p class="dim">${esc(a.stateWords)}` +
+      (a.withheld ? ` — ${esc(a.withheld.reason)}` : '') +
+      (a.expired ? ` — ${esc(a.expired.why)}` : '') + `</p>`;
+  }
+  const p = a.producer || {};
+  const src = a.source || {};
+  const meta = [
+    `commit ${shortSha(src.commit)}${src.dirty ? ' with uncommitted work' : ''}`,
+    p.check ? `check ${p.check} — ${p.outcome || 'unknown'}` : '',
+    a.capturedAt ? `captured ${stampOf(a.capturedAt)}` : '',
+    a.viewport ? `viewport ${a.viewport}` : '',
+    a.data && a.data !== 'unknown' ? `data: ${a.data}` : 'data: not stated',
+    a.environment ? `environment: ${a.environment}` : '',
+    a.role && a.role !== 'single' ? a.role : '',
+  ].filter(Boolean).join(' · ');
+  const depicts = a.depicts || {};
+  const open = S.accOpen[`${t.file}:res-${a.id}`];
+  return `<li class="resitem" data-keep="res-${esc(a.id)}"><figure>` + media +
+    `<figcaption>${badge} <b>${esc(caption)}</b>` +
+    (a.scenario ? `<div>Scenario: ${esc(a.scenario)}</div>` : '') +
+    (a.criterion ? `<div>Criterion: <span class="mono">${esc(a.criterion)}</span>` +
+      (a.criterionText ? ` — ${esc(a.criterionText)}` : '') + `</div>` : '') +
+    `<div class="dim">${esc(meta)}</div>` +
+    ((a.relevanceWords || []).length && !a.current
+      ? `<div class="dim">${a.relevanceWords.map(esc).join('; ')}</div>` : '') +
+    `</figcaption></figure>` +
+    `<details class="rpt" data-keep="res-d-${esc(a.id)}"${open ? ' open' : ''} data-res-fold="${esc(a.id)}">` +
+    `<summary>Provenance</summary><div style="padding:6px 10px">` +
+    `<p>Bench recorded: the run <span class="mono">${esc(p.evidence || 'unknown')}</span>, its check and outcome, and the source it ran against (commit ${esc(shortSha(src.commit))}${src.bound ? '' : ', not bound'}). ` +
+    `The output's hash is <span class="mono">${esc(shortSha(a.sha256))}</span>, ${esc(String(a.size))} bytes, ${esc(a.kind)}.</p>` +
+    `<p>The program's account: it shows revision ${esc(shortSha(depicts.revision))}` +
+    `${depicts.claimed ? ' (stated by the program)' : ''}; target ${esc(a.target || 'unknown')}. ` +
+    `Bench did not confirm which build it depicts.</p>` +
+    (a.kind === 'image' ? `<p class="dim">Images are kept as they were made; their pixels are not inspected for secrets.</p>` : '') +
+    (a.scrubbed ? `<p class="dim">Credential-shaped text was scrubbed from this output when it was kept.</p>` : '') +
+    (a.state === 'available'
+      ? `<p><label for="res-why-${i}">Withhold this output</label> <input id="res-why-${i}" placeholder="why — e.g. shows personal data" ` +
+        `value="${esc(S.accDraft[`res-why:${a.id}`] || '')}"> <button data-res-withhold="${i}">Withhold</button> ` +
+        `<span class="dim">Removes its bytes and description; the record that it existed stays.</span></p>` : '') +
+    `</div></details></li>`;
+}
+
+function resultSettingHtml(t, d) {
+  const s = d.setting || {};
+  const key = (k) => `res-${k}:${t.file}`;
+  const mode = S.accDraft[key('mode')] || s.mode || 'off';
+  const want = S.accDraft[key('want')] !== undefined ? S.accDraft[key('want')] : (s.want || '');
+  const expects = S.accDraft[key('expects')] || s.expects || 'any';
+  const agree = S.accDraft[key('agree')] !== undefined ? S.accDraft[key('agree')] : !!s.agreedNow;
+  const preview = S.accDraft[key('preview')];
+  const open = S.accOpen[`${t.file}:res-edit`] || t.stage === 'done' && preview;
+  const radios = RES_MODES.map(([v, w]) =>
+    `<label><input type="radio" name="res-mode-${esc(t.file)}" value="${v}"${v === mode ? ' checked' : ''} data-res-mode> ${w}</label>`).join(' ');
+  const shortcuts = RES_SHORTCUTS.map(([v, w]) =>
+    `<button type="button" data-res-shortcut="${v}"${v === expects ? ' aria-pressed="true"' : ' aria-pressed="false"'}>${w}</button>`).join(' ');
+  return `<details class="rpt" data-keep="res-edit" data-res-fold="edit"${open ? ' open' : ''}>` +
+    `<summary>${t.stage === 'done' ? 'Request a demonstration' : 'Edit Show the result'}</summary>` +
+    `<div style="padding:6px 10px" class="ressetting">` +
+    `<fieldset><legend>Show the result</legend>${radios}</fieldset>` +
+    `<p class="dim">Off: no extra demonstration work and nothing missing. Requested: the run is asked to capture something useful and to say what it could not; nothing is held. ` +
+    `Required for handoff: the agreed output must exist for the current commit before the card goes to review.</p>` +
+    (mode !== 'off'
+      ? `<p><label for="res-want">What would you like to see?</label><br>` +
+        `<input id="res-want" class="reswant" maxlength="300" placeholder="e.g. Before/after screenshots of the mobile settings screen" value="${esc(want)}"></p>` +
+        `<p>${shortcuts}</p>` +
+        (mode === 'required'
+          ? `<p><label><input type="checkbox" id="res-agree"${agree ? ' checked' : ''}> This is the agreed output to show</label> ` +
+            `<span class="dim">Required enforces nothing until a concrete output is agreed. It grants the run no new capability.</span></p>` : '') +
+        (mode === 'requested' && !want ? `<p class="dim">Left empty, the run chooses a sensible demonstration and says why.</p>` : '')
+      : '') +
+    (preview ? `<div role="status">${preview.notes.map(n => `<p>${esc(n)}</p>`).join('')}</div>` : '') +
+    `<p>` + (t.stage === 'done' && !preview
+      ? `<button id="resPreview">Check what this would need</button>`
+      : `<button id="resSave">Save</button>`) +
+    ` <span class="dim">Saving writes the card's brief. It starts no capture, check or agent${t.stage === 'done' ? ' and does not reopen the card' : ''}.</span></p>` +
+    (d.activeRun ? `<p class="dnote" role="status">${esc(d.activeRun.name || 'An agent')} is working on this card and keeps the instructions and authority it launched with; a change here reaches the next run.</p>` : '') +
+    `</div></details>`;
+}
+
+function resultHtml(t) {
+  loadResult(t);
+  const entry = S.result[t.file] || {};
+  const d = entry.data;
+  if (!d) {
+    return `<section class="showresult" data-keep="result" aria-labelledby="res-h"><h3 id="res-h">Show the result</h3>` +
+      (entry.error ? `<p class="dnote" role="alert">The result could not be read: ${esc(entry.error)} <button id="resRetry">Try again</button></p>`
+                   : `<p class="dnote" aria-busy="true">Reading the result…</p>`) + `</section>`;
+  }
+  const rows = d.artifacts || [];
+  const byId = Object.fromEntries(rows.map((a, i) => [a.id, i]));
+  const curated = (d.curated || []).map(id => rows[byId[id]]).filter(Boolean);
+  const pairs = (d.pairs || []).filter(p => p.matched);
+  const alarm = d.tone === 'alarm';
+  const nothing = !rows.length && d.status === 'off';
+  const facts = (d.availability || []).map(a =>
+    `<dt>${esc(FACT_WORDS[a.fact] || a.fact)}</dt><dd><span class="cbadge ${a.state === 'yes' ? 'ok' : a.state === 'unknown' ? 'dim' : ''}">${esc(a.state)}</span> ${esc(a.words)}</dd>`).join('');
+  const checks = (d.checks || []).length
+    ? `<ul class="reschecks">` + d.checks.map(c => `<li><b>${esc(c.check)}</b> — ${esc(c.outcome || 'unknown')}` +
+        ` <span class="dim">at ${esc(shortSha(c.commit))}${c.atCandidate ? ' (current commit)' : ' (another commit — history)'}</span></li>`).join('') + `</ul>`
+    : `<p class="dnote">Bench has run no check for this card.</p>`;
+  const acc = d.acceptance
+    ? `<button class="dlink" data-goto="acceptance">${d.acceptance.accepted} of ${d.acceptance.total} criteria accepted on record</button> — a demonstration accepts none of them.`
+    : `<button class="dlink" data-goto="acceptance">Acceptance results not recorded</button> — a demonstration records none.`;
+  const gaps = (d.gaps || []).length
+    ? `<p class="dim">No current output is linked to: ${d.gaps.map(g => esc(g.text)).join('; ')}.</p>` : '';
+  const pairHtml = pairs.map(p => {
+    const b = rows[byId[p.before]], a = rows[byId[p.after]];
+    return `<div class="respair" data-keep="res-pair-${esc(p.pair)}"><h4>Before / after — ${esc(p.scenario || p.pair)}` +
+      `${p.viewport ? ` at ${esc(p.viewport)}` : ''}</h4>` +
+      `<p class="dim">Before shows ${esc(shortSha(p.beforeRevision))} (the program's account); after was captured at ${esc(shortSha(p.afterRevision))}.` +
+      `${p.current ? '' : ' Not current.'}</p>` +
+      `<ul class="resgallery">${[b, a].filter(Boolean).map(x => artifactHtml(t, x, byId[x.id])).join('')}</ul></div>`;
+  }).join('');
+  const pairedIds = new Set(pairs.flatMap(p => [p.before, p.after]));
+  const singles = curated.filter(a => !pairedIds.has(a.id));
+  const allOpen = S.accOpen[`${t.file}:res-all`];
+  return `<section class="showresult" data-keep="result" aria-labelledby="res-h">` +
+    `<h3 id="res-h">Show the result <span class="cbadge ${RES_TONE[d.tone] || ''}" id="resState">${esc(d.label)}</span></h3>` +
+    `<p ${alarm ? 'role="alert"' : 'role="status"'}>${esc(d.sentence)}</p>` +
+    (d.remedy ? `<p><b>Fix:</b> ${esc(d.remedy)}</p>` : '') +
+    (d.setting && d.setting.want ? `<p>Asked to see: “${esc(d.setting.want)}”</p>` : '') +
+    (d.summary ? `<p>${esc(d.summary.text)} <span class="dim">— ${esc(d.summary.from)}</span></p>` : '') +
+    (d.suggest
+      ? `<div class="ressuggest" role="note"><p>Would screenshots help you review this change?</p>` +
+        `<p><button id="resSuggestYes">Request screenshots</button> <button id="resSuggestNo">Not now</button></p></div>` : '') +
+    (nothing ? `<p class="dnote">No demonstration output is kept for this card on this board.</p>` : '') +
+    pairHtml +
+    (singles.length ? `<ul class="resgallery">${singles.map(a => artifactHtml(t, a, byId[a.id])).join('')}</ul>` : '') +
+    (rows.length > curated.length || rows.some(a => !a.current)
+      ? `<details class="rpt" data-keep="res-all" data-res-fold="all"${allOpen ? ' open' : ''}><summary>All outputs on this board (${rows.length}), with history</summary>` +
+        `<ul class="resgallery">${rows.map((a, i) => artifactHtml(t, a, i)).join('')}</ul></details>` : '') +
+    `<h4>What ran</h4>` + checks +
+    `<p>${acc}</p>` + gaps +
+    `<h4>Where the change is</h4><dl class="dfacts resfacts">${facts}</dl>` +
+    (!d.capture.supported && d.status !== 'off'
+      ? `<p class="dnote" role="status">${esc(d.capture.why)}</p>` : '') +
+    resultSettingHtml(t, d) +
+    `<details class="rpt" data-keep="res-about" data-res-fold="about"${S.accOpen[`${t.file}:res-about`] ? ' open' : ''}>` +
+    `<summary>What a demonstration is, and is not</summary><div style="padding:6px 10px">` +
+    (d.boundaries || []).map(b => `<p>${esc(b)}</p>`).join('') + `</div></details>` +
+    `<dialog class="resview" id="resView" aria-labelledby="resViewCap"><figure><img id="resViewImg" alt=""><figcaption id="resViewCap"></figcaption></figure>` +
+    `<p><a id="resViewOpen" target="_blank" rel="noopener noreferrer">Open in a new tab</a> · <button id="resViewClose">Close</button></p></dialog>` +
+    `</section>`;
+}
+
+async function saveResult(t, d, fields) {
+  const data = await postCard('/api/card/result/setting', {
+    file: t.file, stage: t.stage, briefSha: d.briefSha, ...fields });
+  if (data) {
+    for (const k of ['mode', 'want', 'expects', 'agree', 'preview']) delete S.accDraft[`res-${k}:${t.file}`];
+    toast(`Show the result: ${data.mode}` + (data.unagreed ? ' — not enforced until an output is agreed' : '') +
+          (data.note ? ` — ${data.note}` : '') + (data.committed ? '' : ' — written to the card, not committed'));
+  }
+  loadResult(t, true);
+  loadDetail(t, true);
+  loadState();
+}
+
+function wireResult(t) {
+  const body = $('#drawerbody');
+  const d = (S.result[t.file] || {}).data;
+  const retry = body.querySelector('#resRetry');
+  if (retry) retry.addEventListener('click', () => { loadResult(t, true); renderDrawer(); });
+  if (!d) return;
+  const key = (k) => `res-${k}:${t.file}`;
+  body.querySelectorAll('[data-res-fold]').forEach(el => el.addEventListener('toggle', () => {
+    S.accOpen[`${t.file}:res-${el.dataset.resFold}`] = el.open;
+  }));
+  body.querySelectorAll('[data-res-mode]').forEach(r => r.addEventListener('change', () => {
+    S.accDraft[key('mode')] = r.value;
+    S.accOpen[`${t.file}:res-edit`] = true;
+    renderDrawer();
+  }));
+  const want = body.querySelector('#res-want');
+  if (want) want.addEventListener('input', () => { S.accDraft[key('want')] = want.value; });
+  const agree = body.querySelector('#res-agree');
+  if (agree) agree.addEventListener('change', () => { S.accDraft[key('agree')] = agree.checked; });
+  body.querySelectorAll('[data-res-shortcut]').forEach(b => b.addEventListener('click', () => {
+    const pick = RES_SHORTCUTS.find(([v]) => v === b.dataset.resShortcut);
+    S.accDraft[key('expects')] = pick[0];
+    if (!(S.accDraft[key('want')] || (d.setting || {}).want)) S.accDraft[key('want')] = pick[2];
+    renderDrawer();
+  }));
+  const fields = () => {
+    const s = d.setting || {};
+    const mode = S.accDraft[key('mode')] || s.mode || 'off';
+    return { mode,
+      want: S.accDraft[key('want')] !== undefined ? S.accDraft[key('want')] : (s.want || ''),
+      expects: S.accDraft[key('expects')] || s.expects || 'any',
+      agree: mode === 'required' && (S.accDraft[key('agree')] !== undefined ? S.accDraft[key('agree')] : !!s.agreedNow) };
+  };
+  const save = body.querySelector('#resSave');
+  if (save) save.addEventListener('click', () => { save.disabled = true; saveResult(t, d, fields()); });
+  const preview = body.querySelector('#resPreview');
+  if (preview) preview.addEventListener('click', async () => {
+    preview.disabled = true;
+    const data = await postCard('/api/card/result/preview', { file: t.file, stage: t.stage });
+    if (data) {
+      S.accDraft[key('preview')] = data;
+      if (!S.accDraft[key('mode')]) S.accDraft[key('mode')] = 'requested';
+    }
+    renderDrawer();
+  });
+  const yes = body.querySelector('#resSuggestYes');
+  if (yes) yes.addEventListener('click', () => {
+    S.accDraft[key('mode')] = 'requested';
+    S.accDraft[key('expects')] = 'screenshots';
+    S.accOpen[`${t.file}:res-edit`] = true;
+    renderDrawer();
+  });
+  const no = body.querySelector('#resSuggestNo');
+  if (no) no.addEventListener('click', async () => {
+    no.disabled = true;
+    await postCard('/api/card/result/dismiss', { file: t.file, stage: t.stage });
+    loadResult(t, true);
+  });
+  const rows = d.artifacts || [];
+  body.querySelectorAll('input[id^="res-why-"]').forEach(input => input.addEventListener('input', () => {
+    const a = rows[Number(input.id.slice('res-why-'.length))];
+    if (a) S.accDraft[`res-why:${a.id}`] = input.value;
+  }));
+  body.querySelectorAll('[data-res-withhold]').forEach(btn => btn.addEventListener('click', async () => {
+    const a = rows[Number(btn.dataset.resWithhold)];
+    if (!a) return;
+    btn.disabled = true;
+    const data = await postCard('/api/artifact/withhold', {
+      file: t.file, stage: t.stage, id: a.id, reason: S.accDraft[`res-why:${a.id}`] || '' });
+    if (data) { delete S.accDraft[`res-why:${a.id}`]; toast('output withheld — its record stays'); }
+    loadResult(t, true);
+  }));
+  const dialog = body.querySelector('#resView');
+  body.querySelectorAll('[data-res-view]').forEach(btn => btn.addEventListener('click', () => {
+    const a = rows[Number(btn.dataset.resView)];
+    if (!a || !dialog || !a.url) return;
+    body.querySelector('#resViewImg').src = a.url;
+    body.querySelector('#resViewImg').alt = a.caption || a.name || 'output';
+    body.querySelector('#resViewCap').textContent = (a.caption || a.name || '') +
+      (a.current ? ' — current' : ` — ${(a.relevanceWords || [])[0] || ''}`);
+    body.querySelector('#resViewOpen').href = a.url;
+    dialog.showModal();
+    dialog.dataset.from = btn.dataset.resView;
+  }));
+  const close = body.querySelector('#resViewClose');
+  if (close && dialog) {
+    close.addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => {
+      const back = body.querySelector(`[data-res-view="${dialog.dataset.from}"]`);
+      if (back) back.focus();
+    });
+  }
 }
 
 /* The Overview's one line about the card's information: the same state the
@@ -897,6 +1204,7 @@ async function postAcc(t, url, payload) {
 function wireDetail(t) {
   const body = $('#drawerbody');
   wireInputs(t);
+  wireResult(t);
   const retry = body.querySelector('#dretry');
   if (retry) retry.addEventListener('click', () => { loadDetail(t, true); renderDrawer(); });
   const tabs = [...body.querySelectorAll('.dtabs [role="tab"]')];
