@@ -994,6 +994,26 @@ INPUT_FRESHNESS = max(60.0, float(setting("BOARD_INPUT_FRESHNESS", "86400")))
 INPUT_FETCH_TIMEOUT = min(60.0, max(1.0, float(
     setting("BOARD_INPUT_FETCH_TIMEOUT", "10"))))
 
+# Retained demonstration outputs (artifacts.py, task 133): what a check that
+# declares "outputs": true wrote into $BENCH_VERIFY_OUTPUTS, kept by bench
+# under the tool's state so it survives the run's TMPDIR cleanup, a restart
+# and the worktree's removal. Bounded per file, per run and per card; the
+# bytes of an artifact older than ARTIFACT_RETENTION_DAYS (or the oldest,
+# once a card is over its cap) are removed and its record is kept, marked
+# expired. RESULT_DEFAULT_UI is a project's opt-in for cards the board
+# itself writes about a user interface: "requested" or "off" — never
+# "required", which only a person sets on a card.
+ARTIFACTS_DIR = STATE / "artifacts"                # retained demonstration outputs
+RESULTS_DIR = STATE / "results"                    # suggestion dismissals
+ARTIFACT_MAX_BYTES = max(1024, int(setting("BOARD_ARTIFACT_MAX_BYTES",
+                                           str(8 * 1024 * 1024))))
+ARTIFACT_CARD_BYTES = max(ARTIFACT_MAX_BYTES, int(setting(
+    "BOARD_ARTIFACT_CARD_BYTES", str(64 * 1024 * 1024))))
+ARTIFACT_RUN_FILES = max(1, int(setting("BOARD_ARTIFACT_RUN_FILES", "24")))
+ARTIFACT_RETENTION_DAYS = max(1.0, float(setting("BOARD_ARTIFACT_RETENTION_DAYS", "90")))
+RESULT_DEFAULT_UI_RAW = setting("BOARD_RESULT_DEFAULT_UI", "off").strip().lower()
+RESULT_DEFAULT_UI = "requested" if RESULT_DEFAULT_UI_RAW == "requested" else "off"
+
 
 def child_env() -> dict[str, str]:
     """Environment for adapter/driver/command child processes: the real

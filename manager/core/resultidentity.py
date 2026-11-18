@@ -77,6 +77,10 @@ RUNNER_FILES = (
 # a verdict is bound without being inside the revision. Held equal to the
 # real imports by `tests/test_runner_identity.py`.
 BOUND_ELSEWHERE = {
+    "artifacts": ("after the verdict: what a check declaring \"outputs\" "
+                  "wrote is kept once the outcome is already decided and "
+                  "written into the record; keeping it changes no outcome, "
+                  "no identity dimension and no freshness answer (task 133)"),
     "config": ("re-derived: the paths, the child environment and the "
                "branch a source check follows are read again when freshness "
                "is asked, and every recorded fact they shaped (the variable "

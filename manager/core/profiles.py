@@ -1523,6 +1523,11 @@ def _check_problem(raw: dict, known_prepare: set[str],
     problem = _inputs_problem(name, raw.get("inputs"), known_inputs or {})
     if problem:
         return problem
+    if "outputs" in raw and not isinstance(raw.get("outputs"), bool):
+        return ("check-invalid",
+                f"the check '{name}' declares \"outputs\" that is not true or "
+                f"false — true hands the check $BENCH_VERIFY_OUTPUTS, where "
+                f"what it writes is kept as demonstration output (task 133)")
     return _env_problem(name, raw.get("env"))
 
 
@@ -1618,7 +1623,14 @@ def _check(raw: dict, steps: dict, *, source: str, scale: float,
                                root, scopes, prepare, timeout,
                                [[i["name"], i["source"], i["required"]]
                                 for i in inputs], env)
+    # A check that keeps demonstration output (task 133) says so with
+    # `"outputs": true`. Carried only when declared, and outside the
+    # revision, the check id and the substance: declaring it stales no
+    # pass, and a document that does not use it resolves byte for byte as
+    # before. The runner hands such a check $BENCH_VERIFY_OUTPUTS.
+    extra = {"outputs": True} if raw.get("outputs") is True else {}
     return {
+        **extra,
         "inputs": inputs,
         "env": env,
         "checkSubstance": check_substance(shlex.join(parts), root, timeout,

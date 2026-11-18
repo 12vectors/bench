@@ -512,6 +512,19 @@ CATALOGUE = (
      "implementation needs Recheck information"),
     ("BOARD_INPUT_FETCH_TIMEOUT", "access", "restart",
      "how long one retrieval of a card's remote reference may take"),
+    ("BOARD_ARTIFACT_MAX_BYTES", "verification", "restart",
+     "the largest single demonstration output bench keeps from a check"),
+    ("BOARD_ARTIFACT_CARD_BYTES", "verification", "restart",
+     "how many bytes of demonstration output one card keeps before the "
+     "oldest expire (their records stay)"),
+    ("BOARD_ARTIFACT_RUN_FILES", "verification", "restart",
+     "how many output files bench keeps from one check run"),
+    ("BOARD_ARTIFACT_RETENTION_DAYS", "verification", "restart",
+     "how many days a demonstration output's bytes are kept; its record "
+     "outlives them"),
+    ("BOARD_RESULT_DEFAULT_UI", "verification", "restart",
+     "whether cards the board writes about a user interface ask for a "
+     "demonstration (requested) — never required, never retroactive"),
     ("BOARD_ALLOWED_ORIGINS", "installation", "restart",
      "browser origins besides this board's own loopback page whose writes "
      "it accepts, such as a local proxy's — exact scheme://host[:port] "
@@ -917,6 +930,9 @@ def verification(doc: dict | None = None) -> dict:
             # other checks whose evidence may answer this one, as declared
             # (card 104) — a precondition, never sufficient on its own
             "accepts": list(check.get("accepts") or []),
+            # whether bench keeps what it writes to $BENCH_VERIFY_OUTPUTS
+            # as demonstration output (task 133)
+            "outputs": bool(check.get("outputs")),
             "timeout": check["timeout"],
             "checkId": check["checkId"],
             "checkSubstance": check.get("checkSubstance"),

@@ -89,6 +89,7 @@ import threading
 import time
 from pathlib import Path
 
+import artifacts
 import config
 import evidence
 import profiles
@@ -875,6 +876,11 @@ def request(*, check: str, task: str | None = None, agent: str | None = None,
         # its result identity, and what a declared equivalence compares
         "checkSubstance": found.get("checkSubstance"),
     })
+    if found.get("outputs") and task:
+        # A check the policy declares as keeping demonstration output
+        # (task 133): it is handed $BENCH_VERIFY_OUTPUTS, and what it
+        # writes there is kept for this card when the run ends.
+        shell["outputs"] = {"declared": True}
 
     # — what the check declares it depends on, before anything runs —
     inputs, refusal = _resolve_inputs(found)
@@ -1721,6 +1727,12 @@ def _execute(record: dict, check: dict, root: Path, owned: bool, *,
     delivered = _deliver_inputs(inputs, tmp)
     if check.get("inputs"):
         env["BENCH_VERIFY_INPUTS"] = str(delivered)
+    if (record.get("outputs") or {}).get("declared"):
+        # inside the run's own temporary directory, which `_cleanup`
+        # removes — `_finish` keeps what is there first
+        outputs = tmp / "outputs"
+        outputs.mkdir(parents=True, exist_ok=True)
+        env["BENCH_VERIFY_OUTPUTS"] = str(outputs)
     bound_env = resultidentity.env_identity(env, list(check.get("env") or []), env_key)
     record["env"] = {
         "removed": removed, "home": str(home), "tmp": str(tmp),
@@ -1910,6 +1922,8 @@ def _finish(record: dict, outcome: dict, owned: bool, root: Path) -> dict:
                          if outcome["started"] else 0.0),
             "logBytes": size, "logTruncated": truncated,
         })
+    if (record.get("outputs") or {}).get("declared"):
+        record["outputs"] = _keep_outputs(record)
     _cleanup(record, owned, root)
     stored = evidence.store(record)
     state.record_board_event({
@@ -1917,6 +1931,34 @@ def _finish(record: dict, outcome: dict, owned: bool, root: Path) -> dict:
         "summary": line(stored)})
     state.broadcast({"type": "verify"})
     return stored
+
+
+def _keep_outputs(record: dict) -> dict:
+    """What a check declaring `"outputs": true` wrote, kept by `artifacts`
+    before the run's temporary directory goes (task 133). Bound to this
+    record — its id, check, outcome and the source it ran against — so a
+    screenshot from a failed run is kept and reads as a failed attempt,
+    never as a result. A keeping that fails is said on the record and
+    changes nothing about the verdict."""
+    tmp = _owned_tmp(record)
+    out = {"declared": True, "kept": [], "refused": []}
+    if tmp is None or not record.get("task"):
+        return out
+    try:
+        kept = artifacts.ingest(tmp / "outputs", task=record["task"], run={
+            "evidence": record.get("id"), "check": record.get("check"),
+            "scope": record.get("scope"), "outcome": record.get("outcome"),
+            "reason": record.get("reason"), "resultId": record.get("resultId"),
+            "agent": record.get("agent"), "intent": record.get("intent"),
+            "actor": record.get("actor"), "root": record.get("rootPolicy"),
+            "source": record.get("source") or {}})
+    except (OSError, ValueError) as exc:
+        out["error"] = f"the outputs could not be kept: {exc.__class__.__name__}"
+        return out
+    out.update(kept=kept["kept"], refused=kept["refused"][:24],
+               summary=kept["summary"], partial=kept["partial"],
+               problems=kept["problems"][:8])
+    return out
 
 
 def _clip_log(path: Path) -> bool:
@@ -2139,6 +2181,9 @@ PUBLIC = ("v", "id", "runner", "task", "stage", "agent", "actor", "intent",
           # on a legacy record, which is how a reader tells the two apart
           "resultId", "identity", "checkSubstance", "provenance", "inputs",
           "prepareSteps",
+          # what a check declaring "outputs" left, kept by `artifacts`
+          # (task 133): ids and refusals, never a path
+          "outputs",
           # a request answered by an existing record (`reused` names it,
           # `reuse` is the requester's own record) and a forced rerun
           "reused", "reuse", "again",
