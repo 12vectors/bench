@@ -415,7 +415,8 @@ function wireInputs(t) {
    runs nothing; the only writes are the setting (into the brief), "Not
    now" on the suggestion and withholding one output. Every word a program
    or a person wrote is drawn through esc(); an image is an <img> of the
-   board's own sandboxed, nosniff URL, and anything active is a download. */
+   board's own nosniff URL under a restrictive policy, and anything active
+   is a download. */
 const RES_TONE = { neutral: '', calm: 'ok', alarm: 'bad', working: 'accent' };
 const RES_MODES = [['off', 'Off'], ['requested', 'Requested'], ['required', 'Required for handoff']];
 const RES_SHORTCUTS = [['screenshots', 'Screenshots', 'Screenshots of the changed screen'],
