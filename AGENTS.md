@@ -2606,6 +2606,15 @@ checkout path was never part of an identity. Historical evidence is not
 rewritten; a record made in a shared `verify/src/` checkout keeps naming
 that path.
 
+**Task 133 is another.** Keeping a check's demonstration outputs changes
+`verify.py`, so promoting that core reads every recorded pass `stale /
+runner-changed` once, and each required check on an open card needs one
+fresh run. Declaring `"outputs": true` on a check moves nothing else: it
+is outside the check's revision, id and substance. A check that declares
+it is handed one more variable (`BENCH_VERIFY_OUTPUTS`), whose name is
+bound like every other variable's, so its first run after the
+declaration is a new result identity.
+
 ### Every status word
 
 The words a card can wear, from `delivery.WORDS`, with the precedence
