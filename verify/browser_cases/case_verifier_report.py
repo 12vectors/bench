@@ -155,7 +155,9 @@ class AReportReadsAsTwoVoices(unittest.TestCase):
                "document.querySelectorAll('#sheetwrap .report-finding')"
                ".forEach(d => d.open = true)")
         time.sleep(0.3)
-        text = b.eval("document.querySelector('#sheetwrap .report-panel').innerText")
+        # textContent, not innerText: the labels are uppercased by CSS,
+        # and the words, not their rendering, are what is asserted
+        text = b.eval("document.querySelector('#sheetwrap .report-panel').textContent")
         shot("verifier-report-sheet-1280x900")
         self.assertIn("Bench observed", text)
         self.assertIn("Verifier reported", text)
