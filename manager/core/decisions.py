@@ -591,7 +591,11 @@ def _readable(record: dict) -> str:
 
 def _append(text: str, record: dict) -> str:
     """One record and its readable line, appended to the section, bounded."""
-    line = taskfiles.record_line("orchestration", record)
+    # every angle bracket escaped, not only a comment's own delimiters: a
+    # renderer that ever showed the line would show text, never markup
+    body = (json.dumps(record, ensure_ascii=False, sort_keys=True)
+            .replace("<", "\\u003c").replace(">", "\\u003e"))
+    line = f"<!-- bench:orchestration {body} -->"
     if len(line.encode("utf-8")) > MAX_RECORD_BYTES:
         raise ValueError(f"the {record['kind']} record is over "
                          f"{MAX_RECORD_BYTES // 1024} KiB — nothing was written")

@@ -43,12 +43,14 @@ sys.path.insert(0, str(CORE))
 
 import agentsettings  # noqa: E402
 import config  # noqa: E402
+import decisions  # noqa: E402
 import doctor  # noqa: E402
 import httpd  # noqa: E402
 import orchestrator  # noqa: E402
 import profiles  # noqa: E402
 import reasoning  # noqa: E402
 import state  # noqa: E402
+import taskfiles  # noqa: E402
 
 CLAUDE = CORE / "adapters" / "claude"
 OPENCODE = CORE / "adapters" / "opencode"
@@ -595,6 +597,42 @@ class Refusals(_Board):
         self.assertIn("cardRev", job["diagnostics"][0]["why"])
         # kept as history, never as an instruction
         self.assertFalse(job["response"]["actions"][0]["executable"])
+
+
+class OnCard(_Board):
+    """Task 140: a settled job's public outcome lives on its card, so the
+    question it drafted outlives every machine-local record of the job."""
+
+    def test_the_question_survives_losing_the_reasoning_state(self):
+        self.addCleanup(setattr, taskfiles, "actor_name", taskfiles.actor_name)
+        taskfiles.actor_name = lambda: "ada"
+        job = self.ask(need="questions")
+        self.assertEqual(job["status"], "valid", job.get("diagnostics"))
+        self.assertTrue(job["cardRecord"]["written"], job["cardRecord"])
+        self.assertTrue(reasoning.public(job)["fresh"]["fresh"],
+                        "recording the response on the card does not stale it")
+        # the board loses every local record of the job: the card still says
+        shutil.rmtree(self.tmp / "reasoning")
+        reasoning.reset()
+        reading = decisions.for_card("51-export-as-csv.md", "to-do")
+        [question] = reading["questions"]
+        self.assertEqual((question["text"], question["options"], question["state"]),
+                         ("Include hidden columns?", ["no", "yes"], "open"))
+        self.assertEqual(reading["responses"][0]["operation"], job["id"])
+        self.assertNotIn("Thinking about it", self.card.read_text(encoding="utf-8"),
+                         "no transcript reaches the card")
+        brief = taskfiles.brief_sha(taskfiles.card_parts(
+            self.card.read_text(encoding="utf-8"))["brief"])
+        decisions.answer("51-export-as-csv.md", "to-do", question=question["id"],
+                         basis=question["basis"], brief_sha=brief, actor_seen="ada",
+                         choice=0, request="req-oncard-1")
+        # the owner's answer is a new input: the same need is a new question
+        again = self.ask(need="questions")
+        self.assertNotEqual(again["fingerprint"], job["fingerprint"])
+        states = {q["id"]: q["state"] for q in
+                  decisions.for_card("51-export-as-csv.md", "to-do")["questions"]}
+        self.assertEqual(states[question["id"]], "answered",
+                         "an answered question is not superseded by the next response")
 
 
 class Validation(unittest.TestCase):
