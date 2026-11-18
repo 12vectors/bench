@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""A disposable, Cicero-shaped verification wrapper, adapted to bench's
+verifier report contract (task 135).
+
+It stands for a project wrapper that owns its own safety checks before
+it runs anything: it refuses an unsafe target, refuses without disposable
+fixture data, and only then compares the candidate's rules against
+fixture cases. None of that moves into bench. The only change the
+contract asks for is the `Report` calls: the same decisions, said in a
+form a coding agent can act on.
+
+The candidate (the working directory bench starts the check in) holds:
+
+    rules.json             {"rate": <number>, "target": "fixture" | ...}
+    fixtures/cases.json    [{"id": "c1", "amount": 100, "expected": 110.0}, ...]
+
+Everything is fake: no private data, no service, no network.
+
+Exit status, which agrees with the report under bench's rule:
+0 passed, 1 failed, 2 refused (an unsafe target), 3 setup-failed (no
+fixtures), 4 incomplete.
+"""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bench_report import Report  # noqa: E402
+
+
+def main() -> int:
+    report = Report()
+    root = Path.cwd()
+
+    # — the wrapper's own safety checks, unchanged by the contract —
+    rules_path = root / "rules.json"
+    try:
+        rules = json.loads(rules_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return report.setup_failed(f"rules.json could not be read ({exc.__class__.__name__})")
+    target = str(rules.get("target") or os.environ.get("CICERO_TARGET") or "fixture")
+    if target != "fixture":
+        report.finding("rules.json points the verifier at a non-fixture target",
+                       path="rules.json", expected='"target": "fixture"',
+                       actual=f'"target": "{target}"')
+        return report.refused(f"refusing to run against target '{target}': this "
+                              f"wrapper runs against disposable fixtures only")
+    cases_path = root / "fixtures" / "cases.json"
+    if not cases_path.is_file():
+        return report.setup_failed("fixtures/cases.json is missing, so no case "
+                                   "could be checked")
+    try:
+        cases = json.loads(cases_path.read_text(encoding="utf-8"))
+    except ValueError:
+        return report.setup_failed("fixtures/cases.json is not JSON")
+
+    # — the checks themselves —
+    rate = rules.get("rate")
+    if not isinstance(rate, (int, float)):
+        return report.setup_failed("rules.json has no numeric rate")
+    rate_line = next((i for i, text in enumerate(
+        rules_path.read_text(encoding="utf-8").splitlines(), 1)
+        if '"rate"' in text), None)
+    wrong, diff = [], []
+    for done, case in enumerate(cases, 1):
+        if case.get("stop"):
+            return report.incomplete(f"stopped after {done - 1} of {len(cases)} "
+                                     f"cases: case {case.get('id')} asks to stop")
+        actual = round(case["amount"] * rate, 2)
+        if abs(actual - case["expected"]) > 0.005:
+            wrong.append(case["id"])
+            diff.append(f"{case['id']}: -{case['expected']:.2f} +{actual:.2f}")
+    if wrong:
+        report.artifact("diff.txt", "\n".join(diff) + "\n",
+                        label="expected and actual totals per case")
+        for case_id in wrong:
+            case = next(c for c in cases if c["id"] == case_id)
+            report.finding(f"case {case_id}: the total is wrong",
+                           path="rules.json", line=rate_line,
+                           expected=f"{case['expected']:.2f}",
+                           actual=f"{round(case['amount'] * rate, 2):.2f}",
+                           evidence=["diff.txt"])
+        return report.failed(f"{len(wrong)} of {len(cases)} fixture cases have "
+                             f"the wrong total")
+    return report.passed(f"all {len(cases)} fixture cases match")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

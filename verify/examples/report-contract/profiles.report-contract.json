@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "checks": [
+    {
+      "name": "totals",
+      "help": "Fixture totals against the candidate's rules, through the project's own safety-checked wrapper",
+      "run": "/usr/bin/python3 /path/to/verify/examples/report-contract/cicero_shaped_verify",
+      "root": "source",
+      "timeout": 300,
+      "report": "v1"
+    }
+  ],
+  "profiles": {
+    "work": {"verify": ["totals"]},
+    "act-pr": {"verify": ["totals"]},
+    "review": {"verify": ["totals"]}
+  }
+}
