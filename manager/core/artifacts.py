@@ -126,22 +126,38 @@ def _task_ok(task: str) -> bool:
                 and Path(task).name == task)
 
 
-def card_dir(task: str) -> Path:
+# What a verifier report declared (task 135) is kept by the same rules in
+# a directory of its own under the card's, so the Show the result
+# section, which reads the card's directory, never mistakes a failing
+# check's diff for a demonstration of the change.
+DIAGNOSTIC = "diagnostic"
+PURPOSES = ("demonstration", DIAGNOSTIC)
+# What a verifier report may keep: content a reader can be shown as what it
+# is. Active content, unknown binaries and executables are refused there,
+# where a demonstration keeps them as downloads.
+DIAGNOSTIC_KINDS = ("text", "json", "image")
+REPORT_FILE = "report.json"
+
+
+def card_dir(task: str, purpose: str | None = None) -> Path:
     if not _task_ok(task):
         raise Refused("not a card")
-    return config.ARTIFACTS_DIR / task[:-3]
+    base = config.ARTIFACTS_DIR / task[:-3]
+    return base / DIAGNOSTIC if purpose == DIAGNOSTIC else base
 
 
-def _record_path(task: str, artifact_id: str) -> Path:
+def _record_path(task: str, artifact_id: str,
+                 purpose: str | None = None) -> Path:
     if not ID_RE.match(str(artifact_id or "")):
         raise Refused("not an artifact id")
-    return card_dir(task) / f"{artifact_id}.json"
+    return card_dir(task, purpose) / f"{artifact_id}.json"
 
 
-def _bytes_path(task: str, artifact_id: str) -> Path:
+def _bytes_path(task: str, artifact_id: str,
+                purpose: str | None = None) -> Path:
     if not ID_RE.match(str(artifact_id or "")):
         raise Refused("not an artifact id")
-    return card_dir(task) / f"{artifact_id}.bin"
+    return card_dir(task, purpose) / f"{artifact_id}.bin"
 
 
 def artifact_id(evidence_id: str, name: str) -> str:
@@ -422,6 +438,146 @@ def ingest(outdir, *, task: str, run: dict) -> dict:
     return result
 
 
+def ingest_report(outdir, *, task: str, run: dict,
+                  declared: list[dict] | None) -> dict:
+    """Keep one run's verifier report and the artifacts it declared
+    (task 135), under the card's diagnostic directory.
+
+    `outdir` is the run's own `$BENCH_VERIFY_REPORT_DIR`, made empty for
+    this invocation, so nothing another run left can be kept as this
+    one's. Only `report.json` and the paths the validated report
+    declares are read — never a path the report names outside the
+    directory, never a link, never anything else lying beside them, and
+    nothing is ever deleted because a report asked. Each kept file is
+    bound to `run` (bench's account) exactly as a demonstration output is.
+    Returns `{"kept": [{"id", "path"}], "refused": [{"path", "why"}]}`."""
+    outdir = Path(outdir)
+    result: dict = {"kept": [], "refused": []}
+    if not _task_ok(task) or outdir.is_symlink() or not outdir.is_dir():
+        return result
+    try:
+        base = outdir.resolve(strict=True)
+    except OSError:
+        return result
+    evidence_id = str(run.get("evidence") or "")
+    source = run.get("source") or {}
+    now = time.time()
+    wanted = [{"path": REPORT_FILE, "label": "the verifier's report"}]
+    wanted += [d for d in (declared or []) if isinstance(d, dict)]
+    for entry in wanted[:config.ARTIFACT_RUN_FILES + 1]:
+        rel = str(entry.get("path") or "")
+
+        def refuse(why: str) -> None:
+            result["refused"].append({"path": rel[:120], "why": why})
+
+        parts = rel.split("/")
+        if not rel or rel.startswith("/") or ".." in parts or "" in parts:
+            refuse("not a relative path inside the report directory")
+            continue
+        path = outdir.joinpath(*parts)
+        # every component, not only the last, is checked for a link: a
+        # linked directory is a way out as much as a linked file is
+        probe, linked = outdir, False
+        for part in parts:
+            probe = probe / part
+            if probe.is_symlink():
+                linked = True
+                break
+        if linked:
+            refuse("a link — bench keeps nothing that points elsewhere")
+            continue
+        try:
+            resolved = path.resolve(strict=True)
+            resolved.relative_to(base)
+            info = path.lstat()
+        except FileNotFoundError:
+            refuse("declared by the report and not there")
+            continue
+        except (OSError, ValueError):
+            refuse("outside the report directory")
+            continue
+        if not path.is_file():
+            refuse("not a regular file")
+            continue
+        name = path.name
+        if SECRET_NAME_RE.search(name):
+            refuse("its name reads as a credential")
+            continue
+        if not NAME_RE.match(name):
+            refuse("a name bench will not serve (letters, digits, '.', '_', "
+                   "'-' and spaces, at most 120 characters)")
+            continue
+        if info.st_size > config.ARTIFACT_MAX_BYTES:
+            refuse(f"{info.st_size} bytes, over BOARD_ARTIFACT_MAX_BYTES "
+                   f"({config.ARTIFACT_MAX_BYTES})")
+            continue
+        if len(result["kept"]) >= config.ARTIFACT_RUN_FILES:
+            refuse(f"over the {config.ARTIFACT_RUN_FILES} files one run keeps "
+                   f"(BOARD_ARTIFACT_RUN_FILES)")
+            continue
+        try:
+            data = path.read_bytes()
+        except OSError:
+            refuse("could not be read")
+            continue
+        kind = classify(data, name)
+        if kind.get("refused"):
+            refuse(kind["refused"])
+            continue
+        if kind["kind"] not in DIAGNOSTIC_KINDS or kind.get("active"):
+            refuse("not a kind a report may keep — text, JSON or an image "
+                   "(PNG, JPEG, GIF, WebP); markup, scripts and unknown "
+                   "binaries are refused")
+            continue
+        scrubbed = 0
+        if kind["kind"] in ("text", "json"):
+            text = data.decode("utf-8")
+            clean = redact.scrub(text, MARKER)
+            if clean != text:
+                scrubbed = len(redact.found(text)) or 1
+                data = clean.encode("utf-8")
+                if kind["kind"] == "json":
+                    try:
+                        json.loads(clean)
+                    except ValueError:
+                        kind = {"kind": "text",
+                                "mime": "text/plain; charset=utf-8",
+                                "active": False}
+        aid = artifact_id(evidence_id, "report/" + rel)
+        label = _clean(entry.get("label"), 200)
+        record = {
+            "v": VERSION, "id": aid, "task": task, "purpose": DIAGNOSTIC,
+            "name": name, "path": rel, "label": label,
+            "kind": kind["kind"], "mime": kind["mime"], "active": False,
+            "sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
+            "capturedAt": now, "state": "available", "scrubbed": scrubbed,
+            "pixelsInspected": False if kind["kind"] == "image" else None,
+            "reportedBy": "verifier",
+            "producer": {
+                "evidence": evidence_id or None, "check": run.get("check"),
+                "scope": run.get("scope"), "outcome": run.get("outcome"),
+                "reason": run.get("reason"), "resultId": run.get("resultId"),
+                "agent": run.get("agent"), "intent": run.get("intent"),
+                "actor": run.get("actor"), "root": run.get("root"),
+            },
+            "source": {
+                "commit": source.get("commit"), "branch": source.get("branch"),
+                "dirty": bool(source.get("dirty")),
+                "bound": bool(source.get("bound")),
+                "sourceId": source.get("sourceId"),
+            },
+        }
+        with _LOCK:
+            records.write_bytes(_bytes_path(task, aid, DIAGNOSTIC), data,
+                                durable=True)
+            records.write_json(_record_path(task, aid, DIAGNOSTIC), record,
+                               durable=True)
+        result["kept"].append({"id": aid, "path": rel})
+    if result["kept"]:
+        sweep(task)
+    return result
+
+
 # ── reading them back ──────────────────────────────────────────────────
 
 
@@ -431,7 +587,7 @@ def state_of(record: dict) -> str:
     if word in ("expired", "withheld"):
         return word
     try:
-        path = _bytes_path(record["task"], record["id"])
+        path = _bytes_path(record["task"], record["id"], record.get("purpose"))
     except (Refused, KeyError):
         return "missing"
     if path.is_symlink() or not path.is_file():
@@ -453,44 +609,57 @@ def count(task: str) -> int:
                if ID_RE.match(path.stem))
 
 
-def for_task(task: str) -> list[dict]:
+def for_task(task: str, purpose: str | None = None) -> list[dict]:
     """Every record this board keeps for a card, oldest first. Reading is
-    reading: no bytes are hashed, nothing is swept, nothing written."""
+    reading: no bytes are hashed, nothing is swept, nothing written.
+    Demonstration outputs unless `purpose` asks for a report's."""
     try:
-        directory = card_dir(task)
+        directory = card_dir(task, purpose)
     except Refused:
         return []
     if not directory.is_dir():
         return []
+    want = DIAGNOSTIC if purpose == DIAGNOSTIC else None
     found = []
     for path in directory.glob("a-*.json"):
         data = records.read_json(path, None, expect=dict)
-        if data and data.get("task") == task and ID_RE.match(str(data.get("id"))):
+        if data and data.get("task") == task and ID_RE.match(str(data.get("id"))) \
+                and data.get("purpose") == want:
             data["state"] = state_of(data)
             found.append(data)
     found.sort(key=lambda r: (r.get("capturedAt") or 0, r.get("path") or ""))
     return found
 
 
-def read(task: str, artifact_id: str) -> dict | None:
-    path = _record_path(task, artifact_id)
+def for_evidence(task: str, evidence_id: str) -> list[dict]:
+    """What one run's verifier report kept, in the order it was kept."""
+    return [r for r in for_task(task, DIAGNOSTIC)
+            if (r.get("producer") or {}).get("evidence") == evidence_id]
+
+
+def read(task: str, artifact_id: str,
+         purpose: str | None = None) -> dict | None:
+    path = _record_path(task, artifact_id, purpose)
     data = records.read_json(path, None, expect=dict)
     if not data or data.get("id") != artifact_id or data.get("task") != task:
+        return None
+    if data.get("purpose") != (DIAGNOSTIC if purpose == DIAGNOSTIC else None):
         return None
     data["state"] = state_of(data)
     return data
 
 
-def content(task: str, artifact_id: str) -> tuple[dict, bytes]:
+def content(task: str, artifact_id: str,
+            purpose: str | None = None) -> tuple[dict, bytes]:
     """The record and its bytes, for serving. Refused rather than guessed:
     an unknown id, a record whose bytes are gone, a link where the bytes
     should be, and bytes that no longer hash to what was kept."""
-    record = read(task, artifact_id)
+    record = read(task, artifact_id, purpose)
     if record is None:
         raise Refused("no such artifact on this board")
     if record["state"] != "available":
         raise Refused(f"not available: {STATES.get(record['state'], record['state'])}")
-    path = _bytes_path(task, artifact_id)
+    path = _bytes_path(task, artifact_id, purpose)
     try:
         resolved = path.resolve(strict=True)
         resolved.relative_to(config.ARTIFACTS_DIR.resolve(strict=True))
@@ -506,14 +675,16 @@ def content(task: str, artifact_id: str) -> tuple[dict, bytes]:
 # ── withholding and retention ──────────────────────────────────────────
 
 
-def _drop_bytes(task: str, artifact_id: str) -> None:
+def _drop_bytes(task: str, artifact_id: str,
+                purpose: str | None = None) -> None:
     try:
-        _bytes_path(task, artifact_id).unlink()
+        _bytes_path(task, artifact_id, purpose).unlink()
     except FileNotFoundError:
         pass
 
 
-def withhold(task: str, artifact_id: str, *, actor: str, reason: str) -> dict:
+def withhold(task: str, artifact_id: str, *, actor: str, reason: str,
+             purpose: str | None = None) -> dict:
     """A person removes an artifact's bytes and what describes it. The
     record that something existed — id, kind, size, hash, the run and
     when — stays, with who withheld it and why."""
@@ -522,19 +693,21 @@ def withhold(task: str, artifact_id: str, *, actor: str, reason: str) -> dict:
         raise Refused("say why it is withheld (three characters at least)")
     reason = redact.scrub(reason, MARKER)
     with _LOCK:
-        record = read(task, artifact_id)
+        record = read(task, artifact_id, purpose)
         if record is None:
             raise Refused("no such artifact on this board")
         if record.get("state") == "withheld":
             return record
-        _drop_bytes(task, artifact_id)
-        for key in ("caption", "scenario", "note", "viewport", "environment"):
+        _drop_bytes(task, artifact_id, purpose)
+        for key in ("caption", "scenario", "note", "viewport", "environment",
+                    "label"):
             record[key] = None
         record["name"] = "withheld"
         record["state"] = "withheld"
         record["withheld"] = {"actor": str(actor or "unknown")[:80],
                               "at": time.time(), "reason": reason}
-        records.write_json(_record_path(task, artifact_id), record, durable=True)
+        records.write_json(_record_path(task, artifact_id, purpose), record,
+                           durable=True)
     return record
 
 
@@ -549,8 +722,8 @@ def sweep(task: str | None = None, now: float | None = None) -> list[str]:
         [p.name + ".md" for p in config.ARTIFACTS_DIR.iterdir() if p.is_dir()]
         if config.ARTIFACTS_DIR.is_dir() else [])
     with _LOCK:
-        for name in tasks:
-            live = [r for r in for_task(name) if r["state"] == "available"]
+        for name, purpose in [(n, p) for n in tasks for p in (None, DIAGNOSTIC)]:
+            live = [r for r in for_task(name, purpose) if r["state"] == "available"]
             total = sum(int(r.get("size") or 0) for r in live)
             for record in live:
                 why = None
@@ -563,10 +736,10 @@ def sweep(task: str | None = None, now: float | None = None) -> list[str]:
                 if why is None:
                     continue
                 total -= int(record.get("size") or 0)
-                _drop_bytes(name, record["id"])
+                _drop_bytes(name, record["id"], purpose)
                 record["state"] = "expired"
                 record["expired"] = {"at": now, "why": why}
-                records.write_json(_record_path(name, record["id"]), record,
+                records.write_json(_record_path(name, record["id"], purpose), record,
                                    durable=True)
                 expired.append(record["id"])
     return expired
@@ -578,7 +751,10 @@ PUBLIC = ("id", "task", "name", "kind", "mime", "active", "sha256", "size",
           "capturedAt", "state", "caption", "scenario", "viewport",
           "criterion", "role", "pair", "data", "environment", "target",
           "note", "partial", "described", "scrubbed", "pixelsInspected",
-          "producer", "source", "depicts", "withheld", "expired")
+          "producer", "source", "depicts", "withheld", "expired",
+          # a verifier report's artifact (task 135): its purpose, the
+          # path relative to the report directory and the report's label
+          "purpose", "path", "label", "reportedBy")
 
 
 def public(record: dict) -> dict:
@@ -586,6 +762,7 @@ def public(record: dict) -> dict:
     reader by default. Never a path on this disk."""
     out = {key: record.get(key) for key in PUBLIC}
     out["stateWords"] = STATES.get(out["state"], out["state"])
-    out["url"] = (f"/api/artifact?card={record['task']}&id={record['id']}"
+    which = "&purpose=diagnostic" if record.get("purpose") == DIAGNOSTIC else ""
+    out["url"] = (f"/api/artifact?card={record['task']}&id={record['id']}{which}"
                   if out["state"] == "available" else None)
     return out

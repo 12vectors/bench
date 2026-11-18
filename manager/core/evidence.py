@@ -32,6 +32,7 @@ import config
 import records
 import redact
 import state
+import verifierreport
 
 
 # ── the outcome vocabulary ─────────────────────────────────────────────
@@ -105,6 +106,10 @@ REASONS = {
                          "read, so nothing was run",
     "env-key-unusable": "the machine-local key that binds declared "
                         "environment values cannot be used",
+    # A check that opts into the verifier report contract (task 135):
+    # which row of its consistency rule decided the outcome. Owned by
+    # `verifierreport`, beside the rule that produces them.
+    **verifierreport.REASONS,
 }
 
 # What to do about each way a result stops holding, said once so the gate,
