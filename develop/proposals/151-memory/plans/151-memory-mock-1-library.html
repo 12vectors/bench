@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup 1: Memory library · #151</title>
+<style>
+:root{
+  --bg:#0c1a20;--canvas:#112329;--surface:#162c33;--raised:#1e373f;--sunken:#0a161b;
+  --border:#264349;--soft:#1c343a;--text:#e9f3f3;--muted:#95afb4;--dim:#8aa6ad;
+  --accent:#56c2d8;--calm:#a6c96f;--alarm:#e08a63;--idle:#9ab0b5;--warn:#e5b866;
+  --on-accent:#0a161b;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  color-scheme:dark;
+}
+html:has(#day:target){
+  --bg:#dde9ec;--canvas:#eaf3f4;--surface:#ffffff;--raised:#ffffff;--sunken:#e2edef;
+  --border:#c5d7db;--soft:#d9e6e9;--text:#12323b;--muted:#4d6e77;--dim:#55737b;
+  --accent:#0d6e8c;--calm:#4b6823;--alarm:#b1543a;--idle:#566e74;--warn:#82510a;
+  --on-accent:#ffffff;color-scheme:light;
+}
+*{box-sizing:border-box}
+html{background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 var(--sans);-webkit-text-size-adjust:100%}
+a{color:var(--accent)}
+a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+code,.mono{font-family:var(--mono);font-size:.88em}
+code{background:var(--sunken);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+.skip{position:absolute;left:-999px;top:0;background:var(--accent);color:var(--on-accent);padding:8px 12px;z-index:9}
+.skip:focus{left:8px;top:8px}
+#day{position:absolute;top:0}
+.mockbar{background:repeating-linear-gradient(135deg,var(--warn) 0 10px,transparent 10px 20px);padding:3px 0}
+.mockbar p{margin:0;background:var(--sunken);color:var(--text);padding:6px 16px;font-size:13px;display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center}
+.mockbar strong{color:var(--warn)}
+.mockbar .themes{margin-left:auto;display:flex;gap:10px}
+header.top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px;padding:10px 16px;background:var(--canvas);border-bottom:1px solid var(--border)}
+.logo{font:600 15px var(--mono);letter-spacing:.04em}
+.logo small{color:var(--muted);font-weight:400}
+nav.views{display:flex;flex-wrap:wrap;gap:2px}
+nav.views a,nav.views span{padding:5px 10px;border-radius:7px;text-decoration:none;color:var(--muted);font-size:14px}
+nav.views span{cursor:default}
+nav.views a[aria-current]{background:var(--raised);color:var(--text);box-shadow:inset 0 -2px 0 var(--accent)}
+main{max-width:1180px;margin:0 auto;padding:18px 16px 48px}
+h1{font-size:24px;line-height:1.25;margin:4px 0 6px}
+h2{font-size:18px;margin:26px 0 8px}
+h3{font-size:15px;margin:18px 0 6px}
+p{margin:6px 0 10px}
+.lede{color:var(--muted);max-width:72ch}
+.crumbs{font-size:13px;color:var(--muted)}
+.crumbs a{color:var(--muted)}
+.panel{background:var(--surface);border:1px solid var(--soft);border-radius:10px;padding:14px 16px;margin:12px 0}
+.grid{display:grid;gap:16px}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:999px;border:1px solid var(--border);font:12px/1.6 var(--mono);color:var(--muted);white-space:nowrap}
+.k-review{border-color:var(--accent);color:var(--accent)}
+.k-decision,.k-guide{border-color:var(--calm);color:var(--calm)}
+.st-calm{color:var(--calm);border-color:var(--calm)}
+.st-alarm{color:var(--alarm);border-color:var(--alarm)}
+.st-idle{color:var(--idle);border-color:var(--idle)}
+.st-warn{color:var(--warn);border-color:var(--warn)}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:7px;border:1px solid var(--border);background:var(--raised);color:var(--text);font-size:14px;text-decoration:none;white-space:nowrap}
+.btn.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.sim{cursor:not-allowed}
+.sim::after{content:"simulated";font:10px var(--mono);color:var(--warn);margin-left:4px}
+.btn.primary.sim::after{color:var(--on-accent)}
+.note{font-size:13px;color:var(--muted)}
+.simnote{font-size:13px;color:var(--warn);border-left:3px solid var(--warn);padding:2px 10px;margin:8px 0}
+.banner{border-left:4px solid var(--warn);background:var(--sunken);padding:10px 14px;border-radius:6px;margin:12px 0}
+.banner.alarm{border-color:var(--alarm)}
+.banner.calm{border-color:var(--calm)}
+.banner strong{display:block}
+dl.facts{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;margin:0}
+dl.facts dt{color:var(--muted);font-size:13px}
+dl.facts dd{margin:0;overflow-wrap:anywhere}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--soft);vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:13px}
+.scroll{overflow-x:auto}
+details{border:1px solid var(--soft);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--sunken)}
+summary{cursor:pointer;color:var(--muted)}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.5 var(--mono);margin:8px 0}
+.lib{display:grid;grid-template-columns:230px minmax(0,1fr);gap:20px}
+.facets h3{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:16px 0 6px}
+.facets ul{list-style:none;margin:0;padding:0}
+.facets li{display:flex;justify-content:space-between;padding:4px 8px;border-radius:6px;font-size:14px}
+.facets li.on{background:var(--raised);box-shadow:inset 3px 0 0 var(--accent)}
+.facets li span:last-child{color:var(--dim);font-family:var(--mono);font-size:12px}
+.search{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.search .field{flex:1 1 260px;min-width:0;border:1px solid var(--border);background:var(--sunken);border-radius:8px;padding:8px 12px;color:var(--muted)}
+.entries{list-style:none;margin:0;padding:0}
+.entry{display:grid;grid-template-columns:110px minmax(0,1fr) auto;gap:4px 14px;padding:14px 4px;border-bottom:1px solid var(--soft)}
+.entry .title{font-weight:600;font-size:16px}
+.entry .title a{color:var(--text);text-decoration-color:var(--accent)}
+.entry .sum{color:var(--muted);font-size:14px;grid-column:2;margin:0}
+.entry .meta{grid-column:2;font-size:13px;color:var(--dim);display:flex;flex-wrap:wrap;gap:4px 12px}
+.entry .when{font:12px var(--mono);color:var(--dim);text-align:right}
+.read{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px}
+.prose{max-width:72ch}
+.prose li{margin:3px 0}
+.verdict{font:600 13px var(--mono);padding:3px 10px;border-radius:6px;border:1px solid}
+.permalink{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.drawer{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.dhead{padding:14px 16px;border-bottom:1px solid var(--soft);background:var(--canvas)}
+.tabs{display:flex;flex-wrap:wrap;gap:2px;padding:0 10px;border-bottom:1px solid var(--soft);background:var(--canvas)}
+.tabs a,.tabs span{padding:8px 12px;font-size:14px;color:var(--muted);text-decoration:none}
+.tabs a[aria-current]{color:var(--text);box-shadow:inset 0 -2px 0 var(--accent)}
+.dbody{padding:4px 16px 16px}
+.round{border:1px solid var(--soft);border-radius:10px;padding:12px 14px;margin:10px 0;background:var(--canvas)}
+.round.new{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.round header{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.timeline{list-style:none;margin:0;padding:0}
+.timeline li{display:grid;grid-template-columns:120px minmax(0,1fr);gap:10px;padding:8px 0;border-bottom:1px solid var(--soft);font-size:14px}
+.timeline time{font:12px var(--mono);color:var(--dim)}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
+.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:14px}
+.flow .step{background:var(--raised);border:1px solid var(--border);border-radius:8px;padding:6px 10px}
+.toc{columns:2;column-gap:28px}
+.toc li{break-inside:avoid}
+@media (max-width:760px){
+  main{padding:12px 12px 40px}
+  h1{font-size:21px}
+  .lib,.read,.two{grid-template-columns:minmax(0,1fr)}
+  .facets{order:2}
+  .entry{grid-template-columns:minmax(0,1fr)}
+  .entry .sum,.entry .meta{grid-column:1}
+  .entry .when{text-align:left}
+  .timeline li{grid-template-columns:minmax(0,1fr);gap:2px}
+  .toc{columns:1}
+  .mockbar .themes{margin-left:0}
+  dl.facts{grid-template-columns:minmax(0,1fr)}
+  dl.facts dd{margin-bottom:6px}
+  .btn{white-space:normal}
+  .chip{white-space:normal}
+}
+</style></head>
+<body><span id="day"></span>
+<a class="skip" href="#main">Skip to content</a>
+<div class="mockbar" role="note"><p><strong>Proposal mockup — not shipped.</strong>
+<span>Static page for card #151. Nothing here reads or changes a board; controls marked <em>simulated</em> do nothing.</span>
+<a href="151-memory-proposal.html">Read the proposal</a>
+<span class="themes"><span>Theme:</span><a href="#">Night</a><a href="#day">Daylight</a></span></p></div>
+<header class="top"><span class="logo">bench <small>· example-app</small></span>
+<nav class="views" aria-label="Views (mockup)"><span title="Simulated — not a link in this mockup">Board</span><span title="Simulated — not a link in this mockup">Orchestrator</span><span title="Simulated — not a link in this mockup">Phases</span><span title="Simulated — not a link in this mockup">Sessions</span><span title="Simulated — not a link in this mockup">Focus</span><span title="Simulated — not a link in this mockup">Settings</span><a href="151-memory-mock-1-library.html" aria-current="page">Memory</a></nav></header>
+<main id="main">
+<p class="note">Mockups: <a href="151-memory-mock-1-library.html" aria-current="page">1 · Library</a> · <a href="151-memory-mock-2-review.html">2 · Review page</a> · <a href="151-memory-mock-3-ticket.html">3 · Ticket Reviews &amp; Activity</a> · <a href="151-memory-mock-4-guide-vs-history.html">4 · Guide vs historical review</a> · <a href="151-memory-mock-5-states.html">5 · Empty, no results, failure</a></p>
+<h1>Memory</h1>
+<p class="lede">What this project has learned and decided: reviews Bench filed, investigations, decisions, maintained guides, prototypes and attachments. Keeping something here does not give it to an agent — a card's <em>Inputs</em> and the run's approved context still decide that.</p>
+<div class="search"><span class="field" role="img" aria-label="Search field (simulated)">Search titles, summaries, cards and review ids…</span>
+<span class="btn sim" aria-disabled="true">Search</span>
+<span class="btn sim" aria-disabled="true">Newest first ▾</span></div>
+<p class="simnote">Simulated controls. Intended: the list narrows as you type (titles, summaries, card numbers, review ids, file names) over an index the board builds from the work repository. No embeddings, no remote call.</p>
+<div class="lib">
+<aside class="facets" aria-label="Filters (simulated)">
+<h3>Kind</h3><ul>
+<li class="on"><span>All</span><span>42</span></li><li><span>Reviews</span><span>18</span></li><li><span>Investigations</span><span>7</span></li><li><span>Decisions</span><span>5</span></li><li><span>Guides</span><span>4</span></li><li><span>Prototypes</span><span>3</span></li><li><span>Attachments</span><span>5</span></li></ul>
+<h3>Applicability</h3><ul>
+<li><span>Current / maintained</span><span>9</span></li><li><span>Historical snapshot</span><span>26</span></li><li><span>Superseded</span><span>4</span></li><li><span>Unclassified</span><span>3</span></li></ul>
+<h3>Source card</h3><ul>
+<li><span>#147</span><span>3</span></li><li><span>#148</span><span>2</span></li><li><span>#149</span><span>4</span></li><li><span>No card</span><span>6</span></li></ul>
+<p class="note">Filters are simulated in this mockup.</p>
+</aside>
+<section aria-label="Entries">
+<p class="note">42 entries · 7 sample entries shown · newest first</p>
+<ul class="entries">
+<li class="entry"><span><span class="chip k-decision">Decision</span></span>
+<div class="title">Reviews stay in the card; Memory is a view <span class="note">(sample — not linked)</span></div><time class="when" datetime="2026-11-19">2026-11-19</time>
+<p class="sum">One authoritative report, held in the card's history; Memory indexes and renders it.</p>
+<div class="meta"><span>decision · proposed in #151</span><span class="chip st-warn">Proposed</span></div></li>
+<li class="entry"><span><span class="chip k-review">Review</span></span>
+<div class="title"><a href="151-memory-mock-2-review.html">PR review of #147 — one click is one click</a></div><time class="when" datetime="2026-11-14">2026-11-14</time>
+<p class="sum">Approved at 4f0ae65. All five criteria assessed against the PR head; one finding fixed in round 2.</p>
+<div class="meta"><span>#147 · PR review · Juno · opus-4-8</span><span class="chip st-warn">Historical — head moved since</span></div></li>
+<li class="entry"><span><span class="chip k-guide">Guide</span></span>
+<div class="title"><a href="151-memory-mock-4-guide-vs-history.html">How Bench serves plans and reference files</a></div><time class="when" datetime="2026-11-12">2026-11-12</time>
+<p class="sum">The /files route, the sandbox policy, what renders and what downloads.</p>
+<div class="meta"><span>maintained by istos · revision 4</span><span class="chip st-calm">Current</span></div></li>
+<li class="entry"><span><span class="chip k-review">Review</span></span>
+<div class="title">Relevance review of #149 — task information redesign <span class="note">(sample — not linked)</span></div><time class="when" datetime="2026-11-11">2026-11-11</time>
+<p class="sum">Partly done: the Inputs tab exists; the Overview grouping is still open.</p>
+<div class="meta"><span>#149 · relevance review · Hazel</span><span class="chip st-idle">Historical snapshot</span></div></li>
+<li class="entry"><span><span class="chip">Investigation</span></span>
+<div class="title">Why test reports leaked into the live board <span class="note">(sample — not linked)</span></div><time class="when" datetime="2026-11-09">2026-11-09</time>
+<p class="sum">Root cause and fix for #148: a report is filed on its own run's board or not at all.</p>
+<div class="meta"><span>#148 · investigation · 2 attached screenshots</span><span class="chip st-idle">Historical snapshot</span></div></li>
+<li class="entry"><span><span class="chip">Prototype</span></span>
+<div class="title">Orchestrator view — static prototype <span class="note">(sample — not linked)</span></div><time class="when" datetime="2026-10-30">2026-10-30</time>
+<p class="sum">HTML prototype used to agree the Orchestrator sections before #145.</p>
+<div class="meta"><span>#145 · prototype · plans/orchestrator-prototype.html</span><span class="chip st-idle">Superseded</span></div></li>
+<li class="entry"><span><span class="chip">Attachment</span></span>
+<div class="title">payments-api.md <span class="note">(sample — not linked)</span></div><time class="when" datetime="2026-08-21">2026-08-21</time>
+<p class="sum">Listed from reference/ — not adopted yet, so no description. Its /files/reference/ address still works.</p>
+<div class="meta"><span>uncatalogued · reference/</span><span class="chip st-idle">Unclassified</span></div></li>
+</ul>
+<p class="note">Old addresses keep working: <code>/files/reference/payments-api.md</code> serves the same file it always did, and its Memory entry links to it.</p>
+</section></div>
+</main></body></html>

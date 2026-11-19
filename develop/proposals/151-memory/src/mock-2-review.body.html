@@ -1,0 +1,54 @@
+<p class="note">Mockups: <a href="151-memory-mock-1-library.html">1 · Library</a> · <a href="151-memory-mock-2-review.html" aria-current="page">2 · Review page</a> · <a href="151-memory-mock-3-ticket.html">3 · Ticket Reviews &amp; Activity</a> · <a href="151-memory-mock-4-guide-vs-history.html">4 · Guide vs historical review</a> · <a href="151-memory-mock-5-states.html">5 · Empty, no results, failure</a></p>
+<p class="crumbs"><a href="151-memory-mock-1-library.html">Memory</a> › Reviews › <a href="151-memory-mock-3-ticket.html">#147</a></p>
+<h1>PR review of #147 — one click is one click</h1>
+<p class="flow"><span class="chip k-review">PR review · round 2</span>
+<span class="verdict st-calm">APPROVE</span>
+<span class="chip st-warn">Historical — about 4f0ae65</span>
+<span class="chip">Report · immutable</span></p>
+<div class="banner"><strong>This approval is about commit <code>4f0ae65</code>, not the card's current code.</strong>
+The card's branch has since moved to <code>8d2e1f0</code> (2 commits). Nothing on this page approves that: the card's own merge requirements decide it, at the commit that would merge.
+<a href="151-memory-mock-3-ticket.html#reviews">See the card's current review state</a>.</div>
+<div class="read">
+<article class="prose" aria-label="Report">
+<h2>Summary</h2>
+<p>The change holds the Orchestrator view's repaint while a press is in flight, so a pointer-down followed by a repaint no longer loses the click. All five acceptance criteria are assessed against the pinned head; one finding from round 1 was fixed and rechecked.</p>
+<h2>Acceptance assessment</h2>
+<div class="scroll"><table><thead><tr><th>Criterion</th><th>Assessment</th><th>Evidence</th></tr></thead><tbody>
+<tr><td>A press survives a repaint between down and up</td><td><span class="chip st-calm">met</span></td><td><code>web/lib/press.js:41</code>; browser case <code>case_orchestrator_controls</code></td></tr>
+<tr><td>The status strip never links to the page shown</td><td><span class="chip st-calm">met</span></td><td><code>views/orchestrator.js:212</code></td></tr>
+<tr><td>Armed buttons keep their contrast in both themes</td><td><span class="chip st-calm">met</span></td><td>screenshots in the check's evidence</td></tr>
+<tr><td>Touch targets are 44px on a touch screen</td><td><span class="chip st-warn">could not judge</span></td><td>no touch emulation in the suite</td></tr>
+<tr><td>No change to the routes a button calls</td><td><span class="chip st-calm">met</span></td><td>the diff touches no route table</td></tr>
+</tbody></table></div>
+<h2>Findings</h2>
+<ul><li><strong>f-2a91 · resolved</strong> — release could fire on a different control after a reflow; fixed in <code>3b7c0de</code>, rechecked at <code>4f0ae65</code>.</li></ul>
+<details><summary>Original Markdown — the report as filed, byte for byte</summary>
+<pre>## PR review at 4f0ae65 (current) — 2026-11-14 10:02 (Juno)
+
+### Summary
+The change holds the Orchestrator view's repaint while a press…
+
+PR REVIEW: APPROVE</pre></details>
+<p class="note">This is the card's own record, rendered by the board's Markdown renderer: raw HTML shows as text, images become links, nothing in it runs. It is not a copy, and it cannot be edited here.</p>
+</article>
+<aside aria-label="Provenance">
+<div class="panel"><h2 style="margin-top:0;font-size:15px">Where this came from</h2>
+<dl class="facts">
+<dt>Card</dt><dd><a href="151-memory-mock-3-ticket.html#reviews">#147 Orchestrator: one click is one click</a> · now in Review</dd>
+<dt>Review</dt><dd>PR review, round 2 · id <code>rv-3c9a51e07b</code></dd>
+<dt>Reviewer</dt><dd>Juno — agent, model <code>opus-4-8</code>, independent of the implementer's model</dd>
+<dt>Filed</dt><dd>2026-11-14 10:02 UTC</dd>
+<dt>Assessed</dt><dd>PR head <code>4f0ae65</code> (read from GitHub) into <code>main</code> at <code>9211c3b</code></dd>
+<dt>Brief</dt><dd>revision <code>b1e2c4d09a7f</code></dd>
+<dt>Evidence</dt><dd>◫ <code>unit</code> passed at <code>4f0ae65</code> <span class="note">(local to the board that ran it)</span></dd>
+<dt>GitHub</dt><dd>no formal review — same account as the PR's author</dd>
+</dl></div>
+<div class="panel"><h2 style="margin-top:0;font-size:15px">Link to this report</h2>
+<div class="permalink"><code>/memory/147/rv-3c9a51e07b</code>
+<span class="btn sim" aria-disabled="true">Copy link</span></div>
+<p class="note">Illustrative address — not implemented. It names the card number and the review id, so it survives the card moving, being archived or being renamed.</p></div>
+<div class="panel"><h2 style="margin-top:0;font-size:15px">Also on this card</h2>
+<ul style="margin:0;padding-left:18px"><li>PR review round 1 — REQUEST CHANGES at <code>a17e9f2</code></li>
+<li>Relevance review — Still relevant, 2026-11-10</li></ul></div>
+<p><a class="btn" href="151-memory-mock-3-ticket.html#reviews">← Back to card #147 · Reviews</a></p>
+</aside></div>

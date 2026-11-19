@@ -1,0 +1,34 @@
+<p class="note">Mockups: <a href="151-memory-mock-1-library.html">1 · Library</a> · <a href="151-memory-mock-2-review.html">2 · Review page</a> · <a href="151-memory-mock-3-ticket.html">3 · Ticket Reviews &amp; Activity</a> · <a href="151-memory-mock-4-guide-vs-history.html">4 · Guide vs historical review</a> · <a href="151-memory-mock-5-states.html" aria-current="page">5 · Empty, no results, failure</a></p>
+<h1>When there is nothing, nothing matches, or filing did not finish</h1>
+<div class="grid">
+<section class="panel" aria-labelledby="s-empty"><h2 id="s-empty" style="margin-top:0">A new board: Memory is empty</h2>
+<p><strong>Nothing in Memory yet.</strong> Reviews appear here by themselves when Bench files them on a card. Guides and decisions are written by people.</p>
+<p class="flow"><span class="btn primary sim" aria-disabled="true">Write a guide</span>
+<span class="btn sim" aria-disabled="true">Adopt 12 files from reference/</span>
+<a class="btn" href="151-memory-proposal.html#adoption">How adoption works</a></p>
+<p class="note">Adopting writes a catalogue entry beside each file and moves nothing; every <code>/files/reference/…</code> link keeps working.</p></section>
+<section class="panel" aria-labelledby="s-none"><h2 id="s-none" style="margin-top:0">No results</h2>
+<p class="search"><span class="field">csp sandbox svg</span><span class="chip">Kind: Decisions</span><span class="chip">Card: #149</span></p>
+<p><strong>No entries match “csp sandbox svg” among Decisions for #149.</strong></p>
+<p class="flow"><span class="btn sim" aria-disabled="true">Clear the two filters</span>
+<span class="btn sim" aria-disabled="true">Search every kind</span></p>
+<p class="note">3 entries match with the filters cleared. The closest is <a href="151-memory-mock-4-guide-vs-history.html">How Bench serves plans and reference files</a>.</p></section>
+<section class="panel" aria-labelledby="s-fail"><h2 id="s-fail" style="margin-top:0">A review finished, but its report was not filed</h2>
+<div class="banner alarm"><strong>Not published — PR review of #152, round 1 (Wren, 2026-11-19 14:20).</strong>
+The review reached a verdict, but the card could not be written: it had moved to another board before the run ended. Nothing was put in Memory, and the card shows no verdict from this run.</div>
+<dl class="facts"><dt>Kept</dt><dd>The whole report, in the run's log on this board</dd>
+<dt>Not done</dt><dd>No card record, no Memory page, no Bench verdict, no GitHub review</dd>
+<dt>Retry</dt><dd>Files the same report under the same heading, so a second click writes nothing</dd></dl>
+<p class="flow"><span class="btn primary sim" aria-disabled="true">Retry filing</span>
+<span class="btn sim" aria-disabled="true">Open the run's log</span>
+<span class="btn sim" aria-disabled="true">Dismiss</span></p></section>
+<section class="panel" aria-labelledby="s-idx"><h2 id="s-idx" style="margin-top:0">Filed on the card, not yet listed</h2>
+<p><span class="chip st-warn">List behind</span> The report is on card #150 and readable there; Memory's list was built before it arrived through a sync. The list is rebuilt from the cards on the next read — there is no second copy that could disagree.</p>
+<p class="flow"><a class="btn" href="151-memory-mock-3-ticket.html#reviews">Read it on the card</a>
+<span class="btn sim" aria-disabled="true">Rebuild the list now</span></p></section>
+<section class="panel" aria-labelledby="s-gone"><h2 id="s-gone" style="margin-top:0">A link to something that is gone</h2>
+<p><strong><code>/memory/88/rv-0c41aa9e12</code> — card #88 is archived.</strong> Its reviews are still readable from the archive, read-only.</p>
+<p class="flow"><span class="btn sim" aria-disabled="true">Open the archived card</span>
+<a class="btn" href="151-memory-mock-1-library.html">Back to Memory</a></p>
+<p class="note">A guide that was removed leaves a tombstone naming who removed it and what replaced it. An address that never existed says <em>not on this board</em>.</p></section>
+</div>

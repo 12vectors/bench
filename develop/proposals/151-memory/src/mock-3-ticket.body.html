@@ -1,0 +1,43 @@
+<p class="note">Mockups: <a href="151-memory-mock-1-library.html">1 · Library</a> · <a href="151-memory-mock-2-review.html">2 · Review page</a> · <a href="151-memory-mock-3-ticket.html" aria-current="page">3 · Ticket Reviews &amp; Activity</a> · <a href="151-memory-mock-4-guide-vs-history.html">4 · Guide vs historical review</a> · <a href="151-memory-mock-5-states.html">5 · Empty, no results, failure</a></p>
+<p class="note">Card #147's detail view just after Bench filed a PR review. <strong>Reviews</strong> and <strong>Activity</strong> are real links to the two sections below; the other tabs and buttons are simulated. The tab layout follows today's card; #149 may change it.</p>
+<div class="drawer">
+<div class="dhead"><p class="crumbs">Board › Review</p>
+<h1 style="margin:2px 0">#147 Orchestrator: one click is one click</h1>
+<p class="flow"><span class="chip st-calm">Ready to merge</span><span class="chip">⚖ 2/2</span>
+<span class="btn sim" aria-disabled="true">Copy link</span></p></div>
+<nav class="tabs" aria-label="Card sections"><span>Overview</span><span>Brief</span><span>Inputs</span><span>Acceptance</span><a href="#reviews" aria-current="true">Reviews</a><a href="#activity">Activity</a></nav>
+<div class="dbody">
+<section id="reviews" aria-labelledby="h-reviews"><h2 id="h-reviews">Reviews</h2>
+<h3>PR reviews</h3>
+<article class="round new" aria-label="PR review round 2, newly filed"><header><span class="verdict st-calm">APPROVE</span>
+<strong>Round 2 · Juno</strong><span class="mono note">at 4f0ae65 · 2026-11-14 10:02</span>
+<span class="chip st-calm">In Memory</span><span class="chip k-review">new</span></header>
+<p>All five criteria assessed against the pinned head; the round 1 finding is fixed.</p>
+<p class="flow"><a class="btn primary" href="151-memory-mock-2-review.html">Read in Memory</a>
+<span class="mono note">/memory/147/rv-3c9a51e07b</span>
+<span class="btn sim" aria-disabled="true">Copy link</span></p>
+<p class="note">Same report, not a copy: the card holds it and Memory renders it. Its verdict cannot be edited in either place.</p></article>
+<article class="round" aria-label="PR review round 1"><header><span class="verdict st-alarm">REQUEST CHANGES</span>
+<strong>Round 1 · Juno</strong><span class="mono note">at a17e9f2 · 2026-11-13 16:40</span>
+<span class="chip st-idle">History — an earlier commit</span><span class="chip st-calm">In Memory</span></header>
+<p>One finding: release could fire on another control after a reflow. Fixed in <code>3b7c0de</code>.</p>
+<p class="flow"><span class="btn sim" aria-disabled="true">Read in Memory</span></p></article>
+<h3>Relevance reviews</h3>
+<article class="round" aria-label="Relevance review"><header><span class="chip">Still relevant</span><strong>Hazel</strong>
+<span class="mono note">2026-11-10 · brief b1e2c4d09a7f</span><span class="chip st-calm">In Memory</span></header>
+<p class="flow"><span class="btn sim" aria-disabled="true">Read in Memory</span>
+<span class="btn sim" aria-disabled="true">Comment</span></p></article>
+<h3>Linked from Memory</h3>
+<p class="note">Entries that name this card, beside the reviews it produced:</p>
+<ul><li><a href="151-memory-mock-4-guide-vs-history.html">Guide — How Bench serves plans and reference files</a> <span class="chip st-calm">Current</span></li>
+<li>Decision — Press handling holds the repaint <span class="note">(sample — not linked)</span></li></ul>
+</section>
+<section id="activity" aria-labelledby="h-activity"><h2 id="h-activity">Activity</h2>
+<ul class="timeline">
+<li><time>11-14 10:02</time><span><strong>PR review filed</strong> — APPROVE at <code>4f0ae65</code> · <a href="151-memory-mock-2-review.html">read in Memory</a> · <a href="#reviews">see it in Reviews</a></span></li>
+<li><time>11-14 09:58</time><span>Check <code>unit</code> passed at <code>4f0ae65</code> — bench ran it</span></li>
+<li><time>11-14 09:31</time><span>Work report — round 1 finding fixed (<code>3b7c0de</code>)</span></li>
+<li><time>11-13 16:41</time><span class="note">Filing this review was retried once: the board restarted before it confirmed. The heading was already on the card, so the retry wrote nothing.</span></li>
+<li><time>11-13 16:40</time><span><strong>PR review filed</strong> — REQUEST CHANGES at <code>a17e9f2</code> · in Memory</span></li>
+</ul></section>
+</div></div>

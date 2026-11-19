@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Proposal: project Memory · #151</title>
+<style>
+:root{
+  --bg:#0c1a20;--canvas:#112329;--surface:#162c33;--raised:#1e373f;--sunken:#0a161b;
+  --border:#264349;--soft:#1c343a;--text:#e9f3f3;--muted:#95afb4;--dim:#8aa6ad;
+  --accent:#56c2d8;--calm:#a6c96f;--alarm:#e08a63;--idle:#9ab0b5;--warn:#e5b866;
+  --on-accent:#0a161b;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  color-scheme:dark;
+}
+html:has(#day:target){
+  --bg:#dde9ec;--canvas:#eaf3f4;--surface:#ffffff;--raised:#ffffff;--sunken:#e2edef;
+  --border:#c5d7db;--soft:#d9e6e9;--text:#12323b;--muted:#4d6e77;--dim:#55737b;
+  --accent:#0d6e8c;--calm:#4b6823;--alarm:#b1543a;--idle:#566e74;--warn:#82510a;
+  --on-accent:#ffffff;color-scheme:light;
+}
+*{box-sizing:border-box}
+html{background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 var(--sans);-webkit-text-size-adjust:100%}
+a{color:var(--accent)}
+a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+code,.mono{font-family:var(--mono);font-size:.88em}
+code{background:var(--sunken);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+.skip{position:absolute;left:-999px;top:0;background:var(--accent);color:var(--on-accent);padding:8px 12px;z-index:9}
+.skip:focus{left:8px;top:8px}
+#day{position:absolute;top:0}
+.mockbar{background:repeating-linear-gradient(135deg,var(--warn) 0 10px,transparent 10px 20px);padding:3px 0}
+.mockbar p{margin:0;background:var(--sunken);color:var(--text);padding:6px 16px;font-size:13px;display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center}
+.mockbar strong{color:var(--warn)}
+.mockbar .themes{margin-left:auto;display:flex;gap:10px}
+header.top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px;padding:10px 16px;background:var(--canvas);border-bottom:1px solid var(--border)}
+.logo{font:600 15px var(--mono);letter-spacing:.04em}
+.logo small{color:var(--muted);font-weight:400}
+nav.views{display:flex;flex-wrap:wrap;gap:2px}
+nav.views a,nav.views span{padding:5px 10px;border-radius:7px;text-decoration:none;color:var(--muted);font-size:14px}
+nav.views span{cursor:default}
+nav.views a[aria-current]{background:var(--raised);color:var(--text);box-shadow:inset 0 -2px 0 var(--accent)}
+main{max-width:1180px;margin:0 auto;padding:18px 16px 48px}
+h1{font-size:24px;line-height:1.25;margin:4px 0 6px}
+h2{font-size:18px;margin:26px 0 8px}
+h3{font-size:15px;margin:18px 0 6px}
+p{margin:6px 0 10px}
+.lede{color:var(--muted);max-width:72ch}
+.crumbs{font-size:13px;color:var(--muted)}
+.crumbs a{color:var(--muted)}
+.panel{background:var(--surface);border:1px solid var(--soft);border-radius:10px;padding:14px 16px;margin:12px 0}
+.grid{display:grid;gap:16px}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:999px;border:1px solid var(--border);font:12px/1.6 var(--mono);color:var(--muted);white-space:nowrap}
+.k-review{border-color:var(--accent);color:var(--accent)}
+.k-decision,.k-guide{border-color:var(--calm);color:var(--calm)}
+.st-calm{color:var(--calm);border-color:var(--calm)}
+.st-alarm{color:var(--alarm);border-color:var(--alarm)}
+.st-idle{color:var(--idle);border-color:var(--idle)}
+.st-warn{color:var(--warn);border-color:var(--warn)}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:7px;border:1px solid var(--border);background:var(--raised);color:var(--text);font-size:14px;text-decoration:none;white-space:nowrap}
+.btn.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.sim{cursor:not-allowed}
+.sim::after{content:"simulated";font:10px var(--mono);color:var(--warn);margin-left:4px}
+.btn.primary.sim::after{color:var(--on-accent)}
+.note{font-size:13px;color:var(--muted)}
+.simnote{font-size:13px;color:var(--warn);border-left:3px solid var(--warn);padding:2px 10px;margin:8px 0}
+.banner{border-left:4px solid var(--warn);background:var(--sunken);padding:10px 14px;border-radius:6px;margin:12px 0}
+.banner.alarm{border-color:var(--alarm)}
+.banner.calm{border-color:var(--calm)}
+.banner strong{display:block}
+dl.facts{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;margin:0}
+dl.facts dt{color:var(--muted);font-size:13px}
+dl.facts dd{margin:0;overflow-wrap:anywhere}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--soft);vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:13px}
+.scroll{overflow-x:auto}
+details{border:1px solid var(--soft);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--sunken)}
+summary{cursor:pointer;color:var(--muted)}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.5 var(--mono);margin:8px 0}
+.lib{display:grid;grid-template-columns:230px minmax(0,1fr);gap:20px}
+.facets h3{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:16px 0 6px}
+.facets ul{list-style:none;margin:0;padding:0}
+.facets li{display:flex;justify-content:space-between;padding:4px 8px;border-radius:6px;font-size:14px}
+.facets li.on{background:var(--raised);box-shadow:inset 3px 0 0 var(--accent)}
+.facets li span:last-child{color:var(--dim);font-family:var(--mono);font-size:12px}
+.search{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.search .field{flex:1 1 260px;min-width:0;border:1px solid var(--border);background:var(--sunken);border-radius:8px;padding:8px 12px;color:var(--muted)}
+.entries{list-style:none;margin:0;padding:0}
+.entry{display:grid;grid-template-columns:110px minmax(0,1fr) auto;gap:4px 14px;padding:14px 4px;border-bottom:1px solid var(--soft)}
+.entry .title{font-weight:600;font-size:16px}
+.entry .title a{color:var(--text);text-decoration-color:var(--accent)}
+.entry .sum{color:var(--muted);font-size:14px;grid-column:2;margin:0}
+.entry .meta{grid-column:2;font-size:13px;color:var(--dim);display:flex;flex-wrap:wrap;gap:4px 12px}
+.entry .when{font:12px var(--mono);color:var(--dim);text-align:right}
+.read{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px}
+.prose{max-width:72ch}
+.prose li{margin:3px 0}
+.verdict{font:600 13px var(--mono);padding:3px 10px;border-radius:6px;border:1px solid}
+.permalink{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.drawer{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.dhead{padding:14px 16px;border-bottom:1px solid var(--soft);background:var(--canvas)}
+.tabs{display:flex;flex-wrap:wrap;gap:2px;padding:0 10px;border-bottom:1px solid var(--soft);background:var(--canvas)}
+.tabs a,.tabs span{padding:8px 12px;font-size:14px;color:var(--muted);text-decoration:none}
+.tabs a[aria-current]{color:var(--text);box-shadow:inset 0 -2px 0 var(--accent)}
+.dbody{padding:4px 16px 16px}
+.round{border:1px solid var(--soft);border-radius:10px;padding:12px 14px;margin:10px 0;background:var(--canvas)}
+.round.new{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.round header{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.timeline{list-style:none;margin:0;padding:0}
+.timeline li{display:grid;grid-template-columns:120px minmax(0,1fr);gap:10px;padding:8px 0;border-bottom:1px solid var(--soft);font-size:14px}
+.timeline time{font:12px var(--mono);color:var(--dim)}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
+.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:14px}
+.flow .step{background:var(--raised);border:1px solid var(--border);border-radius:8px;padding:6px 10px}
+.toc{columns:2;column-gap:28px}
+.toc li{break-inside:avoid}
+@media (max-width:760px){
+  main{padding:12px 12px 40px}
+  h1{font-size:21px}
+  .lib,.read,.two{grid-template-columns:minmax(0,1fr)}
+  .facets{order:2}
+  .entry{grid-template-columns:minmax(0,1fr)}
+  .entry .sum,.entry .meta{grid-column:1}
+  .entry .when{text-align:left}
+  .timeline li{grid-template-columns:minmax(0,1fr);gap:2px}
+  .toc{columns:1}
+  .mockbar .themes{margin-left:0}
+  dl.facts{grid-template-columns:minmax(0,1fr)}
+  dl.facts dd{margin-bottom:6px}
+  .btn{white-space:normal}
+  .chip{white-space:normal}
+}
+</style></head>
+<body><span id="day"></span>
+<a class="skip" href="#main">Skip to content</a>
+<div class="mockbar" role="note"><p><strong>Proposal — not an approval, not shipped.</strong>
+<span>Card #151. Static page; nothing here reads or changes a board.</span>
+<a href="151-memory-mock-1-library.html">Open the mockups</a>
+<span class="themes"><span>Theme:</span><a href="#">Night</a><a href="#day">Daylight</a></span></p></div>
+<header class="top"><span class="logo">bench <small>· proposal #151</small></span></header>
+<main id="main">
+<p class="crumbs">Card #151 · proposal · 2026-11-19 · written for Ronald's decision</p>
+<h1>Memory: a project knowledge section served by Bench</h1>
+<p class="lede">A proposal, not an approval. It recommends turning <code>reference/</code> and the
+reviews Bench already files into one browsable, linkable section of the board, and bounds a first
+delivery. Nothing described as <em>proposed</em> exists yet; addresses such as
+<code>/memory/…</code> are illustrative until implemented.</p>
+
+<div class="banner"><strong>How to read the labels.</strong>
+<span class="chip">Inspected</span> is how the current code behaves, read from the source at
+<code>main</code> <code>9211c3b</code>. <span class="chip st-calm">Recommended</span> is this
+proposal's working recommendation. <span class="chip st-warn">Owner decision</span> needs Ronald.
+<span class="chip st-idle">Later</span> is a future capability, deliberately out of the first delivery.</div>
+
+<nav aria-label="Contents" class="panel"><ol class="toc">
+<li><a href="#example">A worked example</a></li>
+<li><a href="#today">What exists today</a></li>
+<li><a href="#naming">Naming and information architecture</a></li>
+<li><a href="#place">A section inside Bench</a></li>
+<li><a href="#types">Content types, browse and search</a></li>
+<li><a href="#links">Identity, permalinks and two-way links</a></li>
+<li><a href="#publish">Publishing reviews automatically</a></li>
+<li><a href="#history">Historical reports, maintained knowledge</a></li>
+<li><a href="#storage">Storage, sync, index and adoption</a></li>
+<li><a href="#safety">Access, safe rendering and agent context</a></li>
+<li><a href="#mockups">The mockups</a></li>
+<li><a href="#options">Options and the recommended first delivery</a></li>
+<li><a href="#breakdown">Implementation breakdown</a></li>
+<li><a href="#decisions">Owner decisions</a></li>
+<li><a href="#verified">How this package was verified</a></li>
+</ol></nav>
+
+<h2 id="example">1. A worked example</h2>
+<p class="flow"><span class="step">◔ review PR on #147</span>→<span class="step">report filed on the card</span>→<span class="step">Memory lists it</span>→<span class="step">link pasted into #152</span>→<span class="step">read weeks later</span></p>
+<ol>
+<li><strong>Bench completes a review.</strong> Juno's PR review of card #147 ends with
+<code>PR REVIEW: APPROVE</code> at head <code>4f0ae65</code>. Exactly as today, the board appends
+the report to the card under <code>## PR review at 4f0ae65 (current) — 2026-11-14 10:02 (Juno)</code>
+and records Bench's verdict. <em>New:</em> the same filing step marks the review published, and the
+card's Reviews round carries <strong>In Memory</strong> with a <strong>Read in Memory</strong> link
+(<a href="151-memory-mock-3-ticket.html#reviews">mockup 3</a>).</li>
+<li><strong>The ticket links to the report.</strong> The card's Activity line for the filing says
+<em>published to Memory</em> and links to the page; the page links back to the card's Reviews.</li>
+<li><strong>Someone finds it later.</strong> Ronald opens <strong>Memory</strong> in the header,
+filters to <em>Reviews</em> and card <em>#147</em>, or searches “one click”
+(<a href="151-memory-mock-1-library.html">mockup 1</a>).</li>
+<li><strong>Someone follows a pasted permalink.</strong> Card #152's brief says “see
+<code>/memory/147/rv-3c9a51e07b</code>”. The page opens on any machine that reaches the board
+(<a href="151-memory-mock-2-review.html">mockup 2</a>) and says at the top that it approves <code>4f0ae65</code>,
+not whatever #147's branch holds now.</li>
+<li><strong>Nothing was copied.</strong> The card and the Memory page render one report. If the
+filing failed, neither shows a verdict and the failure is visible with a retry
+(<a href="151-memory-mock-5-states.html#s-fail">mockup 5</a>).</li>
+</ol>
+
+<h2 id="today">2. What exists today <span class="chip">Inspected</span></h2>
+<div class="scroll"><table><thead><tr><th>Area</th><th>Behaviour at <code>9211c3b</code></th><th>Where</th></tr></thead><tbody>
+<tr><td>Serving files</td><td><code>GET /files/plans/&lt;name&gt;</code> and <code>/files/reference/&lt;name&gt;</code> from the work root. Names must be flat: a <code>/</code>, <code>..</code> or a leading dot is a 404.</td><td><code>manager/core/httpd.py</code> <code>extra_file</code></td></tr>
+<tr><td>Types and safety</td><td>Every file is sent <code>nosniff</code> and <code>no-store</code>. <code>.html</code> and <code>.svg</code> also get <code>Content-Security-Policy: sandbox; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'</code>. Known types: html, md, txt, json, png, jpg, svg, pdf. Anything else, <code>.css</code> included, is <code>application/octet-stream</code> and downloads.</td><td><code>httpd.py</code> <code>_MIME</code>, <code>file_headers</code></td></tr>
+<tr><td>Finding files</td><td>The Activity bar's expanded panel lists <code>plans/</code> and <code>reference/</code> as two folds of bare file names, sorted by name. No titles, kinds, dates or search. Items are <code>&lt;li&gt;</code> with click handlers, so they are not reachable by keyboard.</td><td><code>web/views/activity.js</code>, <code>taskfiles.collect</code></td></tr>
+<tr><td>Opening files</td><td>Markdown is fetched and rendered in the drawer by the page's renderer; any other file opens in a new tab at its <code>/files/</code> URL.</td><td><code>web/views/extras.js</code></td></tr>
+<tr><td>Review reports</td><td>PR and relevance reviews are appended to the card's history under a dated heading. Their identity is a hash of that heading line (<code>rv-…</code>, <code>rl-…</code>). The card's Reviews tab renders them as Markdown with the original one fold away; Activity links to them.</td><td><code>agents.py</code>, <code>acceptance.py</code>, <code>reports.py</code></td></tr>
+<tr><td>Review records beside the report</td><td>Bench's verdict, the pinned review checkout and the evidence are machine-local under <code>manager/local/state/</code> (<code>gates/</code>, <code>reviews/</code>, <code>evidence/</code>), never committed.</td><td><code>gates.py</code>, <code>reviews.py</code>, <code>evidence.py</code></td></tr>
+<tr><td>Addresses</td><td><code>/cards/&lt;number&gt;?tab=reviews</code> opens a card's Reviews and survives moves and title edits; an archived card opens read-only. There is no address for one review or one file's description.</td><td>task 134, <code>web/app/</code> routing</td></tr>
+<tr><td>Agent context</td><td>What a run reads is decided by the profile's approved <code>context</code> and the card's <code>## Inputs and required tools</code>, pinned and hashed per launch. Files in <code>reference/</code> reach a run only through those.</td><td><code>profiles.py</code>, <code>inputs.py</code></td></tr>
+<tr><td>Kept outputs</td><td>Demonstration and diagnostic artifacts are machine-local under <code>state/artifacts/</code> and served through <code>/api/artifact</code>.</td><td><code>artifacts.py</code></td></tr>
+</tbody></table></div>
+<p>So the raw material is there — committed review reports with stable ids, a safe file route,
+card addresses — but there is no reading surface: a reviewer's report is only found by already
+knowing which card it is on, and <code>reference/</code> is a list of file names.</p>
+
+<h2 id="naming">3. Naming and information architecture <span class="chip st-calm">Recommended</span></h2>
+<div class="scroll"><table><thead><tr><th>Label</th><th>For</th><th>Against</th></tr></thead><tbody>
+<tr><td><strong>Memory</strong></td><td>Says “what this project has learned and kept”, covering reviews, decisions and guides. Distinct from every word Bench already uses.</td><td>Can suggest the agent remembers it automatically. Answered by saying, on the page, that retaining is not delivering.</td></tr>
+<tr><td>Context</td><td>Familiar from AI tooling.</td><td>Already means <em>what one run was given</em>: “approved context”, <code>AGENT_CONTEXT</code>, the pinned bundle. Using it for the whole library would blur exactly the boundary this proposal must keep.</td></tr>
+<tr><td>Reference</td><td>No rename at all.</td><td>Names a folder of attachments, not a place you read reviews and decisions.</td></tr>
+</tbody></table></div>
+<p><strong>Recommendation:</strong> the header view is <strong>Memory</strong>. <strong>Context</strong>
+keeps its current meaning: the selected information supplied to a task or run. <code>reference/</code>
+keeps its name and role as attachment storage; it is not renamed or moved.</p>
+
+<h2 id="place">4. A section inside Bench <span class="chip st-calm">Recommended</span></h2>
+<ul>
+<li><strong>Navigation.</strong> A seventh view in the header switcher, after Settings, at
+<code>/memory</code>. Same build, same access, same addresses scheme as the other views; no second
+service, port or login.</li>
+<li><strong>Board and card.</strong> A card's Reviews round gains <em>In Memory</em> and
+<em>Read in Memory</em>; its Activity line for the filing links to the page; a <em>Linked from
+Memory</em> list shows entries that name the card. The Memory page links back to the card's
+Reviews. (<a href="151-memory-mock-3-ticket.html">mockup 3</a>)</li>
+<li><strong>Delivered outcomes.</strong> A delivered card's reviews stay in Memory; their pages say
+the card is Done and what they were about. Show-the-result outputs stay machine-local artifacts and
+are linked, not copied (see <a href="#storage">§9</a>).</li>
+<li><strong>The Activity bar's file list</strong> keeps working and gains a “Browse in Memory” link.</li>
+</ul>
+
+<h2 id="types">5. Content types, browse and search <span class="chip st-calm">Recommended</span></h2>
+<p>Six kinds, deliberately few: <strong>Review</strong> (PR and relevance), <strong>Investigation</strong>,
+<strong>Decision</strong>, <strong>Guide</strong>, <strong>Prototype</strong> and <strong>Attachment</strong>
+(a file adopted from <code>reference/</code> or <code>plans/</code> with no richer description). Tags,
+hierarchies and spaces are <span class="chip st-idle">Later</span> at most.</p>
+<ul>
+<li><strong>Browse</strong>: newest first, one row per entry — kind, title, one-line summary, source
+card, date, applicability (<a href="151-memory-mock-1-library.html">mockup 1</a>).</li>
+<li><strong>Filter</strong>: kind, applicability (current, historical, superseded, unclassified) and
+source card.</li>
+<li><strong>Search</strong>: a substring match over title, summary, card number, review id and file
+name, computed over a small server-built index. No embeddings, no summarisation model.</li>
+<li><strong>Empty and no-results states</strong> say what fills Memory and offer the next step: adopt
+the existing files, write a guide, clear a filter (<a href="151-memory-mock-5-states.html">mockup 5</a>).</li>
+</ul>
+
+<h2 id="links">6. Identity, permalinks and two-way links</h2>
+<p><span class="chip st-calm">Recommended</span> An address names <em>what the thing is</em>, never
+where its file sits:</p>
+<ul>
+<li><strong>A review</strong>: <code>/memory/&lt;card number&gt;/&lt;review id&gt;</code>, e.g.
+<code>/memory/147/rv-3c9a51e07b</code>. Both parts already exist and are stable: card numbers are
+for life, and the id is a hash of the heading line the board wrote once.</li>
+<li><strong>A guide, decision, investigation or prototype</strong>: <code>/memory/e/&lt;slug&gt;</code>,
+where the slug is written once in the entry's header and kept when its title changes.</li>
+<li><strong>An attachment</strong>: its existing <code>/files/reference/&lt;name&gt;</code> address,
+unchanged, plus <code>/memory/e/&lt;slug&gt;</code> once it has a catalogue entry.</li>
+</ul>
+<p>What happens when things change:</p>
+<div class="scroll"><table><thead><tr><th>Event</th><th>The link</th></tr></thead><tbody>
+<tr><td>Card moves stage</td><td>Unaffected: resolved by number, as <code>/cards/&lt;n&gt;</code> is.</td></tr>
+<tr><td>Card archived</td><td>Still opens; says the card is archived and links to its read-only view.</td></tr>
+<tr><td>Card or entry renamed</td><td>Unaffected: neither address carries the title.</td></tr>
+<tr><td>Guide revised</td><td>The address shows the current revision; <code>?rev=&lt;n&gt;</code> shows an earlier one, read from git.</td></tr>
+<tr><td>Entry or file deleted</td><td>A tombstone page: what it was, who removed it, what replaced it. Never a silent 404.</td></tr>
+<tr><td>Address never existed, or from another board</td><td>Says <em>not on this board</em>, like a card address does.</td></tr>
+<tr><td>Old <code>reference/</code> links in cards and reports</td><td>Keep working byte for byte; nothing is moved. Memory shows the file's entry beside it.</td></tr>
+<tr><td>Two cards share a number</td><td>As for cards: listed, each by its file stem.</td></tr>
+</tbody></table></div>
+<p>Two-way: a card lists entries that name it (<em>Linked from Memory</em>), computed by reading
+entries' <code>**Card:**</code> header and links, never by writing into the card.</p>
+
+<h2 id="publish">7. Publishing reviews automatically</h2>
+<p><span class="chip st-calm">Recommended</span> <strong>One report, two views.</strong> The card's
+history stays the single authoritative store of a review's report, as it is today. Memory does not
+copy it: the review page is a rendering of that section, addressed by card and id. Consequences:</p>
+<ul>
+<li><strong>When.</strong> A review is published the moment its report is appended to the card —
+the same write that exists now, for both relevance and PR reviews. There is no second step that can
+half-succeed with a different text.</li>
+<li><strong>Consistency.</strong> The ticket and the page cannot disagree, because there is one
+text. Neither is editable; a verdict is never altered. A later round is a new report.</li>
+<li><strong>Failure.</strong> Today a report that cannot be filed (card moved boards, card gone —
+task 148) is narrated in the ticker and kept in the run's log. Proposed: record it as an
+<em>unfiled report</em> (machine-local, beside the run), shown on the card and in Memory with
+<strong>Retry filing</strong> (<a href="151-memory-mock-5-states.html#s-fail">mockup 5</a>).</li>
+<li><strong>Retry and idempotence.</strong> A retry re-files the same text under the same heading;
+the heading is the identity, so a report already present is a no-op, never a duplicate.</li>
+<li><strong>Index lag.</strong> If Memory's search index is stale it is rebuilt from cards; the page
+itself always reads the card, so “filed but not yet listed” is temporary and harmless.</li>
+<li><strong>Provenance on the page</strong>: card, review kind and round, reviewer and model,
+filing time, assessed head and base with the authority each was read from, brief revision, the
+evidence ids bench recorded (labelled local to the board that ran them) and whether GitHub took a
+formal review. Where the board that renders it does not have the machine-local records, the page
+says so rather than guessing.</li>
+</ul>
+<p><span class="chip st-warn">Owner decision</span> The PR-review heading carries the assessed commit;
+relevance reviews currently record no brief revision in theirs. Recording it (as the Reviews tab
+already wishes) is a small change to the heading or a record line and is recommended.</p>
+
+<h2 id="history">8. Historical reports, maintained knowledge <span class="chip st-calm">Recommended</span></h2>
+<ul>
+<li><strong>Reviews and investigations are snapshots.</strong> Immutable, dated, bound to what they
+assessed. Their page leads with that binding. A past approval never reads as approval of current
+code: if the card's branch has moved, the page says so in the warning register and links to the
+card's current state. Superseded rounds say <em>history — an earlier commit</em>.</li>
+<li><strong>Guides and decisions are maintained.</strong> Revisable, with an owner, a revision
+number and an <em>applies to</em> line. Edited by a person, committed to the work repository like
+any board edit; their history is git's.</li>
+<li><strong>Supersession is explicit.</strong> An entry names what it supersedes
+(<code>**Supersedes:**</code>); the older page wears <em>Superseded by …</em> and is not edited.</li>
+<li><strong>Ownership.</strong> Agents produce snapshots only. Maintained entries are written by
+people (an agent may propose one through a card, as refinement does). Bench never rewrites a
+maintained entry by itself.</li>
+</ul>
+<p>See the contrast in <a href="151-memory-mock-4-guide-vs-history.html">mockup 4</a>.</p>
+
+<h2 id="storage">9. Storage, sync, index and adoption</h2>
+<p><span class="chip st-calm">Recommended</span></p>
+<ul>
+<li><strong>Reviews</strong>: stay in card files (already in the work repository, already synced
+with <code>BOARD_COMMIT_MOVES</code>/<code>BOARD_SYNC</code>). Nothing new to store.</li>
+<li><strong>Maintained entries</strong>: one Markdown file each in a new flat
+<code>&lt;work root&gt;/memory/</code> directory, with a card-style header
+(<code>**Kind:**</code>, <code>**Slug:**</code>, <code>**Card:**</code>, <code>**Applies to:**</code>,
+<code>**Supersedes:**</code>, <code>**Owner:**</code>). Flat for the same reason <code>plans/</code> is:
+the current file handler and listing are flat, and flat names keep links simple.</li>
+<li><strong>Attachments</strong>: stay in <code>reference/</code>. A catalogue entry in
+<code>memory/</code> describes one and links it.</li>
+<li><strong>Index</strong>: computed by the board from the cards (including <code>archive/</code>),
+<code>memory/</code>, <code>plans/</code> and <code>reference/</code>, memoised by the work-state
+head like the movement reading. Not committed, so it cannot conflict.</li>
+<li><strong>Rendering</strong>: Markdown through the page's existing renderer; HTML, SVG and PDF
+through the existing <code>/files/</code> route with its sandbox.</li>
+<li><strong>Shared versus local.</strong> Shared (committed): cards with their reports,
+<code>memory/</code>, <code>reference/</code>, <code>plans/</code>. Local (never committed):
+verdict records, evidence and logs, review checkouts, kept artifacts, unfiled reports, the index.
+A review page on a teammate's board shows the shared report and says which local facts it does not
+have. Copying runtime evidence into the work repository is not recommended: it holds this machine's
+paths and can be large, which is why it was made local.</li>
+</ul>
+<p id="adoption"><strong>Adoption of existing material</strong> is conservative and explicit: nothing
+is moved, renamed or rewritten. Memory lists every existing <code>plans/</code> and
+<code>reference/</code> file as an <em>Unclassified</em> attachment from day one. A person may then
+<em>adopt</em> one — write its catalogue entry with a kind, title, summary and card — individually
+or in a reviewed batch whose preview lists every file it writes. Old links never change.</p>
+
+<h2 id="safety">10. Access, safe rendering and agent context <span class="chip st-calm">Recommended</span></h2>
+<ul>
+<li><strong>Same access as the board.</strong> Memory is a view of the board, behind the same
+loopback binding, Host and origin checks. No public exposure, no separate service, no share-outside
+links. A permalink grants nothing: whoever opens it reaches it only if they already reach the board.</li>
+<li><strong>Untrusted content.</strong> Reports and entries are rendered by the existing renderer
+(raw HTML as text, only safe link schemes, images as links). HTML and SVG attachments open only
+through the sandboxed <code>/files/</code> route; the sandbox and <code>script-src 'none'</code> are not
+relaxed for Memory.</li>
+<li><strong>No secrets or transcripts.</strong> Only filed reports are published. They are already
+capped and marker-quoted by <code>reports.py</code>; the proposal adds the credential scrubber
+(<code>redact.py</code>) on the way into the card. Session timelines, raw logs and pinned inputs are
+never published.</li>
+<li><strong>Retaining is not delivering.</strong> Being in Memory gives no run any access. A run
+still reads only its approved context and its card's declared inputs, pinned and hashed; the
+readiness check still decides. A future “use as input” action would write an Inputs line on a card
+for a person to confirm — <span class="chip st-idle">Later</span>.</li>
+</ul>
+
+<h2 id="mockups">11. The mockups</h2>
+<p>Five static pages, served by the board exactly as any <code>plans/</code> HTML is: no script, inline
+styles, real links between pages, <code>&lt;details&gt;</code> folds and a CSS theme switch (Night is
+the default; <em>Daylight</em> appends <code>#day</code>). Controls marked <em>simulated</em> do nothing.
+Each page has a narrow layout under 760px.</p>
+<ol>
+<li><a href="151-memory-mock-1-library.html">Library</a> — landing page with entries, kinds, source cards, search and filters (<a href="151-memory-mock-1-library.html#day">daylight</a>)</li>
+<li><a href="151-memory-mock-2-review.html">Review page</a> — summary, verdict, provenance, assessed commit, applicability, permalink (<a href="151-memory-mock-2-review.html#day">daylight</a>)</li>
+<li><a href="151-memory-mock-3-ticket.html">Ticket Reviews and Activity</a> — how a new report is reached from its card and back (<a href="151-memory-mock-3-ticket.html#day">daylight</a>)</li>
+<li><a href="151-memory-mock-4-guide-vs-history.html">Guide vs historical review</a> — maintained knowledge beside a superseded snapshot (<a href="151-memory-mock-4-guide-vs-history.html#day">daylight</a>)</li>
+<li><a href="151-memory-mock-5-states.html">Empty, no results and failure</a> — with recovery actions (<a href="151-memory-mock-5-states.html#day">daylight</a>)</li>
+</ol>
+<p class="note">How to open: on a board whose work root holds this package, open
+<code>/files/plans/151-memory-proposal.html</code> (this page), or the index
+<code>151-memory-index.md</code> from the Activity bar's <em>plans/</em> list. Screenshots at 1280px and
+390px, night and day, are kept by the browser check that verified this package (see §15).</p>
+
+<h2 id="options">12. Options and the recommended first delivery</h2>
+<div class="scroll"><table><thead><tr><th></th><th>Minimal increment</th><th>Recommended first delivery</th><th>Later</th></tr></thead><tbody>
+<tr><td>User value</td><td>Reviews and files become findable and linkable.</td><td>That, plus guides/decisions with applicability, adoption of existing files, visible publication failure.</td><td>Revision diffs, “use as input”, cross-board views, richer taxonomy.</td></tr>
+<tr><td>Scope</td><td>Memory view listing reviews (from cards) and existing files; review pages at <code>/memory/&lt;n&gt;/&lt;id&gt;</code>; card ↔ page links.</td><td>Minimal + <code>memory/</code> entries with header fields, supersession, tombstones, search/filter, unfiled-report record and retry, adoption flow.</td><td>Embeddings, summarisation, collaborative editing, separate wiki service — only if evidence shows a need.</td></tr>
+<tr><td>Storage effect</td><td>None: reads what exists.</td><td>One new flat directory, <code>memory/</code>, in the work repository; one local record family.</td><td>—</td></tr>
+<tr><td>Migration</td><td>None.</td><td>None forced; adoption is opt-in per file.</td><td>—</td></tr>
+<tr><td>Cost and risk</td><td>Small: one module, one route family, one view. Risk: index cost on large boards (memoise).</td><td>Medium: an editor for entries (reuse the refine/brief write path), a new parser with the card-header rules.</td><td>High, and mostly unproven value.</td></tr>
+</tbody></table></div>
+<p><strong>Recommendation:</strong> deliver the <em>recommended first delivery</em> in two cards — the
+minimal increment first (it is useful on its own and changes no storage), then maintained entries
+and adoption. Keep reviews in cards; do not build a second report store.</p>
+<p><strong>Alternative considered — reports as separate files.</strong> Writing each review into
+<code>memory/</code> and leaving a pointer on the card would make Memory self-contained, but it moves
+the authoritative record out of the card that <code>acceptance.py</code>, the Reviews tab, delivery and
+the PR body read today, adds a two-file write that can half-fail, and doubles the sync surface.
+Not recommended for the first delivery.</p>
+
+<h2 id="breakdown">13. Implementation breakdown</h2>
+<p><strong>Reusable contracts</strong>: the review headings and ids (<code>acceptance.py</code>
+<code>ROUND_RE</code>, <code>relevance_id</code>); card reading and the archive
+(<code>taskfiles</code>); the <code>/files/</code> route and its sandbox; the page's Markdown renderer
+and report presentation; the address table and router (task 134); the browser-mutation door for
+writes; the work-state commit path for board edits; <code>redact.py</code>.</p>
+<ol>
+<li><strong>Backend reading</strong> — a <code>memory.py</code> core module (above <code>taskfiles</code>
+and <code>acceptance</code> in the layer table) that builds the index and resolves one entry;
+<code>GET /api/memory</code> and <code>GET /api/memory/entry</code>, read-only.</li>
+<li><strong>Front end</strong> — the Memory view (library, reading page), its addresses, and the card
+integration (Reviews chip and link, Activity link, <em>Linked from Memory</em>), coordinated with
+#149.</li>
+<li><strong>Publication failures</strong> — the unfiled-report record in <code>agents.py</code>'s
+filing path, and a retry route behind the browser-mutation door.</li>
+<li><strong>Maintained entries and adoption</strong> — the <code>memory/</code> format, an editor using
+the board's write-and-commit path, supersession and tombstones, the adoption preview.</li>
+<li><strong>Documentation</strong> — <code>AGENTS.md</code> section, the address table, the website
+docs; browser cases for each view and state.</li>
+</ol>
+<p><strong>Coordination with #149.</strong> #149 owns how a card presents its information; this
+proposal owns the project-wide library and reading page and only adds the entry points on the card
+shown in mockup 3. Whichever lands second adapts to the other's Reviews layout; neither should
+redesign the other's surface.</p>
+
+<h2 id="decisions">14. Owner decisions</h2>
+<ol>
+<li>Is <strong>Memory</strong> the label, with <strong>Context</strong> kept for run-selected inputs?</li>
+<li>Do reviews stay authoritative in the card, with Memory as a view (recommended), or move to files of their own?</li>
+<li>Is a new flat <code>memory/</code> directory in the work repository acceptable for maintained entries?</li>
+<li>Should relevance reviews start recording the brief revision they read?</li>
+<li>Who may write maintained entries — any board user, or the card's owner only?</li>
+<li>Is the two-card split (minimal increment, then entries and adoption) the right sequencing alongside #149?</li>
+</ol>
+
+<h2 id="verified">15. How this package was verified</h2>
+<p>A browser case (<code>verify/browser_cases/case_memory_proposal.py</code> in the
+bench repository, run by bench's <code>bench-browser</code> check) starts a disposable board from the candidate's own <code>manager/core</code>,
+copies this package into its work root, and opens every page at its real <code>/files/plans/</code>
+address in sandboxed Chromium. It checks the served headers (type, <code>nosniff</code>, the sandbox
+policy), that no page overflows at 390px, that every static link between pages resolves to a 200,
+that keyboard focus reaches the links and is visible, and takes the screenshots in both themes.
+<strong>Limitations</strong>: fonts fall back to system fonts (a sandboxed page cannot load the
+board's Plex files); stylesheets must be inline because <code>.css</code> downloads; the theme choice
+does not carry across links; everything marked simulated is inert.</p>
+</main></body></html>
