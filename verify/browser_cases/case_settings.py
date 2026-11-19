@@ -938,6 +938,125 @@ class AgentsSection(unittest.TestCase):
             self.assertTrue(row and row[0] >= -1 and row[0] + row[2] <= w + 1, row)
             shot(f"settings-agents-{w}x{h}")
 
+    def test_g_orchestration_prompts_are_listed_edited_previewed_and_reset(self):
+        """Card 153: the orchestration prompts sit beside the launch
+        templates, edited through the same draft. A refusal writes
+        nothing, a background repaint and a refetch neither take focus nor
+        the unsaved text, the saved override is read back, and a reset
+        restores the built-in — in both themes and at a narrow width."""
+        b = open_settings(1440, 900, "agents")
+        if not b.wait("!!document.querySelector('[data-agtplrow=\"reason.md\"]')", 10):
+            raise bv.CheckFailed("the orchestration prompts were never drawn")
+        names = b.eval("[...document.querySelectorAll('.sorch [data-agtplrow]')]"
+                       ".map(e => e.dataset.agtplrow)")
+        self.assertEqual(["reason.md", "reason-readiness.md", "reason-questions.md",
+                          "reason-plan.md", "reason-recovery.md"], names)
+        text = b.eval("document.querySelector('.sorch').innerText")
+        for words in ("Orchestration prompts", "guidance, not authority",
+                      "Shared by every need", "phase scope", "Specific to the recovery need",
+                      "next reasoning launch", "Built-in"):
+            self.assertIn(words, text)
+        # the launch templates are still in their own panel
+        self.assertTrue(b.eval("!!document.querySelector('[data-agtplrow=\"work.md\"]')"
+                               " && !document.querySelector('.sorch [data-agtplrow=\"work.md\"]')"))
+        shot("settings-orchestration-prompts-1440x900")
+
+        # a refused edit writes nothing, and its error is said
+        before = b.eval("S.settings.page.agents.revision")
+        b.click('#sbody [data-agtpl="reason.md"]')
+        if not b.wait("document.activeElement && document.activeElement.id === 'ag-t-reason.md'", 5):
+            raise bv.CheckFailed("Edit did not put focus in the shared template")
+        b.eval("(() => { const t = document.querySelector('#ag-t-reason\\\\.md');"
+               " t.value = t.value.replace('{contract}', '{nope}');"
+               " t.dispatchEvent(new Event('input', {bubbles: true})); })()")
+        agents_step("validate", "!!(S.agentsDraft.checked && !S.agentsDraft.checked.ok)",
+                    "a shared template without its contract validated")
+        codes = b.eval("S.agentsDraft.checked.errors.map(e => e.code)")
+        self.assertIn("template-unknown-field", codes)
+        self.assertIn("template-missing-field", codes)
+        b.click('#sbody [data-agstep="apply"]')
+        b.click('#sbody [data-agstep="apply"]')
+        b.wait("!S.agentsDraft.armed", 10)
+        self.assertEqual(before, b.eval("S.settings.page.agents.revision"))
+        shot("settings-orchestration-refused")
+        b.click('#sbody [data-agstep="discard"]')
+        self.assertTrue(b.wait("S.agentsDraft === null || !S.agentsDraft.dirty", 10))
+        if not b.wait("!!document.querySelector('[data-agtplrow=\"reason-recovery.md\"]')", 10):
+            raise bv.CheckFailed("discarding did not redraw the prompts")
+
+        # edit the recovery guidance; a repaint and a refetch keep the text
+        # and the focus
+        b.click('#sbody [data-agtpl="reason-recovery.md"]')
+        if not b.wait("document.activeElement && document.activeElement.id === 'ag-t-reason-recovery.md'", 5):
+            raise bv.CheckFailed("Edit did not put focus in the recovery guidance")
+        b.eval("(() => { const t = document.querySelector('#ag-t-reason-recovery\\\\.md');"
+               " t.value = t.value + 'BROWSER-GUIDANCE-153 for card {card}.\\n';"
+               " t.dispatchEvent(new Event('input', {bubbles: true})); })()")
+        b.eval("window.__guide = document.querySelector('#ag-t-reason-recovery\\\\.md');"
+               " render(); renderSettings()")
+        b.eval("loadState()")
+        b.wait("!S.settingsFetching", 10)
+        self.assertTrue(b.eval("document.activeElement === window.__guide"
+                               " && window.__guide.isConnected"),
+                        "a background repaint took focus out of the guidance being edited")
+        self.assertIn("BROWSER-GUIDANCE-153",
+                      b.eval("document.querySelector('#ag-t-reason-recovery\\\\.md').value"))
+        b.click('#sbody [data-agrender="reason-recovery.md"]')
+        if not b.wait("!!document.querySelector('[data-agrendered=\"reason-recovery.md\"]')", 10):
+            raise bv.CheckFailed("the composed preview never arrived")
+        rendered = b.eval("document.querySelector('[data-agrendered=\"reason-recovery.md\"]').innerText")
+        self.assertIn("BROWSER-GUIDANCE-153 for card 0.", rendered)
+        self.assertIn("<<<REASONING", rendered)
+        self.assertIn("sample", rendered)
+        shot("settings-orchestration-preview")
+        b.click('#sbody [data-agstep="apply"]')
+        b.click('#sbody [data-agstep="apply"]')
+        if not b.wait("!!(S.settings && S.settings.page.agents.templates"
+                      ".find(t => t.name === 'reason-recovery.md').source === 'local')", 20):
+            raise bv.CheckFailed("the orchestration override was never saved")
+        # read back from the server after a reload of the page's reading
+        b.eval("S.agentsDraft = null; S.settings = null; renderSettings()")
+        if not b.wait("!!(S.settings && S.settings.page.agents.templates"
+                      ".find(t => t.name === 'reason-recovery.md').text"
+                      ".includes('BROWSER-GUIDANCE-153'))", 20):
+            raise bv.CheckFailed("the saved override did not survive a reload")
+
+        # the shared template's preview, composed with the chosen need
+        b.click('#sbody [data-agtpl="reason.md"]')
+        b.wait("!!document.querySelector('[data-agneed=\"reason.md\"]')", 5)
+        set_control('[data-agneed="reason.md"]', 'recovery')
+        b.click('#sbody [data-agrender="reason.md"]')
+        if not b.wait("!!document.querySelector('[data-agrendered=\"reason.md\"]')", 10):
+            raise bv.CheckFailed("the shared template's preview never arrived")
+        self.assertIn("BROWSER-GUIDANCE-153",
+                      b.eval("document.querySelector('[data-agrendered=\"reason.md\"]').innerText"))
+
+        for theme, (w, h) in (("light", (1440, 900)), ("dark", (390, 780)),
+                              ("light", (390, 780))):
+            b = open_settings(w, h, "agents", theme)
+            b.wait("!!document.querySelector('.sorch')", 10)
+            m = measure(["#sbody", ".sorch", '[data-agtplrow="reason.md"]'])
+            self.assertLessEqual(m["scrollWidth"], w + 1, f"horizontal overflow at {w} {theme}")
+            box = m["boxes"]['[data-agtplrow="reason.md"]']
+            self.assertTrue(box and box[0] >= -1 and box[0] + box[2] <= w + 1, box)
+            shot(f"settings-orchestration-{theme}-{w}x{h}")
+
+        # reset: staged, applied, back to the built-in, the text recoverable
+        b = open_settings(1440, 900, "agents")
+        b.click('#sbody [data-agtpl="reason-recovery.md"]')
+        b.wait("!!document.querySelector('[data-agreset=\"reason-recovery.md\"]')", 5)
+        b.click('#sbody [data-agreset="reason-recovery.md"]')
+        b.click('#sbody [data-agstep="apply"]')
+        b.click('#sbody [data-agstep="apply"]')
+        if not b.wait("!!(S.settings && S.settings.page.agents.templates"
+                      ".find(t => t.name === 'reason-recovery.md').source === 'built-in')", 20):
+            raise bv.CheckFailed("the reset never reached the backend")
+        self.assertGreater(b.eval("S.settings.page.agents.recovery"
+                                  ".filter(r => r.template === 'reason-recovery.md').length"), 0)
+        # nothing was launched by any of it
+        self.assertEqual(0, b.eval("Object.keys((S.state && S.state.agents) || {}).length"))
+        shot("settings-orchestration-reset")
+
 
 class ReadingRunsNothing(unittest.TestCase):
     def test_check_configuration_inspects_without_running_a_project_program(self):
