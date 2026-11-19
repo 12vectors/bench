@@ -148,7 +148,11 @@ import json, config, gatepolicy, profiles, templates
 fields = templates.sample_fields()
 fields.update(config.prompt_fields("01-card.md", "in-progress"))
 prompts = {n: templates.render(n, templates.require(n)["text"], fields)
-           for n in templates.NAMES}
+           for n in templates.NAMES if templates.SPECS[n]["group"] == "launch"}
+# an orchestration guidance template is a fragment of the reasoning
+# prompt (task 153): what a run is told is the composition, per need
+prompts.update({f"reason.md+{need}": templates.compose_reasoning(need, fields)["text"]
+                for need in templates.REASON_NEEDS})
 print(json.dumps({
     "prompts": prompts,
     "repo": str(config.REPO),
