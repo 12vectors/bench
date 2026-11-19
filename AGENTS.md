@@ -1152,7 +1152,7 @@ system font, as they always were; `tests/fixtures/page-symbols.json`
 lists them and `verify/browser_cases/case_fonts.py` checks which glyphs
 come from where.
 
-The board has five views (header switcher):
+The board has six views (header switcher):
 
 - **Board** — the kanban, live, and only what you are holding yourself: a
   phase's members are drawn elsewhere, with the phase card standing for
@@ -1166,6 +1166,11 @@ The board has five views (header switcher):
   (origin unreachable, self-healing) or stalled on something only a human
   can settle. A card's face is kept quiet (see "The card face and its
   tools" below).
+- **Orchestrator** — what the Bench scope and its phase scopes are doing,
+  what waits on you, and the operating agreement they work under (see
+  "The Orchestrator view"). The switcher carries how many decisions wait
+  on you and a mark while orchestration is paused or its agreement is
+  invalid.
 - **Phases** — a swimlane each: where the members the Board stopped drawing
   actually live (see "The Phases view: a swimlane each"). The switcher
   itself carries how many phases are running and a mark when one has
@@ -1455,6 +1460,8 @@ once the board has been read.
 | `/sessions`, `/sessions/<session>` | Sessions, and one session |
 | `/focus`, `/focus/<session>` | Focus, and one session |
 | `/settings`, `/settings/<section>` | Settings → Overview, or one section: `setup`, `verification` (Checks), `acceptance` (Merge rules), `agents`, `access`, `diagnostics`, `installation`, `policy` |
+| `/orchestrator`, `/orchestrator/<section>` | the Orchestrator's Overview, or one section: `work`, `decisions`, `phases`, `recovery`, `activity`, `agreement` |
+| `/orchestrator/<section>?card=<card>` | that section with one card or phase selected in it, named as a card's address names it |
 | `/#setup` | kept from the terminal handoff: Settings → Setup guide, corrected to `/settings/setup` |
 
 **What names what.** A card is named by its **number** — allocated in
@@ -6347,6 +6354,101 @@ scoped phase, each member's state; for a named but unadopted phase,
 whether it is adoptable now and what still works it. Reading it launches,
 merges and writes nothing. The event wording of a phase on a non-default
 base is card 61's, not repeated here.
+
+### The Orchestrator view
+
+Everything above has one place a person reads and acts on it (D15, task
+145): **Orchestrator** in the header switcher, at `/orchestrator`. It
+owns no orchestration logic. Each section draws what the server answered
+— `GET /api/orchestration` (the agreement in force and the draft, every
+scope's authority with the scope that decided it, capacity and usage,
+eligibility, the schedule, delivery, phase scopes, recovery and the
+operation ledger), `GET /api/orchestration/reasoning` and
+`GET /api/card/decisions` — and every action goes through the route that
+owns it, which decides again. A disabled button is a hint; the route is
+the rule.
+
+**Seven sections**, each with an address (`/orchestrator/<section>`, and
+`?card=<card>` for the card or phase selected in it):
+
+- **Overview** — the one state the whole thing is in, in words (Off,
+  Paused, Agreement invalid, Outcome unknown, Recovery needs you, Circuit
+  breaker open, Needs your decision, Adoption needed, Read-only here,
+  Reasoning, Launching, Working, Nothing committed, Waiting, or Offline
+  when the page cannot reach the board), its sentence and the one next
+  step; then each scope — Bench, and every phase scope — with its
+  authority word by word and the scope that decided it, its slots as
+  `n of m in use` (an allocation from the shared total for a phase), its
+  launches today and its ceilings; the merge policy, where an ungated
+  rule reads **No checks required by your policy** and a delegated merge
+  under it *not verified*; and the execution installation.
+- **Work** — every card in To Do, In Progress and Review in five groups:
+  yours to orchestrate (your last stage move), driven by you (handed back
+  or excluded), someone else's, unattributed (who moved it is not known)
+  and outside a scope (a phase the runner schedules). A selected card
+  shows its eligibility with the movement it rests on, its next step or
+  delivery step, its launches against its ceiling, its reasoning job, and
+  a run's signals as separate facts — process, age against the warning
+  threshold, last progress update (agent-reported), last tool activity,
+  a tool call in flight, a Bench check running, last commit.
+- **Decisions** — the cards with questions, open first. A question shows
+  its text, options, recommendation, why and evidence references; the
+  answer form takes an option and a note and is bound to what the page
+  read (the question's newest record, the brief, this board's identity).
+  A question addressed to someone else, or asked against an older brief,
+  is shown and not answerable, with the reason. Resolved questions keep
+  their options and answer; reasoning results are labelled
+  agent-reported, with proposed actions said to be proposals; a phase
+  card lists its members' questions, each answered on its member.
+- **Phases** — every phase card: its scheduling owner (phase runner or
+  phase scope), strategy, integrated members (*in the phase branch, not
+  delivered*), members and their states, and the phase scope's effective
+  authority and capacity (parent ∩ phase).
+- **Recovery** — the circuit breaker, operations held for a person (an
+  unknown outcome; a refused launch), incidents that are held or
+  exhausted with their attempts against the cap and the owner's choices,
+  and the runs being observed.
+- **Activity** — the operation ledger, newest first, and the people's
+  orchestration changes on this board.
+- **Operating agreement** — what is in force beside the draft, and the
+  draft's editor: the Bench scope's enablement, pause, authority,
+  capacity, ceilings, exclusions and hand-backs; each phase scope's,
+  which may only narrow; adding a phase. **Save draft**, **Preview**
+  (two resolutions compared, nothing written) and **Apply** (armed; the
+  saved draft, never the page's unsaved edits) are separate steps, and
+  **Discard** is its own. The reading carries the document it edits —
+  the keys this version reads, notes scrubbed — and a save or apply is
+  refused when the revision the page read has moved.
+
+**Every action says what it does, beside its button**, and arms before
+it fires: pause and resume of the Bench scope (reaching every phase
+scope) or of one phase scope (that phase only); take over manually and
+reclaim; exclude and include; **cancel** one named run (‖ hold: that run
+and the checks it asked for, branch, worktree and history kept, nothing
+else paused or retried); adopt or release a phase; designate this
+installation or hand execution over; settle an unknown outcome as
+launched or not, or release a refused launch; mark an incident handled;
+reset the circuit breaker; answer or withdraw a question. A refusal is
+said in the server's words and changes nothing.
+
+**Ways in.** While an agreement is in force the Board carries a strip —
+the state, how many cards are managed, how many decisions wait, the
+agreement's revision — with **Open Orchestrator** and **Answer
+decisions**. A card's Overview has an **Orchestration** line (which
+scope holds it, or why none does; handed back; open questions and
+blockers) linking to that card in the right section. Both are read from
+`/api/state`'s `orchestration` summary (the agreement's status and
+revision, each scope's pause, the scope or reason per managed card) and
+`decisions` — one file read, no git history, no process.
+
+**Reading is free.** Opening the view or any section, a card's line and
+the strip run no agent, request no check, make no worktree and write
+nothing. The view holds its repaint while a field in it has focus, keeps
+what was typed and which folds are open across live updates, and works
+by keyboard, by touch (44px targets on a touch screen) and at 390px in
+both themes. Question text, reasoning summaries and findings are card
+text: escaped, rendered by the page's own Markdown renderer, and masked
+where they look like a credential — pattern matching, not a promise.
 
 ## Pull requests
 
