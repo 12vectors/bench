@@ -40,6 +40,7 @@ from pathlib import Path
 import config
 import records
 import state
+import workbase
 
 # Every read-modify-write of a card's text in this module takes this lock,
 # so two of the board's own writers — a comment being saved and a report
@@ -266,6 +267,12 @@ def read_task(path: Path, stage: str) -> dict:
         # drift` and `phase drift`: flagged on the card, never guessed
         # around. `plans.preflight` adds what only git can answer.
         "planDrift": plan_drift,
+        # The orchestrator's work-base decision (task 150), read back off
+        # the card's own Orchestration record: which code a new start is
+        # built on when neither a header nor a phase says. None on every
+        # card that has none, which reads exactly as before.
+        "workBase": (workbase.reading(card_parts(text)["history"])
+                     if "bench:orchestration" in text else None),
         # A phase and its members: `cards` is what this card claims (empty
         # for everything that is not a phase), `members`, `phase` and the
         # drift between them are derived across the whole board by
@@ -565,6 +572,21 @@ def _stack_name(task: dict) -> str:
     return f"#{task['number']}" if task.get("number") else task["file"]
 
 
+def decided_base(task: dict) -> str | None:
+    """The branch an accepted `stacked` work-base decision builds this card
+    on (task 150), or None. A card's own **Base branch:** header outranks
+    it and a phase member or phase card never reads one, so the decision
+    only ever fills the application default's place."""
+    if task.get("baseBranch") or task.get("phase") or task.get("isPhase"):
+        return None
+    accepted = (task.get("workBase") or {}).get("accepted") or {}
+    branch = accepted.get("branch")
+    if accepted.get("decision") == "stacked" and branch \
+            and ref_problem(branch) is None:
+        return branch
+    return None
+
+
 def weave_stacks(stages: list[dict]) -> None:
     """Resolve every card's **Base branch:** against the board: which card,
     if any, its work is stacked on, which cards are stacked on it, and
@@ -601,10 +623,12 @@ def weave_stacks(stages: list[dict]) -> None:
             here.update(mapping="integration",
                         base=config.PHASE_BRANCH_PREFIX + task["phase"]["file"][:-3])
             continue
-        base = task.get("baseBranch")
+        base = task.get("baseBranch") or decided_base(task)
         if not base or base == config.APP_BASE:
             continue
         here["base"] = base
+        if not task.get("baseBranch"):
+            here["decided"] = True
         if base.startswith(config.TASK_BRANCH_PREFIX):
             stem, phase = base[len(config.TASK_BRANCH_PREFIX):], False
         elif base.startswith(config.PHASE_BRANCH_PREFIX):
@@ -655,8 +679,10 @@ def weave_stacks(stages: list[dict]) -> None:
         for member in loop:
             card = by_file[member]
             card["stack"]["cycle"] = list(loop)
+            said = ("the work-base decision" if card["stack"].get("decided")
+                    else "**Base branch:**")
             card["planDrift"].append(
-                f"**Base branch:** {card['stack']['base']} makes a loop of "
+                f"{said} {card['stack']['base']} makes a loop of "
                 f"stacked cards ({names}) — a stack needs a bottom to start "
                 f"from; change one card's base")
 

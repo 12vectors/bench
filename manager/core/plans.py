@@ -83,6 +83,7 @@ import githost
 import gitrepo
 import records
 import taskfiles
+import workbase
 
 # Where a recorded plan lives, and what the file is called. One per card,
 # replaced on a replan — the plan is a property of the card's current work,
@@ -311,18 +312,66 @@ def declared(task: dict) -> dict:
                 "drift": drift}
     base = task.get("baseBranch")
     pr_base = task.get("prBase")
-    start = base or config.APP_BASE
+    decided, withdrawn = decision(task)
+    stacked = decided if (decided or {}).get("decision") == "stacked" else None
+    start = base or (stacked["branch"] if stacked else config.APP_BASE)
+    said = (f"the work-base decision {stacked['id']} (building on "
+            f"#{stacked.get('parent') or '?'}'s committed work)" if stacked else None)
     return {
         "startBranch": start,
-        "prBase": pr_base or start,
+        "prBase": pr_base or (stacked.get("prBase") or stacked["branch"]
+                              if stacked else start),
         "source": ("the card's **Base branch:** header" if base
-                   else "the application default"),
+                   else said or "the application default"),
         "prSource": ("the card's **PR base:** header" if pr_base
                      else "the card's **Base branch:** header" if base
-                     else "the application default"),
+                     else said or "the application default"),
         "phase": None,
         "drift": drift,
+        # Present only when the decision governs (no header of the card's
+        # own): what the plan must hold a new start to (task 150).
+        "decision": decided,
+        "decisionWithdrawn": withdrawn,
     }
+
+
+def headline(found: dict | None, task: dict | None = None) -> str:
+    """The decision in plain words, for the card and the Orchestrator."""
+    if not found:
+        return f"Starting from {config.APP_BASE}"
+    latest, accepted = found.get("latest") or {}, found.get("accepted") or {}
+    if latest.get("decision") == "blocked":
+        return "Work base blocked — " + (latest.get("code") or "needs a decision")
+    word = (accepted.get("decision") or "")
+    if task and (task.get("baseBranch") or task.get("phase")):
+        word = "explicit" if task.get("baseBranch") else "integration"
+    if word == "stacked":
+        out = f"Building on #{accepted.get('parent') or '?'}'s committed work"
+    elif word == "explicit":
+        out = "The card's own Base branch header governs"
+    elif word == "integration":
+        out = "Its phase's integration branch governs"
+    else:
+        out = f"Starting from {accepted.get('appBase') or config.APP_BASE}"
+    if latest.get("decision") == "stale":
+        out += " — stale, reassessing"
+    return out
+
+
+def decision(task: dict) -> tuple[dict | None, str | None]:
+    """The work-base decision that governs this card's *new* start, and why
+    a new start must refuse when its newest record withdrew it — both None
+    unless the card has a decision and neither a header nor a phase of its
+    own (those outrank it: task 150 fills only the default's place)."""
+    if task.get("baseBranch") or task.get("phase") or task.get("isPhase"):
+        return None, None
+    found = task.get("workBase")
+    if not found:
+        return None, None
+    accepted, why = workbase.governs_new_start(found)
+    if accepted and accepted.get("decision") not in ("stacked", "normal"):
+        accepted = None
+    return accepted, why
 
 
 def summary(task: dict) -> dict | None:
@@ -337,11 +386,22 @@ def summary(task: dict) -> dict | None:
     saved = recorded(task["file"])
     plain = (shape["startBranch"] == config.APP_BASE
              and shape["prBase"] == config.APP_BASE)
-    if plain and not saved and not shape["drift"]:
+    found = task.get("workBase")
+    if plain and not saved and not shape["drift"] and not found:
         return None
     out = {"startBranch": shape["startBranch"], "prBase": shape["prBase"],
            "source": shape["source"], "prSource": shape["prSource"],
            "drift": shape["drift"], "recorded": False, "default": plain}
+    if found:
+        # The decision as the card records it (task 150): what a person
+        # reads first — "Starting from main", "Building on #A's committed
+        # work" — and what withdrew it, if anything did.
+        out["workBase"] = {"accepted": found.get("accepted"),
+                           "latest": found.get("latest"),
+                           "governs": bool(shape.get("decision")
+                                           or shape.get("decisionWithdrawn")),
+                           "withdrawn": shape.get("decisionWithdrawn"),
+                           "headline": headline(found, task)}
     if saved:
         out.update({"recorded": True, "startRef": saved.get("startRef"),
                     "startCommit": saved.get("startCommit"),
@@ -372,7 +432,7 @@ def board(collected: dict) -> dict:
 
 PORTABLE = ("task", "branch", "startBranch", "startRef", "startCommit",
             "prBase", "source", "prSource", "appBase", "appRemote",
-            "provenance", "delivery", "recorded")
+            "provenance", "delivery", "recorded", "workBase")
 
 
 def record(plan: dict) -> dict:
@@ -616,7 +676,7 @@ def _follows_default(plan: dict) -> bool:
     the card's own and no phase? Such a plan has no requirement of its own
     to drift from, only a setting that may since have moved."""
     return not (plan.get("explicitBase") or plan.get("explicitTarget")
-                or plan.get("phase"))
+                or plan.get("phase") or plan.get("decidedBase"))
 
 
 def _contains(commit: str, tip: str) -> bool:
@@ -661,6 +721,7 @@ def preflight(filename: str, stage: str, *, fetch: bool = True,
         "provenance": "planned",
         "explicitBase": bool(card.get("baseBranch")),
         "explicitTarget": bool(card.get("prBase")),
+        "decidedBase": (shape.get("decision") or {}).get("decision") == "stacked",
         "notes": [],
         "blockers": list(shape["drift"]),
     }
@@ -700,8 +761,56 @@ def preflight(filename: str, stage: str, *, fetch: bool = True,
     if plan["blockers"]:
         return plan
     _resume(plan, card, ignore_recorded=ignore_recorded)
+    _decided(plan, shape)
     _stacked(plan, card)
     return plan
+
+
+def _decided(plan: dict, shape: dict) -> None:
+    """Hold a *new* start to the work-base decision it rides (task 150).
+
+    A decision pins the exact commit it was made about. The branch it
+    names may have moved since — the prerequisite gained commits, was
+    rewritten or deleted — and then the decision is about code the launch
+    would not be starting from: refused, never silently re-read. A newest
+    record that withdrew the decision (stale, blocked) refuses the same
+    way. Work already under way (`continuing`) keeps its recorded plan and
+    is never touched here: its source does not change under its worker.
+    """
+    decided = shape.get("decision")
+    withdrawn = shape.get("decisionWithdrawn")
+    if plan["continuing"] or not (decided or withdrawn):
+        if decided:
+            plan["workBase"] = _decision_brief(decided)
+        return
+    if withdrawn:
+        plan["blockers"].append(
+            f"{withdrawn} — nothing was started. The orchestrator reassesses it "
+            f"on its next pass; or decide it yourself with a **Base branch:** "
+            f"header")
+        return
+    plan["workBase"] = _decision_brief(decided)
+    if decided.get("decision") != "stacked":
+        return
+    pinned = decided["commit"]
+    if plan.get("startCommit") != pinned:
+        now = (plan.get("startCommit") or "")[:9] or "nothing"
+        plan["blockers"].append(
+            f"the work-base decision {decided['id']} pinned {decided['branch']} at "
+            f"{pinned[:9]}, and it now resolves to {now} — the prerequisite "
+            f"changed before this work started, so the decision is stale. Nothing "
+            f"was started; the orchestrator reassesses it on its next pass")
+        return
+    # Started from the pinned commit itself, not the branch name: a push
+    # landing between this read and `worktree add` cannot change the base.
+    plan["startRef"] = pinned
+    plan["startCommit"] = pinned
+
+
+def _decision_brief(decided: dict) -> dict:
+    return {key: decided.get(key) for key in (
+        "id", "decision", "branch", "commit", "prBase", "parent", "parentHead",
+        "appBase", "summary") if decided.get(key)}
 
 
 def _stacked(plan: dict, card: dict) -> None:
