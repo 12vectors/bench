@@ -395,6 +395,24 @@ class ReviewDefects(WorkBaseCase):
         resumed = plans.require(self.preflight(B))
         self.assertTrue(resumed["continuing"])
         self.assertEqual(tip, resumed["startCommit"])
+        # the observer records it stale, and the card does not claim that
+        # anything is reassessing work that has started
+        basechoice.observe(self.board())
+        said = basechoice.reading(self.task(B), self.board())["headline"]
+        self.assertIn("work under way keeps its recorded plan", said)
+        self.assertNotIn("decided again", said)
+
+    def test_a_stale_decision_says_who_decides_it_again(self):
+        self.api_in_review()
+        self.write(B, card("62 — The UI", depends="61"))
+        self.decide(B)
+        self.commit_on(A_BRANCH, "parent-moves-on")
+        basechoice.observe(self.board())
+        said = basechoice.reading(self.task(B), self.board())["headline"]
+        self.assertIn("stale; decided again before it starts", said)
+        refused = self.preflight(B)
+        self.assertTrue(any("on a card worked by hand nothing will" in b
+                            for b in refused["blockers"]), refused["blockers"])
 
     def test_a_retry_does_not_remake_the_decision_when_the_parent_landed(self):
         # defect 2, second half: the card stays stacked, its Stack block

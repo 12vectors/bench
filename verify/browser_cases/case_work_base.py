@@ -12,7 +12,8 @@ put back afterwards. Run through verify/browser.
   fold holds the exact branch, the pinned commit, the PR target and the
   normal base — the record identities `/api/state` reports.
 - **Stale and blocked say so, with the remedy.** A decision whose parent
-  moved reads "stale, reassessing" as a status; a blocked one leads with
+  moved reads "stale; decided again before it starts" as a status (its work
+  has not started); a blocked one leads with
   the conflict and names the owner's way through.
 - **It survives a reload,** and the identity the page draws is the one on
   the card.
@@ -201,7 +202,7 @@ class AWorkBase(unittest.TestCase):
             shot(f"workbase-normal-{width}x{height}")
             self.close()
             stale = self.overview("74-wb-stale")
-            self.assertIn("stale, reassessing", stale["head"])
+            self.assertIn("stale; decided again before it starts", stale["head"])
             self.assertEqual(("stale", "status"), (stale["decision"], stale["role"]))
             self.assertIn("decides its base again", stale["text"])
             shot(f"workbase-stale-{width}x{height}")

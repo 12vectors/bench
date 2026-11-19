@@ -510,7 +510,7 @@ def reading(task: dict, board: dict) -> dict:
     """What the Orchestrator view shows for one card: the recorded
     decision, its plain-language headline and its freshness. A read."""
     found = task.get("workBase")
-    return {"headline": plans.headline(found, task),
+    return {"headline": plans.headline(found, task, under_way=under_way(task)),
             "accepted": (found or {}).get("accepted"),
             "latest": (found or {}).get("latest"),
             "freshness": freshness(task, board)}

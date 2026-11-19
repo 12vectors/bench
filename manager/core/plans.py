@@ -372,8 +372,12 @@ def declared(task: dict) -> dict:
     }
 
 
-def headline(found: dict | None, task: dict | None = None) -> str:
-    """The decision in plain words, for the card and the Orchestrator."""
+def headline(found: dict | None, task: dict | None = None, *,
+             under_way: bool = False) -> str:
+    """The decision in plain words, for the card and the Orchestrator.
+    `under_way` says the card's work has started: a stale decision is then
+    never made again (its recorded plan governs), so it must not read as
+    though something were reassessing it."""
     if not found:
         return f"Starting from {config.APP_BASE}"
     latest, accepted = found.get("latest") or {}, found.get("accepted") or {}
@@ -391,7 +395,8 @@ def headline(found: dict | None, task: dict | None = None) -> str:
     else:
         out = f"Starting from {accepted.get('appBase') or config.APP_BASE}"
     if latest.get("decision") == "stale":
-        out += " — stale, reassessing"
+        out += (" — stale; the work under way keeps its recorded plan"
+                if under_way else " — stale; decided again before it starts")
     return out
 
 
@@ -438,7 +443,7 @@ def summary(task: dict) -> dict | None:
                            "governs": bool(shape.get("decision")
                                            or shape.get("decisionWithdrawn")),
                            "withdrawn": shape.get("decisionWithdrawn"),
-                           "headline": headline(found, task)}
+                           "headline": headline(found, task, under_way=bool(saved))}
     if saved:
         out.update({"recorded": True, "startRef": saved.get("startRef"),
                     "startCommit": saved.get("startCommit"),
@@ -822,9 +827,10 @@ def _decided(plan: dict, shape: dict) -> None:
         return
     if withdrawn:
         plan["blockers"].append(
-            f"{withdrawn} — nothing was started. The orchestrator reassesses it "
-            f"on its next pass; or decide it yourself with a **Base branch:** "
-            f"header")
+            f"{withdrawn} — nothing was started. While an orchestrator manages "
+            f"this card it decides the base again on its next pass; on a card "
+            f"worked by hand nothing will, so decide it yourself with a "
+            f"**Base branch:** header")
         return
     plan["workBase"] = _decision_brief(decided)
     if decided.get("decision") != "stacked":
@@ -836,9 +842,10 @@ def _decided(plan: dict, shape: dict) -> None:
             f"the work-base decision {decided['id']} pinned {decided['branch']} at "
             f"{pinned[:9]}, and it now resolves to {now} — the prerequisite "
             f"changed before this work started, so the decision is stale. Nothing "
-            f"was started; the orchestrator records it stale and decides again "
-            f"on its next pass, or decide it yourself with a **Base branch:** "
-            f"header")
+            f"was started. While an orchestrator manages this card it records "
+            f"the decision stale and decides again on its next pass; on a card "
+            f"worked by hand nothing will, so decide it yourself with a "
+            f"**Base branch:** header")
         return
     # Started from the pinned commit itself, not the branch name: a push
     # landing between this read and `worktree add` cannot change the base.
