@@ -1003,13 +1003,20 @@ class AgentsSection(unittest.TestCase):
         b.eval("(() => { const t = document.querySelector('#ag-t-reason-recovery\\\\.md');"
                " t.value = t.value + 'BROWSER-GUIDANCE-153 for card {card}.\\n';"
                " t.dispatchEvent(new Event('input', {bubbles: true})); })()")
-        b.eval("window.__guide = document.querySelector('#ag-t-reason-recovery\\\\.md');"
-               " render(); renderSettings()")
+        # a stream frame and the state refetch are background repaints:
+        # the very element keeps focus and its text
+        b.eval("window.__guide = document.querySelector('#ag-t-reason-recovery\\\\.md'); render()")
         b.eval("loadState()")
         b.wait("!S.settingsFetching", 10)
         self.assertTrue(b.eval("document.activeElement === window.__guide"
                                " && window.__guide.isConnected"),
                         "a background repaint took focus out of the guidance being edited")
+        # a section repaint rebuilds the editor from the draft: focus comes
+        # back to the field and the unsaved text is still there
+        b.eval("renderSettings()")
+        self.assertEqual("ag-t-reason-recovery.md",
+                         b.eval("document.activeElement && document.activeElement.id"),
+                         "a section repaint took focus out of the guidance being edited")
         self.assertIn("BROWSER-GUIDANCE-153",
                       b.eval("document.querySelector('#ag-t-reason-recovery\\\\.md').value"))
         b.click('#sbody [data-agrender="reason-recovery.md"]')
