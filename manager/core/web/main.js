@@ -389,8 +389,9 @@ $('#loghead').addEventListener('click', (e) => {
    and the project's path is not drawn, so the board is what a phone
    shows first. Warnings never fold — a stalled sync, a halted phase, the
    connection chip — and neither does the configuration check, which is
-   always the way in to a diagnosis. Above the phone width the button is
-   not drawn and nothing is folded. */
+   always the way in to a diagnosis. The same holds on a window as short
+   as a phone held sideways. Anywhere else the button is not drawn and
+   nothing is folded. */
 {
   const more = $('#hdrmore');
   const set = (open) => {
