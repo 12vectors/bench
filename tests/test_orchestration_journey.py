@@ -206,6 +206,39 @@ class _Journeys:
         self.assertIn(phase, reviewed, "the integrated head had its own review")
 
 
+    def test_dependent_work_builds_on_a_prerequisite_in_review(self):
+        # task 150: A is in Review and not merged (merge is not delegated);
+        # B declares it and is picked up — its decision is recorded before
+        # anything is provisioned, its branch holds A's committed work, its
+        # PR targets A's branch, and further passes decide nothing twice
+        j = self.journey()
+        api = j.card("40", "The API", author="bob")
+        j.step("move", file=api, **{"from": "backlog", "to": "to-do"})
+        j.step("enable", agreement={"authority": [w for w in ALL if w != "merge"]})
+        j.until(lambda r: r["stages"].get(api) == "review")
+        ui = j.card("41", "The UI", author="bob", extra="**Depends on:** 40\n")
+        j.step("move", file=ui, **{"from": "backlog", "to": "to-do"})
+        j.until(lambda r: r["stages"].get(ui) == "review")
+
+        a_branch, b_branch = f"task/{api[:-3]}", f"task/{ui[:-3]}"
+        text = j.card_text(ui)
+        self.assertEqual(text.count('"kind": "base"'), 1, text)
+        self.assertIn('"decision": "stacked"', text)
+        self.assertIn(a_branch, text)
+        # B's published branch holds A's committed work; main does not
+        self.assertTrue(j.remote_has("card-40.txt", ref=b_branch))
+        self.assertTrue(j.remote_has("card-41.txt", ref=b_branch))
+        self.assertFalse(j.remote_has("card-40.txt"), "A was not merged to start B")
+        # B's pull request targets A's branch, so its review is B's change
+        prs = j.host._load()["prs"].values()
+        self.assertEqual([p["base"] for p in prs if p["head"] == b_branch], [a_branch])
+        # more passes: no second decision, no second run of B
+        j.step("pass")
+        j.step("pass")
+        self.assertEqual(j.card_text(ui).count('"kind": "base"'), 1)
+        self.assertEqual([c["task"] for c in j.calls("work")].count(ui), 1)
+
+
 class Vendored(_Journeys, unittest.TestCase):
     LAYOUT = "vendored"
 
