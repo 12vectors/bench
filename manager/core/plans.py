@@ -22,7 +22,7 @@ implicitly and separately:
 
 ## Where it comes from
 
-Three structured inputs, in this order, and nothing else:
+Four structured inputs, in this order, and nothing else:
 
 1. **Phase membership.** A member inherits its phase's branch and targets
    it; that is what a phase's branch is *for*. A member card that also
@@ -36,7 +36,12 @@ Three structured inputs, in this order, and nothing else:
    (`taskfiles.ref_problem`): these values reach an argument list, so a
    value that is not a branch name is refused by the parser rather than by
    the process that would have run it.
-3. **The application default** — `config.APP_BASE`, `main` unless the
+3. **The orchestrator's work-base decision** (task 150) — only where the
+   two above say nothing: a `stacked` decision on the card (`workbase`)
+   starts the work from a Review prerequisite's pinned commit and targets
+   its branch; `_decided` refuses a new start the decision no longer
+   describes.
+4. **The application default** — `config.APP_BASE`, `main` unless the
    operator changed it. A card with neither header and no phase resolves
    exactly as it always did, which is the whole of "no new metadata keeps
    established behaviour".
