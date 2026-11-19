@@ -235,6 +235,38 @@ def _resolve_branch(branch: str, *, fetch: bool = True) -> dict:
                         f"create it, or fix the card's base")}
 
 
+def resolve_branch(branch: str, *, fetch: bool = True) -> dict:
+    """`_resolve_branch` for a caller outside this module: exactly the
+    answer a launch's preflight will act on (task 150's recheck asks it
+    immediately before a launch, so the two cannot disagree)."""
+    return _resolve_branch(branch, fetch=fetch)
+
+
+def branch_tip(branch: str) -> str:
+    """The commit a branch names here, read the way `_resolve_branch`
+    reads it after a fetch — the remote's copy (as last fetched) when the
+    remote has one, else this checkout's — and never fetching. A work-base
+    decision pins what this returns, so a launch that fetched and found
+    the same remote copy starts from the commit the decision was about,
+    and a launch that found it moved refuses, after which this reading
+    moves too and the decision is made again (task 150)."""
+    if not branch or taskfiles.ref_problem(branch):
+        return ""
+    remote = app_remote()
+    if remote:
+        commit = _ref_commit(f"refs/remotes/{remote}/{branch}^{{commit}}")
+        if commit:
+            return commit
+    return _ref_commit(f"refs/heads/{branch}^{{commit}}")
+
+
+def work_exists(filename: str) -> bool:
+    """Is this card's work already under way here — its task branch exists
+    in this checkout? The same test `_resume` makes before it continues
+    rather than plans (a worktree implies its branch)."""
+    return _branch_exists(config.TASK_BRANCH_PREFIX + filename[:-3])
+
+
 def _target_exists(branch: str) -> bool:
     """Is this PR target a branch that something could be opened against?
     Local or on the remote; a stacked base is often only the latter."""
@@ -804,7 +836,9 @@ def _decided(plan: dict, shape: dict) -> None:
             f"the work-base decision {decided['id']} pinned {decided['branch']} at "
             f"{pinned[:9]}, and it now resolves to {now} — the prerequisite "
             f"changed before this work started, so the decision is stale. Nothing "
-            f"was started; the orchestrator reassesses it on its next pass")
+            f"was started; the orchestrator records it stale and decides again "
+            f"on its next pass, or decide it yourself with a **Base branch:** "
+            f"header")
         return
     # Started from the pinned commit itself, not the branch name: a push
     # landing between this read and `worktree add` cannot change the base.

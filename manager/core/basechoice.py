@@ -78,19 +78,18 @@ def _git(*args: str):
 
 
 def _tip(branch: str) -> str:
-    """The commit a branch names here: this checkout's copy, else the last
-    fetched remote-tracking copy. Never a fetch."""
-    if not branch or taskfiles.ref_problem(branch):
-        return ""
-    refs = [f"refs/heads/{branch}"]
-    remote = config.app_remote()
-    if remote:
-        refs.append(f"refs/remotes/{remote}/{branch}")
-    for ref in refs:
-        out = _git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
-        if out.returncode == 0 and out.stdout.strip():
-            return out.stdout.strip()
-    return ""
+    """The commit a branch names here, read exactly as the launch's own
+    resolver reads it after its fetch (`plans.branch_tip`: the remote's
+    copy as last fetched, else this checkout's). Never a fetch. One reading
+    for the decision, its freshness and the preflight is what keeps a card
+    from being refused by one and called current by the other."""
+    return plans.branch_tip(branch)
+
+
+def under_way(task: dict) -> bool:
+    """Has this card's work started here (its task branch exists)? Then
+    its recorded plan governs, and no decision is made or remade for it."""
+    return not task.get("isPhase") and plans.work_exists(task["file"])
 
 
 def _ahead(base: str, tip: str) -> int:
@@ -301,10 +300,22 @@ def decide(task: dict, board: dict | None = None) -> dict:
     once per set of inputs. Returns the assessment with `record` (the id
     on the card) and `written` (whether this call wrote it)."""
     board = taskfiles.collect() if board is None else board
+    recorded = task.get("workBase") or {}
+    if under_way(task):
+        # Work already under way rides the plan it was started on: a retry,
+        # a resume or a restart never remakes the decision under it — not
+        # at a parent's new commit, and not as `normal` once the parent
+        # landed (the Stack block and its confirmed actions are the way on).
+        accepted = recorded.get("accepted") or {}
+        return {"v": V, "card": task["file"], "decision": "under-way",
+                "code": "work-under-way", "record": accepted.get("id"),
+                "written": False, "appBase": config.APP_BASE,
+                "summary": ("its work is under way on its recorded plan; the "
+                            "work-base decision is not made again")}
     found = assess(task, board)
     if found["decision"] is None:
         return found
-    latest = ((task.get("workBase") or {}).get("latest") or {})
+    latest = recorded.get("latest") or {}
     if latest.get("inputs") == found["inputs"] and \
             latest.get("decision") == found["decision"]:
         return {**found, "record": latest.get("id"), "written": False}
@@ -324,12 +335,49 @@ def decide(task: dict, board: dict | None = None) -> dict:
                               key=f"base-{found['inputs']}-{latest.get('id') or 'none'}")
     except (ValueError, OSError) as exc:
         return {**found, "record": None, "written": False, "error": str(exc)}
-    return {**found, "record": done.get("id"), "written": not done.get("duplicate")}
+    written = not done.get("duplicate")
+    _blocker(task["file"], stage, found, was_blocked=latest.get("decision") == "blocked")
+    return {**found, "record": done.get("id"), "written": written}
 
 
-def recheck(filename: str) -> str | None:
+def _blocker_id(filename: str) -> str:
+    raw = "\x00".join(("basechoice", filename))
+    return "b-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:10]
+
+
+def _blocker(filename: str, stage: str, found: dict, *, was_blocked: bool) -> None:
+    """A blocked decision is also an open blocker on the card — the
+    conflict and its remedy where the owner reads what waits on them —
+    and the next decision that is not blocked clears it. Idempotent by the
+    decision's inputs, so a repeated pass writes nothing twice."""
+    mine = _blocker_id(filename)
+    if found["decision"] == "blocked":
+        fields = {"blocker": mine, "state": "open", "operation": "work-base",
+                  "text": f"work base {found['code']}: {found['summary']}"[:1800]}
+        key = f"base-block-{found['inputs']}"
+    elif was_blocked:
+        fields = {"blocker": mine, "state": "cleared", "operation": "work-base",
+                  "text": f"cleared: {found['summary']}"[:1800]}
+        key = f"base-clear-{found['inputs']}"
+    else:
+        return
+    try:
+        decisions.note(filename, stage, "blocker", fields, key=key)
+    except (ValueError, OSError):
+        pass
+
+
+def recheck(filename: str, *, fetch: bool = True) -> str | None:
     """Immediately before a launch: does the card's accepted decision still
-    describe the code a new start would be built on? A reason when not."""
+    describe the code a new start would be built on? A reason when not.
+
+    It asks the launch's own resolver (`plans.resolve_branch`, fetching
+    as the preflight will), so the answer here is the answer the launch
+    acts on. When it is no, the decision is recorded `stale` on the card
+    right here — and the fetch has moved the reading `assess` takes — so
+    the next pass decides again on what is there, rather than finding
+    nothing changed and launching into the same refusal. Work already
+    under way is never held to it: it keeps its recorded plan."""
     stage = taskfiles.find_stage_of(filename)
     try:
         task = taskfiles.read_task(config.TASKS / stage / filename, stage) \
@@ -340,15 +388,39 @@ def recheck(filename: str) -> str | None:
         # nothing to hold the launch to here; the launch's own preflight
         # reads the card and refuses what it cannot read
         return None
+    if under_way(task):
+        return None
     decided, withdrawn = plans.decision(task)
     if withdrawn:
         return withdrawn
     if decided and decided.get("decision") == "stacked":
-        now = _tip(decided["branch"])
+        resolved = plans.resolve_branch(decided["branch"], fetch=fetch)
+        now = resolved.get("commit") or ""
         if now != decided["commit"]:
-            return (f"{decided['branch']} moved from {decided['commit'][:9]} to "
-                    f"{(now or 'nothing')[:9]} after the decision was recorded")
+            why = (f"{decided['branch']} moved from {decided['commit'][:9]} to "
+                   f"{(now or 'nothing')[:9]} after the decision was recorded")
+            _stale(task, stage, decided, "parent-moved" if now else "parent-gone",
+                   why, now)
+            return why
     return None
+
+
+def _stale(task: dict, stage: str, accepted: dict, code: str, why: str,
+           head: str) -> dict | None:
+    key = "s" + hashlib.sha256(f"{accepted.get('id')}|{code}|{head}".encode()) \
+        .hexdigest()[:16]
+    try:
+        return decisions.note(task["file"], stage, "base", {
+            "decision": "stale", "code": code,
+            "branch": accepted["branch"], "commit": accepted["commit"],
+            "parent": accepted.get("parent") or "",
+            "parentHead": head or accepted["commit"],
+            "inputs": key,
+            "summary": (f"{why}; not started yet: the orchestrator decides its "
+                        f"base again before it starts")[:1900]},
+            key=f"base-stale-{key}")
+    except (ValueError, OSError):
+        return None
 
 
 # ── observe: the prerequisite evolves ──────────────────────────────────
@@ -364,7 +436,7 @@ def freshness(task: dict, board: dict) -> dict | None:
     tasks = {t["file"]: t for t in _tasks(board)}
     parent = tasks.get(accepted.get("parentFile") or "")
     tip = _tip(accepted["branch"])
-    started = bool(_tip(_branch(task)))
+    started = under_way(task)
     code, why = None, None
     if parent is None:
         code, why = "parent-abandoned", (f"#{accepted.get('parent')} is no longer "

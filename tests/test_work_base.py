@@ -266,9 +266,10 @@ class ThePrerequisiteEvolves(WorkBaseCase):
         self.assertTrue(plan["blockers"])
         self.assertIn("stale", plan["blockers"][0])
         self.assertFalse(Path(plan["worktree"]).exists())
-        self.assertIn("moved", basechoice.recheck(B))
-        # observed, visibly, once
-        self.assertEqual(1, len(basechoice.observe(self.board())))
+        self.assertIn("moved", basechoice.recheck(B, fetch=False))
+        # recorded stale, visibly, once: the recheck wrote it, and
+        # observing the same change writes nothing more
+        self.assertEqual([], basechoice.observe(self.board()))
         self.assertEqual([], basechoice.observe(self.board()))
         latest = self.base_records(B)[-1]
         self.assertEqual(("stale", "parent-moved"), (latest["decision"], latest["code"]))
@@ -327,6 +328,136 @@ class ThePrerequisiteEvolves(WorkBaseCase):
         reading = stacks.board(self.board())[B]
         self.assertIn((reading.get("edge") or {}).get("state"),
                       stacks.LANDED + ("parent-gone",))
+
+
+class ReviewDefects(WorkBaseCase):
+    """The three lifecycle defects the review of 0bf63da found."""
+
+    def test_the_decision_pins_what_the_launch_will_resolve(self):
+        # defect 1: this checkout's copy of the prerequisite has a commit
+        # the remote does not (and the other way round): the decision, the
+        # recheck and the fetching preflight read one answer
+        tip = self.api_in_review()
+        self.commit_on(A_BRANCH, "unpushed", publish=False)
+        self.write(B, card("62 — The UI", depends="61"))
+        found = self.decide(B)
+        self.assertEqual(tip, found["commit"])       # the remote's copy
+        self.assertIsNone(basechoice.recheck(B))     # fetching, as the launch does
+        plan = plans.require(plans.preflight(B, "to-do"))
+        self.assertEqual(tip, plan["startRef"])
+
+    def test_a_push_from_elsewhere_is_reassessed_not_stuck(self):
+        tip = self.api_in_review()
+        self.write(B, card("62 — The UI", depends="61"))
+        self.decide(B)
+        # someone else pushes a fix to the prerequisite: this checkout has
+        # not fetched it, so local reads still say nothing changed
+        other = self.tmp / "other"
+        git(self.tmp, "clone", "-q", str(self.origin), str(other))
+        git(other, "config", "user.email", "o@o")
+        git(other, "config", "user.name", "other")
+        git(other, "checkout", "-q", A_BRANCH)
+        (other / "fix.txt").write_text("fix\n", encoding="utf-8")
+        git(other, "add", "-A")
+        git(other, "commit", "-q", "-m", "fix")
+        git(other, "push", "-q", "origin", A_BRANCH)
+        pushed = sha(other, A_BRANCH)
+        # the recheck fetches as the launch would, sees it, records it stale
+        self.assertIn("moved", basechoice.recheck(B))
+        self.assertEqual(("stale", "parent-moved"),
+                         (self.base_records(B)[-1]["decision"],
+                          self.base_records(B)[-1]["code"]))
+        # and the next decision is made on the commit the launch will find
+        again = self.decide(B)
+        self.assertEqual(("stacked", pushed), (again["decision"], again["commit"]))
+        self.assertTrue(again["written"])
+        self.assertIsNone(basechoice.recheck(B))
+        self.assertEqual(pushed, plans.require(plans.preflight(B, "to-do"))["startRef"])
+        self.assertNotEqual(tip, pushed)
+
+    def _start(self, name: str) -> dict:
+        plan = plans.require(self.preflight(name))
+        gitrepo.worktree_add(Path(plan["worktree"]), plan["branch"], new=True,
+                             start=plan["startRef"])
+        plans.record(plan)
+        return plan
+
+    def test_a_retry_does_not_remake_the_decision_when_the_parent_moved(self):
+        # defect 2, first half
+        tip = self.api_in_review()
+        self.write(B, card("62 — The UI", depends="61"))
+        first = self.decide(B)
+        self._start(B)
+        self.commit_on(A_BRANCH, "parent-moves-on")
+        again = self.decide(B)
+        self.assertEqual(("under-way", False), (again["decision"], again["written"]))
+        self.assertEqual(first["record"], again["record"])
+        self.assertEqual([first["record"]], [r["id"] for r in self.base_records(B)])
+        self.assertIsNone(basechoice.recheck(B))
+        resumed = plans.require(self.preflight(B))
+        self.assertTrue(resumed["continuing"])
+        self.assertEqual(tip, resumed["startCommit"])
+
+    def test_a_retry_does_not_remake_the_decision_when_the_parent_landed(self):
+        # defect 2, second half: the card stays stacked, its Stack block
+        # and Retarget stay, and the relaunch is not refused as a changed plan
+        self.api_in_review()
+        self.write(B, card("62 — The UI", depends="61"))
+        self.decide(B)
+        self._start(B)
+        (self.tasks / "review" / A).rename(self.tasks / "done" / A)
+        basechoice.observe(self.board())
+        again = self.decide(B)
+        self.assertEqual("under-way", again["decision"])
+        self.assertNotIn("normal", [r["decision"] for r in self.base_records(B)])
+        self.assertEqual(A_BRANCH, plans.declared(self.task(B))["prBase"])
+        resumed = plans.require(self.preflight(B))
+        self.assertTrue(resumed["continuing"])
+        self.assertEqual(A_BRANCH, (stacks.board(self.board())[B].get("parent")
+                                    or {}).get("branch", A_BRANCH))
+
+    def test_a_blocked_decision_reaches_the_card_through_a_pass(self):
+        # defect 3: the scheduler's plan holds the card; the pass writes
+        # the blocked decision and an open blocker with its remedy, once
+        import scheduler
+        self.api_in_review()
+        self.branch("task/65-other-api", files=("other",))
+        self.write("65-other-api.md", card("65 — Other API", status="Review"),
+                   "review")
+        self.write(B, card("62 — The UI", depends="61, 65"))
+        found = {"items": [{"card": B, "state": "blocked",
+                            "code": "base-multiple-prerequisites"}]}
+        allowed = {"allowed": True, "code": "ok", "reason": ""}
+        with mock.patch.object(scheduler.orchestrator, "authorize",
+                               return_value=allowed):
+            first = scheduler.record_base_blocks(found, self.board())
+            second = scheduler.record_base_blocks(found, self.board())
+        self.assertEqual(["base-blocked-recorded"], [r["outcome"] for r in first])
+        self.assertEqual([], second)
+        [record] = self.base_records(B)
+        self.assertEqual(("blocked", "multiple-prerequisites"),
+                         (record["decision"], record["code"]))
+        text = (self.tasks / "to-do" / B).read_text(encoding="utf-8")
+        blockers = decisions.read_text(text, B)["blockers"]
+        self.assertEqual(["open"], [b["state"] for b in blockers])
+        self.assertIn("Base branch", blockers[0]["text"])
+        # a card this scope may not act on is not written on
+        refused = {"allowed": False, "code": "not-eligible", "reason": "x"}
+        self.write(C, card("63 — Independent", depends="61, 65"))
+        with mock.patch.object(scheduler.orchestrator, "authorize",
+                               return_value=refused):
+            scheduler.record_base_blocks(
+                {"items": [{"card": C, "state": "blocked",
+                            "code": "base-multiple-prerequisites"}]}, self.board())
+        self.assertEqual([], self.base_records(C))
+        # once resolved by a header-free sequencing, the blocker clears
+        (self.tasks / "review" / "65-other-api.md").rename(
+            self.tasks / "done" / "65-other-api.md")
+        settled = self.decide(B)
+        self.assertEqual("stacked", settled["decision"])
+        text = (self.tasks / "to-do" / B).read_text(encoding="utf-8")
+        self.assertEqual("cleared",
+                         decisions.read_text(text, B)["blockers"][0]["state"])
 
 
 class OnTheSchedule(WorkBaseCase):
