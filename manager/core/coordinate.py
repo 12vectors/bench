@@ -914,17 +914,21 @@ def _integrate(op: dict, task: dict, head: str, answer: dict) -> dict:
     runner's own merge: the member gate read again with the head in hand,
     the validated commit merged additively, the log line written."""
     result = phasescope.integrate(task, head)
+    landed = result.get("integrated") or head
     if result["whole"]:
-        return _merged(op, result, "integrated", f"integrated {head[:12]} into "
+        return _merged(op, result, "integrated", f"integrated {landed[:12]} into "
                        f"{result['branch']} — {answer.get('label') or ''}; not "
-                       f"delivered to the application base".replace(" — ;", ";"))
-    return _merged(op, result, "partial", f"integrated the gated commit into "
-                   f"{result['branch']}; the member's branch has moved on, so "
-                   f"the next pass reads its new head")
+                       f"delivered to the application base".replace(" — ;", ";"),
+                       integrated=landed)
+    return _merged(op, result, "partial", f"integrated the checked commit "
+                   f"{landed[:12]} into {result['branch']}; the member's branch "
+                   f"has moved on, so the next pass reads its new head",
+                   integrated=landed)
 
 
-def _merged(op: dict, result: dict, outcome: str, words: str) -> dict:
-    done = operations.update(op["key"], "ended", outcome=outcome, observed=words)
+def _merged(op: dict, result: dict, outcome: str, words: str, **extra) -> dict:
+    done = operations.update(op["key"], "ended", outcome=outcome, observed=words,
+                             **extra)
     _receipt(done, outcome, words)
     return {"card": op["file"], "action": op.get("action") or "merge",
             "outcome": outcome, "key": op["key"]}

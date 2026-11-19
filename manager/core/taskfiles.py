@@ -1003,10 +1003,25 @@ def record_movement(filename: str, source: str, target: str, name: str,
     """One uncommitted move, kept where `movements` can read it back. Never
     raises: the move has happened on disk either way, and a journal that
     cannot be written leaves the card reading *unrecorded*, which is the
-    safe direction."""
+    safe direction.
+
+    `base` is the work-state head the move was made on top of — what
+    places it causally among the commits: a commit that head contains
+    came before this move, and one it does not (a teammate's move a later
+    pull brought) came after it. `None` is a repository with no commits
+    yet, so every commit came after; a head that could not be read is
+    left out, and the reader falls back to comparing times."""
     entry = {"v": 1, "id": move_id, "at": now_iso(), "file": filename,
              "number": _number(filename), "from": source, "to": target,
              "mover": name, "kind": kind}
+    try:
+        head = _git("rev-parse", "--verify", "-q", "HEAD", timeout=10)
+        if head.returncode == 0 and head.stdout.strip():
+            entry["base"] = head.stdout.strip()
+        elif head.returncode == 1:
+            entry["base"] = None
+    except (OSError, subprocess.SubprocessError):
+        pass
     try:
         path = movement_journal()
         path.parent.mkdir(parents=True, exist_ok=True)

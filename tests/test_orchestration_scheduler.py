@@ -213,6 +213,38 @@ class Sandbox(unittest.TestCase):
                 if status is None or o["status"] == status]
 
 
+class LaunchesAfterAnAdoptedHandover(Sandbox):
+    """PR 147 review, item 4: after execution is handed over and adopted,
+    new work the scheduler itself moves into in-progress launches; only
+    the work already under way at the handover waits for adopt-card."""
+
+    def adopt_after_handover(self) -> dict:
+        self.enable()
+        released = orchestrator.handover(execowner.reading()["revision"])
+        self.assertEqual("released", released["designation"]["role"])
+        adopted = execowner.designate(released["designation"]["revision"])
+        self.assertTrue(execowner.acquire_lock())
+        return adopted["designation"]
+
+    def test_new_work_launches_and_preexisting_work_waits(self):
+        self.board.add("1", stage="in-progress")      # under way at the handover
+        adopted = self.adopt_after_handover()
+        self.assertTrue(adopted["adoptionRequired"])
+        self.board.add("2")                           # committed to afterwards
+        found = self.tick()
+        launched = [r["card"] for r in found["results"]
+                    if r.get("outcome") == "launched"]
+        self.assertEqual(["2-card.md"], launched, found["results"])
+        self.assertEqual("in-progress", self.board.stage_of("2-card.md"))
+        self.assertEqual([("2-card.md", "in-progress")], self.launch.calls)
+        held = orchestrator.authorize("implement", "1-card.md")
+        self.assertEqual("adoption-required", held["code"])
+        execowner.adopt_card(execowner.reading()["revision"], "1")
+        self.assertFalse(execowner.reading()["adoptionRequired"])
+        self.tick()
+        self.assertEqual(["1-card.md", "2-card.md"], self.running())
+
+
 # ── 1. capacity, conflicts and cycles ─────────────────────────────────
 
 class FiveReadyUnderTwoSlots(Sandbox):

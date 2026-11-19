@@ -94,6 +94,62 @@ _BRIDGED: set[str] = set()                 # sids whose bridge sends ids
 DROPPED: dict[str, int] = {}               # sid -> replayed copies dropped
 
 
+# ── tool calls in flight, one by one ───────────────────────────────────
+#
+# Recovery must not read a busy run as stalled (task 144, PR 147 review).
+# A run can have several tool calls open at once — a long test through
+# its shell beside quick reads — so "in flight" is a set of calls, not a
+# flag the next event clears. A call is identified by the vendor's
+# tool-use id, which a start (`PreToolUse:<id>`) and its finish
+# (`PostToolUse:<id>`, `PostToolUseFailure:<id>`) share; only that call's
+# own finish closes it, so a parallel call finishing leaves the long one
+# open. A bridge that sends no id (opencode's) brackets every tool with a
+# start and a finish, so its starts are counted and each finish closes the
+# oldest. Turn boundaries close everything: when a session goes idle, ends
+# or starts, no tool of it is running. The session's `inFlight` is the
+# oldest call still open, which is what recovery reads.
+CALLS_CAP = 64
+_TURN_KINDS = {"session", "end", "idle"}
+_NOT_TOOLS = {"session", "end", "idle", "report"}
+_CALLS: dict[str, dict[str, dict]] = {}    # sid -> open calls, oldest first
+_ANON: dict[str, int] = {}                 # sid -> id-less starts counted
+
+
+def _call_key(event_id: str | None) -> str | None:
+    if not event_id or event_id.startswith("board:") or ":" not in event_id:
+        return None
+    return event_id.split(":", 1)[1] or None
+
+
+def _track_call(meta: dict, event: dict, kind: str) -> None:
+    """Called under `state.LOCK`. The open calls live beside the session's
+    meta, never in it, so a copy of the meta read elsewhere shares nothing
+    this mutates; `inFlight` is replaced whole."""
+    sid = meta["id"]
+    calls = _CALLS.setdefault(sid, {})
+    key = _call_key(event.get("id"))
+    if kind in _TURN_KINDS:
+        calls.clear()
+    elif event.get("running"):
+        if key is None:
+            _ANON[sid] = _ANON.get(sid, 0) + 1
+            key = f"anon-{_ANON[sid]}"
+        calls[key] = {"since": event["ts"], "summary": event["summary"][:120]}
+        while len(calls) > CALLS_CAP:
+            calls.pop(next(iter(calls)))
+    elif key is not None:
+        calls.pop(key, None)
+    elif kind not in _NOT_TOOLS:
+        anon = next((k for k in calls if k.startswith("anon-")), None)
+        if anon is not None:
+            calls.pop(anon)
+    if calls:
+        oldest = min(calls.values(), key=lambda c: c["since"])
+        meta["inFlight"] = {**oldest, "count": len(calls)}
+    else:
+        meta.pop("inFlight", None)
+
+
 def _seen_for(sid: str) -> dict[str, None]:
     """The ids this session has recorded, rebuilt from its log on first
     sight after a restart, so a replay across a restart is still one."""
@@ -189,11 +245,7 @@ def ingest_event(raw: dict) -> dict:
         # A tool call that has started and not finished — a long test run
         # through the agent's shell, say — is activity however quiet it
         # is (task 144): recovery reads it before calling a run stalled.
-        if event.get("running"):
-            meta["inFlight"] = {"since": event["ts"],
-                                "summary": event["summary"][:120]}
-        else:
-            meta.pop("inFlight", None)
+        _track_call(meta, event, kind)
         meta["lastSummary"] = event["summary"]
         meta["lastKind"] = kind
         meta["status"] = {"end": "ended", "idle": "idle"}.get(kind, "active")

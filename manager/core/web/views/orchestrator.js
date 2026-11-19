@@ -586,7 +586,10 @@ function cardDetailHtml(t) {
   }
   if (agent) acts.push(action(`cancel:${agent.id}`, `Cancel ${agent.name || 'this run'}…`, 'cancel', { agent: agent.id }, EFFECTS.cancel, true));
   const inst = r.installation || {};
-  if (inst.adoptionRequired && n && t.stage !== 'to-do' && !(inst.adoptedCards || []).includes(n)) {
+  // only the work under way at the handover waits for adopting; a record
+  // that did not say which (`adoptionPending` null) holds every working card
+  const pending = inst.adoptionPending == null || inst.adoptionPending.includes(n);
+  if (inst.adoptionRequired && n && t.stage !== 'to-do' && pending && !(inst.adoptedCards || []).includes(n)) {
     acts.push(action(`adopt:${n}`, 'Adopt this working card', 'install', { action: 'adopt-card', card: n }, EFFECTS.adoptCard));
   }
   return `<article class="o-panel o-detail" aria-label="${esc(num(t))} in the Orchestrator">` +
@@ -722,7 +725,7 @@ function closedQuestionHtml(q) {
   const a = q.answer || {};
   const res = q.resolution || {};
   const outcome = q.state === 'answered'
-    ? `Answered by ${a.actor || 'a person'} ${when(a.at)}: ${esc(a.choice || a.note || '')}${a.choice && a.note ? ' — ' + esc(a.note) : ''}`
+    ? `Answered by ${esc(a.actor || 'a person')} ${when(a.at)}: ${esc(a.choice || a.note || '')}${a.choice && a.note ? ' — ' + esc(a.note) : ''}`
     : `${esc(q.state)}${res.by || res.actor ? ' by ' + esc(res.by || res.actor) : ''} ${when(res.at)}${res.note ? ': ' + esc(res.note) : ''}`;
   return `<section class="o-q closed"><p class="o-eyebrow">question ${esc(q.id)} · ${esc(q.state)}</p>` +
     `<h4>${esc(q.text || '')}</h4><p>${outcome}</p>` +
@@ -1326,5 +1329,6 @@ function renderOrchTab() {
 }
 
 export {
-  loadOrch, renderOrchestrator, renderOrchStrip, renderOrchTab, setPath
+  closedQuestionHtml, loadOrch, renderOrchestrator, renderOrchStrip, renderOrchTab,
+  setPath
 };

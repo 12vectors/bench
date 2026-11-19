@@ -40,6 +40,7 @@ import execowner  # noqa: E402
 import movements  # noqa: E402
 import orchestrator  # noqa: E402
 import state  # noqa: E402
+import taskfiles  # noqa: E402
 
 
 def snapshot(*roots: Path) -> dict:
@@ -489,19 +490,52 @@ class OneExecutionOwner(Sandbox):
 
         # another installation adopts: a new identity on the same work state
         execowner.identity_path().unlink()
-        adopted = execowner.designate(released["revision"])["designation"]
+        tasks = board(card("7", "in-progress"), card("8"))
+        with mock.patch.object(taskfiles, "collect", lambda: {
+                "stages": [{"slug": "in-progress", "tasks": [card("7", "in-progress")]},
+                           {"slug": "to-do", "tasks": [card("8")]}]}):
+            adopted = execowner.designate(released["revision"])["designation"]
         self.assertEqual(adopted["role"], "designated-here")
         self.assertTrue(adopted["adoptionRequired"])
+        self.assertEqual(["7"], adopted["adoptionPending"],
+                         "only the work under way at the handover is held")
         self.assertTrue(execowner.acquire_lock())
-        tasks = board(card("7", "in-progress"), card("8"))
         self.assertEqual(orchestrator.authorize("implement", "7-card.md",
                                                 board=tasks)["code"],
                          "adoption-required")
         self.assertTrue(orchestrator.authorize("implement", "8-card.md",
                                                board=tasks)["allowed"])
-        execowner.adopt_card(adopted["revision"], "7")
+        # PR 147 review, item 4: a card that starts working after the
+        # adoption is this installation's own work, not held behind it
+        later = board(card("7", "in-progress"), card("8", "in-progress"))
+        self.assertTrue(orchestrator.authorize("implement", "8-card.md",
+                                               board=later)["allowed"])
+        self.assertEqual(orchestrator.authorize("implement", "7-card.md",
+                                                board=later)["code"],
+                         "adoption-required", "pre-existing work still waits")
+        done = execowner.adopt_card(adopted["revision"], "7")["designation"]
         self.assertTrue(orchestrator.authorize("implement", "7-card.md",
                                                board=tasks)["allowed"])
+        self.assertFalse(done["adoptionRequired"],
+                         "every card working at the handover is reconciled")
+
+    def test_an_adoption_record_without_pending_holds_every_working_card(self):
+        # a record written before `pending` existed keeps its conservative
+        # reading: every working card waits for an explicit adoption
+        self.write_foreign_designation()
+        path = execowner.designation_path()
+        record = json.loads(path.read_text())
+        record.update(installation=execowner.ensure_installation_id(),
+                      adoption={"required": True, "cards": []})
+        path.write_text(json.dumps(record))
+        self.put_in_force(agreement())
+        self.assertTrue(execowner.acquire_lock())
+        reading = execowner.reading()
+        self.assertTrue(reading["adoptionRequired"])
+        self.assertIsNone(reading["adoptionPending"])
+        self.assertEqual(orchestrator.authorize(
+            "implement", "9-card.md", board=board(card("9", "in-progress")))["code"],
+            "adoption-required")
 
     def test_an_unreadable_designation_executes_nothing(self):
         path = execowner.designation_path()

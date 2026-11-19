@@ -341,8 +341,10 @@ def authorize(action: str, filename: str, *, board: dict | None = None,
                        f"orchestrate: {eligible['reason']}",
                        eligibility=eligible, **base)
     designation = execowner.reading()
+    pending = designation.get("adoptionPending")
     if designation["adoptionRequired"] and task["stage"] in WORKING_STAGES \
-            and number not in designation["adoptedCards"]:
+            and number not in designation["adoptedCards"] \
+            and (pending is None or number in pending):
         return _refuse("adoption-required", f"execution was adopted from "
                        f"another installation and card {number} was already "
                        f"working; reconcile and adopt it explicitly first", **base)
@@ -499,7 +501,8 @@ def reading(board: dict | None = None) -> dict:
         "authorities": list(agreements.AUTHORITIES),
         "installation": {k: owner[k] for k in (
             "role", "problem", "revision", "designated", "state", "since",
-            "adoptedFrom", "adoptionRequired", "adoptedCards", "lockHeld",
+            "adoptedFrom", "adoptionRequired", "adoptedCards",
+            "adoptionPending", "lockHeld",
             "lockFree", "ownerNote")}
         | {"thisInstallation": owner["installation"],
            "executes": execowner.authorizes()["allowed"]},

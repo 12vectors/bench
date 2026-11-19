@@ -216,6 +216,77 @@ class APhaseRunThroughItsScope(ScopedPhaseCase):
                          (self.stage_of(ONE), self.stage_of(TWO)))
 
 
+class IntegrationIsBoundToTheCheckedHead(ScopedPhaseCase):
+    """PR 147 review, item 3: under the user's ungated member rule, a
+    member's integration still merges exactly the head the scope checked —
+    a commit that lands on the member's branch afterwards is not carried in
+    under a receipt naming the earlier head."""
+    PHASE_STAGE = "to-do"
+
+    def member_in_review(self) -> dict:
+        self.orchestrate()
+        phasescope.adopt(PHASE, "tester")
+        for _ in range(10):
+            self.tick()
+            if self.stage_of(ONE) == "review":
+                break
+        self.assertEqual("review", self.stage_of(ONE))
+        [item] = [i for i in coordinate.plan()["items"] if i["card"] == ONE]
+        self.assertEqual("integrate", item["code"], item.get("reason"))
+        self.assertEqual("ungated", item["gate"]["decision"],
+                         "the user's member rule here is ungated")
+        return item
+
+    def holds(self, commit: str, ref: str) -> bool:
+        return git(self.repo, "merge-base", "--is-ancestor", commit,
+                   ref).returncode == 0
+
+    def push_onto_member(self) -> str:
+        """Someone commits to the member's branch after it was checked."""
+        branch = f"task/{ONE[:-3]}"
+        listing = git(self.repo, "worktree", "list", "--porcelain").stdout
+        path = next(block.split("\n", 1)[0][len("worktree "):]
+                    for block in listing.split("\n\n")
+                    if f"branch refs/heads/{branch}" in block)
+        Path(path, "late.txt").write_text("not checked, not reviewed\n")
+        git(Path(path), "add", "late.txt")
+        result = git(Path(path), "-c", "user.name=elena", "-c",
+                     "user.email=e@example.com", "commit", "-q", "-m", "late")
+        self.assertEqual(0, result.returncode, result.stderr)
+        return self.tip(branch)
+
+    def test_a_commit_after_the_check_is_never_integrated_under_its_receipt(self):
+        item = self.member_in_review()
+        checked = item["head"]
+        late = self.push_onto_member()
+        self.assertNotEqual(checked, late)
+        task = next(t for s in taskfiles.collect()["stages"] for t in s["tasks"]
+                    if t["file"] == ONE)
+        result = coordinate.execute(item, task)
+        phase_tip = self.tip(PHASE_BRANCH)
+        self.assertFalse(self.holds(late, phase_tip),
+                         "an unchecked commit was integrated into the phase")
+        self.assertEqual("refused", result["outcome"], result)
+        self.assertFalse(self.holds(checked, phase_tip),
+                         "nothing is merged when the branch moved")
+        [op] = self.ops("integrate")
+        self.assertEqual("refused", op["status"])
+        self.assertIn(late[:12], op["reason"])
+
+    def test_the_new_head_is_integrated_and_its_receipt_names_it(self):
+        self.member_in_review()
+        late = self.push_onto_member()
+        for _ in range(4):
+            self.tick()
+            if self.holds(late, self.tip(PHASE_BRANCH)):
+                break
+        [op] = [o for o in self.ops("integrate") if o.get("outcome") == "integrated"]
+        self.assertEqual(late, op["integrated"])
+        self.assertEqual(late, op["basis"])
+        self.assertIn(late[:12], op["observed"])
+        self.assertTrue(self.holds(late, self.tip(PHASE_BRANCH)))
+
+
 # ── 2. legacy phases: adoption, handover, restart ─────────────────────
 
 class LegacyPhasesKeepTheirRunner(ScopedPhaseCase):

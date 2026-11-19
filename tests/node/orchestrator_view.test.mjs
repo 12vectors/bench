@@ -105,6 +105,26 @@ test('a card’s entry links to the exact section and card, and escapes what it 
   assert.equal(scopeName('bench'), 'the Bench scope');
 });
 
+test('an answered question renders its actor inert and literal', async () => {
+  // PR 147 review, item 5: the actor is card text, written by whoever's
+  // git identity answered; it must reach the page as text, never markup
+  const { closedQuestionHtml } = await load('views/orchestrator.js');
+  const actor = '<img src=x onerror="alert(1)">Ada & "Bo"';
+  const html = closedQuestionHtml({ id: 'q-1', state: 'answered', text: 'Ship it?',
+    options: ['yes', 'no'], answer: { actor, choice: 'yes', at: '2026-11-19T10:00:00Z' } });
+  assert.ok(!html.includes('<img'), html);
+  assert.ok(!/onerror="/.test(html), html);
+  const shown = '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;Ada &amp; &quot;Bo&quot;';
+  assert.ok(html.includes(`Answered by ${shown} `), html);
+  // decoded, the identity is exactly what was recorded — escaped, not altered
+  const decoded = shown.replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+  assert.equal(decoded, actor);
+  // no actor recorded still says so in words
+  assert.match(closedQuestionHtml({ id: 'q-2', state: 'answered', answer: { choice: 'no' } }),
+    /Answered by a person/);
+});
+
 test('capacity and clocks are said in words', async () => {
   const { capacityWords, ageWords } = await load('lib/orchwords.js');
   assert.equal(capacityWords(1, 2), '1 of 2 in use');

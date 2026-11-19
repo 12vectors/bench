@@ -573,12 +573,29 @@ def _launch(phase: dict, member: dict) -> None:
                         f"{member['title']}")
 
 
-def _merge_member(phase: dict, member: dict) -> bool:
+def _merge_member(phase: dict, member: dict, expect: str | None = None) -> bool:
     """Merge one green member into the phase branch. Returns whether the
     whole member is in: False when its branch moved on past the commit the
-    gate read, which merged that commit and nothing after it."""
+    gate read, which merged that commit and nothing after it.
+
+    `expect` is the exact commit a phase scope checked and reviewed (task
+    143; PR 147 review, item 3). With it, that commit and nothing else is
+    merged, under every merge rule — an ungated one included, because
+    *ungated* says nothing is required, not that whatever the branch has
+    become may ride in under a receipt naming the reviewed head. A branch
+    that has moved off it, or a gate that read another commit, refuses
+    with nothing merged; the next pass asks about the new head."""
     branch = f"task/{member['file'][:-3]}"
     phase_branch = agents.phase_branch(phase["file"])
+    if expect is not None:
+        tip = _git("rev-parse", "--verify", "--quiet", branch).stdout.strip()
+        if not tip:
+            raise _Halt(f"{member['number']}'s branch {branch} is not here — "
+                        f"nothing was merged", member)
+        if tip != expect:
+            raise _Halt(f"{member['number']}'s branch moved from the checked "
+                        f"head {expect[:12]} to {tip[:12]} — nothing was "
+                        f"merged; the next pass asks about the new head", member)
     # Asked again, here, with the branch about to be merged: `_snapshot`
     # read the gate a pass ago and a push can land in between. Reading it
     # twice is what makes the second read the one that matters, and it is
@@ -605,6 +622,12 @@ def _merge_member(phase: dict, member: dict) -> bool:
             raise _Halt(f"{member['number']}'s member gate read "
                         f"{head.get('ref')}, not {branch} — nothing was merged",
                         member)
+        if expect is not None:
+            if pinned and pinned != expect:
+                raise _Halt(f"{member['number']}'s member gate read "
+                            f"{pinned[:12]}, not the checked head "
+                            f"{expect[:12]} — nothing was merged", member)
+            pinned = expect
         _merge_into_phase(phase, branch, f"{member['number']}'s branch", member,
                           commit=pinned)
         _push_phase(phase)
@@ -848,6 +871,11 @@ def branch_tip(branch: str) -> str:
     return _git("rev-parse", "--verify", "--quiet", branch).stdout.strip()
 
 
+def contains(commit: str, branch: str) -> bool:
+    """Does `branch` hold `commit`?"""
+    return _contains(commit, branch)
+
+
 def write_log(phase: dict, entry: str) -> bool:
     return _write_log(phase, entry)
 
@@ -856,8 +884,8 @@ def freshen(phase: dict) -> None:
     _freshen(phase)
 
 
-def merge_member(phase: dict, member: dict) -> bool:
-    return _merge_member(phase, member)
+def merge_member(phase: dict, member: dict, expect: str | None = None) -> bool:
+    return _merge_member(phase, member, expect)
 
 
 def finish(phase: dict) -> None:

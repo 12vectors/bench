@@ -420,13 +420,20 @@ def integrate(member: dict, head: str) -> dict:
     phase = phase_of(member, tasks)
     if phase is None or mode(phase) != "scoped":
         raise ValueError("its phase is not run by a phase scope")
+    if not isinstance(head, str) or not head:
+        raise ValueError("no checked head to integrate — nothing was merged")
     record = _phase_record(phase)
     listed = {**member, "number": _number(member)}
+    branch = agents.phase_branch(phase["file"])
     try:
-        whole = phases.merge_member(record, listed)
+        # `head` is the commit this scope checked and reviewed: exactly it
+        # is merged, under a gated and an ungated rule alike (PR 147 review)
+        whole = phases.merge_member(record, listed, expect=head)
     except phases.Halt as stop:
         raise ValueError(str(stop)) from None
-    return {"whole": whole, "branch": agents.phase_branch(phase["file"])}
+    if not phases.contains(head, branch):
+        raise ValueError(f"{branch} does not hold {head[:12]} after the merge")
+    return {"whole": whole, "branch": branch, "integrated": head}
 
 
 def run(board: dict) -> list[dict]:

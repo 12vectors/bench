@@ -33,6 +33,8 @@ from tests.test_orchestration_scheduler import Sandbox, agreement, snapshot
 
 import agents  # noqa: E402
 import agreements  # noqa: E402
+import config  # noqa: E402
+import events  # noqa: E402
 import decisions  # noqa: E402
 import operations  # noqa: E402
 import orchestrator  # noqa: E402
@@ -211,6 +213,114 @@ class QuietButActiveIsLeftAlone(RecoveryCase):
         [item] = self.incidents()
         self.assertEqual("resolved", item["status"])
         self.assertIn("active again", item["reason"])
+
+
+class InFlightCallsThroughTheEventBridge(RecoveryCase):
+    """PR 147 review, item 2: in-flight tool calls are tracked per call
+    through the real event path, so a quick parallel call finishing does
+    not hide a long test still running — and a live worker is not read
+    as stalled, diagnosed and stopped for it."""
+
+    def setUp(self):
+        super().setUp()
+        for name in ("_CALLS", "_ANON"):
+            registry = getattr(events, name, None)
+            if registry is not None:
+                saved = dict(registry)
+                registry.clear()
+                self.addCleanup(lambda r=registry, s=saved: (r.clear(), r.update(s)))
+        for registry in (events._SEEN, events._WRITTEN, state.EVENTS):
+            saved = dict(registry)
+            registry.clear()
+            self.addCleanup(lambda r=registry, s=saved: (r.clear(), r.update(s)))
+        saved_bridged = set(events._BRIDGED)
+        self.addCleanup(lambda: (events._BRIDGED.clear(),
+                                 events._BRIDGED.update(saved_bridged)))
+        patch = mock.patch.object(config, "SESSIONS_DIR", self.dir / "sessions")
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def hook(self, sid, phase, call, *, running=False, kind="command",
+             summary=None, **extra):
+        raw = {"v": 1, "session": sid, "kind": kind, "running": running,
+               "summary": summary or f"{phase} {call}", **extra}
+        if call is not None:
+            raw["id"] = f"{phase}:{call}"
+        return events.ingest_event(raw)
+
+    def quiet_for_hours(self, sid, hours=2):
+        """The session's last event, and the long call's start, long ago."""
+        with state.LOCK:
+            meta = state.SESSIONS[sid]
+            meta["last"] = time.time() - hours * HOURS
+            if meta.get("inFlight"):
+                meta["inFlight"] = {**meta["inFlight"],
+                                    "since": time.time() - hours * HOURS}
+
+    def stop_if_diagnosed(self):
+        """Play the rest of a recovery: if a diagnosis was asked for, it
+        proposes the restart, and the next pass carries it out."""
+        for _ in range(3):
+            self.tick()
+            if self.reasoning.jobs and self.reasoning.jobs[-1]["status"] == "running":
+                self.reasoning.settle("valid", actions=[("recover", "1")])
+
+    def test_a_quick_parallel_call_finishing_keeps_the_long_one_in_flight(self):
+        run = self.launched_and_aged()
+        state.AGENTS[run]["session"] = "s-1"
+        self.hook("s-1", "PreToolUse", "toolu_long", running=True,
+                  summary="running: python3 -m unittest", agent=run)
+        self.hook("s-1", "PreToolUse", "toolu_quick", running=True,
+                  summary="running: git status", agent=run)
+        self.hook("s-1", "PostToolUse", "toolu_quick", summary="ran: git status",
+                  agent=run)
+        flight = state.SESSIONS["s-1"].get("inFlight")
+        self.quiet_for_hours("s-1")
+        self.stop_if_diagnosed()
+        self.assertEqual([], self.stops, "a live worker was stopped")
+        self.assertIsNotNone(flight, "the long test is still running")
+        self.assertEqual("running: python3 -m unittest", flight["summary"])
+        self.assertEqual([], self.incidents())
+        self.assertEqual([], self.reasoning.calls)
+        self.assertEqual("running", state.AGENTS[run]["status"])
+        [seen] = recovery.projection()["runs"]
+        self.assertEqual("quiet-active", seen["state"])
+
+    def test_other_events_do_not_clear_a_call_in_flight(self):
+        self.hook("s-2", "PreToolUse", "toolu_long", running=True)
+        self.hook("s-2", "PostToolUse", "toolu_read", kind="read")
+        self.hook("s-2", "PreToolUse", "toolu_todo", kind="plan")
+        self.assertIsNotNone(state.SESSIONS["s-2"].get("inFlight"))
+        self.hook("s-2", "PostToolUse", "toolu_long")
+        self.assertIsNone(state.SESSIONS["s-2"].get("inFlight"))
+
+    def test_a_failed_finish_and_a_turn_boundary_close_calls(self):
+        self.hook("s-3", "PreToolUse", "toolu_a", running=True)
+        self.hook("s-3", "PostToolUseFailure", "toolu_a")
+        self.assertIsNone(state.SESSIONS["s-3"].get("inFlight"))
+        self.hook("s-3", "PreToolUse", "toolu_b", running=True)
+        self.hook("s-3", "Stop", "x", kind="idle")
+        self.assertIsNone(state.SESSIONS["s-3"].get("inFlight"),
+                          "no tool runs once the turn is over")
+
+    def test_a_bridge_without_ids_brackets_each_call(self):
+        # opencode's plugin sends no id: a start per tool and a finish per tool
+        self.hook("s-4", None, None, running=True, summary="running: bash")
+        self.hook("s-4", None, None, running=True, summary="running: read")
+        self.hook("s-4", None, None, kind="read")
+        self.assertIsNotNone(state.SESSIONS["s-4"].get("inFlight"))
+        self.hook("s-4", None, None, kind="command")
+        self.assertIsNone(state.SESSIONS["s-4"].get("inFlight"))
+
+    def test_a_long_call_finishing_lets_a_real_stall_be_seen(self):
+        run = self.launched_and_aged()
+        state.AGENTS[run]["session"] = "s-5"
+        self.hook("s-5", "PreToolUse", "toolu_long", running=True, agent=run)
+        self.hook("s-5", "PostToolUse", "toolu_long", agent=run)
+        self.quiet_for_hours("s-5")
+        self.tick()
+        [item] = self.incidents()
+        self.assertEqual(("stalled", run), (item["type"], item["run"]))
 
 
 # ── 2. limits across ticks, restarts and scopes ────────────────────────

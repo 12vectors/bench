@@ -31,7 +31,7 @@ draws) ask it and nothing else, so a launch and a page cannot disagree.
 | trailers whose name differs from the commit's author | **ambiguous** (attribution conflict) |
 | a `board: ` commit with no trailers — written before task 138 | **ambiguous**: it cannot say whether a person or an agent moved the card |
 | any other commit that renames a card between stages (a person's `git mv`) | its author's move, read the way sync attributes an arrival |
-| a journal line | that mover's move, of the kind it records |
+| a journal line | that mover's move, of the kind it records — placed after the commits its recorded head contained and before any that arrived later |
 | a card whose newest record does not land where the card now is | **unrecorded**: it was moved by hand after the last record |
 
 Ownership is then the newest record that is not the board's own. A
@@ -68,6 +68,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+from datetime import datetime
 from pathlib import Path
 
 import config
@@ -284,12 +285,101 @@ def _journal() -> list[dict]:
         kind = entry["kind"]
         if kind == "person" and not mover:
             kind = "ambiguous"
-        found.append({"kind": kind, "why": "no-mover" if kind == "ambiguous" else None,
-                      "mover": mover or None, "id": entry["id"],
-                      "source": "journal", "at": entry.get("at"),
-                      "from": entry.get("from"), "to": entry["to"],
-                      "file": entry["file"]})
+        line = {"kind": kind, "why": "no-mover" if kind == "ambiguous" else None,
+                "mover": mover or None, "id": entry["id"],
+                "source": "journal", "at": entry.get("at"),
+                "from": entry.get("from"), "to": entry["to"],
+                "file": entry["file"]}
+        if "base" in entry and (entry["base"] is None
+                                or (isinstance(entry["base"], str)
+                                    and _SHA_RE.match(entry["base"]))):
+            line["base"] = entry["base"]
+        found.append(line)
     return found
+
+
+# ── placing an uncommitted move among the commits ─────────────────────
+#
+# A journal line is a move this board made without a commit; the commits
+# are everyone's. Which came first is causal, not positional: a commit the
+# head the move was made on top of (`base`) already contains came before
+# it, and one it does not — a teammate's move a later pull brought — came
+# after it, and outranks it. A line written before `base` was recorded is
+# placed by time instead (the commit's committer date against the line's
+# own). Either way an unknown answer places the commit *after* the line:
+# a later foreign move must never be hidden under an older local one.
+
+_SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
+_ANCESTRY: dict = {}
+_ANCESTRY_LOCK = threading.Lock()
+
+
+def _parse_time(value) -> float | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _contains(base: str, commit: str) -> bool | None:
+    """Whether `base` already contains `commit`; None when git cannot say
+    (a head that is gone, a repository that moved)."""
+    repo = config.state_repo()
+    if repo is None:
+        return None
+    key = (str(repo), base, commit)
+    with _ANCESTRY_LOCK:
+        if key in _ANCESTRY:
+            return _ANCESTRY[key]
+    result = gitrepo.git(repo, "merge-base", "--is-ancestor", commit, base,
+                         timeout=10)
+    answer = {0: True, 1: False}.get(result.returncode)
+    if answer is not None:
+        with _ANCESTRY_LOCK:
+            if len(_ANCESTRY) > 4096:
+                _ANCESTRY.clear()
+            _ANCESTRY[key] = answer
+    return answer
+
+
+def _before(commit: dict, line: dict) -> bool:
+    """Did this committed movement happen before the uncommitted one?"""
+    if "base" in line:
+        if line["base"] is None:          # no commit existed when it was made
+            return False
+        if commit.get("commit"):
+            known = _contains(line["base"], commit["commit"])
+            if known is not None:
+                return known
+    made, moved = _parse_time(commit.get("at")), _parse_time(line.get("at"))
+    if made is None or moved is None:
+        return False
+    return made <= moved
+
+
+def _ordered(local: list[dict], committed: list[dict]) -> list[dict]:
+    """The card's movements, newest first: the journal's lines (oldest
+    first in `local`) placed among the commits (newest first) causally.
+
+    Each commit ranks by how many journal lines it came after — the
+    lines before the first one whose head contains it — and each line
+    ranks between its neighbours, so a commit newer than every line is on
+    top and a line is never above a commit that superseded it. Ties keep
+    each list's own order."""
+    ranked = []
+    for index, line in enumerate(local):
+        ranked.append((index + 0.5, 0, -index, line))
+    for position, commit in enumerate(committed):
+        after = len(local)
+        for index, line in enumerate(local):
+            if _before(commit, line):
+                after = index
+                break
+        ranked.append((after, 1, position, commit))
+    ranked.sort(key=lambda item: (-item[0], item[1], item[2]))
+    return [item[3] for item in ranked]
 
 
 def snapshot() -> dict:
@@ -306,14 +396,17 @@ def snapshot() -> dict:
 
 def history(filename: str, snap: dict | None = None) -> dict:
     """Every recorded movement of one card, newest first, and how complete
-    that is. Committed movements first (git's own order), then the
-    journal's uncommitted ones on top — a journal line whose move id a
-    commit carries is the commit's, and is not counted twice."""
+    that is. Committed movements in git's own order, with the journal's
+    uncommitted ones placed among them causally (`_ordered`): a line is
+    newer than the commits its head contained and older than any commit
+    that arrived after it — so a teammate's later move is never hidden
+    under an older local one. A journal line whose move id a commit
+    carries is the commit's, and is not counted twice."""
     snap = snapshot() if snap is None else snap
     git, key = snap["git"], card_key(filename)
     committed = list(git["events"].get(key, []))
     local = snap["journal"].get(key, [])
-    return {"events": list(reversed(local)) + committed,
+    return {"events": _ordered(local, committed) if local else committed,
             "complete": git["complete"], "problem": git["problem"],
             "head": git["head"]}
 
@@ -463,3 +556,5 @@ def forget() -> None:
     """Drop the memo (a test's seam; a new head is a new key anyway)."""
     with _MEMO_LOCK:
         _MEMO.clear()
+    with _ANCESTRY_LOCK:
+        _ANCESTRY.clear()

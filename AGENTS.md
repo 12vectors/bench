@@ -5788,8 +5788,9 @@ read as authority: another installation's designation is never taken
 over, however stale it looks. It moves by a **controlled handover**
 (`POST /api/orchestration/installation`, `handover`: refused unless no
 run is in flight) and an explicit **adoption** elsewhere (`designate`),
-after which working cards need `adopt-card` before automation touches
-them. A former owner that is gone for good is a person's call: confirm
+after which the cards that were working at that moment need
+`adopt-card` before automation touches them; work committed to after
+the adoption is the new owner's own and launches as usual. A former owner that is gone for good is a person's call: confirm
 its processes stopped, then remove the designation by hand.
 
 **Reading it is free.** `GET /api/orchestration` returns the effective
@@ -5828,7 +5829,10 @@ clicked); `automated` is the board's own bookkeeping — an agent's run
 moving its card to review or back, the phase runner, a launch walked
 back, a phase's sweep. A move that was not committed (`BOARD_COMMIT_MOVES`
 off, or a commit that failed) is one line in the machine-local journal
-`manager/local/state/movements/journal.jsonl` instead. Trailers travel
+`manager/local/state/movements/journal.jsonl` instead, naming the
+work-state head it was made on: a commit that head already contained
+came before it, and one a later pull brought came after it and
+outranks it. Trailers travel
 with their commit through a push, a pull and sync's replay, so a move you
 made on another machine reads as yours here.
 
@@ -6202,8 +6206,9 @@ not moving — and nothing in it stops a run for being silent.
 managed card bench reads, separately: the run's last public **progress
 update**, its last **tool activity**, whether a **tool call is in
 flight** right now (a long test through the agent's shell is quiet and
-busy — the event bridge's start of a tool call is the signal, its end
-clears it), whether **bench is running a check** for the card, and its
+busy — the event bridge's start of a tool call is the signal, and only
+that call's own finish clears it, so a quick call finishing beside it
+does not; the session going idle or ending closes them all), whether **bench is running a check** for the card, and its
 worktree's **last commit** — beside its **process** (alive or gone, from
 the process handle, not the registry's word) and its **age**.
 
@@ -6433,6 +6438,9 @@ in the operation ledger and its record on the card it is about:
    and, where the phase delegates `review`, an independent review, then
    is merged into the phase branch through the runner's own merge (the
    member gate read again, the validated commit merged, never a rebase).
+   Exactly the head that was checked and reviewed is merged — under an
+   ungated member rule too — and a member branch that moved on since is
+   refused with nothing merged; the receipt names the commit that landed.
    Delegated by `integrate`; without it the card reads
    `integrate-not-delegated`. A member that is integrated reads
    `integrated` — **in the phase branch, not delivered**: it stays in

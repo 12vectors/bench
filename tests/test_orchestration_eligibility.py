@@ -24,6 +24,7 @@ mock. Each class is one acceptance criterion of the card:
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -445,6 +446,57 @@ class DeterministicHistory(Board):
         self.move("to-do", "in-progress", by=ELENA)
         self.as_user(ADA)
         self.assertEqual(self.answer()["code"], "foreign-move")
+
+    def _journal_then_foreign_round_trip(self):
+        """Ada moves the card without a commit, the tree is committed by
+        hand, then Elena moves it on and back to the same stage with her
+        own `git mv` commits — a person's moves that claim nothing, so no
+        Assignee hides what the movement reading says."""
+        self.create("backlog", by=ELENA)
+        self.patch(COMMIT_MOVES=False)
+        self.move("backlog", "to-do", by=ADA)
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "wip", user=ADA)
+        for source, target in (("to-do", "in-progress"), ("in-progress", "to-do")):
+            git(self.repo, "mv", f"tasks/{source}/{FILE}", f"tasks/{target}/{FILE}")
+            git(self.repo, "commit", "-q", "-m", f"7 to {target}", user=ELENA)
+        self.as_user(ADA)
+        movements.forget()
+        self.assertIsNone(self.task().get("assignee"))
+
+    def test_a_later_foreign_commit_outranks_an_older_journal_line(self):
+        # PR 147 review, item 1: a journal line used to sit above every
+        # commit, so Elena's later round trip back to To Do left the card
+        # reading as Ada's own move.
+        self._journal_then_foreign_round_trip()
+        found = self.answer()
+        self.assertEqual(found["code"], "foreign-move", found["reason"])
+        self.assertEqual(found["movement"]["mover"], ELENA)
+        self.assertEqual(found["movement"]["source"], "commit")
+        line = [json.loads(l) for l in taskfiles.movement_journal()
+                .read_text().splitlines()][0]
+        self.assertRegex(line["base"] or "", r"^[0-9a-f]{40}$",
+                         "a journal line records the head it was made on")
+
+    def test_a_journal_line_without_a_head_is_placed_by_time(self):
+        self._journal_then_foreign_round_trip()
+        path = taskfiles.movement_journal()
+        lines = [json.loads(l) for l in path.read_text().splitlines()]
+        for line in lines:          # written before `base` was recorded
+            line.pop("base", None)
+            line["at"] = "2000-01-01T00:00:00Z"
+        path.write_text("".join(json.dumps(l) + "\n" for l in lines))
+        movements.forget()
+        self.assertEqual(self.answer()["code"], "foreign-move")
+
+    def test_a_journal_line_still_outranks_the_commits_before_it(self):
+        self._journal_then_foreign_round_trip()
+        self.patch(COMMIT_MOVES=False)
+        self.move("to-do", "in-progress", by=ADA)
+        movements.forget()
+        found = self.answer()
+        self.assertEqual(found["code"], "own-move", found["reason"])
+        self.assertEqual(found["movement"]["source"], "journal")
 
     def test_a_committed_journal_line_is_not_counted_twice(self):
         self.create("backlog", by=ELENA)

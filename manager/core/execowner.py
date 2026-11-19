@@ -251,6 +251,14 @@ def reading() -> dict:
         role = "replica"
     note = records.read_json(owner_note_path(), expect=dict) or None
     adoption = (record or {}).get("adoption") or {}
+    adopted_cards = [str(c) for c in adoption.get("cards") or []]
+    # `pending` names the cards that were working when execution was
+    # adopted; a record written before it did not say, and keeps holding
+    # every working card until each is adopted (the conservative reading)
+    pending = adoption.get("pending")
+    pending = ([str(c) for c in pending if str(c) not in adopted_cards]
+               if isinstance(pending, list) else None)
+    required = bool(adoption.get("required")) and pending != []
     return {
         "role": role, "problem": problem,
         "revision": designation_revision(record),
@@ -259,8 +267,9 @@ def reading() -> dict:
         "state": (record or {}).get("state"),
         "since": (record or {}).get("at"),
         "adoptedFrom": (record or {}).get("adoptedFrom"),
-        "adoptionRequired": bool(adoption.get("required")),
-        "adoptedCards": list(adoption.get("cards") or []),
+        "adoptionRequired": required,
+        "adoptedCards": adopted_cards,
+        "adoptionPending": pending if required else [],
         "releasedWith": (record or {}).get("quiescence"),
         "lockHeld": holds_lock(),
         "lockFree": lock_free(),
@@ -298,6 +307,22 @@ def authorizes() -> dict:
 
 # ── changing ownership ────────────────────────────────────────────────
 
+WORKING_STAGES = ("in-progress", "review")
+
+
+def _working_cards() -> list[str]:
+    """The numbers of the cards in a working stage now — what an adoption
+    must reconcile, because it was under way before this installation
+    executed anything."""
+    found = set()
+    for stage in taskfiles.collect()["stages"]:
+        if stage["slug"] not in WORKING_STAGES:
+            continue
+        for task in stage["tasks"]:
+            if task.get("number"):
+                found.add(taskfiles.canonical_number(task["number"]))
+    return sorted(found, key=int)
+
 def designate(expected, actor: str | None = None) -> dict:
     """Name this installation as the one that executes. Only where nothing
     is designated, or execution was released by a controlled handover —
@@ -322,11 +347,23 @@ def designate(expected, actor: str | None = None) -> dict:
                 code="owned-elsewhere")
         mine = ensure_installation_id()
         adopted = record is not None and record["state"] == "released"
+        # Only the work that was already under way when execution moved
+        # needs reconciling (PR 147 review, item 4): the cards in a working
+        # stage at this moment. Work that starts here afterwards is this
+        # installation's own, and is not held behind the adoption.
+        try:
+            pending = _working_cards() if adopted else []
+        except (OSError, ValueError, KeyError):
+            # the board could not be read: hold every working card, the
+            # reading a record without `pending` gets
+            pending = None
         new = {"kind": KIND, "v": VERSION, "state": "designated",
                "installation": mine, "at": _now(), "by": actor or "unknown",
                "revision": int((record or {}).get("revision", 0)) + 1,
                "adoptedFrom": record["releasedFrom"] if adopted else None,
-               "adoption": {"required": adopted, "cards": []}}
+               "adoption": ({"required": adopted, "cards": []} if pending is None
+                            else {"required": bool(pending), "cards": [],
+                                  "pending": pending})}
         committed = _write_designation(new, "adopted" if adopted else "designated")
     return {"designation": reading(), "committed": committed}
 
@@ -394,6 +431,11 @@ def adopt_card(expected, card: str, actor: str | None = None) -> dict:
         if number not in cards:
             cards.append(number)
         adoption["cards"] = cards
+        pending = adoption.get("pending")
+        if isinstance(pending, list) and not set(map(str, pending)) - set(cards):
+            # every card that was working at the handover is reconciled:
+            # the adoption is complete and holds nothing back any more
+            adoption["required"] = False
         record["revision"] = int(record.get("revision", 0)) + 1
         record["by"] = actor or "unknown"
         committed = _write_designation(record, f"card {number} adopted")
