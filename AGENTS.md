@@ -1624,6 +1624,15 @@ left to infer that something was removed. A *failed* run is the deliberate
 exception: its excerpt keeps the log's tail, because for a crash the end
 is the story.
 
+A report is filed on the card the run was launched for, on the board it
+was launched from, in the stage the card is in when the run ends — or not
+at all (task 148). The run's board is bound at launch, and a report is
+never written into a board this process no longer serves. Nor does it
+recreate a card that has left that board: appending opens an existing
+file and never creates one, so a report can no longer become a
+report-only phantom card. Each refusal is narrated in the ticker, and the
+run's log still holds the report.
+
 A report is the run's words, and the card's history is also where the
 board keeps records of its own — acceptance decisions, finding events,
 discussion entries, each a line starting `<!-- bench:`. So a report line
