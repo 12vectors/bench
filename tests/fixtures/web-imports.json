@@ -64,6 +64,7 @@
   "views/frame.js -> views/card.js": 2,
   "views/frame.js -> views/focus.js": 2,
   "views/frame.js -> views/header.js": 6,
+  "views/frame.js -> views/orchestrator.js": 3,
   "views/frame.js -> views/phases.js": 1,
   "views/frame.js -> views/sessions.js": 1,
   "views/frame.js -> views/settings/shell.js": 2,

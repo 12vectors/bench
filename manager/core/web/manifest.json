@@ -6,8 +6,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "app/state.js": {
-   "bytes": 5667,
-   "sha256": "be7d476feec35d22f3c1af78646bee63e0eb961cd80dd8d1dac78a766cd7e890",
+   "bytes": 6076,
+   "sha256": "88dbe6a58055d5b22dd8bd07d9c10877c9079aa7aeccb41f06006949a95dc376",
    "type": "text/javascript; charset=utf-8"
   },
   "app/theme.js": {
@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 93940,
-   "sha256": "d9dccfc470cd4b88308e1077c3ddb1bd4ee14f5914d77cb1b54bee4057af50c4",
+   "bytes": 103550,
+   "sha256": "cf728eb853ffb6e695122afc4fe7d7b24723c61406921c4fc804074599a673e4",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -200,14 +200,19 @@
    "sha256": "0bd5858b8b048886f7181bebabb1dfb21df2d980b9f05c7133892fb7b286f09e",
    "type": "text/javascript; charset=utf-8"
   },
+  "lib/orchwords.js": {
+   "bytes": 11313,
+   "sha256": "8eb5c54eda8403988f15caf070fdaef30a9518f195392c4cfa01beb37a2c98be",
+   "type": "text/javascript; charset=utf-8"
+  },
   "lib/resource.js": {
    "bytes": 5018,
    "sha256": "3e86708a75190ea5b9c0119c6296c7fe94bb739e6f32c1d7ee5da0502c8c89f2",
    "type": "text/javascript; charset=utf-8"
   },
   "lib/route.js": {
-   "bytes": 9961,
-   "sha256": "78ae47209776ba220488047355e431fe8945d3607422a6f6aab54448bf9a78e9",
+   "bytes": 11746,
+   "sha256": "4f7fbaefbf30b4f018951462fa7ecb3eb39be892f776b0266f946f7927440e83",
    "type": "text/javascript; charset=utf-8"
   },
   "lib/schedule.js": {
@@ -226,8 +231,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "main.js": {
-   "bytes": 17621,
-   "sha256": "a834c1e4d4b0a673444dfc580f464b041f7616146dbcadb736be65dd0bae8eb8",
+   "bytes": 18042,
+   "sha256": "ccb660c29fa3561fc436b4398551d6be82983c1030d3ed3093df73d2c2440448",
    "type": "text/javascript; charset=utf-8"
   },
   "views/activity.js": {
@@ -261,8 +266,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/sections.js": {
-   "bytes": 84210,
-   "sha256": "badc24473b6db30e1ad66df3c4feb57d641ba1317088042a21c328b43e519e94",
+   "bytes": 84534,
+   "sha256": "1483aecf69901f5ff935890ef329d8237517fd01a900aadc85551024d0115d22",
    "type": "text/javascript; charset=utf-8"
   },
   "views/doctor.js": {
@@ -281,8 +286,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/frame.js": {
-   "bytes": 10334,
-   "sha256": "65a08714cc5620851fec9894fe25154cb2a8ebe4325a447fe19bb3011c0471ba",
+   "bytes": 10625,
+   "sha256": "31015a8d0b5ebf4ed3c7e842d9ab03585733f54963a4e4cd7b127e487d81dc2c",
    "type": "text/javascript; charset=utf-8"
   },
   "views/gates.js": {
@@ -293,6 +298,11 @@
   "views/header.js": {
    "bytes": 8023,
    "sha256": "0fab69ed85a9a32791acc6f7d3a7e3b9eac3665c5a9bac6e00b8f9321102764d",
+   "type": "text/javascript; charset=utf-8"
+  },
+  "views/orchestrator.js": {
+   "bytes": 82148,
+   "sha256": "22ba427d3bbce35fdfe7568a9e4b1987041035c5c1fdba3c54cd3112b9c09d9a",
    "type": "text/javascript; charset=utf-8"
   },
   "views/phases.js": {

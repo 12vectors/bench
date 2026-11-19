@@ -40,6 +40,9 @@
     <!-- links, not buttons (task 134): each view has an address, so a
          modifier-click or a middle-click opens it in a new tab -->
     <a href="/board" data-view="board" class="on" aria-current="page">Board</a>
+    <!-- the label is written by renderOrchTab(): how many decisions wait
+         on you and the mark a pause or a held incident wears (task 145) -->
+    <a href="/orchestrator" data-view="orchestrator">Orchestrator</a>
     <!-- the label is written by renderViews(): the running count, and the
          mark that says a phase halted while you were somewhere else -->
     <a href="/phases" data-view="phases">Phases</a>
@@ -77,7 +80,17 @@
 <main>
   <!-- board -->
   <div class="view on" id="view-board">
+    <!-- the orchestrator's strip (task 145): only while an agreement is in
+         force, and only ever a way in to the Orchestrator view -->
+    <div id="orchstrip" class="o-strip" hidden></div>
     <div id="board"></div>
+  </div>
+
+  <!-- the Orchestrator (task 145): managed work, phase scopes, decisions,
+       recovery, activity and the operating agreement, read from the server
+       and drawn here; opening it reads and launches nothing -->
+  <div class="view" id="view-orchestrator">
+    <div class="o-shell" id="oshell"></div>
   </div>
 
   <!-- phases: one swimlane each -->

@@ -496,6 +496,29 @@ def effective() -> dict:
     return resolve(doc, problem)
 
 
+def public_document(doc) -> dict | None:
+    """A document as a page may show and edit it (task 145): the keys
+    this version reads and nothing else, every note scrubbed of anything
+    credential-shaped. A key a hand edit added is not carried, so a page
+    that saves this back saves what this version gives a meaning to."""
+    if not isinstance(doc, dict):
+        return None
+
+    def entry(value, keys) -> dict:
+        if not isinstance(value, dict):
+            return {}
+        out = {k: value[k] for k in sorted(keys) if k in value}
+        if isinstance(out.get("note"), str):
+            out["note"] = redact.scrub(out["note"][:NOTE_CAP], "••••")
+        return out
+
+    phases = doc.get("phases") if isinstance(doc.get("phases"), dict) else {}
+    return {"v": doc.get("v"), "kind": doc.get("kind"),
+            "bench": entry(doc.get("bench"), SCOPE_KEYS),
+            "phases": {str(k): entry(v, PHASE_KEYS) for k, v in phases.items()
+                       if CARD_RE.match(str(k))}}
+
+
 def scope(reading: dict, scope_id: str) -> dict | None:
     return next((s for s in reading["scopes"] if s["id"] == scope_id), None)
 

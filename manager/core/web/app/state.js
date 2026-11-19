@@ -70,6 +70,14 @@ const S = {
   // revision. Held so switching section repaints without asking again.
   settings: null,
   settingsSection: 'overview',
+  // The Orchestrator view (task 145): its section, the card or phase an
+  // address selected in it (by number or stem), and what it read — the
+  // reading, the drafts a person is typing and the folds they opened, held
+  // here so a live repaint never loses them. Null until the view is opened:
+  // nothing is read for a view nobody looked at.
+  orchSection: 'overview',
+  orchItem: null,
+  orch: null,
   // The draft being edited, and nothing else: {document, revision, checked,
   // preview, dirty}. `revision` is the one the editor was opened at, sent
   // back with an apply so a save made over somebody else's is refused

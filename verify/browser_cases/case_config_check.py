@@ -214,7 +214,7 @@ class GlobalCheck(unittest.TestCase):
         labels = b.eval(f"[...document.querySelectorAll('{DIALOG} [data-doctorintent]')]"
                         ".map(e => e.innerText)")
         self.assertEqual(["All purposes", "Implementation", "PR fixes", "Review",
-                          "Card refinement"], labels)
+                          "Card refinement", "Orchestrator reasoning"], labels)
         rows_ = b.eval(f"[...document.querySelectorAll('{DIALOG} .crow .ca')].map(e => e.innerText)")
         self.assertNotIn("Implementation", rows_)
         S["metrics"]["configCheckPurposes"] = labels

@@ -67,14 +67,18 @@ class TheShapes(unittest.TestCase):
         for path in ("/board", "/phases", "/sessions", "/focus", "/settings",
                      "/cards/134", "/cards/a-card-without-a-number", "/cards/0134",
                      "/phases/53", "/sessions/6f1c2d3e-aaaa-bbbb-cccc-0123456789ab",
-                     "/focus/abc", "/settings/acceptance", "/settings/no-such-section"):
+                     "/focus/abc", "/settings/acceptance", "/settings/no-such-section",
+                     "/orchestrator", "/orchestrator/decisions",
+                     "/orchestrator/no-such-section"):
             self.assertTrue(routes.ui_path(path), path)
 
     def test_nothing_else_is(self):
         for path in ("/cards", "/cards/", "/cards/134/extra", "/cards/.hidden",
                      "/cards/a%20b", "/cards/..", "/cards/" + "x" * 201,
                      "/settings/Upper", "/settings/a_b", "/sessions/", "/board/x",
-                     "/boards", "/api", "/nowhere", "/phases/53/", "/focus/a/b"):
+                     "/boards", "/api", "/nowhere", "/phases/53/", "/focus/a/b",
+                     "/orchestrator/", "/orchestrator/Decisions",
+                     "/orchestrator/a/b", "/orchestrators"):
             self.assertFalse(routes.ui_path(path), path)
 
 

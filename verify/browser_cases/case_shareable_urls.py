@@ -289,7 +289,7 @@ class ShareableUrls(unittest.TestCase):
         b = self.open("/board", f"!!document.querySelector('#board article.card[data-file=\"{CARD}\"] a.ref')")
         self.assertEqual("/cards/310", b.eval(
             f"document.querySelector('#board article.card[data-file=\"{CARD}\"] a.ref').getAttribute('href')"))
-        self.assertEqual(["/board", "/phases", "/sessions", "/focus", "/settings"],
+        self.assertEqual(["/board", "/orchestrator", "/phases", "/sessions", "/focus", "/settings"],
                          b.eval("[...document.querySelectorAll('#views a[data-view]')].map(a => a.getAttribute('href'))"))
         # a modifier-click is the browser's: the page neither handles nor cancels it
         left = b.eval(f"""(() => {{

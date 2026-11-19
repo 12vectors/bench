@@ -11,6 +11,10 @@
      /sessions[/<session>]       Sessions (`flight`), optionally one session
      /focus[/<session>]          Focus, optionally one session
      /settings[/<section>]       Settings, its Overview or one section
+     /orchestrator[/<section>][?card=<card>]
+                                 the Orchestrator (task 145), its Overview or
+                                 one section, optionally one card or phase
+                                 selected in it
      #setup                      kept from the terminal handoff: Settings →
                                  Setup guide
 
@@ -21,10 +25,13 @@
    `.md`). Never by its lane, its title or its place in a column. A phase
    is a card, so it is named the same way. A session is named by its id. */
 
-const VIEWS = ['board', 'phases', 'flight', 'focus', 'settings'];
+const VIEWS = ['board', 'orchestrator', 'phases', 'flight', 'focus', 'settings'];
 // the user-facing word for each view's path; `flight` is internal
-const VIEW_PATHS = { board: 'board', phases: 'phases', flight: 'sessions',
-  focus: 'focus', settings: 'settings' };
+const VIEW_PATHS = { board: 'board', orchestrator: 'orchestrator', phases: 'phases',
+  flight: 'sessions', focus: 'focus', settings: 'settings' };
+// the Orchestrator's sections (task 145), in the order its navigation lists
+const ORCH_SECTIONS = ['overview', 'work', 'decisions', 'phases', 'recovery',
+  'activity', 'agreement'];
 const CARD_TABS = ['overview', 'brief', 'inputs', 'acceptance', 'reviews', 'activity'];
 // a card's background on direct entry is the Board; history remembers
 // which of the two card-drawing views a card was opened over
@@ -119,6 +126,32 @@ function parseRoute(where) {
       return section === 'overview' ? { view: 'settings', section, alias: true }
         : { view: 'settings', section };
     }
+    case 'orchestrator': {
+      const route = { view: 'orchestrator', section: 'overview' };
+      if (rest !== undefined) {
+        const section = decodeSegment(rest);
+        if (section === null || !SECTION_RE.test(section)) {
+          return { view: 'orchestrator', section: 'overview', invalid: 'section',
+                   raw: decodeSegment(rest) ?? rest };
+        }
+        route.section = section;
+        if (section === 'overview') route.alias = true;
+      }
+      // the card or phase selected in a section: named as a card's
+      // address names it, so a link survives a move and a title edit
+      const item = params.get('card');
+      if (item !== null) {
+        const id = cardIdOf(item);
+        if (id === null) {
+          route.invalid = 'item';
+          route.raw = item;
+        } else {
+          route.item = id;
+          if (id !== item) route.alias = true;
+        }
+      }
+      return route;
+    }
     default:
       return { view: 'board', invalid: 'path', raw: pathname };
   }
@@ -139,6 +172,10 @@ function formatRoute(route) {
   if (view === 'phases' && r.phase) return `${base}/${enc(r.phase)}`;
   if ((view === 'flight' || view === 'focus') && r.session) return `${base}/${enc(r.session)}`;
   if (view === 'settings' && r.section && r.section !== 'overview') return `${base}/${enc(r.section)}`;
+  if (view === 'orchestrator') {
+    const path = r.section && r.section !== 'overview' ? `${base}/${enc(r.section)}` : base;
+    return r.item ? `${path}?card=${enc(r.item)}` : path;
+  }
   return base;
 }
 
@@ -216,11 +253,16 @@ function routeOf(S) {
     case 'flight': return S.flightSid ? { view, session: S.flightSid } : { view };
     case 'focus': return S.focusSid ? { view, session: S.focusSid } : { view };
     case 'settings': return { view, section: S.settingsSection || 'overview' };
+    case 'orchestrator': {
+      const route = { view, section: S.orchSection || 'overview' };
+      if (S.orchItem) route.item = S.orchItem;
+      return route;
+    }
     default: return { view: 'board' };
   }
 }
 
 export {
   boardTasks, CARD_TABS, CARD_VIEWS, cardId, cardIdOf, findCard, formatRoute,
-  parseRoute, routeOf, sessionIdOf, stemOf, VIEW_PATHS, VIEWS
+  ORCH_SECTIONS, parseRoute, routeOf, sessionIdOf, stemOf, VIEW_PATHS, VIEWS
 };

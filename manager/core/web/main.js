@@ -164,6 +164,13 @@ function applyRoute(route, background) {
     if (route.view === 'settings') {
       S.settingsSection = route.invalid === 'section' ? route.raw : route.section || 'overview';
     }
+    if (route.view === 'orchestrator') {
+      // an unknown section or card is said in place, never swapped for
+      // another (the view draws the words)
+      S.orchSection = route.invalid === 'section' ? route.raw : route.section || 'overview';
+      S.orchItem = route.item || null;
+      if (route.invalid === 'item') toast(`“${clip(route.raw, 30)}” does not name a card — showing the section`, true);
+    }
     setView(route.view);
     // a different section is a different page: an unsaved draft is kept,
     // as the sidebar keeps it, and the notice says where it is

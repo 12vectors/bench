@@ -41,7 +41,7 @@ import benchverify as bv
 
 S = bv.SESSION
 ROOT = Path(__file__).resolve().parents[2]
-VIEWS = ["board", "phases", "flight", "focus", "settings", "board"]
+VIEWS = ["board", "orchestrator", "phases", "flight", "focus", "settings", "board"]
 # the build before the script moved: the base WP15 started from, whose page
 # is the one inline classic script
 BASELINE = "7780f042f125e0f587535119d464888fc49fe951"
@@ -63,6 +63,11 @@ CHANGED_ON_PURPOSE = {
     "detail-390x844-day": "task 132 added the Inputs tab; at 390px the tab row wraps",
     "detail-1280x800-night": "task 133 added Show the result to the Overview",
     "detail-1280x800-day": "task 133 added Show the result to the Overview",
+    # task 145 added Orchestrator to the view switcher in the header every
+    # view draws: the tabs after Board shift, and at 390px the row wraps
+    **{f"{view}-{size}-{theme}": "task 145 added Orchestrator to the view switcher"
+       for view in ("board", "phases", "flight", "focus")
+       for size in ("1280x800", "390x844") for theme in ("night", "day")},
 }
 
 

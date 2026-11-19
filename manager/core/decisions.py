@@ -468,6 +468,8 @@ def for_card(filename: str, stage: str, board: dict | None = None) -> dict:
     that owns it; an answer is given there, on the member's own card."""
     text = _card_path(filename, stage).read_text(encoding="utf-8")
     out = read_text(text, filename)
+    # the brief an answer is bound to, as the answer route compares it
+    out["briefSha"] = taskfiles.brief_sha(taskfiles.card_parts(text)["brief"])
     out.update(stage=stage, actor=actor(), aggregated=[],
                persistence={"commits": bool(config.COMMIT_MOVES),
                             "syncs": bool(getattr(config, "SYNC", False))})
