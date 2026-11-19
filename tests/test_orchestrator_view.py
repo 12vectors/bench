@@ -179,7 +179,8 @@ class TheControlsRead(unittest.TestCase):
 
     def rule(self, selector):
         import re
-        for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", self.css):
+        css = re.sub(r"/\*.*?\*/", "", self.css, flags=re.S)
+        for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
             if selector in [s.strip() for s in m.group(1).split(",")]:
                 return m.group(2)
         self.fail(f"no rule for {selector}")

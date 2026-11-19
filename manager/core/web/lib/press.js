@@ -13,9 +13,9 @@
    the pointer gesture is held: a keyboard activation has no press, and a
    handler that paints in answer to the click itself paints at once.
 
-     down() ── held ──> done()   the click arrived (or the press was cancelled)
-                 │
-                 └─ up() ── settleMs, no click (dragged off) ──> released
+     down() -- held --> done()   the click arrived (or the press was cancelled)
+                 |
+                 +-- up() -- settleMs, no click (dragged off) --> released
 
    A press whose release is never reported (the pointer left the window
    mid-press, say) stops holding after `maxMs`, so the view can never be

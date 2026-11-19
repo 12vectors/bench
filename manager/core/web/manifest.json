@@ -206,8 +206,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "lib/press.js": {
-   "bytes": 2282,
-   "sha256": "42a44ac5fd8c26f2fd082a8340e07bd17fe06ce5a8538952797d76e6e45f7dce",
+   "bytes": 2261,
+   "sha256": "cd4a15d7652fe066a2f25b31e6909908f539d435c7064c0aeadd4b664a1e89cb",
    "type": "text/javascript; charset=utf-8"
   },
   "lib/resource.js": {
