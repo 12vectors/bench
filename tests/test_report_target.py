@@ -124,8 +124,12 @@ class Sentinel:
 
     def assert_untouched(self, case: unittest.TestCase) -> None:
         after = self.snapshot()
+        escaped = {name: body for name, body in after["files"].items()
+                   if self.before["files"].get(name) != body}
+        newest = git(self.work, "log", "-1", "--format=%s").stdout.strip()
         case.assertEqual(sorted(after["files"]), sorted(self.before["files"]),
-                         "a file appeared in (or left) the sentinel board")
+                         f"a file appeared in (or left) the sentinel board: "
+                         f"{escaped!r}; newest sentinel commit: {newest!r}")
         case.assertEqual(after, self.before,
                          "the sentinel board changed: a late report escaped "
                          "into a board the run was never launched from")
@@ -144,8 +148,10 @@ class LateReportsCannotEscape(ProfileCase):
 
     def _review_then_restore(self, stage: str = "to-do") -> dict:
         self.adapter_is(REVIEWS)
-        self.write(card("67 — Resolve execution profiles", status="To Do"),
-                   stage=stage)
+        if stage != "in-progress":       # the card is in one stage, as in the incident
+            (self.tasks / "in-progress" / CARD).unlink()
+            self.write(card("67 — Resolve execution profiles", status="To Do"),
+                       stage=stage)
         held = Held(self, CARD)
         record = agents.start_review(CARD, stage)
         held.wait(self)
@@ -197,6 +203,7 @@ class AMissingCardIsNeverRecreated(ProfileCase):
 
     def test_a_card_removed_mid_report_is_not_recreated(self):
         self.adapter_is(REVIEWS)
+        (self.tasks / "in-progress" / CARD).unlink()
         self.write(card("67 — Resolve execution profiles", status="To Do"),
                    stage="to-do")
         held = Held(self, CARD)
