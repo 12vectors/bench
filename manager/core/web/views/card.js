@@ -616,7 +616,7 @@ function reviewLine(task, d) {
   const at = (r.word === 'review-approved' || r.word === 'review-changes') && r.head
     ? `<span class="rvh"> · ${esc(String(r.head).slice(0, 7))}</span>` : '';
   return `<button type="button" class="revstat rv-${esc(r.tone || 'neutral')}" ` +
-    `data-section="reviews" data-revword="${esc(r.word)}" title="${esc(r.sentence || '')}">` +
+    `data-revopen="1" data-revword="${esc(r.word)}" title="${esc(r.sentence || '')}">` +
     `<span class="rvg" aria-hidden="true">${REVIEW_GLYPH[r.word] || '·'}</span>` +
     `<span class="rvl">${esc(r.label)}</span>${at}` +
     `<span class="srx"> — ${esc(r.sentence || '')} Opens the card's Reviews.</span></button>`;
@@ -1147,6 +1147,15 @@ function mountCard(spec) {
     btn.addEventListener('click', (e) => { e.stopPropagation(); gateSheet(cur()); }));
   el.querySelectorAll('[data-review]').forEach(btn =>
     btn.addEventListener('click', (e) => { e.stopPropagation(); reviewSheet(cur()); }));
+  // the review line (task 152) opens the card on its Reviews, as a
+  // section chip would — its own attribute, because it is not a count
+  el.querySelectorAll('[data-revopen]').forEach(btn =>
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      S.dtab[file] = 'reviews';
+      if (S.selected && S.selected.file === file) { renderDrawer(); syncRoute(); }
+      else showDetail(cur());
+    }));
   el.querySelectorAll('[data-section]').forEach(btn =>
     btn.addEventListener('click', (e) => {
       e.stopPropagation();

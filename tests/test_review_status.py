@@ -305,7 +305,9 @@ class TheFaceAndTheReviewsTabDrawTheServersAnswer(ReviewStatusCase):
         self.place("review", pr=PR_URL)
         drawn = self.draw()
         self.assertIn('<span class="rvl">Review approved</span>', drawn["face"])
-        self.assertIn('data-section="reviews"', drawn["face"])
+        self.assertIn('data-revopen="1"', drawn["face"])
+        # not a section chip: a count chip is what `[data-section]` means
+        self.assertNotIn("data-section", drawn["face"])
         self.assertIn("<button", drawn["face"], "a keyboard stop, not a span")
         self.assertIn(head[:7], drawn["face"])
         self.assertIn("<b>Review approved</b>", drawn["tab"])

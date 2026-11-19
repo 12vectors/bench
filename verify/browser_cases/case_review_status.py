@@ -213,9 +213,15 @@ class ReviewStatusOnTheFace(unittest.TestCase):
         b = self.load()
         stem = CARDS[0]
         b.eval(f"document.querySelector('{sel(stem)}').focus()")
-        b.key("Tab")
+        # the card's own actions come first in its order; Tab moves on from
+        # them to the review line, inside the same card
+        for _ in range(6):
+            b.key("Tab")
+            if b.eval("document.activeElement.classList.contains('revstat')"):
+                break
         self.assertTrue(b.eval("document.activeElement.classList.contains('revstat')"),
                         b.eval("document.activeElement.outerHTML.slice(0, 200)"))
+        self.assertTrue(b.eval(f"document.querySelector('{sel(stem)}').contains(document.activeElement)"))
         b.key("Enter")
         self.assertTrue(b.wait("!!document.querySelector('#drawer.open .rvnow')", 10),
                         "Enter on the review line did not open the card's Reviews")
