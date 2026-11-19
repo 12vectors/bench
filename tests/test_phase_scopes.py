@@ -204,6 +204,10 @@ class APhaseRunThroughItsScope(ScopedPhaseCase):
         item = next(i for i in found["items"] if i["card"] == PHASE)
         self.assertEqual(("merge-not-delegated", "integration"),
                          (item["code"], item["gate"]["scope"]))
+        # the final rule reads the integrated head — no member's commit
+        self.assertEqual(self.tip(PHASE_BRANCH), item["head"])
+        self.assertNotIn(item["head"], (self.tip(f"task/{ONE[:-3]}"),
+                                        self.tip(f"task/{TWO[:-3]}")))
         members = [i for i in found["items"] if i["card"] in (ONE, TWO)]
         self.assertEqual({"integrated"}, {i["code"] for i in members},
                          "member passes are not the phase's result")
