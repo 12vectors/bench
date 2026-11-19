@@ -218,5 +218,194 @@ class External(_Journeys, unittest.TestCase):
     LAYOUT = "external"
 
 
+class FailureWindows(unittest.TestCase):
+    """Crashes, stale answers, moved heads, other people's moves, pauses
+    and spent quotas: each preserves the work and never doubles an
+    action. Spread over the layouts; the positive journeys above already
+    run in all three."""
+
+    def journey(self, layout: str, **kwargs) -> Journey:
+        j = Journey(layout, **kwargs)
+        self.addCleanup(j.close)
+        return j
+
+    def owned(self, j: Journey, number: str, title: str) -> str:
+        card = j.card(number, title, author="bob")
+        j.step("move", file=card, **{"from": "backlog", "to": "to-do"})
+        return card
+
+    def ops(self, j: Journey, card: str, action: str) -> list[dict]:
+        return [o for o in j.step("read")["ops"]
+                if o["file"] == card and o["action"] == action]
+
+    def test_a_crash_before_the_launch_is_reconciled_and_launched_once(self):
+        j = self.journey("vendored")
+        card = self.owned(j, "7", "Export as CSV")
+        j.step("enable")
+        self.assertEqual(j.step("pass", crash="launch-before"), {"crashed": True})
+        [intent] = self.ops(j, card, "implement")
+        self.assertEqual(intent["status"], "intent", "the intent was durable first")
+        self.assertEqual(j.calls(), [])
+        # a launch that provably ran nothing is retried, after its backoff
+        # (shortened here; see journey_driver)
+        j.until(lambda r: r["stages"][card] in ("review", "done"), backoff=0)
+        first, second = sorted(self.ops(j, card, "implement"), key=lambda o: o["attempt"])
+        self.assertEqual(first["status"], "abandoned",
+                         "the first attempt provably ran nothing")
+        self.assertIn(second["status"], ("launched", "ended"), "the second ran")
+        self.assertEqual(len(j.calls("work")), 1, "launched exactly once")
+
+    def test_a_crash_after_the_launch_holds_an_unknown_outcome(self):
+        j = self.journey("external")
+        card = self.owned(j, "7", "Export as CSV")
+        j.step("enable")
+        self.assertEqual(j.step("pass", crash="launch-after"), {"crashed": True})
+        for _ in range(3):
+            j.step("pass")
+        [op] = self.ops(j, card, "implement")
+        self.assertEqual(op["status"], "unknown",
+                         "a plan was recorded and no run is tracked: nobody can "
+                         "say whether it ran, so it is held")
+        self.assertEqual(len(j.calls("work")), 1, "never launched blindly again")
+        # D14: execution is not handed over while an outcome is unknown
+        refused = j.step("handover")
+        self.assertTrue(refused.get("refused"), refused)
+        # a person settles it; settling launches nothing
+        j.step("resolve", key=op["key"], decision="launched")
+        j.step("pass")
+        self.assertEqual(self.ops(j, card, "implement")[0]["status"], "ended")
+        self.assertEqual(len(j.calls("work")), 1)
+        self.assertFalse(j.step("handover").get("refused"),
+                         "settled and quiet, the handover is allowed")
+
+    def test_a_crash_after_the_merge_is_reconciled_not_merged_again(self):
+        j = self.journey("source")
+        card = self.owned(j, "7", "Export as CSV")
+        j.step("enable", agreement={"authority": [w for w in ALL if w != "merge"]})
+        j.until(lambda r: r["delivery"].get(card, {}).get("code") == "merge-not-delegated")
+        # the owner delegates the merge, and the pass that makes it dies
+        # after the merge landed and before its receipt
+        j.step("enable")
+        self.assertEqual(j.step("pass", crash="merge-after"), {"crashed": True})
+        [merge] = self.ops(j, card, "merge")
+        self.assertEqual(merge["status"], "intent", "no receipt was written")
+        self.assertTrue(j.remote_has("card-7.txt"), "the merge itself had landed")
+        for _ in range(2):
+            j.step("pass")
+        [merge] = self.ops(j, card, "merge")
+        self.assertEqual(merge["status"], "ended", "reconciled from what happened")
+        self.assertEqual(j.step("read")["stages"][card], "done")
+        # the work reached the remote base once: one commit introduced it
+        # (the board's own bookkeeping commits publish too, in this layout)
+        added = j.s.git(j.origin, "log", "--format=%H", "main", "--", "card-7.txt")
+        self.assertEqual(len(added.split()), 1, "nothing was merged a second time")
+
+    def test_a_stale_or_foreign_answer_is_refused_and_writes_nothing(self):
+        j = self.journey("external")
+        card = self.owned(j, "7", "Export as CSV")
+        j.step("reason", file=card, need="questions", via="person")
+        before = j.card_text(card)
+        foreign = j.step("answer", file=card, actor_seen="bob", request="answer-r-1")
+        self.assertTrue(foreign.get("refused"), foreign)
+        self.assertIn("identity", foreign["message"])
+        stale = j.step("answer", file=card, brief="0" * 16, request="answer-r-2")
+        self.assertTrue(stale.get("refused"), stale)
+        self.assertIn("brief", stale["message"])
+        self.assertEqual(j.card_text(card), before, "a refusal writes nothing")
+        first = j.step("answer", file=card, request="answer-r-3")
+        self.assertFalse(first.get("refused"), first)
+        # the same request again is the first answer, not a second one
+        replay = j.step("answer", file=card, request="answer-r-3")
+        self.assertTrue(replay.get("duplicate"), replay)
+        self.assertEqual(j.card_text(card).count('"kind": "answer"'), 1)
+
+    def test_a_head_that_moves_under_an_approval_is_asked_about_afresh(self):
+        j = self.journey("external", gates={"acceptance": {"review": "bench"}})
+        card = self.owned(j, "7", "Export as CSV")
+        # merge is not delegated: the approval stands until a person merges
+        j.step("enable", agreement={"authority": [w for w in ALL if w != "merge"]})
+        j.until(lambda r: r["delivery"].get(card, {}).get("code") == "merge-not-delegated")
+        [first] = j.step("evidence", file=card)["verdicts"]
+        moved = j.person_commits(card)
+        self.assertNotEqual(moved, first["head"])
+        reading = j.step("read")["delivery"][card]
+        self.assertEqual(reading["head"], moved)
+        self.assertEqual(reading["code"], "review",
+                         "the approval was of another commit; this one needs its own")
+        j.until(lambda r: r["delivery"].get(card, {}).get("code") == "merge-not-delegated")
+        heads = [v["head"] for v in j.step("evidence", file=card)["verdicts"]]
+        self.assertEqual(sorted(heads), sorted([first["head"], moved]))
+        self.assertEqual(j.step("read")["stages"][card], "review", "nothing merged")
+
+    def test_another_persons_move_is_never_acquired(self):
+        j = self.journey("vendored")
+        theirs = j.card("5", "Their card", author="bob")
+        j.hand_move(theirs, "backlog", "to-do", author="bob")
+        mine = self.owned(j, "7", "Export as CSV")
+        j.step("enable")
+        j.until(lambda r: r["stages"][mine] == "done")
+        reading = j.step("read")
+        self.assertEqual(reading["eligibility"][theirs], "foreign-move")
+        self.assertEqual(reading["stages"][theirs], "to-do")
+        self.assertNotIn(theirs, [c["task"] for c in j.calls()],
+                         "nothing was launched on a card someone else moved")
+
+    def test_a_later_move_by_someone_else_stops_the_next_action(self):
+        j = self.journey("external")
+        card = self.owned(j, "7", "Export as CSV")
+        j.step("enable", agreement={"authority": [w for w in ALL if w != "review"]})
+        j.until(lambda r: r["stages"][card] == "review")
+        # bob walks it back; his move, not ada's, is now the latest
+        j.hand_move(card, "review", "in-progress", author="bob")
+        for _ in range(3):
+            j.step("pass")
+        reading = j.step("read")
+        self.assertEqual(reading["eligibility"][card], "foreign-move")
+        self.assertEqual(reading["stages"][card], "in-progress", "user moves win")
+        self.assertEqual(len(j.calls("work")), 1, "no second launch on his card")
+
+    def test_a_paused_bench_scope_starts_nothing_until_resumed(self):
+        j = self.journey("external")
+        card = self.owned(j, "7", "Export as CSV")
+        j.step("enable")
+        j.step("scope", scope="bench", action="pause")
+        for _ in range(2):
+            j.step("pass")
+        self.assertEqual(j.calls(), [])
+        self.assertEqual(j.step("read")["stages"][card], "to-do")
+        j.step("scope", scope="bench", action="resume")
+        j.until(lambda r: r["stages"][card] in ("review", "done"))
+        self.assertEqual(len(j.calls("work")), 1)
+
+    def test_a_spent_daily_quota_survives_restarts(self):
+        j = self.journey("external")
+        first = self.owned(j, "7", "Export as CSV")
+        second = self.owned(j, "8", "Import rows")
+        j.step("enable", agreement={"capacity": {"dailyStarts": 1},
+                                    "authority": ["implement"]})
+        for _ in range(4):            # every pass is a fresh process
+            j.step("pass")
+        self.assertEqual(len(j.calls("work")), 1)
+        codes = {i["card"]: i["code"] for i in j.step("read")["schedule"]}
+        waiting = second if j.calls("work")[0]["task"] == first else first
+        self.assertEqual(codes.get(waiting), "daily-starts-exhausted")
+
+    def test_default_off_launches_none_of_the_existing_work(self):
+        j = self.journey("vendored")
+        card = self.owned(j, "7", "Export as CSV")
+        working = self.owned(j, "8", "Import rows")
+        j.step("move", file=working, **{"from": "to-do", "to": "in-progress"})
+        for _ in range(2):
+            self.assertEqual(j.step("pass")["pass"], {"ran": False, "why": "off"})
+        # an agreement that is in force but not enabled is still off
+        j.step("enable", agreement={"enabled": False})
+        self.assertEqual(j.step("pass")["pass"], {"ran": False, "why": "off"})
+        reading = j.step("read")
+        self.assertEqual((reading["stages"][card], reading["stages"][working]),
+                         ("to-do", "in-progress"))
+        self.assertEqual(j.calls(), [])
+        self.assertEqual(reading["ops"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

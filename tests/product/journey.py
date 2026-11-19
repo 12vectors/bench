@@ -272,9 +272,10 @@ class Journey:
 
     def commit_as(self, author: str, message: str) -> None:
         self.s.git(self.state_repo, "add", "-A", "--", str(self.tasks))
-        self.s.git(self.state_repo, "-c", f"user.name={author}",
-                   "-c", f"user.email={author}@example.com",
-                   "commit", "-q", "--allow-empty", "-m", message)
+        # the author is who git history says made it — the scratch
+        # environment pins one identity, so name this one explicitly
+        self.s.git(self.state_repo, "commit", "-q", "--allow-empty",
+                   f"--author={author} <{author}@example.com>", "-m", message)
         if self.layout != "external":
             # a teammate's commit reaches this board through origin
             self.s.git(self.app, "push", "-q", "origin", "main")
@@ -285,6 +286,25 @@ class Journey:
         self.s.git(self.state_repo, "mv", str(self.tasks / source / filename),
                    str(self.tasks / target / filename))
         self.commit_as(author, f"move {filename}")
+
+    def person_commits(self, filename: str, path: str = "by-hand.txt") -> str:
+        """A person commits to the card's branch in its worktree — the head
+        moves under whatever was decided about the old one."""
+        branch = f"task/{filename[:-3]}"
+        listed = self.s.git(self.app, "worktree", "list", "--porcelain")
+        worktree, current = None, None
+        for line in listed.splitlines():
+            if line.startswith("worktree "):
+                current = line[len("worktree "):]
+            elif line == f"branch refs/heads/{branch}":
+                worktree = Path(current)
+        if worktree is None:
+            raise LookupError(f"no worktree holds {branch}")
+        sha = self.s.commit(worktree, path, "a person's change\n", "by hand")
+        # published, so the pull request proposes it: a review pins the
+        # head the host says the PR has, never an unpushed local commit
+        self.s.git(worktree, "push", "-q", "origin", branch)
+        return sha
 
     def control(self, **values) -> None:
         """What the stand-in vendor does next (see VENDOR)."""
@@ -349,12 +369,12 @@ class Journey:
         found = list(self.tasks.rglob(filename))
         return found[0].read_text(encoding="utf-8")
 
-    def until(self, predicate, *, passes: int = 12) -> list[dict]:
+    def until(self, predicate, *, passes: int = 12, **step) -> list[dict]:
         """Run passes until `predicate(read)` holds, or fail naming the
         last reading. Returns every pass's result."""
         results = []
         for _ in range(passes):
-            results.append(self.step("pass"))
+            results.append(self.step("pass", **step))
             reading = self.step("read")
             if predicate(reading):
                 return results

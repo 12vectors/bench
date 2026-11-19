@@ -205,6 +205,11 @@ def run() -> dict:
         return phasescope.adopt(STEP["file"], actor="ada")
     if kind == "pass":
         crash(STEP.get("crash"))
+        if "backoff" in STEP:
+            # the one clock a journey shortens: a retry's backoff (60s and
+            # doubling on a board). Whether a retry waits is still decided
+            # by the scheduler; only how long is the test's.
+            scheduler.BACKOFF_SECONDS = recovery.BACKOFF_SECONDS = STEP["backoff"]
         result = scheduler.run_pass()
         settle()
         opened = open_prs() if STEP.get("open_prs", True) else []
@@ -219,7 +224,9 @@ def run() -> dict:
     if kind == "answer":
         stage = taskfiles.find_stage_of(STEP["file"])
         reading = decisions.for_card(STEP["file"], stage)
-        question = next(q for q in reading["questions"] if q["state"] == "open")
+        # the open question, or — to replay an answer — the first one
+        question = next((q for q in reading["questions"] if q["state"] == "open"),
+                        reading["questions"][0])
         text = (config.TASKS / stage / STEP["file"]).read_text(encoding="utf-8")
         brief = taskfiles.brief_sha(taskfiles.card_parts(text)["brief"])
         return decisions.answer(STEP["file"], stage, question=question["id"],
@@ -269,6 +276,9 @@ def run() -> dict:
         return {"checks": checks, "verdicts": verdicts}
     if kind == "resolve":
         return scheduler.resolve(STEP["key"], STEP["decision"], actor="ada")
+    if kind == "handover":
+        return orchestrator.handover(execowner.designation_revision(
+            execowner.read_designation()[0]), actor="ada")
     if kind == "gate":
         scope = gates.scope_for(taskfiles.read_task(
             config.TASKS / "review" / STEP["file"], "review"))
@@ -276,8 +286,18 @@ def run() -> dict:
     raise SystemExit(f"journey step: unknown step {kind!r}")
 
 
+REFUSALS = (decisions.Refused, execowner.Refused, agreements.Refused,
+             phasescope.Refused, ValueError, LookupError)
+
+
 if __name__ == "__main__":
-    out = run()
+    try:
+        out = run()
+    except REFUSALS as exc:
+        # a refusal is an answer, reported as one: the step changed nothing
+        # the code it names did not say it changed
+        out = {"refused": True, "kind": type(exc).__name__,
+               "code": getattr(exc, "code", None), "message": str(exc)[:400]}
     settle()
     # an unended run in a process about to exit is a run nobody will reap
     assert not any(r.get("status") == "running" for r in state.AGENTS.values())
