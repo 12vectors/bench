@@ -981,14 +981,25 @@ class AgentsSection(unittest.TestCase):
         shot("settings-orchestration-refused")
         b.click('#sbody [data-agstep="discard"]')
         self.assertTrue(b.wait("S.agentsDraft === null || !S.agentsDraft.dirty", 10))
-        if not b.wait("!!document.querySelector('[data-agtplrow=\"reason-recovery.md\"]')", 10):
-            raise bv.CheckFailed("discarding did not redraw the prompts")
+        # Discard re-reads the settings; the Edit below must land on the
+        # page that reading draws, not on one it is about to replace
+        if not b.wait("!S.settingsFetching && !!S.settings && !!document.querySelector("
+                      "'[data-agtpl=\"reason-recovery.md\"]') && !document.querySelector("
+                      "'[data-agedit]')", 15):
+            raise bv.CheckFailed("discarding did not redraw the prompts closed")
 
         # edit the recovery guidance; a repaint and a refetch keep the text
         # and the focus
+        focused = "document.activeElement && document.activeElement.id === 'ag-t-reason-recovery.md'"
         b.click('#sbody [data-agtpl="reason-recovery.md"]')
-        if not b.wait("document.activeElement && document.activeElement.id === 'ag-t-reason-recovery.md'", 5):
-            raise bv.CheckFailed("Edit did not put focus in the recovery guidance")
+        if not b.wait(focused, 5):
+            if not b.eval("!!document.querySelector('[data-agedit=\"reason-recovery.md\"]')"):
+                b.click('#sbody [data-agtpl="reason-recovery.md"]')
+            if not b.wait(focused, 5):
+                raise bv.CheckFailed("Edit did not put focus in the recovery guidance: " +
+                                     str(b.eval("document.activeElement && "
+                                                "(document.activeElement.id || "
+                                                "document.activeElement.tagName)")))
         b.eval("(() => { const t = document.querySelector('#ag-t-reason-recovery\\\\.md');"
                " t.value = t.value + 'BROWSER-GUIDANCE-153 for card {card}.\\n';"
                " t.dispatchEvent(new Event('input', {bubbles: true})); })()")
