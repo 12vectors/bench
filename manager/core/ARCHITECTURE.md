@@ -465,6 +465,7 @@ neither.
 | execution designation (portable), installation id | `execowner` | `execowner._LOCK`, interprocess; execution itself is the non-blocking `flock` on `execution.lock` | yes |
 | orchestrated launch ledger (append-only) | `orchestrator` | append | no |
 | orchestration operations: intent and receipt (task 141) | `operations` (`scheduler` and `coordinate` decide) | `operations._LOCK`, interprocess | yes |
+| recovery incidents and their attempts; the circuit breaker (task 144) | `recovery` | `recovery._LOCK`, interprocess | yes |
 
 **Durable writers** — the call sites passing `durable=True`, held equal
 to the code by `tests/test_records_adoption.py`:
@@ -488,6 +489,10 @@ operations.update
 plans.record
 plans.restore
 profiles.record
+recovery._save
+recovery.breaker_failure
+recovery.breaker_reset
+recovery.breaker_success
 settings.apply
 setupbase.write_decisions
 verify._provision_source

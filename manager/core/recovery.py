@@ -63,7 +63,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-import subprocess
 import time
 from pathlib import Path
 
@@ -71,6 +70,7 @@ import agents
 import agreements
 import config
 import decisions
+import gitrepo
 import operations
 import orchestrator
 import progress
@@ -283,9 +283,8 @@ def _last_commit(record: dict) -> float | None:
     worktree = record.get("worktree")
     if not worktree or not Path(worktree).is_dir():
         return None
-    try:
-        found = config.git_run(worktree, "log", "-1", "--format=%ct", timeout=5)
-    except (OSError, subprocess.SubprocessError):
+    found = gitrepo.git(worktree, "log", "-1", "--format=%ct", timeout=5)
+    if found.returncode != 0:
         return None
     text = (getattr(found, "stdout", "") or "").strip()
     return float(text) if text.isdigit() else None
