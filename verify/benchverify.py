@@ -1157,6 +1157,10 @@ class Backend:
             "BOARD_GH_BIN": str(gh), "BOARD_CLAUDE_BIN": str(claude),
             "BOARD_PR_POLL_INTERVAL": "3600",
             "BOARD_PHASE_INTERVAL": "3600", "BOARD_SYNC": "0",
+            # a case may put an operating agreement in force (task 145);
+            # this board is never designated to execute, and the pass is
+            # held off besides, so no case can be orchestrated into a launch
+            "BOARD_ORCHESTRATE_INTERVAL": "3600",
             "BOARD_COMMIT_MOVES": "0", "BOARD_TITLE": "bench-verify fixture"})
         self.python = python
         self.log = base / "board.log"

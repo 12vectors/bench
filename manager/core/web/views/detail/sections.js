@@ -5,6 +5,8 @@ import { fetch } from '../../lib/api.js';
 import { $, esc } from '../../lib/dom.js';
 import { md } from '../../lib/md.js';
 import { syncRoute } from '../../lib/nav.js';
+import { cardEntryHtml } from '../../lib/orchwords.js';
+import { cardId } from '../../lib/route.js';
 import { resource, staleWords } from '../../lib/resource.js';
 import { ago } from '../../lib/time.js';
 import { toast } from '../../lib/toast.js';
@@ -195,6 +197,9 @@ function overviewHtml(t, acc, failBlock, signals, plan, members) {
     `<dl class="dfacts">` +
     fact('Stage', esc(STAGE_WORDS[t.stage] || t.stage) + (t.assignee ? ` · held by ${esc(t.assignee)}` : '')) +
     fact('Progress', esc(progressFact(t))) +
+    // which scope holds it and what waits on you, with the link into the
+    // Orchestrator at this card (task 145) — absent while nothing does
+    fact('Orchestration', cardEntryHtml(t, S.state, cardId(t, S.state))) +
     fact('Information', inputsFact(t)) +
     fact('Acceptance', accFact) +
     fact('Findings', findFact) +

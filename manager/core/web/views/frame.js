@@ -9,6 +9,7 @@ import { phaseLabel, renderBoard } from './board.js';
 import { forgetActsOfVanishedCards, showDetail } from './card.js';
 import { findTask, renderFocus } from './focus.js';
 import { renderAgentCommands, renderBuild, renderChip, renderDoctor, renderSync, runningAgents } from './header.js';
+import { renderOrchestrator, renderOrchStrip, renderOrchTab } from './orchestrator.js';
 import { renderLanes } from './phases.js';
 import { renderFlight } from './sessions.js';
 import { renderSettings, settingsEditing } from './settings/shell.js';
@@ -110,6 +111,7 @@ function renderViews() {
       ? `${running} phase${running > 1 ? 's' : ''} running — a swimlane each`
       : 'One swimlane per phase: its cards, its log, its controls';
   renderSettingsTab();
+  renderOrchTab();
 }
 
 /* The same crossing, for configuration: a policy that refuses something
@@ -170,8 +172,8 @@ function setView(view) {
    narrowed to a few characters still shows it. It is the in-flight glyph
    the CI and copilot chips already use, not an emoji, and a quiet board
    is the plain title, byte for byte. */
-const VIEW_TITLES = { board: 'bench', phases: 'phases', flight: 'sessions',
-  focus: 'focus', settings: 'settings' };
+const VIEW_TITLES = { board: 'bench', orchestrator: 'orchestrator', phases: 'phases',
+  flight: 'sessions', focus: 'focus', settings: 'settings' };
 const WORKING_MARK = '◌';
 
 function tabTitle(project, view, working) {
@@ -212,6 +214,8 @@ function render() {
   // the paint: every other change to this view comes from a handler that
   // calls renderSettings() itself.
   else if (S.view === 'settings') { if (!settingsEditing()) renderSettings(); }
+  // the Orchestrator holds its own paint while a person types in it
+  else if (S.view === 'orchestrator') renderOrchestrator();
   else renderCards();
   renderBar();
   renderLog();
@@ -222,7 +226,8 @@ function render() {
    selecting one, closing the drawer — redraws whichever of them you are
    on, rather than assuming the Board. */
 function renderCards() {
-  if (S.view === 'phases') renderLanes(); else renderBoard();
+  if (S.view === 'phases') renderLanes();
+  else { renderOrchStrip(); renderBoard(); }
 }
 
 export {

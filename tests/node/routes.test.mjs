@@ -31,6 +31,12 @@ test('every documented destination parses, and formats back to itself', async ()
     ['/focus/abc123', { view: 'focus', session: 'abc123' }],
     ['/settings', { view: 'settings', section: 'overview' }],
     ['/settings/acceptance', { view: 'settings', section: 'acceptance' }],
+    // the Orchestrator (task 145): a section, and a card selected in it
+    ['/orchestrator', { view: 'orchestrator', section: 'overview' }],
+    ['/orchestrator/decisions', { view: 'orchestrator', section: 'decisions' }],
+    ['/orchestrator/decisions?card=140', { view: 'orchestrator', section: 'decisions', item: '140' }],
+    ['/orchestrator/phases?card=136', { view: 'orchestrator', section: 'phases', item: '136' }],
+    ['/orchestrator?card=a-card-with-no-number', { view: 'orchestrator', section: 'overview', item: 'a-card-with-no-number' }],
   ];
   for (const [path, want] of cases) {
     const [pathname, query] = path.split('?');
@@ -51,6 +57,8 @@ test('aliases are read and marked, so the page can correct them in place', async
     [at('/cards/134', '?tab=overview'), '/cards/134'],
     [at('/phases/007'), '/phases/7'],
     [at('/settings/overview'), '/settings'],
+    [at('/orchestrator/overview'), '/orchestrator'],
+    [at('/orchestrator/work', '?card=0140'), '/orchestrator/work?card=140'],
   ]) {
     const route = parseRoute(where);
     assert.equal(route.alias, true, JSON.stringify(where));
@@ -77,6 +85,12 @@ test('a malformed identifier is named as malformed, never swapped for another', 
   assert.equal(parseRoute(at('/board/x')).invalid, 'path');
   // an unknown but well-formed section is the page's to say is unknown
   assert.deepEqual(parseRoute(at('/settings/nosuch')), { view: 'settings', section: 'nosuch' });
+  // the Orchestrator's section and selected card are refused the same way
+  assert.equal(parseRoute(at('/orchestrator/Not_A_Section')).invalid, 'section');
+  assert.equal(parseRoute(at('/orchestrator/work', '?card=..%2Fx')).invalid, 'item');
+  assert.equal(parseRoute(at('/orchestrator/work', '?card=..%2Fx')).item, undefined);
+  assert.deepEqual(parseRoute(at('/orchestrator/nosuch')), { view: 'orchestrator', section: 'nosuch' });
+  assert.equal(parseRoute(at('/orchestrator/a/b')).invalid, 'path');
 });
 
 test('formatting encodes, and leaves defaults out', async () => {
@@ -131,6 +145,10 @@ test("routeOf reads the page's state: the open card first, picks are not address
   assert.equal(formatRoute(routeOf({ ...base, view: 'focus', focusSid: 's2' })), '/focus/s2');
   assert.equal(formatRoute(routeOf({ ...base, view: 'phases', phaseSel: '53' })), '/phases/53');
   assert.equal(formatRoute(routeOf({ ...base, view: 'settings', settingsSection: 'agents' })), '/settings/agents');
+  assert.equal(formatRoute(routeOf({ ...base, view: 'orchestrator' })), '/orchestrator');
+  assert.equal(formatRoute(routeOf({ ...base, view: 'orchestrator', orchSection: 'decisions', orchItem: '140' })),
+               '/orchestrator/decisions?card=140');
+  assert.equal(formatRoute(routeOf({ ...base, view: 'orchestrator', orchSection: 'work' })), '/orchestrator/work');
 });
 
 /* A stand-in for the browser's history and location, recording writes. */
