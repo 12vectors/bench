@@ -108,7 +108,12 @@ IMPLEMENTING = ("work", "act-pr")
 STATUSES = ("open", "diagnosing", "stopping", "remediating", "held",
             "exhausted", "resolved")
 CLOSED = frozenset({"resolved"})
-WAITING = ("slots-full", "daily-starts-exhausted")
+# Refusals that say "not now" rather than "no": no room, or a scope a
+# person paused. The incident waits through them instead of being held —
+# and since `authorize` asks capacity last, a capacity refusal also
+# means every authority, eligibility and pause check before it passed.
+WAITING = ("slots-full", "daily-starts-exhausted", "paused")
+CAPACITY = ("slots-full", "daily-starts-exhausted")
 
 # Markers in a failed run's own last words. Read as text, case-folded;
 # the first class whose marker appears wins, in this order. Nothing
@@ -749,8 +754,14 @@ def _remediate(item: dict, board: dict, start=None, stop=None) -> dict:
         return _hold(item, "held", "worktree-active",
                      f"another run ({others[0]}) is working on this card; "
                      f"recovery never competes with an active worker")
+    # the authority to recover, asked again; a stop is not a launch, so a
+    # full pool does not refuse it — the stop is what frees the slot
     answer = orchestrator.authorize("recover", item["file"], board=board)
-    if not answer["allowed"]:
+    if not answer["allowed"] and answer["code"] not in CAPACITY:
+        if answer["code"] in WAITING:
+            item.update(code=answer["code"], reason=answer["reason"])
+            _save(item)
+            return item
         return _hold(item, "held", answer["code"], answer["reason"])
     remedy = item.get("remediation") or {}
     with state.LOCK:
@@ -928,6 +939,15 @@ def run(board: dict, request=None, start=None, stop=None,
                 item, "observed: the card left the orchestrated stages"))})
             continue
         _reconcile_attempts(item)
+        # a failure a person moved on from, or a newer run superseded
+        if item["type"] == "failed" and item["status"] in ("open", "diagnosing"):
+            newest = [o for o in operations.for_card(item["file"], "implement")]
+            if task["stage"] != "in-progress" or (
+                    newest and newest[-1]["key"] != item.get("operation")):
+                _settle_attempts(item)
+                results.append({"incident": item["id"], **_summary(_resolve(
+                    item, "observed: the card moved on from this failure"))})
+                continue
         # the run recovered on its own, or ended: nothing more to do —
         # an ending is the scheduler's to observe (and a failure is an
         # incident of its own)

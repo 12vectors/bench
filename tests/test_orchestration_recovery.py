@@ -356,6 +356,19 @@ class LimitsHold(RecoveryCase):
                          (item["type"], item["failure"]["class"]))
         self.assertEqual(1, len(self.reasoning.calls))
 
+    def test_a_failure_the_person_moved_on_from_closes(self):
+        self.enable(capacity={"recoveryAttempts": 3})
+        self.board.add("1")
+        self.tick()
+        self.end_failed("run-1", "AssertionError: 2 != 3")
+        self.tick()
+        self.board.cards["1-card.md"]["stage"] = "review"   # a person's move
+        self.reasoning.settle("invalid")
+        self.tick()
+        [item] = self.incidents()
+        self.assertEqual("resolved", item["status"])
+        self.assertEqual(1, len(self.reasoning.calls))
+
     def test_classification_never_presumes_transient(self):
         self.assertEqual("unknown", recovery.classify("it stopped"))
         self.assertEqual("unknown", recovery.classify("card 502 went quiet"))
@@ -429,6 +442,37 @@ class UnsafeRecoveryIsRefused(RecoveryCase):
         used = orchestrator.usage(agreements.effective(),
                                   scheduler._tasks(self.board.collect()))
         self.assertEqual(3, used["launchesPerCard"]["1"])  # run, diagnosis, restart
+
+    def test_a_full_pool_does_not_refuse_the_stop_that_frees_it(self):
+        run = self.diagnosed(capacity={"implementation": 1, "reasoning": 1})
+        # every slot taken: the worker holds the implementation slot and
+        # someone's reasoning run the reasoning one
+        state.AGENTS["thinking"] = {"task": "1-card.md", "mode": "reason",
+                                    "status": "running", "started": time.time()}
+        self.assertEqual("slots-full", orchestrator.authorize(
+            "recover", "1-card.md")["code"])
+        with mock.patch.object(recovery, "_others", lambda item: []):
+            self.tick()
+        self.assertEqual([run], self.stops)
+        state.AGENTS.pop("thinking")
+        self.tick()
+        self.assertEqual([run], self.stops)
+        state.AGENTS[run]["status"] = "stopped"
+        self.tick()
+        self.assertEqual(2, len(self.launch.calls))
+        self.assertEqual("remediating", self.incidents()[0]["status"])
+
+    def test_a_pause_makes_an_incident_wait_not_hold(self):
+        self.launched_and_aged()
+        revision = agreements.effective()["revision"]
+        agreements.set_scope("bench", "pause", revision)
+        self.tick()
+        [item] = self.incidents()
+        self.assertEqual(("open", "paused"), (item["status"], item["code"]))
+        revision = agreements.effective()["revision"]
+        agreements.set_scope("bench", "resume", revision)
+        self.tick()
+        self.assertEqual(1, len(self.reasoning.calls))
 
     def test_a_stop_never_observed_is_held(self):
         self.diagnosed()
