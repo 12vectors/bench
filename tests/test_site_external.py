@@ -297,9 +297,11 @@ class TheSiteOffersBothInstalls(unittest.TestCase):
         guides = [page["path"] for page in self.manifest["pages"]
                   if page.get("section") == "Guides"]
         # The two installs lead; the guided setup of the second (task 87)
-        # follows them.
+        # follows them, and delegating work to an orchestrator (task 146)
+        # comes after the board is set up.
         self.assertEqual([VENDORED, EXTERNAL,
-                          "/guides/set-up-with-your-coding-agent/"], guides)
+                          "/guides/set-up-with-your-coding-agent/",
+                          "/guides/orchestration/"], guides)
 
     def test_the_landing_page_offers_both(self):
         home = self.page("/")

@@ -5604,13 +5604,120 @@ page is refused. Records are machine-local under
 
 ## Orchestration: scopes and operating agreements
 
-Phase 136 builds orchestrators: a Bench scope that coordinates
-standalone cards and phase scopes, and a phase scope that coordinates
-one phase's members, both instances of one engine. Task 137 is its
-foundation — what a scope may do, how much, and who may execute — and
-it schedules and launches nothing itself. The later members (attribution,
-the reasoning contract, on-card history, the scheduler and ledger,
-review and repair, phase migration, recovery, the view) ask it.
+### Start here: you own the product, the orchestrator runs the project
+
+Without orchestration, every step on a card is a click of yours: ▸ start
+work, **Run required checks**, ◔ review PR, ↻ act on PR, merge & clean
+up. With it, you stay the **product owner** — you decide what is worth
+building, answer the questions only you can answer, and set the rules —
+and an **orchestrator** acts as the technical project manager for the
+cards you hand it. It launches the coding agents, asks bench for the
+checks, gets an independent review, sends work back for repair, and
+merges where you said it may. Everything it does goes through the same
+buttons you would have pressed, under the same rules, and is written
+down on the card it is about.
+
+**A worked example.** A teammate writes *"Export the table as CSV"* into
+Backlog. Nothing happens: writing or editing a card gives it to nobody.
+
+1. You read it and drag it into **To Do**. That move is yours — bench
+   reads it from git — so the card is now yours to delegate. A card a
+   teammate moved is theirs, and your orchestrator leaves it alone even
+   after a sync brings it to your board.
+2. Before any code, an agent is launched to read the card, its phase,
+   its dependencies and what bench knows about them, and drafts the
+   questions only you can answer — *"Include hidden columns? Options:
+   no, yes. Recommended: no, because the brief says visible."* The
+   question is written onto the card.
+3. You answer on the board: the **Orchestrator** view's Decisions, or
+   the card itself. Nothing is sent to chat or email; bench is the only
+   place the conversation lives.
+4. The orchestrator starts the work through ▸ start work's own path —
+   the same branch, worktree, profile and preflight a click would get.
+5. When the agent commits, the card moves to Review and its PR opens.
+   The orchestrator asks bench to run the checks your merge rules
+   require, at that exact commit. If one fails, a repair run is
+   launched — at most twice — and the new commit is checked again.
+6. A review runs on a **different model** from the one that wrote the
+   code, in a checkout pinned to the commit under review. If it asks for
+   changes, that is a repair too.
+7. If you delegated merging, the card is merged once your rules are
+   met, and bench reads the result back off the remote before it calls
+   the card Done. If your rules require nothing, it says so — *ungated,
+   not verified* — rather than calling the merge checked.
+
+At any point you can pause it, take a card back to do by hand, or cancel
+one run. Your own moves always win.
+
+**What you decide, and where.**
+
+| You decide | Where |
+| --- | --- |
+| whether orchestration is on at all | **Orchestrator → Operating agreement**: off until you apply one |
+| which cards it may touch | by moving them into To Do yourself; **Take over** hands one back |
+| what it may do: start work, review, repair, merge, integrate, diagnose | the agreement's authority, word by word |
+| how much at once, and per day | slots, launches per day and per card, repair rounds, retries |
+| what a merge requires | **Settings → Merge rules**, exactly as without orchestration |
+| the product questions | **Orchestrator → Decisions**, or the card |
+| which installation runs it | one designated installation; others only read |
+
+**What it never does.** It does not take a card someone else moved,
+pull anything out of Backlog or Done, treat an agent's "tests pass" as a
+check result, relax or turn on a merge rule, grant itself an override,
+run two schedulers over one phase, kill a run for being quiet, retry a
+failure it cannot classify, or repeat an action whose outcome it could
+not observe. It sends no notifications, publishes no release, deploys
+nothing, and promotes no installation. Those stay yours.
+
+**Turning it on, the first time.**
+
+1. Configure the models first, in **Settings → Agents**: implementation
+   and review on *different* models, so an independent review is
+   possible. With both on the harness default bench cannot tell them
+   apart, and refuses the review rather than pretending.
+2. Open **Orchestrator → Operating agreement**, **Save draft** from the
+   starting point (the defaults below are written into it), read the
+   **Preview**, and **Apply**. Apply is the moment it becomes able to
+   launch; there is no separate trial mode.
+3. Designate this installation as the one that executes (**Orchestrator
+   → Overview**). Other boards that sync the same cards stay read-only.
+4. Move one card into To Do. The next pass — every 30 seconds by
+   default — picks it up.
+
+Upgrading bench never turns it on, and never touches an agreement you
+already have: the agreement lives in `manager/local/`, which updates do
+not replace.
+
+**The sixteen decisions it is built on**, and where each is described:
+
+| | Decision | Section |
+| --- | --- | --- |
+| D1 | Your latest attributable move, not the last edit, makes a card yours | "Last mover, not last editor" |
+| D2 | Every judgement is a launched agent with the card's context and a public response | "Orchestrator reasoning" |
+| D3 | Review runs on a different model, shown to be different, or it is refused | "Delivery: checks, independent review…" |
+| D4 | Merge delegation is your choice, under the merge rules you already have | "Delivery…", "Operating agreements…" |
+| D5 | A stalled or failed run gets at most two bounded, read-only diagnoses | "Recovery: diagnose, don't kill" |
+| D6 | A phase is a scoped sub-orchestrator, narrowing its parent | "Phase scopes: one scheduler per phase" |
+| D7 | Two implementation slots, one review slot, six launches per card, twenty a day | "Operating agreements…" |
+| D8 | Limits are launch counts; usage is shown only when the vendor reports it | "Orchestrator reasoning" |
+| D9 | Transient failures retry twice with backoff, behind a circuit breaker | "Scheduling: bounded passes…" |
+| D10 | `**Touches:**` declares overlap; undeclared overlap is unknown, never safe | "Scheduling: bounded passes…" |
+| D11 | The card keeps every question, answer, response, blocker and action | "The card keeps everything" |
+| D12 | The board is the only channel | "The card keeps everything" |
+| D13 | One designated installation, held by an OS lock | "Operating agreements…" |
+| D14 | Execution moves only by a quiet, explicit handover | "Operating agreements…" |
+| D15 | A top-level Orchestrator view | "The Orchestrator view" |
+| D16 | It can launch from the first enabled agreement; installs are off | "Operating agreements…" |
+
+### Operating agreements, scopes and one installation
+
+Orchestration is one engine at two levels: a Bench scope that
+coordinates standalone cards and phase scopes, and a phase scope that
+coordinates one phase's members. This part is its foundation — what a
+scope may do, how much, and who may execute — and it schedules and
+launches nothing itself: attribution, the reasoning contract, on-card
+history, the scheduler and its ledger, delivery, phase scopes, recovery
+and the view, described in the sections after it, all ask it.
 
 **Off until a person turns it on.** With no agreement in force
 (`manager/local/orchestration.json`, machine-local like the execution
@@ -6449,6 +6556,63 @@ by keyboard, by touch (44px targets on a touch screen) and at 390px in
 both themes. Question text, reasoning summaries and findings are card
 text: escaped, rendered by the page's own Markdown renderer, and masked
 where they look like a credential — pattern matching, not a promise.
+
+### What is proved end to end, and what stays yours
+
+Each part above has its own tests. The whole journey has one more set
+(task 146), in `tests/test_orchestration_journey.py`, and they are worth
+knowing about because of what they are *not* allowed to fake. Every
+journey runs on a disposable board — an application with a local bare
+origin, a work-state repository wherever the layout puts it — in all
+three layouts bench ships: **vendored** (the tool inside the
+application), **source-hosted** (the tool at the top of the repository
+it manages) and **external** (tool, application and cards apart). The
+moves are committed with their trailers, the agreement, designation,
+lock and ledger are the real files, the launches go through ▸ start
+work, ◔ review PR and ↻ act on PR, the checks through bench's own runner,
+the merge through merge & clean up and its readback off the remote, and
+the agent through the Claude adapter's own `run`. Two things are stand-ins
+and nothing else: the vendor CLI behind the adapter, which acts by
+intent and logs what it was handed, and the hosting provider
+(`tests/product/fakehost.py`). Each step runs in a fresh process, so
+each is a restart too.
+
+What they hold, positively, in every layout: a teammate's card becomes
+yours only by your move; nothing runs before an agreement; a reasoning
+run reads the card through exact grants and its question lands on the
+card; your answer is bound to what you saw; the first enabled agreement
+launches; the review rides another model in a pinned checkout; an
+ungated merge says *not verified* and the remote holds the code; a failed
+check is repaired, checked again at the new head and reviewed afresh; and
+a phase scope shares the Bench scope's capacity, integrates its members
+one at a time and delivers the integrated head under its own rule. And
+the failure windows: a crash before a launch (reconciled, launched
+once), after a launch (held as unknown until a person settles it, and
+no handover meanwhile), after a merge (reconciled, never merged twice);
+a stale or foreign answer (refused, nothing written); a head that moves
+under an approval (asked about afresh); someone else's move (never
+acquired, and it stops the next action); a pause; a spent daily quota;
+a run that keeps dying (two retries, the breaker, one bounded diagnosis
+held for you); and default off. `tests/test_orchestration_install.py`
+holds the distribution: every engine module and the view ship, a fresh
+or repeated install is off, and an update keeps the agreement, the
+designation, the cards and the ledger byte for byte.
+
+What none of that proves: how a real model behaves, or whether the
+installed vendor CLI honours the permission rules the adapter generated.
+Those are the opt-in, billable probes `develop/reasoning-probe.py` and
+`develop/claude-access-smoke.py`, which nothing runs by itself. A
+passing journey is evidence about bench's own lifecycle, not about the
+agents it launches.
+
+**Maintenance boundaries.** Turning orchestration on, designating the
+installation that executes, handing execution over, adopting a phase
+from the phase runner and resetting the circuit breaker are each a
+person's act. Promoting a new bench into the installation that serves
+the board, publishing a release and deploying the website are separate
+again: no orchestrator, journey or test does any of them. A phase
+already running under the phase runner is never switched to its scope
+mid-flight; it is adopted, explicitly, once it is quiet.
 
 ## Pull requests
 
