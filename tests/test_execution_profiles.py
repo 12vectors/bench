@@ -195,6 +195,24 @@ class ProfileCase(unittest.TestCase):
 
         self.write(card("67 — Resolve execution profiles"))
 
+    def tearDown(self):
+        """The runs this test started are over — every reaper's writes
+        included — before any cleanup restores the configuration (task
+        148). A status that has left `running` is not that: the reaper
+        files the report, moves the card and narrates *after* it, and a
+        reaper still going when `config.TASKS` is put back writes into
+        whatever board that is. tearDown runs before every cleanup, so
+        this is the one place the order is guaranteed."""
+        with state.LOCK:
+            running = [r["proc"] for r in state.AGENTS.values()
+                       if r.get("status") == "running" and r.get("proc")]
+        for proc in running:             # owned by this test: cancel, then join
+            if proc.poll() is None:
+                proc.terminate()
+        alive = agents.join_reapers(60)
+        super().tearDown()
+        self.assertEqual(alive, [], "a run's reaper outlived its test")
+
     # — the furniture —
 
     def patch(self, **values) -> None:

@@ -169,7 +169,7 @@ class LateReportsCannotEscape(ProfileCase):
         self.assertFalse((self.sentinel.tasks / "to-do" / CARD).exists())
 
     def test_the_refusal_is_narrated_and_the_fixture_card_is_kept_whole(self):
-        before = (self.tasks / "to-do" / CARD).read_text(encoding="utf-8")
+        before = card("67 — Resolve execution profiles", status="To Do")
         self._review_then_restore()
         self.assertEqual((self.tasks / "to-do" / CARD).read_text(encoding="utf-8"),
                          before, "nothing is filed anywhere once the board moved")

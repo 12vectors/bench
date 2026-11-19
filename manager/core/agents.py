@@ -90,15 +90,30 @@ def _report_of(record: dict, text: str | None = None) -> str:
 def _file_report(record: dict, heading: str, report: str) -> None:
     """The report travels with the task, like every review does — and, like
     every other board-made write to a task file, it reaches git rather than
-    sitting modified in one working tree (task 44)."""
-    stage = find_stage_of(record["task"])
-    if not stage or not report:
+    sitting modified in one working tree (task 44).
+
+    Filed on the board the run was launched from (`record["tasks"]`), in
+    the stage the card is in *now* — a card moved during the run gets its
+    report where it went — or not at all (task 148). The stage is looked up
+    on that board and the append is bound to it, so a lookup on one board
+    can no longer become a write on another, and a card that has gone is
+    said to have gone rather than recreated to hold the report."""
+    if not report:
+        return
+    root = Path(record["tasks"]) if record.get("tasks") else config.TASKS
+    stage = find_stage_of(record["task"], root)
+    name = record.get("name") or "agent"
+    if not stage:
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": record["task"],
+            "summary": (f"{name}'s {heading.lower()} on {record['task']} was "
+                        f"not filed — the card is no longer on the board at "
+                        f"{root}; the run's log still holds it")})
         return
     stamp = time.strftime("%Y-%m-%d %H:%M")
-    name = record.get("name") or "agent"
     append_to_task(record["task"], stage,
                    f"\n\n---\n\n## {heading} — {stamp} ({name})\n\n{report}\n",
-                   f"{heading} filed")
+                   f"{heading} filed", root=root)
 
 
 def _session_report(record: dict, report: str) -> None:
@@ -146,6 +161,10 @@ def _start_reaper(target, agent_id: str, proc, log_file) -> None:
     thread = threading.Thread(target=target, args=(agent_id, proc, log_file),
                               daemon=True, name=f"reap:{agent_id}")
     with state.LOCK:
+        # The board this run was launched from, bound for its ending: its
+        # report is filed there or nowhere (task 148), whatever the
+        # process's configuration says by the time the run ends.
+        state.AGENTS[agent_id].setdefault("tasks", str(config.TASKS))
         REAPERS[agent_id] = thread
     thread.start()
 
