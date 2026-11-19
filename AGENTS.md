@@ -6297,6 +6297,16 @@ decides again on the new commit. The decision, its freshness and the
 launch all read a branch the same way: the remote's copy as last
 fetched, else this checkout's. So a prerequisite whose local and remote
 copies differ cannot be pinned by one reading and refused by the other.
+A decision the board could not write onto the card (its record section
+full, say) launches nothing, because the plan could not read it and the
+work would start from the application base instead.
+
+A stale decision says who decides it again. While an orchestrator
+manages the card, its next pass does. On a card worked by hand nothing
+does, and ▸ start work's refusal says so and names the
+`**Base branch:**` header as the way through. A card whose work is
+under way reads *stale; the work under way keeps its recorded plan*,
+never that something is reassessing it.
 
 Once the work is under way (its task branch exists), resuming follows
 its recorded plan, exactly as before. A retry, a resume or a restart
