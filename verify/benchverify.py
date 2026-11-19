@@ -672,6 +672,32 @@ class PageOps:
             raise CheckFailed(f"{selector}: {hit['problem']}")
         self._click_at(hit["x"], hit["y"])
 
+    def press(self, selector: str) -> dict:
+        """The first half of a person's click: the button goes down on the
+        element and stays down, so a case can make something happen
+        between the press and the release — a repaint, a reading landing —
+        before `release` lets go at the same point. The pair is what a
+        real pointer does; a click that loses its target in between is
+        the page's fault, and the case sees it."""
+        hit = self.eval(CLICK_TARGET_JS % json.dumps(selector))
+        if not hit:
+            raise CheckFailed(f"{selector}: not found to press")
+        if hit.get("problem"):
+            raise CheckFailed(f"{selector}: {hit['problem']}")
+        self._mouse("down", hit["x"], hit["y"])
+        return hit
+
+    def release(self, hit: dict) -> None:
+        self._mouse("up", hit["x"], hit["y"])
+
+    def hover(self, selector: str) -> dict:
+        """The pointer moved onto the element, no button pressed."""
+        hit = self.eval(CLICK_TARGET_JS % json.dumps(selector))
+        if not hit or hit.get("problem"):
+            raise CheckFailed(f"{selector}: {(hit or {}).get('problem', 'not found to hover')}")
+        self._mouse("move", hit["x"], hit["y"])
+        return hit
+
 
 # Resolves a selector to the point a click should land on, or says why
 # there is none. `scrollIntoView` moves whichever scrollers hold the
@@ -821,6 +847,15 @@ class Browser(PageOps):
         for kind in ("mousePressed", "mouseReleased"):
             self.call("Input.dispatchMouseEvent", {"type": kind, "x": x, "y": y,
                                                    "button": "left", "clickCount": 1})
+
+    def _mouse(self, phase: str, x: float, y: float) -> None:
+        if phase in ("down", "move"):
+            self.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y})
+        if phase == "move":
+            return
+        self.call("Input.dispatchMouseEvent", {
+            "type": "mousePressed" if phase == "down" else "mouseReleased",
+            "x": x, "y": y, "button": "left", "clickCount": 1})
 
     def screenshot(self, path: Path) -> Path:
         res = self.call("Page.captureScreenshot", {"format": "png"})
@@ -1036,6 +1071,9 @@ class RemoteBrowser(PageOps):
     def _click_at(self, x: float, y: float) -> None:
         self.request("click", x=x, y=y)
 
+    def _mouse(self, phase: str, x: float, y: float) -> None:
+        self.request("mouse", phase=phase, x=x, y=y)
+
     def screenshot(self, path: Path) -> Path:
         data = self.request("screenshot")
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1201,13 +1239,15 @@ class Backend:
         except urllib.error.HTTPError as exc:
             return exc.code, exc.read()
 
-    def post(self, path: str, payload: dict, timeout: float = 10) -> tuple[int, bytes]:
+    def post(self, path: str, payload: dict, timeout: float = 10,
+             headers: dict | None = None) -> tuple[int, bytes]:
         """A JSON POST to the disposable backend — what another board, or
-        a second person on this one, would send."""
+        a second person on this one, would send. `headers` adds to the
+        JSON content type (a policy route's `X-Bench-Settings`, say)."""
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         request = urllib.request.Request(
             self.url + path, data=json.dumps(payload).encode("utf-8"), method="POST",
-            headers={"Content-Type": "application/json"})
+            headers={"Content-Type": "application/json", **(headers or {})})
         try:
             with opener.open(request, timeout=timeout) as resp:
                 return resp.status, resp.read()

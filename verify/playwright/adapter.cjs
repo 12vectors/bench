@@ -105,6 +105,14 @@ async function main() {
       deviceScaleFactor: r.factor, mobile: false }),
     key: (r) => page.keyboard.press(r.shift ? `Shift+${r.key}` : r.key),
     click: (r) => page.mouse.click(r.x, r.y),
+    // one half of a click, so a case can act between press and release
+    mouse: async (r) => {
+      if (r.phase === 'move') await page.mouse.move(r.x, r.y);
+      else if (r.phase === 'down') { await page.mouse.move(r.x, r.y); await page.mouse.down(); }
+      else if (r.phase === 'up') await page.mouse.up();
+      else throw new Error(`unknown mouse phase ${r.phase}`);
+      return null;
+    },
     screenshot: async () => (await page.screenshot({ type: 'png' })).toString('base64'),
     ax: () => cdp.send('Accessibility.getFullAXTree'),
   };
