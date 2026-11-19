@@ -29,12 +29,12 @@ asked immediately before every side effect. What it adds:
   its branch cut through `phases.ensure_branch` — the one way a phase
   branch is cut — and main is merged into it on the beat as the runner
   does. When every member is integrated the phase is finished through
-  `phases._finish`: the branch published, the card into review/ and its
+  `phases.finish`: the branch published, the card into review/ and its
   one PR opened. From there `coordinate` delivers it like any card, under
   the *integration* merge rule: the final integrated head's own checks and
   review, never its members' (acceptance 4).
 - **Integration (`integrate`).** A member is merged into the phase branch
-  through `phases._merge_member` — the gate read again with the head in
+  through `phases.merge_member` — the gate read again with the head in
   hand, the validated commit merged, never a rebase or a force-push, and
   the `<n> merged into` log line that is the durable record. Integrated is
   not delivered: the member stays in review/ until the phase itself is
@@ -212,7 +212,7 @@ def quiescence(phase: dict, tasks: list[dict]) -> list[str]:
 
 def _log(phase: dict, line: str) -> None:
     stage = taskfiles.find_stage_of(phase["file"]) or phase["stage"]
-    if not phases._write_log(phase | {"stage": stage}, line):
+    if not phases.write_log(phase | {"stage": stage}, line):
         raise Refused("log-unwritable", f"could not write {phase['file']}'s "
                       f"phase log; nothing changed")
 
@@ -342,14 +342,14 @@ def _phase_record(task: dict) -> dict:
     """The phase card as `phases` expects it: file, stage, title, number,
     body and members."""
     stage = taskfiles.find_stage_of(task["file"]) or task["stage"]
-    return phases._cards()[0].get(task["file"]) or {**task, "stage": stage}
+    return phases.cards()[0].get(task["file"]) or {**task, "stage": stage}
 
 
 def prepare(phase: dict) -> dict | None:
     """Put an adopted phase in-progress and its branch in place. Returns
     the result, or None when there is nothing to do."""
     branch = agents.phase_branch(phase["file"])
-    if phase["stage"] == "in-progress" and phases._branch_exists(branch):
+    if phase["stage"] == "in-progress" and phases.branch_exists(branch):
         return None
     if phase["stage"] not in ("to-do", "in-progress"):
         return None
@@ -380,8 +380,8 @@ def freshen(phase: dict) -> dict | None:
     while no member is in flight. A conflict is a blocker on the phase
     card, never a guess."""
     try:
-        phases._freshen(_phase_record(phase))
-    except phases._Halt as stop:
+        phases.freshen(_phase_record(phase))
+    except phases.Halt as stop:
         return {"card": phase["file"], "action": "freshen",
                 "outcome": "blocked", "reason": str(stop)}
     return None
@@ -399,14 +399,13 @@ def finish(phase: dict, tasks: list[dict]) -> dict | None:
         return {"card": phase["file"], "action": "finish",
                 "outcome": "not-authorized", "code": answer["code"],
                 "reason": answer["reason"]}
-    tip = phases._git("rev-parse", "--verify", "--quiet",
-                      agents.phase_branch(phase["file"])).stdout.strip()
+    tip = phases.branch_tip(agents.phase_branch(phase["file"]))
     op = _begin("finish", phase, tip or "no-branch", answer)
     if op is None:
         return None
     try:
-        phases._finish(_phase_record(phase))
-    except (ValueError, OSError, phases._Halt) as exc:
+        phases.finish(_phase_record(phase))
+    except (ValueError, OSError, phases.Halt) as exc:
         return _refused(op, "finish-refused", str(exc))
     return _ended(op, "finished", "every member is integrated: the phase "
                   "branch is published and the phase card is in review/ — "
@@ -424,8 +423,8 @@ def integrate(member: dict, head: str) -> dict:
     record = _phase_record(phase)
     listed = {**member, "number": _number(member)}
     try:
-        whole = phases._merge_member(record, listed)
-    except phases._Halt as stop:
+        whole = phases.merge_member(record, listed)
+    except phases.Halt as stop:
         raise ValueError(str(stop)) from None
     return {"whole": whole, "branch": agents.phase_branch(phase["file"])}
 

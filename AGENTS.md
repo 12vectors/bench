@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine / reasoning / coordinate < scheduler < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < scheduler < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -325,6 +325,12 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   `readiness`, `previews` and `setuptasks`, so it sits right of all three
 - `phases.py` — a phase run: its own branch, its cards merged into it one
   at a time. A beat, not an agent; it holds no registry of where a phase is
+- `phasescope.py` — a phase run by its scoped sub-orchestrator (task
+  143, D6): explicit adoption from the phase runner (refused until it is
+  quiescent), which member may start under the phase's strategy, and the
+  phase branch cut, a member integrated and the phase finished through
+  `phases`' own mechanics, each with an intent and a receipt. It launches
+  nothing (see "Phase scopes: one scheduler per phase")
 - `refine.py` — refining a card on the board: comments, the one
   refinement job a person asks for, its validated proposal, and the
   explicit Apply or Discard. The brief and the decisions live in the
@@ -336,7 +342,8 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   identity, scope, evidence references, bounds and binding — before it
   is kept. It executes nothing a response proposes (see "Orchestrator
   reasoning: launched agents, public responses")
-- `coordinate.py` — delivering a standalone card in review (task 142):
+- `coordinate.py` — delivering a card in review (task 142; a phase
+  scope's members and final head, task 143):
   its required checks, an independent review once the reviewer's
   resolved model is shown to differ from every implementer's, a bounded
   repair, and a delegated merge under the merge rules you configured,
@@ -5082,7 +5089,7 @@ so a route cannot skip it by forgetting to ask:
 | --- | --- | --- |
 | `read` | every GET | nothing; reading changes nothing |
 | `browser-mutation` | every person-operated POST | a JSON object body within a size cap; `Sec-Fetch-Site` same-origin or none when sent; an `Origin`, when sent, that is this board on the port it actually serves or exactly one of `BOARD_ALLOWED_ORIGINS`; `Origin: null` refused; and no run named by a request that says it is a browser's |
-| `policy-mutation` | the 33 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
+| `policy-mutation` | the 34 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
 | `run-authenticated` | `/api/progress`, `/api/verify/details` | the same door, then the run's own token |
 | `event-ingest` | `/api/events` | the same door; a run the event names is proved by that run's token (next section) |
 

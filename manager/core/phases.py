@@ -826,6 +826,44 @@ def ensure_branch(phase: dict) -> str:
     return note
 
 
+# ── what a phase scope reuses (task 143) ───────────────────────────────
+#
+# A phase adopted into its phase scope is scheduled by the orchestration
+# engine, not by the beat above — but cut, merged into, freshened and
+# finished by exactly these mechanics. Named here so `phasescope` asks for
+# them by a public name rather than reaching into this module.
+
+Halt = _Halt
+
+
+def cards() -> tuple[dict[str, dict], dict[str, dict]]:
+    return _cards()
+
+
+def branch_exists(branch: str) -> bool:
+    return _branch_exists(branch)
+
+
+def branch_tip(branch: str) -> str:
+    return _git("rev-parse", "--verify", "--quiet", branch).stdout.strip()
+
+
+def write_log(phase: dict, entry: str) -> bool:
+    return _write_log(phase, entry)
+
+
+def freshen(phase: dict) -> None:
+    _freshen(phase)
+
+
+def merge_member(phase: dict, member: dict) -> bool:
+    return _merge_member(phase, member)
+
+
+def finish(phase: dict) -> None:
+    _finish(phase)
+
+
 def stop_phase(filename: str, stage: str) -> dict:
     """Hold a phase: stop, without unwinding anything.
 

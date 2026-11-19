@@ -101,7 +101,9 @@ class ReadingAPhase(PhaseReadingCase):
 
         self.assertEqual(cards["32-serve-it.md"]["phase"],
                          {"file": "40-the-site.md", "number": "40",
-                          "title": "40 — Ship the site", "index": 2, "total": 3})
+                          "title": "40 — Ship the site", "index": 2, "total": 3,
+                          # task 143: run by the phase runner until adopted
+                          "mode": "legacy"})
         self.assertEqual(cards["31-stand-up-site.md"]["phase"]["index"], 1)
         self.assertEqual(cards["33-landing.md"]["phase"]["index"], 3)
 

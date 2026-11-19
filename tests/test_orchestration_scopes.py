@@ -51,10 +51,13 @@ def snapshot(*roots: Path) -> dict:
 
 
 def card(number: str, stage: str = "to-do", *, phase: str | None = None,
-         is_phase: bool = False) -> dict:
+         is_phase: bool = False, mode: str = "scoped") -> dict:
+    # a phase named by the agreement is its scope's once adopted (task
+    # 143); these cases are about authority and capacity, so they adopt
     return {"file": f"{number}-card.md", "number": number, "stage": stage,
-            "isPhase": is_phase,
-            "phase": {"number": phase, "file": f"{phase}-phase.md"} if phase else None}
+            "isPhase": is_phase, "phaseMode": mode if is_phase else None,
+            "phase": {"number": phase, "file": f"{phase}-phase.md",
+                      "mode": mode} if phase else None}
 
 
 def board(*tasks: dict) -> dict:
