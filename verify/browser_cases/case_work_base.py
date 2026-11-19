@@ -159,10 +159,14 @@ class AWorkBase(unittest.TestCase):
 
     def overview(self, stem: str) -> dict:
         b = S["browser"]
-        b.eval(f"document.querySelector('{card_sel(stem)}').focus()")
-        b.key("Enter")
-        self.assertTrue(b.wait("!!document.querySelector('#drawer.open #dsec-overview .workbase')",
-                               10), f"{stem}: the Overview drew no Work base block")
+        # by its address, and waited for by its own title: a drawer still
+        # closing from the card before is never read as this one's
+        title = self.cards[stem][0]
+        b.goto(f"/cards/{self.cards[stem][1]}")
+        self.assertTrue(b.wait(
+            "!!document.querySelector('#drawer.open #dsec-overview .workbase') && "
+            f"document.querySelector('#drawer').innerText.includes({json.dumps(title)})",
+            15), f"{stem}: the Overview drew no Work base block")
         b.eval("(() => { const d = document.querySelector('#drawer .workbase details');"
                " if (d) d.open = true; })()")
         found = b.eval("""(() => { const w = document.querySelector('#drawer .workbase');
