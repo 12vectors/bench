@@ -489,6 +489,32 @@ happened, and a reading says what did. A second archive of a card
 already on its way joins the first, and ⌘Z waits for every archive in
 flight. The timings are in `develop/perf/README.md`.
 
+### On a phone
+
+A phone is for checking where cards stand (task 154), so below 760px the
+board is what the page shows first. The header folds the theme, Refresh,
+the setup invitation and the agent-commands note behind one labelled
+**More** button (marked while a folded chip has something to say); the
+connection chip, the configuration check and every warning stay. The
+board shows one stage per screen with a **stage strip** naming each stage,
+its count and whether a card in it needs attention — read off the faces
+that column painted, never worked out again — and a card's detail view
+takes the whole screen and gives the board back where it was.
+
+The activity panel starts closed on a phone, and only a person's toggle
+opens or closes it: no event, repaint, reading, navigation or rotation
+does. A phone's choice is remembered apart from a desktop's
+(`bench-log-open-narrow` beside `bench-log-open` in the browser's
+storage). The panel has a **Hide activity** control inside it, its grip
+resizes by touch, and its height is a wish clamped to the window the
+page has now — at most 40% of a phone's or of a window shorter than
+560px, and always leaving the board 160px — so an open panel can never
+push the bar holding its own toggle off the screen, which is what it used
+to do. The page is `100dvh` high where the browser knows that unit, the
+height a phone actually shows. A window shorter than 480px (a phone held
+sideways) gets the compact header, bar and panel and keeps its columns.
+Anywhere else nothing is folded and no strip is drawn.
+
 ## Local commands
 
 Projects grow chores that belong to a specific checkout — applying a
