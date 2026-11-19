@@ -23,6 +23,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
@@ -423,6 +424,58 @@ class Negative(Fixture):
         self.assertEqual(reading["state"], "ready")
         self.assertNotIn("IGNORE", json.dumps(inputs.public(reading)),
                          "retrieved content never enters the reading")
+
+
+class CheckEnding(Fixture):
+    """A check's ending is read whole (PR 147 browser case, "the recheck
+    never read back"). The check used to drop its running mark and only
+    then write its result, so a reading in between said *no check running
+    and none has run*. The page's re-read is keyed on /api/state's summary,
+    which did not change across that window, so a page that read inside it
+    never read again. This holds the check open exactly there."""
+
+    class Running(dict):
+        def __init__(self, popped):
+            super().__init__()
+            self.popped = popped
+
+        def pop(self, *args):
+            found = super().pop(*args)
+            self.popped.set()
+            return found
+
+    def test_no_reading_sees_a_finished_check_without_its_result(self):
+        name = self.put("07-x.md", card("[api](../../reference/api.md)\n"))
+        self.ref("api.md", b"# API\n")
+        popped, taken, seen = threading.Event(), threading.Event(), []
+        running = self.Running(popped)
+        write = inputs.records.write_json
+
+        def held_write(path, data, *a, **kw):
+            if Path(path).parent == config.INPUTS_DIR:
+                taken.wait(1.0)          # a reader gets in first, if it can
+            return write(path, data, *a, **kw)
+
+        def reader():
+            popped.wait(5)
+            reading = inputs.readiness(name, "to-do")
+            seen.append((reading["check"], inputs.summary(reading)))
+            taken.set()
+
+        with mock.patch.object(inputs, "_RUNNING", running), \
+                mock.patch.object(inputs.records, "write_json", held_write):
+            before = inputs.summary(self.reading(name))
+            thread = threading.Thread(target=reader, daemon=True)
+            thread.start()
+            inputs.schedule(name, "to-do")
+            self.assertTrue(inputs.wait(name, 10))
+            thread.join(10)
+        [(check, after)] = seen
+        self.assertFalse(not check["running"] and check["last"] is None,
+                         f"a finished check read without its result: {check}")
+        self.assertNotEqual(before, after,
+                            "the board summary must move when a check ends, or "
+                            "a page has nothing to re-read on")
 
 
 class Freshness(Fixture):

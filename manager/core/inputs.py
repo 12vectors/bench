@@ -1009,7 +1009,10 @@ def summary(reading: dict) -> dict | None:
             "unchecked": reading["counts"].get("unchecked", 0),
             "optional": reading["counts"].get("optional", 0),
             "proposed": len(reading["proposed"]),
-            "briefSha": reading["briefSha"][:12], "running": reading["check"]["running"]}
+            "briefSha": reading["briefSha"][:12], "running": reading["check"]["running"],
+            # when the newest check ended: a check that ends always moves
+            # the summary, so a page keyed on it reads the result
+            "lastCheck": (reading["check"].get("last") or {}).get("at")}
 
 
 def board(collected: dict) -> dict:
@@ -1259,12 +1262,24 @@ def _run_check(filename: str, stage: str, generation: int, key: tuple) -> None:
             remote[row["identity"]] = retrieve(row["identity"])
     except Exception as exc:  # noqa: BLE001 — a check that dies says so
         outcome = f"failed: {redact.scrub(str(exc), '•••')[:200]}"
+    try:
+        _publish(filename, stage, generation, key, outcome, remote)
+    finally:
+        # The running mark is dropped only once the result is on disk (or
+        # will never be), so no reading sees a check that has ended
+        # without its result — the page re-reads on the summary moving,
+        # and that window read as "no check has run" for good.
+        with _LOCK:
+            if _RUNNING.get(filename, {}).get("generation") == generation:
+                _RUNNING.pop(filename, None)
+    state.broadcast({"type": "board"})
+
+
+def _publish(filename: str, stage: str, generation: int, key: tuple,
+             outcome: str, remote: dict) -> None:
     with _LOCK:
-        current = _GENERATION.get(filename) == generation
-        if _RUNNING.get(filename, {}).get("generation") == generation:
-            _RUNNING.pop(filename, None)
-    if not current:
-        return          # a newer check started: this result is obsolete
+        if _GENERATION.get(filename) != generation:
+            return      # a newer check started: this result is obsolete
     try:
         here = taskfiles.find_stage_of(filename) or stage
         sha_now = taskfiles.brief_sha(taskfiles.card_parts(card_text(filename, here))["brief"])
@@ -1274,6 +1289,8 @@ def _run_check(filename: str, stage: str, generation: int, key: tuple) -> None:
         return          # the brief moved under the check: publish nothing
     path = _record_path(filename)
     with _LOCK:
+        if _GENERATION.get(filename) != generation:
+            return
         rec = record(filename)
         merged = dict(rec.get("remote") or {})
         merged.update(remote)
@@ -1282,7 +1299,6 @@ def _run_check(filename: str, stage: str, generation: int, key: tuple) -> None:
                              "briefSha": key[0][:12], "profile": key[1],
                              "outcome": outcome, "retrieved": len(remote)}})
         records.write_json(path, rec)
-    state.broadcast({"type": "board"})
 
 
 def _address_problem(host: str, port: int) -> str | None:
