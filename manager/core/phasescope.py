@@ -502,8 +502,11 @@ def reconcile(ops: list[dict] | None = None) -> list[dict]:
             phase_file = ((task or {}).get("phase") or {}).get("file")
             if phase_file and gates.contained(op.get("basis") or "",
                                               agents.phase_branch(phase_file)):
-                changed.append(_ended(op, "integrated", "reconciled: the "
-                                      "phase branch holds the member's head"))
+                words = "reconciled: the phase branch holds the member's head"
+                done = operations.update(op["key"], "ended", outcome="integrated",
+                                         observed=words)
+                _note(done, "receipt", "integrated", words)
+                changed.append(done)
                 continue
             changed.append(operations.update(
                 op["key"], "abandoned", code="not-integrated",
