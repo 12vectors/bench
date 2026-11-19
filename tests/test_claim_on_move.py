@@ -227,6 +227,53 @@ class ClaimOnMove(unittest.TestCase):
 
         self.assertEqual(self.porcelain(), " M unrelated.txt\n")
 
+    def test_a_held_index_lock_is_waited_out_not_left_staged(self):
+        """Another git holding the index for a moment — a sync, a person's
+        command — used to fail the move's commit and leave it staged and
+        unrecorded, which later stopped a merge on this checkout."""
+        import threading
+        lock = self.repo / ".git" / "index.lock"
+        lock.write_text("", encoding="utf-8")
+        timer = threading.Timer(0.12, lock.unlink)
+        timer.start()
+        self.addCleanup(timer.cancel)
+
+        taskfiles.move_task(FILENAME, "backlog", "to-do")
+
+        self.assertEqual(self.head_message(), f"board: 18 → to-do ({MOVER})")
+        self.assertEqual(self.porcelain(), "")
+
+    def test_the_boards_own_commits_take_turns(self):
+        """A run's ending and a scheduler pass committing two cards at once
+        on two threads both land; neither finds the other's index lock."""
+        import threading
+        other = "19-another-card.md"
+        (self.repo / "tasks" / "backlog" / other).write_text(
+            CARD.replace("18 — A card", "19 — Another card"), encoding="utf-8")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "another")
+        base = self.commit_count()
+        errors = []
+
+        def move(name):
+            try:
+                taskfiles.move_task(name, "backlog", "to-do")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        for _ in range(3):
+            threads = [threading.Thread(target=move, args=(name,))
+                       for name in (FILENAME, other)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            self.assertEqual(errors, [])
+            self.assertEqual(self.porcelain(), "", "both moves are committed")
+            for name in (FILENAME, other):
+                taskfiles.move_task(name, "to-do", "backlog")
+        self.assertEqual(self.commit_count(), base + 12)
+
     def test_a_failing_commit_still_moves_the_card_and_says_so(self):
         self.patch(REPO=self.repo.parent / "not-a-repo")
         (self.repo.parent / "not-a-repo").mkdir()

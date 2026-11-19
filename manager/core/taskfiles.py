@@ -51,6 +51,16 @@ import workbase
 # before replacing it.
 WRITE_LOCK = threading.RLock()
 
+# The board's own commits share one index: a run's ending committing its
+# card's move on one thread and a scheduler pass committing another card's
+# on the next would each find the other's `index.lock` and one would fail,
+# leaving a move staged and never recorded — which later stops a merge on
+# that checkout. So the board's commits take turns, and a lock held by a
+# git outside this process (a sync, a person's command) is waited out
+# briefly rather than read as a failure.
+COMMIT_LOCK = threading.RLock()
+_INDEX_LOCK_TRIES = 6
+
 TITLE_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 STATUS_RE = re.compile(r"^\*\*Status:\*\*\s*(.+?)\s*$", re.MULTILINE)
 PRIORITY_RE = re.compile(r"^\*\*Priority:\*\*\s*(.+?)\s*$", re.MULTILINE)
@@ -925,12 +935,19 @@ def commit_paths(filename: str, message: str, spec: list[str], failure: str) -> 
                         f"bookkeeping to the application instead")})
         return False
     try:
-        result = _git("add", "-A", "--", *spec)
-        if result.returncode == 0:
-            result = _git("commit", "--no-verify", "-m", message, "--", *spec, timeout=60)
-            if result.returncode == 0:
-                state.task_committed(filename)   # sync (when on) publishes it
-                return True
+        with COMMIT_LOCK:
+            for attempt in range(_INDEX_LOCK_TRIES):
+                result = _git("add", "-A", "--", *spec)
+                if result.returncode == 0:
+                    result = _git("commit", "--no-verify", "-m", message, "--",
+                                  *spec, timeout=60)
+                    if result.returncode == 0:
+                        state.task_committed(filename)   # sync (when on) publishes it
+                        return True
+                said = f"{result.stderr or ''}{result.stdout or ''}"
+                if "index.lock" not in said or attempt == _INDEX_LOCK_TRIES - 1:
+                    break
+                time.sleep(0.05 * (attempt + 1))
         lines = (result.stderr or result.stdout).strip().splitlines()
         detail = lines[-1] if lines else f"git exited {result.returncode}"
     except (subprocess.SubprocessError, OSError) as exc:
