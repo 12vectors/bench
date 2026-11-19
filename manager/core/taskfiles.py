@@ -271,6 +271,11 @@ def read_task(path: Path, stage: str) -> dict:
         # drift between them are derived across the whole board by
         # `collect` — a member card says nothing about its phase.
         "isPhase": is_phase,
+        # Which scheduler runs this phase (task 143): `legacy`, the phase
+        # runner, until a person explicitly adopts it into its phase scope
+        # — a line in its own phase log, so the decision travels with the
+        # card and the runner reads it where it reads everything else.
+        "phaseMode": phase_mode(text) if is_phase else None,
         "cards": listed,
         "members": [],
         "phase": None,
@@ -449,6 +454,42 @@ def _phase_name(phase: dict) -> str:
     return f"{phase['number'] or phase['file']} — {phase['title']}"
 
 
+PHASE_LOG_HEADING = "Phase log"
+# One log line: `- <date> <time> · <entry>`. The entry is what is parsed;
+# the stamp in front of it is for the reader.
+PHASE_LOG_LINE_RE = re.compile(r"^-\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+·\s+(.+?)\s*$")
+SCOPE_ADOPTED_RE = re.compile(r"^scope adopted\b")
+SCOPE_RELEASED_RE = re.compile(r"^scope released\b")
+PHASE_MODES = ("legacy", "scoped")
+
+
+def phase_log_entries(text: str) -> list[str]:
+    """A phase card's `## Phase log` entries, in the order they were made."""
+    section = re.search(rf"^##\s+{PHASE_LOG_HEADING}\s*$(.*?)(?=^##\s|\Z)",
+                        text or "", re.MULTILINE | re.DOTALL)
+    if not section:
+        return []
+    entries = []
+    for line in section.group(1).splitlines():
+        match = PHASE_LOG_LINE_RE.match(line.strip())
+        if match:
+            entries.append(match.group(1))
+    return entries
+
+
+def phase_mode(text: str) -> str:
+    """Which scheduler runs a phase (task 143): `scoped` when the newest
+    adoption line in its log adopted it into its phase scope, `legacy` —
+    the phase runner — otherwise. Absent means legacy, so every phase
+    written before scopes existed keeps the runner it had."""
+    for entry in reversed(phase_log_entries(text)):
+        if SCOPE_ADOPTED_RE.match(entry):
+            return "scoped"
+        if SCOPE_RELEASED_RE.match(entry):
+            return "legacy"
+    return "legacy"
+
+
 def weave_phases(stages: list[dict]) -> None:
     """Resolve every phase card's list against the board it sits on.
 
@@ -512,7 +553,8 @@ def weave_phases(stages: list[dict]) -> None:
         for index, member in enumerate(members, start=1):
             member["phase"] = {"file": phase["file"], "number": phase["number"],
                                "title": phase["title"],
-                               "index": index, "total": len(members)}
+                               "index": index, "total": len(members),
+                               "mode": phase.get("phaseMode") or "legacy"}
 
 
 STACK_MAPPINGS = ("default", "integration", "card", "external", "missing",

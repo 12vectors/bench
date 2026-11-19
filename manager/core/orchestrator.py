@@ -76,6 +76,13 @@ ACTIONS = {
     "recover": "recovery",
     "integrate": "integrate",
     "merge": "merge",
+    # A phase scope's own bookkeeping (task 143): putting its phase card
+    # in-progress and cutting the phase branch its members start from is
+    # part of implementing them; finishing — the phase branch published,
+    # its card into review/ and its PR opened — follows integrating them.
+    # Neither launches anything, so neither takes a slot or a start.
+    "prepare": "implement",
+    "finish": "integrate",
 }
 # An action that launches a coding agent, and the pool its slot comes
 # from. Reasoning and recovery launches are real usage (D7): they take a
@@ -123,6 +130,13 @@ def scope_of(task: dict, reading: dict) -> tuple[str | None, str | None]:
     sid = f"phase:{phase}"
     if agreements.scope(reading, sid) is None:
         return None, "legacy-phase"
+    # Named by the agreement is not enough (task 143): a phase is its
+    # scope's only once a person adopted it, with the phase runner
+    # quiescent — so the runner and the scope never share its members.
+    mode = task.get("phaseMode") if task.get("isPhase") else \
+        (task.get("phase") or {}).get("mode")
+    if mode != "scoped":
+        return None, "phase-not-adopted"
     return sid, None
 
 
@@ -282,9 +296,14 @@ def authorize(action: str, filename: str, *, board: dict | None = None,
                        action=action, card=filename)
     sid, why = scope_of(task, reading)
     if sid is None:
-        return _refuse(why, "this card's phase has no phase agreement, so the "
-                       "existing phase runner schedules it and no orchestrator "
-                       "scope may", action=action, card=filename)
+        return _refuse(why, {
+            "phase-not-adopted": "this card's phase is named by the agreement "
+                                 "but not adopted into its phase scope, so the "
+                                 "existing phase runner schedules it and no "
+                                 "orchestrator scope may",
+        }.get(why, "this card's phase has no phase agreement, so the "
+                   "existing phase runner schedules it and no orchestrator "
+                   "scope may"), action=action, card=filename)
     here = agreements.scope(reading, sid)
     base = {"action": action, "card": filename, "scope": sid}
     if here["off"]:

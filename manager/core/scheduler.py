@@ -67,6 +67,7 @@ import decisions
 import execowner
 import operations
 import orchestrator
+import phasescope
 import plans
 import state
 import taskfiles
@@ -188,6 +189,8 @@ def _dependency(task: dict, by_number: dict, looped: set) -> tuple[str, str] | N
                     f"not on this board")
         same_phase = (task.get("phase") and other.get("phase") and
                       task["phase"]["number"] == other["phase"]["number"])
+        if same_phase and phasescope.mode(task) == "scoped":
+            continue    # integrated, not reviewed: the phase scope's rule
         done = other["stage"] == "done" or (same_phase and
                                             other["stage"] in ("review", "done"))
         if not done:
@@ -282,8 +285,10 @@ def plan(board: dict | None = None) -> dict:
         items.append(item)
         if sid is None:
             item.update(state="unmanaged", code=why,
-                        reason="its phase has no phase agreement; the existing "
-                               "phase runner schedules it")
+                        reason=("its phase is not adopted into its phase scope; "
+                                if why == "phase-not-adopted" else
+                                "its phase has no phase agreement; ")
+                        + "the existing phase runner schedules it")
             continue
         if task.get("isPhase"):
             item.update(state="unmanaged", code="phase-card",
@@ -310,6 +315,13 @@ def plan(board: dict | None = None) -> dict:
             item.update(state="waiting" if answer["code"] in WAITING else "blocked",
                         code=answer["code"], reason=answer["reason"])
             continue
+        if task.get("phase"):
+            # a phase scope's strategy: which member may start next
+            # (task 143) — sequential, or by integrated dependencies
+            held_by = phasescope.may_start(task, tasks, running)
+            if held_by:
+                item.update(state="waiting", code=held_by[0], reason=held_by[1])
+                continue
         item.update(state="ready", code="ready", reason="authorized")
         ready.append((task, item))
     chosen = _choose(ready, reading, tasks, running, by_number)
@@ -394,6 +406,7 @@ def projection(board: dict | None = None) -> dict:
     found = plan(board)
     found.pop("_chosen", None)
     return {**found, "delivery": coordinate.projection(board),
+            "phases": phasescope.projection(board),
             "breaker": breaker(), "lastPass": LAST["pass"],
             "interval": config.ORCHESTRATE_INTERVAL,
             "executes": execowner.authorizes()["allowed"],
@@ -654,11 +667,16 @@ def run_pass(board: dict | None = None, start=None) -> dict:
     try:
         started = time.time()
         observed = observe() + coordinate.observe()
-        reconciled = reconcile() + coordinate.reconcile()
+        reconciled = reconcile() + coordinate.reconcile() + phasescope.reconcile()
         given = board
+        # a phase scope's own steps first (task 143): its card put
+        # in-progress, its branch cut, main merged in, a phase whose
+        # members are all integrated finished — so the members planned
+        # below start from a branch that is there
+        prepared = phasescope.run(taskfiles.collect() if given is None else given)
         board = taskfiles.collect() if board is None else board
         found = plan(board)
-        results = []
+        results = list(prepared)
         if time.time() < BREAKER["openUntil"]:
             results.append({"outcome": "breaker-open",
                             "until": BREAKER["openUntil"]})

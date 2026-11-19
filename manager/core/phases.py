@@ -105,17 +105,10 @@ def _say(filename: str, summary: str) -> None:
 
 
 def log_entries(text: str) -> list[str]:
-    """The `## Phase log` section's entries, in the order they were made."""
-    section = re.search(rf"^##\s+{LOG_HEADING}\s*$(.*?)(?=^##\s|\Z)", text,
-                        re.MULTILINE | re.DOTALL)
-    if not section:
-        return []
-    entries = []
-    for line in section.group(1).splitlines():
-        match = LOG_LINE_RE.match(line.strip())
-        if match:
-            entries.append(match.group(1))
-    return entries
+    """The `## Phase log` section's entries, in the order they were made.
+    Read by `taskfiles`, which reads the adoption line from it too (task
+    143), so the runner and the scope read one log one way."""
+    return taskfiles.phase_log_entries(text)
 
 
 LOG_DATED_RE = re.compile(
@@ -208,6 +201,14 @@ def run_state(entries: list[str]) -> dict:
     clears a halt or a stop, because that line is the person's decision.
     """
     for entry in reversed(entries):
+        # task 143: an adoption hands the phase to its phase scope, which
+        # ends a legacy run exactly as a hold does — the runner reads it
+        # and stands down — and a release hands it back, not running
+        if taskfiles.SCOPE_ADOPTED_RE.match(entry):
+            return {"state": "scoped", "reason": entry, "at": None}
+        if taskfiles.SCOPE_RELEASED_RE.match(entry):
+            return {"state": "idle", "reason": "released by its phase scope",
+                    "at": None}
         halted = HALTED_RE.match(entry)
         if halted:
             return {"state": "halted", "reason": halted.group(2),
@@ -382,6 +383,8 @@ def _snapshot(phase: dict, by_file: dict[str, dict]) -> dict:
             "running": where["state"] == "running",
             "stopped": where["state"] == "stopped",
             "stoppedBy": where["reason"] if where["state"] == "stopped" else None,
+            # task 143: run by its phase scope, not by this runner
+            "scoped": where["state"] == "scoped",
             # the branch is the whole of "this phase has been started"
             "started": _branch_exists(branch),
             # What accepting *this* phase requires, which is a different
@@ -763,6 +766,10 @@ def start_phase(filename: str, stage: str, takeover: bool = False) -> dict:
     it appends the line that clears it and takes one pass immediately.
     """
     phase = _phase_card(filename, stage)
+    if phase.get("phaseMode") == "scoped":
+        raise ValueError(f"{filename} is run by its phase scope — the "
+                         f"Orchestrator schedules its members; release the "
+                         f"scope first to run it with the phase runner")
     if phase["phaseDrift"]:
         raise ValueError(f"{filename} does not resolve: {phase['phaseDrift'][0]} "
                          f"— fix the list before running it")
@@ -778,6 +785,25 @@ def start_phase(filename: str, stage: str, takeover: bool = False) -> dict:
 
 def _start(phase: dict, filename: str) -> dict:
     """Cut the branch (once), record the run, and take the first pass."""
+    branch = agents.phase_branch(filename)
+    note = ensure_branch(phase)
+    if not _write_log(phase, f"run started on {branch}"):
+        raise ValueError(f"could not record the run on {filename} — its phase "
+                         f"log must be writable to run the phase safely")
+    _say(filename, f"phase {filename} is running on {branch}"
+                   + (f" — {note}" if note else ""))
+    state.broadcast({"type": "board"})
+
+    by_file, by_number = _cards()         # the log just rewrote the card
+    return advance(by_file.get(filename) or phase, by_file, by_number)
+
+
+def ensure_branch(phase: dict) -> str:
+    """Cut `phase/<stem>` once, from the newest main this checkout can see,
+    with a worktree of its own, and publish it. Returns the branch point's
+    note ("" when the branch was already there). Shared by `▸ run phase`
+    and a phase scope (task 143): one way to cut a phase branch."""
+    filename = phase["file"]
     branch = agents.phase_branch(filename)
     note = ""
     # Before the branch is cut: the path the phase's worktree wants may
@@ -797,15 +823,7 @@ def _start(phase: dict, filename: str) -> dict:
         if result.returncode != 0:
             raise ValueError(f"could not cut {branch}: {result.stderr.strip()[:200]}")
         _push_phase(phase)
-    if not _write_log(phase, f"run started on {branch}"):
-        raise ValueError(f"could not record the run on {filename} — its phase "
-                         f"log must be writable to run the phase safely")
-    _say(filename, f"phase {filename} is running on {branch}"
-                   + (f" — {note}" if note else ""))
-    state.broadcast({"type": "board"})
-
-    by_file, by_number = _cards()         # the log just rewrote the card
-    return advance(by_file.get(filename) or phase, by_file, by_number)
+    return note
 
 
 def stop_phase(filename: str, stage: str) -> dict:
@@ -829,6 +847,11 @@ def stop_phase(filename: str, stage: str) -> dict:
     run that ended without reaching review/, and it is a person's to settle.
     """
     phase = _phase_card(filename, stage)
+    if phase.get("phaseMode") == "scoped":
+        raise ValueError(f"{filename} is run by its phase scope: pause the "
+                         f"scope to stop new member work, and hold a member's "
+                         f"run on its own card to cancel it — the two are "
+                         f"separate on purpose")
     with _LOCK:                       # never alongside a pass of the beat
         where = run_state(log_entries(phase["body"]))
         if where["state"] not in ("running", "halted"):

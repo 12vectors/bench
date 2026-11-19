@@ -46,6 +46,7 @@ import changes
 import inputs
 import orchestrator
 import phases
+import phasescope
 import plans
 import profiles
 import progress
@@ -1490,6 +1491,24 @@ def post_orchestration_installation(req) -> None:
     req.reply(200, {"result": result})
 
 
+def post_orchestration_phase(req) -> None:
+    # Adopt a phase into its phase scope, or release it back to the phase
+    # runner (task 143). Refused while anything still works it; writes one
+    # line to the phase log and touches no branch, worktree or member.
+    body, action = req.body, str(req.body.get("action") or "")
+    card = str(body.get("card") or "")
+    if action not in ("adopt", "release"):
+        req.reply(400, {"error": "action is adopt or release"})
+        return
+    try:
+        result = (phasescope.adopt if action == "adopt" else
+                  phasescope.release)(card, taskfiles.actor_name() or None)
+    except phasescope.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), "code": exc.code, **exc.extra})
+        return
+    req.reply(200, {"result": result})
+
+
 def post_orchestration_operation(req) -> None:
     # A person settles an operation the scheduler held (task 141): an
     # unknown outcome was in fact launched or not, or a refused launch is
@@ -2072,6 +2091,8 @@ ROUTES = (
           post_orchestration_installation),
     Route("POST", "/api/orchestration/operation", "policy-mutation",
           post_orchestration_operation),
+    Route("POST", "/api/orchestration/phase", "policy-mutation",
+          post_orchestration_phase),
     Route("POST", "/api/setup/decide", "policy-mutation", post_setup),
     Route("POST", "/api/setup/task", "policy-mutation", post_setup),
     Route("POST", "/api/setup/cards/preview", "policy-mutation", post_setup_cards),
