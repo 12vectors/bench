@@ -1688,6 +1688,12 @@
     #hdrmore{display:inline-flex;align-items:center;justify-content:center;gap:6px;
       min-height:40px;min-width:44px;padding:0 12px}
     #hdrmore[aria-expanded="true"]{border-color:var(--accent);color:var(--text)}
+    /* a folded chip with something to say (the setup invitation, the
+       agent-commands note) marks the door it is behind */
+    #hdrmore{position:relative}
+    header:not(.more-open):has(.livechip.hsec:not([hidden])) #hdrmore::after{
+      content:"";position:absolute;top:5px;right:5px;width:7px;height:7px;
+      border-radius:99px;background:var(--accent)}
     #themebtn,#refresh{min-height:40px}
     header .livechip{min-height:36px}
     #livechip .mono{display:none}

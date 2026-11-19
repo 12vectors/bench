@@ -49,6 +49,10 @@ GEOMETRY = """(() => {
     scrollW: document.documentElement.scrollWidth,
     scrollH: document.documentElement.scrollHeight,
     header: box('header'), board: box('#board'), bar: box('#statusbar'),
+    headerItems: [...document.querySelector('header').children]
+      .filter(e => e.getClientRects().length)
+      .map(e => { const r = e.getBoundingClientRect();
+        return (e.id || e.className) + '@' + Math.round(r.x) + ',' + Math.round(r.y) + '+' + Math.round(r.width); }),
     toggle: box('#actbtn'), toggleHit: hit('#actbtn'),
     open: panel.classList.contains('open'), panelH: panel.offsetHeight,
     expanded: document.querySelector('#actbtn').getAttribute('aria-expanded')};
@@ -167,7 +171,7 @@ class Phones(unittest.TestCase):
             fits(self, g, where)
             # the header is not the page: at most a fifth of the window
             self.assertLessEqual(g["header"]["h"], max(110, g["vh"] * 0.2),
-                                 f"the header takes {g['header']['h']}px {where}")
+                                 f"the header takes {g['header']['h']}px {where}: {g['headerItems']}")
             # nothing is laid over the cards: the first card answers a hit
             hit = b.eval("(() => { const c = document.querySelector('#board article.card');"
                          " const r = c.getBoundingClientRect();"

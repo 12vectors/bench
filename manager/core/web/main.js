@@ -385,7 +385,8 @@ $('#loghead').addEventListener('click', (e) => {
 });
 
 /* The header's secondary controls on a phone (task 154): the theme,
-   Refresh and the agent-commands note fold behind one labelled button,
+   Refresh, the setup invitation and the agent-commands note fold behind
+   one labelled button (marked while a folded chip has something to say),
    and the project's path is not drawn, so the board is what a phone
    shows first. Warnings never fold — a stalled sync, a halted phase, the
    connection chip — and neither does the configuration check, which is

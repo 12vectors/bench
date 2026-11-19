@@ -88,6 +88,7 @@ def open_guide(width=1440, height=900, theme="dark"):
     b = open_board(width, height, theme)
     if not b.wait("!document.querySelector('#setupchip').hidden", 10):
         raise bv.CheckFailed("the setup invitation never appeared")
+    b.reveal('#setupchip')
     b.click('#setupchip')
     if not b.wait("document.querySelectorAll('#sbody .setup-area').length === 6", 10):
         raise bv.CheckFailed("the setup guide did not draw its six areas")
