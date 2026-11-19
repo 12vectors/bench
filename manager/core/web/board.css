@@ -1749,11 +1749,12 @@
     #drawerbody{padding:14px 12px}
   }
   @media (max-width:430px){ #hdrmore .mlab{display:none} }
-  /* the narrowest phones keep the header to two rows: a quiet connection
-     chip is its dot (its name still says "quiet"), and the configuration
-     chip's reading is cut to fit (its name and title keep all of it) */
+  /* the narrowest phones keep the header to two rows: the connection
+     chip is its dot — breathing while anyone works — unless the board
+     may be stale, which it still says in words; and the configuration
+     chip's reading is cut to fit. Both names keep all of it. */
   @media (max-width:360px){
     header{column-gap:6px}
-    #livechip.quiet > span:not(.dot){display:none}
+    #livechip:not(.stale) > span:not(.dot){display:none}
     #doctorchip .mono{max-width:10ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   }

@@ -19,9 +19,9 @@ function renderChip() {
   const agents = runningAgents();
   const liveYou = sessionsOf(m => isLiveSession(m) && !m.agentId);
   const el = $('#livechip');
-  // the narrowest phones draw a quiet chip as its dot alone (task 154);
-  // a stale board or anyone working is never quiet
-  el.classList.toggle('quiet', !S.sseDown && !S.stateError && !agents.length && !liveYou.length);
+  // the narrowest phones draw the chip as its dot (task 154) — its name
+  // keeps the words — unless what is drawn may be stale, which is said
+  el.classList.toggle('stale', !!(S.sseDown || S.stateError));
   // the chip is a keyboard stop (task 125): its name says what it opens
   // and, when the board is out of reach, that what is drawn may be old
   if (S.sseDown || S.stateError) {
