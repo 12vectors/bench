@@ -686,9 +686,12 @@ def collect() -> dict:
     return {"stages": stages, "extras": extras, "root": str(config.TASKS)}
 
 
-def find_stage_of(filename: str) -> str | None:
+def find_stage_of(filename: str, root: Path | None = None) -> str | None:
+    """The stage a card sits in on this board — or on the board `root`
+    names, for a caller that is bound to one (a run's report, task 148)."""
+    tasks = config.TASKS if root is None else Path(root)
     for slug in config.STAGE_DIRS:
-        if (config.TASKS / slug / filename).is_file():
+        if (tasks / slug / filename).is_file():
             return slug
     return None
 
@@ -722,12 +725,14 @@ def refuse_escape(*paths: Path) -> None:
             raise ValueError(reason)
 
 
-def _writable(filename: str, stage: str) -> Path | None:
+def _writable(filename: str, stage: str, root: Path | None = None) -> Path | None:
     """The narrating flavour: the card's path, or None with the refusal in
     the ticker. The append doors answer *whether* they wrote rather than
     raising, and a report that cannot be recorded is narrated like any
-    other write that did not happen."""
-    path = config.TASKS / stage / filename
+    other write that did not happen. `root`, when given, is the tasks
+    directory the caller is bound to; the path is built from it rather
+    than read again from the configuration."""
+    path = (config.TASKS if root is None else Path(root)) / stage / filename
     reason = _escape(path)
     if reason is None:
         return path
@@ -1112,7 +1117,8 @@ def commit_work_file(path: Path, message: str, failure: str) -> bool:
     return commit_paths(name, message, [str(path)], failure)
 
 
-def append_to_task(filename: str, stage: str, text: str, what: str) -> bool:
+def append_to_task(filename: str, stage: str, text: str, what: str,
+                   *, root: Path | None = None) -> bool:
     """Append to a card where it stands, and commit the write.
 
     The other half of the same law: an agent's closing report is the
@@ -1120,16 +1126,49 @@ def append_to_task(filename: str, stage: str, text: str, what: str) -> bool:
     the `**PR:**` line does instead of sitting modified in one working
     tree. Returns whether the text was written (the commit is the gate's
     business, and is narrated if it fails).
+
+    It appends to a card that **exists**, and never creates one (task
+    148). Append mode creates, so a card that left its stage between a
+    caller's lookup and this write — or a lookup made against another
+    board — used to come back as a file holding nothing but the report: a
+    phantom card in whatever stage the caller named. Now the file is opened
+    without `O_CREAT`, and a missing one is narrated and left missing.
+
+    `root` is the tasks directory the caller is bound to — the board a run
+    was launched from. When this board's tasks directory is no longer that
+    one (a restarted or reconfigured process, a test's fixture restoring
+    the configuration it found), nothing is written anywhere: the report
+    belongs to a board this process no longer serves, and the run's log
+    still holds it.
     """
-    path = _writable(filename, stage)
+    if root is not None and Path(root) != config.TASKS:
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": (f"{filename}: {what} was not filed — the run was "
+                        f"launched from the board at {root}, and this board "
+                        f"now reads {config.TASKS}; nothing was written, and "
+                        f"the run's log still holds the report")})
+        return False
+    path = _writable(filename, stage, root)
     if path is None:
         return False
     try:
-        with WRITE_LOCK, path.open("a", encoding="utf-8") as fh:
-            fh.write(text)
+        with WRITE_LOCK:
+            fd = os.open(path, os.O_WRONLY | os.O_APPEND)
+            with os.fdopen(fd, "a", encoding="utf-8") as fh:
+                fh.write(text)
+    except FileNotFoundError:
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": (f"{filename}: {what} was not filed — the card is no "
+                        f"longer in {stage}/, and bench does not recreate a "
+                        f"card to hold a report; the run's log still holds it")})
+        return False
     except OSError:
         return False
-    commit_edit(filename, stage, what)
+    if root is None or Path(root) == config.TASKS:
+        # never a commit in a repository other than the bound board's
+        commit_edit(filename, stage, what)
     return True
 
 

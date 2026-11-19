@@ -90,15 +90,30 @@ def _report_of(record: dict, text: str | None = None) -> str:
 def _file_report(record: dict, heading: str, report: str) -> None:
     """The report travels with the task, like every review does — and, like
     every other board-made write to a task file, it reaches git rather than
-    sitting modified in one working tree (task 44)."""
-    stage = find_stage_of(record["task"])
-    if not stage or not report:
+    sitting modified in one working tree (task 44).
+
+    Filed on the board the run was launched from (`record["tasks"]`), in
+    the stage the card is in *now* — a card moved during the run gets its
+    report where it went — or not at all (task 148). The stage is looked up
+    on that board and the append is bound to it, so a lookup on one board
+    can no longer become a write on another, and a card that has gone is
+    said to have gone rather than recreated to hold the report."""
+    if not report:
+        return
+    root = Path(record["tasks"]) if record.get("tasks") else config.TASKS
+    stage = find_stage_of(record["task"], root)
+    name = record.get("name") or "agent"
+    if not stage:
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": record["task"],
+            "summary": (f"{name}'s {heading.lower()} on {record['task']} was "
+                        f"not filed — the card is no longer on the board at "
+                        f"{root}; the run's log still holds it")})
         return
     stamp = time.strftime("%Y-%m-%d %H:%M")
-    name = record.get("name") or "agent"
     append_to_task(record["task"], stage,
                    f"\n\n---\n\n## {heading} — {stamp} ({name})\n\n{report}\n",
-                   f"{heading} filed")
+                   f"{heading} filed", root=root)
 
 
 def _session_report(record: dict, report: str) -> None:
@@ -132,6 +147,46 @@ def pick_name(stem: str) -> str:
         if name not in used:
             return name
     return NAMES[start]
+
+
+# The thread that sees each run end, by run. A reaper writes after the
+# status leaves `running` — the closing report, the move, the PR — so a
+# caller that must know those writes are over (a test about to restore the
+# board's configuration, task 148) joins the reaper rather than polling
+# the status.
+REAPERS: dict[str, threading.Thread] = {}
+
+
+def _start_reaper(target, agent_id: str, proc, log_file) -> None:
+    thread = threading.Thread(target=target, args=(agent_id, proc, log_file),
+                              daemon=True, name=f"reap:{agent_id}")
+    with state.LOCK:
+        # The board this run was launched from, bound for its ending: its
+        # report is filed there or nowhere (task 148), whatever the
+        # process's configuration says by the time the run ends.
+        state.AGENTS[agent_id].setdefault("tasks", str(config.TASKS))
+        REAPERS[agent_id] = thread
+    thread.start()
+
+
+def join_reapers(timeout: float = 30.0) -> list[str]:
+    """Wait for every reaper started so far to finish its run's ending,
+    within `timeout` seconds overall. Returns the runs whose reaper is
+    still going — empty when every ending has been written. Joined reapers
+    are forgotten."""
+    deadline = time.monotonic() + timeout
+    with state.LOCK:
+        pending = list(REAPERS.items())
+    alive = []
+    for agent_id, thread in pending:
+        thread.join(max(0.0, deadline - time.monotonic()))
+        if thread.is_alive():
+            alive.append(agent_id)
+        else:
+            with state.LOCK:
+                if REAPERS.get(agent_id) is thread:
+                    del REAPERS[agent_id]
+    return alive
 
 
 def _agent_public(record: dict) -> dict:
@@ -707,8 +762,7 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
         "kind": "agent", "actor": "agent", "file": filename,
         "summary": summary,
     })
-    threading.Thread(target=_reap_agent, args=(agent_id, proc, log_file),
-                     daemon=True).start()
+    _start_reaper(_reap_agent, agent_id, proc, log_file)
     return _agent_public(record)
 
 
@@ -756,8 +810,7 @@ def start_review(filename: str, stage: str) -> dict:
         "kind": "agent", "actor": "agent", "file": filename,
         "summary": f"{name} is checking {filename} is still true of the codebase",
     })
-    threading.Thread(target=_reap_review, args=(agent_id, proc, log_file),
-                     daemon=True).start()
+    _start_reaper(_reap_review, agent_id, proc, log_file)
     return _agent_public(record)
 
 
@@ -1110,8 +1163,7 @@ def start_pr_review(filename: str, stage: str) -> dict:
         "summary": (f"{name} is reviewing {filename}'s PR — "
                     f"{reviews.line(pinned)}"),
     })
-    threading.Thread(target=_reap_pr_review, args=(agent_id, proc, log_file),
-                     daemon=True).start()
+    _start_reaper(_reap_pr_review, agent_id, proc, log_file)
     return _agent_public(record)
 
 
@@ -1202,8 +1254,7 @@ def start_pr_fix(filename: str, stage: str) -> dict:
         "kind": "agent", "actor": "agent", "file": filename,
         "summary": summary,
     })
-    threading.Thread(target=_reap_pr_fix, args=(agent_id, proc, log_file),
-                     daemon=True).start()
+    _start_reaper(_reap_pr_fix, agent_id, proc, log_file)
     return _agent_public(record)
 
 
