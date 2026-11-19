@@ -53,6 +53,7 @@ import progress
 import readiness
 import previews
 import reasoning
+import recovery
 import refine
 import required
 import results
@@ -1532,6 +1533,34 @@ def post_orchestration_operation(req) -> None:
     req.reply(200, {"result": result})
 
 
+def post_orchestration_recovery(req) -> None:
+    # A person's two answers to what recovery held (task 144): an incident
+    # is handled (`resolve`), or the circuit breaker may close
+    # (`reset-breaker`). Neither launches, stops or retries anything.
+    body = req.body
+    action = str(body.get("action") or "")
+    who = taskfiles.actor_name() or None
+    try:
+        if action == "resolve":
+            result = recovery.resolve(str(body.get("incident") or ""), who)
+        elif action == "reset-breaker":
+            result = recovery.breaker_reset(who)
+        else:
+            raise ValueError("the action is resolve or reset-breaker")
+    except LookupError as exc:
+        req.reply(404, {"error": str(exc)})
+        return
+    except ValueError as exc:
+        req.reply(409, {"error": str(exc)})
+        return
+    state.record_board_event({
+        "kind": "other", "actor": "you",
+        "summary": f"orchestration: recovery {action}"
+                   + (f" {body.get('incident')}" if action == "resolve" else "")})
+    state.broadcast({"type": "board"})
+    req.reply(200, {"result": result})
+
+
 def post_setup_cards(req) -> None:
     # Gap-specific setup cards (task 89), behind the same door.
     # Preview writes nothing; create writes cards and links and
@@ -2093,6 +2122,8 @@ ROUTES = (
           post_orchestration_operation),
     Route("POST", "/api/orchestration/phase", "policy-mutation",
           post_orchestration_phase),
+    Route("POST", "/api/orchestration/recovery", "policy-mutation",
+          post_orchestration_recovery),
     Route("POST", "/api/setup/decide", "policy-mutation", post_setup),
     Route("POST", "/api/setup/task", "policy-mutation", post_setup),
     Route("POST", "/api/setup/cards/preview", "policy-mutation", post_setup_cards),

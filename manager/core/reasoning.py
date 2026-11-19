@@ -300,9 +300,15 @@ def binding(filename: str, board: dict | None = None) -> dict:
     }
 
 
-def fingerprint(need: str, bound: dict) -> str:
-    return profiles.digest("reasoning", str(VERSION), need,
-                           json.dumps(bound, sort_keys=True))[:16]
+def fingerprint(need: str, bound: dict, subject: dict | None = None) -> str:
+    """The question's identity: the need and the input binding — and, for
+    a recovery diagnosis (task 144), the incident and attempt it serves,
+    so a second attempt about an unchanged card is a new question while a
+    repeated tick about the same attempt is the same one."""
+    parts = ["reasoning", str(VERSION), need, json.dumps(bound, sort_keys=True)]
+    if subject:
+        parts.append(json.dumps(subject, sort_keys=True))
+    return profiles.digest(*parts)[:16]
 
 
 def _scope_facts(task: dict, tasks: list[dict]) -> dict:
@@ -344,7 +350,7 @@ def _card_fact(card: dict) -> dict:
 
 
 def facts(filename: str, need: str, operation: str, bound: dict,
-          tasks: list[dict]) -> dict:
+          tasks: list[dict], subject: dict | None = None) -> dict:
     """What bench tells the run in its own words: public readings only —
     no path, no environment value, no credential — scrubbed again on the
     way out because a title is a person's text."""
@@ -368,6 +374,10 @@ def facts(filename: str, need: str, operation: str, bound: dict,
         "eligibility": eligible,
         "evidence": _evidence_facts(filename),
         "binding": bound,
+        # what bench observed about the incident a recovery diagnosis is
+        # for (task 144): its signals, the failure's class and the attempts
+        # so far — bench's readings, never the stalled run's own claims
+        "incident": subject,
         "contract": CONTRACT_FIELDS,
         "notes": ["Every fact here is bench's own reading at the moment the "
                   "run was prepared. Agent-reported claims are not in it."],
@@ -387,7 +397,7 @@ def _input_item(name: str, role: str, source: str, path: Path,
 
 
 def attach(found: dict, filename: str, need: str, operation: str, bound: dict,
-           tasks: list[dict]) -> dict:
+           tasks: list[dict], subject: dict | None = None) -> dict:
     """Add the reasoning context to a launch's manifest, before the pin,
     the way a card's own inputs are added (`inputs.attach`) — so each is
     copied, hashed and granted by one exact read exactly as an approved
@@ -411,7 +421,7 @@ def attach(found: dict, filename: str, need: str, operation: str, bound: dict,
         context.append(_input_item(name, role,
                                    f"work:tasks/{card['stage']}/{card['file']}",
                                    path, data))
-    written = facts(filename, need, operation, bound, tasks)
+    written = facts(filename, need, operation, bound, tasks, subject)
     facts_path = _dir() / "facts" / f"{operation}.json"
     records.write_json(facts_path, written)
     # named by what it is rather than by a path: the facts are bench's
@@ -718,7 +728,7 @@ PUBLIC = ("v", "id", "need", "task", "card", "stage", "via", "scope", "actor",
           "attempt", "retryOf", "status", "created", "started", "ended",
           "agent", "name", "harness", "model", "policyId", "binding",
           "inputs", "response", "diagnostics", "raw", "error", "usage",
-          "fingerprint", "provenance", "cardRecord")
+          "fingerprint", "provenance", "cardRecord", "action", "subject")
 
 
 def public(job: dict) -> dict:
@@ -741,6 +751,19 @@ def for_card(filename: str) -> list[dict]:
         found = [j for j in JOBS.values() if j.get("task") == filename]
     return [public(j) for j in sorted(found, key=lambda j: (j.get("created") or 0,
                                                             j["id"]), reverse=True)]
+
+
+def for_subject(incident: str, attempt: int) -> dict | None:
+    """The newest job launched for one recovery incident's attempt (task
+    144), whole — `recovery` reads its status, response and error to
+    settle the attempt, and its absence to prove nothing ran. A read."""
+    with LOCK:
+        _load()
+        found = [j for j in JOBS.values()
+                 if (j.get("subject") or {}).get("incident") == incident
+                 and (j.get("subject") or {}).get("attempt") == attempt]
+    found.sort(key=lambda j: (j.get("created") or 0, j["id"]))
+    return dict(found[-1]) if found else None
 
 
 def board() -> dict:
@@ -768,7 +791,8 @@ def readiness() -> dict:
 
 def request(filename: str, need: str, *, via: str = "orchestrator",
             retry: bool = False, board: dict | None = None,
-            actor: str | None = None) -> dict:
+            actor: str | None = None, action: str = "reason",
+            subject: dict | None = None) -> dict:
     """Ask one reasoning question about one card, at most once per input
     binding.
 
@@ -779,7 +803,15 @@ def request(filename: str, need: str, *, via: str = "orchestrator",
     question about unchanged inputs answers with the job it already has —
     running, or settled — so a scheduler tick, a refresh or a concurrent
     caller never launches twice; a job that failed or was cancelled is
-    asked again only with `retry`."""
+    asked again only with `retry`.
+
+    `action` is the orchestrator action the launch is authorized and
+    counted as: `reason`, or `recover` for a recovery diagnosis (task 144),
+    which the `recovery` authority word delegates instead and which
+    carries the incident it serves in `subject` — folded into the
+    fingerprint and handed to the run in its facts."""
+    if action not in ("reason", "recover"):
+        raise ValueError("a reasoning launch is authorized as reason or recover")
     if need not in NEEDS:
         raise ValueError(f"unknown reasoning need {need!r} — one of "
                          f"{', '.join(NEEDS)}")
@@ -790,7 +822,7 @@ def request(filename: str, need: str, *, via: str = "orchestrator",
         board = taskfiles.collect() if board is None else board
         tasks = _tasks(board)
         bound = binding(filename, board)
-        print_ = fingerprint(need, bound)
+        print_ = fingerprint(need, bound, subject)
         prior = sorted((j for j in JOBS.values() if j.get("fingerprint") == print_),
                        key=lambda j: (j.get("created") or 0, j["id"]))
         last = prior[-1] if prior else None
@@ -808,7 +840,7 @@ def request(filename: str, need: str, *, via: str = "orchestrator",
 
         authorized = None
         if via == "orchestrator":
-            authorized = orchestrator.authorize("reason", filename, board=board)
+            authorized = orchestrator.authorize(action, filename, board=board)
             if not authorized["allowed"]:
                 raise ValueError(f"not authorized: {authorized['reason']} "
                                  f"({authorized['code']})")
@@ -819,7 +851,7 @@ def request(filename: str, need: str, *, via: str = "orchestrator",
         # is recorded: a refusal leaves no job and no launch
         found = profiles.manifest("reason", filename, stage)
         profiles.require(found)
-        attach(found, filename, need, operation, bound, tasks)
+        attach(found, filename, need, operation, bound, tasks, subject)
         profiles.pin(found)
         inputs_ = delivered(found)
 
@@ -838,6 +870,7 @@ def request(filename: str, need: str, *, via: str = "orchestrator",
             "attempt": len(prior) + 1,
             "retryOf": last["id"] if last is not None else None,
             "fingerprint": print_, "binding": bound, "status": "queued",
+            "action": action, "subject": subject,
             "created": time.time(), "inputs": inputs_,
             "cards": sorted(context_numbers), "scopeCards": sorted(scope_cards),
             "evidenceIds": [e["id"] for e in _evidence_facts(filename)],
@@ -865,7 +898,7 @@ def request(filename: str, need: str, *, via: str = "orchestrator",
             _save(job)
             raise
         if via == "orchestrator":
-            orchestrator.record_launch(job["scope"], bound["card"], "reason", job["id"])
+            orchestrator.record_launch(job["scope"], bound["card"], action, job["id"])
         return {"job": public(job), "duplicate": False}
 
 

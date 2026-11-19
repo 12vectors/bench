@@ -81,7 +81,7 @@ AUTHORITIES = ("readiness", "reasoning", "implement", "review", "repair",
 POOLED = ("implementation", "review", "reasoning", "dailyStarts")
 # Ceilings: limits per card or per incident, which a child may only lower.
 CEILINGS = ("launchesPerCard", "repairRounds", "transientRetries",
-            "runAgeMinutes")
+            "runAgeMinutes", "recoveryAttempts")
 
 # D7, accepted as the initial ceilings. Written into every new draft
 # explicitly rather than implied, so the page shows them as policy a
@@ -97,6 +97,10 @@ DEFAULTS = {
     "repairRounds": 2,
     "transientRetries": 2,
     "runAgeMinutes": 120,
+    # D5 (task 144): diagnostic/recovery launches per distinct incident.
+    # Each is an actual launch, counted against slots, daily starts and
+    # the card's launches like any other — configurable, never unlimited.
+    "recoveryAttempts": 2,
 }
 LIMITS = {key: (0, 1440 if key == "runAgeMinutes" else 1000) for key in DEFAULTS}
 

@@ -44,12 +44,15 @@ its execution lock, executes.
 
 **Failures are classified, not retried blindly (D9).** A refusal before
 anything happened (`refused`) is not retried until the brief changes or a
-person releases it. A transient failure before anything ran (`retry`) is
-retried up to the scope's `transientRetries` ceiling with exponential
-backoff, behind a circuit breaker. Anything unexplained is `unknown`.
-A run that ended — done, failed, declined — is never relaunched by this
-pass on the same brief: that is a person's, or a later recovery member's,
-decision.
+person releases it. A transient failure — a launch that could not start
+(`retry`), or a run whose ending `recovery.classify` reads as a transport
+or setup failure — is retried up to the scope's `transientRetries`
+ceiling with exponential backoff, behind the durable circuit breaker
+(`recovery.breaker`). Anything unexplained is `unknown`. Any other run
+that ended — done, failed for a reason that is not transient, declined —
+is never relaunched by this pass on the same brief: a deterministic or
+unknown failure is a recovery incident (`recovery`, task 144), a denied
+one is held for a person.
 """
 
 from __future__ import annotations
@@ -69,25 +72,18 @@ import operations
 import orchestrator
 import phasescope
 import plans
+import recovery
 import state
 import taskfiles
 
 ACTION = "implement"
 STAGES = ("to-do", "in-progress")
 PRIORITY_RANK = {"high": 0, "medium": 1, "low": 2}
-# Words in a refusal that mark a failure as worth trying again: a launch
-# that could not start a process, a network wait that ran out. Nothing
-# else is presumed transient (D9).
-TRANSIENT = ("timed out", "timeout", "could not launch adapter",
-             "temporarily unavailable", "connection reset", "try again")
 BACKOFF_SECONDS = 60
-BREAKER_THRESHOLD = 3
-BREAKER_SECONDS = 600
 # What authorize answers when the card is fine but there is no room now.
 WAITING = ("slots-full", "daily-starts-exhausted")
 
 _PASS_LOCK = threading.Lock()
-BREAKER = {"failures": 0, "openUntil": 0.0}
 LAST: dict = {"pass": None}
 
 
@@ -238,17 +234,19 @@ def _held(task: dict, ops: list[dict], here_basis: str,
             return ("in-flight", f"operation {op['key']} is {op['status']}", 0)
     same = [op for op in mine if op.get("basis") == here_basis]
     for op in same:
-        if op["status"] == "ended":
+        if op["status"] == "ended" and not recovery.transient(op):
             return ("ran", "a run on this brief has ended "
                     f"({op.get('outcome') or 'ended'}); launching again is a "
                     f"person's decision, or follows a changed brief", 0)
         if op["status"] == "refused":
             return ("refused", f"the launch was refused: {op.get('reason')} "
                     f"— change what it names, or release it", 0)
-    tries = [op for op in same if op["status"] in ("retry", "abandoned")]
+    tries = [op for op in same if recovery.transient(op)
+             or op["status"] == "abandoned"]
     if len(tries) > ceiling:
-        return ("retries-exhausted", f"{len(tries)} attempts ended without a "
-                f"launch; the ceiling is {ceiling} retries", 0)
+        return ("retries-exhausted", f"{len(tries)} attempts ended in a "
+                f"transient failure or without a launch; the ceiling is "
+                f"{ceiling} retries", 0)
     if tries:
         wait = BACKOFF_SECONDS * (2 ** (len(tries) - 1))
         last = tries[-1].get("updatedEpoch") or tries[-1].get("intentEpoch") or 0
@@ -407,6 +405,7 @@ def projection(board: dict | None = None) -> dict:
     found.pop("_chosen", None)
     return {**found, "delivery": coordinate.projection(board),
             "phases": phasescope.projection(board),
+            "recovery": recovery.projection(board),
             "breaker": breaker(), "lastPass": LAST["pass"],
             "interval": config.ORCHESTRATE_INTERVAL,
             "executes": execowner.authorizes()["allowed"],
@@ -414,9 +413,8 @@ def projection(board: dict | None = None) -> dict:
 
 
 def breaker() -> dict:
-    open_ = time.time() < BREAKER["openUntil"]
-    return {"open": open_, "failures": BREAKER["failures"],
-            "until": BREAKER["openUntil"] if open_ else None}
+    """The durable circuit breaker (`recovery`): it survives a restart."""
+    return recovery.breaker()
 
 
 # ── observe and reconcile ─────────────────────────────────────────────
@@ -465,11 +463,22 @@ def observe(ops: list[dict] | None = None) -> list[dict]:
             continue
         if record:
             outcome = record.get("status") or "ended"
+            extra = {}
+            if outcome == "failed":
+                # classified once, where the ending is observed (D9): a
+                # transient one may be retried, any other is not
+                extra["failure"] = recovery.failure_of(record)
+                recovery.breaker_failure(op.get("card"),
+                                         f"run-{extra['failure']['class']}")
+            elif outcome == "done":
+                recovery.breaker_success()
             done = operations.update(op["key"], "ended", outcome=outcome,
                                      rc=record.get("rc"),
-                                     observed="the run's ending was observed")
+                                     observed="the run's ending was observed",
+                                     **extra)
             _note(done, "receipt", outcome if outcome.isalpha() else "ended",
-                  f"the implementation run ended: {outcome}")
+                  f"the implementation run ended: {outcome}"
+                  + (f" ({extra['failure']['class']} failure)" if extra else ""))
             changed.append(done)
             continue
         alive = _process_alive(op.get("pid"), op.get("agent") or "")
@@ -535,11 +544,6 @@ def reconcile(ops: list[dict] | None = None) -> list[dict]:
 
 # ── execute ───────────────────────────────────────────────────────────
 
-def _transient(message: str) -> bool:
-    text = message.lower()
-    return any(marker in text for marker in TRANSIENT)
-
-
 def _walk_back(filename: str, moved: bool) -> None:
     if moved and taskfiles.find_stage_of(filename) == "in-progress":
         try:
@@ -565,8 +569,11 @@ def execute(task: dict, item: dict, board: dict | None = None,
     # The attempt counts only attempts that provably ran nothing, so the
     # same decision taken again while its first attempt is open, launched
     # or ended has the same key — and `begin` refuses it as a duplicate.
+    # A run that ended in a transient failure may be tried again too, so
+    # it is a numbered attempt like one that ran nothing.
     attempt = len([o for o in prior if o.get("basis") == here_basis
-                   and o["status"] in operations.NOTHING_RAN]) + 1
+                   and (o["status"] in operations.NOTHING_RAN
+                        or recovery.transient(o))]) + 1
     key = operations.key_for(ACTION, filename, here_basis, attempt)
     try:
         op = operations.begin(key, action=ACTION, card=filename,
@@ -599,10 +606,8 @@ def execute(task: dict, item: dict, board: dict | None = None,
     except ValueError as exc:
         message = str(exc)
         _walk_back(filename, moved)
-        if _transient(message):
-            BREAKER["failures"] += 1
-            if BREAKER["failures"] >= BREAKER_THRESHOLD:
-                BREAKER["openUntil"] = time.time() + BREAKER_SECONDS
+        if recovery.classify(message) == "transient":
+            recovery.breaker_failure(_number(task), "launch-transient")
             operations.update(key, "retry", code="transient", reason=message)
             return {"card": filename, "outcome": "retry", "key": key,
                     "reason": message}
@@ -617,7 +622,8 @@ def execute(task: dict, item: dict, board: dict | None = None,
     agent_id = (record or {}).get("id")
     with state.LOCK:
         proc = (state.AGENTS.get(agent_id or "") or {}).get("proc")
-    BREAKER["failures"] = 0
+    # a launch that starts is not yet a run that works: the breaker's
+    # failures are cleared only when a run is observed finishing
     done = operations.update(key, "launched", agent=agent_id,
                              pid=getattr(proc, "pid", None),
                              observed="the launch returned its run")
@@ -677,9 +683,10 @@ def run_pass(board: dict | None = None, start=None) -> dict:
         board = taskfiles.collect() if board is None else board
         found = plan(board)
         results = list(prepared)
-        if time.time() < BREAKER["openUntil"]:
+        tripped = recovery.breaker()
+        if tripped["open"]:
             results.append({"outcome": "breaker-open",
-                            "until": BREAKER["openUntil"]})
+                            "until": tripped["until"]})
         else:
             for task, _item in found.get("_chosen", []):
                 results.append(execute(task, _item, None, start))
@@ -688,6 +695,12 @@ def run_pass(board: dict | None = None, start=None) -> dict:
             # after this pass's own moves
             results.extend(coordinate.run(
                 taskfiles.collect() if given is None else given))
+        # last, work that is not moving (task 144): incidents opened only
+        # on justified evidence, a bounded diagnosis each, a coordinated
+        # restart where one was proposed — and with the breaker open,
+        # observation only
+        results.extend(recovery.run(
+            taskfiles.collect() if given is None else given, start=start))
         summary = {"at": operations.now_iso(), "seconds": round(time.time() - started, 3),
                    "observed": len(observed), "reconciled": len(reconciled),
                    "chosen": found.get("chosen", []),

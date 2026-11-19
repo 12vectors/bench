@@ -67,10 +67,11 @@ L25 setupguide
 L26 phases
 L27 phasescope
 L28 refine reasoning coordinate
-L29 scheduler
-L30 routes watch
-L31 httpd
-L32 board
+L29 recovery
+L30 scheduler
+L31 routes watch
+L32 httpd
+L33 board
 composition: board httpd routes watch
 ```
 
@@ -373,10 +374,11 @@ L24 setupguide
 L25 phases
 L26 phasescope
 L27 refine reasoning coordinate
-L28 scheduler
-L29 watch routes
-L30 httpd
-L31 board
+L28 recovery
+L29 scheduler
+L30 watch routes
+L31 httpd
+L32 board
 composition: board httpd routes
 retired:
 new:

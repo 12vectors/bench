@@ -88,7 +88,6 @@ class ScopedPhaseCase(PhaseCase):
         eligible.start()
         self.addCleanup(eligible.stop)
         self.addCleanup(execowner.release_lock)
-        scheduler.BREAKER.update(failures=0, openUntil=0.0)
 
     def write_cards(self, **_) -> None:
         self.write(ONE, card("31 — Stand up site/", status="To Do"), "to-do")

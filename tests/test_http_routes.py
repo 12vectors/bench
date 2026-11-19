@@ -261,9 +261,11 @@ class EveryMutationRefusesAHostilePage(unittest.TestCase):
         # task 137 added seven orchestration writes, all policy-mutation;
         # task 140 two person writes (answer, withdraw), browser-mutation;
         # task 141 one, settling a held operation, policy-mutation;
-        # task 143 one, adopting or releasing a phase, policy-mutation
-        self.assertEqual(80, len(self.routes))
-        self.assertEqual(34, sum(1 for k in self.routes.values()
+        # task 143 one, adopting or releasing a phase, policy-mutation;
+        # task 144 one, resolving an incident or resetting the breaker,
+        # policy-mutation
+        self.assertEqual(81, len(self.routes))
+        self.assertEqual(35, sum(1 for k in self.routes.values()
                                  if k == "policy-mutation"))
 
     def test_a_cross_origin_form_is_refused(self):
