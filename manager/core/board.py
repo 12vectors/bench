@@ -89,6 +89,7 @@ import progress
 import readiness  # noqa: F401
 import reasoning
 import records  # noqa: F401
+import recovery  # noqa: F401
 import redact  # noqa: F401
 import refine
 import reports  # noqa: F401

@@ -186,6 +186,14 @@ def ingest_event(raw: dict) -> dict:
         # itself, the person when none did.
         meta["known"] = True
         meta["last"] = event["ts"]
+        # A tool call that has started and not finished — a long test run
+        # through the agent's shell, say — is activity however quiet it
+        # is (task 144): recovery reads it before calling a run stalled.
+        if event.get("running"):
+            meta["inFlight"] = {"since": event["ts"],
+                                "summary": event["summary"][:120]}
+        else:
+            meta.pop("inFlight", None)
         meta["lastSummary"] = event["summary"]
         meta["lastKind"] = kind
         meta["status"] = {"end": "ended", "idle": "idle"}.get(kind, "active")

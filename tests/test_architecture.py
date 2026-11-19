@@ -897,6 +897,9 @@ ROUTES: dict[str, str] = {
     # a person settles an operation the scheduler held (task 141)
     "POST /api/orchestration/operation": "policy-mutation",
     "POST /api/orchestration/phase": "policy-mutation",
+    # a person resolves a held recovery incident or resets the breaker
+    # (task 144)
+    "POST /api/orchestration/recovery": "policy-mutation",
     "POST /api/setup/decide": "policy-mutation",
     "POST /api/setup/task": "policy-mutation",
     "POST /api/setup/verification/activate": "policy-mutation",

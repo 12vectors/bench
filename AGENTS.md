@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < scheduler < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -350,6 +350,14 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   pinned to the exact head; uncertain merges reconcile against the
   delivered and recovery records and the remote (see "Delivery: checks,
   independent review, repair and your merge policy")
+- `recovery.py` — work that is not moving (task 144, D5/D9): a run's
+  activity read as separate signals (progress update, tool activity, a
+  tool call in flight, a check bench runs, its last commit, its process
+  and its age), an incident opened only for a stalled or failed run an
+  orchestrator launched, at most `recoveryAttempts` read-only diagnoses
+  per incident through `reasoning`, the one coordinated restart a
+  diagnosis may propose (stop observed first), failure classification
+  and the durable circuit breaker (see "Recovery: diagnose, don't kill")
 - `scheduler.py` — bounded orchestration passes (task 141): observe run
   endings, reconcile operations left without a receipt, plan by
   dependencies, priority, fairness and declared `**Touches:**` overlap,
@@ -5089,7 +5097,7 @@ so a route cannot skip it by forgetting to ask:
 | --- | --- | --- |
 | `read` | every GET | nothing; reading changes nothing |
 | `browser-mutation` | every person-operated POST | a JSON object body within a size cap; `Sec-Fetch-Site` same-origin or none when sent; an `Origin`, when sent, that is this board on the port it actually serves or exactly one of `BOARD_ALLOWED_ORIGINS`; `Origin: null` refused; and no run named by a request that says it is a browser's |
-| `policy-mutation` | the 34 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
+| `policy-mutation` | the 35 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
 | `run-authenticated` | `/api/progress`, `/api/verify/details` | the same door, then the run's own token |
 | `event-ingest` | `/api/events` | the same door; a run the event names is proved by that run's token (next section) |
 
@@ -5618,7 +5626,8 @@ the same toggles. The D7 defaults are written into every new draft:
 2 implementation slots, 1 review slot, 0 reasoning slots (reasoning and
 recovery then take implementation slots — counted, never free),
 20 launches a day, 6 launches per card, 2 repair rounds, 2 transient
-retries, a 120-minute run-age threshold (a warning, never a kill).
+retries, a 120-minute run-age threshold (a warning, never a kill) and
+2 recovery attempts per incident (`recoveryAttempts`, task 144).
 
 **Only narrowing, only two levels.** A phase's authority is the
 intersection with the Bench scope's, every word carrying the scope that
@@ -6035,12 +6044,29 @@ refused while any operation is unsettled.
 
 **Failures, classified (D9).** A refusal before anything happened — a
 preflight said no — is `refused` and not retried until the brief
-changes or a person releases it. A failure whose message marks it as
+changes or a person releases it. A launch whose message marks it as
 transient (a process that could not start, a wait that timed out) is
-`retry`: tried again up to the scope's `transientRetries` ceiling, with
-exponential backoff from 60 seconds, and three in a row open a circuit
-breaker for ten minutes. A run that ended — finished, failed, declined,
-held — is never relaunched by a pass on the same brief.
+`retry`, and a run that *ended* failed is classified from its log's
+last words when its ending is observed (task 144): `transient` (a
+transport or setup failure — a timeout, an overload, a dropped
+connection, an HTTP 429 or 5xx), `denied` (refused something it needed),
+`deterministic` (an assertion, a traceback, a failing test) or
+`unknown` — and unknown is never presumed transient. Only transient
+failures are tried again: up to the scope's `transientRetries` ceiling,
+counted together, with exponential backoff from 60 seconds. Every other
+run that ended — finished, failed, declined, held — is never relaunched
+by a pass on the same brief; a failure that is not transient, or whose
+retries are spent, becomes a recovery incident (next section).
+
+The **circuit breaker** is durable (`state/orchestration/breaker.json`):
+three failures across the board — launches that could not start, runs
+that ended failed, incidents exhausted — within thirty minutes and with
+no run finishing between them open it for ten minutes, and a restart
+does not close it. While it is open no launch, diagnosis or restart
+starts; endings are still observed. `GET /api/orchestration` names the
+cards behind it and the owner's choices, and `POST
+/api/orchestration/recovery` with `{"action": "reset-breaker"}` is a
+person closing it once the cause is fixed.
 
 **On the card, and on the page.** Each operation's intent and receipt
 are `action` records in the card's `## Orchestration record` (see the
@@ -6050,6 +6076,93 @@ section above), keyed by the operation so a replay writes once. `GET
 `unmanaged`), its code and its reason, the circuit breaker, the last
 pass and the ledger's counts — read from files, with nothing reserved,
 acquired, written or launched.
+
+### Recovery: diagnose, don't kill
+
+A run that has gone quiet is not a run that has stopped working, and a
+run that died is not always one to start again (D5, task 144,
+`recovery.py`). The last step of every pass looks at the work that is
+not moving — and nothing in it stops a run for being silent.
+
+**Five signals, never one.** For each running implementation run on a
+managed card bench reads, separately: the run's last public **progress
+update**, its last **tool activity**, whether a **tool call is in
+flight** right now (a long test through the agent's shell is quiet and
+busy — the event bridge's start of a tool call is the signal, its end
+clears it), whether **bench is running a check** for the card, and its
+worktree's **last commit** — beside its **process** (alive or gone, from
+the process handle, not the registry's word) and its **age**.
+
+| reading | when | what happens |
+| --- | --- | --- |
+| `young` | under the scope's `runAgeMinutes` (120 by default) | nothing |
+| `active` | past it, and a tool event, progress update or commit within 15 minutes | a warning on the page; nothing else |
+| `quiet-active` | past it, with a tool call in flight or a check running | a warning; nothing else |
+| `stalled` | past it, process alive, and none of the above for 15 minutes | an incident, if an orchestrator launched the run |
+| `ended` | the process is gone | the scheduler observes the ending |
+
+A person's own run is observed and never diagnosed or stopped.
+
+**An incident, and its bounded attempts.** A stalled run an orchestrator
+launched opens one **incident**; so does the card's newest
+implementation run ending in a failure that is `deterministic` or
+`unknown`, or `transient` with its retries spent. A `denied` failure
+opens one already held: recovery never works round a refusal. The
+incident is keyed by the run, so a second tick or a restart finds the
+one already open, and it is recorded under the tool's state and on the
+card (a blocker, every attempt, every action). Each **attempt** is one
+read-only diagnosis — a `reasoning` job with the `recovery` need,
+authorized and counted as the `recover` action, so the agreement's
+`recovery` word delegates it and it takes a reasoning slot (an
+implementation slot where none is allocated), a daily start and one of
+the card's launches like any launch. Its facts carry the incident: the
+signals, the failure's class and headline, the attempts before it, and
+the one remediation bench can carry out. The attempt's intent is written
+before the request; one found after a restart without a job provably ran
+nothing (a request records its job before any process starts) and is not
+counted. At most `recoveryAttempts` attempts launch per incident — two by
+default, a phase may lower it, a person may change it in the agreement —
+with backoff between them; when they are spent the incident is
+**exhausted**, held on the card with what was tried and the owner's
+choices, and nothing tries again.
+
+**A diagnosis proposes; bench observes.** The recovery run has no edit
+tool, no shell and no worktree, so it cannot compete with an active
+worker's edits. Its response lands on the card as any reasoning
+response does. The one remediation bench carries out is a coordinated
+**restart**, and only when the response proposes `recover` for this
+card:
+
+1. `recover` is authorized again, the card has no operation of unknown
+   outcome, it is in `in-progress/`, and no other run works in it;
+2. the stalled worker, if alive, is stopped through **‖ hold** — and
+   the restart waits until its process is *observed* gone (two minutes,
+   then the incident is held as `stop-unconfirmed`);
+3. `implement` is authorized again and the restart is an operation in
+   the ledger (intent, then receipt), launched through **▸ start work**'s
+   own path and preflights, continuing the same branch and worktree —
+   every commit and every uncommitted file kept. Nothing is reset,
+   rebased or discarded, and no grant or check changes.
+
+The incident is resolved only by what bench observes afterwards: the
+restarted run's own tool activity, a check running for it, or the card
+moving to `review/` — or, for a stalled run, the run becoming active
+again or ending by itself. What the diagnosis *says* resolves nothing.
+Any other proposal (`hold`, `ask-owner`, a merge, a review) holds the
+incident as `diagnosed` for a person. A restart that fails closes its
+incident; the new failure is an incident of its own, and the card's
+launch ceiling bounds the chain.
+
+**Held is visible.** Every held or exhausted incident is an open blocker
+on its card, naming the code, the attempts launched against the cap and
+the choices: fix the card and move it yourself, hand it back to manual
+work, **‖ hold** the run, raise `recoveryAttempts`, or mark the incident
+resolved (`POST /api/orchestration/recovery`, `{"action": "resolve",
+"incident": …}`), which launches, stops and retries nothing. `GET
+/api/orchestration`'s `schedule.recovery` lists every observed run with
+its signals and reading, every incident with its attempts, the held
+ones with their choices, and the breaker — a read: it launches, stops
+and writes nothing.
 
 ### Delivery: checks, independent review, repair and your merge policy
 

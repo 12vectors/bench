@@ -67,10 +67,11 @@ L25 setupguide
 L26 phases
 L27 phasescope
 L28 refine reasoning coordinate
-L29 scheduler
-L30 routes watch
-L31 httpd
-L32 board
+L29 recovery
+L30 scheduler
+L31 routes watch
+L32 httpd
+L33 board
 composition: board httpd routes watch
 ```
 
@@ -373,10 +374,11 @@ L24 setupguide
 L25 phases
 L26 phasescope
 L27 refine reasoning coordinate
-L28 scheduler
-L29 watch routes
-L30 httpd
-L31 board
+L28 recovery
+L29 scheduler
+L30 watch routes
+L31 httpd
+L32 board
 composition: board httpd routes
 retired:
 new:
@@ -463,6 +465,7 @@ neither.
 | execution designation (portable), installation id | `execowner` | `execowner._LOCK`, interprocess; execution itself is the non-blocking `flock` on `execution.lock` | yes |
 | orchestrated launch ledger (append-only) | `orchestrator` | append | no |
 | orchestration operations: intent and receipt (task 141) | `operations` (`scheduler` and `coordinate` decide) | `operations._LOCK`, interprocess | yes |
+| recovery incidents and their attempts; the circuit breaker (task 144) | `recovery` | `recovery._LOCK`, interprocess | yes |
 
 **Durable writers** — the call sites passing `durable=True`, held equal
 to the code by `tests/test_records_adoption.py`:
@@ -486,6 +489,10 @@ operations.update
 plans.record
 plans.restore
 profiles.record
+recovery._save
+recovery.breaker_failure
+recovery.breaker_reset
+recovery.breaker_success
 settings.apply
 setupbase.write_decisions
 verify._provision_source
@@ -668,5 +675,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 181
-routes 129
+routes 130
 ```

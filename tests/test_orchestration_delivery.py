@@ -185,7 +185,6 @@ class Sandbox(unittest.TestCase):
         saved = dict(state.AGENTS)
         state.AGENTS.clear()
         self.addCleanup(lambda: (state.AGENTS.clear(), state.AGENTS.update(saved)))
-        scheduler.BREAKER.update(failures=0, openUntil=0.0)
 
     # ── stand-ins ────────────────────────────────────────────────────
     def _choice(self, intent, values=None):

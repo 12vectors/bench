@@ -175,7 +175,6 @@ class Sandbox(unittest.TestCase):
         saved = dict(state.AGENTS)
         state.AGENTS.clear()
         self.addCleanup(lambda: (state.AGENTS.clear(), state.AGENTS.update(saved)))
-        scheduler.BREAKER.update(failures=0, openUntil=0.0)
         scheduler.LAST["pass"] = None
         self.launch = Launcher()
 
@@ -509,7 +508,6 @@ class BudgetsAreConserved(Sandbox):
                 self.board.cards[name]["stage"] = "review"
         # a restart forgets every registry and memory; the ledger stays
         state.AGENTS.clear()
-        scheduler.BREAKER.update(failures=0, openUntil=0.0)
         self.tick()
         self.assertEqual(2, len(self.launch.calls))
         revision = agreements.effective()["revision"]
@@ -538,7 +536,7 @@ class BudgetsAreConserved(Sandbox):
         self.launch.fail = ValueError("could not launch adapter run: busy")
         for _ in range(6):
             self.tick()
-            scheduler.BREAKER.update(failures=0, openUntil=0.0)   # a restart
+            state.AGENTS.clear()   # a restart: the ledger and the breaker stay
         self.assertEqual(3, len(self.launch.calls))   # one try, two retries
         self.assertEqual(3, len(self.ops("retry")))
         item = next(i for i in scheduler.plan()["items"])
