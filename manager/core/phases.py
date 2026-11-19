@@ -501,13 +501,33 @@ def _push_phase(phase: dict) -> None:
     _git("push", "-u", rname, agents.phase_branch(phase["file"]), timeout=180)
 
 
+def _base_name(source: str) -> str:
+    """The application base a refresh merged, named as a person names it:
+    `<remote>/<base>` is that remote's copy of `<base>`, so it reads as
+    `<base>`; a local branch reads as itself. Derived from the ref the
+    merge actually took, never from a constant, so the ticker cannot name
+    a branch the merge did not touch (task 61)."""
+    rname = config.app_branch_remote()
+    if rname and source.startswith(f"{rname}/") and len(source) > len(rname) + 1:
+        return source[len(rname) + 1:]
+    return source
+
+
 def _freshen(phase: dict) -> None:
-    """Merge main into the phase branch on the beat, so a phase that runs
-    for hours does not drift into one enormous conflict at the end. A
-    conflict here halts the phase like any other."""
+    """Merge the application base into the phase branch on the beat, so a
+    phase that runs for hours does not drift into one enormous conflict at
+    the end. A conflict here halts the phase like any other.
+
+    The base is the one the phase branch was cut from — `fresh_branch_point`,
+    `BOARD_APP_BASE` on its remote or locally — and the event names the ref
+    this merge took. Nothing is said when nothing landed: an up-to-date
+    branch and a conflict (which halts) announce no merge."""
     point, _ = gitrepo.fresh_branch_point()
-    if _merge_into_phase(phase, point or config.APP_BASE, config.APP_BASE):
-        _say(phase["file"], f"merged main into {agents.phase_branch(phase['file'])}")
+    source = point or config.APP_BASE
+    base = _base_name(source)
+    if _merge_into_phase(phase, source, base):
+        _say(phase["file"],
+             f"merged {base} into {agents.phase_branch(phase['file'])}")
         _push_phase(phase)
 
 
