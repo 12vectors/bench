@@ -1756,6 +1756,14 @@
     #hdrmore .mlab{display:none}
     #livechip:not(.stale) > span:not(.dot){display:none}
   }
+  /* a window as short as a phone held sideways: every row the board does
+     not use is as thin as its targets allow */
+  @media (max-height:480px){
+    header{padding-top:4px;padding-bottom:4px}
+    #statusbar{height:46px}
+    #loggrip{height:10px}
+    #loghead{padding-bottom:2px}
+  }
   /* the narrowest cut the configuration chip's reading to fit; its name
      and title keep all of it */
   @media (max-width:360px){
