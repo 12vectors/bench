@@ -134,6 +134,42 @@ def pick_name(stem: str) -> str:
     return NAMES[start]
 
 
+# The thread that sees each run end, by run. A reaper writes after the
+# status leaves `running` — the closing report, the move, the PR — so a
+# caller that must know those writes are over (a test about to restore the
+# board's configuration, task 148) joins the reaper rather than polling
+# the status.
+REAPERS: dict[str, threading.Thread] = {}
+
+
+def _start_reaper(target, agent_id: str, proc, log_file) -> None:
+    thread = threading.Thread(target=target, args=(agent_id, proc, log_file),
+                              daemon=True, name=f"reap:{agent_id}")
+    with state.LOCK:
+        REAPERS[agent_id] = thread
+    thread.start()
+
+
+def join_reapers(timeout: float = 30.0) -> list[str]:
+    """Wait for every reaper started so far to finish its run's ending,
+    within `timeout` seconds overall. Returns the runs whose reaper is
+    still going — empty when every ending has been written. Joined reapers
+    are forgotten."""
+    deadline = time.monotonic() + timeout
+    with state.LOCK:
+        pending = list(REAPERS.items())
+    alive = []
+    for agent_id, thread in pending:
+        thread.join(max(0.0, deadline - time.monotonic()))
+        if thread.is_alive():
+            alive.append(agent_id)
+        else:
+            with state.LOCK:
+                if REAPERS.get(agent_id) is thread:
+                    del REAPERS[agent_id]
+    return alive
+
+
 def _agent_public(record: dict) -> dict:
     public = {k: record[k] for k in
               ("id", "task", "branch", "worktree", "status", "rc", "started", "session")}
@@ -707,8 +743,7 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
         "kind": "agent", "actor": "agent", "file": filename,
         "summary": summary,
     })
-    threading.Thread(target=_reap_agent, args=(agent_id, proc, log_file),
-                     daemon=True).start()
+    _start_reaper(_reap_agent, agent_id, proc, log_file)
     return _agent_public(record)
 
 
@@ -756,8 +791,7 @@ def start_review(filename: str, stage: str) -> dict:
         "kind": "agent", "actor": "agent", "file": filename,
         "summary": f"{name} is checking {filename} is still true of the codebase",
     })
-    threading.Thread(target=_reap_review, args=(agent_id, proc, log_file),
-                     daemon=True).start()
+    _start_reaper(_reap_review, agent_id, proc, log_file)
     return _agent_public(record)
 
 
@@ -1110,8 +1144,7 @@ def start_pr_review(filename: str, stage: str) -> dict:
         "summary": (f"{name} is reviewing {filename}'s PR — "
                     f"{reviews.line(pinned)}"),
     })
-    threading.Thread(target=_reap_pr_review, args=(agent_id, proc, log_file),
-                     daemon=True).start()
+    _start_reaper(_reap_pr_review, agent_id, proc, log_file)
     return _agent_public(record)
 
 
@@ -1202,8 +1235,7 @@ def start_pr_fix(filename: str, stage: str) -> dict:
         "kind": "agent", "actor": "agent", "file": filename,
         "summary": summary,
     })
-    threading.Thread(target=_reap_pr_fix, args=(agent_id, proc, log_file),
-                     daemon=True).start()
+    _start_reaper(_reap_pr_fix, agent_id, proc, log_file)
     return _agent_public(record)
 
 
