@@ -409,6 +409,137 @@ def _reviews(task: dict, candidate: dict, verdict_now: dict | None) -> dict:
     }
 
 
+# ── the review status a card face wears (task 152) ─────────────────────
+#
+# One plain answer to "has the work as it stands now been approved by
+# Bench's own PR review?", read from the same records the review rows
+# and the merge gate read: Bench's durable verdict bound to the exact
+# commit (`gates.verdict_at`, which already drops a verdict given before
+# the newest retarget), the runs in this board's registry, and the
+# candidate commit. Never from the lane, GitHub's formal state, a
+# verdict parsed out of the card's text or a review checkout's label:
+# each of those is shown elsewhere in its own words, and none of them is
+# Bench's approval of this commit.
+#
+# It is a fact about review, not a delivery status: an approved review
+# can sit beside a failed check, a missing sign-off or any other unmet
+# requirement, and says nothing about whether the card may merge.
+
+REVIEW_WORDS = {
+    # word: (label, tone)
+    "review-approved": ("Review approved", "calm"),
+    "review-changes": ("Changes requested", "alarm"),
+    "review-running": ("Review in progress", "working"),
+    "review-outdated": ("Review outdated", "neutral"),
+    "review-incomplete": ("Review incomplete", "alarm"),
+    "review-unavailable": ("Review status unavailable", "neutral"),
+    "review-pending": ("Review pending", "neutral"),
+}
+
+_NOT_MERGE = ("This is Bench's own PR review, not GitHub approval, a "
+              "person's acceptance or permission to merge.")
+
+
+def _review_runs(task: dict, ctx: dict) -> list[dict]:
+    """This card's PR-review runs, newest first. A relevance check rides
+    the same `review` mode but pins no pull request, so it carries no
+    `review` record and is not one of these."""
+    return sorted((r for r in ctx["agents"]
+                   if r.get("task") == task["file"] and r.get("review")),
+                  key=lambda r: r.get("started") or 0, reverse=True)
+
+
+def review_status(task: dict, ctx: dict, candidate: dict,
+                  verdict_now: dict | None) -> dict:
+    """The one review status a card wears: its word, label, sentence and
+    tone, and the commit it is about. Reads only; see the block above."""
+    filename = task["file"]
+    commit = candidate.get("commit") if candidate.get("state") == "present" \
+        else None
+    runs = _review_runs(task, ctx)
+    running = next((r for r in runs if r.get("status") == "running"), None)
+    recorded = gates.verdicts_for(filename)
+
+    def out(word: str, sentence: str, head: str | None = None) -> dict:
+        label, tone = REVIEW_WORDS[word]
+        return {"word": word, "label": label, "tone": tone,
+                "sentence": sentence, "head": head, "commit": commit}
+
+    if running is not None:
+        pinned = (running.get("review") or {}).get("head")
+        about = (f"of {_short(pinned)}" if pinned
+                 else "of the pull request's head")
+        stale = bool(commit and pinned and pinned != commit)
+        return out("review-running",
+                   f"{running.get('name') or 'An agent'} is reviewing the PR "
+                   f"{about}." + (f" The branch has since moved to "
+                                  f"{_short(commit)}, so its verdict will be "
+                                  f"about an earlier commit." if stale else "")
+                   + " Nothing is approved until it records a verdict.",
+                   pinned)
+    if not commit:
+        why = {"none-yet": "there is no implementation commit on this board "
+                           "yet",
+               "delivered": "the work was delivered and its branch is gone",
+               }.get(candidate.get("state"),
+                     "the commit this card would merge cannot be read here")
+        return out("review-unavailable",
+                   f"Which commit a review would be about is not known: "
+                   f"{why}. No approval is shown without one.")
+    if verdict_now is not None:
+        head = verdict_now.get("head")
+        if verdict_now.get("verdict") == "APPROVE":
+            return out("review-approved",
+                       f"Bench's PR review approved {_short(head)}, the "
+                       f"commit this card would merge. {_NOT_MERGE}", head)
+        return out("review-changes",
+                   f"Bench's PR review asked for changes at {_short(head)}, "
+                   f"the commit this card would merge.", head)
+    # Nothing about this commit. A review run that ended without a verdict
+    # after the newest recorded one is an incomplete review, said so.
+    newest = recorded[0] if recorded else None
+    since = float((newest or {}).get("recorded") or 0)
+    last = runs[0] if runs else None
+    if last is not None and last.get("status") != "running" \
+            and float(last.get("started") or 0) > since:
+        return out("review-incomplete",
+                   f"The last PR review ({last.get('name') or 'an agent'}) "
+                   f"ended without a verdict. Nothing about "
+                   f"{_short(commit)} is approved; ◔ review PR asks again.")
+    before = gates.verdict_before_retarget(filename, commit)
+    if before is not None:
+        word = ("approved" if before.get("verdict") == "APPROVE"
+                else "asked for changes at")
+        return out("review-outdated",
+                   f"Bench's PR review {word} {_short(commit)} before the "
+                   f"card's target changed, so it is about another diff. "
+                   f"{_short(commit)} needs a fresh review.",
+                   before.get("head"))
+    if newest is not None:
+        word = ("approved" if newest.get("verdict") == "APPROVE"
+                else "asked for changes at")
+        return out("review-outdated",
+                   f"Bench's PR review {word} {_short(newest.get('head'))}, "
+                   f"an earlier commit. {_short(commit)} has not been "
+                   f"reviewed, so that verdict is history.",
+                   newest.get("head"))
+    rounds = [r for r in acceptance.rounds(task.get("body") or "")
+              if r.get("verdict")]
+    if rounds:
+        # Text in the card claims a verdict Bench holds no record of: a
+        # legacy or hand-written summary. Never read as an approval.
+        report = rounds[-1]
+        return out("review-unavailable",
+                   f"The card's text reports a PR review "
+                   f"({report['verdict'].lower()}) at "
+                   f"{_short(report.get('commit'), 'an unrecorded revision')}"
+                   f", but Bench has no recorded verdict for it, so it is "
+                   f"not shown as an approval.", report.get("commit"))
+    return out("review-pending",
+               f"No Bench PR review of {_short(commit)} yet. ◔ review PR "
+               f"asks for one.")
+
+
 def _optional(policy_doc: dict, required: set[str], mine: list[dict]) -> int:
     """Checks this card may ask for, or has records of, that no gate
     requires — counted apart, never in a headline (design §7)."""
@@ -539,6 +670,7 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
         "counts": counts,
         "history": history,
         "reviews": _reviews(task, candidate, verdict_now),
+        "review": review_status(task, ctx, candidate, verdict_now),
         "source": {
             "pr": ({"observed": observed, "from": pr.get("from"),
                     "age": round(ctx["now"] - observed, 1)
@@ -1002,7 +1134,7 @@ _TTL = 15.0
 _BOARD: tuple | None = None
 
 COMPACT = ("status", "primary", "candidate", "counts", "history", "detail",
-           "reviews")
+           "reviews", "review")
 
 # What an action keeps in the compact reading: enough for the page to draw
 # it and route it, never anything the page would re-decide from.
@@ -1131,7 +1263,13 @@ def board(collected: dict, phase_state: dict | None = None,
                 "counts": {"required": 0, "met": 0},
                 "history": {"older": 0, "optional": 0, "obsolete": 0},
                 "detail": None, "pr": None,
-                "reviews": {"bench": None, "report": None}}
+                "reviews": {"bench": None, "report": None},
+                "review": {"word": "review-unavailable",
+                           "label": REVIEW_WORDS["review-unavailable"][0],
+                           "tone": "neutral", "head": None, "commit": None,
+                           "sentence": "The review status could not be "
+                                       "read here, so no approval is "
+                                       "shown."}}
     with _LOCK:
         _BOARD = (key, found)
     return found
