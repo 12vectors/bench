@@ -134,7 +134,7 @@ const NEXT = {
   waiting: { label: 'See why work waits', section: 'work' },
 };
 
-function nextStep(word) { return NEXT[word] || NEXT.waiting; }
+function stepFor(word) { return NEXT[word] || NEXT.waiting; }
 
 function orchHref(section, item) {
   return formatRoute({ view: 'orchestrator', section: section || 'overview',
@@ -242,6 +242,6 @@ const SOURCE_WORDS = {
 };
 
 export {
-  ageWords, capacityWords, cardEntryHtml, GROUP_WORDS, nextStep, orchHref,
+  ageWords, capacityWords, cardEntryHtml, GROUP_WORDS, stepFor, orchHref,
   overall, RUN_WORDS, scopeName, SECTION_WORDS, SOURCE_WORDS, STATES, workGroup
 };

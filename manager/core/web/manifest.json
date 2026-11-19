@@ -201,8 +201,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "lib/orchwords.js": {
-   "bytes": 11315,
-   "sha256": "d889bb3edfc379622ebfbea8c9f96e84318c17af565230556dbb6c918a5939fc",
+   "bytes": 11313,
+   "sha256": "8eb5c54eda8403988f15caf070fdaef30a9518f195392c4cfa01beb37a2c98be",
    "type": "text/javascript; charset=utf-8"
   },
   "lib/resource.js": {
@@ -301,8 +301,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/orchestrator.js": {
-   "bytes": 81780,
-   "sha256": "9e8f0d80302bcda99e197919cd447b0ee38b9b16cb5378cba078d8ac387fef29",
+   "bytes": 81808,
+   "sha256": "c8ccd932803e65110a239e41a1ffd1080de78d843582dcac6eb1b4cce881e8d2",
    "type": "text/javascript; charset=utf-8"
   },
   "views/phases.js": {

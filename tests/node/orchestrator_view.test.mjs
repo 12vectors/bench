@@ -25,7 +25,7 @@ const quiet = { offline: false, status: 'enabled', configured: true, unknownOps:
   replica: false, reasoning: false, launching: false, working: false, managed: 1 };
 
 test('every state the specification names has its word, and the first that holds leads', async () => {
-  const { overall, STATES, nextStep } = await load('lib/orchwords.js');
+  const { overall, STATES, stepFor } = await load('lib/orchwords.js');
   const cases = [
     [{ offline: true, status: 'paused' }, 'offline'],
     [{ status: 'invalid' }, 'invalid'],
@@ -49,7 +49,7 @@ test('every state the specification names has its word, and the first that holds
     assert.equal(got.word, want, JSON.stringify(facts));
     // a word is always there to read, never only a colour
     assert.ok(got.label && got.sentence, want);
-    assert.ok(nextStep(got.word).label, want);
+    assert.ok(stepFor(got.word).label, want);
   }
   for (const [word, s] of Object.entries(STATES)) {
     assert.ok(['alarm', 'working', 'calm', 'idle', 'neutral'].includes(s.tone), word);

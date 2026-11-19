@@ -24,7 +24,7 @@ import { arming } from '../lib/arm.js';
 import { $, esc } from '../lib/dom.js';
 import { setHtml } from '../lib/keyed.js';
 import { md } from '../lib/md.js';
-import { ageWords, capacityWords, GROUP_WORDS, nextStep, orchHref, overall, RUN_WORDS, scopeName, SECTION_WORDS, SOURCE_WORDS, workGroup } from '../lib/orchwords.js';
+import { ageWords, capacityWords, GROUP_WORDS, stepFor, orchHref, overall, RUN_WORDS, scopeName, SECTION_WORDS, SOURCE_WORDS, workGroup } from '../lib/orchwords.js';
 import { cardId, findCard, ORCH_SECTIONS } from '../lib/route.js';
 import { scheduleRender } from '../lib/schedule.js';
 import { ago } from '../lib/time.js';
@@ -280,7 +280,7 @@ function navHtml(section) {
 function stripHtml() {
   const f = facts();
   const st = overall(f);
-  const next = nextStep(st.word);
+  const next = stepFor(st.word);
   const r = orch().reading;
   const nextHtml = next.action === 'reload'
     ? btn('reload', next.label, { act: 'reload', primary: true })
@@ -817,7 +817,7 @@ function phaseHtml(p, isSel) {
     `<div><dt>integrated</dt><dd>${(p.integrated || []).length ? esc((p.integrated || []).map(x => '#' + x).join(', ')) + ' — in the phase branch, not delivered' : 'none yet'}</dd></div>` +
     (p.delivered !== undefined ? `<div><dt>delivered</dt><dd>${p.delivered ? 'yes' : 'not yet'}</dd></div>` : '') +
     `</dl>` +
-    (scope ? `<details class="o-fold" data-okeep="pauth-${esc(n)}"${keepOpen('pauth-' + n, isSel)}><summary>Effective authority and capacity (parent ∩ phase)</summary>${authorityHtml(scope)}${capacityHtml(scope)}</details>` : '') +
+    (scope ? `<details class="o-fold" data-okeep="pauth-${esc(n)}"${keepOpen('pauth-' + n, isSel)}><summary>Effective authority and capacity (what both the Bench scope and this phase grant)</summary>${authorityHtml(scope)}${capacityHtml(scope)}</details>` : '') +
     (members.length ? `<h4>Members</h4><ul class="o-rows">${members.join('')}</ul>` : '') +
     (acts.length ? `<h4>Actions</h4><div class="o-actions">${acts.join('')}</div>` : '') +
     `<p><a data-route href="/phases/${esc(n)}">Open its lane in Phases</a></p></article>`;
