@@ -230,13 +230,19 @@ class OrchestratorControls(unittest.TestCase):
         order = SECTIONS[1:] + SECTIONS[:1]
         clicks = []
         for section, path, title in order:
-            before = b.eval("history.length")
             # the previous destination keeps focus, as it does after a click
             b.eval("document.querySelector('#oshell .o-nav a.on').focus()")
             self.click_through_repaint(b, f"#oshell .o-nav a[href='{path}']")
             self.assert_section(b, section, path, title)
-            self.assertEqual(before + 1, b.eval("history.length"), f"{section}: not one history entry")
             clicks.append(section)
+        # one entry per click (history.length is capped at 50, so walk it):
+        # Back from Overview is Agreement, and again Activity
+        for section, path, title in (SECTIONS[6], SECTIONS[5]):
+            b.eval("history.back()")
+            self.assert_section(b, section, path, title)
+        for section, path, title in (SECTIONS[6], SECTIONS[0]):
+            b.eval("history.forward()")
+            self.assert_section(b, section, path, title)
         metric("navOneClick", clicks)
         # a reading landing while the button is down: the same, again
         b.eval("document.querySelector('#oshell .o-nav a.on').focus()")
@@ -307,6 +313,11 @@ class OrchestratorControls(unittest.TestCase):
             sel = json.dumps(DRAFT_BTN)
 
             def measure(state):
+                # colours fade (.14s): read them where they come to rest
+                time.sleep(0.05)
+                if not b.wait("!document.getAnimations().some(a => a instanceof CSSTransition"
+                              " && a.playState === 'running')", 3):
+                    raise bv.CheckFailed(f"{which} {state}: transitions never settled")
                 m = b.eval(MEASURE_JS % sel)
                 readings[f"{which}:{state}"] = m
                 self.assertTrue(m and m["text"], f"{which} {state}: no visible label ({m})")
