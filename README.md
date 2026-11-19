@@ -21,6 +21,17 @@ usual setup is one required check and one review; anything more is a
 deliberate choice of distinct assurance ("From evidence to merge" in the
 docs).
 
+When clicking every step yourself gets old, hand it to an
+**orchestrator**. You stay the product owner: you move a card into To
+Do, answer the questions it raises on the card, and set the limits and
+merge rules. It acts as the project manager for the cards *you* moved —
+launching the agents, asking bench for the checks, getting a review from
+a different model, sending failures back for repair, and merging only
+where and how you allowed. It is off until you apply an operating
+agreement, it never takes a card someone else moved, and everything it
+does is written on the card ("Delegate work to an orchestrator" in the
+docs).
+
 **Docs: [bench.12vectors.com](https://bench.12vectors.com)** — guides,
 concepts, and a settings reference, every page of it generated from this
 repository's own markdown, so what the docs say and what bench does

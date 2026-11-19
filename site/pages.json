@@ -248,6 +248,72 @@
       "to": "## Stages"
     },
     {
+      "path": "/guides/orchestration/",
+      "title": "Delegate work to an orchestrator",
+      "layout": "article",
+      "section": "Guides",
+      "description": "You stay the product owner; an orchestrator runs the cards you moved into To Do — agents, checks, an independent review, repair and an allowed merge — under an agreement you apply, with every step written on the card.",
+      "lede": "What changes when you hand the clicking to an orchestrator: a worked example from a teammate's idea to a merged card, what you decide and where, what it never does, how to turn it on, and the sixteen decisions it is built on.",
+      "source": "AGENTS.md",
+      "from": "### Start here: you own the product, the orchestrator runs the project",
+      "to": "### Operating agreements, scopes and one installation"
+    },
+    {
+      "path": "/concepts/orchestration-agreements/",
+      "title": "Agreements and ownership",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "The operating agreement: what each scope may do and how much, narrowed from Bench to phase; one designated installation; and the last mover — not the last editor — deciding whose a card is.",
+      "lede": "The foundation every orchestrated action asks first: the agreement in force and its defaults, how a phase can only narrow its parent, which installation may execute, and how a card's latest attributable move decides whether it is yours to orchestrate.",
+      "source": "AGENTS.md",
+      "from": "### Operating agreements, scopes and one installation",
+      "to": "### Orchestrator reasoning: launched agents, public responses"
+    },
+    {
+      "path": "/concepts/orchestration-reasoning/",
+      "title": "Reasoning and decisions",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "Every judgement is a launched coding-agent job given the card's context by exact reads, answering in a validated public response; its questions, your answers and its records live on the card.",
+      "lede": "How an orchestrator thinks without a hidden model loop: the read-only reason intent, what context it is pinned, the response contract and what is refused, and the card's own record of questions, answers, blockers and actions.",
+      "source": "AGENTS.md",
+      "from": "### Orchestrator reasoning: launched agents, public responses",
+      "to": "### Scheduling: bounded passes, durable operations"
+    },
+    {
+      "path": "/concepts/orchestration-scheduling/",
+      "title": "Scheduling and recovery",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "Bounded passes over a durable operation ledger: dependencies, priority and declared overlap, capacity reserved before a launch, crash windows reconciled, failures classified — and stalled work diagnosed, never killed for silence.",
+      "lede": "What a pass does and what it never does twice: how work is chosen, how an intent and a receipt make a restart safe, what is retried and what is held for you, and how a stalled or failed run is diagnosed within a fixed number of attempts.",
+      "source": "AGENTS.md",
+      "from": "### Scheduling: bounded passes, durable operations",
+      "to": "### Delivery: checks, independent review, repair and your merge policy"
+    },
+    {
+      "path": "/concepts/orchestration-delivery/",
+      "title": "Delivery and phase scopes",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "Checks at the exact head, a review by a different model, bounded repair and a merge only under your rules — and a phase scope that integrates its members and delivers the integrated head.",
+      "lede": "From a card in Review to Done without a click of yours, and the same for a phase: what independent review has to prove, why ungated is never called verified, how uncertain merges reconcile, and why a member integrated into its phase branch is not delivered.",
+      "source": "AGENTS.md",
+      "from": "### Delivery: checks, independent review, repair and your merge policy",
+      "to": "### The Orchestrator view"
+    },
+    {
+      "path": "/concepts/orchestrator-view/",
+      "title": "The Orchestrator view",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "One place to read and steer orchestration — work, decisions, phases, recovery, activity and the agreement — and what the end-to-end tests prove about all of it, and what stays yours.",
+      "lede": "Where a person reads and acts on everything orchestration does: the seven sections and their actions, the ways in from the Board and a card, then what the cross-layout journeys prove, what they cannot, and the maintenance acts that stay a person's.",
+      "source": "AGENTS.md",
+      "from": "### The Orchestrator view",
+      "to": "## Pull requests"
+    },
+    {
       "path": "/concepts/team-mode/",
       "title": "Team mode",
       "layout": "article",
