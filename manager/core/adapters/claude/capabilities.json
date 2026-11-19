@@ -50,6 +50,21 @@
     "delivery": "exact-read",
     "representations": ["text", "image", "pdf"]
   },
+  "models": {
+    "_doc": [
+      "Which --model names are one model (task 142): the full names this",
+      "adapter knows, and the aliases Claude Code resolves to one of them.",
+      "Core reads it only to tell an independent reviewer's model from the",
+      "implementer's; it is never a catalogue or an availability claim. A",
+      "name in neither list cannot be shown to be any particular model, so",
+      "an independent review that depends on it is refused rather than",
+      "assumed. A local adapter override may extend both lists."
+    ],
+    "canonical": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5",
+                  "claude-fable-5-2"],
+    "aliases": {"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5",
+                "haiku": "claude-haiku-5-5", "fable": "claude-fable-5-2"}
+  },
   "unsupported": {
     "filesystem-sandbox": "Claude Code's permission rules match tool inputs; they cannot confine a run's reads to a named set of files, and the shell it is granted is not sandboxed. A pinned context bundle is a guaranteed input, never a boundary on reading.",
     "network-policy": "the CLI exposes no network boundary this adapter could set"

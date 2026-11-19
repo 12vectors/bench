@@ -831,6 +831,20 @@ def adapter_identity(name: str | None = None) -> dict:
                 if str(r) in INPUT_REPRESENTATIONS],
             "why": str(declared_inputs.get("why") or "")[:400] or None,
         }
+    # which model names the harness knows to be one model (task 142): its
+    # full names, and the aliases its CLI resolves to one of them. Read
+    # only to tell a different model from the same model under another
+    # name; absent, no name can be shown to be any particular model.
+    declared_models = data.get("models")
+    if isinstance(declared_models, dict):
+        canonical = [str(m).strip().lower() for m in
+                     declared_models.get("canonical") or []
+                     if isinstance(m, str) and m.strip()][:200]
+        aliases = {str(k).strip().lower(): str(v).strip().lower()
+                   for k, v in (declared_models.get("aliases") or {}).items()
+                   if isinstance(k, str) and isinstance(v, str)
+                   and str(v).strip().lower() in canonical}
+        found["models"] = {"canonical": canonical, "aliases": aliases}
     return found
 
 

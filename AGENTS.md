@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine / reasoning < scheduler < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine / reasoning / coordinate < scheduler < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -336,6 +336,13 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   identity, scope, evidence references, bounds and binding — before it
   is kept. It executes nothing a response proposes (see "Orchestrator
   reasoning: launched agents, public responses")
+- `coordinate.py` — delivering a standalone card in review (task 142):
+  its required checks, an independent review once the reviewer's
+  resolved model is shown to differ from every implementer's, a bounded
+  repair, and a delegated merge under the merge rules you configured,
+  pinned to the exact head; uncertain merges reconcile against the
+  delivered and recovery records and the remote (see "Delivery: checks,
+  independent review, repair and your merge policy")
 - `scheduler.py` — bounded orchestration passes (task 141): observe run
   endings, reconcile operations left without a receipt, plan by
   dependencies, priority, fairness and declared `**Touches:**` overlap,
@@ -6034,6 +6041,101 @@ section above), keyed by the operation so a replay writes once. `GET
 `unmanaged`), its code and its reason, the circuit breaker, the last
 pass and the ledger's counts — read from files, with nothing reserved,
 acquired, written or launched.
+
+### Delivery: checks, independent review, repair and your merge policy
+
+Once a standalone card's work is in `review/`, the same pass carries it
+the rest of the way (task 142, `coordinate.py`): the candidate's required
+checks, an independent review of that exact head, a bounded repair when
+either says no, and — only where the agreement delegates `merge` — the
+merge, under the merge rules you configured. Each step is an existing
+authority's own door: **Run required checks** (`required.start`, under a
+person's work reading, `trigger: orchestrator`), **◔ review PR**
+(`agents.start_pr_review`), **↻ act on PR** (`agents.start_pr_fix`) and
+**merge & clean up** (`completion.complete_task`). A phase's members and
+phase cards are their phase scope's, not this pass's.
+
+| authority word | what it lets the pass do |
+| --- | --- |
+| `review` | ask bench for the candidate's required checks (the `verify` action: no slot, no start) and launch an independent review (a review slot) |
+| `repair` | launch ↻ act on PR after a failed check or a request for changes, up to `repairRounds` per card (an implementation slot) |
+| `merge` | merge & clean up, waiting for exactly the requirements you configured |
+
+**One head decides.** Every step is read against the commit
+`gates.candidate` names now, and every operation is keyed by it. A new
+commit makes earlier checks history (the gate's relevance rule), an
+earlier verdict another commit's, and earlier operations about something
+else: a moved head is asked about afresh, never answered by what was
+selected for the old one. A merge takes exactly that commit —
+`complete_task(expect_head=…)` pins it on an ungated board too, and a
+branch that moved refuses with nothing merged.
+
+**Independent means a different model, shown to be one (D3).** Before a
+review launches, and again immediately before, the reviewer's resolved
+identity — the review purpose's harness and model — is compared with
+every implementer's: each run on the card that rode `work` or `act-pr`,
+from its frozen manifest, and what those two purposes resolve to now (a
+repair is an `act-pr` run). Names are compared through what the harness
+declares in its `capabilities.json` `models` block — its full names and
+the aliases its CLI resolves — so `opus` and `claude-opus-5-5` are one
+model. Refused, with a remedy and nothing launched:
+
+| code | what it means | fix |
+| --- | --- | --- |
+| `same-model` | the reviewer would ride an implementer's model, under any name | set `BOARD_AGENT_MODEL_REVIEW` to another model |
+| `reviewer-model-unresolved` | no review model is set, so the harness picks one bench cannot name | name the review model |
+| `implementer-model-unknown` | an implementer rode the harness default | name the work and PR-fix models; review that run yourself |
+| `model-identity-unverified` | a name the harness does not declare | use a declared name, or declare it in a local adapter override |
+| `review-unavailable` | the review harness is not installed or does not run reviews | choose another harness in Settings → Agents |
+
+A verdict counts toward this step only when the run that gave it is shown
+independent the same way, from its own manifest; one that is not is
+shown (`counted`) and a new review is asked for. A request for changes is
+acted on whoever gave it. A different model alone proves nothing about
+the evidence: the review is a separate read-only run in its own pinned
+checkout, and checks are bench's records at the head — never a report.
+
+**Your merge policy, as you set it (D4).** A delegated merge waits for
+the reading `orchestrator.authorize` takes of `gates.evaluate`: unmet
+blocks (`requirements-unmet`), running holds, and an ungated rule merges
+labelled *ungated — nothing is required by your policy, so this merge is
+not verified*. With no rule, the card says **No checks required by your
+policy**; no check is run, none is called passed, no gate is turned on and
+no override is granted. Optional checks are never run here. Without the
+`merge` word the card reads `merge-not-delegated`: ready, and yours.
+
+**Distinct endings, each on the card.** Every blocked step writes a
+`blocker` record on the card once per head (cleared when the card moves
+on), and every step's intent and receipt are `action` records:
+
+| code | what happened |
+| --- | --- |
+| `repair-exhausted` | the card has spent its `repairRounds`; an `attempt` record says *exhausted* |
+| `repair-no-change` | a repair ended without a new commit |
+| `check-not-granted` | a required check a person's work reading may not ask for — the permission is not widened |
+| `verification-setup-failed` | a required check could not reach a verdict (preparation failed, refused, no verdict): not repaired |
+| `checks-unanswered` | checks asked at this head ended without answering; asking again is yours |
+| `authority-revoked` | the agreement, a pause, an exclusion or another person's move withdrew the step between the decision and the act |
+| `review-not-independent` | as above |
+| `step-refused` | a check batch, review or repair launch was refused at this head (its preflight said no); it is not asked again until the head moves or a person releases the operation |
+| `requirements-unmet`, `merge-refused`, `not-published`, `partial` | the merge rules, `complete_task` or publication said no |
+
+**Uncertain merges reconcile, never repeat.** A merge's intent is written
+before it. An intent found without a receipt is settled from the
+delivered record (merged), the completion's recovery record (merged, not
+published — its own retry publishes without merging again), then the
+application remote itself: a head the remote's target already holds is
+finished by `completion.complete_delivered` — cleanup and the move, no
+merge — and a merge the next pass finds already landed is reconciled the
+same way. A local merge that neither the base here nor the remote holds
+provably did not happen. Anything else is held `unknown` for a person's
+`POST /api/orchestration/operation`. Nothing here releases, deploys or
+promotes anything.
+
+`GET /api/orchestration`'s `schedule.delivery` lists every review card
+with its state, code, reason, head, check words, review independence and
+merge label — local records and local git only; it asks no remote and
+launches nothing.
 
 ## Pull requests
 

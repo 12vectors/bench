@@ -65,7 +65,7 @@ L23 agents previews readiness
 L24 setuptasks
 L25 setupguide
 L26 phases
-L27 refine reasoning
+L27 refine reasoning coordinate
 L28 scheduler
 L29 routes watch
 L30 httpd
@@ -205,6 +205,19 @@ through `taskfiles.move_task` and `agents.start_agent` with
 It has no git of its own and no second launch path. `board` starts its
 beat; `routes` serves its read-only projection and a person's settlement
 of a held operation.
+
+`coordinate` (L27, beside `reasoning`, task 142) is the delivery half of
+a pass, for standalone cards already in `review/`: the candidate's
+required checks through `required.start`, an independent review through
+`agents.start_pr_review` once the reviewer's resolved model is shown to
+differ from every implementer's (by the names each harness declares in
+`capabilities.json`, read by `profiles.adapter_identity`), a bounded
+repair through `agents.start_pr_fix`, and a delegated merge through
+`completion.complete_task` with the exact head pinned — or
+`completion.complete_delivered` when the remote already holds it. Each
+step is an `operations` record keyed by the candidate head, authorized by
+`orchestrator.authorize` immediately before it acts; `scheduler` calls it
+after its own launches and above it, so the engine still has one beat.
 
 `profiles.read_scope` (task 127) is a request-scoped memo, not a layer:
 a `ContextVar` that `routes.state_payload` sets for the length of one
@@ -347,7 +360,7 @@ L22 agents readiness previews
 L23 setuptasks
 L24 setupguide
 L25 phases
-L26 refine reasoning
+L26 refine reasoning coordinate
 L27 scheduler
 L28 watch routes
 L29 httpd
@@ -389,7 +402,7 @@ One owner per question; `AGENTS.md` describes each module in full.
 | stack maintenance | `stackactions` | the three confirmed stack actions — retarget, update from parent, clean up after proven delivery — each bound to the identities its sheet showed |
 | setup base | `setupbase`, `appinspect` | the setup decisions record, its journal, request identity and revision guards, and the agent area; the read-only inspection of the application's files |
 | surfaces | `agentsettings`, `settings`, `setupguide`, `setuptasks`, `readiness`, `previews` | configuration pages and the setup guide's areas (`setupguide` composes the other three) |
-| runs | `agents`, `phases`, `refine`, `reasoning`, `scheduler` | headless launches; the phase beat; refinement jobs; orchestrator reasoning jobs and their validated responses; the orchestration beat |
+| runs | `agents`, `phases`, `refine`, `reasoning`, `coordinate`, `scheduler` | headless launches; the phase beat; refinement jobs; orchestrator reasoning jobs and their validated responses; a review card's checks, independent review, repair and delegated merge; the orchestration beat |
 | composition | `watch`, `routes`, `httpd`, `board` | the disk poller; every route with its request class and handler; the socket, the class doors and the body checks; startup wiring |
 
 Standalone programs — `adapters/*/` and the `bench-verify` and
@@ -437,7 +450,7 @@ neither.
 | operating agreement (machine-local) and its draft (task 137) | `agreements` | `agreements._LOCK`, interprocess | the agreement yes; the draft no |
 | execution designation (portable), installation id | `execowner` | `execowner._LOCK`, interprocess; execution itself is the non-blocking `flock` on `execution.lock` | yes |
 | orchestrated launch ledger (append-only) | `orchestrator` | append | no |
-| orchestration operations: intent and receipt (task 141) | `operations` (`scheduler` decides) | `operations._LOCK`, interprocess | yes |
+| orchestration operations: intent and receipt (task 141) | `operations` (`scheduler` and `coordinate` decide) | `operations._LOCK`, interprocess | yes |
 
 **Durable writers** — the call sites passing `durable=True`, held equal
 to the code by `tests/test_records_adoption.py`:

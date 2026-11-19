@@ -106,7 +106,8 @@ def _record_delivered(filename: str, commit: str | None, target: str,
 # ── merge & clean up ────────────────────────────────────────────────────
 
 
-def complete_task(filename: str, stage: str) -> dict:
+def complete_task(filename: str, stage: str, *, expect_head: str | None = None,
+                  actor: str = "you") -> dict:
     """The user chose "merge & clean up" on a move to done: park the drive
     if it is this task's, merge the branch, remove the worktree and
     branches, then move the card. Every step narrates; a conflict aborts
@@ -129,6 +130,14 @@ def complete_task(filename: str, stage: str) -> dict:
     claimed before the first step and given back in a `finally` after the
     last one. The claim is what the card wears while this runs and what
     refuses a second request; see `state.claim_completing`.
+
+    `expect_head` is the commit a delegated merge (task 142) was decided
+    about. With it the merge takes exactly that commit — on an ungated
+    board too, where a person's click merges the branch as it stands —
+    and refuses, with nothing merged, when the branch or the gate's
+    reading names another. `actor` is who the card's move into `done/`
+    is attributed to: a person's click, or the orchestrator's own
+    automated move.
     """
     if stage not in config.STAGE_DIRS or stage == "done":
         raise ValueError("complete runs on a live-stage card")
@@ -139,13 +148,14 @@ def complete_task(filename: str, stage: str) -> dict:
         raise ValueError(f"{filename} is already being completed — the card "
                          f"is showing each step; nothing was started twice")
     try:
-        return _complete(filename, stage)
+        return _complete(filename, stage, expect_head, actor)
     finally:
         # every exit: merged, conflicted, on the wrong branch, or crashed
         state.release_completing(filename)
 
 
-def _complete(filename: str, stage: str) -> dict:
+def _complete(filename: str, stage: str, expect_head: str | None = None,
+              actor: str = "you") -> dict:
     """The steps themselves, run under the claim complete_task holds.
 
     Four outcomes, told apart: the merge into the base, its publication on
@@ -247,6 +257,14 @@ def _complete(filename: str, stage: str) -> dict:
             # — and a branch that moves after this line is a refusal or a
             # kept branch, never an unverified commit in the base.
             pinned = _pinned_head(decision, branch)
+            if expect_head:
+                now = _tip(branch)
+                if (pinned and pinned != expect_head) or now != expect_head:
+                    raise ValueError(
+                        f"{branch} is at {(pinned or now or 'no commit')[:12]}, "
+                        f"not {expect_head[:12]}, the commit this merge was "
+                        f"decided about — nothing was merged")
+                pinned = expect_head
             on_origin = config.app_merge_on_origin()
             merged_tip = pinned or _tip(branch)
             # (an ungated board pins nothing, and calls them exactly as before)
@@ -330,7 +348,7 @@ def _complete(filename: str, stage: str) -> dict:
         result.update({"partial": True, "stage": stage, "unmerged": unmerged,
                        "moved": False})
         return result
-    move_task(filename, stage, "done", actor="you")
+    move_task(filename, stage, "done", actor=actor)
     if merged and publication:
         _record_delivered(filename, publication.get("commit"),
                           publication.get("target") or "",
@@ -501,7 +519,8 @@ def remote_holds(rname: str, target: str, commit: str) -> tuple:
 
 
 def finish_delivered(filename: str, stage: str, branch: str, head: str,
-                     landing: str) -> dict:
+                     landing: str, *, actor: str = "you",
+                     how: str = "stack") -> dict:
     """Clean up a stacked card whose work the application base on the
     remote already holds (task 119: **Finish: clean up**), and move it to
     `done/`. Nothing is merged: the caller proved delivery with
@@ -516,11 +535,50 @@ def finish_delivered(filename: str, stage: str, branch: str, head: str,
                 "why": (f"{branch} has moved on to {unmerged['tip'][:12]}, "
                         f"which is not delivered")}
     changes.forget_pr(filename)
-    move_task(filename, stage, "done", actor="you")
-    _record_delivered(filename, head, landing, "stack")
+    move_task(filename, stage, "done", actor=actor)
+    _record_delivered(filename, head, landing, how)
     forget_recovery(filename)
     state.broadcast({"type": "board"})
     return {"moved": True, "cleanup": cleanup}
+
+
+def complete_delivered(filename: str, stage: str, head: str, *,
+                       actor: str = "orchestrator") -> dict:
+    """Finish a card whose exact head the application remote already
+    holds in its target — a merge whose reply was lost, or one made on
+    the host meanwhile (task 142). Nothing is merged: delivery is read off
+    the remote itself, the workspace is cleared under `_clean_up`'s rules
+    and the card moves. A stacked card is refused as merge & clean up
+    refuses it, and a remote that does not (or cannot) say it holds the
+    commit is a refusal, never a guess."""
+    if stage not in config.STAGE_DIRS or stage == "done":
+        raise ValueError("complete runs on a live-stage card")
+    if not state.claim_completing(filename, "reconciling a merge that landed…"):
+        raise ValueError(f"{filename} is already being completed — nothing "
+                         f"was started twice")
+    try:
+        task = changes.woven(filename, stage)
+        branch = changes.branch_of(filename)
+        target = plans.pr_base(filename, task)
+        _assert_lands_in_the_base(filename, target)
+        rname = changes.remote()
+        if not rname:
+            raise ValueError("this application has no remote, so delivery "
+                             "cannot be read off one — nothing was done")
+        held, _tip_now, why = _remote_holds(rname, target, head)
+        if held is not True:
+            raise ValueError(f"{rname}/{target} is not seen to hold "
+                             f"{head[:12]}" + (f": {why}" if why else "")
+                             + " — nothing was done")
+        state.record_board_event({
+            "kind": "agent", "actor": "board", "file": filename,
+            "summary": (f"{rname}/{target} already holds {head[:12]} — "
+                        f"reconciling {filename}: nothing is merged again")})
+        return {"merged": False, "reconciled": True,
+                **finish_delivered(filename, stage, branch, head, target,
+                                   actor=actor, how="reconciled")}
+    finally:
+        state.release_completing(filename)
 
 
 def _publish(filename: str, target: str, commit: str, on_origin: bool) -> dict:
