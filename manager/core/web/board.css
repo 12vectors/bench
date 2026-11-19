@@ -1567,9 +1567,16 @@
   .o-btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
   .o-btn.primary:hover{filter:brightness(1.08);color:var(--on-accent)}
   .o-btn.danger{color:var(--alarm)}
-  .o-btn.armed{color:var(--alarm);border-color:var(--alarm);background:var(--surface)}
-  .o-btn.busy{color:var(--accent);border-color:var(--accent);cursor:default}
+  /* armed and busy win over primary and over hover, in both themes: a
+     primary's hover set its on-accent label over the armed surface —
+     white on white in Daylight (task 147) */
+  .o-btn.armed,.o-btn.armed:hover,.o-btn.primary.armed,.o-btn.primary.armed:hover{
+    color:var(--alarm);border-color:var(--alarm);background:var(--surface);filter:none}
+  .o-btn.busy,.o-btn.busy:hover,.o-btn.primary.busy,.o-btn.primary.busy:hover{
+    color:var(--accent);border-color:var(--accent);background:var(--surface);filter:none;cursor:default}
   .o-btn:disabled{cursor:not-allowed;opacity:.6}
+  /* busy is disabled so it cannot fire twice, and still read in full */
+  .o-btn.busy:disabled{opacity:1;cursor:progress}
   .o-link{border:0;background:none;color:var(--accent);text-decoration:underline;padding:4px;min-height:32px}
   @media (pointer:coarse){.o-btn,.o-nav a,.o-option,.o-setting,.o-main summary,.o-link{min-height:44px}}
   .o-notice{padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface)}

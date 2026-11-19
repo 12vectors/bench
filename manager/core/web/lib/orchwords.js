@@ -136,6 +136,15 @@ const NEXT = {
 
 function stepFor(word) { return NEXT[word] || NEXT.waiting; }
 
+/* The next step as a link drawn on `section`: none when it would lead to
+   the page already shown (task 147) — "Review the operating agreement"
+   on the Operating agreement page is a link to itself. A step that acts
+   (a reload) or leaves the Orchestrator is always offered. */
+function stepHere(word, section) {
+  const step = stepFor(word);
+  return step.section && !step.href && step.section === (section || 'overview') ? null : step;
+}
+
 function orchHref(section, item) {
   return formatRoute({ view: 'orchestrator', section: section || 'overview',
                        ...(item ? { item } : {}) });
@@ -242,6 +251,6 @@ const SOURCE_WORDS = {
 };
 
 export {
-  ageWords, capacityWords, cardEntryHtml, GROUP_WORDS, stepFor, orchHref,
+  ageWords, capacityWords, cardEntryHtml, GROUP_WORDS, stepFor, stepHere, orchHref,
   overall, RUN_WORDS, scopeName, SECTION_WORDS, SOURCE_WORDS, STATES, workGroup
 };

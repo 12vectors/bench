@@ -167,3 +167,31 @@ class ThePagePaths(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheControlsRead(unittest.TestCase):
+    """Task 147: armed and busy Orchestrator buttons say their words in
+    both themes. The browser case measures computed colours; this keeps
+    the rules that make it so from being dropped by an edit."""
+
+    def setUp(self):
+        self.css = (REPO / "manager" / "core" / "web" / "board.css").read_text(encoding="utf-8")
+
+    def rule(self, selector):
+        import re
+        for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", self.css):
+            if selector in [s.strip() for s in m.group(1).split(",")]:
+                return m.group(2)
+        self.fail(f"no rule for {selector}")
+
+    def test_armed_and_busy_outrank_a_primary_under_the_pointer(self):
+        for sel in (".o-btn.primary.armed:hover", ".o-btn.armed:hover"):
+            body = self.rule(sel)
+            self.assertIn("color:var(--alarm)", body)
+            self.assertIn("background:var(--surface)", body)
+            self.assertIn("filter:none", body)
+        for sel in (".o-btn.primary.busy:hover", ".o-btn.primary.busy"):
+            body = self.rule(sel)
+            self.assertIn("color:var(--accent)", body)
+            self.assertIn("background:var(--surface)", body)
+        self.assertIn("opacity:1", self.rule(".o-btn.busy:disabled"))

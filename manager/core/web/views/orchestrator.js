@@ -20,11 +20,12 @@
    is reached for, so the view can be read on its own. */
 import { S } from '../app/state.js';
 import { fetch } from '../lib/api.js';
-import { arming } from '../lib/arm.js';
+import { ARM_MS, arming } from '../lib/arm.js';
 import { $, esc } from '../lib/dom.js';
 import { setHtml } from '../lib/keyed.js';
 import { md } from '../lib/md.js';
-import { ageWords, capacityWords, GROUP_WORDS, stepFor, orchHref, overall, RUN_WORDS, scopeName, SECTION_WORDS, SOURCE_WORDS, workGroup } from '../lib/orchwords.js';
+import { pressHold } from '../lib/press.js';
+import { ageWords, capacityWords, GROUP_WORDS, stepHere, orchHref, overall, RUN_WORDS, scopeName, SECTION_WORDS, SOURCE_WORDS, workGroup } from '../lib/orchwords.js';
 import { cardId, findCard, ORCH_SECTIONS } from '../lib/route.js';
 import { scheduleRender } from '../lib/schedule.js';
 import { ago } from '../lib/time.js';
@@ -277,12 +278,14 @@ function navHtml(section) {
     `</nav>`;
 }
 
-function stripHtml() {
+function stripHtml(section) {
   const f = facts();
   const st = overall(f);
-  const next = stepFor(st.word);
+  // never a link to the page already shown (task 147)
+  const next = stepHere(st.word, section);
   const r = orch().reading;
-  const nextHtml = next.action === 'reload'
+  const nextHtml = !next ? ''
+    : next.action === 'reload'
     ? btn('reload', next.label, { act: 'reload', primary: true })
     : next.href ? `<a class="o-btn primary" data-route data-o="next" href="${esc(next.href)}">${esc(next.label)}</a>`
       : `<a class="o-btn primary" data-route data-o="next" href="${esc(orchHref(next.section))}">${esc(next.label)}</a>`;
@@ -297,7 +300,7 @@ function stripHtml() {
     `<p>${esc(st.sentence)}</p>` +
     (r ? `<p class="o-dim">Agreement ${esc(r.effective.revision)}` +
       ` · ${esc(identityWords(r.identity))}</p>` : '') +
-    `</div><div class="o-acts">${nextHtml}${pause}</div>` +
+    `</div>${nextHtml || pause ? `<div class="o-acts">${nextHtml}${pause}</div>` : ''}` +
     (pause ? `<p class="o-effect">${esc(bench && bench.paused ? EFFECTS.resumeBench : EFFECTS.pauseBench)}</p>` : '') +
     `</section>`;
 }
@@ -347,7 +350,7 @@ function shellHtml() {
   const section = S.orchSection || 'overview';
   return navHtml(section) +
     `<div class="o-main"><h1 class="o-title">${esc(SECTION_WORDS[section] || 'Orchestrator')}</h1>` +
-    offlineHtml() + stripHtml() + noticeHtml() + sectionHtml(section) + `</div>`;
+    offlineHtml() + stripHtml(section) + noticeHtml() + sectionHtml(section) + `</div>`;
 }
 
 /* ── overview ────────────────────────────────────────────────────────── */
@@ -1210,17 +1213,28 @@ function keepOpen(key, dflt = false) {
   return (v === undefined ? dflt : v) ? ' open' : '';
 }
 
-function editing(root) {
-  const a = document.activeElement;
-  if (!a || !root.contains(a)) return false;
+/* a control a person types or chooses in: its repaint waits for them */
+function isField(a) {
+  if (!a || !a.tagName) return false;
   if (a.tagName === 'TEXTAREA' || a.tagName === 'SELECT') return true;
   return a.tagName === 'INPUT' && !['checkbox', 'radio', 'button'].includes(a.type);
+}
+
+function editing(root) {
+  const a = document.activeElement;
+  return !!a && root.contains(a) && isField(a);
 }
 
 function paint(root, html) {
   const a = document.activeElement;
   const mark = a && root.contains(a) ? a.getAttribute('data-o') : null;
   if (!setHtml(root, html)) return;
+  // an armed button drawn afresh keeps its countdown where its window is,
+  // rather than starting the drain again from full
+  for (const b of root.querySelectorAll('button.armed[data-o]')) {
+    const left = arms.remaining(b.getAttribute('data-o'));
+    if (left) b.style.setProperty('--arm-delay', `${Math.min(0, left - ARM_MS)}ms`);
+  }
   if (mark) {
     const el = root.querySelector(`[data-o="${CSS.escape(mark)}"]`);
     if (el && typeof el.focus === 'function') el.focus({ preventScroll: true });
@@ -1274,8 +1288,27 @@ function wire(root) {
     const k = e.target && e.target.dataset && e.target.dataset.okeep;
     if (k) o.open[k] = e.target.open;
   }, true);
-  // a field left: the repaint it held may run now
-  root.addEventListener('focusout', () => setTimeout(scheduleRender, 0));
+  // a field left: the repaint it held may run now. Only a field holds
+  // one, so focus moving between links and buttons asks for nothing
+  root.addEventListener('focusout', (e) => { if (isField(e.target)) setTimeout(scheduleRender, 0); });
+  // a press holds the repaint until its click is dispatched (lib/press.js):
+  // a repaint between the button going down and coming up would take the
+  // pressed control out of the page, and the click with it
+  root.addEventListener('pointerdown', (e) => { if (e.isPrimary !== false) pressing().down(); });
+  if (!pressWired) {
+    pressWired = true;
+    // capture, so every click handler runs after the hold has lifted
+    document.addEventListener('click', () => pressing().done(), true);
+    document.addEventListener('pointerup', () => pressing().up(), true);
+    document.addEventListener('pointercancel', () => pressing().done(), true);
+  }
+}
+
+let press = null;
+let pressWired = false;
+function pressing() {
+  if (!press) press = pressHold({ onRelease: scheduleRender });
+  return press;
 }
 
 /* The view's paint: reads what is stale, holds while a person types, and
@@ -1285,7 +1318,9 @@ function renderOrchestrator() {
   if (!root || !S.state) return;
   wire(root);
   loadOrch(false);
-  if (editing(root)) return;
+  // held while a person types, and while a pointer is down on the view:
+  // the release asks for this paint again
+  if (editing(root) || pressing().held()) return;
   paint(root, shellHtml());
 }
 

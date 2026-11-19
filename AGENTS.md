@@ -6556,6 +6556,17 @@ blockers) linking to that card in the right section. Both are read from
 revision, each scope's pause, the scope or reason per managed card) and
 `decisions` — one file read, no git history, no process.
 
+**One click is one click** (task 147). The view is painted from a
+string, so a repaint replaces its controls; a press therefore holds the
+view's repaint until the click it belongs to has been dispatched
+(`lib/press.js`), and the release asks for the paint it held. A repaint
+landing between the button going down and coming up — the focus leaving
+the previous control, a reading arriving — used to take the pressed link
+or button out of the page and the click with it. The status strip's next
+step is never a link to the page already shown, and an armed or busy
+button keeps its alarm or accent words over the surface in both themes,
+under the pointer and with focus.
+
 **Reading is free.** Opening the view or any section, a card's line and
 the strip run no agent, request no check, make no worktree and write
 nothing. The view holds its repaint while a field in it has focus, keeps

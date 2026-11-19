@@ -154,3 +154,85 @@ test('the agreement editor narrows a phase by writing false, and inherits by rem
   setPath(doc, 'bench.handback', 'list', '#12, 14  15', false);
   assert.deepEqual(doc.bench.handback, ['12', '14', '15']);
 });
+
+// Task 147: the strip's next step never links to the page already shown,
+// and a press holds the view's repaint until its click is dispatched.
+
+test('the next step is not offered as a link to the page already shown', async () => {
+  const { stepHere, stepFor } = await load('lib/orchwords.js');
+  // off: "Review the operating agreement" leads to the agreement…
+  assert.equal(stepHere('off', 'overview'), stepFor('off'));
+  assert.equal(stepHere('off', 'overview').section, 'agreement');
+  // …and is not drawn on it, nor is "Fix the agreement"
+  assert.equal(stepHere('off', 'agreement'), null);
+  assert.equal(stepHere('disabled', 'agreement'), null);
+  assert.equal(stepHere('invalid', 'agreement'), null);
+  // a step to another section is kept there
+  assert.equal(stepHere('needs-decision', 'agreement').section, 'decisions');
+  assert.equal(stepHere('paused', 'agreement').section, 'overview');
+  assert.equal(stepHere('paused', 'overview'), null);
+  assert.equal(stepHere('paused', undefined), null);
+  // a step that acts, or leaves the Orchestrator, is always offered
+  assert.equal(stepHere('offline', 'agreement').action, 'reload');
+  assert.equal(stepHere('empty', 'overview').href, '/board');
+});
+
+function clock() {
+  let t = 1000;
+  const timers = [];
+  return {
+    now: () => t,
+    later: (fn, ms) => { timers.push({ at: t + ms, fn }); },
+    tick(ms) {
+      t += ms;
+      for (const x of timers.splice(0)) { if (x.at <= t) x.fn(); else timers.push(x); }
+    },
+  };
+}
+
+test('a press holds the repaint until its click, and the release asks for it', async () => {
+  const { pressHold } = await load('lib/press.js');
+  const c = clock();
+  let asked = 0;
+  const p = pressHold({ now: c.now, later: c.later, onRelease: () => asked++ });
+  assert.equal(p.held(), false, 'nothing pressed holds nothing');
+  p.down();
+  assert.equal(p.held(), true, 'a press holds');
+  // a repaint asked for between down and up is held, not run
+  c.tick(150);
+  assert.equal(p.held(), true);
+  p.up();
+  assert.equal(p.held(), true, 'the click has not been dispatched yet');
+  p.done();                                  // the click (document, capture)
+  assert.equal(p.held(), false);
+  assert.equal(asked, 1, 'the release asks for the held repaint once');
+  c.tick(1000);
+  assert.equal(asked, 1, 'the settle timer of a finished press asks nothing more');
+  // a keyboard click has no press: nothing to release
+  p.done();
+  assert.equal(asked, 1);
+});
+
+test('a press dragged off its control, cancelled or never released stops holding', async () => {
+  const { pressHold, SETTLE_MS, MAX_MS } = await load('lib/press.js');
+  const c = clock();
+  let asked = 0;
+  const p = pressHold({ now: c.now, later: c.later, onRelease: () => asked++ });
+  p.down(); p.up();                          // no click follows
+  c.tick(SETTLE_MS - 1);
+  assert.equal(p.held(), true);
+  c.tick(1);
+  assert.equal(p.held(), false, 'a release with no click lapses after the settle');
+  assert.equal(asked, 1);
+  // a new press before an old settle runs is not cut short by it
+  p.down(); p.up(); p.down();
+  c.tick(SETTLE_MS * 2);
+  assert.equal(p.held(), true, 'the earlier release does not end the newer press');
+  p.done();
+  assert.equal(asked, 2);
+  // a release the page never saw: the hold ends by itself
+  p.down();
+  c.tick(MAX_MS + 1);
+  assert.equal(p.held(), false, 'a lost release cannot freeze the view');
+  assert.equal(asked, 3);
+});
