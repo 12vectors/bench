@@ -10,6 +10,7 @@ import { applyTheme } from './app/theme.js';
 import { fetch, onStalePage, post } from './lib/api.js';
 import { $ } from './lib/dom.js';
 import { holdRoute, linkFor, onCardLink, plainClick, replaceRoute, routeReady, routeWrites, setRouteSource, syncRoute } from './lib/nav.js';
+import { isNarrow, logOpenKey } from './lib/layout.js';
 import { CARD_VIEWS, findCard, parseRoute, routeOf } from './lib/route.js';
 import { onRender } from './lib/schedule.js';
 import { ago } from './lib/time.js';
@@ -305,36 +306,100 @@ document.addEventListener('keydown', (e) => {
 /* the activity log: drag its grip to resize, scroll to read back */
 {
   const grip = $('#loggrip'), body = $('#logbody');
-  const clamp = (px) => Math.min(Math.max(px, 80), Math.round(innerHeight * 0.6));
-  let h = clamp(parseInt(localStorage.getItem('bench-log-h'), 10) ||
-    Math.round(innerHeight * 0.30));
-  body.style.height = h + 'px';
+  // The panel may never take the board away (task 154). A height chosen
+  // on a desktop and read back on a phone, or one taken in portrait and
+  // kept through a rotation to landscape, used to push the bar holding
+  // the panel's own toggle below the window: a panel that could not be
+  // closed. So the remembered height is a wish, clamped to the window
+  // the page has now — a phone, or a window as short as a phone held
+  // sideways, gets at most 40% of it, and the board always keeps
+  // BOARD_MIN beside the header, the bar and the panel's own head — and
+  // clamped again whenever any of those changes. The wish itself is kept,
+  // so going back to a large window gives back the height chosen there.
+  const BOARD_MIN = 160, FLOOR = 48;
   let dragging = false, startY = 0, startH = 0;
-  grip.addEventListener('mousedown', (e) => {
+  const chrome = () => ['header', '#statusbar', '#loghead', '#loggrip']
+    .reduce((n, s) => n + ($(s)?.offsetHeight || 0), 0);
+  const most = () => Math.min(
+    Math.round(innerHeight * (isNarrow() || innerHeight < 560 ? 0.4 : 0.6)),
+    innerHeight - chrome() - BOARD_MIN);
+  const clamp = (px) => Math.max(Math.min(px, most()), FLOOR);
+  let wish = parseInt(localStorage.getItem('bench-log-h'), 10) ||
+    Math.round(innerHeight * 0.30);
+  let h = clamp(wish);
+  body.style.height = h + 'px';
+  const fit = () => {
+    if (dragging) return;
+    const next = clamp(wish);
+    if (next !== h) { h = next; body.style.height = h + 'px'; }
+  };
+  addEventListener('resize', fit);
+  // the header wrapping, More opening and the panel's head being drawn
+  // or opened all change what is left, so each one fits the panel again
+  if (typeof ResizeObserver === 'function') {
+    const watch = new ResizeObserver(fit);
+    for (const s of ['header', '#loghead', '#statusbar']) watch.observe($(s));
+  }
+  // pointer events, so a finger resizes it as a mouse does
+  grip.addEventListener('pointerdown', (e) => {
     dragging = true; startY = e.clientY; startH = body.offsetHeight;
     grip.classList.add('dragging'); e.preventDefault();
+    try { grip.setPointerCapture(e.pointerId); } catch { /* a synthetic pointer */ }
   });
-  document.addEventListener('mousemove', (e) => {
+  document.addEventListener('pointermove', (e) => {
     if (!dragging) return;
     h = clamp(startH + (startY - e.clientY));
     body.style.height = h + 'px';
   });
-  document.addEventListener('mouseup', () => {
+  const endDrag = () => {
     if (!dragging) return;
     dragging = false; grip.classList.remove('dragging');
+    wish = h;
     localStorage.setItem('bench-log-h', h);
-  });
+  };
+  document.addEventListener('pointerup', endDrag);
+  document.addEventListener('pointercancel', endDrag);
   body.addEventListener('scroll', () => {
     S.logStick = body.scrollTop + body.clientHeight >= body.scrollHeight - 8;
   });
 }
 
-/* the activity bar: toggle, archive dock, ⌘Z */
-$('#actbtn').addEventListener('click', () => {
-  S.logOpen = !S.logOpen;
-  localStorage.setItem('bench-log-open', S.logOpen ? '1' : '0');
+/* the activity bar: toggle, archive dock, ⌘Z.
+
+   Opening and closing the activity panel is a person's act and nothing
+   else's (task 154): no event, repaint, reading or navigation sets
+   S.logOpen. The choice is remembered for the layout it was made in — a
+   phone's apart from a desktop's — and kept as it is through a rotation
+   or a resize. */
+function setLogOpen(open) {
+  S.logOpen = open;
+  localStorage.setItem(logOpenKey(), open ? '1' : '0');
   renderBar(); renderLog();
+}
+$('#actbtn').setAttribute('aria-controls', 'logpanel');
+$('#actbtn').addEventListener('click', () => setLogOpen(!S.logOpen));
+$('#loghead').addEventListener('click', (e) => {
+  if (!e.target.closest('[data-logclose]')) return;
+  setLogOpen(false);
+  $('#actbtn').focus();
 });
+
+/* The header's secondary controls on a phone (task 154): the theme,
+   Refresh and the agent-commands note fold behind one labelled button,
+   and the project's path is not drawn, so the board is what a phone
+   shows first. Warnings never fold — a stalled sync, a halted phase, the
+   connection chip — and neither does the configuration check, which is
+   always the way in to a diagnosis. Above the phone width the button is
+   not drawn and nothing is folded. */
+{
+  const more = $('#hdrmore');
+  const set = (open) => {
+    document.querySelector('header').classList.toggle('more-open', open);
+    more.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  more.addEventListener('click', () => set(more.getAttribute('aria-expanded') !== 'true'));
+  set(false);
+}
 $('#tray').addEventListener('click', () => {
   const n = S.state && S.state.archivedCount || 0;
   toast(n ? `${n} archived — ⌘Z undoes the last one from this board` : 'Nothing archived yet. Drag a card here.');

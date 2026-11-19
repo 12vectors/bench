@@ -108,6 +108,8 @@ function renderBoard() {
     for (const stage of stages) {
       const col = document.createElement('section');
       col.className = 'kcol';
+      col.id = 'col-' + stage.slug;
+      col.setAttribute('aria-label', stage.label);
       col.appendChild(document.createElement('h2'));
       const drop = document.createElement('div');
       drop.className = 'drop';
@@ -132,6 +134,7 @@ function renderBoard() {
   } else {
     paintColumns();
   }
+  renderStageNav(stages);
   if (S.selected) {
     S.selected = allTasks().find(t => t.file === S.selected.file) || null;
     // a card that left the board while open (archived, deleted) closes its
@@ -139,6 +142,88 @@ function renderBoard() {
     if (!S.selected) syncRoute({ replace: true });
   }
   renderDrawer();
+}
+
+/* The stage strip (task 154). On a phone the board shows one stage at a
+   time, so a card needing attention three stages away would be out of
+   sight; the strip names every stage with how many cards it draws and
+   says which hold a card that needs attention. That reading is not made
+   here: it is whatever the cards in that column already wear — a failed
+   run, a halted phase, a delivery status in the alarm tone, drift — read
+   off the faces the column just painted, so the strip can never disagree
+   with the cards. A tap scrolls the board to the stage; the stage in view
+   is marked as the current one. The strip is drawn on every width and
+   shown only on a phone (board.css). Its buttons are built once per set
+   of stages and updated in place, so a repaint never takes a focused
+   button out from under a finger or a keyboard. */
+const ATTENTION = '.card.verdict-bad, .card.run-failed, .card.halted, .card .pill.drift';
+
+function stageInView() {
+  const board = $('#board');
+  const cols = [...board.children];
+  if (!cols.length) return null;
+  const left = board.getBoundingClientRect().left;
+  let best = cols[0], dist = Infinity;
+  for (const col of cols) {
+    const d = Math.abs(col.getBoundingClientRect().left - left);
+    if (d < dist) { dist = d; best = col; }
+  }
+  return best.id.replace(/^col-/, '');
+}
+
+function markStageInView() {
+  const at = stageInView();
+  for (const b of document.querySelectorAll('#stagenav [data-stage]')) {
+    if (b.dataset.stage === at) b.setAttribute('aria-current', 'true');
+    else b.removeAttribute('aria-current');
+  }
+}
+
+function renderStageNav(stages) {
+  const nav = $('#stagenav');
+  if (!nav) return;
+  const slugs = stages.map(s => s.slug).join('|');
+  if (nav.__stages !== slugs) {
+    nav.innerHTML = stages.map(s =>
+      `<button type="button" data-stage="${esc(s.slug)}" aria-controls="col-${esc(s.slug)}">` +
+      `<span class="tickmark" style="background:${STAGE_TINT[s.slug]}"></span>` +
+      `<span class="sname">${esc(s.label)}</span><span class="scount"></span>` +
+      `<span class="salarm" hidden>!</span></button>`).join('');
+    nav.__stages = slugs;
+    nav.querySelectorAll('[data-stage]').forEach(b => b.addEventListener('click', () => {
+      const col = document.getElementById('col-' + b.dataset.stage);
+      if (!col) return;
+      col.scrollIntoView({ block: 'nearest', inline: 'start' });
+      for (const o of nav.querySelectorAll('[data-stage]')) {
+        if (o === b) o.setAttribute('aria-current', 'true');
+        else o.removeAttribute('aria-current');
+      }
+    }));
+    const board = $('#board');
+    if (!board.__stageScroll) {
+      board.__stageScroll = true;
+      let pending = 0;
+      board.addEventListener('scroll', () => {
+        cancelAnimationFrame(pending);
+        pending = requestAnimationFrame(markStageInView);
+      }, { passive: true });
+    }
+  }
+  for (const stage of stages) {
+    const b = nav.querySelector(`[data-stage="${CSS.escape(stage.slug)}"]`);
+    const drop = document.querySelector(`#board .drop[data-stage="${CSS.escape(stage.slug)}"]`);
+    if (!b || !drop) continue;
+    const shown = drop.querySelectorAll('article.card').length;
+    const attention = new Set([...drop.querySelectorAll(ATTENTION)]
+      .map(e => e.closest('article.card'))).size;
+    setHtml(b.querySelector('.scount'), String(shown));
+    b.querySelector('.salarm').hidden = !attention;
+    b.classList.toggle('attention', !!attention);
+    const name = `${stage.label}, ${shown} card${shown === 1 ? '' : 's'}` +
+      (attention ? `, ${attention} need${attention === 1 ? 's' : ''} attention` : '');
+    if (b.getAttribute('aria-label') !== name) b.setAttribute('aria-label', name);
+  }
+  markStageInView();
 }
 
 /* A phase is named by its card, so the chip says what the card says —

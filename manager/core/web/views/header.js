@@ -150,7 +150,8 @@ function renderDoctor() {
   el.title = title;
   el.setAttribute('aria-label', `open the configuration check — ${tail}`);
   el.innerHTML = `<span class="dot" style="background:var(--${colour === 'muted' ? 'idle' : colour})"></span>` +
-    `<span style="color:var(--${colour})">⚕ configuration</span>` +
+    // a phone draws the glyph and the reading without the word (task 154)
+    `<span style="color:var(--${colour})">⚕ <span class="dlab">configuration</span></span>` +
     `<span class="mono">${esc(clip(String(tail), 28))}</span>`;
 }
 
