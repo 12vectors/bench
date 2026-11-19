@@ -80,7 +80,7 @@ class AWorkBase(unittest.TestCase):
         cls.files.append(parent)
         backend._git(backend.app, "checkout", "-q", "-b", A_BRANCH, APP_BASE)
         backend._git(backend.app, "commit", "-q", "--allow-empty", "-m", "fixture: the API")
-        cls.tip = bv._git(backend.app, "rev-parse", A_BRANCH).stdout.strip()
+        cls.tip = bv._git(backend.app, "rev-parse", A_BRANCH).stdout.decode().strip()
         backend._git(backend.app, "checkout", "-q", APP_BASE)
         stacked = dict(decision="stacked", code="declared-prerequisite",
                        branch=A_BRANCH, commit=cls.tip, prBase=A_BRANCH,
