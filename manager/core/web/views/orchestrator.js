@@ -1234,6 +1234,11 @@ function wire(root) {
   if (o.wired === root) return;
   o.wired = root;
   root.addEventListener('click', (e) => {
+    // a fold's summary: remembered now, because `toggle` is dispatched
+    // later and a repaint in between would take the fold it names
+    const sum = e.target.closest && e.target.closest('summary');
+    const fold = sum && sum.parentElement;
+    if (fold && fold.dataset && fold.dataset.okeep) o.open[fold.dataset.okeep] = !fold.open;
     const el = e.target.closest && e.target.closest('[data-oact]');
     if (!el || el.disabled) return;
     e.preventDefault();

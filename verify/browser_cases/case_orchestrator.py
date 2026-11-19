@@ -332,8 +332,8 @@ class Orchestrator(unittest.TestCase):
         # what the page may not answer, it says so and does not offer
         foreign = "document.querySelector('[data-o=\"answer:%s:q-bbbbbbbbbb\"]')" % CARD
         stale = "document.querySelector('[data-o=\"answer:%s:q-cccccccccc\"]')" % CARD
-        self.assertTrue(b.eval(f"{foreign}.disabled"))
-        self.assertTrue(b.eval(f"{stale}.disabled"))
+        self.assertTrue(b.eval(f"{foreign}.disabled"), "a question for someone else is answerable")
+        self.assertTrue(b.eval(f"{stale}.disabled"), "a question to re-evaluate is answerable")
         self.assertIn("needs re-evaluation", b.eval(f"{main}.innerText"))
         # and the server holds the same line: a stale basis writes nothing
         data = api(f"/api/card/decisions?file={CARD}&stage=in-progress")
@@ -365,11 +365,14 @@ class Orchestrator(unittest.TestCase):
         self.assertIn('"kind": "answer"', text)
         if not b.wait("document.querySelector('[data-okeep=\"closed-%s\"]')" % CARD, 15):
             raise bv.CheckFailed("the answered question did not move to the resolved history")
+        fold = "document.querySelector('[data-okeep=\"closed-%s\"]')" % CARD
         b.click(f"[data-okeep='closed-{CARD}'] summary")
-        self.assertIn("Answered by", b.eval("document.querySelector('[data-okeep=\"closed-%s\"]').innerText" % CARD))
+        if not b.wait(f"{fold} && {fold}.open", 5):
+            raise bv.CheckFailed("the resolved history did not open")
+        self.assertIn("Answered by", b.eval(f"{fold}.innerText"))
         # an open fold survives a repaint
         b.eval("render()")
-        self.assertTrue(b.eval("document.querySelector('[data-okeep=\"closed-%s\"]').open" % CARD))
+        self.assertTrue(b.eval(f"{fold}.open"), "a repaint closed the fold a person opened")
 
     # ── 6. manual takeover, and cancelling one named run ─────────────────
 
