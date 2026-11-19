@@ -45,6 +45,7 @@ import execowner  # noqa: E402
 import movements  # noqa: E402
 import operations  # noqa: E402
 import orchestrator  # noqa: E402
+import phasescope  # noqa: E402
 import plans  # noqa: E402
 import scheduler  # noqa: E402
 import state  # noqa: E402
@@ -75,8 +76,11 @@ class FakeBoard:
             "file": name, "number": number, "stage": stage,
             "priority": priority, "dependsOn": list(depends),
             "touches": touches, "isPhase": is_phase,
+            # adopted into its phase scope (task 143); `phasescope`'s own
+            # tests hold adoption, these hold the scheduler
+            "phaseMode": "scoped" if is_phase else None,
             "phase": ({"number": phase, "file": f"{phase}-phase.md",
-                       "index": index} if phase else None),
+                       "index": index, "mode": "scoped"} if phase else None),
             "body": f"# {number} — card\n\n**Status:** x\n\n{brief}\n"}
         return name
 
@@ -160,6 +164,9 @@ class Sandbox(unittest.TestCase):
             mock.patch.object(state, "record_board_event", lambda event: None),
             mock.patch.object(state, "broadcast", lambda frame: None),
             mock.patch.object(scheduler, "BACKOFF_SECONDS", 0),
+            # a phase scope's branch work is git's, held in
+            # tests/test_phase_scopes.py; no repository here
+            mock.patch.object(phasescope, "run", lambda board: []),
         )
         for patch in patches:
             patch.start()

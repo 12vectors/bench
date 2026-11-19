@@ -103,7 +103,14 @@ LIMITS = {key: (0, 1440 if key == "runAgeMinutes" else 1000) for key in DEFAULTS
 SCOPE_KEYS = {"enabled", "paused", "authority", "capacity", "exclusions",
               "handback", "note"}
 PHASE_KEYS = {"enabled", "paused", "authority", "allocation", "ceilings",
-              "exclusions", "handback", "note"}
+              "exclusions", "handback", "note", "strategy"}
+# How a phase scope orders its members (task 143). `sequential` is the
+# phase runner's own semantics — one member at a time, in the order the
+# phase card lists them — and the default; `dependencies` lets members
+# whose in-phase dependencies are integrated run side by side, within the
+# phase's allocation. Neither widens anything: the slots are the
+# allocation's and every launch is authorized as before.
+STRATEGIES = ("sequential", "dependencies")
 TOP_KEYS = {"v", "kind", "bench", "phases", "_doc"}
 NOTE_CAP = 200
 LIST_CAP = 500
@@ -118,6 +125,7 @@ PROBLEMS = {
     "authority-expansion": "a phase asks for authority its parent does not grant",
     "ceiling-expansion": "a phase raises a ceiling above its parent's",
     "capacity-overcommitted": "the phases' allocations exceed the parent's total",
+    "strategy-unknown": "a phase names an execution strategy this bench does not run",
 }
 
 _LOCK = records.InterprocessLock(lambda: state_dir() / "agreement.lock")
@@ -367,9 +375,14 @@ def parse(doc) -> dict:
                 _problem(found, "ceiling-expansion", f"{where}.ceilings.{name}",
                          f"phase {number} sets {name} to {value}, above the "
                          f"Bench scope's {capacity[name]}")
+        strategy = entry.get("strategy", STRATEGIES[0])
+        if strategy not in STRATEGIES:
+            _problem(found, "strategy-unknown", f"{where}.strategy",
+                     f"{where}.strategy is one of " + ", ".join(STRATEGIES))
+            strategy = STRATEGIES[0]
         phases[number] = {
             "id": f"phase:{number}", "kind": "phase", "parent": BENCH,
-            "card": number,
+            "card": number, "strategy": strategy,
             "enabled": _flag(entry, "enabled", where, found),
             "paused": _flag(entry, "paused", where, found),
             "authority": authority,
@@ -421,7 +434,7 @@ def resolve(doc, problem: str | None = None) -> dict:
                      for pool in POOLED}
         scopes.append({
             "id": BENCH, "kind": "bench", "parent": None, "card": None,
-            "enabled": bench["enabled"], "active": bench_on and not bench["paused"],
+            "strategy": None, "enabled": bench["enabled"], "active": bench_on and not bench["paused"],
             "paused": bench["paused"], "pausedBy": BENCH if bench["paused"] else None,
             "off": None if bench_on else ("invalid" if not valid else "disabled"),
             "authority": {w: {"allowed": valid and bench["authority"][w], "by": BENCH}
@@ -450,7 +463,8 @@ def resolve(doc, problem: str | None = None) -> dict:
                 phase["id"] if phase["paused"] else None)
             scopes.append({
                 "id": phase["id"], "kind": "phase", "parent": BENCH,
-                "card": number, "enabled": phase["enabled"],
+                "card": number, "strategy": phase["strategy"],
+                "enabled": phase["enabled"],
                 "active": on and paused_by is None,
                 "paused": phase["paused"], "pausedBy": paused_by,
                 "off": None if on else ("invalid" if not valid else
@@ -498,7 +512,7 @@ def compare(before: dict, after: dict) -> list[dict]:
                             "before": a is not None, "after": b is not None})
             continue
         for key in ("active", "paused", "pausedBy", "off", "exclusions",
-                    "handback"):
+                    "handback", "strategy"):
             if a[key] != b[key]:
                 changes.append({"scope": sid, "what": key,
                                 "before": a[key], "after": b[key]})

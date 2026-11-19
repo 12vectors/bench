@@ -455,7 +455,11 @@ class DeterministicHistory(Board):
 
 class OneAnswerForLaunchAndPage(Board):
     PHASE = ("# 50 — Ship export\n\n**Status:** {status}\n**Priority:** High\n"
-             "**Type:** Phase\n\n## Cards\n\n- 51 — The member\n")
+             "**Type:** Phase\n\n## Cards\n\n- 51 — The member\n"
+             # adopted into its phase scope (task 143): what these cases
+             # read is the delegation, not which scheduler runs it
+             "\n## Phase log\n\n- 2026-11-01 10:00 · scope adopted by ada — "
+             "the phase:50 scope schedules this phase from here\n")
 
     def phase(self) -> None:
         self.path("backlog", "50-ship.md").write_text(

@@ -81,6 +81,7 @@ import inputs  # noqa: F401
 import operations  # noqa: F401
 import orchestrator  # noqa: F401
 import phases
+import phasescope  # noqa: F401
 import plans  # noqa: F401
 import previews
 import profiles  # noqa: F401

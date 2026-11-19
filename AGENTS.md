@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < refine / reasoning / coordinate < scheduler < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < scheduler < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -325,6 +325,12 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   `readiness`, `previews` and `setuptasks`, so it sits right of all three
 - `phases.py` — a phase run: its own branch, its cards merged into it one
   at a time. A beat, not an agent; it holds no registry of where a phase is
+- `phasescope.py` — a phase run by its scoped sub-orchestrator (task
+  143, D6): explicit adoption from the phase runner (refused until it is
+  quiescent), which member may start under the phase's strategy, and the
+  phase branch cut, a member integrated and the phase finished through
+  `phases`' own mechanics, each with an intent and a receipt. It launches
+  nothing (see "Phase scopes: one scheduler per phase")
 - `refine.py` — refining a card on the board: comments, the one
   refinement job a person asks for, its validated proposal, and the
   explicit Apply or Discard. The brief and the decisions live in the
@@ -336,7 +342,8 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   identity, scope, evidence references, bounds and binding — before it
   is kept. It executes nothing a response proposes (see "Orchestrator
   reasoning: launched agents, public responses")
-- `coordinate.py` — delivering a standalone card in review (task 142):
+- `coordinate.py` — delivering a card in review (task 142; a phase
+  scope's members and final head, task 143):
   its required checks, an independent review once the reviewer's
   resolved model is shown to differ from every implementer's, a bounded
   repair, and a delegated merge under the merge rules you configured,
@@ -5082,7 +5089,7 @@ so a route cannot skip it by forgetting to ask:
 | --- | --- | --- |
 | `read` | every GET | nothing; reading changes nothing |
 | `browser-mutation` | every person-operated POST | a JSON object body within a size cap; `Sec-Fetch-Site` same-origin or none when sent; an `Origin`, when sent, that is this board on the port it actually serves or exactly one of `BOARD_ALLOWED_ORIGINS`; `Origin: null` refused; and no run named by a request that says it is a browser's |
-| `policy-mutation` | the 33 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
+| `policy-mutation` | the 34 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
 | `run-authenticated` | `/api/progress`, `/api/verify/details` | the same door, then the run's own token |
 | `event-ingest` | `/api/events` | the same door; a run the event names is proved by that run's token (next section) |
 
@@ -5627,8 +5634,10 @@ scope off.
 
 **One scope per card.** A standalone card is the Bench scope's; a phase
 card and its members are their phase scope's when the agreement names
-the phase. A phase the agreement does not name stays with the existing
-phase runner and no orchestrator scope schedules it (`legacy-phase`), so
+the phase **and** a person has adopted it (task 143, see "Phase scopes:
+one scheduler per phase"). A phase the agreement does not name
+(`legacy-phase`), or names but nobody adopted (`phase-not-adopted`), stays
+with the existing phase runner and no orchestrator scope schedules it, so
 two schedulers never share members. Backlog and Done are never managed.
 
 **Pause, exclusion and hand-back** (`POST /api/orchestration/scope`) are
@@ -6052,8 +6061,11 @@ merge, under the merge rules you configured. Each step is an existing
 authority's own door: **Run required checks** (`required.start`, under a
 person's work reading, `trigger: orchestrator`), **◔ review PR**
 (`agents.start_pr_review`), **↻ act on PR** (`agents.start_pr_fix`) and
-**merge & clean up** (`completion.complete_task`). A phase's members and
-phase cards are their phase scope's, not this pass's.
+**merge & clean up** (`completion.complete_task`). In an adopted phase
+scope the same steps carry a member to *integration* into its phase
+branch and the phase card to delivery of its integrated head (task 143,
+"Phase scopes: one scheduler per phase"); a phase the runner owns is not
+touched here.
 
 | authority word | what it lets the pass do |
 | --- | --- |
@@ -6136,6 +6148,92 @@ promotes anything.
 with its state, code, reason, head, check words, review independence and
 merge label — local records and local git only; it asks no remote and
 launches nothing.
+
+### Phase scopes: one scheduler per phase
+
+A phase can be run by the phase runner (see "A phase runs itself, on a
+branch of its own") or by its own **phase scope** — the same orchestration
+engine as the Bench scope, narrowed by the phase's entry in the agreement
+(task 143, `phasescope.py`). Never by both: every phase has exactly one
+scheduling owner, and which one is written on the phase card itself.
+
+**Adoption is explicit, and waits for quiet.** Naming a phase in the
+agreement does not take it from the runner. A person adopts it (`POST
+/api/orchestration/phase`, `{"card", "action": "adopt"}`), and adoption is
+refused, naming what is still working, while the runner has a run in
+force (‖ hold it first), an agent runs on the phase card or a member, or
+an operation on any of them has no receipt. It also needs the agreement
+to name the phase and this installation to be the one that executes.
+Adoption writes one line to the phase log — `scope adopted by <name> —
+…` — and changes nothing else: the phase branch, its worktree, the
+members' branches, the log and every member the runner already
+integrated stay exactly as they were, and an integrated member is never
+run again. The runner reads that line where it reads everything else and
+stands down (its state reads `scoped`): its beat advances nothing, **▸ run
+phase** is refused, and its **‖ hold** is refused with the two acts it
+used to combine named apart. `"action": "release"`, under the same
+quiescence, hands the phase back; the runner does not resume until a
+person runs it. A phase that is never adopted runs exactly as it always
+did — which is also why the phase building this feature is not migrated
+mid-flight: nothing adopts a phase by itself.
+
+**What the phase entry says.** Beside `enabled`, `paused`, `authority`,
+`allocation`, `ceilings`, `exclusions` and `handback` (each only narrowing
+the Bench scope's), a phase names its `strategy`:
+
+| strategy | which member may start |
+| --- | --- |
+| `sequential` (default) | the runner's rule: one at a time, in the order `## Cards` lists them, each after the one before it is **integrated** into the phase branch |
+| `dependencies` | any member whose in-phase `**Depends on:**` are integrated, side by side within the phase's own allocation |
+
+Membership stays the phase card's `## Cards` list, and members still
+inherit the phase branch: no member names a base of its own. A member in
+Backlog is never pulled out of it — a sequential phase waits on it, and
+says so. A member someone else holds, or whose own latest move was
+another person's, is `not-eligible` with the remedy until it is taken
+over or moved (see "Last mover, not last editor").
+
+**How a pass runs a scoped phase.** Each step has an intent and a receipt
+in the operation ledger and its record on the card it is about:
+
+1. **Prepare** — a phase card the owner moved into To Do is put
+   in-progress (an automated move; the delegation stands) and its branch
+   cut through the runner's own `ensure_branch`; main is merged into it on
+   the beat while no member runs, a conflict a blocker on the phase card.
+2. **Start members** — the scheduler, through ▸ start work's own path,
+   under the strategy and the phase's own slots and starts.
+3. **Integrate** — a member in review/ gets its required *member* checks
+   and, where the phase delegates `review`, an independent review, then
+   is merged into the phase branch through the runner's own merge (the
+   member gate read again, the validated commit merged, never a rebase).
+   Delegated by `integrate`; without it the card reads
+   `integrate-not-delegated`. A member that is integrated reads
+   `integrated` — **in the phase branch, not delivered**: it stays in
+   review/ and is not in the application base.
+4. **Finish** — once every member is integrated: the branch published,
+   the phase card into review/ and its PR opened, as the runner does.
+5. **Deliver** — the phase card is delivered like any card, under the
+   **integration** merge rule: its checks run and its review is read at
+   the *integrated head*, never a member's, and an independent review
+   must differ from every member's implementer. A phase card is not
+   repaired as a card (`repair-unavailable`). The merge, where `merge` is
+   delegated, is merge & clean up — publication confirmed on the remote,
+   the members swept to done/ with it.
+
+**Pause and cancel are separate.** Pausing the Bench scope stops every
+phase scope's new starts; pausing a phase scope stops that phase only and
+leaves standalone work running. Neither stops a run in flight — its
+ending is observed. Cancelling is the member run's own **‖ hold**.
+
+**Restart.** An integration whose intent has no receipt is settled from
+git — the phase branch holds the head (integrated) or does not (nothing
+merged) — and preparing and finishing are idempotent, so an unconfirmed
+one is simply asked again. `schedule.phases` in `GET /api/orchestration`
+lists every phase with its owner, strategy, integrated members and, for a
+scoped phase, each member's state; for a named but unadopted phase,
+whether it is adoptable now and what still works it. Reading it launches,
+merges and writes nothing. The event wording of a phase on a non-default
+base is card 61's, not repeated here.
 
 ## Pull requests
 

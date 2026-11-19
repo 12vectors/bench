@@ -65,11 +65,12 @@ L23 agents previews readiness
 L24 setuptasks
 L25 setupguide
 L26 phases
-L27 refine reasoning coordinate
-L28 scheduler
-L29 routes watch
-L30 httpd
-L31 board
+L27 phasescope
+L28 refine reasoning coordinate
+L29 scheduler
+L30 routes watch
+L31 httpd
+L32 board
 composition: board httpd routes watch
 ```
 
@@ -206,7 +207,17 @@ It has no git of its own and no second launch path. `board` starts its
 beat; `routes` serves its read-only projection and a person's settlement
 of a held operation.
 
-`coordinate` (L27, beside `reasoning`, task 142) is the delivery half of
+`phasescope` (L27, task 143) is what a phase scope adds to the shared
+engine, above `phases` whose mechanics it reuses rather than repeats:
+adoption from the phase runner (a line in the phase log, refused while
+the runner, a member's agent or an unsettled operation still works the
+phase), which member may start under the phase's strategy, the phase
+branch cut through `phases.ensure_branch`, a member integrated through
+`phases._merge_member`, and the phase finished through `phases._finish`.
+It launches nothing: `scheduler` starts members and `coordinate`
+integrates them and delivers the final integrated head, both asking it.
+
+`coordinate` (L28, beside `reasoning`, task 142) is the delivery half of
 a pass, for standalone cards already in `review/`: the candidate's
 required checks through `required.start`, an independent review through
 `agents.start_pr_review` once the reviewer's resolved model is shown to
@@ -360,11 +371,12 @@ L22 agents readiness previews
 L23 setuptasks
 L24 setupguide
 L25 phases
-L26 refine reasoning coordinate
-L27 scheduler
-L28 watch routes
-L29 httpd
-L30 board
+L26 phasescope
+L27 refine reasoning coordinate
+L28 scheduler
+L29 watch routes
+L30 httpd
+L31 board
 composition: board httpd routes
 retired:
 new:
@@ -656,5 +668,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 181
-routes 128
+routes 129
 ```

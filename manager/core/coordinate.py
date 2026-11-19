@@ -84,13 +84,14 @@ import decisions
 import gates
 import operations
 import orchestrator
+import phasescope
 import plans
 import profiles
 import required
 import state
 import taskfiles
 
-ACTIONS = ("verify", "review", "repair", "merge")
+ACTIONS = ("verify", "review", "repair", "merge", "integrate")
 STAGE = "review"
 # Which agent intents implement a card's code: the work run and ↻ act on
 # PR, which is what a repair rides.
@@ -123,6 +124,11 @@ CODES = {
     "repair": "ready",
     "merge": "ready",
     "merge-not-delegated": "awaiting",
+    # task 143: a phase member's last step, and the state it rests in
+    "integrate": "ready",
+    "integrate-not-delegated": "awaiting",
+    "integrated": "integrated",
+    "repair-unavailable": "blocked",
     "no-candidate": "blocked",
     "no-pr": "blocked",
     "rules-invalid": "blocked",
@@ -242,6 +248,24 @@ def _card_manifests(filename: str, intents: tuple[str, ...]) -> list[dict]:
     return found
 
 
+def _written_by(filename: str) -> list[str]:
+    """The cards whose runs wrote this card's code: itself, and for a
+    phase card every member — the integrated head is their work, so a
+    review of it is independent only of all of them (task 143)."""
+    stage = taskfiles.find_stage_of(filename)
+    if not stage:
+        return [filename]
+    try:
+        card = taskfiles.read_task(config.TASKS / stage / filename, stage)
+    except (OSError, ValueError):
+        return [filename]
+    if not card.get("isPhase"):
+        return [filename]
+    tasks = [t for s in taskfiles.collect()["stages"] for t in s["tasks"]]
+    found = next((t for t in tasks if t["file"] == filename), None) or {}
+    return [filename] + [m["file"] for m in found.get("members") or []]
+
+
 def implementers(filename: str, cache: dict | None = None) -> list[dict]:
     """Every model that wrote, or would next write, this card's code: the
     runs on record that rode `work` or `act-pr`, and what those intents
@@ -250,7 +274,8 @@ def implementers(filename: str, cache: dict | None = None) -> list[dict]:
     found = [_selection_identity(m.get("selection"),
                                  f"run {m.get('agent') or 'unknown'} "
                                  f"({m.get('intent')})", cache)
-             for m in _card_manifests(filename, IMPLEMENTING)]
+             for name in _written_by(filename)
+             for m in _card_manifests(name, IMPLEMENTING)]
     for intent in IMPLEMENTING:
         choice = config.agent_choice(intent)
         found.append(identity(choice["harness"]["value"],
@@ -379,9 +404,15 @@ def assess(task: dict, reading: dict, ops: list[dict],
     item = {"card": filename, "number": _number(task), "stage": task["stage"]}
     sid, _why = orchestrator.scope_of(task, reading)
     item["scope"] = sid
-    if sid != agreements.BENCH or task.get("isPhase"):
-        return _set(item, "unmanaged", "a phase's cards are integrated by "
-                    "their phase scope; this pass delivers standalone cards")
+    if sid is None:
+        return _set(item, "unmanaged", "its phase is run by the phase runner, "
+                    "not by an orchestrator scope")
+    # task 143: in an adopted phase scope, a member's last step is its
+    # integration into the phase branch — never the application base — and
+    # the phase card's is the merge of the final integrated head
+    member = bool(task.get("phase")) and not task.get("isPhase")
+    item["unit"] = "member" if member else ("phase" if task.get("isPhase")
+                                            else "card")
     # whether this card is the scope's to act on at all — ownership, the
     # agreement, pause, exclusion, hand-back, the last mover (D1),
     # adoption — before anything about it is read or written. Which
@@ -393,13 +424,17 @@ def assess(task: dict, reading: dict, ops: list[dict],
     if _running(filename):
         return _set(item, "running", "a run is working on it")
     here = agreements.scope(reading, sid)
-    scope = gates.scope_for(task)
+    scope = "member" if member else gates.scope_for(task)
     found = gates.candidate(filename, scope, task=task)
     head = found.get("commit") if found.get("state") == "present" else None
     if not head:
         return _set(item, "no-candidate", "there is no implementation commit "
                     "on this board to deliver")
     item["head"] = head
+    if member and gates.contained(head, agents.phase_branch(task["phase"]["file"])):
+        return _set(item, "integrated", f"{head[:12]} is in the phase branch; "
+                    f"it reaches the application base when the phase is "
+                    f"delivered, not before")
     mine = _mine(filename, ops)
     for op in mine:
         if op["status"] == "unknown":
@@ -518,6 +553,14 @@ def assess(task: dict, reading: dict, ops: list[dict],
              "overridden": "you overrode unmet requirements; not a pass",
              }.get(decision, decision)
     item["label"] = label
+    if member:
+        if not here["authority"]["integrate"]["allowed"]:
+            return _set(item, "integrate-not-delegated", f"ready to integrate "
+                        f"into the phase branch ({label}); the agreement does "
+                        f"not delegate integrating, so it is yours")
+        return _set(item, "integrate", f"integrate {head[:12]} into "
+                    f"{agents.phase_branch(task['phase']['file'])} — {label}; "
+                    f"integrated is not delivered")
     for op in _same(mine, "merge", head):
         if op["status"] == "refused" and op.get("code") not in ANSWERED_AFRESH:
             return _set(item, "merge-refused", f"the merge was refused: "
@@ -581,6 +624,12 @@ def _checks_needed(item: dict, filename: str, head: str,
 def _repair(item: dict, task: dict, here: dict, head: str, mine: list[dict],
             ops: list[dict], why: str, reason: str, **extra) -> dict:
     item["finding"] = why
+    if task.get("isPhase"):
+        # ↻ act on PR refuses a phase card by design: its work belongs to
+        # its members' cards, so a failing integrated head is a person's
+        return _set(item, "repair-unavailable", f"{reason}; a phase's "
+                    f"integrated head is not repaired as a card — the fix "
+                    f"belongs on a member, and that decision is yours", **extra)
     if not here["authority"]["repair"]["allowed"]:
         return _set(item, "repair-not-delegated", f"{reason}; the agreement "
                     f"does not delegate repair, so ↻ act on PR is yours", **extra)
@@ -761,6 +810,8 @@ def execute(item: dict, task: dict, board: dict | None = None) -> dict:
             return _review(op, filename, head)
         if action == "repair":
             return _repair_now(op, filename, head, task)
+        if action == "integrate":
+            return _integrate(op, task, head, again)
         return _merge(op, filename, head, task, again)
     except (ValueError, required.Refused) as exc:
         return _refused(op, getattr(exc, "code", None) or f"{action}-refused",
@@ -858,11 +909,25 @@ def _merge(op: dict, filename: str, head: str, task: dict,
                    "moving the card")
 
 
+def _integrate(op: dict, task: dict, head: str, answer: dict) -> dict:
+    """A phase member into its phase branch (task 143), through the phase
+    runner's own merge: the member gate read again with the head in hand,
+    the validated commit merged additively, the log line written."""
+    result = phasescope.integrate(task, head)
+    if result["whole"]:
+        return _merged(op, result, "integrated", f"integrated {head[:12]} into "
+                       f"{result['branch']} — {answer.get('label') or ''}; not "
+                       f"delivered to the application base".replace(" — ;", ";"))
+    return _merged(op, result, "partial", f"integrated the gated commit into "
+                   f"{result['branch']}; the member's branch has moved on, so "
+                   f"the next pass reads its new head")
+
+
 def _merged(op: dict, result: dict, outcome: str, words: str) -> dict:
     done = operations.update(op["key"], "ended", outcome=outcome, observed=words)
     _receipt(done, outcome, words)
-    return {"card": op["file"], "action": "merge", "outcome": outcome,
-            "key": op["key"]}
+    return {"card": op["file"], "action": op.get("action") or "merge",
+            "outcome": outcome, "key": op["key"]}
 
 
 # ── observe and reconcile ─────────────────────────────────────────────
@@ -940,6 +1005,8 @@ def reconcile(ops: list[dict] | None = None) -> list[dict]:
     for op in operations.all_ops() if ops is None else ops:
         if op.get("action") not in ACTIONS or op["status"] != "intent":
             continue
+        if op["action"] == "integrate":
+            continue      # settled by containment, in `phasescope.reconcile`
         since = (op.get("intentEpoch") or 0) - 1
         handler = {"verify": _reconcile_verify, "review": _reconcile_run,
                    "repair": _reconcile_run, "merge": _reconcile_merge}
