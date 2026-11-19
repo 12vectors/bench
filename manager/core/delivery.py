@@ -527,8 +527,17 @@ def review_status(task: dict, ctx: dict, candidate: dict,
               if r.get("verdict")]
     if rounds:
         # Text in the card claims a verdict Bench holds no record of: a
-        # legacy or hand-written summary. Never read as an approval.
+        # legacy or hand-written summary. Never read as an approval: about
+        # an earlier commit it is history, and about this one (or no
+        # recorded one) it is a claim bench cannot confirm.
         report = rounds[-1]
+        said = report.get("commit") or ""
+        if said and not (commit.startswith(said) or said.startswith(commit)):
+            return out("review-outdated",
+                       f"The card's text reports a PR review "
+                       f"({report['verdict'].lower()}) of {_short(said)}, "
+                       f"an earlier commit, and Bench has no recorded "
+                       f"verdict about {_short(commit)}.", said)
         return out("review-unavailable",
                    f"The card's text reports a PR review "
                    f"({report['verdict'].lower()}) at "

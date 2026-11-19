@@ -594,6 +594,34 @@ function keyedCard(pool, task, replaced) {
                    (kept) => { kept.__spec = spec; }, replaced);
 }
 
+/* ── whether the work as it stands has Bench's review approval (task 152)
+
+   Every card in review/ says it on its face, in words: being in Review is
+   a stage, not an approval. The answer is the server's (`delivery.py`'s
+   `review_status`, carried as `delivery[file].review`) — bound to the
+   commit the card would merge — and this draws it and decides nothing.
+   It sits on its own line, apart from the delivery pill, so an approval
+   stays visible beside a failed check or another blocker without being
+   read as permission to merge. The line is the way to the Reviews
+   section, where the report and the rounds are. */
+const REVIEW_GLYPH = {
+  'review-approved': '✓', 'review-changes': '✕', 'review-running': '◌',
+  'review-outdated': '↺', 'review-incomplete': '!', 'review-unavailable': '?',
+  'review-pending': '○',
+};
+
+function reviewLine(task, d) {
+  const r = d && d.review;
+  if (task.stage !== 'review' || !r || !r.word) return '';
+  const at = (r.word === 'review-approved' || r.word === 'review-changes') && r.head
+    ? `<span class="rvh"> · ${esc(String(r.head).slice(0, 7))}</span>` : '';
+  return `<button type="button" class="revstat rv-${esc(r.tone || 'neutral')}" ` +
+    `data-section="reviews" data-revword="${esc(r.word)}" title="${esc(r.sentence || '')}">` +
+    `<span class="rvg" aria-hidden="true">${REVIEW_GLYPH[r.word] || '·'}</span>` +
+    `<span class="rvl">${esc(r.label)}</span>${at}` +
+    `<span class="srx"> — ${esc(r.sentence || '')} Opens the card's Reviews.</span></button>`;
+}
+
 function cardSpec(task) {
   const agent = agentOnTask(task.file);
   // a running phase has an agent alive on a card this view no longer draws,
@@ -1035,6 +1063,7 @@ function cardSpec(task) {
   const html =
     `<div class="toprow">${top.join('')}</div>` +
     `<div class="title">${esc(cardTitle(task))}</div>` +
+    reviewLine(task, d) +
     (showWho
       ? `<div class="whorow"><span class="initial">${esc(initial)}</span><span class="who">${esc(who)}</span>` +
         modelChip(agent) +

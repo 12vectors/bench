@@ -22,10 +22,13 @@ What is held here:
 
 from __future__ import annotations
 
+import json
+import subprocess
 import time
 import unittest
 from unittest import mock
 
+from tests import test_delivery_surfaces as surfaces  # noqa: E402
 from tests.test_delivery_status import PR_URL, DeliveryCase  # noqa: E402
 from tests.test_integration_gates import CARD, FAILS, STEM  # noqa: E402
 
@@ -208,6 +211,15 @@ class LegacyFieldsNeverReadAsApproval(ReviewStatusCase):
         # the detail's own records say the same thing apart
         self.assertIsNone(self.read()["reviews"]["bench"])
 
+    def test_a_text_verdict_about_an_older_commit_is_outdated(self):
+        older = self.head()
+        self.place("review", pr=PR_URL)
+        path = self.tasks / "review" / CARD
+        path.write_text(path.read_text(encoding="utf-8")
+                        + ROUND.format(commit=older[:12]), encoding="utf-8")
+        self.commit_in(config.WORKTREES / STEM, "a later push\n")
+        self.assertEqual(self.word(), "review-outdated")
+
     def test_github_approval_is_not_bench_approval(self):
         head = self.head()
         self.place("review", pr=PR_URL)
@@ -256,6 +268,72 @@ class ApprovalIsNotMergeReadiness(ReviewStatusCase):
                                   for p in self.local.rglob("*") if p.is_file()})
         self.assertEqual(tasks, {p: p.read_bytes()
                                  for p in self.tasks.rglob("*") if p.is_file()})
+
+
+FACE = "\n".join([
+    "const S = { state: {} };", surfaces.const("esc"),
+    surfaces.const("REVIEW_GLYPH"), surfaces.lift("reviewLine"),
+    "const deliveryOf = (t) => (S.state.delivery || {})[t.file] || null;",
+    surfaces.lift("reviewNowHtml"),
+])
+
+
+@unittest.skipUnless(surfaces.NODE, "node not available")
+class TheFaceAndTheReviewsTabDrawTheServersAnswer(ReviewStatusCase):
+    """Every surface draws the one reading: the face's line and the Reviews
+    tab's head, from the page's own functions, over the compact reading
+    `/api/state` carries on disposable fixtures."""
+
+    def draw(self, stage: str = "review") -> dict:
+        delivery.forget_cached()
+        compact = delivery.board(taskfiles.collect())[CARD]
+        task = {"file": CARD, "stage": stage}
+        script = (FACE + f"\nS.state.delivery = {{{json.dumps(CARD)}: "
+                  f"{json.dumps(compact)}}};"
+                  f"\nconst t = {json.dumps(task)};"
+                  f"\nconsole.log(JSON.stringify({{face: reviewLine(t, "
+                  f"deliveryOf(t)), tab: reviewNowHtml(t)}}));")
+        out = subprocess.run([surfaces.NODE, "-e", script],
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)
+
+    def test_approved_says_review_approved_on_the_face_and_in_reviews(self):
+        head = self.head()
+        gates.record_verdict(CARD, verdict="APPROVE", head=head)
+        self.place("review", pr=PR_URL)
+        drawn = self.draw()
+        self.assertIn('<span class="rvl">Review approved</span>', drawn["face"])
+        self.assertIn('data-section="reviews"', drawn["face"])
+        self.assertIn("<button", drawn["face"], "a keyboard stop, not a span")
+        self.assertIn(head[:7], drawn["face"])
+        self.assertIn("<b>Review approved</b>", drawn["tab"])
+
+    def test_every_word_reaches_the_face_in_words(self):
+        head = self.head()
+        self.place("review", pr=PR_URL)
+        self.assertIn("Review pending", self.draw()["face"])
+        gates.record_verdict(CARD, verdict="REQUEST CHANGES", head=head)
+        self.assertIn("Changes requested", self.draw()["face"])
+        self.commit_in(config.WORKTREES / STEM, "a later push\n")
+        drawn = self.draw()
+        self.assertIn("Review outdated", drawn["face"])
+        self.assertNotIn("Review approved", drawn["face"])
+
+    def test_only_review_cards_wear_it(self):
+        head = self.head()
+        gates.record_verdict(CARD, verdict="APPROVE", head=head)
+        self.place("in-progress")
+        self.assertEqual(self.draw("in-progress")["face"], "")
+
+    def test_the_text_is_escaped(self):
+        script = (FACE + "\nconsole.log(reviewLine({stage: 'review'}, {review: "
+                  "{word: 'review-pending', label: '<b>x</b>', tone: 'neutral', "
+                  "sentence: '<script>'}}));")
+        out = subprocess.run([surfaces.NODE, "-e", script],
+                             capture_output=True, text=True)
+        self.assertNotIn("<script>", out.stdout)
+        self.assertNotIn("<b>x</b>", out.stdout)
 
 
 class TheVocabularyIsClosed(unittest.TestCase):

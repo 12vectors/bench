@@ -245,7 +245,10 @@ class TheReviewSignalsSayWhatEachRecordSays(matrix.DeliveryCase):
         self.assertIn(f"changes requested in the card's report at {older[:7]}", text)
         self.assertIn("an earlier commit, history", text)
         self.assertEqual(cls, "", "a request about an older commit is not today's alarm")
-        self.assertEqual(rows["Bench review"][0], "no Bench verdict yet")
+        # task 152: the row leads with the server's review status — the
+        # card face's words — and the text's older verdict is not today's
+        self.assertEqual(rows["Bench review"][0],
+                         "Review outdated. No Bench verdict yet")
 
     def test_a_report_that_is_the_bench_verdicts_prose_is_not_drawn_twice(self):
         head = self.passed_at_head()
