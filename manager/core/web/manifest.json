@@ -241,8 +241,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "main.js": {
-   "bytes": 21343,
-   "sha256": "f6b00e54db501a772078d5610346c313929218958bf240ba4fab67b51ef07885",
+   "bytes": 21494,
+   "sha256": "d40653094866360ac3d38672a8d6f8f975d9bb511350062b20937f70743fb5f7",
    "type": "text/javascript; charset=utf-8"
   },
   "views/activity.js": {

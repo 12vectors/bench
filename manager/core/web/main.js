@@ -316,17 +316,19 @@ document.addEventListener('keydown', (e) => {
   // BOARD_MIN beside the header, the bar and the panel's own head — and
   // clamped again whenever any of those changes. The wish itself is kept,
   // so going back to a large window gives back the height chosen there.
-  const BOARD_MIN = 160, FLOOR = 48;
+  // The bounds are 80px to 60vh (40vh on a phone), and within them the
+  // board's BOARD_MIN comes first.
+  const BOARD_MIN = 160;
   let dragging = false, startY = 0, startH = 0;
   const chrome = () => ['header', '#statusbar', '#loghead', '#loggrip']
     .reduce((n, s) => n + ($(s)?.offsetHeight || 0), 0);
-  const most = () => Math.min(
-    Math.round(innerHeight * (isNarrow() || innerHeight < 560 ? 0.4 : 0.6)),
-    innerHeight - chrome() - BOARD_MIN);
-  const clamp = (px) => Math.max(Math.min(px, most()), FLOOR);
-  let wish = parseInt(localStorage.getItem('bench-log-h'), 10) ||
-    Math.round(innerHeight * 0.30);
-  let h = clamp(wish);
+  const ceiling = () => (isNarrow() || innerHeight < 560)
+    ? innerHeight * 0.4 : innerHeight * 0.6;
+  const most = () => Math.round(Math.min(ceiling(), innerHeight - chrome() - BOARD_MIN));
+  const clamp = (px) => Math.min(Math.max(px, 80), Math.max(most(), 80));
+  let wish;
+  let h = clamp(wish = parseInt(localStorage.getItem('bench-log-h'), 10) ||
+    Math.round(innerHeight * 0.30));
   body.style.height = h + 'px';
   const fit = () => {
     if (dragging) return;

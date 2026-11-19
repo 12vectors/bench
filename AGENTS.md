@@ -507,8 +507,9 @@ does. A phone's choice is remembered apart from a desktop's
 (`bench-log-open-narrow` beside `bench-log-open` in the browser's
 storage). The panel has a **Hide activity** control inside it, its grip
 resizes by touch, and its height is a wish clamped to the window the
-page has now — at most 40% of a phone's or of a window shorter than
-560px, and always leaving the board 160px — so an open panel can never
+page has now — at least 80px, at most 40% of a phone's or of a window
+shorter than 560px (60% elsewhere), and within that always leaving the
+board 160px — so an open panel can never
 push the bar holding its own toggle off the screen, which is what it used
 to do. The page is `100dvh` high where the browser knows that unit, the
 height a phone actually shows. A window shorter than 480px (a phone held
