@@ -397,6 +397,11 @@ def _state_payload() -> dict:
         # never from a local index. The whole reading is
         # /api/card/decisions. Empty on a board with no such history
         "decisions": decisions.board(collected),
+        # whether orchestration is on, each scope's pause and which scope
+        # holds each managed card (task 145) — what the board strip and a
+        # card's Overview link from. One file read; the whole reading is
+        # GET /api/orchestration
+        "orchestration": orchestrator.board_summary(collected),
         # per card that names supporting information, whether a run could
         # use all of it now (task 132): Ready, Needs information, Checking
         # or Unchecked, with counts. The same resolver every launch and the
@@ -471,25 +476,29 @@ def get_page(req) -> None:
 # page itself. Only these shapes are; anything else is a 404 as it always
 # was, so `/api/…`, `/web/…` and `/files/…` keep their own answers and an
 # address nobody documented is not a page.
-UI_PATHS = {"board", "phases", "sessions", "focus", "settings"}
-UI_ITEM_PREFIXES = {"cards", "phases", "sessions", "focus", "settings"}
+UI_PATHS = {"board", "orchestrator", "phases", "sessions", "focus", "settings"}
+UI_ITEM_PREFIXES = {"cards", "orchestrator", "phases", "sessions", "focus",
+                    "settings"}
+# segments that name a section, not a card or a session
+UI_SECTION_PREFIXES = {"settings", "orchestrator"}
 UI_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~-]{0,199}$")
 UI_SECTION_RE = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 
 
 def ui_path(path: str) -> bool:
-    """Whether `path` is one of the page's addresses: `/board`, `/phases`,
-    `/sessions`, `/focus`, `/settings`, or one of `/cards/<card>`,
-    `/phases/<card>`, `/sessions/<session>`, `/focus/<session>` and
-    `/settings/<section>` with a single segment of the narrow alphabet an
-    identifier is written in. A trailing slash, an empty or second
-    segment, and anything percent-encoded are not."""
+    """Whether `path` is one of the page's addresses: `/board`,
+    `/orchestrator`, `/phases`, `/sessions`, `/focus`, `/settings`, or one
+    of `/cards/<card>`, `/orchestrator/<section>`, `/phases/<card>`,
+    `/sessions/<session>`, `/focus/<session>` and `/settings/<section>`
+    with a single segment of the narrow alphabet an identifier is written
+    in. A trailing slash, an empty or second segment, and anything
+    percent-encoded are not."""
     parts = path.split("/")
     if len(parts) == 2:
         return parts[1] in UI_PATHS
     if len(parts) != 3 or parts[1] not in UI_ITEM_PREFIXES:
         return False
-    pattern = UI_SECTION_RE if parts[1] == "settings" else UI_ID_RE
+    pattern = UI_SECTION_RE if parts[1] in UI_SECTION_PREFIXES else UI_ID_RE
     return bool(pattern.match(parts[2]))
 
 
@@ -2030,6 +2039,8 @@ ROUTES = (
     # the page's own addresses (task 134): the shell, for exactly these
     Route("GET", "/board", "read", get_ui_page),
     Route("GET", "/cards/*", "read", get_ui_page),
+    Route("GET", "/orchestrator", "read", get_ui_page),
+    Route("GET", "/orchestrator/*", "read", get_ui_page),
     Route("GET", "/phases", "read", get_ui_page),
     Route("GET", "/phases/*", "read", get_ui_page),
     Route("GET", "/sessions", "read", get_ui_page),

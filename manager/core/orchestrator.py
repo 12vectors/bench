@@ -484,12 +484,17 @@ def reading(board: dict | None = None) -> dict:
                       "valid": effective["valid"],
                       "revision": effective["revision"],
                       "problems": effective["problems"],
-                      "scopes": _public_scopes(effective)},
+                      "scopes": _public_scopes(effective),
+                      # what the Orchestrator view edits from (task 145):
+                      # known keys only, notes scrubbed
+                      "document": agreements.public_document(
+                          agreements.effective_document()[0])},
         "draft": None if draft is None else {
             "revision": draft["revision"], "valid": draft["valid"],
             "problems": draft["problems"], "scopes": _public_scopes(draft),
             "changes": draft["changes"],
-            "differs": draft["revision"] != effective["revision"]},
+            "differs": draft["revision"] != effective["revision"],
+            "document": agreements.public_document(draft_doc)},
         "defaults": dict(agreements.DEFAULTS),
         "authorities": list(agreements.AUTHORITIES),
         "installation": {k: owner[k] for k in (
@@ -510,6 +515,45 @@ def reading(board: dict | None = None) -> dict:
         "identity": {**snap["identity"],
                      "attribution": movements.NOT_AUTHENTICATION},
     }
+
+
+def board_summary(board: dict | None = None) -> dict:
+    """The few facts the board strip and a card's Overview need to say
+    whether orchestration is on and which scope holds a card (task 145):
+    the agreement's status and revision, each scope's pause, and per
+    managed card its scope or why it has none. One file read and the
+    cards already in hand — no git history, no ledger, no process; the
+    whole reading is `GET /api/orchestration`."""
+    effective = agreements.effective()
+    if not effective["configured"]:
+        return {"status": "off", "configured": False, "valid": True,
+                "revision": "none", "scopes": [], "cards": {}}
+    if not effective["valid"]:
+        status = "invalid"
+    else:
+        bench = agreements.scope(effective, agreements.BENCH)
+        status = ("off" if not bench["enabled"] else
+                  "paused" if bench["paused"] else "enabled")
+    cards = {}
+    if effective["valid"]:
+        for task in _tasks(board):
+            if task["stage"] in MANAGED_STAGES:
+                sid, why = scope_of(task, effective)
+                number = _number(task)
+                manual = None
+                if sid and number:
+                    here = agreements.scope(effective, sid) or {}
+                    if number in (here.get("handback") or []):
+                        manual = "handback"
+                    elif number in (here.get("exclusions") or []):
+                        manual = "excluded"
+                cards[task["file"]] = {"scope": sid, "why": why, "manual": manual}
+    return {"status": status, "configured": True, "valid": effective["valid"],
+            "revision": effective["revision"],
+            "scopes": [{k: s[k] for k in ("id", "kind", "card", "active", "paused",
+                                          "pausedBy", "off")}
+                       for s in effective["scopes"]],
+            "cards": cards}
 
 
 def _notes(effective: dict) -> list[str]:

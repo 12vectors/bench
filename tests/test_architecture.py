@@ -779,6 +779,9 @@ ROUTES: dict[str, str] = {
     # the page's own addresses (task 134): the shell for these shapes only
     "GET /board": "read",
     "GET /cards/*": "read",
+    # the Orchestrator view (task 145), a page like the others
+    "GET /orchestrator": "read",
+    "GET /orchestrator/*": "read",
     "GET /phases": "read",
     "GET /phases/*": "read",
     "GET /sessions": "read",
