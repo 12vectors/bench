@@ -150,6 +150,61 @@ class _Journeys:
         self.assertEqual(j.s.git(j.origin, "branch", "--list", f"task/{card[:-3]}"), "",
                          "cleanup removed the delivered branch from the remote")
 
+    def test_a_phase_scope_integrates_its_members_and_delivers_the_whole(self):
+        j = self.journey()
+        phase = j.card("20", "Ship the export", author="bob",
+                       extra="**Type:** Phase\n",
+                       body="The export, end to end.\n\n## Cards\n\n"
+                            "- 21 — Export model\n- 22 — Export button\n")
+        one = j.card("21", "Export model", stage="to-do", author="bob")
+        two = j.card("22", "Export button", stage="to-do", author="bob")
+        solo = j.card("30", "Fix the footer", author="bob")
+        for card in (phase, solo):
+            j.step("move", file=card, **{"from": "backlog", "to": "to-do"})
+        j.step("enable", agreement={
+            # one shared total; the phase is allocated part of it and the
+            # Bench scope keeps the rest (D6, D7)
+            "capacity": {"implementation": 2, "review": 2},
+            "phases": {"20": {"enabled": True, "strategy": "sequential",
+                              "authority": {w: True for w in ALL},
+                              "allocation": {"implementation": 1, "review": 1,
+                                             "dailyStarts": 6}}}})
+        adopted = j.step("adopt", file=phase)
+        self.assertEqual(adopted["scope"], "phase:20")
+
+        # the first pass: the phase is prepared, then its first member and
+        # the standalone card start — two launches, within the shared total
+        first = j.step("pass")
+        launched = [r["card"] for r in first["pass"]["results"]
+                    if r.get("outcome") == "launched"]
+        self.assertEqual(sorted(launched), sorted([one, solo]))
+        scopes = {o["file"]: o["scope"] for o in first["ops"] if o["action"] == "implement"}
+        self.assertEqual(scopes, {one: "phase:20", solo: "bench"},
+                         "one scope per card: the Bench scope never launched a member")
+
+        j.until(lambda r: r["stages"].get(phase) == "done", passes=20)
+        reading = j.step("read")
+        for card in (one, two, solo):
+            self.assertEqual(reading["stages"][card], "done", card)
+        # sequential: the second member started only after the first was
+        # integrated, so the two work runs never overlapped in the phase
+        works = [c["task"] for c in j.calls("work")]
+        self.assertEqual(works.count(one), 1)
+        self.assertEqual(works.count(two), 1)
+        # the phase's integrated head is what was reviewed and merged —
+        # never a member's head on its own
+        for card in ("card-21.txt", "card-22.txt", "card-30.txt"):
+            self.assertTrue(j.remote_has(card), card)
+        actions = [(o["file"], o["action"], o.get("outcome") or o["status"])
+                   for o in reading["ops"]]
+        self.assertIn((one, "integrate", "integrated"), actions)
+        self.assertIn((two, "integrate", "integrated"), actions)
+        self.assertIn((phase, "merge", "merged"), actions)
+        self.assertNotIn((one, "merge", "merged"), actions,
+                         "a member is integrated, never merged on its own")
+        reviewed = {c["task"] for c in j.calls("review")}
+        self.assertIn(phase, reviewed, "the integrated head had its own review")
+
 
 class Vendored(_Journeys, unittest.TestCase):
     LAYOUT = "vendored"

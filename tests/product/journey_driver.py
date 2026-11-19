@@ -176,6 +176,12 @@ def calls() -> list[dict]:
 
 def run() -> dict:
     kind = STEP["step"]
+    if kind in ("read", "adopt", "resolve"):
+        # a designated installation's board process holds its own lock, as
+        # a pass takes it; taking it changes no record and ends with the step
+        owner = execowner.reading()
+        if owner["role"] == "designated-here" and not owner["lockHeld"]:
+            execowner.acquire_lock()
     if kind == "describe":
         return {"repo": str(config.REPO), "work": str(config.work_root()),
                 "tasks": str(config.TASKS), "external": config.EXTERNAL,
@@ -223,11 +229,6 @@ def run() -> dict:
                                 choice=STEP.get("choice", 0),
                                 request=STEP.get("request", "journey-answer"))
     if kind == "read":
-        # read as the pass would: a designated installation's process holds
-        # its own lock (taking it changes no record; it ends with the step)
-        owner = execowner.reading()
-        if owner["role"] == "designated-here" and not owner["lockHeld"]:
-            execowner.acquire_lock()
         found = {"stages": stages(), "ops": public_ops(), "calls": calls(),
                  "eligibility": {}, "decisions": {}, "delivery": {}}
         tasks = [t for s in taskfiles.collect()["stages"] for t in s["tasks"]]
