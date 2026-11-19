@@ -670,5 +670,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 181
-routes 129
+routes 130
 ```

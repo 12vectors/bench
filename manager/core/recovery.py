@@ -259,8 +259,8 @@ def breaker(now: float | None = None) -> dict:
 # ── observing a run ───────────────────────────────────────────────────
 
 def _process_state(record: dict) -> str:
-    if record.get("status") != "running":
-        return "exited"
+    """The process, not the registry's word for it: a run marked stopped
+    by **‖ hold** is alive until its process is observed gone."""
     proc = record.get("proc")
     if proc is not None and hasattr(proc, "poll"):
         try:
@@ -270,9 +270,8 @@ def _process_state(record: dict) -> str:
     pid = record.get("pid")
     if isinstance(pid, int) and pid > 0:
         return "alive" if Path(f"/proc/{pid}").exists() else "exited"
-    # registered as running with no process handle: what the registry
-    # says, and nothing stronger
-    return "alive"
+    # no process handle: what the registry says, and nothing stronger
+    return "alive" if record.get("status") == "running" else "exited"
 
 
 def _last_commit(record: dict) -> float | None:
@@ -525,9 +524,14 @@ def detect(board: dict, reading: dict, now: float | None = None) -> list[dict]:
                           cap=_ceiling(reading, seen["scope"], "recoveryAttempts"))
         if new:
             opened.append(item)
+    # only the newest implementation operation on a card speaks for it: an
+    # earlier failure was superseded by the attempt that followed it
+    newest: dict = {}
     for op in operations.all_ops():
-        if op.get("action") != "implement" or op.get("status") != "ended" \
-                or op.get("outcome") != "failed":
+        if op.get("action") == "implement":
+            newest[op.get("file")] = op
+    for op in newest.values():
+        if op.get("status") != "ended" or op.get("outcome") != "failed":
             continue
         task = by_file.get(op.get("file"))
         if task is None or task["stage"] not in orchestrator.MANAGED_STAGES:
