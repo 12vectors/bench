@@ -120,6 +120,7 @@ def metric(name, value):
 
 def theme(b, which):
     if b.eval("document.documentElement.dataset.theme") != which:
+        b.reveal("#themebtn")
         b.click("#themebtn")
 
 

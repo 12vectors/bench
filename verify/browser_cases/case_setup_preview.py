@@ -116,6 +116,7 @@ def open_preview(width=1440, height=900, theme="dark"):
         if not b.wait("!!document.querySelector('#preview-life')", 15):
             raise bv.CheckFailed("the guide drew no Application preview panel")
     if b.eval("document.documentElement.dataset.theme") != theme:
+        b.reveal('#themebtn')
         b.click('#themebtn')
     return b
 
