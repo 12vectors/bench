@@ -6289,10 +6289,25 @@ input, after phase membership and the card's headers and before the
 application default (see "Execution plans"). A new start must begin from
 the pinned commit itself. If the prerequisite's branch moved after the
 decision, the preflight refuses before any branch, worktree or run
-exists. The scheduler also checks again immediately before the launch.
-That attempt counts as one that ran nothing, and the next pass decides
-again on the new commit. Once the work is under way, resuming follows
-its recorded plan, exactly as before.
+exists. The scheduler also checks again immediately before the launch,
+through the launch's own branch resolver, fetching as the launch will.
+When it finds the branch moved, it records the decision `stale` on the
+card. That attempt counts as one that ran nothing, and the next pass
+decides again on the new commit. The decision, its freshness and the
+launch all read a branch the same way: the remote's copy as last
+fetched, else this checkout's. So a prerequisite whose local and remote
+copies differ cannot be pinned by one reading and refused by the other.
+
+Once the work is under way (its task branch exists), resuming follows
+its recorded plan, exactly as before. A retry, a resume or a restart
+never makes the decision again. It does not re-pin a moved parent, and
+it does not rewrite the decision to `normal` once the parent landed.
+
+A blocked decision is written onto its card by the scheduler's pass,
+with an open blocker naming the conflict and the remedy, on any card the
+scope may act on. The next decision that is not blocked clears the
+blocker. No reasoning run is launched for it. The blocker is the owner's
+prompt, and the remedy is a person's choice.
 
 **As the prerequisite evolves.** Every pass checks each card whose
 decision stacked it on another. When the parent has moved, gone back to
