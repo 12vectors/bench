@@ -212,6 +212,12 @@ def run() -> dict:
             scheduler.BACKOFF_SECONDS = recovery.BACKOFF_SECONDS = STEP["backoff"]
         result = scheduler.run_pass()
         settle()
+        if STEP.get("observe", True):
+            # a live board's next beat sees the endings of the runs it
+            # launched while it still holds them; this process is about to
+            # exit, so it looks now (observing launches nothing)
+            scheduler.observe()
+            coordinate.observe()
         opened = open_prs() if STEP.get("open_prs", True) else []
         settle()
         return {"pass": result, "opened": opened, "stages": stages(),
@@ -276,6 +282,8 @@ def run() -> dict:
         return {"checks": checks, "verdicts": verdicts}
     if kind == "resolve":
         return scheduler.resolve(STEP["key"], STEP["decision"], actor="ada")
+    if kind == "reset-breaker":
+        return recovery.breaker_reset(actor="ada")
     if kind == "handover":
         return orchestrator.handover(execowner.designation_revision(
             execowner.read_designation()[0]), actor="ada")

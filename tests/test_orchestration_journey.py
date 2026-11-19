@@ -390,6 +390,39 @@ class FailureWindows(unittest.TestCase):
         waiting = second if j.calls("work")[0]["task"] == first else first
         self.assertEqual(codes.get(waiting), "daily-starts-exhausted")
 
+    def test_a_run_that_keeps_dying_is_retried_boundedly_then_held(self):
+        j = self.journey("external")
+        card = self.owned(j, "7", "Export as CSV")
+        j.control(work="die")             # "API Error: 500 overloaded", exit 1
+        j.step("enable")
+        for _ in range(10):
+            j.step("pass", backoff=0)
+        reading = j.step("read")
+        # D7/D9: the first launch and exactly two transient retries; the
+        # third failure opens the breaker, which starts nothing — not even
+        # a diagnosis — while it is open
+        self.assertEqual(len(j.calls("work")), 3)
+        self.assertTrue(reading["breaker"], "repeated failures open the breaker")
+        self.assertEqual(len(reading["incidents"]), 1, "the retries spent: an incident")
+        self.assertEqual(j.calls("reason"), [])
+        self.assertEqual(reading["stages"][card], "in-progress",
+                         "the card stays where the work is; nothing moves it on")
+        # D5: a person closes the breaker; the incident gets a bounded,
+        # read-only diagnosis, and its proposal is held for the owner
+        j.step("reset-breaker")
+        for _ in range(6):
+            j.step("pass", backoff=0)
+        reading = j.step("read")
+        diagnoses = j.calls("reason")
+        self.assertGreaterEqual(len(diagnoses), 1)
+        self.assertLessEqual(len(diagnoses), 2, "at most recoveryAttempts (2)")
+        self.assertTrue(all(c["allow"] == len(c["reads"]) for c in diagnoses),
+                        "a diagnosis is granted exact reads and nothing else")
+        self.assertEqual(len(j.calls("work")), 3, "no blind relaunch")
+        [incident] = reading["incidents"]
+        self.assertNotEqual(incident["status"], "resolved",
+                            "what a diagnosis says resolves nothing")
+
     def test_default_off_launches_none_of_the_existing_work(self):
         j = self.journey("vendored")
         card = self.owned(j, "7", "Export as CSV")
