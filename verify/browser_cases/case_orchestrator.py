@@ -394,8 +394,16 @@ class Orchestrator(unittest.TestCase):
             "file": CARD, "stage": "in-progress", "text": "Tighten the wording",
             "request": f"case-145-{time.time()}"})
         self.assertEqual(200, code, body[:300])
-        if not b.wait("document.querySelector('[data-oact=\"cancel\"]')", 20):
-            raise bv.CheckFailed("a running run offered no cancellation")
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            running = [a for a in api("/api/state")["agents"]
+                       if a["task"] == CARD and a["status"] == "running"]
+            if running:
+                break
+            time.sleep(0.3)
+        else:
+            raise bv.SetupError("the held refinement never ran on the card: " + body[:300].decode(errors="replace"))
+        b = visit("/orchestrator/work?card=40", "document.querySelector('[data-oact=\"cancel\"]')")
         agent = b.eval("document.querySelector('[data-oact=\"cancel\"]').dataset.agent")
         b.click("[data-oact='cancel']")
         if not b.wait("document.querySelector('[data-oact=\"cancel\"]').classList.contains('armed')", 5):
