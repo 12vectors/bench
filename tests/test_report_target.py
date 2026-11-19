@@ -116,11 +116,16 @@ class Sentinel:
         live board, with commits on. The previous values are restored
         afterwards by the case's own cleanups, so the order is the real
         one: this happens first, then the reaper runs."""
-        for attr, value in dict(TASKS=self.tasks, EXTERNAL=True,
-                                WORK_SETTING=str(self.work),
-                                COMMIT_MOVES=True, SYNC=False).items():
-            case.addCleanup(setattr, config, attr, getattr(config, attr))
-            setattr(config, attr, value)
+        case.addCleanup(setattr, config, "TASKS", config.TASKS)
+        case.addCleanup(setattr, config, "EXTERNAL", config.EXTERNAL)
+        case.addCleanup(setattr, config, "WORK_SETTING", config.WORK_SETTING)
+        case.addCleanup(setattr, config, "COMMIT_MOVES", config.COMMIT_MOVES)
+        case.addCleanup(setattr, config, "SYNC", config.SYNC)
+        config.TASKS = self.tasks
+        config.EXTERNAL = True
+        config.WORK_SETTING = str(self.work)
+        config.COMMIT_MOVES = True
+        config.SYNC = False
 
     def assert_untouched(self, case: unittest.TestCase) -> None:
         after = self.snapshot()
