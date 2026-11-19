@@ -20,6 +20,7 @@ started (agent reapers, check batches) before it reports.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
@@ -44,7 +45,12 @@ import reasoning  # noqa: E402
 import recovery  # noqa: E402
 import scheduler  # noqa: E402
 import state  # noqa: E402
+import sync  # noqa: E402
 import taskfiles  # noqa: E402
+
+# as board.py does at startup: with BOARD_SYNC on, every commit the board
+# makes publishes itself (a no-op with it off)
+sync.install()
 
 # a step must not wait for ever on a thread a bug left running
 SETTLE_SECONDS = 120
@@ -95,6 +101,44 @@ def open_prs() -> list[str]:
             continue
         opened.append(changes.open_pr_now(name))
     return opened
+
+
+CRASHED = 70
+
+
+def crash(where: str | None) -> None:
+    """Kill this process at one of the windows a real board can die in:
+
+    - `launch-before`: after the launch's intent is durable, before the
+      launch path is entered;
+    - `launch-after`: after the launch path returned a running run, before
+      its receipt is written (the run's own process lives on, orphaned,
+      and nobody reaps it);
+    - `merge-after`: after the merge and its publication, before the
+      merge's receipt is written.
+    """
+    if where is None:
+        return
+    import agents
+    import completion
+    if where == "launch-before":
+        agents.start_agent = lambda *a, **k: os._exit(CRASHED)
+    elif where == "launch-after":
+        real = agents.start_agent
+
+        def after(*args, **kwargs):
+            real(*args, **kwargs)
+            os._exit(CRASHED)
+        agents.start_agent = after
+    elif where == "merge-after":
+        real_merge = completion.complete_task
+
+        def merged(*args, **kwargs):
+            real_merge(*args, **kwargs)
+            os._exit(CRASHED)
+        completion.complete_task = merged
+    else:
+        raise SystemExit(f"journey step: no crash window {where!r}")
 
 
 def put_in_force(doc: dict) -> dict:
@@ -154,6 +198,7 @@ def run() -> dict:
     if kind == "adopt":
         return phasescope.adopt(STEP["file"], actor="ada")
     if kind == "pass":
+        crash(STEP.get("crash"))
         result = scheduler.run_pass()
         settle()
         opened = open_prs() if STEP.get("open_prs", True) else []
@@ -210,6 +255,17 @@ def run() -> dict:
         return found
     if kind == "card":
         return card(STEP["file"])
+    if kind == "evidence":
+        # bench's own records, each with the commit it is bound to — the
+        # thing a review reads, rather than any run's account of itself
+        import evidence
+        checks = [{"check": r.get("check"), "outcome": r.get("outcome"),
+                   "commit": (r.get("source") or {}).get("commit"),
+                   "requester": (r.get("requester") or {}).get("intent")}
+                  for r in evidence.for_task(STEP["file"])]
+        verdicts = [{"verdict": v.get("verdict"), "head": v.get("head"),
+                     "agent": v.get("agent")} for v in gates.verdicts_for(STEP["file"])]
+        return {"checks": checks, "verdicts": verdicts}
     if kind == "resolve":
         return scheduler.resolve(STEP["key"], STEP["decision"], actor="ada")
     if kind == "gate":

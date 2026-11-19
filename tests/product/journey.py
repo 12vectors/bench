@@ -58,6 +58,7 @@ BENCH = Path(__file__).resolve().parents[2]
 CORE = BENCH / "manager" / "core"
 DRIVER = Path(__file__).resolve().with_name("journey_driver.py")
 LAYOUTS = ("vendored", "source", "external")
+CRASHED = 70           # journey_driver.CRASHED: a step killed on purpose
 # environment prefixes a step never inherits (see Journey.env)
 INHERITED = ("BOARD_", "AGENT_", "BENCH_", "TEST_STATE", "CLAUDE", "GH_")
 
@@ -225,6 +226,12 @@ class Journey:
             **(env or {})}
         if layout == "external":
             settings.update(BOARD_APP_ROOT=str(self.app), BOARD_WORK_ROOT=str(self.work))
+        else:
+            # the cards share the application's `main`, so a board that
+            # commits its moves must publish them too — or the PR guard
+            # rightly refuses a base that is ahead of its remote. That is
+            # team mode, which is how a shared vendored board runs.
+            settings["BOARD_SYNC"] = "1"
         (self.local / ".env").write_text(
             "".join(f"{k}={v}\n" for k, v in settings.items()), encoding="utf-8")
         self.calls_path = root / "calls.jsonl"
@@ -268,6 +275,9 @@ class Journey:
         self.s.git(self.state_repo, "-c", f"user.name={author}",
                    "-c", f"user.email={author}@example.com",
                    "commit", "-q", "--allow-empty", "-m", message)
+        if self.layout != "external":
+            # a teammate's commit reaches this board through origin
+            self.s.git(self.app, "push", "-q", "origin", "main")
 
     def hand_move(self, filename: str, source: str, target: str, author: str) -> None:
         """A person's `git mv` between stages, committed under their name —
@@ -294,10 +304,19 @@ class Journey:
                 if not k.startswith(INHERITED)}
 
     def step(self, step: str, **args) -> dict:
+        """One driver step. With `crash=<window>` the step's process is
+        expected to die there (see journey_driver.crash), and returns
+        `{"crashed": True}`."""
         payload = json.dumps({"step": step, "calls": str(self.calls_path), **args})
         done = subprocess.run([sys.executable, str(DRIVER), str(self.tool / "manager" / "core"),
                                payload], capture_output=True, text=True,
                               env=self.env(), cwd=str(self.tool), timeout=600)
+        if args.get("crash"):
+            if done.returncode != CRASHED:
+                raise AssertionError(f"journey step {step} was to crash at "
+                                     f"{args['crash']} and exited {done.returncode}:"
+                                     f"\n{done.stderr[-4000:]}")
+            return {"crashed": True}
         if done.returncode != 0:
             raise AssertionError(f"journey step {step} {args} failed "
                                  f"(exit {done.returncode}):\n{done.stderr[-4000:]}")
@@ -313,6 +332,13 @@ class Journey:
 
     def remote(self, ref: str = "main") -> str:
         return self.s.git(self.origin, "rev-parse", ref)
+
+    def contains(self, ref: str, commit: str) -> bool:
+        """Whether the remote's `ref` holds `commit`."""
+        done = subprocess.run(["git", "-C", str(self.origin), "merge-base",
+                               "--is-ancestor", commit, ref], capture_output=True,
+                              env=self.s.env())
+        return done.returncode == 0
 
     def remote_has(self, path: str, ref: str = "main") -> bool:
         done = subprocess.run(["git", "-C", str(self.origin), "cat-file", "-e",
