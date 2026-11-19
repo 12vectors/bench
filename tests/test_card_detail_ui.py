@@ -65,7 +65,10 @@ HARNESS = "\n".join([
         "informationChip",
         # task 84: relevance reviews and their threads
         "relevanceLine", "reviewRefineWhy", "reviewThreadHtml", "relevanceHtml",
-        "jobsByComment", "reviewRef", "commentRowHtml", "diffHtml", "jobHtml")),
+        "jobsByComment", "reviewRef", "commentRowHtml", "diffHtml", "jobHtml",
+        # task 152: the Reviews section leads with the server's review status
+        "reviewNowHtml")),
+    "const deliveryOf = (t) => ((S.state || {}).delivery || {})[t.file] || null;",
     "const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));",
     "const S = { state: { acceptance: { [input.file]: input.summary } },",
     "  accOpen: {}, accDraft: {}, evidence: { [input.file]: { evidence: [] } },",

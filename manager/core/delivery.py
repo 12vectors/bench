@@ -436,7 +436,8 @@ REVIEW_WORDS = {
     "review-pending": ("Review pending", "neutral"),
 }
 
-_NOT_MERGE = ("This is Bench's own PR review, not GitHub approval, a "
+_NOT_MERGE = ("This is Bench's own PR review, not the hosting provider's "
+              "formal approval, a "
               "person's acceptance or permission to merge.")
 
 

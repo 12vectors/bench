@@ -99,7 +99,8 @@ class EachWordFromItsOwnState(ReviewStatusCase):
         self.assertEqual(found["word"], "review-approved")
         self.assertEqual(found["label"], "Review approved")
         self.assertEqual(found["head"], head)
-        self.assertIn("not GitHub approval", found["sentence"])
+        self.assertIn("not the hosting provider's formal approval",
+                      found["sentence"])
         self.assertIn("permission to merge", found["sentence"])
 
     def test_current_request_for_changes(self):
