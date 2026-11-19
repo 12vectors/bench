@@ -599,6 +599,16 @@ def execute(task: dict, item: dict, board: dict | None = None,
     if base["decision"] in ("blocked", None):
         return {"card": filename, "outcome": "base-blocked",
                 "code": base["code"], "reason": base["summary"]}
+    # A decision that never reached the card is not one the plan can read:
+    # launching would start from whatever the card already says — for a
+    # stacked choice, the application base this exists to avoid. Nothing
+    # is provisioned; the next pass decides and writes again.
+    if base.get("error") or (base["decision"] != "under-way" and not base.get("record")):
+        return {"card": filename, "outcome": "base-unrecorded",
+                "code": "base-unrecorded",
+                "reason": (f"the work-base decision ({base['decision']}) could not "
+                           f"be written onto the card, so nothing was launched: "
+                           f"{base.get('error') or 'no record'}")}
     here_basis = basis(task)
     prior = operations.for_card(filename, ACTION)
     # The attempt counts only attempts that provably ran nothing, so the

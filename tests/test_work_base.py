@@ -122,9 +122,7 @@ class TheStackedDecision(WorkBaseCase):
                                 plan["branch"]).returncode)
         # and the stack reading sees B stacked on A, from the decision
         reading = stacks.board(self.board())
-        self.assertEqual("61-the-api.md", reading[B]["parent"]["file"]
-                         if isinstance(reading[B].get("parent"), dict)
-                         else reading[B].get("parent"))
+        self.assertEqual("61-the-api.md", reading[B]["parent"]["file"])
 
     def test_the_decision_is_written_once_and_survives_a_reload(self):
         self.api_in_review()
@@ -413,8 +411,8 @@ class ReviewDefects(WorkBaseCase):
         self.assertEqual(A_BRANCH, plans.declared(self.task(B))["prBase"])
         resumed = plans.require(self.preflight(B))
         self.assertTrue(resumed["continuing"])
-        self.assertEqual(A_BRANCH, (stacks.board(self.board())[B].get("parent")
-                                    or {}).get("branch", A_BRANCH))
+        parent = stacks.board(self.board())[B]["parent"]
+        self.assertEqual((A, A_BRANCH), (parent["file"], parent["branch"]))
 
     def test_a_blocked_decision_reaches_the_card_through_a_pass(self):
         # defect 3: the scheduler's plan holds the card; the pass writes
@@ -458,6 +456,33 @@ class ReviewDefects(WorkBaseCase):
         text = (self.tasks / "to-do" / B).read_text(encoding="utf-8")
         self.assertEqual("cleared",
                          decisions.read_text(text, B)["blockers"][0]["state"])
+
+
+class AnUnwrittenDecision(WorkBaseCase):
+    """A decision that never reached the card launches nothing: the plan
+    could not read it, so the work would start from the application base."""
+
+    def test_a_refused_write_launches_nothing(self):
+        import operations
+        import scheduler
+        self.api_in_review()
+        self.write(B, card("62 — The UI", depends="61"))
+        allowed = {"allowed": True, "code": "ok", "reason": "", "scope": "bench"}
+        started = []
+        with mock.patch.object(scheduler.orchestrator, "authorize",
+                               return_value=allowed), \
+                mock.patch.object(basechoice.decisions, "note",
+                                  side_effect=ValueError("the record section is full")):
+            result = scheduler.execute(self.task(B), {}, self.board(),
+                                       start=lambda *a: started.append(a))
+        self.assertEqual("base-unrecorded", result["outcome"])
+        self.assertIn("stacked", result["reason"])
+        self.assertIn("the record section is full", result["reason"])
+        self.assertEqual([], started, "nothing was launched")
+        self.assertEqual([], operations.for_card(B, scheduler.ACTION),
+                         "no slot was reserved and no start spent")
+        self.assertEqual([], self.base_records(B))
+        self.assertTrue((self.tasks / "to-do" / B).is_file(), "the card did not move")
 
 
 class OnTheSchedule(WorkBaseCase):
