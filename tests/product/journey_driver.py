@@ -226,6 +226,7 @@ def race(spec: dict | None) -> None:
 
 
 JAM: dict = {}
+JAM_SECONDS = 30
 
 
 def jam(spec: dict | None) -> None:
@@ -239,7 +240,8 @@ def jam(spec: dict | None) -> None:
     if not spec:
         return
     target, stage = spec["file"], spec["to"]
-    JAM.update(file=target, to=stage, jammed=False, committed=None, lockHeld=None)
+    JAM.update(file=target, to=stage, jammed=False, committed=None, lockHeld=None,
+               timeout=None)
     real = taskfiles.commit_paths
 
     def commit_paths(filename, message, spec_, failure):
@@ -250,15 +252,22 @@ def jam(spec: dict | None) -> None:
         lock = Path(found.stdout.strip())
         if not lock.is_absolute():
             lock = root / lock
-        try:   # exclusive, as git itself creates it
-            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-        except FileExistsError:
-            import traceback
-            JAM["contended"] = [
-                "".join(traceback.format_stack(frame)[-6:])
-                for ident, frame in sys._current_frames().items()
-                if ident != threading.get_ident()]
-            raise
+        # exclusive, as git itself creates it — never into a lock another
+        # git holds, whose rename would take the jam away mid-commit. A
+        # git already holding it is waited out, boundedly, and counted; a
+        # jam that could not be taken says so and is never a reproduction.
+        deadline = time.monotonic() + JAM_SECONDS
+        JAM["contended"] = 0
+        while True:
+            try:
+                os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                break
+            except FileExistsError:
+                JAM["contended"] += 1
+                if time.monotonic() > deadline:
+                    JAM["timeout"] = "the work-state index was never free to jam"
+                    return real(filename, message, spec_, failure)
+                time.sleep(0.01)
         JAM["jammed"] = True
         try:
             JAM["committed"] = real(filename, message, spec_, failure)

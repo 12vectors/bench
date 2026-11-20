@@ -240,7 +240,9 @@ class _Journeys:
         j, phase, one, two, solo = self.phase_board()
         first = j.step("pass", jam={"file": one, "to": "in-progress"})
         jam = first.get("jam")
-        self.assertTrue(jam and jam["jammed"], f"the jam never applied: {jam}")
+        self.assertIsNotNone(jam, first)
+        self.assertIsNone(jam["timeout"], f"a probe timeout is not a reproduction: {jam}")
+        self.assertTrue(jam["jammed"], f"the jam never applied: {jam}")
         self.assertIs(jam["committed"], False,
                       f"the jammed commit must fail, or nothing was reproduced: {jam}")
         self.assertTrue(jam["lockHeld"], jam)
