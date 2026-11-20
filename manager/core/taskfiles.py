@@ -975,10 +975,19 @@ def commit_paths(filename: str, message: str, spec: list[str], failure: str) -> 
                         f"repository, and bench does not commit the board's "
                         f"bookkeeping to the application instead")})
         return False
+    # Only what is on disk is staged first: a path gone from disk whose
+    # deletion an earlier, failed commit already staged is in neither the
+    # working tree nor the index, and `git add` refuses a pathspec that
+    # matches nothing. The pathspec commit records every gone path's
+    # deletion itself — it reads the named paths from the working tree
+    # over HEAD — so nothing is lost by not staging it (task 155).
+    root = config.state_repo()
+    present = [p for p in spec if os.path.lexists(Path(root, p))]
     try:
         with COMMIT_LOCK:
             for attempt in range(_INDEX_LOCK_TRIES):
-                result = _git("add", "-A", "--", *spec)
+                result = (_git("add", "-A", "--", *present) if present
+                          else subprocess.CompletedProcess(spec, 0, "", ""))
                 if result.returncode == 0:
                     result = _git("commit", "--no-verify", "-m", message, "--",
                                   *spec, timeout=60)
@@ -1046,15 +1055,24 @@ def _stale_copies(path: Path, also: Path | None = None) -> list[str]:
     if also is not None and also not in candidates:
         candidates.append(also)
     root = config.state_repo()
-    try:
-        tracked = _git("ls-files", "--full-name", "--",
-                       *(str(p) for p in candidates if p != path))
-    except (subprocess.SubprocessError, OSError):
+    others = [str(p) for p in candidates if p != path]
+    if root is None or not others:
         return []
-    if tracked.returncode != 0 or root is None:
-        return []
+    # Known to git means in the index *or* in HEAD. A failed commit whose
+    # `git add` had already succeeded staged the old path's deletion, so
+    # the index no longer lists it while HEAD still does — and asking the
+    # index alone found nothing to record (the 06:58 full-suite failure).
+    names: set[str] = set()
+    for args in (("ls-files", "--full-name", "--", *others),
+                 ("ls-tree", "-r", "--full-name", "--name-only", "HEAD", "--", *others)):
+        try:
+            listed = _git(*args)
+        except (subprocess.SubprocessError, OSError):
+            continue
+        if listed.returncode == 0:
+            names.update(line for line in listed.stdout.splitlines() if line)
     stale = []
-    for line in tracked.stdout.splitlines():
+    for line in sorted(names):
         known = root / line
         if not known.exists() and not known.is_symlink():
             stale.append(str(known))   # git knew it: record its removal

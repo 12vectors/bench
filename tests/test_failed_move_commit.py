@@ -158,14 +158,33 @@ class _FailedMoveCommit:
 
     # — the reproduction: the state a failed move commit leaves —
 
-    def test_a_staged_then_failed_move_commit_leaves_the_deletion_staged(self):
+    def test_a_staged_then_failed_move_commit_leaves_the_move_uncommitted(self):
+        """What the staged-then-failed commit leaves: the new path staged,
+        HEAD unchanged. Before the repair the move's `git add` also staged
+        the old path's deletion, so the index stopped listing it (the
+        red commit before the repair shows that state); now only what is
+        on disk is staged and the deletion is left for the commit."""
         self.staged_then_failing_move("to-do", "in-progress")
 
         self.assertTrue(self.head_has("to-do"))
         self.assertFalse(self.head_has("in-progress"))
-        self.assertIn(f"D  {self.rel('to-do')}\n", self.porcelain(),
-                      "the deletion is staged: the index no longer lists the old path")
+        self.assertIn(f"A  {self.rel('in-progress')}\n", self.porcelain())
+        self.assertIn(self.rel("to-do"), self.porcelain(), "the deletion is a local change")
+
+    def test_an_edit_records_a_deletion_only_head_still_lists(self):
+        """The index no longer lists the old path but HEAD does — the
+        state the pre-repair add left, and any staged deletion. The edit
+        still finds it, by asking HEAD as well as the index."""
+        self.staged_then_failing_move("to-do", "in-progress")
+        git(self.repo, "rm", "-q", "--cached", "--", self.rel("to-do"))
         self.assertEqual(git(self.repo, "ls-files", "--", self.rel("to-do")).stdout, "")
+        self.assertTrue(self.head_has("to-do"))
+
+        taskfiles.append_to_task(FILENAME, "in-progress", "\n## Report\n", "report")
+
+        self.assertEqual(self.porcelain(), "")
+        self.assertFalse(self.head_has("to-do"))
+        self.assertIn("Bench-Move-Id:", git(self.repo, "log", "-1", "--format=%B").stdout)
 
     def test_the_cards_next_edit_records_a_staged_then_failed_move(self):
         """The 06:58 full-suite failure (task 155): the standalone card's
