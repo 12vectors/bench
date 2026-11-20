@@ -40,12 +40,16 @@ class PhaseSandbox(Sandbox):
     def setUp(self):
         super().setUp()
         self.branches = {"phase/9-card"}
-        for target in (phases, phasescope):
-            patch = mock.patch.object(target, "branch_exists" if target is phases
-                                      else "has_work",
-                                      (lambda b: b in self.branches) if target is phases
-                                      else (lambda t: f"task/{t['file'][:-3]}"
-                                            in self.branches))
+        patches = (
+            mock.patch.object(phases, "branch_exists",
+                              lambda branch: branch in self.branches),
+            # create=True: the regression is also run against the module
+            # from before the repair, which had no such function
+            mock.patch.object(phasescope, "has_work",
+                              lambda task: f"task/{task['file'][:-3]}"
+                              in self.branches, create=True),
+        )
+        for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
 
