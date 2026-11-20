@@ -10,8 +10,14 @@
                                  by its stable id
      /cards/<card>[?tab=<tab>]   a card's detail view over the Board
      /phases[/<card>]            the Phases view, optionally one phase
-     /sessions[/<session>]       Sessions (`flight`), optionally one session
-     /focus[/<session>]          Focus, optionally one session
+     /sessions[/<session>][?card=<card>]
+                                 Sessions (`flight`), optionally one session;
+                                 `card` names the card or phase whose
+                                 activity it is (task 159), else the whole
+                                 board's
+     /focus[/<session>][?card=<card>]
+                                 Focus, optionally one session, in the same
+                                 activity context
      /settings[/<section>]       Settings, its Overview or one section
      /orchestrator[/<section>][?card=<card>]
                                  the Orchestrator (task 145), its Overview or
@@ -124,10 +130,26 @@ function parseRoute(where) {
     case 'sessions':
     case 'focus': {
       const view = head === 'sessions' ? 'flight' : 'focus';
-      if (rest === undefined) return { view };
-      const session = sessionIdOf(rest);
-      return session === null ? { view, invalid: 'session', raw: decodeSegment(rest) ?? rest }
-        : { view, session };
+      let route = { view };
+      if (rest !== undefined) {
+        const session = sessionIdOf(rest);
+        route = session === null ? { view, invalid: 'session', raw: decodeSegment(rest) ?? rest }
+          : { view, session };
+      }
+      // the activity's context (task 159): the card or phase it is about,
+      // named as a card's address names it. A context that is not an
+      // identifier is said, never dropped for the whole board's.
+      const ctx = params.get('card');
+      if (ctx !== null) {
+        const id = cardIdOf(ctx);
+        if (id === null) {
+          if (!route.invalid) { route.invalid = 'ctx'; route.raw = ctx; }
+        } else {
+          route.ctx = id;
+          if (id !== ctx) route.alias = true;
+        }
+      }
+      return route;
     }
     case 'settings': {
       if (rest === undefined) return { view: 'settings', section: 'overview' };
@@ -182,7 +204,10 @@ function formatRoute(route) {
   const base = '/' + VIEW_PATHS[view];
   if (view === 'brain' && r.entry) return `${base}/e/${enc(r.entry)}`;
   if (view === 'phases' && r.phase) return `${base}/${enc(r.phase)}`;
-  if ((view === 'flight' || view === 'focus') && r.session) return `${base}/${enc(r.session)}`;
+  if (view === 'flight' || view === 'focus') {
+    const path = r.session ? `${base}/${enc(r.session)}` : base;
+    return r.ctx ? `${path}?card=${enc(r.ctx)}` : path;
+  }
   if (view === 'settings' && r.section && r.section !== 'overview') return `${base}/${enc(r.section)}`;
   if (view === 'orchestrator') {
     const path = r.section && r.section !== 'overview' ? `${base}/${enc(r.section)}` : base;
@@ -263,8 +288,13 @@ function routeOf(S) {
   switch (view) {
     case 'brain': return S.brainEntry ? { view, entry: S.brainEntry } : { view };
     case 'phases': return S.phaseSel ? { view, phase: S.phaseSel } : { view };
-    case 'flight': return S.flightSid ? { view, session: S.flightSid } : { view };
-    case 'focus': return S.focusSid ? { view, session: S.focusSid } : { view };
+    case 'flight':
+    case 'focus': {
+      const sid = view === 'flight' ? S.flightSid : S.focusSid;
+      const route = sid ? { view, session: sid } : { view };
+      if (S.activityCtx) route.ctx = S.activityCtx;
+      return route;
+    }
     case 'settings': return { view, section: S.settingsSection || 'overview' };
     case 'orchestrator': {
       const route = { view, section: S.orchSection || 'overview' };

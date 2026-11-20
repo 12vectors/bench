@@ -1,11 +1,13 @@
 /* The drawer: a card's detail view or an open document. */
 import { agentOnTask, failedRun } from '../../app/data.js';
 import { S } from '../../app/state.js';
+import { activityScope, cardLabel, cardParent, crumbsHtml, sessionsIn } from '../../lib/context.js';
 import { $, esc } from '../../lib/dom.js';
 import { harvestFolds } from '../../lib/folds.js';
 import { markScroll, restoreScroll } from '../../lib/keep.js';
 import { md } from '../../lib/md.js';
 import { askCardLink, syncRoute } from '../../lib/nav.js';
+import { pressHold } from '../../lib/press.js';
 import { cardId, formatRoute, routeOf, stemOf } from '../../lib/route.js';
 import { ago } from '../../lib/time.js';
 import { cardFor, cardTitle, focusCard, phaseMembers, planBlock, showDetail, verifySheet } from '../card.js';
@@ -58,6 +60,47 @@ function icon(name) {
     `stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
 }
 
+/* The card's place on the Board (task 159): Board › Tasks › the card, or
+   Board › Phases › its phase › the card when it was opened over Phases.
+   Each step closes the card back to that place; the card itself is where
+   you are, and is not a link. */
+function cardCrumbs(t) {
+  const parent = cardParent(S.state, t, S.view, S.phaseSel);
+  const steps = [{ text: 'Board', href: '/board' }];
+  if (parent.tab === 'phases') {
+    steps.push({ text: 'Phases', href: '/phases' });
+    if (parent.phase && parent.phase.file !== t.file) {
+      steps.push({ text: cardLabel(parent.phase),
+                   href: formatRoute({ view: 'phases', phase: cardId(parent.phase, S.state) }) });
+    }
+  } else {
+    steps.push({ text: 'Tasks', href: '/board' });
+  }
+  steps.push({ text: cardLabel(t) });
+  return crumbsHtml(steps, esc, 'This card on the Board');
+}
+
+/* The way from a card's Activity into its sessions (task 159): the
+   sessions recorded on this card (a phase card's: on it and its members),
+   and Focus on the newest of them. Links, in the card's own activity
+   context, so Sessions and Focus say whose activity they are showing and
+   lead back here. Reading them starts nothing. */
+function activityLinks(t) {
+  const id = cardId(t, S.state);
+  const scope = activityScope(S.state, id);
+  // a card the listing does not hold (archived, ambiguous) has no link
+  if (!scope || !scope.task || scope.task.file !== t.file) return '';
+  const mine = sessionsIn(S.state, scope);
+  const newest = mine.slice().sort((a, b) => (b.last || b.started || 0) - (a.last || a.started || 0))[0];
+  const what = t.isPhase ? 'this phase and its cards' : 'this card';
+  return `<p class="dact-links">` +
+    `<a class="dlink" data-route data-sessions-for href="${esc(formatRoute({ view: 'flight', ctx: id }))}">` +
+    `Sessions for ${esc(what)} <span class="mono">${mine.length}</span></a>` +
+    (newest ? ` · <a class="dlink" data-route data-focus-for href="${esc(formatRoute({ view: 'focus', session: newest.id, ctx: id }))}">` +
+      `Focus on its newest session</a>` : ' · <span class="dnote">no session recorded on it yet</span>') +
+    `</p>`;
+}
+
 function viewControls(copy, copyLabel, wide) {
   const w = !!S.dwide;
   const wideLabel = w ? 'Narrow the reading view' : 'Expand the reading view';
@@ -79,7 +122,35 @@ function drawerKey() {
   return S.selected ? 'v:drawer:task:' + S.selected.file + ':' + drawerTab(S.selected) : null;
 }
 
+/* One click is one click in the detail view too (task 159, as task 147
+   made it in the Orchestrator): the detail view is painted from a string,
+   and a reading that lands between a button going down and coming up — a
+   card's delivery or result, read after it opens — replaced the pressed
+   control, and the click was lost. A press holds the repaint until its
+   click has been dispatched (lib/press.js); the click's own handler paints
+   at once, and a repaint the press held is made after it. */
+let press = null;
+let heldPaint = false;
+function drawerPress() {
+  if (!press) {
+    press = pressHold({ onRelease: () => {
+      if (!heldPaint) return;
+      heldPaint = false;
+      setTimeout(() => renderDrawer(), 0);
+    } });
+    const panel = typeof document === 'undefined' ? null : $('#drawer');
+    if (panel && panel.addEventListener) {
+      panel.addEventListener('pointerdown', (e) => { if (e.isPrimary !== false) press.down(); });
+      document.addEventListener('click', () => press.done(), true);
+      document.addEventListener('pointerup', () => press.up(), true);
+      document.addEventListener('pointercancel', () => press.done(), true);
+    }
+  }
+  return press;
+}
+
 function renderDrawer() {
+  if (drawerPress().held()) { heldPaint = true; return; }
   const panel = $('#drawer');
   const body = $('#drawerbody');
   if (S.drawerKey) markScroll(S.drawerKey, body);   // the document leaving
@@ -152,6 +223,8 @@ function renderDrawer() {
   // existing tools all reach it — the others are `hidden`, not absent.
   body.innerHTML =
     `<div class="dhead dsticky">` +
+    // where the card sits on the Board, and the way back (task 159)
+    cardCrumbs(t) +
     // one row of identity and controls: the card's address (a link a new
     // tab can take, task 134), its delivery status, and the three view
     // controls as one group that never wraps apart. The title has the
@@ -179,7 +252,7 @@ function renderDrawer() {
     dsec('inputs', tab, inputsHtml(t)) +
     dsec('acceptance', tab, acceptanceHtml(t, acc)) +
     dsec('reviews', tab, reviewsHtml(t, acc)) +
-    dsec('activity', tab, activityHtml(t, acc)) +
+    dsec('activity', tab, activityLinks(t) + activityHtml(t, acc)) +
     `<div class="dmeta">${esc(t.stage)}/${esc(t.file)} · ${t.words} words · edited ${esc(when)}</div>`;
   wireDiscussion(t);
   wireDetail(t);

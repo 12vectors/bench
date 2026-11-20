@@ -267,7 +267,7 @@ class Persistence(unittest.TestCase):
             raise bv.CheckFailed("the live events never reached the page")
         b.eval("(() => { render(); return true; })()")
         b.eval("loadState().then(() => true)")
-        b.click('#views a[data-view="flight"]')
+        b.click('#boardnav a[data-view="flight"]')
         b.wait("location.pathname.startsWith('/sessions')", 5)
         b.click('#views a[data-view="board"]')
         if not b.wait("location.pathname === '/board' && document.querySelectorAll('#board article.card').length >= 5", 5):

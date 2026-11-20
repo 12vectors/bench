@@ -302,7 +302,8 @@ class LongChips(unittest.TestCase):
         load(w, h)
         b = S["browser"]
         if which != "board":
-            b.click(f'#views [data-view="{which}"]')
+            # the Board's own views are in its bar since task 159
+            b.click(f'#boardnav [data-view="{which}"]')
         stem = "75-a-member-of-the-long-phase" if which == "phases" else \
             "71-gate-integration-and-acceptance"
         self.assertTrue(b.wait(f"!!document.querySelector('#view-{which}.on "
@@ -462,15 +463,24 @@ class Views(unittest.TestCase):
         load(1280, 800)
         b = S["browser"]
         seen = {}
+        # the Board's own views are in its bar (task 159); the primary Board
+        # stays selected under every one of them
         for view in ["phases", "flight", "focus", "board"]:
-            b.click(f'#views [data-view="{view}"]')
+            b.click(f'#boardnav [data-view="{view}"]')
             ok = b.wait(f"document.querySelector('#view-{view}').classList.contains('on')"
                         f" && document.querySelectorAll('.view.on').length === 1", 5)
             self.assertTrue(ok, f"the {view} view did not become the only visible view")
-            m = measure([f"#view-{view}", "#views"])
-            pressed = b.eval(f"document.querySelector('#views [data-view=\"{view}\"]')"
-                             ".classList.contains('on')")
-            self.assertTrue(pressed, f"the {view} switcher button is not marked current")
+            m = measure([f"#view-{view}", "#views", "#boardnav"])
+            self.assertTrue(b.eval("document.querySelector('#views [data-view=\"board\"]')"
+                                   ".classList.contains('on')"),
+                            f"under {view}, the primary Board is not marked current")
+            if view in ("phases", "board"):
+                pressed = b.eval(f"document.querySelector('#boardnav [data-view=\"{view}\"]')"
+                                 ".getAttribute('aria-current')")
+                self.assertEqual("page", pressed, f"the {view} tab is not marked current")
+            else:
+                self.assertTrue(b.eval("!!document.querySelector('#bnwhere .crumbs [aria-current]')"),
+                                f"{view} draws no breadcrumb saying where it is")
             box = m["boxes"][f"#view-{view}"]
             self.assertTrue(box and box[2] > 0 and box[3] > 0, f"#view-{view} has no size")
             self.assertLessEqual(m["scrollWidth"], 1281, f"{view} overflows horizontally")

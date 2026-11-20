@@ -6,7 +6,7 @@ import { post } from '../lib/api.js';
 import { $, esc } from '../lib/dom.js';
 import { markScroll, restoreScroll, scrollMarks } from '../lib/keep.js';
 import { emptyNote, holdFocus, keyedPool, placeChildren, setHtml } from '../lib/keyed.js';
-import { plainClick, syncRoute } from '../lib/nav.js';
+import { syncRoute } from '../lib/nav.js';
 import { toast } from '../lib/toast.js';
 import { cardId, findCard, formatRoute } from '../lib/route.js';
 import { phaseFlight } from './board.js';
@@ -189,8 +189,11 @@ function laneFor(task, el) {
       halted ? 'var(--alarm)' : running ? 'var(--accent)' : STAGE_TINT[task.stage]}"></span>` +
     // the phase's address (task 134): selects this lane, and a new tab
     // takes it
-    `<a class="lref" href="${esc(formatRoute({ view: 'phases', phase: id }))}" data-phaselink="${esc(id)}" ` +
-      `title="This phase's address">${task.number ? '#' + esc(task.number) : esc(id)}</a>` +
+    // drilled into, it is where you are, and not a link to itself
+    (chosen
+      ? `<span class="lref" aria-current="page">${task.number ? '#' + esc(task.number) : esc(id)}</span>`
+      : `<a class="lref" href="${esc(formatRoute({ view: 'phases', phase: id }))}" data-phaselink="${esc(id)}" data-route ` +
+        `title="Drill into this phase — its address">${task.number ? '#' + esc(task.number) : esc(id)}</a>`) +
     `<button class="ltitle" data-open="1" title="Open the phase card — its text, ` +
       `its list and its PR">${esc(task.title)}</button>` +
     `<span class="lprog">${at.total ? `${at.done} of ${at.total} merged`
@@ -202,6 +205,12 @@ function laneFor(task, el) {
       }">${esc(branch)}</span>` +
     `<button class="chip2" data-copy-link="${esc(formatRoute({ view: 'phases', phase: id }))}" ` +
       `aria-label="copy a link to this phase">Copy link</button>` +
+    // the phase's activity, and its coordination (task 159): each a link
+    // to a destination that keeps this phase as its context
+    `<a class="chip2" data-route data-phase-sessions href="${esc(formatRoute({ view: 'flight', ctx: id }))}" ` +
+      `title="The sessions recorded on this phase card and its cards">Sessions</a>` +
+    `<a class="chip2" data-route data-phase-orch href="${esc(formatRoute({ view: 'orchestrator', section: 'phases', item: id }))}" ` +
+      `title="This phase in the Orchestrator: its scheduling owner, scope and members">Coordinate</a>` +
     `<span class="lacts"></span></div>`;
 
   // the card the phase stopped on, named rather than left as a number
@@ -262,15 +271,8 @@ function laneFor(task, el) {
     el.__topSig = topSig;
     el.querySelectorAll('[data-open]').forEach(btn =>
       btn.addEventListener('click', () => showDetail(el.__task)));
-    // choosing a lane by its address: selected here, written as one entry
-    el.querySelectorAll('[data-phaselink]').forEach(a =>
-      a.addEventListener('click', (e) => {
-        if (!plainClick(e)) return;
-        e.preventDefault();
-        S.phaseSel = a.dataset.phaselink;
-        renderLanes();
-        syncRoute();
-      }));
+    // choosing a lane by its address is following its link (data-route):
+    // the address is applied and written as one entry, like any other
 
     // ▸ run again lives here and nowhere else: clearing a halt should mean
     // having read what caused it, and the reason is the line above it
@@ -416,8 +418,14 @@ function renderLanes() {
     markScroll('v:lanestages:' + el.dataset.phase, el));
   wrap.querySelectorAll('.plines').forEach(el =>
     markScroll('v:phaselog:' + el.dataset.phase, el));
-  const phases = lanePhases();
-  phaseNote(phases);
+  const every = lanePhases();
+  phaseNote(every);
+  // a phase drilled into (task 159) is drawn alone: its identity is the
+  // page, and Board › Phases above it is the way back to every lane. A
+  // phase the address names that has no lane leaves every lane drawn,
+  // under the note that says so.
+  const chosen = S.phaseSel ? every.filter(t => cardId(t, S.state) === S.phaseSel) : [];
+  const phases = chosen.length ? chosen : every;
   if (!phases.length) {
     // an empty grid of five columns would be a room pretending to be full
     setHtml(wrap, '<div class="empty">No phases yet. A phase is an ordinary card ' +

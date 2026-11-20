@@ -259,6 +259,18 @@ class AWorkBase(unittest.TestCase):
       });
       mo.observe(d, { attributes: true, attributeFilter: ['open'] });
       window.__wbRace = log;
+      // what re-wrote the detail view meanwhile, with where from: said in
+      // the failure, so a toggle that never arrives names its cause
+      window.__wbWrites = [];
+      const body = document.querySelector('#drawerbody');
+      const html = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+      if (body && !body.__wbSpy) {
+        body.__wbSpy = true;
+        Object.defineProperty(body, 'innerHTML', { configurable: true,
+          get() { return html.get.call(this); },
+          set(v) { if (window.__wbWrites) window.__wbWrites.push(String(new Error().stack).split('\\n').slice(1, 6).join(' | '));
+                   html.set.call(this, v); } });
+      }
     })()"""
 
     FOLD_JS = """(() => { const d = document.querySelector('#drawer .workbase details');
@@ -283,10 +295,22 @@ class AWorkBase(unittest.TestCase):
         before its toggle is delivered. Waits for that late toggle, so the
         reading below is after both."""
         b = S["browser"]
+        # the detail view's own readings (its delivery, its result) land a
+        # moment after it opens and redraw it; the race this case makes is
+        # its own, so it starts once those have settled
+        b.eval("(() => { const body = document.querySelector('#drawerbody');"
+               " const html = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');"
+               " if (!body.__wbQuiet) { body.__wbQuiet = true; window.__wbLast = Date.now();"
+               "  Object.defineProperty(body, 'innerHTML', { configurable: true,"
+               "   get() { return html.get.call(this); },"
+               "   set(v) { window.__wbLast = Date.now(); html.set.call(this, v); } }); }"
+               " return true; })()")
+        b.wait("Date.now() - window.__wbLast > 600", 8)
         b.eval(self.RACE_JS)
         act()
         self.assertTrue(b.wait("(window.__wbRace || []).some(e => e.startsWith('toggle:'))", 5),
-                        f"the fold's toggle was never delivered: {b.eval('window.__wbRace')}")
+                        f"the fold's toggle was never delivered: {b.eval('window.__wbRace')}; "
+                        f"the detail view was re-written by: {b.eval('window.__wbWrites')}")
         got = b.eval(self.FOLD_JS)
         # the ordering this case exists for, observed rather than assumed
         self.assertEqual(got["log"][0].split(":")[0], "open", got["log"])

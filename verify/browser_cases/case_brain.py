@@ -209,9 +209,13 @@ class BrainReading(unittest.TestCase):
     def test_4_the_keyboard_reaches_and_opens_an_entry(self):
         b = self.open("/brain")
         b.eval("document.querySelector('#bshell .b-title').focus(); true")
-        # the list's own action comes first (task 158), then its entries
+        # the list's own action comes first (task 158), then its search and
+        # its two filters (task 159), then its entries
         b.key("Tab")
         self.assertEqual(b.eval("document.activeElement?.dataset?.bact || null"), "new")
+        for control in ("q", "cls", "kind"):
+            b.key("Tab")
+            self.assertEqual(b.eval("document.activeElement?.dataset?.bfind || null"), control)
         b.key("Tab")
         first = b.eval("document.activeElement?.dataset?.brainId || null")
         self.assertEqual(first, "e-report-routing")

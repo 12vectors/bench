@@ -122,7 +122,15 @@ def card_text() -> str:
 
 def view(name: str):
     b = S["browser"]
-    b.click(f'#views [data-view="{name}"]')
+    # the primary destinations are in the header, the Board's own views in
+    # its bar (task 159); reaching one of those starts from the Board
+    if name in ("board", "brain", "orchestrator", "settings"):
+        b.click(f'#views [data-view="{name}"]')
+    else:
+        if b.eval("document.querySelector('#boardnav').hidden"):
+            b.click('#views [data-view="board"]')
+            b.wait("!document.querySelector('#boardnav').hidden", 5)
+        b.click(f'#boardnav [data-view="{name}"]')
     b.wait(f"document.querySelector('#view-{name}') && "
            f"getComputedStyle(document.querySelector('#view-{name}')).display !== 'none'", 5)
 

@@ -1,12 +1,13 @@
 /* Sessions: the flight recorder. */
-import { agentFor, isLiveSession, loadSession, loadState, modelChip, sessionMeta, sessionsOf } from '../app/data.js';
+import { agentFor, isLiveSession, loadSession, loadState, modelChip, sessionMeta } from '../app/data.js';
 import { S } from '../app/state.js';
 import { fetch } from '../lib/api.js';
 import { $, esc } from '../lib/dom.js';
 import { markScroll, restoreScroll } from '../lib/keep.js';
 import { sessionStatusWord, sessionUnavailable } from '../lib/linkwords.js';
 import { plainClick, syncRoute } from '../lib/nav.js';
-import { formatRoute } from '../lib/route.js';
+import { activityScope, cardLabel, recordedCard, sessionsIn } from '../lib/context.js';
+import { cardId, formatRoute } from '../lib/route.js';
 import { ago, fmtClock, fmtShort } from '../lib/time.js';
 import { toast } from '../lib/toast.js';
 import { render } from './frame.js';
@@ -22,23 +23,68 @@ import { FILTERS, GLYPHS } from '../words.js';
    (S.flightAuto): a pick is not a destination, so it has no address. */
 function pickFlightSid() {
   if (S.flightSid) return S.flightSid;
-  if (S.flightAuto && sessionMeta(S.flightAuto)) return S.flightAuto;
-  const live = sessionsOf(isLiveSession);
+  // the page's pick is made among the sessions in view: the card's or
+  // phase's in a context (task 159), the whole board's otherwise
+  const inView = scopedSessions();
+  if (S.flightAuto && inView.some(m => m.id === S.flightAuto)) return S.flightAuto;
+  const live = inView.filter(isLiveSession);
   const agentLive = live.find(m => m.agentId);
-  S.flightAuto = (agentLive || live[0] || (S.state.sessions || [])[0] || {}).id || null;
+  S.flightAuto = (agentLive || live[0] || inView[0] || {}).id || null;
   return S.flightAuto;
+}
+
+/* The sessions the activity context holds (task 159): every one on the
+   whole board's, the ones recorded on a card — or on a phase and its
+   members — otherwise, and none for a context that is not on this board. */
+function scopedSessions() {
+  return sessionsIn(S.state, activityScope(S.state, S.activityCtx));
+}
+
+/* What a context that names nothing here is, said where the list would
+   be: never swapped for the whole board's sessions, never a guessed
+   parent. */
+function contextNote() {
+  if (S.activityBad) {
+    return `<div class="f-empty" role="status">“${esc(String(S.activityBad).slice(0, 40))}” does not name a ` +
+      `card. <a href="/sessions" data-route>All sessions</a></div>`;
+  }
+  const scope = activityScope(S.state, S.activityCtx);
+  if (!scope || scope.task) return '';
+  const label = /^\d+$/.test(scope.id) ? '#' + scope.id : scope.id;
+  const say = scope.state === 'ambiguous'
+    ? `${scope.files.length} cards carry the number ${esc(scope.id)}, so these sessions cannot be told apart by it.`
+    : `No card ${esc(label)} on this board — it may be archived, or the link was made on another board.`;
+  return `<div class="f-empty" role="status">${say} <a href="/sessions" data-route>All sessions</a></div>`;
+}
+
+/* Where a session sits on the Board, from the card it recorded — or that
+   it recorded none — with the ways to that card and its activity. */
+function recordedLine(meta) {
+  const task = recordedCard(S.state, meta);
+  if (!task) {
+    return `<div class="s-ctx">${meta.task
+      ? `Recorded on ${esc(meta.task)}, which is not on this board.`
+      : 'No card is recorded for this session.'}</div>`;
+  }
+  const id = cardId(task, S.state);
+  const inThis = S.activityCtx && activityScope(S.state, S.activityCtx)?.files?.has(task.file);
+  return `<div class="s-ctx">On <a href="${esc(formatRoute({ card: id }))}" data-route>` +
+    `${esc(cardLabel(task))} ${esc(task.title)}</a>` +
+    (inThis ? '' : ` · <a href="${esc(formatRoute({ view: 'flight', ctx: id }))}" data-route>` +
+      `Sessions for ${esc(cardLabel(task))}</a>`) + `</div>`;
 }
 
 function renderFlight() {
   const sid = pickFlightSid();
   const meta0 = sid ? sessionMeta(sid) : null;
   if (sid && meta0) loadSession(sid);
+  const ctx = S.activityCtx || undefined;
 
-  const rows = (S.state.sessions || []).map(m => {
+  const rows = scopedSessions().map(m => {
     const active = isLiveSession(m) && m.status === 'active';
     // a link to the session's address (task 134): a new tab takes it
     return `<a class="sess-row${m.id === sid ? ' sel' : ''}" data-sid="${esc(m.id)}" ` +
-      `href="${esc(formatRoute({ view: 'flight', session: m.id }))}"` +
+      `href="${esc(formatRoute({ view: 'flight', session: m.id, ctx }))}"` +
       `${m.id === sid ? ' aria-current="true"' : ''}>` +
       `<span class="top"><span class="dot${active ? ' live' : ''}"></span>` +
       `<span>${esc((m.label || m.id.slice(0, 8)).split(' · ')[0])}</span>` +
@@ -49,8 +95,13 @@ function renderFlight() {
   }).join('');
   const rail = $('#frail');
   markScroll('v:rail', rail);
-  rail.innerHTML = `<div class="label">Sessions</div>` +
-    (rows || '<div class="f-empty">None yet. Start an agent, or open a claude session in this repo.</div>');
+  const scope = activityScope(S.state, S.activityCtx);
+  const heading = scope && scope.task ? `Sessions for ${cardLabel(scope.task)}` : 'Sessions';
+  const none = scope && scope.task
+    ? `<div class="f-empty">No session is recorded on ${esc(cardLabel(scope.task))}` +
+      `${scope.state === 'phase' ? ' or its cards' : ''} yet. <a href="/sessions" data-route>All sessions</a></div>`
+    : '<div class="f-empty">None yet. Start an agent, or open a claude session in this repo.</div>';
+  rail.innerHTML = `<div class="label">${esc(heading)}</div>` + (contextNote() || rows || none);
   restoreScroll('v:rail', rail);
   document.querySelectorAll('#frail .sess-row').forEach(el =>
     el.addEventListener('click', (e) => {
@@ -87,8 +138,12 @@ function renderFlight() {
     `<div class="s-line">${meta.task ? 'on ' + esc(meta.task) + ' · ' : ''}` +
     `<span data-sstatus>${esc(sessionStatusWord(meta, isLiveSession(meta)))}</span> · ` +
     `started ${fmtShort(meta.started)} · ${meta.count || 0} events · ` +
-    `${files.size} files edited · ${checks} check runs${branch}${model}</div></div>` +
-    `<button class="copylink" data-copy-link="${esc(formatRoute({ view: 'flight', session: sid }))}" ` +
+    `${files.size} files edited · ${checks} check runs${branch}${model}</div>` +
+    recordedLine(meta) + `</div>` +
+    // Focus is this session's activity, in the same context (task 159)
+    `<a class="copylink" data-route data-focuslink href="${esc(formatRoute({ view: 'focus', session: sid, ctx }))}">` +
+    `Focus on this session</a>` +
+    `<button class="copylink" data-copy-link="${esc(formatRoute({ view: 'flight', session: sid, ctx }))}" ` +
     `aria-label="copy a link to this session">Copy link</button>` +
     stopBtn + spark(events, meta);
   const stop = $('#stopagent');

@@ -36,21 +36,20 @@
     </svg>
     <span class="path" id="root"></span>
   </div>
-  <nav class="views" id="views">
-    <!-- links, not buttons (task 134): each view has an address, so a
-         modifier-click or a middle-click opens it in a new tab -->
+  <!-- the four primary destinations, in this order (task 159). Links, not
+       buttons (task 134): each has an address, so a modifier-click or a
+       middle-click opens it in a new tab. Phases, Sessions and Focus live
+       under the Board (the bar below the header). -->
+  <nav class="views" id="views" aria-label="Primary">
+    <!-- the label is written by renderViews(): the mark that says a phase
+         halted while you were somewhere else -->
     <a href="/board" data-view="board" class="on" aria-current="page">Board</a>
-    <!-- the Brain (task 157): maintained entries in the work root's brain/,
-         read only. A first entry point; #159 settles the navigation -->
+    <!-- the Brain (tasks 157, 158): maintained entries in the work root's
+         brain/ -->
     <a href="/brain" data-view="brain">Brain</a>
     <!-- the label is written by renderOrchTab(): how many decisions wait
          on you and the mark a pause or a held incident wears (task 145) -->
     <a href="/orchestrator" data-view="orchestrator">Orchestrator</a>
-    <!-- the label is written by renderViews(): the running count, and the
-         mark that says a phase halted while you were somewhere else -->
-    <a href="/phases" data-view="phases">Phases</a>
-    <a href="/sessions" data-view="flight">Sessions</a>
-    <a href="/focus" data-view="focus">Focus</a>
     <!-- the label is written by renderViews(): the mark that says this
          board's execution policy refuses something, learned from whichever
          view you are on -->
@@ -86,6 +85,24 @@
   <button id="themebtn" class="hsec">Daylight</button>
   <button id="refresh" class="hsec">Refresh</button>
 </header>
+
+<!-- the Board's own navigation (task 159), drawn only while the Board is
+     the primary destination: its two kinds of work — Tasks and Phases —
+     then where you are below them (a phase drilled into, or the activity
+     of a card or phase), then the board-wide activity. The current
+     destination is never a link to itself. renderBoardNav() keeps it. -->
+<nav class="boardnav" id="boardnav" aria-label="Board">
+  <div class="bn-tabs">
+    <a href="/board" data-view="board" data-route class="on" aria-current="page">Tasks</a>
+    <a href="/phases" data-view="phases" data-route>Phases</a>
+  </div>
+  <div class="bn-where" id="bnwhere"></div>
+  <div class="bn-act" id="bnact" aria-label="Board activity" role="group">
+    <span class="bn-lab">Board activity</span>
+    <a href="/sessions" data-view="flight">All sessions</a>
+    <a href="/focus" data-view="focus">Focus</a>
+  </div>
+</nav>
 
 <main>
   <!-- board -->

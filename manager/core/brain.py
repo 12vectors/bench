@@ -559,6 +559,9 @@ def _listed(e: dict) -> dict:
             "tombstone": e["removed"] is not None, "revision": e["revision"],
             "file": e["file"], "sources": e["sourceRefs"],
             "supersededBy": e["supersededBy"], "override": e["override"] is not None,
+            # the ids it names as related (task 159): the list's search
+            # finds an entry by what it links to as well as by its words
+            "related": list(e["related"]),
             "warnings": len(e["warnings"])}
 
 
