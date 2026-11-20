@@ -1801,10 +1801,13 @@ configuration, a gate or an AGENTS file. Refused with nothing written: a
 file, or that resolves outside the work root; an entry another file
 also claims, or one that breaks the contract (fix it by hand); a line
 break, a control or direction-changing character, or `<`/`>` in a title,
-summary, source or reason; a title starting `#`; a source with a comma,
+summary, source or reason; a title starting or ending `#` (Markdown
+would read the trailing `#` away); a source with a comma,
 credentials in a web address, or a `javascript:`/`data:`/`file:`
 scheme; a body with its own `## Classification history` heading or an
-unclosed code fence; a related, replacing or superseding id that is not
+unclosed code fence — and a classify, override or retire of an entry
+written by hand whose body has one, since the history line would land
+inside the fence (close it first); a related, replacing or superseding id that is not
 an entry here. Sources are text: a web address is never fetched, and
 nothing in an entry grants a run any permission.
 
