@@ -183,6 +183,23 @@ function renderDrawer() {
   wireDeliveryButtons(ov, t, deliveryActions(dl, 'ov'));
   ov.querySelectorAll('[data-dview="evidence"]').forEach(b =>
     b.addEventListener('click', () => verifySheet(t)));
+  // every tool and action the card has, built by the card's own builder
+  // and wired by it — so the detail view cannot offer a tool the card
+  // would not, or wire one differently. Placed before focus is restored,
+  // so a tool that had focus gets it back after a live redraw.
+  const tools = cardFor(t).querySelector('.cardtools');
+  const slot = $('#drawertools');
+  if (tools && tools.querySelectorAll('button, a').length) {
+    tools.classList.add('open', 'dtools');
+    tools.id = 'drawertools';
+    const label = tools.querySelector('.tlabel');
+    if (label) label.textContent = 'Tools';
+    slot.replaceWith(tools);
+  } else {
+    // no tools in this stage: nothing at the top, rather than a sentence
+    // saying so above every section
+    slot.remove();
+  }
   if (dslot && !typing) {
     const again = body.querySelector(`[data-dslot="${dslot}"]`);
     if (again && !again.closest('[hidden]')) again.focus({ preventScroll: true });
@@ -198,22 +215,6 @@ function renderDrawer() {
       again.focus({ preventScroll: true });
       if (typing.sel && again.setSelectionRange) again.setSelectionRange(typing.sel[0], typing.sel[1]);
     }
-  }
-  // every tool and action the card has, built by the card's own builder
-  // and wired by it — so the detail view cannot offer a tool the card
-  // would not, or wire one differently
-  const tools = cardFor(t).querySelector('.cardtools');
-  const slot = $('#drawertools');
-  if (tools && tools.querySelectorAll('button, a').length) {
-    tools.classList.add('open', 'dtools');
-    tools.id = 'drawertools';
-    const label = tools.querySelector('.tlabel');
-    if (label) label.textContent = 'Tools';
-    slot.replaceWith(tools);
-  } else {
-    // no tools in this stage: nothing at the top, rather than a sentence
-    // saying so above every section
-    slot.remove();
   }
   panel.classList.add('open');
   restoreScroll(key, body);

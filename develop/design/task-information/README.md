@@ -79,7 +79,8 @@ card*; **H** lives in its own tab, linked from the Overview.
 | Show the result (demonstrations) | More about this card | P3 (one line and a fold when Off with nothing kept) | — |
 | Where the change is (merged, installed, deployed) | More about this card → Show the result | P3 | — |
 | Stack, Signals (Bench checks, CI, Bench/GitHub review) | More about this card | P3 | ⌖, ◫, ⚖ chips |
-| Every tool and action | More about this card → Tools | P3 | the card's ⋯ menu |
+| Card identity and the view controls (copy link, expand/narrow, close) | The sticky head: `#n`, the status word and three icon buttons on one row, the title on the full width under them | P1 | Escape closes; each icon has its name as a tooltip |
+| Every tool and action | **Tools**, once, at the top of the detail view — under the tab row, above every tab's text (owner review) | P1 (on every tab) | the card's ⋯ menu |
 | Branch and plan | More about this card (folded) | P3 | ⌖ chip |
 | Discussion, refinement | Brief tab | H | — |
 | Explanations of what a section is and is not | A fold in that section | P3 | — |
@@ -95,6 +96,41 @@ Tab responsibilities after the change:
 | Acceptance | Criteria and their record | Untracked criteria lead with their first clause |
 | Reviews | Findings and rounds | PR reviews (findings, newest round) before relevance reviews; explanations folded |
 | Activity | The dated record | Unchanged; the Overview links into it |
+
+### The owner's visual review (supersedes "Tools at the bottom")
+
+Ronald inspected the candidate at `4ab11487d80d` and asked for three
+changes, which this map now follows (his before screenshots are
+`149-visual-feedback-tabs-spacing.png`, `-duplicate-tools.png` and
+`-header-wrap.png` in the work state's `reference/`):
+
+1. **A deliberate gap under the tab row.** Whatever comes first under the
+   head's border — the tools, or the open tab's text — starts at least
+   20px below it (the body's 14px gap plus 10px under the sticky head),
+   on every tab, in the narrow and expanded views and in both themes.
+2. **Tools at the top, labelled once.** The card's tool group (built by
+   the card's own builder, so it cannot disagree with the ⋯ menu) sits
+   directly under the navigation and before the tab's narrative, on every
+   tab, with its one "Tools" label and no heading over it. A card with no
+   tools in its stage draws nothing there. Arming and confirmation are
+   the tools' own, unchanged; a redraw replaces the group, never adds one,
+   and a focused tool keeps its focus.
+3. **Compact header controls.** Copy link, Expand/Narrow and Close are
+   icon buttons, each with its name in words (`aria-label`) and as a
+   tooltip; Expand/Narrow changes name, icon and `aria-pressed` with its
+   state; Copy link still confirms in a toast; Escape still closes. The
+   three are one group (`.dctl`) that never wraps, on the head's first row
+   beside the card's number and status, so the title has the full width
+   on the row under them and wraps rather than shrinking — at 390px and
+   320px too.
+
+The browser case holds all three (`test_owner_review_*` in
+`case_task_information.py`) and writes
+`task-info-owner-header-<width>x<height>-<light|dark>.png` at 1280×900,
+390×844 and 320×720, plus `task-info-owner-header-expanded-1280x900-*.png`.
+Narrow widths there are viewport emulation, not browser zoom; the real
+200% zoom is `case_card_detail`'s. Those captures are for a person to look
+at: the run that made this change could not open them.
 
 ## The summary: provenance and freshness
 
@@ -163,8 +199,14 @@ Stage · Progress · Acceptance · Findings · Last review          ← first fa
 ### Overview, after (the long legacy fixture at 1280×900 — `task-info-164-legacy-long-overview-1280x900.png`)
 
 ```text
-#164 Initialize work directories only at the installation mode's…  [Delivered] [Copy link] [Expand] [Close]
+#164 [Delivered]                                                            [🔗] [⤢] [✕]
+Initialize work directories only at the installation mode's work root
 Overview  Brief  Inputs  Acceptance  Reviews  Activity
+──────────────────────────────────────────────────────────────────────────────────────
+                                                         ← a deliberate gap under the line
+Tools
+[◔ still true?] [⚿ profile] [◫ evidence] [⌖ plan] [PR ↗] …
+──────────────────────────────────────────────────────────────────────────────────────
 THE WORK
   Make first installation layout-aware: initialize tasks/, plans/ and reference/
   only at the resolved work root, retain vendored defaults, and clearly …
@@ -190,17 +232,26 @@ REVIEWS AND FINDINGS
 MORE ABOUT THIS CARD
   Show the result (Off) — No demonstration was asked for and none is kept on this board.
   ▸ Screenshots, the checks bench ran, and where the change is
-  Signals …   Tools …   ▸ Branch and plan
+  Signals …   ▸ Branch and plan
 ```
+
+(`[🔗] [⤢] [✕]` stand for the three icon buttons — drawn as inline SVG
+on the page, each named "Copy a link to this card", "Expand the reading
+view" / "Narrow the reading view" and "Close the detail view".)
 
 ### Overview, after, at 390×844 (`task-info-204-review-findings-overview-390x844-light.png`, `-dark.png`)
 
 ```text
-#204 Show the time zone beside every
-     timestamp in the Activity view
-[Changes requested] [Copy link] [Expand] [Close]
+#204 [Changes requested]  [🔗][⤢][✕]
+Show the time zone beside every
+timestamp in the Activity view
 Overview Brief Inputs Acceptance
 Reviews Activity
+──────────────────────────────────
+                       ← the gap
+Tools
+[↻ act on PR] [◔ review PR] [⚿] …
+──────────────────────────────────
 THE WORK
  Activity shows local times without
  saying which zone they are in, …

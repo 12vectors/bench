@@ -1182,6 +1182,9 @@ function mountCard(spec) {
       twin.className = 'chip2 onface';
       twin.innerHTML = `<span class="g2">${act.glyph}</span>${actLabel(act.label, act.confirm, act.busy)}`;
       twin.title = act.title;
+      // named, so a detail view redrawn under a focused twin can find it
+      // again (drawerFocusKey reads data-* attributes)
+      twin.dataset.toolAct = act.label;
       wireAction(twin, `${task.file}::${act.label}`, live);
       el.querySelector('.cardtools .tacts').appendChild(twin);
     });

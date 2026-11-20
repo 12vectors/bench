@@ -1356,9 +1356,16 @@ complete the work is.
 
 The card's detail view leads with what the card is and what happens next:
 its number, title and delivery status stay in view while you read (the
-head is sticky, and **Expand** widens the view for long briefs and
-reports), and five sections follow as tabs — Tab reaches the row, the
-arrow keys, Home and End move along it.
+head is sticky), and five sections follow as tabs — Tab reaches the row,
+the arrow keys, Home and End move along it. The head's three controls
+are icons, each named in words for a screen reader and as a tooltip, and
+kept together on one row at every width beside the number and status,
+with the title wrapping on the full width under them: **Copy link**
+(confirmed in a toast), **Expand** / **Narrow** (a wider view for long
+briefs and reports; its name, icon and pressed state follow it) and
+**Close** (Escape too). Under the tab row, after a deliberate gap, the
+card's **Tools** come first on every tab — the same group as its **⋯**
+menu, labelled once — and then the open section's text.
 
 - **Overview** — four sections in the order a busy reader asks their
   questions (task 149), then everything else. **The work**: what the
@@ -1399,8 +1406,8 @@ arrow keys, Home and End move along it.
   stack, the **Signals**
   block — Bench checks (`Required: 1 of 1 passed on <commit>. Optional:
   2 (see ◫).`), external CI, review and the merge requirements as
-  separate rows, each in its own words — and every tool and action the
-  card has, with the branch plan folded underneath. Green CI is labelled
+  separate rows, each in its own words — with the branch plan folded
+  underneath. Green CI is labelled
   as not a Bench check, and a board with no gate says that nothing is
   required, which is not a pass. Review is the records it is, each on a
   row of its own: **Bench review** (the durable verdict and the commit

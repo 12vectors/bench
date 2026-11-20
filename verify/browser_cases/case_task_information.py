@@ -261,6 +261,149 @@ class TaskInformation(unittest.TestCase):
         b.eval("(() => { const c = document.querySelector('#commentbox'); c.value = '';"
                " c.dispatchEvent(new Event('input')); return true; })()")
 
+    # ── the owner's visual review: tools at the top, icon controls, gap ──
+
+    TABS = ("overview", "brief", "inputs", "acceptance", "reviews", "activity")
+
+    def tools_and_gap(self, where: str):
+        """One tool group, labelled once, under the tab row and above the
+        open section on every tab — and a deliberate gap under the line."""
+        b = S["browser"]
+        for tab in self.TABS:
+            b.click(f"#dtab-{tab}")
+            self.assertTrue(b.wait(f"!document.querySelector('#dsec-{tab}').hidden", 5), f"{tab} did not open")
+            b.eval(f"{DRAWER}.scrollTop = 0")
+            m = b.eval(
+                "(() => { const r = s => { const e = document.querySelector(s);"
+                " return e ? e.getBoundingClientRect() : null; };"
+                " const sec = [...document.querySelectorAll('#drawerbody > .dsec')].find(s => !s.hidden);"
+                " const first = sec && [...sec.children].find(c => c.getBoundingClientRect().height > 0);"
+                " return { groups: document.querySelectorAll('#drawerbody .cardtools').length,"
+                " labels: [...document.querySelectorAll('#drawerbody .tlabel')].map(l => l.innerText.trim()),"
+                " headings: [...document.querySelectorAll('#drawerbody h2, #drawerbody h3, #drawerbody h4')]"
+                ".filter(h => /^tools$/i.test(h.innerText.trim())).length,"
+                " head: r('#drawer .dsticky').bottom, tabs: r('#drawer .dtabs').bottom,"
+                " tools: r('#drawerbody > #drawertools'),"
+                " first: first ? first.getBoundingClientRect().top : null }; })()")
+            self.assertEqual(m["groups"], 1, f"{where} {tab}: {m['groups']} tool groups")
+            self.assertEqual(m["labels"], ["Tools"], f"{where} {tab}: tool labels {m['labels']}")
+            self.assertEqual(m["headings"], 0, f"{where} {tab}: a Tools heading over the tool group")
+            tools = m["tools"]
+            self.assertIsNotNone(tools, f"{where} {tab}: the tools are not under the tab row")
+            self.assertGreaterEqual(tools["top"] - m["head"], 20,
+                                    f"{where} {tab}: the tools start {tools['top'] - m['head']:.0f}px under the line")
+            self.assertIsNotNone(m["first"], f"{where} {tab}: the section shows nothing")
+            self.assertGreaterEqual(m["first"] - tools["bottom"], 12,
+                                    f"{where} {tab}: the section starts against the tools")
+            self.measured.setdefault("gap", {})[f"{where} {tab}"] = round(tools["top"] - m["head"])
+        b.click("#dtab-overview")
+
+    def controls_one_row(self, where: str):
+        b = S["browser"]
+        m = b.eval(
+            "(() => { const bs = [...document.querySelectorAll('#drawer .dhead .dctl button')];"
+            " const body = document.querySelector('#drawerbody').getBoundingClientRect();"
+            " const t = document.querySelector('#drawer .dtitle').getBoundingClientRect();"
+            " return { ids: bs.map(x => x.id), tops: bs.map(x => Math.round(x.getBoundingClientRect().top)),"
+            " rights: bs.map(x => x.getBoundingClientRect().right), lefts: bs.map(x => x.getBoundingClientRect().left),"
+            " names: bs.map(x => x.getAttribute('aria-label')), tips: bs.map(x => x.title),"
+            " texts: bs.map(x => x.innerText.trim()), bodyL: body.left, bodyR: body.right,"
+            " vw: window.innerWidth, titleW: t.width, titleR: t.right }; })()")
+        self.assertEqual(m["ids"], ["dcopylink", "dwide", "closeDrawer"], where)
+        self.assertEqual(len(set(m["tops"])), 1, f"{where}: the controls wrap onto two rows {m['tops']}")
+        self.assertTrue(all(n for n in m["names"]) and all(t for t in m["tips"]),
+                        f"{where}: an icon without a name or a tooltip")
+        self.assertEqual(m["texts"], ["", "", ""], f"{where}: the controls still carry text")
+        self.assertLessEqual(max(m["rights"]), min(m["vw"], m["bodyR"]) + 1, f"{where}: a control is cut off")
+        self.assertGreaterEqual(min(m["lefts"]), m["bodyL"] - 1, f"{where}: a control is cut off")
+        # the title keeps the width of the view, wrapping rather than shrinking
+        self.assertGreaterEqual(m["titleW"], (m["bodyR"] - m["bodyL"]) * 0.8,
+                                f"{where}: the title was squeezed to {m['titleW']:.0f}px")
+        self.measured.setdefault("controls", {})[where] = {"tops": m["tops"], "titleW": round(m["titleW"])}
+
+    def test_owner_review_tools_top_gap_and_icon_controls(self):
+        name = "164-legacy-long.md"
+        for dark in (False, True):
+            mode = "dark" if dark else "light"
+            for w, h in ((1280, 900), (390, 844), (320, 720)):
+                with self.subTest(mode=mode, width=w):
+                    b = self.open_card(name, width=w, height=h, dark=dark)
+                    where = f"{w}x{h} {mode}"
+                    self.controls_one_row(where)
+                    self.tools_and_gap(where)
+                    self.no_sideways(where)
+                    shot(f"task-info-owner-header-{w}x{h}-{mode}")
+                    if w == 1280:
+                        # the expanded reading view keeps the same header
+                        b.click("#dwide")
+                        self.assertTrue(b.wait("S.dwide === true", 5))
+                        self.controls_one_row(f"{where} expanded")
+                        self.tools_and_gap(f"{where} expanded")
+                        shot(f"task-info-owner-header-expanded-{w}x{h}-{mode}")
+                        b.click("#dwide")
+                        self.assertTrue(b.wait("S.dwide === false", 5))
+
+    def test_owner_review_controls_behave(self):
+        b = self.open_card("204-review-findings.md")
+        # Expand/Narrow: its name and icon follow its state, focus stays on it
+        b.click("#dwide")
+        self.assertTrue(b.wait("S.dwide === true && document.querySelector('#drawer').classList.contains('wide')", 5))
+        self.assertEqual(b.eval("document.querySelector('#dwide').getAttribute('aria-label')"), "Narrow the reading view")
+        self.assertEqual(b.eval("document.querySelector('#dwide').getAttribute('aria-pressed')"), "true")
+        self.assertTrue(b.eval("!!document.querySelector('#dwide svg[data-icon=\"narrow\"]')"))
+        self.assertEqual(b.eval("document.activeElement && document.activeElement.id"), "dwide",
+                         "focus left the Expand control")
+        b.key("Enter")
+        self.assertTrue(b.wait("S.dwide === false", 5), "Enter on the focused control did not narrow the view")
+        self.assertEqual(b.eval("document.querySelector('#dwide').getAttribute('aria-label')"), "Expand the reading view")
+        self.assertTrue(b.eval("!!document.querySelector('#dwide svg[data-icon=\"expand\"]')"))
+        # Copy link: captured, with its confirmation
+        b.eval("(() => { window.__copied = [];"
+               " Object.defineProperty(navigator, 'clipboard', { configurable: true,"
+               " value: { writeText: async (t) => { __copied.push(t); } } }); return true; })()")
+        b.click("#dtab-reviews")
+        self.assertTrue(b.wait("location.search === '?tab=reviews'", 5))
+        b.click("#dcopylink")
+        self.assertTrue(b.wait("__copied.length === 1", 5), "Copy link copied nothing")
+        self.assertEqual(b.eval("__copied[0]"), b.eval("location.origin") + "/cards/204?tab=reviews")
+        self.assertTrue(b.wait("document.querySelector('#toastmsg').textContent.includes('link copied')", 5),
+                        "no confirmation that the link was copied")
+        # Close by its button, and by Escape: focus goes back to the card
+        b.click("#closeDrawer")
+        self.assertTrue(b.wait("!document.querySelector('#drawer').classList.contains('open')", 5))
+        self.assertTrue(b.wait("document.activeElement && document.activeElement.dataset"
+                               " && document.activeElement.dataset.file === '204-review-findings.md'", 5),
+                        "Close did not give focus back to the card")
+        b = self.open_card("204-review-findings.md")
+        b.eval("document.querySelector('#closeDrawer').focus()")
+        b.key("Escape")
+        self.assertTrue(b.wait("!document.querySelector('#drawer').classList.contains('open')", 5),
+                        "Escape did not close the detail view")
+
+    def test_owner_review_tools_survive_a_live_update(self):
+        b = self.open_card("204-review-findings.md", width=1280, height=700)
+        # a tool focused at the top keeps its focus, and stays one group,
+        # through a redraw and a whole board reading (what an SSE frame asks)
+        b.eval("[...document.querySelectorAll('#drawerbody > #drawertools button.chip2')]"
+               ".filter(e => Object.keys(e.dataset).length).pop().focus()")
+        self.assertTrue(b.eval("!!document.activeElement.closest('#drawertools')"), "no tool to focus")
+        label = b.eval("document.activeElement.innerText")
+        for _ in range(2):
+            b.eval("loadState()")
+            time.sleep(0.8)
+            b.eval("renderDrawer()")
+        self.assertEqual(b.eval("document.querySelectorAll('#drawerbody .cardtools').length"), 1,
+                         "a redraw doubled the tools")
+        self.assertTrue(b.eval("!!document.activeElement && !!document.activeElement.closest('#drawerbody > #drawertools')"),
+                        "a redraw dropped focus from the tools")
+        self.assertEqual(b.eval("document.activeElement.innerText"), label)
+        # a redraw while expanded keeps the reading view expanded
+        b.click("#dwide")
+        b.eval("renderDrawer()")
+        self.assertTrue(b.eval("document.querySelector('#drawer').classList.contains('wide')"
+                               " && document.querySelector('#dwide').getAttribute('aria-pressed') === 'true'"))
+        b.click("#dwide")
+
 
 if __name__ == "__main__":
     unittest.main()
