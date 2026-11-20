@@ -331,7 +331,11 @@ def reports(text: str) -> list[dict]:
         kind = head.group(1).strip()
         line = head.group(0)
         item = {"kind": kind, "at": head.group(2), "by": head.group(3) or "",
-                "text": body}
+                "text": body,
+                # the report's own first paragraph, verbatim and clipped at
+                # a sentence (task 149): what the Overview quotes as the
+                # last recorded result, labelled as the run's account
+                "headline": taskfiles.lead_paragraph(body)}
         if ROUND_RE.match(line):
             item.update(review="rv-" + hashlib.sha256(line.strip().encode("utf-8"))
                         .hexdigest()[:10], reviewType="pr")

@@ -230,7 +230,8 @@ class RelevanceReviews(unittest.TestCase):
                             "a redraw dropped focus from the review: " + self.focused())
             groups = b.eval("[...document.querySelectorAll('#dsec-reviews .rvgroup > h3')]"
                             ".map(h => h.innerText)")
-            self.assertEqual([g.split()[0] for g in groups], ["Relevance", "PR"])
+            # task 149: the code's reviews lead, the brief's follow
+            self.assertEqual([g.split()[0] for g in groups], ["PR", "Relevance"])
             text = b.eval("document.querySelector('#dsec-reviews').innerText")
             self.assertIn("Hazel", text)
             self.assertIn("Partly done", text)

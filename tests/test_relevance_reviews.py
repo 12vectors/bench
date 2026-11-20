@@ -422,7 +422,8 @@ class Drawn(unittest.TestCase):
 
     @staticmethod
     def groups(html: str) -> tuple[str, str]:
-        rel, pr = html.split('aria-labelledby="rvg-pr-', 1)
+        # task 149: the code's reviews lead, the brief's follow
+        pr, rel = html.split('aria-labelledby="rvg-rel-', 1)
         return rel, pr
 
     def test_card_79_review_is_under_relevance_beside_a_pr_empty_state(self):

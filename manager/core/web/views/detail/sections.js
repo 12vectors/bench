@@ -1,12 +1,12 @@
 /* The detail view's sections. */
-import { agentOnTask, loadState } from '../../app/data.js';
+import { agentOnTask, allTasks, loadState } from '../../app/data.js';
 import { S } from '../../app/state.js';
 import { fetch } from '../../lib/api.js';
 import { $, esc } from '../../lib/dom.js';
 import { md } from '../../lib/md.js';
 import { syncRoute } from '../../lib/nav.js';
 import { cardEntryHtml } from '../../lib/orchwords.js';
-import { cardId } from '../../lib/route.js';
+import { cardId, formatRoute } from '../../lib/route.js';
 import { resource, staleWords } from '../../lib/resource.js';
 import { ago } from '../../lib/time.js';
 import { toast } from '../../lib/toast.js';
@@ -167,55 +167,195 @@ function sinceRound(r, acc) {
   return bits.join(' · ');
 }
 
-/* The Overview leads with the card's one delivery status — the server's
-   reading, the same one the face and the merge dialog draw — then its
-   merge requirements as supporting detail, then the facts. Nothing here
-   works out a next step of its own (task 99). */
+/* ── The Overview, ordered by a reader's questions (task 149) ───────────
+
+   A busy reader opens a card to learn four things, in this order, and the
+   Overview answers them in this order before anything else:
+
+   1. What is the work and why? — `workHtml`: excerpts of the brief as it
+      reads now (`taskfiles.brief_outline`, served with the card's text),
+      each labelled with the section it came from, and the way to the
+      whole brief. Never a paraphrase, never persisted, never a model's.
+   2. Where does it stand, and what happens next? — `standsHtml`: the
+      server's one delivery status (word, sentence, primary action and who
+      holds it — task 99, never a cascade of this page's own), a failed
+      run, what the latest run says it is doing, and the last recorded
+      result, labelled as the run's own account.
+   3. What is required? — `requiredHtml`: what the work needs (inputs,
+      dependencies, criteria) apart from what a merge needs (the merge
+      requirements, unchanged).
+   4. What did the reviews find? — `reviewFactsHtml`.
+
+   Supporting detail follows, quieter and folded where it is long: the
+   demonstration, the stack, the signals, the phase's members, every tool
+   and the branch plan. Nothing that was here is gone; it is placed. */
 function overviewHtml(t, acc, failBlock, signals, plan, members) {
   const d = deliveryOf(t);
   const full = loadDeliveryFull(t, () => {
     if (S.selected && S.selected.file === t.file && !S.fileView) renderDrawer();
   });
-  const counts = acc ? acc.counts : null;
-  const last = acc && acc.rounds.length ? acc.rounds[acc.rounds.length - 1] : null;
-  const lastRel = acc && (acc.relevance || []).length ? acc.relevance[acc.relevance.length - 1] : null;
+  return workHtml(t) +
+    standsHtml(t, d, acc, failBlock) +
+    requiredHtml(t, d, full, acc) +
+    reviewFactsHtml(t, acc) +
+    `<div class="ovdetail" role="group" aria-labelledby="ov-more-h">` +
+    `<h3 class="ovh" id="ov-more-h">More about this card</h3>` +
+    resultHtml(t) +
+    stackBlock(t) + signals + members +
+    `<h3>Tools</h3><div id="drawertools"><p class="dnote">This card has no tools in its current stage.</p></div>` +
+    (plan ? `<details class="rpt"${S.accOpen[t.file + ':plan'] ? ' open' : ''} data-keep="plan">` +
+            `<summary>Branch and plan</summary><div style="padding:6px 10px">${plan}</div></details>` : '') +
+    `</div>`;
+}
+
+function ovSection(key, title, inner, extra = '') {
+  return `<section class="ovsec ov${key}" data-keep="ov-${key}" aria-labelledby="ov-${key}-h"${extra}>` +
+    `<h3 class="ovh" id="ov-${key}-h">${title}</h3>${inner}</section>`;
+}
+
+const ovFact = (dt, dd, cls = '') => dd ? `<dt>${dt}</dt><dd${cls ? ` class="${cls}"` : ''}>${dd}</dd>` : '';
+
+/* 1. What the work is: the brief's own words, quoted. The outline is read
+   with the card's text, so it is never older than the brief the Brief
+   section shows; while a newer revision is being read, it says so. */
+function workHtml(listed) {
+  const t = withDetail(listed);
+  const entry = (listed && S.detail[listed.file]) || {};
+  const go = `<button class="dlink" data-goto="brief">Read the full brief</button>`;
+  if (!t) {
+    if (entry.error && !entry.loading)
+      return ovSection('work', 'The work', `<p class="dnote" role="alert">The brief could not be read — ` +
+        `${esc(entry.error)}. Nothing is summarised in its place. ${go}</p>`);
+    return ovSection('work', 'The work', `<p class="dnote" role="status" aria-busy="true">Reading the brief…</p>`);
+  }
+  const o = t.outline;
+  if (!o) return ovSection('work', 'The work', `<p class="dnote">This board sent no outline of the brief. ${go}</p>`);
+  const changed = !!(t.textRev && listed.rev && t.textRev !== listed.rev);
+  const stale = changed
+    ? `<p class="dnote dstale" role="status">This card has changed since this text was read; the newest text is ` +
+      `being read, and the summary below is not current until it arrives.</p>` : '';
+  const extra = changed ? ' data-stale="1"' : '';
+  if (o.state === 'none') {
+    return ovSection('work', 'The work', stale +
+      `<p class="ovnone">The brief has no opening paragraph, problem section or scope section to quote, ` +
+      `so there is no summary of it here — nothing is written in its place. ${go}</p>`, extra);
+  }
+  const more = (x) => x.clipped ? ` <span class="ovmore">…continues in the brief</span>` : '';
+  const from = (x) => ` <span class="ovfrom">— from “${esc(x.from)}”</span>`;
+  const parts = [];
+  if (o.problem) parts.push(['Problem', esc(o.problem.text) + more(o.problem) + from(o.problem)]);
+  if (o.scope) {
+    parts.push(['Scope', `<ul class="ovscope">${o.scope.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul>` +
+      (o.scope.more ? `<span class="ovmore">and ${o.scope.more} more in the brief</span>` : '') + from(o.scope)]);
+  }
+  if (o.boundaries) parts.push(['Not in scope', esc(o.boundaries.text) + more(o.boundaries) + from(o.boundaries)]);
+  const absent = [!o.lead && !o.problem ? 'an opening paragraph or problem section' : '',
+                  !o.scope ? 'a scope section' : ''].filter(Boolean);
+  return ovSection('work', 'The work', stale +
+    (o.lead ? `<p class="ovlead">${esc(o.lead.text)}${more(o.lead)}</p>` : '') +
+    (parts.length ? `<dl class="ovparts">${parts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : '') +
+    (o.questions
+      ? `<p class="ovq" role="note"><b>Open questions.</b> The brief lists ${o.questions.count} under ` +
+        `“${esc(o.questions.from)}”. A work run is told to decline a card whose questions are open.</p>` : '') +
+    (absent.length ? `<p class="dnote">The brief has no ${absent.join(' and no ')} to quote.</p>` : '') +
+    `<p class="ovsrc">Quoted from the brief as it reads now (revision <span class="mono">${esc(o.rev)}</span>). ` +
+    `The brief is the requirement; this is not a second copy of it. ${go}</p>`, extra);
+}
+
+/* The last result a run recorded on the card: its newest work report or
+   PR update, by its own first paragraph — the run's account, said to be
+   one, and never a check result. A card in review or done with none says
+   the result is not stated rather than inventing one. */
+function lastResultHtml(t, acc) {
+  if (!acc) return 'reading…';
+  const reports = (acc.reports || []).filter(r => !r.review && /^(work report|pr update)/i.test(r.kind || ''));
+  const last = reports[reports.length - 1];
+  if (!last) {
+    return ['review', 'done'].includes(t.stage)
+      ? `<span class="unknown">No work report is on record on this card, so its result is not stated here.</span>` : '';
+  }
+  const h = last.headline;
+  return (h ? `${esc(h.text)}${h.clipped ? ' …' : ''}` : `<span class="unknown">The report has no opening paragraph.</span>`) +
+    ` <span class="ovfrom">— ${esc(last.kind)}${last.by ? ' by ' + esc(last.by) : ''}, ${esc(last.at)}: ` +
+    `the run's own account, not a check result</span> · <button class="dlink" data-goto="activity">read it in Activity</button>`;
+}
+
+/* 2. Where it stands and what happens next: the server's delivery
+   reading leads, then the facts that say what is active, what failed and
+   what was last recorded. */
+function standsHtml(t, d, acc, failBlock) {
+  return ovSection('now', 'Where it stands · what happens next',
+    deliveryStatusHtml(t, d, 'ov') + failBlock +
+    `<dl class="dfacts ovfacts">` +
+    ovFact('Stage', esc(STAGE_WORDS[t.stage] || t.stage) + (t.assignee ? ` · held by ${esc(t.assignee)}` : '')) +
+    ovFact('Progress', esc(progressFact(t))) +
+    ovFact('Last result', lastResultHtml(t, acc)) +
+    // which scope holds it and what waits on you, with the link into the
+    // Orchestrator at this card (task 145) — absent while nothing does
+    ovFact('Orchestration', cardEntryHtml(t, S.state, cardId(t, S.state))) +
+    `</dl>`);
+}
+
+/* A dependency by number, with the stage it is in on this board — or
+   said to be not on it. Never resolved by title. */
+function dependencyHtml(n) {
+  const want = String(n).replace(/^0+(?=\d)/, '');
+  const tasks = S.state && S.state.board ? allTasks() : [];
+  const dep = tasks.find(x => String(x.number || '').replace(/^0+(?=\d)/, '') === want);
+  const href = esc(formatRoute({ card: want }));
+  return `<a href="${href}" data-route>#${esc(n)}</a> ` +
+    (dep ? `<span class="ovfrom">${esc(STAGE_WORDS[dep.stage] || dep.stage)}</span>`
+         : `<span class="ovfrom">not on this board</span>`);
+}
+
+/* 3. What is required — to do the work, and, apart from it, to merge it.
+   The merge requirements are the server's reading, as they always were. */
+function requiredHtml(t, d, full, acc) {
   const link = (tab, text) => `<button class="dlink" data-goto="${tab}">${esc(text)}</button>`;
+  const counts = acc ? acc.counts : null;
   const accFact = !acc ? 'reading…'
-    : !acc.tracked ? `${link('acceptance', 'Acceptance results not recorded')}`
+    : !acc.tracked
+      ? (acc.untracked.length
+          ? `${acc.untracked.length} criteri${acc.untracked.length === 1 ? 'on' : 'a'} in the brief · ` +
+            link('acceptance', 'Acceptance results not recorded')
+          : `<span class="unknown">The brief has no checklist criteria.</span>`)
     : `${link('acceptance', `${counts.accepted} of ${counts.total} accepted`)}` +
       ['reported', 'pending', 'needs-work', 'recheck'].filter(k => counts[k])
         .map(k => ` · ${counts[k]} ${esc(acc.states[k])}`).join('');
+  const deps = t.dependsOn || [];
+  return ovSection('req', 'What is required',
+    `<h4 class="ovsub">To do the work</h4><dl class="dfacts ovfacts">` +
+    ovFact('Information', inputsFact(t)) +
+    ovFact('Depends on', deps.length ? deps.map(dependencyHtml).join(' · ') : '') +
+    ovFact('Acceptance', accFact) +
+    `</dl>` +
+    `<h4 class="ovsub">To merge it</h4>` + requirementsHtml(t, d, full, 'ov'));
+}
+
+/* 4. What the reviews found: open findings first, then the last review
+   and the brief's own relevance review — each a link to the one copy in
+   Reviews. */
+function reviewFactsHtml(t, acc) {
+  const link = (tab, text) => `<button class="dlink" data-goto="${tab}">${esc(text)}</button>`;
+  const last = acc && acc.rounds.length ? acc.rounds[acc.rounds.length - 1] : null;
+  const lastRel = acc && (acc.relevance || []).length ? acc.relevance[acc.relevance.length - 1] : null;
   const fc = acc ? acc.findingCounts : null;
   const findFact = !acc ? 'reading…'
     : !acc.findings.length ? (acc.rounds.length ? 'No findings recorded against the reviews.' : '')
     : `${link('reviews', `${fc.open} open`)} · ${fc['fix-reported']} fix reported` +
       `${fc['fix-reported'] ? ' — recheck and resolve, or reopen' : ''} · ${fc.resolved} resolved`;
-  const fact = (dt, dd) => dd ? `<dt>${dt}</dt><dd>${dd}</dd>` : '';
-  return deliveryStatusHtml(t, d, 'ov') + failBlock +
-    requirementsHtml(t, d, full, 'ov') +
-    resultHtml(t) +
-    `<dl class="dfacts">` +
-    fact('Stage', esc(STAGE_WORDS[t.stage] || t.stage) + (t.assignee ? ` · held by ${esc(t.assignee)}` : '')) +
-    fact('Progress', esc(progressFact(t))) +
-    // which scope holds it and what waits on you, with the link into the
-    // Orchestrator at this card (task 145) — absent while nothing does
-    fact('Orchestration', cardEntryHtml(t, S.state, cardId(t, S.state))) +
-    fact('Information', inputsFact(t)) +
-    fact('Acceptance', accFact) +
-    fact('Findings', findFact) +
-    fact('Last review', last ? esc(roundLine(last)) +
+  const facts = ovFact('Findings', findFact) +
+    ovFact('Last review', last ? esc(roundLine(last)) +
       (sinceRound(last, acc) ? ` — ${esc(sinceRound(last, acc))}` : '') +
       ` · <button class="dlink" data-goreview="${esc(last.id)}">open this review</button>` : '') +
     // the brief's own review, apart from the code's: never an approval
-    fact('Relevance', lastRel ? esc(relevanceLine(lastRel)) +
+    ovFact('Relevance', lastRel ? esc(relevanceLine(lastRel)) +
       ` · <button class="dlink" data-goreview="${esc(lastRel.id)}">open this review</button>` +
-      ((acc.relevance || []).length > 1 ? ` · ${acc.relevance.length} on record` : '') : '') +
-    `</dl>` +
-    (last ? `<p class="dnote">A reviewer's verdict is about the revision it names. GitHub's formal approval and Bench's own verdict are separate facts, in Signals below.</p>` : '') +
-    stackBlock(t) + signals + members +
-    `<h3>Tools</h3><div id="drawertools"><p class="dnote">This card has no tools in its current stage.</p></div>` +
-    (plan ? `<details class="rpt"${S.accOpen[t.file + ':plan'] ? ' open' : ''} data-keep="plan">` +
-            `<summary>Branch and plan</summary><div style="padding:6px 10px">${plan}</div></details>` : '');
+      ((acc.relevance || []).length > 1 ? ` · ${acc.relevance.length} on record` : '') : '');
+  return ovSection('rev', 'Reviews and findings',
+    (facts ? `<dl class="dfacts ovfacts">${facts}</dl>`
+           : `<p class="dnote">No review has been filed on this card.</p>`) +
+    (last ? `<p class="dnote">A reviewer's verdict is about the revision it names. GitHub's formal approval and Bench's own verdict are separate facts, in Signals below.</p>` : ''));
 }
 
 /* The card's text, read when the card is opened (task 129). The board list
@@ -345,10 +485,29 @@ function inputsHtml(t) {
     `Checked for the ${esc(d.run.intent)} run on ${esc(d.run.harness || 'the default harness')}` +
     ` (reads ${esc((d.run.representations || []).join(', ') || 'nothing declared')}).</span></p>` +
     (entry.stale ? `<p class="dnote" role="status">${esc(staleWords(entry))}</p>` : '') +
-    `<p class="dnote">Information readiness is one thing a launch checks. Ready here is not launch readiness ` +
-    `(the plan, ownership and the launch check) and not merge readiness (the merge requirements) — the Overview says those.</p>` +
     `</div>`;
+  // what this reading does and does not prove, and how to write the
+  // section: reference, one fold away rather than repeated above the
+  // list (task 149)
+  const about = `<details class="rpt" data-keep="inp-about"${S.accOpen[t.file + ':inp-about'] ? ' open' : ''}>` +
+    `<summary>What this does and does not prove</summary><div style="padding:6px 10px">` +
+    `<p>Information readiness is one thing a launch checks. Ready here is not launch readiness ` +
+    `(the plan, ownership and the launch check) and not merge readiness (the merge requirements) — the Overview says those.</p>` +
+    `<p>${esc(d.distinctions)}</p><p>${esc(d.coverage)}</p>` +
+    `<p>Write an entry as <code>- input, required: ../../reference/spec.md — why</code> or ` +
+    `<code>- tool, required: check unit</code>. Tools bench can verify: <code>check &lt;name&gt;</code>, ` +
+    `<code>command &lt;prefix&gt;</code>, <code>capability &lt;word&gt;</code>, <code>image-reading</code>, <code>pdf-reading</code>.</p>` +
+    `</div></details>`;
   const section = d.section || {};
+  const empty = !d.inputs.length && !d.tools.length && !section.present &&
+    !(section.problems || []).length && !(d.proposed || []).length;
+  if (empty) {
+    // nothing named and nothing to classify: one statement, not three
+    // headings each saying "none" (task 149)
+    return head + (d.limits || []).map(l => `<p class="dnote" role="status">${esc(l)}</p>`).join('') +
+      `<p class="dnote">This card has no “Inputs and required tools” section, and its brief names no ` +
+      `supporting input or tool — there is nothing to list.</p>` + about;
+  }
   const notes = (!section.present
     ? `<p class="dnote">This card has no “Inputs and required tools” section. ` +
       (d.inputs.length ? 'The references below were found in the brief; each counts as required until classified, and classifying one writes the section.'
@@ -365,14 +524,7 @@ function inputsHtml(t) {
     : `<p class="dnote">${kind === 'tool' ? 'No tools are listed.' : 'No inputs.'}</p>`;
   return head + notes +
     `<h4>Inputs</h4>` + list(d.inputs, 'input') +
-    `<h4>Tools</h4>` + list(d.tools, 'tool') +
-    `<details class="rpt" data-keep="inp-about"${S.accOpen[t.file + ':inp-about'] ? ' open' : ''}>` +
-    `<summary>What this does and does not prove</summary><div style="padding:6px 10px">` +
-    `<p>${esc(d.distinctions)}</p><p>${esc(d.coverage)}</p>` +
-    `<p>Write an entry as <code>- input, required: ../../reference/spec.md — why</code> or ` +
-    `<code>- tool, required: check unit</code>. Tools bench can verify: <code>check &lt;name&gt;</code>, ` +
-    `<code>command &lt;prefix&gt;</code>, <code>capability &lt;word&gt;</code>, <code>image-reading</code>, <code>pdf-reading</code>.</p>` +
-    `</div></details>`;
+    `<h4>Tools</h4>` + list(d.tools, 'tool') + about;
 }
 
 function wireInputs(t) {
@@ -596,6 +748,25 @@ function resultHtml(t) {
       `<p class="dim">No demonstration was asked for and none is kept on this board.</p>` +
       resultSettingHtml(t, d) + `</section>`;
   }
+  if (nothing) {
+    // Off with nothing kept, and a suggestion to make (task 149): the
+    // suggestion, the checks bench ran and where the change is are all
+    // still here, one fold away — an optional demonstration does not get
+    // to push the work's own account down the Overview
+    const open = S.accOpen[`${t.file}:res-off`];
+    return `<section class="showresult compact" data-keep="result" aria-labelledby="res-h">` +
+      `<h3 id="res-h">Show the result <span class="cbadge" id="resState">${esc(d.label)}</span></h3>` +
+      `<p class="dim">No demonstration was asked for and none is kept on this board.</p>` +
+      `<details class="rpt" data-keep="res-off" data-res-fold="off"${open ? ' open' : ''}>` +
+      `<summary>Screenshots, the checks bench ran, and where the change is</summary>` +
+      `<div style="padding:6px 10px">` +
+      `<div class="ressuggest" role="note"><p>Would screenshots help you review this change?</p>` +
+      `<p><button id="resSuggestYes">Request screenshots</button> <button id="resSuggestNo">Not now</button></p></div>` +
+      `<h4>What ran</h4>` + checks + `<p>${acc}</p>` +
+      `<h4>Where the change is</h4><dl class="dfacts resfacts">${facts}</dl>` +
+      `</div></details>` +
+      resultSettingHtml(t, d) + `</section>`;
+  }
   const pairedIds = new Set(pairs.flatMap(p => [p.before, p.after]));
   const singles = curated.filter(a => !pairedIds.has(a.id));
   const allOpen = S.accOpen[`${t.file}:res-all`];
@@ -792,7 +963,7 @@ function withDetail(t) {
   if (typeof t.body === 'string' && !t.rev) return t;
   const d = (S.detail[t.file] || {}).data;
   if (!d || d.file !== t.file || d.stage !== t.stage) return null;
-  return { ...t, body: d.body, parts: d.parts, words: d.words, textRev: d.rev };
+  return { ...t, body: d.body, parts: d.parts, words: d.words, textRev: d.rev, outline: d.outline || null };
 }
 
 function briefHtml(listed) {
@@ -810,8 +981,28 @@ function briefHtml(listed) {
       ? 'This card has changed since this text was read; the newest text is being read.' : '';
   const parts = cardSplit(t);
   const head = parts.head.replace(/^\s*#\s[^\n]*\n?/, '');
-  return (note ? `<p class="dnote dstale" role="status">${esc(note)}</p>` : '') +
-    `<div class="dbody">${md(head + '\n' + withoutDiscussion(parts.brief))}</div>` +
+  // the header fields as a grid of their own (task 149), rather than one
+  // run-on paragraph: each value drawn by the same renderer, and any line
+  // that is not a field kept as Markdown, so nothing in the head is lost
+  const fields = [];
+  const rest = [];
+  for (const line of head.split('\n')) {
+    const m = line.match(/^\*\*([A-Za-z][A-Za-z ]{0,40}):\*\*\s*(.*)$/);
+    if (m) fields.push([m[1], m[2]]);
+    else rest.push(line);
+  }
+  const value = (v) => v.trim() ? md(v).replace(/^<p>/, '').replace(/<\/p>\s*$/, '') : '<span class="dim">—</span>';
+  const meta = fields.length
+    ? `<dl class="dfacts bmeta" aria-label="Card fields">` +
+      fields.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${value(v)}</dd>`).join('') + `</dl>` : '';
+  // the brief's own sections, as a short index to jump along a long one
+  const heads = ((t.outline || {}).sections || []);
+  const index = heads.length > 2
+    ? `<nav class="bindex" aria-label="Sections of the brief">` +
+      heads.map((h, i) => `<button type="button" class="dlink" data-brief-h="${i}">${esc(h)}</button>`).join('') +
+      `</nav>` : '';
+  return (note ? `<p class="dnote dstale" role="status">${esc(note)}</p>` : '') + meta + index +
+    `<div class="dbody bbody">${md(rest.join('\n') + '\n' + withoutDiscussion(parts.brief))}</div>` +
     `<p class="dnote">The brief is the requirement. Earlier wordings are in the card's history: ` +
     `each applied refinement is a decision in the discussion below, and the card's git history ` +
     `holds every previous text.</p>`;
@@ -896,8 +1087,16 @@ function acceptanceBody(t, acc) {
     return c && c.error ? `<p class="dnote bad">${esc(c.error)}</p>` : `<p class="dnote">reading acceptance…</p>`;
   }
   const counts = acc.counts;
-  const legacy = acc.untracked.map(c => `<li>${c.legacyTick ? '<b>[x]</b> ' : '[ ] '}${esc(c.text)}` +
-    `${c.legacyTick ? ' <span class="ameta">ticked by hand — a legacy claim, not an acceptance</span>' : ''}</li>`).join('');
+  // each criterion leads with its first clause, so a long list scans by
+  // its leads and the rest reads after (task 149) — the whole wording is
+  // there, in order, and nothing is reworded
+  const legacy = acc.untracked.map(c => {
+    const m = String(c.text).match(/^(.{12,}?[.;:])\s+([\s\S]+)$/);
+    const words = m ? `<span class="alead">${esc(m[1])}</span> <span class="arest">${esc(m[2])}</span>`
+                    : `<span class="alead">${esc(c.text)}</span>`;
+    return `<li class="aitem">${c.legacyTick ? '<b>[x]</b> ' : '[ ] '}${words}` +
+      `${c.legacyTick ? ' <span class="ameta">ticked by hand — a legacy claim, not an acceptance</span>' : ''}</li>`;
+  }).join('');
   const trackBtn = (word) => `<div class="racts"><button class="dact" id="accTrack">` +
     `${actLabel(word, 'click again — adds ids to the brief', 'tracking…')}</button></div>`;
   // Only where a merge rule asks for sign-off is it a requirement, and
@@ -1066,11 +1265,17 @@ function reviewsHtml(t, acc) {
     `<summary id="rvs-${esc(r.id)}"><b>${esc(roundLine(r))}</b>${sinceRound(r, acc) ? `<span class="dnote">${esc(sinceRound(r, acc))}</span>` : ''}` +
     `<span class="ameta">${esc(r.id)}</span></summary>${reportHtml(t, r.report, r.id)}</details>`;
   const fc = acc.findingCounts;
+  // what a group is for, one fold away rather than ahead of its records
+  // (task 149): the records lead, the explanation is reference
+  const about = (key, summary, text) =>
+    `<details class="rhelp" data-fold="${key}"${S.accOpen[`${t.file}:${key}`] ? ' open' : ''}>` +
+    `<summary>${esc(summary)}</summary><p class="dnote">${text}</p></details>`;
   const relevance = `<section class="rvgroup" aria-labelledby="rvg-rel-${esc(t.number || 'x')}">` +
     `<h3 id="rvg-rel-${esc(t.number || 'x')}">Relevance reviews <span class="n">${rel.length}</span></h3>` +
-    `<p class="dnote">Whether the brief is still needed and current, and what to change in it. ` +
-    `A relevance verdict is about the card's definition: it is not a code review, approves nothing ` +
-    `and counts toward no acceptance or merge requirement.</p>` +
+    about('rvhelp-rel', 'What a relevance review is',
+      `Whether the brief is still needed and current, and what to change in it. ` +
+      `A relevance verdict is about the card's definition: it is not a code review, approves nothing ` +
+      `and counts toward no acceptance or merge requirement.`) +
     // newest first, every one at the same level: a review arriving later
     // must not fold away the one somebody is reading or commenting on, so
     // the newest opens the first time it is drawn and each keeps its own
@@ -1081,10 +1286,10 @@ function reviewsHtml(t, acc) {
     }).join('') + (rel.length > 1 ? `<p class="dnote">${rel.length} relevance reviews, newest first. Each is about the brief as it stood when it was filed.</p>` : '')
       : `<p class="dnote">No relevance review has been filed on this card. ◔ still true? asks for one.</p>`) +
     `</section>`;
-  return relevance +
-    `<section class="rvgroup" aria-labelledby="rvg-pr-${esc(t.number || 'x')}">` +
+  // the code's reviews first — the open findings and the newest round are
+  // what a merge waits on — then the brief's own reviews (task 149)
+  return `<section class="rvgroup" aria-labelledby="rvg-pr-${esc(t.number || 'x')}">` +
     `<h3 id="rvg-pr-${esc(t.number || 'x')}">PR reviews <span class="n">${rounds.length}</span></h3>` +
-    `<p class="dnote">The implementation at a code revision, and the findings recorded against it.</p>` +
     `<p class="acount"><b>${fc.open}</b> open · <b>${fc['fix-reported']}</b> fix reported · <b>${fc.resolved}</b> resolved</p>` +
     (live.length ? live.map(f => findingHtml(t, f, acc)).join('')
                  : `<p class="dnote">No open findings on record.</p>`) +
@@ -1103,8 +1308,10 @@ function reviewsHtml(t, acc) {
       (rounds.length > 1 ? `<details class="rpt" data-keep="oldrounds"${S.accOpen[`${t.file}:oldrounds`] ? ' open' : ''}><summary>Earlier rounds (${rounds.length - 1})</summary>` +
         `<div style="padding:6px 10px;display:flex;flex-direction:column;gap:6px">${rounds.slice(1).map(r => roundHtml(r, false)).join('')}</div></details>` : '')
       : `<p class="dnote">No PR review has been filed on this card.</p>`) +
-    `<p class="dnote">A round's verdict is about the revision it names. A request for changes stays what it was; what happened after it is the fixes and resolutions above, and formal GitHub approval is a separate fact in Overview's Signals.</p>` +
-    `</section>`;
+    about('rvhelp-pr', 'What a PR review is, and is not',
+      `The implementation at a code revision, and the findings recorded against it. ` +
+      `A round's verdict is about the revision it names. A request for changes stays what it was; what happened after it is the fixes and resolutions above, and formal GitHub approval is a separate fact in Overview's Signals.`) +
+    `</section>` + relevance;
 }
 
 /* Open one review where it lives — from Activity, the Overview or a
@@ -1274,6 +1481,15 @@ function wireDetail(t) {
     });
   });
   body.querySelectorAll('[data-goto]').forEach(btn => btn.addEventListener('click', () => go(btn.dataset.goto, true)));
+  // the brief's section index: to the heading, which takes focus, so a
+  // keyboard reader lands where a sighted one does (task 149)
+  body.querySelectorAll('[data-brief-h]').forEach(btn => btn.addEventListener('click', () => {
+    const h = body.querySelectorAll('#dsec-brief .bbody h2')[Number(btn.dataset.briefH)];
+    if (!h) return;
+    h.setAttribute('tabindex', '-1');
+    h.scrollIntoView({ block: 'start' });
+    h.focus({ preventScroll: true });
+  }));
   // a link to one exact review; the discussion's and a thread's own rows
   // are wired with the rows (wireCommentRows), which a live read redraws
   body.querySelectorAll('[data-goreview]').forEach(btn => {
@@ -1411,7 +1627,8 @@ function informationChip(task) {
 
 export {
   ACC_GLYPH, accActor, acceptanceChips, acceptanceHtml, accStamp,
-  activityHtml, briefHtml, cardSplit, criterionHtml, drawerAnchor, drawerTab,
+  activityHtml, briefHtml, cardSplit, criterionHtml, dependencyHtml, drawerAnchor, drawerTab,
+  lastResultHtml, requiredHtml, reviewFactsHtml, standsHtml, workHtml,
   detailKey, dsec, DTABS, dtabsHtml, evidenceOptions, findingHtml, inputsHtml, loadAcc, loadDetail,
   openReview, withDetail,
   overviewHtml, postAcc, progressFact, recordHtml, RELEVANCE_TONE,

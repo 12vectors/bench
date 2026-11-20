@@ -409,6 +409,11 @@ class ShowTheResult(unittest.TestCase):
         self.open_card(VISUAL)
         self.assertTrue(b.wait("!!document.querySelector('#resSuggestNo')", 10),
                         "a visual card was not offered screenshots")
+        # task 149: with nothing asked for or kept, the offer is one fold
+        # away rather than leading the Overview
+        self.assertFalse(self.js("!!document.querySelector('[data-res-fold=\"off\"]').open"),
+                         "an Off section with nothing kept opens by default")
+        self.open_fold("off")
         b.click("#resSuggestNo")
         self.assertTrue(b.wait("!document.querySelector('#resSuggestNo')", 10),
                         "Not now did not dismiss the suggestion")

@@ -1089,6 +1089,44 @@
   #drawer .dsec{display:flex;flex-direction:column;gap:12px}
   #drawer .dsec[hidden]{display:none}
   #drawer .dsec h3{font-size:12px;font-weight:600;margin:4px 0 0;color:var(--text)}
+  /* the Overview by a reader's questions (task 149): the work, where it
+     stands, what is required, what the reviews found — each a section
+     with a quiet label heading — then everything else, set back. Prose
+     keeps a readable measure; structure, not only colour, separates the
+     work's own words from records and from provenance. */
+  #drawer .ovsec{display:flex;flex-direction:column;gap:8px;min-width:0;
+    padding:0 0 14px;border-bottom:1px solid var(--border-soft)}
+  #drawer .dsec h3.ovh{margin:2px 0 0;font-size:11px;font-weight:600;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--muted)}
+  #drawer .ovwork .ovlead{margin:0;font-size:15px;line-height:1.55;color:var(--text);
+    max-width:68ch;overflow-wrap:anywhere;text-wrap:pretty}
+  #drawer .ovparts{display:grid;grid-template-columns:minmax(84px,max-content) minmax(0,1fr);
+    gap:6px 14px;margin:0;font-size:13px;line-height:1.55;max-width:84ch}
+  #drawer .ovparts dt{color:var(--muted);font-weight:600}
+  #drawer .ovparts dd{margin:0;color:var(--text);overflow-wrap:anywhere}
+  #drawer .ovscope{margin:0;padding-left:18px}
+  #drawer .ovscope li{margin:1px 0}
+  #drawer .ovfrom,#drawer .ovmore{color:var(--dim);font-size:11.5px}
+  #drawer .ovsrc{margin:0;font-size:11.5px;color:var(--dim)}
+  #drawer .ovnone{margin:0;font-size:13px;color:var(--muted);font-style:italic}
+  #drawer .ovq{margin:0;padding:6px 10px;border-left:3px solid var(--alarm);
+    background:var(--sunken);border-radius:0 6px 6px 0;font-size:12.5px}
+  #drawer .ovsec[data-stale] .ovlead,#drawer .ovsec[data-stale] .ovparts{opacity:.6}
+  #drawer .ovsub{margin:2px 0 0;font-size:12px;font-weight:600;color:var(--text)}
+  #drawer .ovreq .dreqs h3{font-size:12px}
+  #drawer .ovdetail{display:flex;flex-direction:column;gap:12px;min-width:0;padding-top:2px}
+  /* the Brief's header fields as a grid, and its section index */
+  #drawer dl.bmeta{font-size:12px;padding:8px 10px;background:var(--sunken);border-radius:8px}
+  #drawer dl.bmeta dd p{margin:0}
+  #drawer .bindex{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px}
+  #drawer .bbody h2{scroll-margin-top:130px}
+  #drawer .bbody p,#drawer .bbody li{max-width:84ch}
+  /* reference about a group, folded under its records */
+  #drawer .rhelp>summary{cursor:pointer;font-size:11.5px;color:var(--dim);width:max-content;max-width:100%}
+  #drawer .rhelp .dnote{margin:4px 0 0}
+  /* an untracked criterion scans by its lead clause */
+  #drawer .aitem .alead{color:var(--text);font-weight:500}
+  #drawer .aitem .arest{color:var(--muted)}
   /* the delivery status (task 99): the word as a heading, its sentence,
      the primary action, then the alternatives in one disclosure. Drawn
      the same in the Overview and the merge dialog. */

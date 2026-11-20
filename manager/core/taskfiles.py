@@ -372,7 +372,10 @@ def card_detail(filename: str, stage: str) -> dict:
     return {"file": filename, "stage": stage, "rev": revision(text),
             "mtime": mtime, "words": len(text.split()),
             "bytes": len(text.encode("utf-8", "replace")),
-            "body": text, "parts": part_offsets(text)}
+            "body": text, "parts": part_offsets(text),
+            # what the Overview leads with, read out of this same text
+            # (task 149): never persisted, so never older than the brief
+            "outline": brief_outline(text)}
 
 
 # What a card's address may name (task 134): its number, or its file's
@@ -1568,6 +1571,198 @@ def card_parts(text: str) -> dict:
         break
     return {"head": "".join(lines[:start]), "brief": "".join(lines[start:end]),
             "history": "".join(lines[end:])}
+
+
+# ── the brief's outline (task 149) ─────────────────────────────────────
+#
+# The Overview opens with what the work is and why, read out of the brief
+# as it is *now*: the brief's own lead paragraph, the first paragraph of
+# its problem section, the headings (or leading bullets) of its scope
+# section and its boundary section — each a verbatim excerpt, clipped at a
+# sentence boundary and labelled with the section it came from. Nothing is
+# persisted, so there is no summary to go stale: a changed brief is a
+# changed outline on the next read, and the outline names the brief
+# revision it was taken from. Nothing is generated either — no model is
+# asked, and a brief with none of these parts reads `none`, never a
+# paraphrase of its title.
+
+OUTLINE_VERSION = 1
+OUTLINE_LEAD_CHARS = 420
+OUTLINE_PART_CHARS = 320
+OUTLINE_ITEM_CHARS = 120
+OUTLINE_ITEMS = 6
+_PROBLEM_HEADINGS = ("context", "problem", "background", "why", "motivation")
+_SCOPE_HEADINGS = ("what to build", "scope", "approach", "changes", "deliverables",
+                   "plan", "what to do", "proposal")
+_BOUNDARY_HEADINGS = ("out of scope", "non-goals", "not in scope", "non goals")
+_QUESTION_HEADINGS = ("open questions", "questions")
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?])[\"')\]]*\s+(?=[A-Z0-9\"'(\[*`])")
+_MD_LINK_RE = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
+_MD_NOISE_RE = re.compile(r"(\*\*|__|(?<![\w*])\*(?!\s)|(?<!\s)\*(?![\w*])|<!--.*?-->)")
+
+
+def plain_inline(text: str) -> str:
+    """One paragraph of Markdown as plain text: links keep their words,
+    emphasis markers and HTML comments go, code spans keep their text,
+    whitespace collapses. The page draws it escaped."""
+    text = _MD_LINK_RE.sub(lambda m: m.group(1), text)
+    text = _MD_NOISE_RE.sub("", text)
+    text = text.replace("`", "")
+    return " ".join(text.split())
+
+
+def clip_sentences(text: str, cap: int) -> tuple[str, bool]:
+    """Whole sentences of `text` up to `cap` characters, and whether any
+    were left out. A first sentence longer than the cap is cut at a word
+    and ends in an ellipsis — the reader is never shown a cut as a stop."""
+    text = text.strip()
+    if len(text) <= cap:
+        return text, False
+    out = ""
+    for sentence in _SENTENCE_END_RE.split(text):
+        joined = f"{out} {sentence}".strip()
+        if len(joined) > cap:
+            break
+        out = joined
+    if out:
+        return out, True
+    cut = text[:cap].rsplit(" ", 1)[0].rstrip(",;:—–- ")
+    return cut + "…", True
+
+
+def _blocks(lines: list[str]) -> list[tuple[str, str]]:
+    """The brief's lines as (kind, text) blocks: `para`, `list` items,
+    `h2`/`h3` headings, with fenced code, tables, quotes, HTML comments
+    and header-field lines dropped — none of them is prose a summary may
+    quote."""
+    out: list[tuple[str, str]] = []
+    para: list[str] = []
+    fenced = False
+
+    def flush():
+        if para:
+            out.append(("para", " ".join(para)))
+            para.clear()
+
+    for raw in lines:
+        line = raw.rstrip("\n")
+        if is_fence(line):
+            flush()
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        s = line.strip()
+        heading = re.match(r"^(#{2,6})\s+(.*?)\s*#*\s*$", s)
+        if heading:
+            flush()
+            out.append(("h2" if len(heading.group(1)) == 2 else "h3", heading.group(2)))
+            continue
+        indent = len(line) - len(line.lstrip())
+        if s and indent and out and out[-1][0] == "list" and not para:
+            continue    # a nested item or continuation belongs to the item above
+        item = re.match(r"^([-*+]|\d+[.)])\s+(.*)$", s)
+        if item and not indent:
+            flush()
+            out.append(("list", item.group(2)))
+            continue
+        if (not s or s.startswith(("|", ">", "<!--")) or HEADER_LINE_RE.match(s)
+                or MACHINE_MARKER_RE.match(s) or re.fullmatch(r"[-*_]{3,}", s)):
+            flush()
+            continue
+        para.append(s)
+    flush()
+    return out
+
+
+def _section(blocks, names) -> tuple[str, list] | None:
+    """The first `##` section whose heading starts with one of `names`,
+    with its blocks."""
+    for i, (kind, text) in enumerate(blocks):
+        if kind != "h2" or not text.lower().startswith(names):
+            continue
+        body = []
+        for later in blocks[i + 1:]:
+            if later[0] == "h2":
+                break
+            body.append(later)
+        return text, body
+    return None
+
+
+def _excerpt(text: str, cap: int, source: str) -> dict:
+    clipped_text, clipped = clip_sentences(plain_inline(text), cap)
+    return {"text": clipped_text, "clipped": clipped, "from": source}
+
+
+def lead_paragraph(text: str, cap: int = OUTLINE_PART_CHARS) -> dict | None:
+    """The first prose paragraph of a report or a brief — skipping
+    headings, markers, quotes, code and lists — clipped at a sentence."""
+    for kind, block in _blocks(text.splitlines()):
+        if kind == "para" and plain_inline(block):
+            out = _excerpt(block, cap, "")
+            out.pop("from")
+            return out
+    return None
+
+
+def brief_outline(text: str) -> dict:
+    """What the brief says the work is (see above). Every excerpt names
+    the section it came from; parts the brief does not have are listed in
+    `missing`, and `state` is `none` when there is nothing to quote."""
+    brief = card_parts(text)["brief"]
+    brief = DISCUSSION_SECTION_RE.sub("", brief)
+    blocks = _blocks(brief.splitlines())
+    out: dict = {"v": OUTLINE_VERSION, "rev": brief_sha(brief)[:12],
+                 "lead": None, "problem": None, "scope": None,
+                 "boundaries": None, "questions": None,
+                 "sections": [b[1] for b in blocks if b[0] == "h2"]}
+    first_h2 = next((i for i, b in enumerate(blocks) if b[0] == "h2"), len(blocks))
+    lead = [b[1] for b in blocks[:first_h2] if b[0] == "para" and plain_inline(b[1])]
+    if lead:
+        out["lead"] = _excerpt(lead[0], OUTLINE_LEAD_CHARS, "the brief's opening")
+        if len(lead) > 1:
+            out["lead"]["clipped"] = True
+    problem = _section(blocks, _PROBLEM_HEADINGS)
+    if problem:
+        paras = [b[1] for b in problem[1] if b[0] == "para" and plain_inline(b[1])]
+        if paras:
+            out["problem"] = _excerpt(paras[0], OUTLINE_PART_CHARS, problem[0])
+            if len(paras) > 1 or any(b[0] == "list" for b in problem[1]):
+                out["problem"]["clipped"] = True
+    scope = _section(blocks, _SCOPE_HEADINGS)
+    if scope:
+        heads = [b[1] for b in scope[1] if b[0] == "h3"]
+        items = heads or [b[1] for b in scope[1] if b[0] == "list"]
+        if items:
+            # a heading as written; a bullet by its first clause
+            shown = [clip_sentences(plain_inline(i) if heads else
+                                    plain_inline(re.split(r"(?<=[.:;])\s", i, maxsplit=1)[0])
+                                    .rstrip(";:"),
+                                    OUTLINE_ITEM_CHARS)[0]
+                     for i in items[:OUTLINE_ITEMS]]
+            out["scope"] = {"items": [s for s in shown if s],
+                            "more": max(0, len(items) - OUTLINE_ITEMS),
+                            "from": scope[0], "kind": "headings" if heads else "items"}
+    bounds = _section(blocks, _BOUNDARY_HEADINGS)
+    if bounds:
+        prose = [b[1] for b in bounds[1] if b[0] in ("para", "list")]
+        if prose:
+            out["boundaries"] = _excerpt(prose[0], OUTLINE_PART_CHARS, bounds[0])
+            if len(prose) > 1:
+                out["boundaries"]["clipped"] = True
+    questions = _section(blocks, _QUESTION_HEADINGS)
+    if questions:
+        asked = [b for b in questions[1] if b[0] in ("para", "list")
+                 and plain_inline(b[1]).lower().strip(" .") not in ("none", "n/a", "-")]
+        if asked:
+            out["questions"] = {"count": len(asked), "from": questions[0]}
+    parts = ("lead", "problem", "scope", "boundaries")
+    out["missing"] = [p for p in parts if not out[p]]
+    out["state"] = ("none" if not (out["lead"] or out["problem"] or out["scope"])
+                    else "partial" if not (out["lead"] or out["problem"]) or not out["scope"]
+                    else "full")
+    return out
 
 
 def brief_sha(brief: str) -> str:
