@@ -7,6 +7,7 @@ import { harvestFolds } from '../../lib/folds.js';
 import { markScroll, restoreScroll } from '../../lib/keep.js';
 import { md } from '../../lib/md.js';
 import { askCardLink, syncRoute } from '../../lib/nav.js';
+import { pressHold } from '../../lib/press.js';
 import { cardId, formatRoute, routeOf, stemOf } from '../../lib/route.js';
 import { ago } from '../../lib/time.js';
 import { cardFor, cardTitle, focusCard, phaseMembers, planBlock, showDetail, verifySheet } from '../card.js';
@@ -100,7 +101,35 @@ function drawerKey() {
   return S.selected ? 'v:drawer:task:' + S.selected.file + ':' + drawerTab(S.selected) : null;
 }
 
+/* One click is one click in the detail view too (task 159, as task 147
+   made it in the Orchestrator): the detail view is painted from a string,
+   and a reading that lands between a button going down and coming up — a
+   card's delivery or result, read after it opens — replaced the pressed
+   control, and the click was lost. A press holds the repaint until its
+   click has been dispatched (lib/press.js); the click's own handler paints
+   at once, and a repaint the press held is made after it. */
+let press = null;
+let heldPaint = false;
+function drawerPress() {
+  if (!press) {
+    press = pressHold({ onRelease: () => {
+      if (!heldPaint) return;
+      heldPaint = false;
+      setTimeout(() => renderDrawer(), 0);
+    } });
+    const panel = typeof document === 'undefined' ? null : $('#drawer');
+    if (panel && panel.addEventListener) {
+      panel.addEventListener('pointerdown', (e) => { if (e.isPrimary !== false) press.down(); });
+      document.addEventListener('click', () => press.done(), true);
+      document.addEventListener('pointerup', () => press.up(), true);
+      document.addEventListener('pointercancel', () => press.done(), true);
+    }
+  }
+  return press;
+}
+
 function renderDrawer() {
+  if (drawerPress().held()) { heldPaint = true; return; }
   const panel = $('#drawer');
   const body = $('#drawerbody');
   if (S.drawerKey) markScroll(S.drawerKey, body);   // the document leaving
