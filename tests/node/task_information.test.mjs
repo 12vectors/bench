@@ -158,3 +158,34 @@ test('the Overview orders the reader\'s questions, and reading it asks the board
   assert.deepEqual(extra, [], 'the Overview asked for something beyond its own readings');
   assert.ok(asked.slice(before).every(u => !/launch|verify|move|refine|check-remote/.test(u)), 'nothing was started');
 });
+
+test('a header field wrapped onto a second line stays that field\'s value', async () => {
+  const { briefHtml } = await load('views/detail/sections.js');
+  const { S } = await setup('202-active-run.md');
+  const head = '# 9 — x\n\n**Status:** Review\n**Priority:** High — the reason runs on\nonto a second line\n**Type:** Feature\n\n';
+  const body = head + 'The brief.\n';
+  S.detail['9-x.md'] = { data: { file: '9-x.md', stage: 'review', rev: 'r1', body,
+                                 parts: { brief: head.length, history: body.length },
+                                 outline: { state: 'none', sections: [] }, words: 3 } };
+  const html = briefHtml({ file: '9-x.md', stage: 'review', rev: 'r1', mtime: 1 });
+  const grid = html.slice(html.indexOf('class="dfacts bmeta"'), html.indexOf('</dl>'));
+  assert.match(text(grid), /Priority High — the reason runs on onto a second line Type Feature/);
+  assert.equal(html.split('onto a second line').length, 2, 'the continuation is not drawn again below the grid');
+});
+
+test('the work base sits under where it stands, a held new start in view', async () => {
+  const { overviewHtml } = await load('views/detail/sections.js');
+  const { S, listed, r } = await setup('204-review-findings.md');
+  S.acc[r.file] = { data: r.acc };
+  S.result[r.file] = { data: { status: 'off', label: 'Off', artifacts: [], checks: [], availability: [],
+                               suggest: false, setting: { mode: 'off' } } };
+  S.dfull[r.file] = { data: { requirements: [] } };
+  S.state.plans = { [r.file]: { workBase: { headline: 'Starting from main', withdrawn: 'the prerequisite moved',
+                                            accepted: { decision: 'normal', summary: 'nothing to build on' },
+                                            latest: { decision: 'normal' } } } };
+  const html = overviewHtml(listed, r.acc, '', '', '', '');
+  const at = (s) => html.indexOf(s);
+  assert.ok(at('Where it stands') < at('class="workbase"') && at('class="workbase"') < at('What is required'),
+            'the work base is part of where the card stands');
+  assert.match(text(html), /A new start is held: the prerequisite moved/);
+});

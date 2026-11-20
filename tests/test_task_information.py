@@ -177,6 +177,24 @@ class Outline(unittest.TestCase):
         self.assertEqual(inline["scope"]["items"], ["A"])
         self.assertEqual(inline["boundaries"]["text"], "exports and imports.")
 
+    def test_identifiers_in_code_spans_are_quoted_as_written(self):
+        # review of 3bc5597: emphasis stripping ran inside code spans, so a
+        # summary labelled a quote changed the identifiers it quoted
+        p = taskfiles.plain_inline
+        self.assertEqual(p("Edit `__init__.py` first."), "Edit __init__.py first.")
+        self.assertEqual(p("Read `BOARD_AGENT_*` keys."), "Read BOARD_AGENT_* keys.")
+        self.assertEqual(p("Run `tests/**/*.py` now."), "Run tests/**/*.py now.")
+        self.assertEqual(p("A ``code with ` tick`` here."), "A code with ` tick here.")
+        self.assertEqual(p("[the `__x__` doc](a.md) and **bold**"), "the __x__ doc and bold")
+        self.assertEqual(p("an `<!-- bench:x -->` example"), "an <!-- bench:x --> example")
+        self.assertEqual(p("**loud** and *soft* <!-- hidden -->"), "loud and soft")
+        self.assertEqual(p("an `unclosed span with __x__"), "an unclosed span with x")
+        o = taskfiles.brief_outline(
+            "# 9 — x\n\n**Status:** Backlog\n\nRename `__init__.py` and read `BOARD_AGENT_*`.\n\n"
+            "## What to build\n\n- Cover `tests/**/*.py`\n")
+        self.assertEqual(o["lead"]["text"], "Rename __init__.py and read BOARD_AGENT_*.")
+        self.assertEqual(o["scope"]["items"], ["Cover tests/**/*.py"])
+
     def test_a_first_sentence_longer_than_the_cap_says_it_was_cut(self):
         text, clipped = taskfiles.clip_sentences("word " * 200, 50)
         self.assertTrue(clipped)

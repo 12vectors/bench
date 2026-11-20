@@ -1022,10 +1022,14 @@ function briefHtml(listed) {
   // that is not a field kept as Markdown, so nothing in the head is lost
   const fields = [];
   const rest = [];
+  let open = false;   // the last line was a field, or its continuation
   for (const line of head.split('\n')) {
     const m = line.match(/^\*\*([A-Za-z][A-Za-z ]{0,40}):\*\*\s*(.*)$/);
-    if (m) fields.push([m[1], m[2]]);
-    else rest.push(line);
+    if (m) { fields.push([m[1], m[2]]); open = true; }
+    // a field's value wrapped onto the next line is still that field's
+    // value, as Markdown reads a paragraph — never a stray line below
+    else if (open && line.trim()) fields[fields.length - 1][1] += ' ' + line.trim();
+    else { rest.push(line); open = false; }
   }
   const value = (v) => v.trim() ? md(v).replace(/^<p>/, '').replace(/<\/p>\s*$/, '') : '<span class="dim">—</span>';
   const meta = fields.length

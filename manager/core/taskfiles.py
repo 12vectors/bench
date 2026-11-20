@@ -1678,15 +1678,31 @@ _QUESTION_HEADINGS = ("open questions", "questions")
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?])[\"')\]]*\s+(?=[A-Z0-9\"'(\[*`])")
 _MD_LINK_RE = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 _MD_NOISE_RE = re.compile(r"(\*\*|__|(?<![\w*])\*(?!\s)|(?<!\s)\*(?![\w*])|<!--.*?-->)")
+_MD_CODE_RE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
+_MD_HELD_RE = re.compile(r"\x00(\d+)\x00")
 
 
 def plain_inline(text: str) -> str:
     """One paragraph of Markdown as plain text: links keep their words,
     emphasis markers and HTML comments go, code spans keep their text,
-    whitespace collapses. The page draws it escaped."""
+    whitespace collapses. The page draws it escaped.
+
+    Code spans are held first, as the Brief's renderer holds them
+    (`lib/md.js`): what is inside backticks is an identifier, not
+    emphasis, so `__init__.py`, `BOARD_AGENT_*` and `tests/**/*.py` are
+    quoted as written rather than stripped of their underscores and
+    stars. A span closes on the same number of backticks it opened with."""
+    held: list[str] = []
+
+    def hold(m: re.Match) -> str:
+        held.append(m.group(2).strip() or m.group(2))
+        return f"\x00{len(held) - 1}\x00"
+
+    text = _MD_CODE_RE.sub(hold, text.replace("\x00", ""))
     text = _MD_LINK_RE.sub(lambda m: m.group(1), text)
     text = _MD_NOISE_RE.sub("", text)
     text = text.replace("`", "")
+    text = _MD_HELD_RE.sub(lambda m: held[int(m.group(1))], text)
     return " ".join(text.split())
 
 
@@ -1835,12 +1851,12 @@ def brief_outline(text: str) -> dict:
         # scope section ends the scope: what follows it is its boundary
         body = scope[1]
         for at, (kind, block) in enumerate(body):
-            lead = re.match(r"^\*\*(?:Out of scope|Non-goals|Not in scope)\*\*\s*[—–:-]?\s*(.*)$",
-                            block, re.IGNORECASE) if kind == "para" else None
-            if lead:
+            marker = re.match(r"^\*\*(?:Out of scope|Non-goals|Not in scope)\*\*\s*[—–:-]?\s*(.*)$",
+                              block, re.IGNORECASE) if kind == "para" else None
+            if marker:
                 after = body[at + 1] if at + 1 < len(body) else None
                 inline_bounds = (after[1] if after and after[0] == "list"
-                                 else lead.group(1) or None)
+                                 else marker.group(1) or None)
                 scope = (scope[0], body[:at])
                 break
         heads = [b[1] for b in scope[1] if b[0] == "h3"]
@@ -1873,8 +1889,8 @@ def brief_outline(text: str) -> dict:
                  and plain_inline(b[1]).lower().strip(" .") not in ("none", "n/a", "-", "")]
         if asked:
             out["questions"] = {"count": len(asked), "from": questions[0]}
-    parts = ("lead", "problem", "scope", "boundaries")
-    out["missing"] = [p for p in parts if not out[p]]
+    quoted = ("lead", "problem", "scope", "boundaries")
+    out["missing"] = [p for p in quoted if not out[p]]
     out["state"] = ("none" if not (out["lead"] or out["problem"] or out["scope"])
                     else "partial" if not (out["lead"] or out["problem"]) or not out["scope"]
                     else "full")
