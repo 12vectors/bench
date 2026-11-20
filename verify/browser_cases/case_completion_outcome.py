@@ -98,7 +98,7 @@ class AnUnfinishedCompletion(unittest.TestCase):
     def test_the_card_says_delivered_elsewhere_and_the_next_step(self):
         code, body = S["backend"].get(f"/api/card/delivery?file={FILE}")
         self.assertEqual(200, code)
-        status = json.loads(body)["status"]
+        status = json.loads(body)["delivery"]["status"]
         self.assertEqual("not-published", status["word"])
         self.assertIn("Delivered elsewhere", status["sentence"])
         self.assertIn(f"recovery/{STEM}", status["sentence"])
