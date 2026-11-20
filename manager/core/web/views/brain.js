@@ -669,7 +669,12 @@ function wire(el) {
 }
 
 function pressing() {
-  if (!press) press = pressHold({ onRelease: () => renderBrain() });
+  // the held repaint runs after the click that released it has been
+  // dispatched, never inside it: released synchronously from the click's
+  // capture phase, it replaced the pressed button before the view's own
+  // handler saw the click, and the click was lost (the Orchestrator's
+  // release is scheduled the same way)
+  if (!press) press = pressHold({ onRelease: () => setTimeout(() => renderBrain(), 0) });
   return press;
 }
 const isField = (n) => !!n && /^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName || '');
