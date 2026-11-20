@@ -247,8 +247,14 @@ class TheReviewSignalsSayWhatEachRecordSays(matrix.DeliveryCase):
         self.assertEqual(cls, "", "a request about an older commit is not today's alarm")
         # task 152: the row leads with the server's review status — the
         # card face's words — and the text's older verdict is not today's
-        self.assertEqual(rows["Bench review"][0],
-                         "Review outdated. No Bench verdict yet")
+        # task 152 review: with no Bench verdict, the row says why it is
+        # outdated in the status's own sentence rather than a bare
+        # "No Bench verdict yet"
+        bench_row = rows["Bench review"][0]
+        self.assertTrue(bench_row.startswith("Review outdated. The card's text "
+                                             "reports a PR review"), bench_row)
+        self.assertIn("Bench has no recorded verdict", bench_row)
+        self.assertNotIn("Review approved", bench_row)
 
     def test_a_report_that_is_the_bench_verdicts_prose_is_not_drawn_twice(self):
         head = self.passed_at_head()

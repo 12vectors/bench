@@ -261,8 +261,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/discussion.js": {
-   "bytes": 22643,
-   "sha256": "66c62b0d9bb7da7419775011d4f18e86b4d480a13ca7c106532db7424291ebfc",
+   "bytes": 22888,
+   "sha256": "3f415d1851c176aef2198dca34de0f58c27808f1b397c862feb054589b003ded",
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/drawer.js": {
