@@ -656,6 +656,14 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
         merged_elsewhere=merged_elsewhere, gated=gated,
         verdict_now=verdict_now, waiting=stacks.waiting(_stack(task, ctx)))
 
+    open_failed = (changes.open_failure(filename)
+                   if stage == "review" and not task.get("pr")
+                   and not (pr or {}).get("url") else None)
+    if open_failed and status != "not-published":
+        # task 166: the actual reason the PR could not be opened, not a
+        # generic "no pull request" — and the supported way to retry it
+        sentence = (f"{sentence} Opening its PR failed: "
+                    f"{open_failed['detail']} Settle that, then ↑ open PR.")
     if pr and pr.get("merged") and not merged_elsewhere \
             and candidate["state"] == "present" and not member:
         sentence = (f"{sentence} The PR merged on GitHub at "
@@ -751,10 +759,25 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
     # 2. merged, not published
     if recovery:
         said = recovery.get("detail") or "the remote does not hold it yet"
-        return ("not-published",
-                f"Merged locally into {recovery.get('target') or 'the base'} "
-                f"at {_short(recovery.get('commit'))}, but not on the remote: "
-                f"{said}.",
+        target = recovery.get("target") or "the base"
+        if recovery.get("deliveredElsewhere"):
+            # task 166: the work is on the remote through another merge;
+            # the merge made here is the thing left unpublished
+            sentence = (f"Delivered elsewhere: the remote's {target} already "
+                        f"holds {_short(recovery.get('commit'))} through "
+                        f"another merge, and this checkout's merge "
+                        f"{_short(recovery.get('merge'))} is not published.")
+        else:
+            merged = (f" (merge {_short(recovery.get('merge'))})"
+                      if recovery.get("merge")
+                      and recovery.get("merge") != recovery.get("commit")
+                      else "")
+            sentence = (f"Merged locally into {target} at "
+                        f"{_short(recovery.get('commit'))}{merged}, but not on "
+                        f"the remote: {said}.")
+        if recovery.get("action"):
+            sentence += f" Next: {recovery['action']}"
+        return ("not-published", sentence,
                 action("complete", "Retry publication"), [])
 
     # 3. the latest run on this stage failed
@@ -1218,6 +1241,9 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
                   for t in tasks],
         "delivered": [(t["file"], completion_mod.delivered_record(t["file"]))
                       for t in tasks],
+        # why a review card's PR could not be opened (task 166)
+        "prOpen": [(t["file"], changes.open_failure(t["file"]))
+                   for t in tasks if t["stage"] == "review"],
         "records": len(ctx["records"]),
         "worktrees": sorted(p.name for p in config.WORKTREES.iterdir())
         if config.WORKTREES.is_dir() else [],
@@ -1409,6 +1435,7 @@ def seams() -> dict:
     return {
         "reads": ["taskfiles", "state.AGENTS", "state.COMPLETING",
                   "completion.recovery_public", "changes.pr_snapshot",
+                  "changes.open_failure",
                   "completion.delivered_record", "plans.recorded",
                   "plans.declared", "gates.candidate", "gates.evaluate",
                   "acceptance.summary", "phases.public_state (passed in)",

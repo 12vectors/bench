@@ -81,6 +81,13 @@ class Incident(pub.Delivery):
         self.addCleanup(os.environ.pop, "GH_PR_FOR", None)
         os.environ.pop("GH_PR_FOR", None)
         self.patch(GATES_DIR=self.tmp / "state" / "gates")
+        # Another card landed after this one was cut, as in the incident:
+        # so a merge of the card's branch is a real merge commit — the
+        # host's and this checkout's would have identical parents.
+        (self.app / "other.txt").write_text("another card\n", encoding="utf-8")
+        git(self.app, "add", "other.txt")
+        git(self.app, "commit", "-q", "-m", "another card landed")
+        git(self.app, "push", "-q", "origin", "main")
 
     # — the provider, in a clone of its own —
 
@@ -145,9 +152,8 @@ class Incident(pub.Delivery):
         self.assertEqual(result["publication"]["head"], self.work)
         self.assertTrue(result["moved"])
         self.assertEqual(self.stage_of(), "done")
-        self.assertEqual(self.merges_on_main(),
-                         int(git(self.app, "rev-list", "--count", "--merges",
-                                 provider).stdout.strip()),
+        self.assertEqual(git(self.app, "rev-list", "--count", "--merges",
+                             f"{provider}..main").stdout.strip(), "0",
                          "a merge of this checkout's own was made")
         self.assertEqual(self.tip(self.origin, "refs/heads/main"), provider,
                          "the remote's main was moved")
@@ -311,7 +317,9 @@ class PublicationIsAboutTheNewMerge(Incident):
         self.assertTrue(result["publication"]["deliveredElsewhere"])
         self.assertEqual(self.stage_of(), "review")
         self.assertTrue(self.worktree.is_dir())
-        self.assertIn("main is protected", result["publication"]["detail"])
+        self.assertIn("[rejected]", result["publication"]["detail"])
+        self.assertIn(result["publication"]["merge"][:12],
+                      completion.recovery(FILENAME)["action"])
 
     def test_a_reopened_card_merges_only_its_second_head(self):
         provider = self.provider_merge()
@@ -416,6 +424,34 @@ class GuardsHold(Incident):
         self.assertEqual(refs, (self.tip(self.app, "main"),
                                 self.tip(self.origin, "refs/heads/main")))
         self.assertEqual(self.stage_of(), "review")
+
+
+class ThePrOpeningCauseIsKept(Incident):
+    """The next card's PR refused because local main is ahead: the actual
+    cause reaches the card, its delivery status and an orchestration
+    blocker, with the supported retry — and is cleared once it opens."""
+
+    def test_the_cause_and_the_retry_reach_every_reader(self):
+        provider, local = TheDuplicateIsNeverCalledPublished.leave_the_duplicate(self)
+        with self.assertRaises(ValueError):
+            self.next_card_pr()
+
+        failed = changes.open_failure(NEXT)
+        self.assertIn("ahead of origin", failed["detail"])
+        self.assertIn("↑ open PR", failed["detail"])
+        import coordinate
+        self.assertIn("opening it failed: won't open a PR",
+                      coordinate._no_pr_cause(NEXT))
+        import delivery
+        delivery.bump()
+        sentence = delivery.for_card(NEXT, "review")["status"]["sentence"]
+        self.assertIn("Opening its PR failed", sentence)
+        self.assertIn("then ↑ open PR", sentence)
+
+        git(self.app, "branch", "recovery/duplicate-63", local)
+        git(self.app, "reset", "-q", "--hard", provider)
+        self.assertEqual(changes.open_pr_now(NEXT), NEXT_URL)
+        self.assertIsNone(changes.open_failure(NEXT))
 
 
 class ProvenanceIsKept(Incident):

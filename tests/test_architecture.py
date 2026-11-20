@@ -758,7 +758,9 @@ DYNAMIC_PATCH_TARGETS: dict[str, tuple[int, int]] = {
 # (`EXTERNAL_REVIEW`), so the combined verdict the page used to compute
 # reads it without spelling it again: 24 → 23.
 PROVIDER_VOCABULARY: dict[str, int] = {
-    "agents": 2, "changes": 23, "completion": 13, "config": 10,
+    # Task 166: completion's merged-elsewhere event names the remote's
+    # target rather than "GitHub": 13 → 12.
+    "agents": 2, "changes": 23, "completion": 12, "config": 10,
     "delivery": 10, "doctor": 3, "gatepolicy": 13, "gates": 23,
     "githost": 2, "plans": 1, "profiles": 4, "readiness": 9, "redact": 4,
     "reviews": 8, "routes": 5, "settings": 36, "setupguide": 13,

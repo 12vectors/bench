@@ -231,14 +231,19 @@ class Sandbox(unittest.TestCase):
     def _holds(self, rname, target, commit):
         return self.remote["held"], "", self.remote["why"]
 
-    def _complete(self, filename, stage, *, expect_head=None, actor="you"):
+    def _complete(self, filename, stage, *, expect_head=None, actor="you",
+                  source="api", verified_actor=None):
         self.calls["merge"].append((filename, stage, expect_head, actor))
+        # task 166: the orchestrator's completion says where it came from
+        self.calls.setdefault("sources", []).append(source)
         if self.merge_raises is not None:
             raise self.merge_raises
         return dict(self.merge_result)
 
-    def _delivered_now(self, filename, stage, head, *, actor="orchestrator"):
+    def _delivered_now(self, filename, stage, head, *, actor="orchestrator",
+                       source="api", verified_actor=None):
         self.calls["delivered"].append((filename, head))
+        self.calls.setdefault("sources", []).append(source)
         return {"merged": False, "reconciled": True, "moved": True}
 
     # ── helpers ──────────────────────────────────────────────────────
@@ -327,6 +332,7 @@ class HeadMovementInvalidatesSelection(Sandbox):
         self.approve()
         self.tick()
         self.assertEqual([(CARD, "review", A, "orchestrator")], self.calls["merge"])
+        self.assertEqual(["orchestrator"], self.calls["sources"])
 
 
 # ── 2. independent review: a different resolved model ────────────────
@@ -657,7 +663,7 @@ class CompletionTakesTheExactHead(unittest.TestCase):
         moved = []
         patches = [
             mock.patch.object(completion, "recovery", lambda f: None),
-            mock.patch.object(completion, "_merged_elsewhere", lambda *a: None),
+            mock.patch.object(completion, "_merged_elsewhere", lambda *a, **k: None),
             mock.patch.object(changes, "branch_of", lambda f: "task/7-card"),
             mock.patch.object(changes, "woven", lambda f, s: {"isPhase": False}),
             mock.patch.object(changes, "remote", lambda: "origin"),
@@ -673,15 +679,15 @@ class CompletionTakesTheExactHead(unittest.TestCase):
             mock.patch.object(config, "app_merge_on_origin", lambda: False),
             mock.patch.object(completion, "_merge_locally",
                               lambda f, b, *c: merged.append(c)),
-            mock.patch.object(completion, "_remember", lambda f, r: None),
-            mock.patch.object(completion, "_publish", lambda *a: {
+            mock.patch.object(completion, "_remember", lambda *a, **k: None),
+            mock.patch.object(completion, "_publish", lambda *a, **k: {
                 "state": "published", "commit": expect, "target": "trunk",
                 "remote": "origin"}),
             mock.patch.object(completion, "_clean_up", lambda *a, **k: ({}, None)),
             mock.patch.object(completion, "_sweep", lambda *a: ([], [])),
             mock.patch.object(completion, "move_task",
                               lambda f, s, t, actor="you": moved.append(actor)),
-            mock.patch.object(completion, "_record_delivered", lambda *a: None),
+            mock.patch.object(completion, "_record_delivered", lambda *a, **k: None),
             mock.patch.object(completion, "forget_recovery", lambda f: None),
             mock.patch.object(state, "broadcast", lambda frame: None),
             mock.patch.object(state, "record_board_event", lambda e: None),
