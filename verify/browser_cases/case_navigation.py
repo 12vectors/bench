@@ -107,6 +107,11 @@ class Navigation(unittest.TestCase):
             card("First navigation member", "Review"), encoding="utf-8")
         (tasks / "to-do" / "902-second-navigation-member.md").write_text(
             card("Second navigation member", "To Do"), encoding="utf-8")
+        # a second phase, so drilling into one is seen to leave the other
+        (tasks / "backlog" / "910-another-navigation-phase.md").write_text(
+            PHASE.replace("# Navigation phase", "# Another navigation phase")
+                 .replace("**Status:** To Do", "**Status:** Backlog")
+                 .split("## Cards")[0] + "## Cards\n\n- 904 — Not on this board\n", encoding="utf-8")
         (tasks / "in-progress" / "903-plain-navigation-card.md").write_text(
             card("Plain navigation card", "In Progress"), encoding="utf-8")
         (cls.backend.work / "brain").mkdir()
@@ -219,8 +224,7 @@ class Navigation(unittest.TestCase):
             self.assertEqual("true", b.eval("document.querySelector('#views [data-view=\"board\"]')"
                                             ".getAttribute('aria-current')"), path)
         # the keyboard: a primary link takes focus visibly and Enter follows it
-        b.goto("/board")
-        b.wait("!!document.querySelector('#view-board.on')", 10)
+        b = self.open("/board", "!!document.querySelector('#view-board.on')")
         b.eval("document.querySelector('#views [data-view=\"board\"]').focus(); true")
         b.key("Tab")
         self.assertEqual("brain", b.eval("document.activeElement && document.activeElement.dataset.view"),
@@ -297,7 +301,7 @@ class Navigation(unittest.TestCase):
         self.assertEqual("nav-plain-session", b.eval("document.querySelector('#frail .sess-row').dataset.sid"))
         crumbs = self.crumbs()
         self.assertEqual(["Board", "Tasks", "#903 Plain navigation card", "Sessions for #903"], crumbs[:4])
-        self.assertEqual("Sessions for #903", b.eval("document.querySelector('#frail .label').innerText"))
+        self.assertEqual("Sessions for #903", b.eval("document.querySelector('#frail .label').textContent"))
         shot("nav-sessions-card-1280-night")
         # a row keeps the context, Focus keeps it, and the crumbs lead back
         self.one_click(b, '#frail .sess-row', "/sessions/nav-plain-session?card=903", "a session row")

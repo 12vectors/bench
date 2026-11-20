@@ -259,6 +259,18 @@ class AWorkBase(unittest.TestCase):
       });
       mo.observe(d, { attributes: true, attributeFilter: ['open'] });
       window.__wbRace = log;
+      // what re-wrote the detail view meanwhile, with where from: said in
+      // the failure, so a toggle that never arrives names its cause
+      window.__wbWrites = [];
+      const body = document.querySelector('#drawerbody');
+      const html = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+      if (body && !body.__wbSpy) {
+        body.__wbSpy = true;
+        Object.defineProperty(body, 'innerHTML', { configurable: true,
+          get() { return html.get.call(this); },
+          set(v) { if (window.__wbWrites) window.__wbWrites.push(String(new Error().stack).split('\\n').slice(1, 6).join(' | '));
+                   html.set.call(this, v); } });
+      }
     })()"""
 
     FOLD_JS = """(() => { const d = document.querySelector('#drawer .workbase details');
@@ -286,7 +298,8 @@ class AWorkBase(unittest.TestCase):
         b.eval(self.RACE_JS)
         act()
         self.assertTrue(b.wait("(window.__wbRace || []).some(e => e.startsWith('toggle:'))", 5),
-                        f"the fold's toggle was never delivered: {b.eval('window.__wbRace')}")
+                        f"the fold's toggle was never delivered: {b.eval('window.__wbRace')}; "
+                        f"the detail view was re-written by: {b.eval('window.__wbWrites')}")
         got = b.eval(self.FOLD_JS)
         # the ordering this case exists for, observed rather than assumed
         self.assertEqual(got["log"][0].split(":")[0], "open", got["log"])
