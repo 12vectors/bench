@@ -104,13 +104,12 @@ class _Layout(unittest.TestCase):
             git(self.work, "remote", "add", "origin", str(self.bare))
             git(self.work, "push", "-q", "origin", "main")
             git(self.work, "fetch", "-q", "origin")
-        patches = dict(TASKS=self.work / "tasks", REPO=self.app, EXTERNAL=True,
-                       STATE=self.dir / "state", COMMIT_MOVES=self.commit_moves,
-                       SYNC=self.remote, STATE_GIT_REMOTE="", STATE_BASE="main")
-        for name, value in patches.items():
-            patcher = mock.patch.object(config, name, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch.multiple(
+            config, TASKS=self.work / "tasks", REPO=self.app, EXTERNAL=True,
+            STATE=self.dir / "state", COMMIT_MOVES=self.commit_moves,
+            SYNC=self.remote, STATE_GIT_REMOTE="", STATE_BASE="main")
+        patcher.start()
+        self.addCleanup(patcher.stop)
         sync._NOTES.clear()
         self.addCleanup(sync._NOTES.clear)
         self.app_before = tree(self.app)
