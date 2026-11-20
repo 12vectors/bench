@@ -17,6 +17,11 @@ put back afterwards. Run through verify/browser.
   the conflict and names the owner's way through.
 - **It survives a reload,** and the identity the page draws is the one on
   the card.
+- **The reader's fold choice survives a redraw** (task 155), even one
+  landing between a click, Enter or Space and the `toggle` event the
+  browser queues for it: open and shut, by pointer and keyboard, after a
+  reading, in both themes at both widths, and never crossing to another
+  card.
 - **Reading runs nothing.** Opening every card and its fold leaves each
   card's bytes, the application's refs and the worktrees exactly as they
   were.
@@ -229,6 +234,118 @@ class AWorkBase(unittest.TestCase):
         head = b.eval("document.querySelector('#drawer .workbase .wbhead').innerText")
         self.assertTrue(head.startswith("Building on #71"), head)
         self.close()
+
+    # ── task 155: a redraw before the fold's queued toggle ──────────────
+    #
+    # A <details> changes `open` at once when a person clicks its summary
+    # or presses Enter or Space on it; the page hears of it only through a
+    # `toggle` event the browser queues for later. A live redraw (a stream
+    # frame, a reading arriving) landing in between replaced the fold and
+    # drew it from the choice before the click — shut, its evidence gone.
+    # A MutationObserver on the fold's `open` attribute runs its callback
+    # as a microtask of the input's own task, so it calls the page's real
+    # `render()` exactly in that window, every time: no sleep, no luck.
+
+    RACE_JS = """(() => {
+      const d = document.querySelector('#drawer .workbase details');
+      const log = [];
+      d.addEventListener('toggle', () => log.push('toggle:' + (d.isConnected ? 'attached' : 'detached')));
+      const mo = new MutationObserver(() => {
+        mo.disconnect();
+        log.push('open:' + d.open);
+        render();
+        const now = document.querySelector('#drawer .workbase details');
+        log.push('redrawn:' + (now === d ? 'same' : 'replaced') + ':' + (now && now.open));
+      });
+      mo.observe(d, { attributes: true, attributeFilter: ['open'] });
+      window.__wbRace = log;
+    })()"""
+
+    FOLD_JS = """(() => { const d = document.querySelector('#drawer .workbase details');
+      return { open: d.open, text: document.querySelector('#drawer .workbase').innerText,
+               facts: d.querySelector('.dfacts').getBoundingClientRect().height,
+               log: window.__wbRace || null }; })()"""
+
+    def drawn(self, number: str) -> None:
+        """Another card's Overview, without a page load: the address
+        changes as a link would change it, so S and the stream stay."""
+        b = S["browser"]
+        title = {c[1]: c[0] for c in self.cards.values()}[number]
+        b.eval(f"history.pushState(null, '', '/cards/{number}');"
+               " dispatchEvent(new PopStateEvent('popstate'))")
+        self.assertTrue(b.wait(
+            "!!document.querySelector('#drawer.open #dsec-overview .workbase details') && "
+            f"document.querySelector('#drawer .dtitle').innerText.includes({json.dumps(title)})",
+            15), f"#{number}: the Overview drew no Work base fold")
+
+    def raced(self, act) -> dict:
+        """`act` changes the fold as a person does; a real redraw lands
+        before its toggle is delivered. Waits for that late toggle, so the
+        reading below is after both."""
+        b = S["browser"]
+        b.eval(self.RACE_JS)
+        act()
+        self.assertTrue(b.wait("(window.__wbRace || []).some(e => e.startsWith('toggle:'))", 5),
+                        f"the fold's toggle was never delivered: {b.eval('window.__wbRace')}")
+        got = b.eval(self.FOLD_JS)
+        # the ordering this case exists for, observed rather than assumed
+        self.assertEqual(got["log"][0].split(":")[0], "open", got["log"])
+        self.assertTrue(got["log"][1].startswith("redrawn:replaced:"), got["log"])
+        self.assertEqual(got["log"][2], "toggle:detached", got["log"])
+        b.eval("window.__wbRace = null")
+        return got
+
+    def assertOpenWithEvidence(self, got, how):
+        self.assertTrue(got["open"], f"{how}: the fold was drawn shut by the redraw ({got['log']})")
+        for want in (A_BRANCH, self.tip[:12], "g-72aaaaaaaa"):
+            self.assertIn(want, got["text"], f"{how}: the evidence is not readable")
+        self.assertGreater(got["facts"], 0, f"{how}: the facts take no space")
+
+    def assertShut(self, got, how):
+        self.assertFalse(got["open"], f"{how}: the fold was drawn open again ({got['log']})")
+        self.assertNotIn(self.tip[:12], got["text"], f"{how}: the closed fold still shows its facts")
+
+    def test_3_a_redraw_before_the_queued_toggle_keeps_the_readers_choice(self):
+        before = self.snapshot()
+        summary = "#drawer .workbase details > summary"
+        b = S["browser"]
+        for dark in (True, False):
+            for width, height in VIEWPORTS:
+                where = f"{width}px {'night' if dark else 'day'}"
+                self.load(width, height)
+                b.goto("/cards/72")
+                b.eval(f"S.dark = {str(dark).lower()}; applyTheme();")
+                self.drawn("72")
+                self.assertFalse(b.eval(self.FOLD_JS)["open"], f"{where}: drawn open")
+                # a pointer opens it, a redraw lands first: it stays open
+                self.assertOpenWithEvidence(self.raced(lambda: b.click(summary)),
+                                            f"{where}: pointer open")
+                # a reading and a stream frame later, still open
+                b.eval("window.__ls = 0; Promise.resolve(loadState())"
+                       ".then(() => { render(); window.__ls = 1; })")
+                self.assertTrue(b.wait("window.__ls === 1", 15), f"{where}: the reading never ended")
+                self.assertOpenWithEvidence(b.eval(self.FOLD_JS), f"{where}: after a reading")
+                shot(f"workbase-kept-open-{width}-{'night' if dark else 'day'}")
+                # another card: its own fold, not this one's choice
+                self.drawn("73")
+                self.assertFalse(b.eval("document.querySelector('#drawer .workbase details').open"),
+                                 f"{where}: #72's choice crossed to #73")
+                self.drawn("72")
+                self.assertOpenWithEvidence(b.eval(self.FOLD_JS), f"{where}: back on #72")
+                # a pointer closes it, a redraw lands first: it stays shut
+                self.assertShut(self.raced(lambda: b.click(summary)), f"{where}: pointer close")
+                b.eval("render()")
+                self.assertShut(b.eval(self.FOLD_JS), f"{where}: closed, then a stream frame")
+                # the keyboard, both ways
+                b.eval(f"document.querySelector('{summary}').focus()")
+                self.assertOpenWithEvidence(self.raced(lambda: b.key("Enter")),
+                                            f"{where}: Enter open")
+                b.eval(f"document.querySelector('{summary}').focus()")
+                self.assertShut(self.raced(lambda: b.key("Space")), f"{where}: Space close")
+                self.close()
+        b.eval("localStorage.removeItem('bench-theme')")
+        # reading and folding ran nothing: no card, ref or worktree changed
+        self.assertEqual(before, self.snapshot())
 
 
 if __name__ == "__main__":
