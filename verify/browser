@@ -140,7 +140,7 @@ def body(run: bv.Run) -> str:
         raise bv.SetupError(f"zero browser cases discovered in {cases}")
     selection = bv.validate_selection(
         run.args.case, bv.BROWSER_SELECTOR, "browser case",
-        "case_board or case_board.BoardCase.test_name")
+        "case_board or case_board.Board.test_name")
     available = n
     if selection:
         suite, n = select(suite, selection)
@@ -149,8 +149,9 @@ def body(run: bv.Run) -> str:
                                          available if selection else None)
     # A case written against one transport's private API passes on one
     # machine and breaks on the other; refused before a browser starts.
-    modules = sorted({t.id().split(".", 1)[0] for t in flat(suite)})
-    problems = [p for m in modules for p in bv.case_api_problems(cases / f"{m}.py")]
+    modules = sorted({type(t).__module__ for t in flat(suite)})
+    problems = [p for m in modules
+                for p in bv.case_api_problems(cases.joinpath(*m.split(".")).with_suffix(".py"))]
     run.record["cases"]["apiChecked"] = modules
     if problems:
         raise bv.SetupError(bv.case_api_remedy(problems))
