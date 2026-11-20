@@ -225,6 +225,120 @@ def race(spec: dict | None) -> None:
     agents.start_agent = start_agent
 
 
+JAM: dict = {}
+JAM_SECONDS = 30
+
+
+def jam(spec: dict | None) -> None:
+    """Make one board commit fail the way a concurrent git makes it fail
+    (task 155): the work-state index is held — `index.lock` exists, as
+    git itself creates it — for the whole of the commit of `file`'s move
+    into `to`, and let go when that commit returns. Nothing is timed to
+    make it happen — the only waits are bounded ones for a lock another
+    git already holds, or for a colliding commit's events, each recorded
+    as a timeout if it runs out: the commit meets a held index on every attempt, so it
+    fails exactly as the observed one did, and the card has moved on disk
+    with the move unrecorded. What happened is in `JAM`."""
+    if not spec:
+        return
+    target, stage = spec["file"], spec["to"]
+    collide = spec.get("collide") or {}
+    JAM.update(file=target, to=stage, jammed=False, committed=None, lockHeld=None,
+               timeout=None, commits=[])
+    if collide:
+        JAM.update(collide=collide, collided=None)
+    placed, collided, staged = threading.Event(), threading.Event(), threading.Event()
+    real_commit = taskfiles.commit_paths
+    real_git = taskfiles._git
+    stager: dict = {}
+
+    def _git(*args, **kwargs):
+        # `collide.staged`: the colliding commit's `git add` succeeds, and
+        # only then is the index held — so its commit fails with the
+        # card's paths already staged, as the 06:58 full-suite run's did
+        done = real_git(*args, **kwargs)
+        if (stager.get("thread") is threading.current_thread()
+                and args[:1] == ("add",) and done.returncode == 0
+                and not staged.is_set()):
+            JAM["stagedBeforeJam"] = True
+            staged.set()
+            if not placed.wait(RACE_SECONDS):
+                JAM["timeout"] = "the jam was never placed after the staged add"
+        return done
+
+    if collide.get("staged"):
+        JAM["stagedBeforeJam"] = False
+        taskfiles._git = _git
+
+    def real(filename, message, spec_, failure):
+        # every board commit while the jam is installed, and its outcome:
+        # the evidence of which commits met the held index
+        ok = real_commit(filename, message, spec_, failure)
+        JAM["commits"].append({"file": filename, "message": message.splitlines()[0],
+                               "committed": ok,
+                               "thread": threading.current_thread().name})
+        return ok
+
+    def commit_paths(filename, message, spec_, failure):
+        if (collide and filename == collide["file"]
+                and collide.get("message", "") in message
+                and JAM.get("collided") is None
+                and threading.current_thread() is not threading.main_thread()):
+            # `collide`: the next commit another thread makes of this card
+            # meets the held index — as the observed report commit did
+            # (task 155). It waits for the jam to be in place, boundedly,
+            # and the jam waits for it to end before its own commit runs.
+            if collide.get("staged"):
+                stager["thread"] = threading.current_thread()
+            elif not placed.wait(RACE_SECONDS):
+                JAM["timeout"] = "the jam was never placed for the colliding commit"
+            try:
+                JAM["collided"] = real(filename, message, spec_, failure)
+                return JAM["collided"]
+            finally:
+                collided.set()
+        if filename != target or f"→ {stage} " not in message or JAM["jammed"]:
+            return real(filename, message, spec_, failure)
+        if collide.get("staged") and not staged.wait(RACE_SECONDS):
+            JAM["timeout"] = "the colliding commit never staged"
+            return real(filename, message, spec_, failure)
+        root = config.state_repo()
+        found = config.git_run(root, "rev-parse", "--git-path", "index.lock")
+        lock = Path(found.stdout.strip())
+        if not lock.is_absolute():
+            lock = root / lock
+        # exclusive, as git itself creates it — never into a lock another
+        # git holds, whose rename would take the jam away mid-commit. A
+        # git already holding it is waited out, boundedly, and counted; a
+        # jam that could not be taken says so and is never a reproduction.
+        deadline = time.monotonic() + JAM_SECONDS
+        JAM["contended"] = 0
+        while True:
+            try:
+                os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                break
+            except FileExistsError:
+                JAM["contended"] += 1
+                if time.monotonic() > deadline:
+                    JAM["timeout"] = "the work-state index was never free to jam"
+                    return real(filename, message, spec_, failure)
+                time.sleep(0.01)
+        JAM["jammed"] = True
+        try:
+            if collide:
+                placed.set()
+                if not collided.wait(RACE_SECONDS):
+                    JAM["timeout"] = "the colliding commit never ended"
+            JAM["committed"] = real(filename, message, spec_, failure)
+        finally:
+            JAM["lockHeld"] = lock.is_file()
+            if JAM["lockHeld"]:
+                lock.unlink()
+        return JAM["committed"]
+
+    taskfiles.commit_paths = commit_paths
+
+
 def put_in_force(doc: dict) -> dict:
     current, _ = agreements.draft_document()
     agreements.save_draft(doc, agreements.revision(current))
@@ -294,6 +408,7 @@ def run() -> dict:
     if kind == "pass":
         crash(STEP.get("crash"))
         race(STEP.get("race"))
+        jam(STEP.get("jam"))
         if "backoff" in STEP:
             # the one clock a journey shortens: a retry's backoff (60s and
             # doubling on a board). Whether a retry waits is still decided
@@ -310,7 +425,8 @@ def run() -> dict:
         opened = open_prs() if STEP.get("open_prs", True) else []
         settle()
         return {"pass": result, "opened": opened, "stages": stages(),
-                "ops": public_ops(), **({"race": dict(RACE)} if RACE else {})}
+                "ops": public_ops(), **({"race": dict(RACE)} if RACE else {}),
+                **({"jam": dict(JAM)} if JAM else {})}
     if kind == "reason":
         found = reasoning.request(STEP["file"], STEP["need"], via=STEP.get("via", "orchestrator"))
         settle()

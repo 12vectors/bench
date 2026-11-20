@@ -978,10 +978,19 @@ def commit_paths(filename: str, message: str, spec: list[str], failure: str) -> 
                         f"repository, and bench does not commit the board's "
                         f"bookkeeping to the application instead")})
         return False
+    # Only what is on disk is staged first: a path gone from disk whose
+    # deletion an earlier, failed commit already staged is in neither the
+    # working tree nor the index, and `git add` refuses a pathspec that
+    # matches nothing. The pathspec commit records every gone path's
+    # deletion itself — it reads the named paths from the working tree
+    # over HEAD — so nothing is lost by not staging it (task 155).
+    root = config.state_repo()
+    present = [p for p in spec if os.path.lexists(Path(root, p))]
     try:
         with COMMIT_LOCK:
             for attempt in range(_INDEX_LOCK_TRIES):
-                result = _git("add", "-A", "--", *spec)
+                result = (_git("add", "-A", "--", *present) if present
+                          else subprocess.CompletedProcess(spec, 0, "", ""))
                 if result.returncode == 0:
                     result = _git("commit", "--no-verify", "-m", message, "--",
                                   *spec, timeout=60)
@@ -1015,14 +1024,119 @@ def _move_spec(src: Path, dst: Path) -> list[str]:
     destination, since a pathspec matching nothing in HEAD would fail the
     commit outright.
     """
-    spec = [str(dst)]
+    return _card_spec(dst, also=src)
+
+
+def _card_spec(path: Path, also: Path | None = None) -> list[str]:
+    """The paths one commit of the card at `path` names: `path` itself,
+    `also` (a move's source) when git knows it, and every other copy of
+    this card git still records under tasks/ that is no longer on disk.
+
+    That last part is what a move whose own commit failed leaves behind
+    (task 155): the card moved on disk — the disk is the truth — but the
+    deletion of where it was is unrecorded, and the card's later commits
+    named only the paths *they* moved between, so the stale path stayed a
+    local change for good: sync paused over it, and a merge that touched
+    it refused. Naming it here records it with the card's next move.
+    A move's commit carries its own movement trailers; an edit's commit
+    records the stale path only together with the trailers of the board's
+    own uncommitted move that left it (`commit_edit`), since a stage
+    change recorded without them would read as an unattributed move. Only
+    this card's own filename, only under the stage and archive
+    directories, and only a path that is gone from disk — so nothing
+    anyone else changed, and no copy of the card that still exists, is
+    swept into the commit."""
+    return [*_stale_copies(path, also), str(path)]
+
+
+def _stale_copies(path: Path, also: Path | None = None) -> list[str]:
+    """Every other copy of the card at `path` git still records under
+    tasks/ (and `also`) that is gone from disk: deletions nobody has
+    recorded yet. See `_card_spec`."""
+    candidates = [config.TASKS / slug / path.name
+                  for slug in sorted({*config.STAGE_DIRS, "archive"})]
+    if also is not None and also not in candidates:
+        candidates.append(also)
+    root = config.state_repo()
+    others = [str(p) for p in candidates if p != path]
+    if root is None or not others:
+        return []
+    # Known to git means in the index *or* in HEAD. A failed commit whose
+    # `git add` had already succeeded staged the old path's deletion, so
+    # the index no longer lists it while HEAD still does — and asking the
+    # index alone found nothing to record (the 06:58 full-suite failure).
+    # NUL-separated (`-z`): otherwise git C-quotes a name holding a
+    # non-ASCII character, `"` or a backslash (unless `core.quotePath` is
+    # off), and the quoted text — a path that exists nowhere — would read
+    # as a stale copy and fail every commit naming it.
+    names: set[str] = set()
+    for args in (("ls-files", "-z", "--full-name", "--", *others),
+                 ("ls-tree", "-r", "-z", "--full-name", "--name-only", "HEAD",
+                  "--", *others)):
+        try:
+            listed = _git(*args)
+        except (subprocess.SubprocessError, OSError):
+            continue
+        if listed.returncode == 0:
+            names.update(name for name in listed.stdout.split("\0") if name)
+    stale = []
+    for line in sorted(names):
+        known = root / line
+        if not known.exists() and not known.is_symlink():
+            stale.append(str(known))   # git knew it: record its removal
+    return stale
+
+
+def _unrecorded_move(filename: str, stage: str,
+                     stale: list[str]) -> dict | None:
+    """The board's own move of `filename` into `stage` whose commit
+    failed (task 155): the newest journal line for this card, when it
+    names `stage` as where the card went, names as where it came from the
+    stage of one of the `stale` paths, and no commit carries its move id
+    yet. `record_movement` writes that line exactly when a move's commit
+    did not happen; None when the newest line says something else, or
+    there is none — a card moved by hand, say, which the board did not
+    make and will not attribute. The last two conditions keep an old line
+    from being used twice: once its move is recorded, a hand move back
+    into the same stage is not committed under that move's trailers."""
+    stale_stages = {Path(p).parent.name for p in stale}
     try:
-        tracked = _git("ls-files", "--", str(src))
-        if tracked.returncode == 0 and tracked.stdout.strip():
-            spec.insert(0, str(src))   # git knew the old path: record its removal
+        lines = movement_journal().read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines[-_JOURNAL_SCAN:]):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict) or entry.get("file") != filename:
+            continue
+        if (entry.get("v") == 1 and entry.get("to") == stage
+                and entry.get("from") in stale_stages
+                and isinstance(entry.get("id"), str)
+                and entry.get("kind") in ("person", "automated")
+                and isinstance(entry.get("mover"), str)
+                and not _move_committed(entry["id"])):
+            return entry
+        return None
+    return None
+
+
+def _move_committed(move_id: str) -> bool:
+    """Whether a commit in the work state's history already carries this
+    move's id in its trailers. History that cannot be read answers True,
+    the safe direction: the move is then not attributed again."""
+    try:
+        found = _git("log", "-1", "--format=%H", "--fixed-strings",
+                     f"--grep=Bench-Move-Id: {move_id}", "HEAD", timeout=30)
     except (subprocess.SubprocessError, OSError):
-        pass
-    return spec
+        return True
+    if found.returncode != 0:
+        return True
+    return bool(found.stdout.strip())
+
+
+_JOURNAL_SCAN = 5000
 
 
 def _commit_move(filename: str, target: str, src: Path, dst: Path, who: str,
@@ -1173,14 +1287,35 @@ def commit_edit(filename: str, stage: str, what: str) -> bool:
     piggyback guard looks for, and it fires the same commit hook a move
     does. With `BOARD_COMMIT_MOVES` off it does nothing at all: the edit
     stays in the working tree for a human to commit, exactly as before.
+
+    One more thing it records (task 155): when the board's own move of
+    this card into `stage` failed to commit — a concurrent git held the
+    index — the card's next commit is often an edit (its report, its PR
+    line, an orchestration record), not a move. Committing only the new
+    path would record the card as *created* there, with no mover, and
+    leave the deletion of where it was a local change that every later
+    merge touching it refuses over. So the edit's commit also records
+    that move — the stale path's deletion, under the move's own trailers
+    from the journal, which `movements` then reads as the commit's and
+    not twice. A stale path with no such journal line (a hand move, say)
+    is left exactly as before: the board does not attribute a move it
+    did not make.
     """
     if not config.COMMIT_MOVES:
         return False
     path = config.TASKS / stage / filename
-    return commit_paths(filename,
-                   f"board: {_number(filename) or filename[:-3]} "
-                   f"{what} ({actor_name() or 'board'})",
-                   [str(path)],
+    who = actor_name() or "board"
+    number = _number(filename) or filename[:-3]
+    stale = _stale_copies(path)
+    move = _unrecorded_move(filename, stage, stale) if stale else None
+    if move is not None:
+        return commit_paths(
+            filename,
+            f"board: {number} {what}, and its move → {stage} ({who})"
+            + movement_trailers(move["id"], move["mover"], move["kind"]),
+            [*stale, str(path)],
+            f"{filename}: {what} recorded, but committing it failed")
+    return commit_paths(filename, f"board: {number} {what} ({who})", [str(path)],
                    f"{filename}: {what} recorded, but committing it failed")
 
 

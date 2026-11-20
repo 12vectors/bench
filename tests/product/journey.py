@@ -365,6 +365,12 @@ class Journey:
                                f"{ref}:{path}"], capture_output=True, env=self.s.env())
         return done.returncode == 0
 
+    def state_status(self) -> str:
+        """What the work-state checkout holds under tasks/ that git has
+        not recorded — staged, unstaged or untracked."""
+        return self.s.git(self.state_repo, "status", "--porcelain",
+                          "--untracked-files=all", "--", str(self.tasks))
+
     def card_text(self, filename: str) -> str:
         found = list(self.tasks.rglob(filename))
         return found[0].read_text(encoding="utf-8")
