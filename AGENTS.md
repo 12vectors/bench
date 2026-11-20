@@ -1208,9 +1208,15 @@ system font, as they always were; `tests/fixtures/page-symbols.json`
 lists them and `verify/browser_cases/case_fonts.py` checks which glyphs
 come from where.
 
-The board has seven views (header switcher):
+The header has four primary destinations, in this order: **Board**,
+**Brain**, **Orchestrator** and **Settings** (task 159; see "Finding
+your way: Board, Brain, Orchestrator, Settings"). Under the Board, a bar
+of its own holds its two kinds of work — **Tasks** (the kanban) and
+**Phases** — and the board-wide activity, Sessions and Focus, which are
+also reached in the context of one card or one phase. Seven views in
+all:
 
-- **Board** — the kanban, live, and only what you are holding yourself: a
+- **Board** (Board › Tasks) — the kanban, live, and only what you are holding yourself: a
   phase's members are drawn elsewhere, with the phase card standing for
   them and each column saying how many it is not showing (see "A phase's
   members leave the Board view"). Active Claude Code sessions appear as chips in
@@ -1226,17 +1232,18 @@ The board has seven views (header switcher):
   root's `brain/`: a list by classification and one entry at its stable
   address, with a person's writes — create, edit, classify, override and
   retire (see "The Brain: maintained entries, read" and "Writing the
-  Brain"). Where it sits in the navigation is card #159's to settle.
+  Brain"), and its own search and filters (see "Finding an entry").
 - **Orchestrator** — what the Bench scope and its phase scopes are doing,
   what waits on you, and the operating agreement they work under (see
   "The Orchestrator view"). The switcher carries how many decisions wait
   on you and a mark while orchestration is paused or its agreement is
   invalid.
-- **Phases** — a swimlane each: where the members the Board stopped drawing
-  actually live (see "The Phases view: a swimlane each"). The switcher
-  itself carries how many phases are running and a mark when one has
-  halted, so a halt is learned from whichever view you are on.
-- **Sessions** — a flight recorder per session: a chronological timeline of
+- **Phases** (Board › Phases) — a swimlane each: where the members the
+  Board stopped drawing actually live (see "The Phases view: a swimlane
+  each"). Its tab carries how many phases are running and a mark when
+  one has halted, and the primary **Board** carries the same mark, so a
+  halt is learned from whichever destination you are on.
+- **Sessions** (Board activity) — a flight recorder per session: a chronological timeline of
   reads, edits, test runs, commits and card moves, with filters and expandable
   output. Sessions persist to `local/state/sessions/<id>.jsonl`, so past ones
   can be replayed — and beside each log sits `<id>.who.json`, who that
@@ -1274,6 +1281,82 @@ The board has seven views (header switcher):
   configuration, and changing it safely"). The switcher carries a mark
   when this board's execution policy refuses something, for the reason
   the Phases mark exists: the thing it refuses is the next launch.
+
+### Finding your way: Board, Brain, Orchestrator, Settings
+
+The page has four primary destinations, always in this order (task 159):
+**Board** (the work), **Brain** (what the project knows), **Orchestrator**
+(coordination) and **Settings** (configuration). Exactly one is marked
+current (`aria-current="page"` on its own page, `"true"` when you are
+inside it), each is a link a new tab can take, and below 760px they keep
+one row of full-size targets. Everything else lives under one of them, so
+there is always a way back up:
+
+| You are on | It sits under | The way back |
+| --- | --- | --- |
+| the kanban, `/board` | Board › **Tasks** | — |
+| every phase, `/phases` | Board › **Phases** | Tasks |
+| one phase drilled into, `/phases/<card>` | Board › Phases › the phase, drawn alone | the **Phases** breadcrumb (every lane), Back |
+| a card, `/cards/<card>` | Board › Tasks › the card; Board › Phases › its phase › the card when opened over Phases | the breadcrumb at the top of the detail view, Close or Escape (back to where it was opened) |
+| the whole board's sessions, `/sessions[/<session>]` | Board › All sessions | Board |
+| a card's or phase's sessions, `/sessions[/<session>]?card=<card>` | Board › Tasks (or Phases › the phase) › the card › Sessions for it | each breadcrumb step |
+| Focus, `/focus[/<session>][?card=<card>]` | the same trail, then Focus | the session, then the card |
+| the Brain, an entry, `/brain[/e/<id>]` | Brain | All Brain entries |
+| a section, a card in it, `/orchestrator[/<section>][?card=<card>]` | Orchestrator | its own navigation |
+| a section, `/settings[/<section>]` | Settings | its own sidebar |
+
+**The Board's bar.** Under the header while the Board is selected: the
+**Tasks** and **Phases** tabs, a breadcrumb trail whenever you are below
+them, and, apart at the end, the **Board activity** — *All sessions* and
+*Focus* across the whole board. Those two are not tabs beside Tasks and
+Phases and are not drawn anywhere else; a destination never offers a
+link to itself (the session list you are on, the phase you drilled into,
+the card in its own breadcrumb).
+
+**Sessions and Focus are activity, in a context.** A card's **Activity**
+section opens *Sessions for this card* (a phase card: *for this phase
+and its cards*) and *Focus on its newest session*; a phase's lane head
+has **Sessions** and **Coordinate** (the phase in the Orchestrator, whose
+own phase panel answers with *View this phase in Board › Phases*). In a
+context the session list shows only the sessions recorded on that card —
+on a phase card and its members, for a phase — its heading says whose
+they are, every row and the Focus link keep the context, and the
+breadcrumbs lead back to the card or phase. Reached from the Board's bar,
+the list is the whole board's. A session opened with no context says
+which card it recorded and links to that card and its sessions, or says
+no card is recorded; it never invents a parent. A context naming no card
+here (archived, another board's, two cards sharing the number) says so
+and lists nothing in its place; a session that is not here says that.
+
+**Addresses: what moved, and what did not.** No address changed meaning,
+and none was removed: `/board`, `/cards/<card>[?tab=…]`, `/phases[/<card>]`,
+`/sessions[/<session>]`, `/focus[/<session>]`, `/brain[/e/<id>]`,
+`/orchestrator[/<section>][?card=…]` and `/settings[/<section>]` open what
+they always opened, with the parent above selected. The one addition is
+the optional `?card=<card>` on `/sessions` and `/focus`, named as a card's
+address names it (`?card=007` is corrected to `?card=7` in place); without
+it, the activity is the whole board's, exactly as before. A malformed
+context is said, never dropped for the whole board's. `/phases/<card>`
+now draws that phase's lane alone, under its breadcrumb, where it used
+to select the lane among all of them. Back, Forward and reload restore
+the visited context, and following any of these links reads; it writes,
+fetches from a remote, launches and runs nothing.
+
+### Finding an entry
+
+The Brain's list has its own search and filters, independent of the
+Board's stages: a **Search** box matching every word typed, case
+blind, against each entry's title, summary, id, kind, file name, sources
+and related ids; a **Classification** filter (the four, with counts) and
+a **Kind** filter (the six). It reads the index the board already sent —
+deterministic, bounded by the files `brain.py` reads, no model and no
+request — and keeps its search across a visit to an entry and back. It
+is not part of an address. A search that matches nothing says what it
+looked for and where, and offers **Clear search and filters** and **New
+entry**; files that cannot be shown are listed with how to fix each
+kind of problem, and are not found by search until they are fixed. There
+is no curated handbook, no seeding and no automatic classification yet:
+those are later phases, and nothing on the page offers them.
 
 ### The page's script: modules under a policy
 
@@ -1587,9 +1670,9 @@ The **Brain** is the project's maintained knowledge: explanations,
 investigations, decisions and guides, each a Markdown file in
 `<work root>/brain/` with a stable address (task 157). Any person who can
 reach the board can write and classify them there (task 158, "Writing
-the Brain"). What it does not do yet, said so nobody looks for it: the
-final place in the navigation and search (#159), reviews appearing in
-the Brain, a
+the Brain"), and find them with its search and filters (task 159,
+"Finding an entry"). What it does not do yet, said so nobody looks for
+it: reviews appearing in the Brain, a
 curated handbook, seeding a Brain from an application, adopting
 `reference/` files, and any agent classification. A run is given no
 Brain entry because it exists: being in the Brain is not being approved
@@ -1846,9 +1929,10 @@ once the board has been read.
 | `/brain`, `/brain/e/<id>` | the Brain's list, and one entry by its stable id (task 157) |
 | `/cards/<card>` | the card's detail view, on its Overview, over the Board |
 | `/cards/<card>?tab=<section>` | one of its sections: `brief`, `inputs`, `acceptance`, `reviews`, `activity` |
-| `/phases`, `/phases/<card>` | the Phases view, and one phase's lane selected and scrolled to |
-| `/sessions`, `/sessions/<session>` | Sessions, and one session |
+| `/phases`, `/phases/<card>` | Board › Phases, and one phase drilled into: its lane alone, under its breadcrumb (task 159) |
+| `/sessions`, `/sessions/<session>` | the whole board's Sessions, and one session |
 | `/focus`, `/focus/<session>` | Focus, and one session |
+| `/sessions[/<session>]?card=<card>`, `/focus[/<session>]?card=<card>` | the same, in the activity context of one card, or of one phase and its cards (task 159) |
 | `/settings`, `/settings/<section>` | Settings → Overview, or one section: `setup`, `verification` (Checks), `acceptance` (Merge rules), `agents`, `access`, `diagnostics`, `installation`, `policy` |
 | `/orchestrator`, `/orchestrator/<section>` | the Orchestrator's Overview, or one section: `work`, `decisions`, `phases`, `recovery`, `activity`, `agreement` |
 | `/orchestrator/<section>?card=<card>` | that section with one card or phase selected in it, named as a card's address names it |
@@ -5144,8 +5228,9 @@ diagnosis runs against.
 
 Everything above is configuration an operator sets up. Until this, the
 only way to *read* it was a JSON document and a terminal, and the only
-way to change it was a text editor. The **Settings** view — the fifth,
-beside Board, Phases, Sessions and Focus — is where it is read instead:
+way to change it was a text editor. The **Settings** view — the last of
+the four primary destinations, after Board, Brain and Orchestrator — is
+where it is read instead:
 **how is this bench configured, what has actually been verified, and what
 should I configure next?**
 
@@ -7079,7 +7164,7 @@ base is card 61's, not repeated here.
 ### The Orchestrator view
 
 Everything above has one place a person reads and acts on it (D15, task
-145): **Orchestrator** in the header switcher, at `/orchestrator`. It
+145): **Orchestrator**, the third primary destination, at `/orchestrator`. It
 owns no orchestration logic. Each section draws what the server answered
 — `GET /api/orchestration` (the agreement in force and the draft, every
 scope's authority with the scope that decided it, capacity and usage,
@@ -8329,8 +8414,8 @@ phase's cards, and a Focus view for a phase, remain separate cards.
 
 ### The Phases view: a swimlane each
 
-Where the members went. A fourth view beside Board, Sessions and Focus,
-holding **one lane per phase card** — every phase there is, not only the
+Where the members went. **Board › Phases**, beside Board › Tasks in the
+Board's bar, holding **one lane per phase card** — every phase there is, not only the
 running ones, because a phase whose cards are all merged and which is
 waiting on its own PR still owns them, and a lane that vanished exactly
 when it needed merging would be a view you could not trust. Lanes are
@@ -8343,7 +8428,11 @@ A lane is a head, five stage columns and the phase's log:
 - **The head** — the phase, its progress (`2 of 3 merged`), the member in
   flight on the same activity line a card would use, and its own controls:
   **‖ hold**, the phase branch, and the phase card, which opens in the
-  drawer. Those are all of them. Nothing here ends a phase — merging is a
+  drawer — and two links that change nothing: **Sessions** (the phase's
+  and its cards' sessions) and **Coordinate** (the phase in the
+  Orchestrator). Its number drills into the phase: `/phases/<card>`, the
+  lane drawn alone under Board › Phases › the phase, with a card opened
+  from it returning to it. Nothing here ends a phase — merging is a
   board move on the phase card, and there is exactly one place where work
   leaves the board.
 - **Five columns, and the last one is the phase's own.** Four are the
@@ -8375,9 +8464,10 @@ and **‖ hold**, which needs nothing read.
 
 The crossing matters more than the lane: a person on the Board has to
 learn that a phase halted without being on this view, and a person here
-has to be able to get back to the card that owns it. So the switcher
+has to be able to get back to the card that owns it. So the Phases tab
 carries the running count and, in `--alarm`, a mark when something has
-halted — on every view, holding until the phase is run again or held,
+halted, and the primary **Board** carries the same mark — on every
+destination, holding until the phase is run again or held,
 alongside the toast and the ticker line that already fire. And the lane
 head's title and its `card ↗` chip open the phase card.
 
