@@ -51,7 +51,9 @@ function workBaseBlock(t) {
     `<p class="wbhead" data-decision="${esc(l.decision || '')}"${stale ? ' role="status"' : ''}>` +
     `<b>${esc(w.headline)}.</b> ${esc((stale ? l.summary : a.summary) || '')}</p>` +
     (w.withdrawn ? `<p class="dnote">A new start is held: ${esc(w.withdrawn)}</p>` : '') +
-    `<details class="rpt" data-keep="workbase"><summary>Refs, evidence and history</summary>` +
+    // kept open across a live redraw, as every other kept fold is
+    `<details class="rpt" data-keep="workbase"${S.accOpen[t.file + ':workbase'] ? ' open' : ''}>` +
+    `<summary>Refs, evidence and history</summary>` +
     `<dl class="dfacts">` +
     fact('Decision', esc(a.decision || l.decision || '') + (a.id ? ` · ${mono(a.id)}` : '')) +
     fact('Starts from', a.branch ? mono(a.branch) + (a.commit ? ` at ${mono(a.commit.slice(0, 12))}` : '') : '') +

@@ -971,7 +971,7 @@
   #drawergrip:hover::before,#drawergrip.dragging::before{background:var(--accent)}
   #drawerbody{
     flex:1;min-width:0;overflow-y:auto;display:flex;flex-direction:column;gap:14px;
-    padding:20px 20px 20px 6px;
+    --dpt:20px;padding:var(--dpt) 20px 20px 6px;
   }
   #drawer .dhead{display:flex;align-items:center;gap:10px}
   /* the dead run's excerpt, above the task itself: machine output, bounded */
@@ -1083,8 +1083,12 @@
      decision first and held in view while reading, then five sections.
      State is a word everywhere; colour only repeats it. ── */
   #drawer.wide{width:min(920px,96vw)!important}
-  #drawer .dsticky{position:sticky;top:0;z-index:2;background:var(--canvas);
-    margin-top:-20px;padding:14px 0 8px;flex-wrap:wrap;border-bottom:1px solid var(--border-soft)}
+  /* the head meets the scroller's top edge, at rest and when stuck: the
+     sticky inset is measured inside the scroller's padding, so `top` takes
+     the padding back exactly as the margin does — without it the head
+     rested 20px below its place and covered the first lines under it */
+  #drawer .dsticky{position:sticky;top:calc(-1 * var(--dpt, 20px));z-index:2;background:var(--canvas);
+    margin-top:calc(-1 * var(--dpt, 20px));padding:14px 0 8px;flex-wrap:wrap;border-bottom:1px solid var(--border-soft)}
   /* a deliberate gap between the tab row's border and whatever comes
      first under it — the tools, or a section's text — on every section,
      at every width and in both themes (owner review of task 149): the
@@ -1808,7 +1812,7 @@
     /* a card's detail view takes the whole screen, and gives it back */
     #drawer{min-width:100vw;max-width:100vw;border-left:none}
     #drawergrip{display:none}
-    #drawerbody{padding:14px 12px}
+    #drawerbody{--dpt:14px;padding:var(--dpt) 12px}
   }
   /* a phone held upright keeps the header to two rows: More is its
      glyph, and the connection chip is its dot — breathing while anyone
