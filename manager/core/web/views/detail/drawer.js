@@ -1,6 +1,7 @@
 /* The drawer: a card's detail view or an open document. */
 import { agentOnTask, failedRun } from '../../app/data.js';
 import { S } from '../../app/state.js';
+import { cardLabel, cardParent, crumbsHtml } from '../../lib/context.js';
 import { $, esc } from '../../lib/dom.js';
 import { harvestFolds } from '../../lib/folds.js';
 import { markScroll, restoreScroll } from '../../lib/keep.js';
@@ -56,6 +57,26 @@ function icon(name) {
   return `<svg class="dico" data-icon="${name}" viewBox="0 0 16 16" width="16" height="16" ` +
     `aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" ` +
     `stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
+}
+
+/* The card's place on the Board (task 159): Board › Tasks › the card, or
+   Board › Phases › its phase › the card when it was opened over Phases.
+   Each step closes the card back to that place; the card itself is where
+   you are, and is not a link. */
+function cardCrumbs(t) {
+  const parent = cardParent(S.state, t, S.view, S.phaseSel);
+  const steps = [{ text: 'Board', href: '/board' }];
+  if (parent.tab === 'phases') {
+    steps.push({ text: 'Phases', href: '/phases' });
+    if (parent.phase && parent.phase.file !== t.file) {
+      steps.push({ text: cardLabel(parent.phase),
+                   href: formatRoute({ view: 'phases', phase: cardId(parent.phase, S.state) }) });
+    }
+  } else {
+    steps.push({ text: 'Tasks', href: '/board' });
+  }
+  steps.push({ text: cardLabel(t) });
+  return crumbsHtml(steps, esc, 'This card on the Board');
 }
 
 function viewControls(copy, copyLabel, wide) {
@@ -152,6 +173,8 @@ function renderDrawer() {
   // existing tools all reach it — the others are `hidden`, not absent.
   body.innerHTML =
     `<div class="dhead dsticky">` +
+    // where the card sits on the Board, and the way back (task 159)
+    cardCrumbs(t) +
     // one row of identity and controls: the card's address (a link a new
     // tab can take, task 134), its delivery status, and the three view
     // controls as one group that never wraps apart. The title has the

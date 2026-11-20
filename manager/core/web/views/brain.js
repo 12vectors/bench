@@ -154,8 +154,75 @@ function diagnosticsBlock(index) {
   return `<details class="b-panel b-diag" open><summary>${list.length + (index.diagnosticsOmitted || 0)} ` +
     `file${list.length === 1 ? '' : 's'} in brain/ could not be shown</summary><ul>` +
     list.map(d => `<li><code>${esc(d.file)}</code> — <strong>${esc(d.code)}</strong>: ${esc(d.message)}</li>`).join('') +
-    more + '</ul><p class="b-note">Nothing was merged or guessed: fix the file and it appears on the next ' +
-    'reading.</p></details>';
+    more + '</ul><p class="b-note">Nothing was merged or guessed, and a file listed here is not found by ' +
+    'search. To fix one: <strong>invalid</strong> — correct the field named, following the version 1 ' +
+    'record in AGENTS.md (“The Brain”); <strong>duplicate-id</strong> — give one of the files a new ' +
+    '<code>**Id:**</code>; <strong>unsupported</strong> — this board does not read that ' +
+    '<code>**Brain:**</code> version; <strong>unversioned</strong> — add <code>**Brain:** 1</code> or move ' +
+    'the file out of <code>brain/</code>; <strong>refused</strong> — replace the link or special file with ' +
+    'a plain Markdown file. It appears on the next reading.</p></details>';
+}
+
+/* ── finding an entry (task 159) ───────────────────────────────────────
+
+   Search and filters over the index the board already sent: a plain,
+   case-insensitive substring match over each entry's title, summary, id,
+   kind, file name, sources and related ids, and two filters —
+   classification and kind, independent of each other and of the Board's
+   stages. Deterministic and bounded by the index (brain.py caps the files
+   it reads); no model, no request. Kept across navigation, so coming back
+   to the list finds it as it was left; not part of an address, which
+   names a destination, never a moment. */
+const find = { q: '', cls: 'all', kind: 'all' };
+
+function finding() { return !!(find.q.trim() || find.cls !== 'all' || find.kind !== 'all'); }
+
+function haystack(e) {
+  return [e.title, e.summary, e.id, e.kind, e.file,
+    ...(e.sources || []).map(s => s.text), ...(e.related || [])]
+    .filter(Boolean).join('\n').toLowerCase();
+}
+
+function matches(e) {
+  if (find.cls !== 'all' && e.classification !== find.cls) return false;
+  if (find.kind !== 'all' && e.kind !== find.kind) return false;
+  const words = find.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = haystack(e);
+  return words.every(w => hay.includes(w));
+}
+
+function findHtml(index, hits) {
+  const total = index.entries.length;
+  const count = (list, pick) => list.filter(pick).length;
+  const opt = (v, label, on) => `<option value="${esc(v)}"${on ? ' selected' : ''}>${esc(label)}</option>`;
+  const classes = opt('all', `All classifications (${total})`, find.cls === 'all') + CLASSES.map(c =>
+    opt(c, `${c} (${count(index.entries, e => e.classification === c)})`, find.cls === c)).join('');
+  const kinds = opt('all', 'All kinds', find.kind === 'all') + KINDS.map(k =>
+    opt(k, `${k} (${count(index.entries, e => e.kind === k)})`, find.kind === k)).join('');
+  return `<form class="b-panel b-find" role="search" aria-label="Find Brain entries" data-bfindform>` +
+    `<div class="b-findrow">` +
+    `<label class="b-findq"><span>Search</span><input type="search" data-bfind="q" value="${esc(find.q)}" ` +
+    `placeholder="Title, summary, id, source or related entry" autocomplete="off" spellcheck="false" ` +
+    `aria-describedby="bfindcount"></label>` +
+    `<label><span>Classification</span><select data-bfind="cls">${classes}</select></label>` +
+    `<label><span>Kind</span><select data-bfind="kind">${kinds}</select></label>` +
+    (finding() ? button('clear-find', 'Clear') : '') + `</div>` +
+    `<p class="b-note" id="bfindcount" role="status" aria-live="polite">` +
+    (finding() ? `${hits.length} of ${total} entr${total === 1 ? 'y' : 'ies'} match.`
+      : `${total} entr${total === 1 ? 'y' : 'ies'}. Search reads this list only; it asks nothing of a model.`) +
+    `</p></form>`;
+}
+
+function noResults(index) {
+  const said = [find.q.trim() ? `“${find.q.trim()}”` : '',
+    find.cls !== 'all' ? `classified ${find.cls}` : '', find.kind !== 'all' ? `of kind ${find.kind}` : '']
+    .filter(Boolean).join(', ');
+  return `<div class="b-panel b-empty" role="status"><p><strong>No entry matches</strong> ${esc(said)}.</p>` +
+    `<p>Search looks at each entry's title, summary, id, kind, file name, sources and related ids. ` +
+    `${index.diagnostics && index.diagnostics.length ? 'A file listed below as not shown cannot match until it is fixed. ' : ''}` +
+    `Clear the search and filters to see all ${index.entries.length}, or write the entry you were looking for.</p>` +
+    `<p>${button('clear-find', 'Clear search and filters')} ${button('new', 'New entry')}</p></div>`;
 }
 
 function listHtml(slot) {
@@ -172,8 +239,14 @@ function listHtml(slot) {
       `${esc(index.directory.why)}.</p></div>`;
   }
   if (!index.entries.length) return head + stale + emptyGuidance(index.directory) + diagnosticsBlock(index);
-  const sections = CLASSES.map(c => {
-    const rows = index.entries.filter(e => e.classification === c);
+  const hits = index.entries.filter(matches);
+  const filtering = finding();
+  const shown = CLASSES.filter(c => find.cls === 'all' || find.cls === c);
+  const sections = !hits.length ? noResults(index) : shown.map(c => {
+    const rows = hits.filter(e => e.classification === c);
+    // while a search or filter narrows the list, a classification with no
+    // match is left out rather than drawn as an empty section
+    if (filtering && !rows.length) return '';
     const body = rows.length ? '<ul class="b-list">' + rows.map(e =>
       `<li class="b-row${e.tombstone ? ' b-tomb' : ''}"><div class="b-rowhead">${entryLink(e)}` +
       chip('b-kind', e.kind) + (e.tombstone ? chip('b-c-removed', 'Removed') : '') +
@@ -186,7 +259,7 @@ function listHtml(slot) {
     return `<section class="b-panel" aria-labelledby="bsec-${c}"><h2 id="bsec-${c}">${c} ` +
       `<span class="b-count">${rows.length}</span></h2><p class="b-note">${esc(ABOUT[c])}.</p>${body}</section>`;
   }).join('');
-  return head + stale + sections + diagnosticsBlock(index) +
+  return head + stale + findHtml(index, hits) + sections + diagnosticsBlock(index) +
     `<p class="b-note mono">brain/ revision ${esc(index.revision)} · ${index.entries.length} ` +
     `entr${index.entries.length === 1 ? 'y' : 'ies'}</p>`;
 }
@@ -607,6 +680,12 @@ function currentEntry() {
 
 function act(name, arg) {
   const e = currentEntry();
+  if (name === 'clear-find') {
+    find.q = ''; find.cls = 'all'; find.kind = 'all';
+    renderBrain(true);
+    $('#bshell [data-bfind="q"]')?.focus();
+    return;
+  }
   if (name === 'new') {
     startWrite('create', null);
     if (!cache.index) load('index');
@@ -649,6 +728,14 @@ function wire(el) {
   });
   const onField = (ev) => {
     const f = ev.target;
+    if (f.dataset && f.dataset.bfind) {
+      // the list follows the search as it is typed: a person's own act,
+      // painted at once with the caret kept where it was
+      if (find[f.dataset.bfind] === f.value) return;
+      find[f.dataset.bfind] = f.value;
+      renderBrain(true);
+      return;
+    }
     if (!ed || !f.dataset || !f.dataset.bf) return;
     const name = f.dataset.bf;
     ed.draft[name] = f.type === 'checkbox' ? f.checked : f.value;
@@ -657,6 +744,8 @@ function wire(el) {
   };
   el.addEventListener('input', onField);
   el.addEventListener('change', onField);
+  // Enter in the search box searches as typing already did: nothing is sent
+  el.addEventListener('submit', (ev) => { if (ev.target.matches('[data-bfindform]')) ev.preventDefault(); });
   el.addEventListener('toggle', (ev) => {
     const d = ev.target;
     if (d.dataset && d.dataset.brevs) {
@@ -751,15 +840,22 @@ function renderBrain(force) {
     // a live repaint keeps the reader's place: replaced only when the
     // reading changed, and focus is put back where it was
     const active = document.activeElement;
+    const caret = active && active.dataset && active.dataset.bfind === 'q'
+      ? [active.selectionStart, active.selectionEnd] : null;
     const keep = active && el.contains(active) && active.dataset
-      ? (active.dataset.brainId ? `[data-brain-id="${CSS.escape(active.dataset.brainId)}"]`
+      ? (active.dataset.bfind ? `[data-bfind="${CSS.escape(active.dataset.bfind)}"]`
+        : active.dataset.brainId ? `[data-brain-id="${CSS.escape(active.dataset.brainId)}"]`
         : active.dataset.bact ? `[data-bact="${CSS.escape(active.dataset.bact)}"]`
           : active.dataset.bf ? `[data-bf="${CSS.escape(active.dataset.bf)}"]` +
             (active.type === 'radio' ? `[value="${CSS.escape(active.value)}"]` : '') : null) : null;
     el.innerHTML = `<div class="b-main">${html}</div>`;
     painted = html;
     if (S.brainEntry) settleLinks(el, S.brainEntry);
-    if (keep) el.querySelector(keep)?.focus();
+    if (keep) {
+      const back = el.querySelector(keep);
+      back?.focus();
+      if (back && caret && back.setSelectionRange) back.setSelectionRange(caret[0], caret[1]);
+    }
   }
   if (arrived) {
     // a new destination: focus its heading, or, back on the list, the

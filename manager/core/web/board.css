@@ -1996,3 +1996,67 @@
     .b-facts{grid-template-columns:minmax(0,1fr)}
     .b-facts dd{margin-bottom:6px}
   }
+
+  /* ── the Board's own navigation (task 159) ─────────────────────────────
+     Under the header while the Board is the primary destination: Tasks and
+     Phases as its two kinds of work, where you are below them, and the
+     board-wide activity apart at the end — words, never a third tab. */
+  .boardnav{display:flex;align-items:center;flex-wrap:wrap;gap:6px 14px;padding:6px 18px;
+    background:var(--canvas);border-bottom:1px solid var(--border-soft);flex:none}
+  .boardnav[hidden]{display:none}
+  .bn-tabs{display:flex;gap:2px}
+  .bn-tabs a{display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:6px;
+    font-size:12.5px;font-weight:500;color:var(--muted);text-decoration:none;
+    border:1px solid transparent;box-shadow:inset 0 -2px 0 transparent}
+  .bn-tabs a:hover{color:var(--text);text-decoration:none}
+  .bn-tabs a.on{color:var(--text);box-shadow:inset 0 -2px 0 var(--accent)}
+  .bn-tabs a:focus-visible,.bn-act a:focus-visible,.crumbs a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  .bn-tabs .vcount{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+  .bn-tabs a.on .vcount{color:var(--accent)}
+  .bn-where{flex:1 1 auto;min-width:0}
+  .bn-act{display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap;font-size:12px}
+  .bn-act .bn-lab{color:var(--dim)}
+  .bn-act a{color:var(--muted);text-decoration:underline;text-underline-offset:3px}
+  .bn-act a:hover{color:var(--accent)}
+  .bn-act a[hidden]{display:none}
+  /* a breadcrumb trail: each step a way back, the last where you are */
+  .crumbs ol{display:flex;flex-wrap:wrap;align-items:center;gap:2px 0;list-style:none;margin:0;padding:0;
+    font-size:12px;color:var(--muted);min-width:0}
+  .crumbs li{display:flex;align-items:center;min-width:0}
+  .crumbs li + li::before{content:'›';color:var(--dim);padding:0 7px}
+  .crumbs a{color:var(--muted);text-decoration:underline;text-underline-offset:3px;overflow-wrap:anywhere}
+  .crumbs a:hover{color:var(--accent)}
+  .crumbs [aria-current]{color:var(--text);font-weight:500;overflow-wrap:anywhere}
+  #drawer .dhead .crumbs{margin:0 0 6px}
+  #drawer .dact-links{font-size:12px;margin:0 0 8px;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}
+  .f-head .s-ctx{font-size:12px;color:var(--muted);margin-top:4px}
+  .f-head .s-ctx a{text-decoration:underline;text-underline-offset:3px}
+  .f-head a.copylink{display:inline-flex;align-items:center;font-size:12.5px;color:var(--muted);
+    border:1px solid var(--border);border-radius:8px;padding:6px 10px;text-decoration:none}
+  .f-head a.copylink:hover{border-color:var(--accent);color:var(--text)}
+  .f-rail .f-empty a,.f-main .f-empty a{text-decoration:underline}
+  .lhead a.chip2{text-decoration:none;color:var(--muted)}
+  .lhead a.chip2:hover{color:var(--text)}
+  @media (max-width:760px){
+    .boardnav{padding:4px 10px;gap:4px 10px}
+    .bn-tabs a{min-height:40px;padding:0 14px}
+    .bn-where{flex-basis:100%;order:3}
+    .bn-act{margin-left:auto}
+    .bn-act .bn-lab{display:none}
+    .bn-act a{min-height:40px;display:inline-flex;align-items:center}
+    .crumbs ol{font-size:12.5px}
+    .crumbs a{display:inline-flex;align-items:center;min-height:32px}
+  }
+  /* the Brain's search and filters (task 159) */
+  .b-find{display:flex;flex-direction:column;gap:6px}
+  .b-findrow{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px 12px}
+  .b-findrow label{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:var(--muted)}
+  .b-findrow .b-findq{flex:1 1 260px}
+  .b-findrow input[type=search]{font:inherit;font-size:13px;color:var(--text);background:var(--surface);
+    border:1px solid var(--border);border-radius:8px;padding:8px 10px;min-height:40px;width:100%}
+  .b-findrow select{min-height:40px}
+  .b-findrow input:focus-visible,.b-findrow select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  .b-find .b-note{margin:0}
+  @media (max-width:760px){
+    .b-findrow label{flex:1 1 100%}
+  }

@@ -168,6 +168,10 @@ function applyRoute(route, background) {
     }
     if (route.view === 'flight') S.flightSid = named('session');
     if (route.view === 'focus') S.focusSid = named('session');
+    // the card or phase whose activity this is (task 159): from the
+    // address alone, so an address without one is the whole board's
+    S.activityCtx = route.ctx || null;
+    S.activityBad = route.invalid === 'ctx' ? route.raw : null;
     if (route.view === 'settings') {
       S.settingsSection = route.invalid === 'section' ? route.raw : route.section || 'overview';
     }
@@ -222,7 +226,8 @@ function onActivate(el, open) {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
   });
 }
-onActivate($('#livechip'), () => setView('flight'));
+// the connection chip opens the whole board's sessions
+onActivate($('#livechip'), () => { S.activityCtx = null; S.activityBad = null; setView('flight'); });
 /* Every labelled Copy control — a path in the configuration check, in a
    sheet or in Settings. The value is the control's own attribute, never
    read off the page around it. Clipboard access needs a secure context,

@@ -829,7 +829,8 @@ function phaseHtml(p, isSel) {
     (scope ? `<details class="o-fold" data-okeep="pauth-${esc(n)}"${keepOpen('pauth-' + n, isSel)}><summary>Effective authority and capacity (what both the Bench scope and this phase grant)</summary>${authorityHtml(scope)}${capacityHtml(scope)}</details>` : '') +
     (members.length ? `<h4>Members</h4><ul class="o-rows">${members.join('')}</ul>` : '') +
     (acts.length ? `<h4>Actions</h4><div class="o-actions">${acts.join('')}</div>` : '') +
-    `<p><a data-route href="/phases/${esc(n)}">Open its lane in Phases</a></p></article>`;
+    // the phase's work lives on the Board (task 159): Board › Phases › it
+    `<p><a data-route data-o="board-phase" href="/phases/${esc(n)}">View this phase in Board › Phases</a></p></article>`;
 }
 
 /* ── recovery ────────────────────────────────────────────────────────── */

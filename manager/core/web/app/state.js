@@ -41,6 +41,11 @@ const S = {
   focusSid: null,
   flightAuto: null,
   focusAuto: null,
+  // the card or phase whose activity Sessions and Focus are showing (task
+  // 159), as an address names it; null is the whole board's activity
+  activityCtx: null,
+  // what was wrong with an address's activity context, said in place
+  activityBad: null,
   filter: 'all',
   diffCache: {},         // agentId -> {at, files, fetching}
   // agentId -> {at, manifest, freshness, fetching}: the policy and inputs

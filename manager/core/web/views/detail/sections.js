@@ -2,6 +2,7 @@
 import { agentOnTask, loadState } from '../../app/data.js';
 import { S } from '../../app/state.js';
 import { fetch } from '../../lib/api.js';
+import { activityScope, sessionsIn } from '../../lib/context.js';
 import { $, esc } from '../../lib/dom.js';
 import { wireFolds } from '../../lib/folds.js';
 import { md } from '../../lib/md.js';
@@ -1460,6 +1461,27 @@ function wireReviews(t) {
   });
 }
 
+/* The way from a card's Activity into its sessions (task 159): the
+   sessions recorded on this card (a phase card's: on it and its members),
+   and Focus on the newest of them. Links, in the card's own activity
+   context, so Sessions and Focus say whose activity they are showing and
+   lead back here. Reading them starts nothing. */
+function activityLinks(t) {
+  const id = cardId(t, S.state);
+  const scope = activityScope(S.state, id);
+  // a card the listing does not hold (archived, ambiguous) has no link
+  if (!scope || !scope.task || scope.task.file !== t.file) return '';
+  const mine = sessionsIn(S.state, scope);
+  const newest = mine.slice().sort((a, b) => (b.last || b.started || 0) - (a.last || a.started || 0))[0];
+  const what = t.isPhase ? 'this phase and its cards' : 'this card';
+  return `<p class="dact-links">` +
+    `<a class="dlink" data-route data-sessions-for href="${esc(formatRoute({ view: 'flight', ctx: id }))}">` +
+    `Sessions for ${esc(what)} <span class="mono">${mine.length}</span></a>` +
+    (newest ? ` · <a class="dlink" data-route data-focus-for href="${esc(formatRoute({ view: 'focus', session: newest.id, ctx: id }))}">` +
+      `Focus on its newest session</a>` : ' · <span class="dnote">no session recorded on it yet</span>') +
+    `</p>`;
+}
+
 function activityHtml(t, acc) {
   const items = [];
   const p = (S.state.progress || {})[t.file];
@@ -1514,7 +1536,8 @@ function activityHtml(t, acc) {
       `${reportHtml(t, it.report, it.key)}</details>`
     : `<div class="tl"><time>${esc(it.at ? new Date(it.at).toLocaleString() : '—')}</time>` +
       `<span><span class="src">${esc(it.src)}</span><div class="tx">${esc(it.text)}</div></span></div>`;
-  return `<p class="dnote">Newest first: progress the runs reported (labelled as theirs), work reports, reviews (dated here, read in Reviews), comments and decisions, and acceptance and finding records. Raw reads, edits and commands are technical detail, in the Sessions view.</p>` +
+  return activityLinks(t) +
+    `<p class="dnote">Newest first: progress the runs reported (labelled as theirs), work reports, reviews (dated here, read in Reviews), comments and decisions, and acceptance and finding records. Raw reads, edits and commands are technical detail, in this card's sessions.</p>` +
     (items.length ? `<div class="tline">${items.map(row).join('')}</div>` : `<p class="dnote">Nothing has happened on this card yet.</p>`);
 }
 

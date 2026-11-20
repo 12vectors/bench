@@ -1,9 +1,10 @@
 /* Focus: one session's heads-up display. */
-import { agentFor, agentOnTask, allTasks, isLiveSession, loadSession, modelChip, sessionElapsed, sessionMeta, sessionsOf } from '../app/data.js';
+import { agentFor, agentOnTask, allTasks, isLiveSession, loadSession, modelChip, sessionElapsed, sessionMeta } from '../app/data.js';
 import { S } from '../app/state.js';
 import { $, esc } from '../lib/dom.js';
 import { markScroll, restoreScroll } from '../lib/keep.js';
 import { sessionStatusWord, sessionUnavailable } from '../lib/linkwords.js';
+import { activityScope, sessionsIn } from '../lib/context.js';
 import { formatRoute } from '../lib/route.js';
 import { fmtShort } from '../lib/time.js';
 import { evRow } from './activity.js';
@@ -20,10 +21,12 @@ import { pillFor } from '../words.js';
    in S.focusAuto, because a pick has no address. */
 function pickFocusSid() {
   if (S.focusSid) return S.focusSid;
-  if (S.focusAuto && sessionMeta(S.focusAuto)) return S.focusAuto;
-  const live = sessionsOf(isLiveSession);
+  // picked among the sessions of the activity context (task 159)
+  const inView = sessionsIn(S.state, activityScope(S.state, S.activityCtx));
+  if (S.focusAuto && inView.some(m => m.id === S.focusAuto)) return S.focusAuto;
+  const live = inView.filter(isLiveSession);
   const agentLive = live.find(m => m.agentId);
-  S.focusAuto = (agentLive || live[0] || (S.state.sessions || [])[0] || {}).id || null;
+  S.focusAuto = (agentLive || live[0] || inView[0] || {}).id || null;
   return S.focusAuto;
 }
 
@@ -121,7 +124,7 @@ function renderFocus() {
   markScroll('v:cstrip', strip);
   const putBack = () => { restoreScroll('v:focus', view); restoreScroll('v:cstrip', strip); };
 
-  const options = (S.state.sessions || []).map(m =>
+  const options = sessionsIn(S.state, activityScope(S.state, S.activityCtx)).map(m =>
     `<option value="${esc(m.id)}"${m.id === sid ? ' selected' : ''}>${esc(m.label || m.id.slice(0, 8))}${m.task ? ' — ' + esc(m.task) : ''}</option>`).join('');
   // a session an address named that is not here is an option of its own,
   // so the selector does not claim another one is shown (task 134)
@@ -201,7 +204,7 @@ function renderFocus() {
     `<span class="dot${live ? ' live' : ''}"></span><span class="label">Right now</span>` +
     `<span class="r" id="celapsed">${sessionElapsed(meta)} on this</span>` +
     `<span class="r" data-sstatus>${esc(sessionStatusWord(meta, live))}</span>` +
-    `<button class="copylink" data-copy-link="${esc(formatRoute({ view: 'focus', session: sid }))}" ` +
+    `<button class="copylink" data-copy-link="${esc(formatRoute({ view: 'focus', session: sid, ctx: S.activityCtx || undefined }))}" ` +
     `aria-label="copy a link to Focus on this session">Copy link</button>${stopBtn}</div>` +
     `<div class="refline">${refBits.join('<span>·</span>')}</div>` +
     `<h1 class="focus-title">${esc(task ? task.title : 'Session')}</h1>` +
