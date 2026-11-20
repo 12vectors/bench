@@ -138,6 +138,38 @@ class EachWordFromItsOwnState(ReviewStatusCase):
         self.assertEqual(found["word"], "review-incomplete")
         self.assertEqual(found["label"], "Review incomplete")
 
+    def test_a_run_whose_verdict_is_still_being_recorded_is_in_progress(self):
+        # The reviewer's process has ended (status done) and the reaper is
+        # between `finish` and recording the verdict: not "incomplete".
+        head = self.head()
+        self.place("review", pr=PR_URL)
+        self.review_run("rv-reaping", status="done", head=head)
+        with state.LOCK:
+            state.AGENTS["rv-reaping"]["verdictPending"] = True
+        self.assertEqual(self.word(), "review-running")
+        # The verdict lands and the reaper clears the mark: approved.
+        gates.record_verdict(CARD, verdict="APPROVE", head=head)
+        with state.LOCK:
+            state.AGENTS["rv-reaping"].pop("verdictPending")
+        self.assertEqual(self.word(), "review-approved")
+
+    def test_the_reaper_clears_its_mark_even_when_it_raises(self):
+        import agents  # noqa: PLC0415
+        self.review_run("rv-raises", status="running", head=None)
+        seen = {}
+
+        def settle(agent_id, proc, log_file):
+            with state.LOCK:
+                seen["pending"] = state.AGENTS[agent_id].get("verdictPending")
+            raise RuntimeError("the host did not answer")
+
+        with mock.patch.object(agents, "_settle_pr_review", settle), \
+                mock.patch.object(agents.state, "broadcast"):
+            with self.assertRaises(RuntimeError):
+                agents._reap_pr_review("rv-raises", None, None)
+        self.assertTrue(seen["pending"])
+        self.assertNotIn("verdictPending", state.AGENTS["rv-raises"])
+
     def test_an_incomplete_rerun_hides_an_older_approval_too(self):
         older = self.head()
         gates.record_verdict(CARD, verdict="APPROVE", head=older)

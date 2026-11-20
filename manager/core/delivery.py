@@ -458,7 +458,10 @@ def review_status(task: dict, ctx: dict, candidate: dict,
     commit = candidate.get("commit") if candidate.get("state") == "present" \
         else None
     runs = _review_runs(task, ctx)
-    running = next((r for r in runs if r.get("status") == "running"), None)
+    # A run whose process ended while its verdict is still being recorded
+    # (`agents._reap_pr_review`) is in progress, not incomplete.
+    running = next((r for r in runs if r.get("status") == "running"
+                    or r.get("verdictPending")), None)
     recorded = gates.verdicts_for(filename)
 
     def out(word: str, sentence: str, head: str | None = None) -> dict:
@@ -1194,7 +1197,8 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
                    hashlib.sha256((t.get("body") or "").encode()).hexdigest())
                   for t in tasks],
         "agents": sorted((a.get("id"), a.get("task"), a.get("status"),
-                          bool(a.get("failure")))
+                          bool(a.get("failure")),
+                          bool(a.get("verdictPending")))
                          for a in ctx["agents"]),
         "completing": sorted(ctx["completing"]),
         "batches": sorted((k, (v or {}).get("done"), (v or {}).get("total"))

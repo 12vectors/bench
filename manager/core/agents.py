@@ -1284,6 +1284,25 @@ def _reap_pr_fix(agent_id: str, proc: subprocess.Popen, log_file) -> None:
 
 
 def _reap_pr_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
+    # The run's process ends before its verdict is recorded — a host call
+    # resolving the head sits between the two. Until this reaper has
+    # finished, the record says `verdictPending`, so a reading taken in
+    # that window says the review is still in progress rather than that
+    # it ended without a verdict. `finally`: a reaper that raises must not
+    # leave the card reading "in progress" for ever.
+    with state.LOCK:
+        if agent_id in state.AGENTS:
+            state.AGENTS[agent_id]["verdictPending"] = True
+    try:
+        _settle_pr_review(agent_id, proc, log_file)
+    finally:
+        with state.LOCK:
+            if agent_id in state.AGENTS:
+                state.AGENTS[agent_id].pop("verdictPending", None)
+        state.broadcast({"type": "board"})
+
+
+def _settle_pr_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
     record, stopped, rc = finish(agent_id, proc, log_file)
     filename = record["task"]
     name = record.get("name") or "the reviewer"
