@@ -279,6 +279,79 @@ def now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
 
+# Task 164: how this harness's own three endings are said in bench's
+# verifier report contract (v1, task 135). The exit status alone makes a
+# setup error read as `failed` under a runner that only sees non-zero; a
+# check whose operator declares `"report": "v1"` is handed
+# $BENCH_VERIFY_REPORT, and the report written here is what lets bench
+# record "the verifier's setup failed" as preparation failed rather than a
+# test failure. A cancelled run is `incomplete`: it reached no verdict.
+CONTRACT_OUTCOME = {PASSED: "passed", FAILED: "failed", SETUP_ERROR: "setup-failed"}
+CONTRACT_FINDINGS = 50
+
+
+def _contract_text(value, cap: int) -> str:
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= cap else text[:cap - 1] + "…"
+
+
+def contract_report(record: dict, status: int, reason: str | None) -> dict:
+    """The v1 report for one finished run: its outcome, a summary, and one
+    finding per browser case that did not pass (bounded). Nothing in it
+    is a path on this disk. Pure, so it can be read without a run."""
+    outcome = CONTRACT_OUTCOME[status]
+    if status == SETUP_ERROR and record.get("cancelled"):
+        outcome = "incomplete"
+    summary = reason or {"passed": "every check this run made passed",
+                         "failed": "an assertion failed",
+                         "setup-failed": "the verifier could not set up its run",
+                         "incomplete": "the run was stopped before a verdict"}[outcome]
+    findings = []
+    for case in ((record.get("cases") or {}).get("results") or []):
+        if case.get("outcome") == "passed":
+            continue
+        kind = case.get("outcome")
+        findings.append({
+            "message": _contract_text(
+                f"{case.get('case', '?')}: "
+                f"{'assertion failed' if kind == 'failed' else 'setup error'}"
+                f" — {case.get('detail') or ''}", 1900),
+            "severity": "error" if kind == "failed" else "warning"})
+        if len(findings) >= CONTRACT_FINDINGS:
+            break
+    out = {"v": 1, "outcome": outcome,
+           "summary": _contract_text(f"{record.get('check', 'check')}: {summary}", 480),
+           "findings": findings}
+    preflight = (record.get("probe") or {}).get("coverage")
+    if preflight:
+        out["extensions"] = {"bench.verify": {"probe": preflight}}
+    return out
+
+
+def write_contract_report(record: dict, status: int, reason: str | None,
+                          env=os.environ) -> str | None:
+    """Write the report where bench asked for it, or nothing. Only when
+    both variables are set, the report is the file the directory names,
+    the directory exists and is not a link, and nothing is a link at the
+    report's path. Never raises: a report bench could not be given reads
+    `report-missing` under the contract, which is the honest answer."""
+    target, folder = env.get("BENCH_VERIFY_REPORT"), env.get("BENCH_VERIFY_REPORT_DIR")
+    if not target or not folder:
+        return None
+    try:
+        path, where = Path(target), Path(folder)
+        if path.name != "report.json" or path.parent != where \
+                or not where.is_dir() or where.is_symlink() or path.is_symlink():
+            return None
+        data = json.dumps(contract_report(record, status, reason), sort_keys=True)
+        tmp = where / f".report-{os.getpid()}.tmp"
+        tmp.write_text(data + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+        return str(path)
+    except (OSError, ValueError, KeyError):
+        return None
+
+
 class Run:
     """One entrypoint invocation: its work directory, its artifacts and
     the record written at the end whatever happened."""
@@ -402,6 +475,9 @@ class Run:
         tmp = getattr(self, "work", None)
         if tmp is not None:
             shutil.rmtree(tmp / "tmp", ignore_errors=True)
+        written = write_contract_report(self.record, status, reason)
+        if written:
+            print(f"bench-verify report: {written}")
         word = OUTCOME[status].upper()
         print(f"bench-verify {self.check}: {word}" + (f" — {reason}" if reason else ""))
         c = self.record.get("candidate", {})
