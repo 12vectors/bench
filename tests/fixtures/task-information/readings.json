@@ -1,0 +1,754 @@
+{
+ "164-legacy-long.md": {
+  "acc": {
+   "counts": {
+    "accepted": 0,
+    "needs-work": 0,
+    "pending": 8,
+    "recheck": 0,
+    "reported": 0,
+    "total": 8
+   },
+   "criteria": [],
+   "findingCounts": {
+    "fix-reported": 0,
+    "open": 0,
+    "resolved": 0
+   },
+   "findings": [],
+   "relevance": [],
+   "removed": [],
+   "reports": [
+    {
+     "at": "2026-11-09 18:02",
+     "by": "Juno",
+     "headline": {
+      "clipped": true,
+      "text": "Committed on task/164-initialize-work-directories and tested: install.py now creates the work state only at the resolved work root, and a release no longer ships tasks/, plans/ or reference/."
+     },
+     "kind": "Work report",
+     "text": "Committed on task/164-initialize-work-directories and tested: install.py now creates the work state only at the resolved work root, and a release no longer ships tasks/, plans/ or reference/. The full unittest suite passed apart from twelve failures in modules this change does not touch, which come from the run's own settings leaking into the tests.\n\n### What changed\n\n- `install.py` resolves the layout from the persisted `.env` and the environment before any write.\n- The task template moved to the tool-owned `manager/core/seed/`.\n\n### To do\n\n- Read the bench-backend log before merging."
+    },
+    {
+     "at": "2026-11-10 12:14",
+     "by": "Reed",
+     "headline": {
+      "clipped": false,
+      "text": "I'm approving this change, but bench's own backend test run failed at this commit and I couldn't find out why, so someone should read that log before merging."
+     },
+     "kind": "PR review at 2c6aa445c49e",
+     "review": "rv-ee779cbb84",
+     "reviewType": "pr",
+     "text": "PR REVIEW: APPROVE\n\nI'm approving this change, but bench's own backend test run failed at this commit and I couldn't find out why, so someone should read that log before merging.\n\n### What I checked\n\n- **Release artifact:** `manager/core/release-manifest` no longer ships `tasks/`, `plans/` or `reference/`."
+    }
+   ],
+   "rounds": [
+    {
+     "at": "2026-11-10 12:14",
+     "commit": "2c6aa445c49e",
+     "heading": "PR review at 2c6aa445c49e",
+     "id": "rv-ee779cbb84",
+     "label": "current-at-the-time",
+     "report": "PR REVIEW: APPROVE\n\nI'm approving this change, but bench's own backend test run failed at this commit and I couldn't find out why, so someone should read that log before merging.\n\n### What I checked\n\n- **Release artifact:** `manager/core/release-manifest` no longer ships `tasks/`, `plans/` or `reference/`.",
+     "reviewer": "Reed",
+     "verdict": "APPROVE"
+    }
+   ],
+   "states": {
+    "accepted": "accepted",
+    "needs-work": "needs work",
+    "pending": "pending",
+    "recheck": "needs recheck",
+    "reported": "reported — awaiting confirmation"
+   },
+   "tracked": false,
+   "untracked": [
+    {
+     "id": null,
+     "label": "A fresh release artifact installed in vendored mode produces the expected usable work…",
+     "legacyTick": false,
+     "order": 0,
+     "rev": "e168cab54200",
+     "text": "A fresh release artifact installed in vendored mode produces the expected usable work skeleton at the default work root, with normal task and template behavior preserved."
+    },
+    {
+     "id": null,
+     "label": "The same fresh artifact installed in external mode produces the usable skeleton only at…",
+     "legacyTick": false,
+     "order": 1,
+     "rev": "46a7b902664b",
+     "text": "The same fresh artifact installed in external mode produces the usable skeleton only at the configured work root; the final tool root contains no misleading duplicate active tasks/, plans/ or reference/ skeleton."
+    },
+    {
+     "id": null,
+     "label": "Reinstalling in each mode leaves existing work files and customized templates…",
+     "legacyTick": false,
+     "order": 2,
+     "rev": "8bdd57572dd0",
+     "text": "Reinstalling in each mode leaves existing work files and customized templates byte-for-byte intact and does not create duplicate skeletons or unintended state commits."
+    },
+    {
+     "id": null,
+     "label": "Mode changes in both directions and changes between external roots preserve the old…",
+     "legacyTick": false,
+     "order": 3,
+     "rev": "797cc4e8c7be",
+     "text": "Mode changes in both directions and changes between external roots preserve the old root's data and any existing destination data."
+    },
+    {
+     "id": null,
+     "label": "Upgrading an older release to the new release, followed by installer re-wiring, preserves…",
+     "legacyTick": false,
+     "order": 4,
+     "rev": "32637cf94fd1",
+     "text": "Upgrading an older release to the new release, followed by installer re-wiring, preserves both layouts' user files, local configuration and runtime state."
+    },
+    {
+     "id": null,
+     "label": "Symlink and path-containment regressions remain fail-closed; external initialization…",
+     "legacyTick": false,
+     "order": 5,
+     "rev": "110873437400",
+     "text": "Symlink and path-containment regressions remain fail-closed; external initialization never writes state into the application checkout."
+    },
+    {
+     "id": null,
+     "label": "Regression coverage exercises the actual release, extraction, install and update paths…",
+     "legacyTick": false,
+     "order": 6,
+     "rev": "ec2e332c6bd3",
+     "text": "Regression coverage exercises the actual release, extraction, install and update paths, not just direct skeleton-helper calls."
+    },
+    {
+     "id": null,
+     "label": "Documentation accurately describes directory ownership, conservative legacy handling and…",
+     "legacyTick": false,
+     "order": 7,
+     "rev": "5c558a81e1db",
+     "text": "Documentation accurately describes directory ownership, conservative legacy handling and mode changes; the generated website builds successfully without deployment."
+    }
+   ]
+  },
+  "body": "# 164 — Initialize work directories only at the installation mode's configured work root\n\n**Status:** Done\n**PR:** https://github.com/example/bench/pull/80\n**Assignee:** istos\n**Priority:** Medium — ambiguous duplicate work directories undermine confidence in which board state is authoritative\n**Type:** Feature\n\nMake first installation layout-aware: initialize tasks/, plans/ and reference/ only at the resolved work root, retain vendored defaults, and clearly distinguish tool-owned templates and seed material from user-owned work state. Preserve existing data through repeated installation, layout changes and updates; never blindly delete nonempty directories.\n\n## Context\n\nExternal-workspace support and execution plans are merged, as is their documentation. The external operator has a separate tool installation and work-state repository, but the distribution still unpacks tasks/, plans/ and reference/ under the tool directory. Those look like active work directories even though the configured external work root is authoritative.\n\nRelevant existing surfaces:\n\n- `install.py`: layout resolution, first-boot handling and `make_work_skeleton`.\n- `manager/core/config.py`: resolved work-root defaults, layout validation and writable-path containment.\n- `manager/core/release-manifest` and `release.sh`: currently ship `once tasks/task-template.md` and `keep` entries for the task stages, plans/ and reference/. The artifact is unpacked before the installer knows the chosen layout, so installer-only changes must not leave the same misleading final result.\n- `update.sh`: existing manifest classes and preservation of user-owned paths.\n\nThis is distinct from the default-work-root resolution bug: consume the correctly resolved work root rather than redefining that default as part of this feature. Normal application base and PR target is main; no stacked prerequisite branch is required.\n\n## What to build\n\n### Installation-mode-aware initialization\n\n- Resolve the installation layout and effective work root before initializing user work directories. Consider persisted settings as well as command-line choices.\n- For a fresh vendored install, retain the familiar active tasks/, plans/ and reference/ at the default work root, including the expected task stages, archive and starter task template.\n- For a fresh external install with a distinct configured work root, initialize the active skeleton and initial user-editable template only there.\n- Keep reusable tool-owned templates or seed material in an explicitly named, tool-owned location distinct from user work state.\n\n### Preservation, reinstall and mode changes\n\n- Re-running installation with unchanged settings must be idempotent: no duplicate skeletons, no rewritten templates and no unintended Git changes.\n- Mode changes in both directions preserve the old root's data and any existing destination data. No implicit migration, destructive cleanup or silent conflict resolution occurs.\n\n### Legacy installations\n\n- Existing external installations with pristine legacy tool-local skeletons converge safely to the clarified layout. Nonempty, customized or ambiguous legacy directories remain intact, with a clear diagnostic.\n\n## Acceptance\n\n- [ ] A fresh release artifact installed in vendored mode produces the expected usable work skeleton at the default work root, with normal task and template behavior preserved.\n- [ ] The same fresh artifact installed in external mode produces the usable skeleton only at the configured work root; the final tool root contains no misleading duplicate active tasks/, plans/ or reference/ skeleton.\n- [ ] Reinstalling in each mode leaves existing work files and customized templates byte-for-byte intact and does not create duplicate skeletons or unintended state commits.\n- [ ] Mode changes in both directions and changes between external roots preserve the old root's data and any existing destination data.\n- [ ] Upgrading an older release to the new release, followed by installer re-wiring, preserves both layouts' user files, local configuration and runtime state.\n- [ ] Symlink and path-containment regressions remain fail-closed; external initialization never writes state into the application checkout.\n- [ ] Regression coverage exercises the actual release, extraction, install and update paths, not just direct skeleton-helper calls.\n- [ ] Documentation accurately describes directory ownership, conservative legacy handling and mode changes; the generated website builds successfully without deployment.\n\n## Out of scope\n\nChanging how the default work root is resolved; migrating cards between roots; deleting anything a person may have written.\n\n---\n\n## Work report — 2026-11-09 18:02 (Juno)\n\nCommitted on task/164-initialize-work-directories and tested: install.py now creates the work state only at the resolved work root, and a release no longer ships tasks/, plans/ or reference/. The full unittest suite passed apart from twelve failures in modules this change does not touch, which come from the run's own settings leaking into the tests.\n\n### What changed\n\n- `install.py` resolves the layout from the persisted `.env` and the environment before any write.\n- The task template moved to the tool-owned `manager/core/seed/`.\n\n### To do\n\n- Read the bench-backend log before merging.\n\n---\n\n## PR review at 2c6aa445c49e — 2026-11-10 12:14 (Reed)\n\nPR REVIEW: APPROVE\n\nI'm approving this change, but bench's own backend test run failed at this commit and I couldn't find out why, so someone should read that log before merging.\n\n### What I checked\n\n- **Release artifact:** `manager/core/release-manifest` no longer ships `tasks/`, `plans/` or `reference/`.\n",
+  "file": "164-legacy-long.md",
+  "outline": {
+   "boundaries": {
+    "clipped": false,
+    "from": "Out of scope",
+    "text": "Changing how the default work root is resolved; migrating cards between roots; deleting anything a person may have written."
+   },
+   "lead": {
+    "clipped": false,
+    "from": "the brief's opening",
+    "text": "Make first installation layout-aware: initialize tasks/, plans/ and reference/ only at the resolved work root, retain vendored defaults, and clearly distinguish tool-owned templates and seed material from user-owned work state. Preserve existing data through repeated installation, layout changes and updates; never blindly delete nonempty directories."
+   },
+   "missing": [],
+   "problem": {
+    "clipped": true,
+    "from": "Context",
+    "text": "External-workspace support and execution plans are merged, as is their documentation. The external operator has a separate tool installation and work-state repository, but the distribution still unpacks tasks/, plans/ and reference/ under the tool directory."
+   },
+   "questions": null,
+   "rev": "8517f25594ea",
+   "scope": {
+    "from": "What to build",
+    "items": [
+     "Installation-mode-aware initialization",
+     "Preservation, reinstall and mode changes",
+     "Legacy installations"
+    ],
+    "kind": "headings",
+    "more": 0
+   },
+   "sections": [
+    "Context",
+    "What to build",
+    "Acceptance",
+    "Out of scope"
+   ],
+   "state": "full",
+   "v": 1
+  },
+  "parts": {
+   "brief": 314,
+   "history": 4669
+  },
+  "rev": "cd1c95eeb6eb8b04",
+  "stage": "done"
+ },
+ "201-backlog-rough.md": {
+  "acc": {
+   "counts": {
+    "accepted": 0,
+    "needs-work": 0,
+    "pending": 0,
+    "recheck": 0,
+    "reported": 0,
+    "total": 0
+   },
+   "criteria": [],
+   "findingCounts": {
+    "fix-reported": 0,
+    "open": 0,
+    "resolved": 0
+   },
+   "findings": [],
+   "relevance": [],
+   "removed": [],
+   "reports": [],
+   "rounds": [],
+   "states": {
+    "accepted": "accepted",
+    "needs-work": "needs work",
+    "pending": "pending",
+    "recheck": "needs recheck",
+    "reported": "reported — awaiting confirmation"
+   },
+   "tracked": false,
+   "untracked": []
+  },
+  "body": "# 201 — Let a person pin a card to the top of its column\n\n**Status:** Backlog\n**Priority:** Low\n\nPeople keep a few cards they look at every day near the top of To Do, and a sync reorders them by number. Let a person pin a card so it stays first in its column on their own board. Nobody has decided yet whether a pin should travel with the card to other boards.\n",
+  "file": "201-backlog-rough.md",
+  "outline": {
+   "boundaries": null,
+   "lead": {
+    "clipped": false,
+    "from": "the brief's opening",
+    "text": "People keep a few cards they look at every day near the top of To Do, and a sync reorders them by number. Let a person pin a card so it stays first in its column on their own board. Nobody has decided yet whether a pin should travel with the card to other boards."
+   },
+   "missing": [
+    "problem",
+    "scope",
+    "boundaries"
+   ],
+   "problem": null,
+   "questions": null,
+   "rev": "ac87fc6ee179",
+   "scope": null,
+   "sections": [],
+   "state": "partial",
+   "v": 1
+  },
+  "parts": {
+   "brief": 97,
+   "history": 361
+  },
+  "rev": "bf56f46ba5000f21",
+  "stage": "backlog"
+ },
+ "202-active-run.md": {
+  "acc": {
+   "counts": {
+    "accepted": 0,
+    "needs-work": 0,
+    "pending": 3,
+    "recheck": 0,
+    "reported": 0,
+    "total": 3
+   },
+   "criteria": [
+    {
+     "basis": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "history": [],
+     "id": "visible",
+     "label": "The download holds exactly the visible rows and columns, in the order shown.",
+     "legacyTick": false,
+     "order": 0,
+     "reason": null,
+     "rev": "6ca3e340db71",
+     "state": "pending",
+     "text": "The download holds exactly the visible rows and columns, in the order shown.",
+     "word": "pending"
+    },
+    {
+     "basis": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "history": [],
+     "id": "formula",
+     "label": "A cell that looks like a formula is neutralised.",
+     "legacyTick": false,
+     "order": 1,
+     "reason": null,
+     "rev": "cd034e866aa9",
+     "state": "pending",
+     "text": "A cell that looks like a formula is neutralised.",
+     "word": "pending"
+    },
+    {
+     "basis": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "history": [],
+     "id": "passive",
+     "label": "Nothing is written on the server, and opening the table runs nothing.",
+     "legacyTick": false,
+     "order": 2,
+     "reason": null,
+     "rev": "161075c328b3",
+     "state": "pending",
+     "text": "Nothing is written on the server, and opening the table runs nothing.",
+     "word": "pending"
+    }
+   ],
+   "findingCounts": {
+    "fix-reported": 0,
+    "open": 0,
+    "resolved": 0
+   },
+   "findings": [],
+   "relevance": [],
+   "removed": [],
+   "reports": [],
+   "rounds": [],
+   "states": {
+    "accepted": "accepted",
+    "needs-work": "needs work",
+    "pending": "pending",
+    "recheck": "needs recheck",
+    "reported": "reported — awaiting confirmation"
+   },
+   "tracked": true,
+   "untracked": []
+  },
+  "body": "# 202 — Export the board's table view as CSV\n\n**Status:** In Progress\n**Assignee:** istos\n**Priority:** Medium\n**Type:** Feature\n**Touches:** manager/core/web/views/board.js, manager/core/routes.py\n\nAdd an \"Export CSV\" action to the board's table view so a person can take the cards they are looking at into a spreadsheet. The export contains exactly the visible columns and rows, in the order shown.\n\n## Context\n\nTeams reporting on progress copy cards out of the board by hand every week. The table view already has the rows and columns they want; nothing writes them out.\n\n## What to build\n\n- A **Download CSV** button in the table view's toolbar that exports the visible rows and columns only.\n- Values are quoted per RFC 4180; a cell starting with `=`, `+`, `-` or `@` is prefixed with an apostrophe so a spreadsheet does not run it as a formula.\n- The file is named after the board and the date, and nothing is written on the server.\n\n## Inputs and required tools\n\n- input, required: ../../reference/csv-example.csv — the column layout finance expects\n- tool, required: check unit\n\n## Acceptance\n\n- [ ] The download holds exactly the visible rows and columns, in the order shown. <!-- ac:visible -->\n- [ ] A cell that looks like a formula is neutralised. <!-- ac:formula -->\n- [ ] Nothing is written on the server, and opening the table runs nothing. <!-- ac:passive -->\n\n## Out of scope\n\nHidden columns, other views, scheduled exports and any server-side file.\n",
+  "file": "202-active-run.md",
+  "outline": {
+   "boundaries": {
+    "clipped": false,
+    "from": "Out of scope",
+    "text": "Hidden columns, other views, scheduled exports and any server-side file."
+   },
+   "lead": {
+    "clipped": false,
+    "from": "the brief's opening",
+    "text": "Add an \"Export CSV\" action to the board's table view so a person can take the cards they are looking at into a spreadsheet. The export contains exactly the visible columns and rows, in the order shown."
+   },
+   "missing": [],
+   "problem": {
+    "clipped": false,
+    "from": "Context",
+    "text": "Teams reporting on progress copy cards out of the board by hand every week. The table view already has the rows and columns they want; nothing writes them out."
+   },
+   "questions": null,
+   "rev": "ec3d03f2cb3d",
+   "scope": {
+    "from": "What to build",
+    "items": [
+     "A Download CSV button in the table view's toolbar that exports the visible rows and columns only.",
+     "Values are quoted per RFC 4180",
+     "The file is named after the board and the date, and nothing is written on the server."
+    ],
+    "kind": "items",
+    "more": 0
+   },
+   "sections": [
+    "Context",
+    "What to build",
+    "Inputs and required tools",
+    "Acceptance",
+    "Out of scope"
+   ],
+   "state": "full",
+   "v": 1
+  },
+  "parts": {
+   "brief": 199,
+   "history": 1467
+  },
+  "rev": "6c2423605393f852",
+  "stage": "in-progress"
+ },
+ "203-blocked-questions.md": {
+  "acc": {
+   "counts": {
+    "accepted": 0,
+    "needs-work": 0,
+    "pending": 2,
+    "recheck": 0,
+    "reported": 0,
+    "total": 2
+   },
+   "criteria": [],
+   "findingCounts": {
+    "fix-reported": 0,
+    "open": 0,
+    "resolved": 0
+   },
+   "findings": [],
+   "relevance": [],
+   "removed": [],
+   "reports": [],
+   "rounds": [],
+   "states": {
+    "accepted": "accepted",
+    "needs-work": "needs work",
+    "pending": "pending",
+    "recheck": "needs recheck",
+    "reported": "reported — awaiting confirmation"
+   },
+   "tracked": false,
+   "untracked": [
+    {
+     "id": null,
+     "label": "No phase can be scheduled by two owners.",
+     "legacyTick": false,
+     "order": 0,
+     "rev": "980a15e7a577",
+     "text": "No phase can be scheduled by two owners."
+    },
+    {
+     "id": null,
+     "label": "An existing phase log still reads as history.",
+     "legacyTick": false,
+     "order": 1,
+     "rev": "aecdde58c2a5",
+     "text": "An existing phase log still reads as history."
+    }
+   ]
+  },
+  "body": "# 203 — Retire the legacy phase runner once every phase is scoped\n\n**Status:** To Do\n**Priority:** High — two schedulers are a standing source of confusion\n**Type:** Refactor\n**Depends on:** 202, 999\n\nRemove the legacy phase runner after every phase on supported boards is run by its own phase scope, so one scheduler decides what a phase does next.\n\n## Problem\n\nA phase can be run by the legacy beat or by its scope, and the board has to explain which one owns it on every surface. Keeping both doubles the tests and the documentation.\n\n## Scope\n\n1. Refuse ▸ run phase on a board where every phase is adopted, with the remedy.\n2. Remove the runner's beat and its log-reading code.\n3. Rewrite the Phases documentation for one scheduler.\n\n## Open questions\n\n- Do we keep reading old `## Phase log` lines for history, or drop them?\n- Which release is the last that runs an unscoped phase?\n\n## Acceptance\n\n- [ ] No phase can be scheduled by two owners.\n- [ ] An existing phase log still reads as history.\n",
+  "file": "203-blocked-questions.md",
+  "outline": {
+   "boundaries": null,
+   "lead": {
+    "clipped": false,
+    "from": "the brief's opening",
+    "text": "Remove the legacy phase runner after every phase on supported boards is run by its own phase scope, so one scheduler decides what a phase does next."
+   },
+   "missing": [
+    "boundaries"
+   ],
+   "problem": {
+    "clipped": false,
+    "from": "Problem",
+    "text": "A phase can be run by the legacy beat or by its scope, and the board has to explain which one owns it on every surface. Keeping both doubles the tests and the documentation."
+   },
+   "questions": {
+    "count": 2,
+    "from": "Open questions"
+   },
+   "rev": "e6eac5d8abe1",
+   "scope": {
+    "from": "Scope",
+    "items": [
+     "Refuse ▸ run phase on a board where every phase is adopted, with the remedy.",
+     "Remove the runner's beat and its log-reading code.",
+     "Rewrite the Phases documentation for one scheduler."
+    ],
+    "kind": "items",
+    "more": 0
+   },
+   "sections": [
+    "Problem",
+    "Scope",
+    "Open questions",
+    "Acceptance"
+   ],
+   "state": "full",
+   "v": 1
+  },
+  "parts": {
+   "brief": 201,
+   "history": 1002
+  },
+  "rev": "d734eee153d21985",
+  "stage": "to-do"
+ },
+ "204-review-findings.md": {
+  "acc": {
+   "counts": {
+    "accepted": 0,
+    "needs-work": 0,
+    "pending": 3,
+    "recheck": 0,
+    "reported": 0,
+    "total": 3
+   },
+   "criteria": [
+    {
+     "basis": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "history": [],
+     "id": "zone",
+     "label": "Every timestamp in Activity names its zone.",
+     "legacyTick": false,
+     "order": 0,
+     "reason": null,
+     "rev": "5b5c94193b5e",
+     "state": "pending",
+     "text": "Every timestamp in Activity names its zone.",
+     "word": "pending"
+    },
+    {
+     "basis": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "history": [],
+     "id": "keyboard",
+     "label": "The UTC value is reachable by keyboard as well as by hover.",
+     "legacyTick": false,
+     "order": 1,
+     "reason": null,
+     "rev": "84810e408e2e",
+     "state": "pending",
+     "text": "The UTC value is reachable by keyboard as well as by hover.",
+     "word": "pending"
+    },
+    {
+     "basis": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "history": [],
+     "id": "order",
+     "label": "Items stay in instant order across midnight.",
+     "legacyTick": false,
+     "order": 2,
+     "reason": null,
+     "rev": "bd16738a07d1",
+     "state": "pending",
+     "text": "Items stay in instant order across midnight.",
+     "word": "pending"
+    }
+   ],
+   "findingCounts": {
+    "fix-reported": 0,
+    "open": 0,
+    "resolved": 0
+   },
+   "findings": [],
+   "relevance": [],
+   "removed": [],
+   "reports": [
+    {
+     "at": "2026-11-18 10:41",
+     "by": "Wren",
+     "headline": {
+      "clipped": false,
+      "text": "Committed and tested on task/204: Activity timestamps now name the reader's zone and sort by the recorded instant. The UTC value is in the element's title only, so it is not yet reachable by keyboard."
+     },
+     "kind": "Work report",
+     "text": "Committed and tested on task/204: Activity timestamps now name the reader's zone and sort by the recorded instant. The UTC value is in the element's title only, so it is not yet reachable by keyboard."
+    },
+    {
+     "at": "2026-11-18 14:05",
+     "by": "Olive",
+     "headline": {
+      "clipped": false,
+      "text": "The zone is shown and the order holds across midnight, but the UTC value is only in a title attribute, which a keyboard user cannot reach. Make it focusable or show it on focus."
+     },
+     "kind": "PR review at 7d1e0aa94c21",
+     "review": "rv-a102133305",
+     "reviewType": "pr",
+     "text": "PR REVIEW: REQUEST CHANGES\n\nThe zone is shown and the order holds across midnight, but the UTC value is only in a `title` attribute, which a keyboard user cannot reach. Make it focusable or show it on focus."
+    }
+   ],
+   "rounds": [
+    {
+     "at": "2026-11-18 14:05",
+     "commit": "7d1e0aa94c21",
+     "heading": "PR review at 7d1e0aa94c21",
+     "id": "rv-a102133305",
+     "label": "current-at-the-time",
+     "report": "PR REVIEW: REQUEST CHANGES\n\nThe zone is shown and the order holds across midnight, but the UTC value is only in a `title` attribute, which a keyboard user cannot reach. Make it focusable or show it on focus.",
+     "reviewer": "Olive",
+     "verdict": "REQUEST CHANGES"
+    }
+   ],
+   "states": {
+    "accepted": "accepted",
+    "needs-work": "needs work",
+    "pending": "pending",
+    "recheck": "needs recheck",
+    "reported": "reported — awaiting confirmation"
+   },
+   "tracked": true,
+   "untracked": []
+  },
+  "body": "# 204 — Show the time zone beside every timestamp in the Activity view\n\n**Status:** Review\n**Assignee:** istos\n**Priority:** Medium\n**Type:** Bug\n\nActivity shows local times without saying which zone they are in, so two teammates in different cities read the same event at different hours. Name the zone beside each timestamp, and keep the underlying UTC value one hover away.\n\n## Context\n\nReports filed by runs carry UTC stamps; comments carry the reader's local time. Both appear in one list with no zone, and the order looks wrong across midnight.\n\n## What to build\n\n- Every Activity timestamp names its zone (the reader's local zone abbreviation).\n- Hovering or focusing a timestamp shows the UTC value it was recorded with.\n- Sorting uses the recorded instant, never the rendered string.\n\n## Acceptance\n\n- [ ] Every timestamp in Activity names its zone. <!-- ac:zone -->\n- [ ] The UTC value is reachable by keyboard as well as by hover. <!-- ac:keyboard -->\n- [ ] Items stay in instant order across midnight. <!-- ac:order -->\n\n---\n\n## Work report — 2026-11-18 10:41 (Wren)\n\nCommitted and tested on task/204: Activity timestamps now name the reader's zone and sort by the recorded instant. The UTC value is in the element's title only, so it is not yet reachable by keyboard.\n\n---\n\n## PR review at 7d1e0aa94c21 — 2026-11-18 14:05 (Olive)\n\nPR REVIEW: REQUEST CHANGES\n\nThe zone is shown and the order holds across midnight, but the UTC value is only in a `title` attribute, which a keyboard user cannot reach. Make it focusable or show it on focus.\n",
+  "file": "204-review-findings.md",
+  "outline": {
+   "boundaries": null,
+   "lead": {
+    "clipped": false,
+    "from": "the brief's opening",
+    "text": "Activity shows local times without saying which zone they are in, so two teammates in different cities read the same event at different hours. Name the zone beside each timestamp, and keep the underlying UTC value one hover away."
+   },
+   "missing": [
+    "boundaries"
+   ],
+   "problem": {
+    "clipped": false,
+    "from": "Context",
+    "text": "Reports filed by runs carry UTC stamps; comments carry the reader's local time. Both appear in one list with no zone, and the order looks wrong across midnight."
+   },
+   "questions": null,
+   "rev": "cd4eaa2f5c8c",
+   "scope": {
+    "from": "What to build",
+    "items": [
+     "Every Activity timestamp names its zone (the reader's local zone abbreviation).",
+     "Hovering or focusing a timestamp shows the UTC value it was recorded with.",
+     "Sorting uses the recorded instant, never the rendered string."
+    ],
+    "kind": "items",
+    "more": 0
+   },
+   "sections": [
+    "Context",
+    "What to build",
+    "Acceptance"
+   ],
+   "state": "full",
+   "v": 1
+  },
+  "parts": {
+   "brief": 147,
+   "history": 1033
+  },
+  "rev": "abd4da8066195c52",
+  "stage": "review"
+ },
+ "205-missing-summary.md": {
+  "acc": {
+   "counts": {
+    "accepted": 0,
+    "needs-work": 0,
+    "pending": 1,
+    "recheck": 0,
+    "reported": 0,
+    "total": 1
+   },
+   "criteria": [],
+   "findingCounts": {
+    "fix-reported": 0,
+    "open": 0,
+    "resolved": 0
+   },
+   "findings": [],
+   "relevance": [],
+   "removed": [],
+   "reports": [],
+   "rounds": [],
+   "states": {
+    "accepted": "accepted",
+    "needs-work": "needs work",
+    "pending": "pending",
+    "recheck": "needs recheck",
+    "reported": "reported — awaiting confirmation"
+   },
+   "tracked": false,
+   "untracked": [
+    {
+     "id": null,
+     "label": "It is tidier.",
+     "legacyTick": false,
+     "order": 0,
+     "rev": "4f496edd9b0f",
+     "text": "It is tidier."
+    }
+   ]
+  },
+  "body": "# 205 — Tidy up\n\n**Status:** In Progress\n**Assignee:** istos\n**Priority:** Low\n\n## Acceptance\n\n- [ ] It is tidier.\n",
+  "file": "205-missing-summary.md",
+  "outline": {
+   "boundaries": null,
+   "lead": null,
+   "missing": [
+    "lead",
+    "problem",
+    "scope",
+    "boundaries"
+   ],
+   "problem": null,
+   "questions": null,
+   "rev": "a511d250cc53",
+   "scope": null,
+   "sections": [
+    "Acceptance"
+   ],
+   "state": "none",
+   "v": 1
+  },
+  "parts": {
+   "brief": 80,
+   "history": 115
+  },
+  "rev": "389073874208c308",
+  "stage": "in-progress"
+ },
+ "206-unavailable-evidence.md": {
+  "acc": {
+   "counts": {
+    "accepted": 0,
+    "needs-work": 0,
+    "pending": 0,
+    "recheck": 0,
+    "reported": 0,
+    "total": 0
+   },
+   "criteria": [],
+   "findingCounts": {
+    "fix-reported": 0,
+    "open": 0,
+    "resolved": 0
+   },
+   "findings": [],
+   "relevance": [],
+   "removed": [],
+   "reports": [],
+   "rounds": [],
+   "states": {
+    "accepted": "accepted",
+    "needs-work": "needs work",
+    "pending": "pending",
+    "recheck": "needs recheck",
+    "reported": "reported — awaiting confirmation"
+   },
+   "tracked": false,
+   "untracked": []
+  },
+  "body": "# 206 — Rename the \"drive\" chip to \"preview\"\n\n**Status:** Done\n**Priority:** Low\n**Type:** Chore\n\nRename the ⛭ drive chip's visible label to \"preview\" everywhere a person reads it, so the board uses one word for running the app from a card's worktree. Code identifiers stay as they are.\n\n## Out of scope\n\nRenaming the driver contract, its environment variables or `drive.py`.\n",
+  "file": "206-unavailable-evidence.md",
+  "outline": {
+   "boundaries": {
+    "clipped": false,
+    "from": "Out of scope",
+    "text": "Renaming the driver contract, its environment variables or drive.py."
+   },
+   "lead": {
+    "clipped": false,
+    "from": "the brief's opening",
+    "text": "Rename the ⛭ drive chip's visible label to \"preview\" everywhere a person reads it, so the board uses one word for running the app from a card's worktree. Code identifiers stay as they are."
+   },
+   "missing": [
+    "problem",
+    "scope"
+   ],
+   "problem": null,
+   "questions": null,
+   "rev": "dfc5ea511b6a",
+   "scope": null,
+   "sections": [
+    "Out of scope"
+   ],
+   "state": "partial",
+   "v": 1
+  },
+  "parts": {
+   "brief": 98,
+   "history": 376
+  },
+  "rev": "456bc7a768f6eb96",
+  "stage": "done"
+ }
+}

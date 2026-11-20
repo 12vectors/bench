@@ -1,5 +1,5 @@
 /* The detail view's sections. */
-import { agentOnTask, allTasks, loadState } from '../../app/data.js';
+import { agentOnTask, loadState } from '../../app/data.js';
 import { S } from '../../app/state.js';
 import { fetch } from '../../lib/api.js';
 import { $, esc } from '../../lib/dom.js';
@@ -249,8 +249,8 @@ function workHtml(listed) {
       (o.scope.more ? `<span class="ovmore">and ${o.scope.more} more in the brief</span>` : '') + from(o.scope)]);
   }
   if (o.boundaries) parts.push(['Not in scope', esc(o.boundaries.text) + more(o.boundaries) + from(o.boundaries)]);
-  const absent = [!o.lead && !o.problem ? 'an opening paragraph or problem section' : '',
-                  !o.scope ? 'a scope section' : ''].filter(Boolean);
+  const absent = [!o.lead && !o.problem ? 'opening paragraph or problem section' : '',
+                  !o.scope ? 'scope section' : ''].filter(Boolean);
   return ovSection('work', 'The work', stale +
     (o.lead ? `<p class="ovlead">${esc(o.lead.text)}${more(o.lead)}</p>` : '') +
     (parts.length ? `<dl class="ovparts">${parts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : '') +
@@ -300,7 +300,8 @@ function standsHtml(t, d, acc, failBlock) {
    said to be not on it. Never resolved by title. */
 function dependencyHtml(n) {
   const want = String(n).replace(/^0+(?=\d)/, '');
-  const tasks = S.state && S.state.board ? allTasks() : [];
+  // the board's own listing, as the state carries it
+  const tasks = ((S.state && S.state.board && S.state.board.stages) || []).flatMap(s => s.tasks || []);
   const dep = tasks.find(x => String(x.number || '').replace(/^0+(?=\d)/, '') === want);
   const href = esc(formatRoute({ card: want }));
   return `<a href="${href}" data-route>#${esc(n)}</a> ` +

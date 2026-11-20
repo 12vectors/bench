@@ -225,7 +225,9 @@ class OneStatusAcrossSurfaces(Source):
 
     def test_every_surface_reads_the_one_reading(self):
         self.assertIn("const d = deliveryOf(task);", self.card)
-        self.assertIn("deliveryStatusHtml(t, d, 'ov')", self.body("overviewHtml"))
+        # task 149: the Overview's "where it stands" section draws it
+        self.assertIn("standsHtml(t, d, acc, failBlock)", self.body("overviewHtml"))
+        self.assertIn("deliveryStatusHtml(t, d, 'ov')", self.body("standsHtml"))
         self.assertIn("const pill = dl ? deliveryPill(dl)", self.body("renderDrawer"))
         sheet = self.html[self.html.index("async function gateSheet("):]
         sheet = sheet[:sheet.index("\n}\n")]
