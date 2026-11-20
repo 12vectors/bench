@@ -951,7 +951,7 @@ const AUTHORITY_WORDS = {
   integrate: 'Integrate phase members', merge: 'Merge accepted work',
 };
 const POOLS = ['implementation', 'review', 'reasoning', 'dailyStarts'];
-const CEILINGS = ['launchesPerCard', 'repairRounds', 'transientRetries', 'runAgeMinutes', 'recoveryAttempts'];
+const CEILINGS = ['launchesPerCard', 'repairRounds', 'transientRetries', 'runAgeMinutes', 'recoveryAttempts', 'setupRetries'];
 
 function editState() {
   const o = orch();

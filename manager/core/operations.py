@@ -143,10 +143,13 @@ def for_card(card: str, action: str | None = None,
 
 def begin(key: str, *, action: str, card: str, number: str | None,
           scope: str, pool: str, basis: str, attempt: int,
-          note: str | None = None) -> dict:
+          note: str | None = None, retry: dict | None = None) -> dict:
     """Record the intent, durably, before the side effect. Refused with
     `Exists` when the key is already on record — the receiver's dedupe:
-    a second caller learns what the first did instead of doing it again."""
+    a second caller learns what the first did instead of doing it again.
+    `retry` marks a bounded setup retry (task 164): which checks it asks
+    again and the evidence each answers, so the ceiling is counted from
+    the ledger and a restart resets nothing."""
     with _LOCK:
         path = _path(key)
         current = records.read_json(path, expect=dict)
@@ -157,6 +160,9 @@ def begin(key: str, *, action: str, card: str, number: str | None,
               "basis": basis, "attempt": attempt, "status": "intent",
               "intentAt": now_iso(), "intentEpoch": time.time(),
               "day": today(), "note": _clip(note), "history": []}
+        if retry:
+            op["retry"] = {"checks": [_clip(c) for c in retry.get("checks") or []][:8],
+                           "of": [_clip(e) for e in retry.get("of") or []][:8]}
         records.write_json(path, op, durable=True)
     return op
 
