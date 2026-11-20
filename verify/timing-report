@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Read the timings verify/backend kept, and say where the time went.
+
+    verify/timing-report RUN                       # rank one run
+    verify/timing-report --baseline A [A…] --candidate B [B…]
+
+A RUN is a `timings.json` written by verify/unittesttiming.py, or the
+`result.json` of a verify/backend run (its `artifacts.timings` is
+followed). Everything printed is measured; nothing is estimated.
+
+Ranking prints the run's total, discovery, test, fixture and unattributed
+seconds, then the slowest modules, classes (tests + their class
+fixtures), fixtures and single tests.
+
+Comparing prints, for each side, the mean and spread of the run's
+elapsed seconds over the runs given, and refuses (exit 2) when the two
+sides did not run the same set of test ids, or when any run was not a
+full pass — a faster run of fewer tests, or of failing tests, is not an
+improvement. It then lists the classes whose mean moved most. `--json`
+prints the same as one JSON document.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import statistics
+import sys
+from pathlib import Path
+
+
+def load(path: str) -> dict:
+    p = Path(path)
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    if "schema" not in doc and "artifacts" in doc:
+        timings = (doc.get("artifacts") or {}).get("timings")
+        if not timings:
+            raise SystemExit(f"{p}: a record with no timings file "
+                             f"(timing: {doc.get('timing')})")
+        doc = json.loads(Path(timings).read_text(encoding="utf-8"))
+    if not str(doc.get("schema", "")).startswith("bench-unittest-timings/"):
+        raise SystemExit(f"{p}: not a timings file")
+    doc["_path"] = str(p)
+    return doc
+
+
+def rank(doc: dict, top: int) -> dict:
+    s = doc["seconds"]
+    fixtures = sorted(doc.get("fixtures", []), key=lambda f: -f["seconds"])
+    return {
+        "path": doc["_path"], "runtime": doc.get("runtime"),
+        "fixtureTiming": doc.get("fixtureTiming"), "exitStatus": doc.get("exitStatus"),
+        "counts": doc.get("counts"), "seconds": s,
+        "modules": doc["modules"][:top], "classes": doc["classes"][:top],
+        "fixtures": fixtures[:top],
+        "tests": sorted(doc["tests"], key=lambda t: -t["seconds"])[:top],
+    }
+
+
+def spread(values: list[float]) -> dict:
+    return {"runs": len(values), "mean": statistics.fmean(values),
+            "min": min(values), "max": max(values),
+            "stdev": statistics.stdev(values) if len(values) > 1 else None}
+
+
+def problems(side: str, docs: list[dict]) -> list[str]:
+    out = []
+    for d in docs:
+        bad = {k: v for k, v in (d.get("counts") or {}).items()
+               if k not in ("tests", "passed") and v}
+        if d.get("exitStatus") not in (0, None) or bad:
+            out.append(f"{side} {d['_path']}: not a full pass "
+                       f"(exit {d.get('exitStatus')}, {bad or 'no counts'})")
+    return out
+
+
+def compare(base: list[dict], cand: list[dict], top: int) -> tuple[dict, list[str]]:
+    errors = problems("baseline", base) + problems("candidate", cand)
+    ids = [frozenset(t["id"] for t in d["tests"]) for d in base + cand]
+    if len(set(ids)) != 1:
+        first = ids[0]
+        for d, i in zip(base + cand, ids):
+            if i != first:
+                errors.append(f"{d['_path']}: a different set of tests "
+                              f"({len(i - first)} added, {len(first - i)} missing "
+                              f"against {base[0]['_path']})")
+    def classes(docs):
+        acc: dict[str, list[float]] = {}
+        for d in docs:
+            for c in d["classes"]:
+                acc.setdefault(c["class"], []).append(c["seconds"])
+        return {k: statistics.fmean(v) for k, v in acc.items()}
+    cb, cc = classes(base), classes(cand)
+    moved = sorted(({"class": k, "baseline": cb.get(k, 0.0), "candidate": cc.get(k, 0.0),
+                     "delta": cc.get(k, 0.0) - cb.get(k, 0.0)}
+                    for k in set(cb) | set(cc)), key=lambda m: m["delta"])
+    out = {"tests": len(base[0]["tests"]),
+           "baseline": {k: spread([d["seconds"][k] for d in base])
+                        for k in ("elapsed", "tests", "fixtures", "unattributed")},
+           "candidate": {k: spread([d["seconds"][k] for d in cand])
+                         for k in ("elapsed", "tests", "fixtures", "unattributed")},
+           "improved": moved[:top], "regressed": [m for m in moved[::-1][:top]
+                                                  if m["delta"] > 0]}
+    b, c = out["baseline"]["elapsed"]["mean"], out["candidate"]["elapsed"]["mean"]
+    out["elapsedChange"] = {"seconds": c - b, "fraction": (c - b) / b if b else None}
+    return out, errors
+
+
+def fmt_rank(r: dict) -> str:
+    s = r["seconds"]
+    lines = [f"{r['path']}", f"  python {r['runtime']['python']} on {r['runtime']['platform']}, "
+             f"{r['runtime']['cpus']} cpus; fixtures {r['fixtureTiming']}; "
+             f"exit {r['exitStatus']}; {r['counts']}",
+             "  seconds: " + ", ".join(f"{k} {v:.1f}" for k, v in s.items())]
+    lines.append("  slowest modules:")
+    lines += [f"    {m['seconds']:8.1f}s  {m['tests']:4d} tests  {m['module']}" for m in r["modules"]]
+    lines.append("  slowest classes (tests + class fixtures):")
+    lines += [f"    {c['seconds']:8.1f}s  {c['tests']:4d} tests  fixtures {c['fixtureSeconds']:6.1f}s  "
+              f"{c['class']}" for c in r["classes"]]
+    lines.append("  slowest fixtures:")
+    lines += [f"    {f['seconds']:8.2f}s  {f['kind']:<14} {f['owner']}" for f in r["fixtures"]]
+    lines.append("  slowest tests (setUp + test + tearDown + cleanups):")
+    lines += [f"    {t['seconds']:8.2f}s  {t['id']}" for t in r["tests"]]
+    return "\n".join(lines)
+
+
+def fmt_compare(c: dict) -> str:
+    def side(name):
+        e = c[name]["elapsed"]
+        sd = f" ± {e['stdev']:.1f}" if e["stdev"] is not None else ""
+        return (f"  {name:<9} {e['runs']} run(s): elapsed mean {e['mean']:.1f}s{sd} "
+                f"(min {e['min']:.1f}, max {e['max']:.1f}); tests "
+                f"{c[name]['tests']['mean']:.1f}s, fixtures {c[name]['fixtures']['mean']:.1f}s")
+    ch = c["elapsedChange"]
+    lines = [f"{c['tests']} tests on both sides", side("baseline"), side("candidate"),
+             f"  change: {ch['seconds']:+.1f}s ({ch['fraction'] * 100:+.1f}%)",
+             "  classes that moved most (mean seconds):"]
+    lines += [f"    {m['delta']:+8.1f}s  {m['baseline']:7.1f} → {m['candidate']:7.1f}  {m['class']}"
+              for m in c["improved"]]
+    if c["regressed"]:
+        lines.append("  classes that got slower:")
+        lines += [f"    {m['delta']:+8.1f}s  {m['baseline']:7.1f} → {m['candidate']:7.1f}  {m['class']}"
+                  for m in c["regressed"]]
+    return "\n".join(lines)
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(prog="verify/timing-report", description=__doc__.splitlines()[0])
+    p.add_argument("runs", nargs="*")
+    p.add_argument("--baseline", nargs="+", default=[])
+    p.add_argument("--candidate", nargs="+", default=[])
+    p.add_argument("--top", type=int, default=15)
+    p.add_argument("--json", action="store_true")
+    a = p.parse_args(argv)
+    if bool(a.baseline) != bool(a.candidate) or (a.baseline and a.runs) \
+            or not (a.runs or a.baseline):
+        p.error("give RUN…, or both --baseline and --candidate")
+    if a.runs:
+        ranked = [rank(load(r), a.top) for r in a.runs]
+        print(json.dumps(ranked, indent=1) if a.json else "\n\n".join(map(fmt_rank, ranked)))
+        return 0
+    result, errors = compare([load(x) for x in a.baseline], [load(x) for x in a.candidate], a.top)
+    if a.json:
+        print(json.dumps({**result, "refused": errors}, indent=1))
+    else:
+        print(fmt_compare(result))
+        for e in errors:
+            print(f"REFUSED: {e}", file=sys.stderr)
+    return 2 if errors else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -9,6 +9,13 @@ root and nothing more — no third-party runner, so the plain command keeps
 working without this file — with the child environment built rather than
 inherited (see benchverify.py) and the whole log kept.
 
+Timing (task 163): by default the same discovery runs under
+verify/unittesttiming.py, which is unittest's own runner and output with a
+stopwatch, and writes `timings.json` beside the log — per test, per class
+and module fixture, discovery and the whole run — summarised under
+`timing` in the record. `--no-timing` runs the plain command instead.
+verify/timing-report ranks one run and compares two sets of runs.
+
 Exit 0 when tests ran and all passed, 1 when any failed or errored, 2 when
 nothing trustworthy ran: not a bench checkout, zero tests discovered, a
 test module that would not import, or any test skipped. The plain command
@@ -16,6 +23,7 @@ still reads skips as OK; this one does not, because the suite's skips are
 all missing dependencies (node, markdown-it-py) or platform tools.
 """
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -29,9 +37,58 @@ import benchverify as bv  # noqa: E402
 TIMEOUT = 3600
 
 
+UNITTEST = ["discover", "-s", "tests", "-t", "."]
+COLLECTOR = Path(__file__).resolve().parent / "unittesttiming.py"
+
+
+def timed_argv(run: bv.Run) -> list[str]:
+    """The plain command, or the same discovery under the timing
+    collector (verify/unittesttiming.py), which runs unittest's own runner
+    and output and only adds a stopwatch. The collector lives beside this
+    runner, not in the candidate, so any candidate can be timed."""
+    plain = [run.args.python, "-m", "unittest", *UNITTEST, "-v"]
+    run.record["plainCommand"] = plain
+    if run.args.no_timing or not COLLECTOR.is_file():
+        run.record["timing"] = {"collected": False,
+                                "why": "--no-timing" if run.args.no_timing
+                                else f"no collector at {COLLECTOR}"}
+        return plain
+    path = run.artifact("timings", run.artifacts / "timings.json")
+    run.record["timing"] = {"collected": None, "collector": str(COLLECTOR),
+                            "collectorSha256": bv.sha256_file(COLLECTOR)}
+    return [run.args.python, str(COLLECTOR), "--timings", str(path), *UNITTEST, "-v"]
+
+
+def record_timing(run: bv.Run) -> None:
+    """A summary of the timings file in the record, beside the candidate
+    revision and interpreter it is about. Diagnostics only: a missing or
+    unreadable file is said, and never changes the outcome."""
+    t = run.record.get("timing", {})
+    if t.get("collected") is False:
+        return
+    path = Path(run.record["artifacts"]["timings"])
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        t.update(collected=False, why=f"timings file not readable: {exc}")
+        return
+    secs = {k: round(v, 3) for k, v in doc.get("seconds", {}).items()}
+    t.update(collected=True, schema=doc.get("schema"), seconds=secs,
+             fixtureTiming=doc.get("fixtureTiming"), counts=doc.get("counts"),
+             overhead=doc.get("overhead"), runtime=doc.get("runtime"),
+             slowestClasses=[{"class": c["class"], "tests": c["tests"],
+                              "seconds": round(c["seconds"], 2),
+                              "fixtureSeconds": round(c["fixtureSeconds"], 2)}
+                             for c in doc.get("classes", [])[:10]],
+             slowestTests=[{"id": x["id"], "seconds": round(x["seconds"], 2)}
+                           for x in sorted(doc.get("tests", []),
+                                           key=lambda x: -x["seconds"])[:10]])
+
+
 def body(run: bv.Run) -> str:
-    argv = [run.args.python, "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"]
+    argv = timed_argv(run)
     code, out = run.run_logged(argv, "unittest.log", run.timeout(TIMEOUT))
+    record_timing(run)
     ran = re.search(r"^Ran (\d+) tests? in ", out, re.M)
     summary = re.search(r"^(OK|FAILED)( \((.*)\))?\s*$", out, re.M)
     counts = dict(re.findall(r"(failures|errors|skipped|expected failures|"
@@ -91,5 +148,10 @@ def body(run: bv.Run) -> str:
 
 
 if __name__ == "__main__":
-    sys.exit(bv.Run("backend", __doc__.splitlines()[0],
-                    ["manager/core/board.py", "tests"]).main(body))
+    runner = bv.Run("backend", __doc__.splitlines()[0],
+                    ["manager/core/board.py", "tests"])
+    runner.parser.add_argument(
+        "--no-timing", action="store_true",
+        help="run the plain `python -m unittest` command, without the timing "
+             "collector (timings.json is then not written)")
+    sys.exit(runner.main(body))
