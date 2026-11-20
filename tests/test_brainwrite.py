@@ -220,7 +220,8 @@ class CreateAndEdit(_Layout):
 
     def test_one_line_fields_refuse_markup_breaks_and_controls(self):
         for payload in ({"title": "a\nb"}, {"title": "<script>x</script>"},
-                        {"title": "# heading"}, {"summary": "x‮y"},
+                        {"title": "# heading"}, {"title": "Trailing hash #"},
+                        {"summary": "x‮y"},
                         {"title": ""}, {"kind": "Wiki"},
                         {"sources": ["a, b"]}, {"sources": ["https://u:p@example.com/"]},
                         {"sources": ["javascript:alert(1)"]},
@@ -358,8 +359,33 @@ class Classification(_Layout):
                                   "classification": "Superseded", "supersededBy": a,
                                   "reason": "retired target"})
 
+    def test_a_hand_written_unclosed_fence_refuses_history_writes(self):
+        # an edit through the board refuses such a body; one written by hand
+        # would swallow the history line a classify, override or retire adds
+        a, _ = self.two()
+        path = self.work / "brain" / f"{a}.md"
+        text = path.read_text()
+        head, sep, history = text.partition("\n## Classification history")
+        path.write_text(head.rstrip("\n") + "\n\n```\nnever closed\n" + sep + history)
+        e = self.entry(a)
+        for kind, extra in (("classify", {"classification": "Historical"}),
+                            ("override", {"action": "set"}), ("retire", {})):
+            with self.subTest(kind=kind):
+                err = self.refused(kind, {"id": a, "expected": e["revision"],
+                                          "reason": "fold the notes away", **extra}, 409)
+                self.assertIn("never closed", str(err))
+
 
 class Operations(_Layout):
+
+    def test_a_retry_names_commit_or_push_and_nothing_else(self):
+        out = self.create(request="retry-what-req-1")
+        for action in (None, "", "rebase", "Push"):
+            with self.subTest(action=action):
+                with self.assertRaises(brainwrite.Refused) as caught:
+                    brainwrite.retry({"request": "retry-what-req-1", "action": action})
+                self.assertEqual(caught.exception.status, 400)
+        self.assertEqual(brainwrite.operation("retry-what-req-1")["id"], out["id"])
 
     def test_a_repeated_request_answers_with_the_first_result(self):
         payload = {"request": "repeat-request-1", "title": "Once", "kind": "Guide"}
@@ -461,6 +487,19 @@ class CommitFailure(_Layout):
         self.assertIn(f"brain/{out['file']}",
                       git(self.work, "show", "--name-only", "HEAD").stdout)
 
+    def test_the_failure_detail_survives_a_full_event_list(self):
+        # the board's event list stops growing at its cap; git's own words
+        # must still be found, not "git refused the commit"
+        saved = list(state.BOARD_EVENTS)
+        self.addCleanup(lambda: state.BOARD_EVENTS.__setitem__(slice(None), saved))
+        state.BOARD_EVENTS[:] = [{"summary": f"filler {n}"}
+                                 for n in range(config.BOARD_EVENTS_CAP)]
+        (self.work / ".git" / "index.lock").write_text("")
+        self.addCleanup((self.work / ".git" / "index.lock").unlink, True)
+        out = self.create()
+        self.assertEqual(out["commit"]["state"], "failed")
+        self.assertNotEqual(out["commit"]["detail"], "git refused the commit")
+
 
 class CommitsOff(_Layout):
     commit_moves = False
@@ -492,6 +531,51 @@ class Shared(_Layout):
         self.assertEqual(res["push"]["state"], "failed", res)
         self.assertEqual(res["commit"]["state"], "committed")
         self.assertTrue((self.work / "brain" / out["file"]).exists())
+
+
+class VendoredShared(unittest.TestCase):
+    """The work root inside its repository (`.task-manager/`), as a vendored
+    install has it: the remote names the file under that prefix, and a
+    commit sync replayed under a new id still reads shared by its bytes."""
+
+    def test_a_replayed_commit_reads_shared_under_the_vendored_prefix(self):
+        top = Path(tempfile.mkdtemp(prefix="bench-brainwrite-v-")).resolve()
+        self.addCleanup(shutil.rmtree, top, True)
+        repo, work = top / "repo", top / "repo" / ".task-manager"
+        for stage, _ in config.STAGES:
+            (work / "tasks" / stage).mkdir(parents=True)
+            (work / "tasks" / stage / ".gitkeep").write_text("")
+        git(repo, "init", "-q", "-b", "main")
+        git(repo, "config", "user.name", "ronald")
+        git(repo, "config", "user.email", "r@example.com")
+        git(repo, "config", "commit.gpgsign", "false")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "work")
+        bare = top / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)],
+                       check=True, capture_output=True)
+        git(repo, "remote", "add", "origin", str(bare))
+        git(repo, "push", "-q", "origin", "main")
+        patcher = mock.patch.multiple(
+            config, TASKS=work / "tasks", REPO=repo, EXTERNAL=False,
+            STATE=top / "state", COMMIT_MOVES=True, SYNC=True,
+            STATE_GIT_REMOTE="", STATE_BASE="main")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        sync._NOTES.clear()
+        self.addCleanup(sync._NOTES.clear)
+        out = brainwrite.write("create", {"request": "vendored-req-1", "title": "Vendored",
+                                          "kind": "Guide", "body": "x"})
+        self.assertEqual(out["commit"]["state"], "committed", out)
+        self.assertEqual(brainwrite._repo_path(out["file"]),
+                         f".task-manager/brain/{out['file']}")
+        # what sync's replay does: the same bytes, under another commit id
+        git(repo, "commit", "--amend", "-q", "--no-edit", "--date", "2001-01-01T00:00:00")
+        git(repo, "push", "-q", "origin", "main")
+        git(repo, "fetch", "-q", "origin")
+        self.assertNotEqual(git(repo, "rev-parse", "HEAD").stdout.strip(),
+                            out["commit"]["sha"])
+        self.assertEqual(brainwrite.operation("vendored-req-1")["push"]["state"], "shared")
 
 
 class OverHttp(unittest.TestCase):

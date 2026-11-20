@@ -161,6 +161,11 @@ def _title(value) -> str:
     text = _line(value, "title", cap=brain.MAX_TITLE_CHARS, required=True)
     if text.startswith("#"):
         raise Refused("the title is plain text; it cannot start with '#'", field="title")
+    if text.endswith("#"):
+        # Markdown reads a heading's trailing '#'s as its closing sequence,
+        # so the title saved would not be the title read back
+        raise Refused("the title cannot end with '#': it would be read back without it",
+                      field="title")
     return text
 
 
@@ -307,6 +312,19 @@ def _parts(data: bytes) -> dict:
     return {"rec": rec, "fields": fields, "extra": extra,
             "title": split["title"] or rec.get("title") or "", "body": split["body"],
             "history": split["history"]}
+
+
+def _appendable(parts: dict, found: dict) -> dict:
+    """An existing record a classify, an override or a retirement may add a
+    history line to. A body whose code fence never closes (written by
+    hand: an edit through the board refuses one) would swallow the history
+    section written after it, so the write is refused instead, with the
+    remedy."""
+    if brain.fence_unclosed(parts["body"].split("\n")):
+        raise Refused(f"brain/{found['file']} has a code fence in its body that is never "
+                      "closed, so a history line written after it would read as body. Close "
+                      "the fence (Edit, or by hand), then try again", 409)
+    return parts
 
 
 def _check_directory(create: bool, make: bool = True) -> Path:
@@ -481,7 +499,7 @@ def _plan_classify(payload: dict, reading: dict, actor: str) -> dict:
     _guard_revision(found, payload, reading)
     klass = _classification(payload.get("classification"))
     reason = _reason(payload.get("reason"))
-    parts = _parts(_current_bytes(brain.directory() / found["file"]) or b"")
+    parts = _appendable(_parts(_current_bytes(brain.directory() / found["file"]) or b""), found)
     fields = dict(parts["fields"])
     fields["Classification"] = klass
     fields.pop("Superseded by", None)
@@ -521,7 +539,7 @@ def _plan_override(payload: dict, reading: dict, actor: str) -> dict:
     if action not in ("set", "clear"):
         raise Refused("an override is set or cleared", field="action")
     reason = _reason(payload.get("reason"))
-    parts = _parts(_current_bytes(brain.directory() / found["file"]) or b"")
+    parts = _appendable(_parts(_current_bytes(brain.directory() / found["file"]) or b""), found)
     fields = dict(parts["fields"])
     at = _now()
     if action == "set":
@@ -545,7 +563,7 @@ def _plan_retire(payload: dict, reading: dict, actor: str) -> dict:
     _guard_revision(found, payload, reading)
     reason = _reason(payload.get("reason"))
     replaced = payload.get("replacedBy") or ""
-    parts = _parts(_current_bytes(brain.directory() / found["file"]) or b"")
+    parts = _appendable(_parts(_current_bytes(brain.directory() / found["file"]) or b""), found)
     fields = dict(parts["fields"])
     fields["Removed"] = reason
     said = f"retired: {reason}"
@@ -591,14 +609,19 @@ def _commit(path: Path, entry_id: str, what: str, actor: str) -> dict:
     if config.state_repo() is None:
         return {"state": "failed", "detail": "the work root is in no work-state repository"}
     failure = f"brain/{path.name}: {what} saved, but committing it failed"
-    before = len(state.BOARD_EVENTS)
+    # the events already listed, held so none of their ids can be reused:
+    # the narration this commit adds is told apart by identity, not by the
+    # list's length, which stops growing once it reaches its cap
+    before = list(state.BOARD_EVENTS)
+    seen = {id(e) for e in before}
     ok = taskfiles.commit_work_file(
         path, f"board: brain {entry_id} {what} ({actor})", failure)
     if ok:
         sha = _git("log", "-1", "--format=%H", "--", str(path)).stdout.strip()
         return {"state": "committed", "sha": sha}
-    said = [e.get("summary", "") for e in state.BOARD_EVENTS[before:]
-            if str(e.get("summary", "")).startswith(failure)]
+    said = [e.get("summary", "") for e in list(state.BOARD_EVENTS)
+            if id(e) not in seen and str(e.get("summary", "")).startswith(failure)]
+    del before
     detail = said[-1][len(failure):].lstrip(": ") if said else "git refused the commit"
     return {"state": "failed", "detail": detail[:300]}
 
@@ -715,7 +738,7 @@ def _push(commit: dict, file: str, revision: str) -> dict:
         return {"state": "shared", "upstream": upstream}
     # sync replays the board's own commits onto what arrived, which gives
     # the commit a new id: the remote holding these exact bytes is shared too
-    shown = _git("show", f"{upstream}:{brain.DIRECTORY}/{file}")
+    shown = _git("show", f"{upstream}:{_repo_path(file)}")
     if shown.returncode == 0 and brain.revision(shown.stdout.encode("utf-8")) == revision:
         return {"state": "shared", "upstream": upstream}
     status = sync.status()
@@ -723,6 +746,20 @@ def _push(commit: dict, file: str, revision: str) -> dict:
         return {"state": "failed", "detail": status.get("detail") or status["state"],
                 "upstream": upstream}
     return {"state": "pending", "upstream": upstream}
+
+
+def _repo_path(file: str) -> str:
+    """`brain/<file>` as the work-state repository names it: relative to
+    the repository's top level, which is the work root in an external
+    layout and an ancestor of it in a vendored one."""
+    target = brain.directory() / file
+    root = gitrepo.state()
+    if root is not None:
+        try:
+            return Path(os.path.relpath(target.resolve(), Path(root).resolve())).as_posix()
+        except ValueError:
+            pass
+    return f"{brain.DIRECTORY}/{file}"
 
 
 def _public(entry: dict) -> dict:
@@ -765,6 +802,8 @@ def retry(payload: dict) -> dict:
     action = payload.get("action") if isinstance(payload, dict) else None
     if not isinstance(request, str) or not REQUEST_RE.match(request):
         raise Refused("name the operation to retry")
+    if action not in ("commit", "push"):
+        raise Refused("a retry asks for the commit or the push, by name", field="action")
     with _LOCK, LOCK:
         entry = _journal().get(request)
         if entry is None or not entry.get("saved"):
