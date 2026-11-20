@@ -888,10 +888,10 @@ def board_lifecycle(board: dict) -> dict:
     phase runner's snapshot. Without the scheduler's plan, so a member
     that may start reads `queued`; the Orchestrator's reading names the
     rest."""
-    tasks, reading, running, opened = _context(board)
-    found = [t for t in tasks if t.get("isPhase")]
+    found = [t for t in _tasks(board) if t.get("isPhase")]
     if not found:
-        return {}
+        return {}       # a board of ordinary cards reads nothing more
+    tasks, reading, running, opened = _context(board)
     used = (orchestrator.usage(reading, tasks)
             if any(mode(t) == "scoped" for t in found) else None)
     out = {}
