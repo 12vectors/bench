@@ -4555,7 +4555,11 @@ rule is asked for — the gate guards a merge this board would make, and
 there is none. Publication is still read off the remote, the base still
 catches up, and cleanup still keeps anything uncommitted. A snapshot
 that says merged while the remote does not hold the commit is gated
-exactly as before. A stacked card stays a stacked card: it lands through
+exactly as before. The status word follows the snapshot, but the
+completion does not need it (task 166): merge & clean up asks the remote
+about the exact head whatever the snapshot says, so a stale `OPEN`, or no
+snapshot at all after a restart, reconciles the same way (see "After the
+host merged it: delivery is not publication"). A stacked card stays a stacked card: it lands through
 its PR into its prerequisite, and its primary action says so.
 
 The merge speaks only for the commit it merged. When the card's branch
@@ -7452,6 +7456,88 @@ external layouts alike — the application remote is always the one
 `BOARD_GIT_REMOTE` resolves, the ticket's move is committed and synced in
 the work state's own repository, and the two never stand in for each
 other.
+
+### After the host merged it: delivery is not publication
+
+Task 166 closed a hole that made two merges of one card. The host merged
+a card's pull request; this board's cached PR status still said `OPEN`
+(or, after a restart, nothing); **merge & clean up**, in the local merge
+mode, merged the same branch into local `main` again — a second merge
+commit with the same tree and a different SHA. Its push was refused, but
+the remote's `main` already contained the card's *head* through the
+host's merge, and the publication check asked about the head. So it said
+"published, the reply was lost", cleaned up and moved the card, and the
+next card's PR was refused because local `main` was ahead of the remote.
+
+**Two different facts, read separately.**
+
+- **Delivered** — the application remote's target holds the card's exact
+  head. Before any merge, the completion asks the remote that, whatever
+  the cached status says. If it does, the completion *reconciles*:
+  nothing is merged, no merge rule is asked for (it guards a merge this
+  board would make, and there is none), the workspace is cleared under
+  the usual rules and the card moves. The result says
+  `reconciled: true`, `merged: false` and outcome `delivered`. In the
+  local merge mode, a remote that cannot be read at that moment refuses
+  the completion with nothing merged: a merge made blind to whether the
+  work is already delivered is the one this exists to stop. On origin
+  the host itself will not merge a change twice, so it goes ahead as
+  before and its publication is read afterwards.
+- **Published** — the remote holds *the merge this board made*. A local
+  merge is published only when the remote's target holds the new local
+  base tip, the commit a push publishes. The remote holding the card's
+  head through another merge does not prove that, and is never read as
+  it. A lost reply is recognised only when the remote holds that exact
+  merge.
+
+Each completion result and record keeps three identities apart: `head`
+(the card's commit), `merge` (the local merge this completion made,
+empty on origin) and `remoteTip` (what the remote's target was read
+at). The outcome is one word:
+
+| outcome | what it means | the card |
+| --- | --- | --- |
+| `delivered` | the remote already held the head; nothing was merged | done/ |
+| `published` | the remote holds the merge made here | done/ |
+| `local-only` | no application remote; nothing was published | done/ |
+| `rejected` | the remote refused the push | stays in review/ |
+| `diverged` | the remote's target has commits this checkout's lacks — including the head through another merge (`deliveredElsewhere`) | stays in review/ |
+| `unavailable` | the remote could not be read | stays in review/ |
+| `unknown` | whether the remote holds the merge is not established | stays in review/ |
+
+**Recovering from a duplicate an older board left.** When the record says
+`deliveredElsewhere`, the card's work is on the remote and the local
+merge is a second copy of it. Nothing is cleaned up, and bench pushes,
+resets and force-pushes nothing. The sheet, the card and the record's
+`action` name the next step: keep the local merge under a reference of
+your own (`git branch recovery/<card> <merge>`), bring the application's
+`main` back to the remote's `main` yourself, then **merge & clean up**
+again. It reconciles without merging. A card whose PR could not be opened
+meanwhile keeps the actual reason (the base ahead of the remote, a
+refused push) on its delivery status and in any orchestration blocker,
+and **↑ open PR** is the retry once the base is repaired. Nothing retries
+it, or any historical push, by itself, on a replica or at a restart.
+
+**Catching the base up.** After a delivered or origin completion,
+`baseCatchUp` says what became of the application checkout: `synced`
+(fast-forwarded), `sync-beat` (vendored with ticket sync: the sync beat
+owns it), or left exactly as it was — `wrong-branch`, `dirty` (tracked
+changes), `diverged` (it has commits the remote lacks) or `failed`. It is
+never reset, rebased or merged into.
+
+**Local or origin is the operator's policy, unchanged.** `BOARD_APP_MERGE`
+still decides where a merge is made, and ticket sync still does not. Both
+modes get the delivery check first; neither is switched by the board.
+
+**Who asked, on the record.** Every completion is an operation with an
+id (`cmp-…`), a source (`api` for the board's endpoint, `orchestrator`
+for a delegated merge) and an actor *only when one is verified* — the
+orchestrator's git identity. The endpoint authenticates nobody, so its
+default "you" is never written down as a person; the sheet says *actor
+not verified*. The recovery record keeps the operation, the three
+identities, the outcome, the scrubbed detail, the next step and the last
+twenty attempts. The delivered record keeps the operation and the
+identities too. Neither holds a path, a credential or a prompt.
 
 **Delivering source is not promoting the operator.** Completing a card
 whose work changes bench itself puts that code in the candidate

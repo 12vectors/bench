@@ -494,6 +494,24 @@ class ProvenanceIsKept(Incident):
                          "ada")
 
 
+class TheDocumentedContract(unittest.TestCase):
+
+    def test_agents_md_describes_delivery_and_publication(self):
+        doc = (Path(__file__).resolve().parents[1] / "AGENTS.md").read_text(
+            encoding="utf-8")
+        section = doc.split("### After the host merged it: delivery is not "
+                            "publication")[1].split("\n## ")[0]
+        for promise in ("whatever\n  the cached status says", "reconciles",
+                        "`remoteTip`", "deliveredElsewhere", "recovery/",
+                        "↑ open PR", "BOARD_APP_MERGE", "actor\nnot verified",
+                        "never reset, rebased or merged into"):
+            self.assertIn(promise, section)
+        for outcome in ("delivered", "published", "local-only", "rejected",
+                        "diverged", "unavailable", "unknown"):
+            self.assertIn(f"| `{outcome}` |", section)
+            self.assertIn(outcome, completion.PUBLICATION_OUTCOMES)
+
+
 # — the same incident, in the other layouts —
 
 
