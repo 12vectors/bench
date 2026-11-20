@@ -778,6 +778,11 @@ ROUTES: dict[str, str] = {
     "GET /": "read",
     # the page's own addresses (task 134): the shell for these shapes only
     "GET /board": "read",
+    # the Brain (task 157): its list and one entry, `/brain/e/<id>`
+    "GET /brain": "read",
+    "GET /brain/*": "read",
+    "GET /api/brain": "read",
+    "GET /api/brain/entry": "read",
     "GET /cards/*": "read",
     # the Orchestrator view (task 145), a page like the others
     "GET /orchestrator": "read",
