@@ -8120,8 +8120,9 @@ unrelated staged work is neither committed nor unstaged (hooks are skipped —
 this is bookkeeping, not code). A move whose commit failed — another git
 holding the index, say — has still happened on disk, and is said in the
 ticker; the card's next commit records it. A next move also records the
-removal of any path of that same card git still has and the disk no
-longer does; a next edit (a report, the `**PR:**` line, an orchestration
+removal of any path of that same card git still has — in its index or
+in HEAD, since a commit that failed after staging leaves the deletion
+staged — and the disk no longer does; a next edit (a report, the `**PR:**` line, an orchestration
 record) records that removal under the failed move's own trailers from
 the movement journal, so the card reads as moved by whoever moved it
 rather than created where it landed. A path the board did not move — a
