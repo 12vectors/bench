@@ -238,6 +238,38 @@
   @media (pointer:coarse){:where(.chiprow) .chip2.arch{min-height:44px;padding:0 14px}}
   .chip2 .srx{position:absolute;width:1px;height:1px;overflow:hidden;
     clip-path:inset(50%);white-space:nowrap}
+  /* the review status on a Review card's face (task 152): words first,
+     a glyph beside them, the tone only reinforcing — never colour alone.
+     Its own line, so it stays in view whatever the delivery pill says. */
+  .revstat{
+    position:relative;display:flex;align-items:center;gap:6px;
+    align-self:flex-start;max-width:100%;min-width:0;min-height:24px;
+    margin:0;padding:2px 9px 2px 7px;
+    border:1px solid var(--border);border-left-width:3px;border-radius:6px;
+    background:var(--sunken);color:var(--text);
+    font-family:var(--sans);font-size:12px;font-weight:600;line-height:1.3;
+    text-align:left;cursor:pointer;
+  }
+  .revstat .rvg{flex:none;font-family:var(--mono);font-size:11px}
+  .revstat .rvl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .revstat .rvh{flex:none;font-family:var(--mono);font-weight:400;font-size:11px;color:var(--muted)}
+  .revstat .srx{position:absolute;width:1px;height:1px;overflow:hidden;
+    clip-path:inset(50%);white-space:nowrap}
+  .revstat:hover,.revstat:focus-visible{border-color:var(--accent)}
+  .revstat.rv-calm{border-left-color:var(--calm);background:color-mix(in oklab, var(--calm) 14%, var(--sunken))}
+  .revstat.rv-calm .rvg{color:var(--calm)}
+  .revstat.rv-alarm{border-left-color:var(--alarm);background:color-mix(in oklab, var(--alarm) 12%, var(--sunken))}
+  .revstat.rv-alarm .rvg{color:var(--alarm)}
+  .revstat.rv-working{border-left-color:var(--accent)}
+  .revstat.rv-working .rvg{color:var(--accent);animation:breathe 2.4s ease-in-out infinite}
+  .revstat.rv-neutral{border-left-color:var(--idle)}
+  .revstat.rv-neutral .rvg{color:var(--muted)}
+  @media (pointer:coarse){.revstat{min-height:44px}}
+  .rvnow{margin:6px 0;padding:6px 10px;border-left:3px solid var(--idle);
+    background:var(--sunken);border-radius:6px;font-size:13px}
+  .rvnow.rv-calm{border-left-color:var(--calm)}
+  .rvnow.rv-alarm{border-left-color:var(--alarm)}
+  .rvnow.rv-working{border-left-color:var(--accent)}
   /* the tools: every destination and action a card has, one labelled
      control away instead of a row of operational chrome on every face.
      Closed by default; on a card it lists what the face does not already

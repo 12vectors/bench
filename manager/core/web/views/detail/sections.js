@@ -1317,6 +1317,17 @@ function relevanceHtml(t, r, open) {
     `the brief changes only when you apply the proposal.</p></div></div></details>`;
 }
 
+/* The one review status the card face wears (task 152), said again where
+   its rounds are, with the sentence the face keeps in its title. The
+   server's answer, not a reading of the rounds below. */
+function reviewNowHtml(t) {
+  const d = deliveryOf(t);
+  const r = d && d.review;
+  if (!r || !r.word) return '';
+  return `<p class="rvnow rv-${esc(r.tone || 'neutral')}" data-revword="${esc(r.word)}">` +
+    `<b>${esc(r.label)}</b> — ${esc(r.sentence || '')}</p>`;
+}
+
 function reviewsHtml(t, acc) {
   if (!acc) return `<p class="dnote">reading reviews…</p>`;
   const live = acc.findings.filter(f => f.state !== 'resolved');
@@ -1352,6 +1363,9 @@ function reviewsHtml(t, acc) {
   // what a merge waits on — then the brief's own reviews (task 149)
   return `<section class="rvgroup" aria-labelledby="rvg-pr-${esc(t.number || 'x')}">` +
     `<h3 id="rvg-pr-${esc(t.number || 'x')}">PR reviews <span class="n">${rounds.length}</span></h3>` +
+    // the review status now (main, task 152) leads the group; what a PR
+    // review is stays in the fold below, as task 149 placed it
+    reviewNowHtml(t) +
     `<p class="acount"><b>${fc.open}</b> open · <b>${fc['fix-reported']}</b> fix reported · <b>${fc.resolved}</b> resolved</p>` +
     (live.length ? live.map(f => findingHtml(t, f, acc)).join('')
                  : `<p class="dnote">No open findings on record.</p>`) +

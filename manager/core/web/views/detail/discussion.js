@@ -359,9 +359,17 @@ function reviewSignals(d, pr) {
   const bad = (rec) => rec.verdict === 'REQUEST CHANGES' && rec.current === true;
   const rows = [];
   const b = rv.bench;
+  // the headline is the server's one review status (task 152) — the very
+  // words the card face wears — and the record it rests on follows it
+  const now = d && d.review;
+  // with no Bench verdict on record, the status's own sentence says why
+  // it reads as it does ("No Bench verdict yet" beside "Review outdated"
+  // left the reader to work out what was outdated)
   rows.push(['Bench review', b
-    ? `${REVIEW_WORD[b.verdict] || b.verdict}${at(b)}${where(b)}`
-    : 'no Bench verdict yet', b && bad(b) ? 'bad' : '']);
+    ? (now ? `${now.label}. ` : '') +
+      `Newest verdict: ${REVIEW_WORD[b.verdict] || b.verdict}${at(b)}${where(b)}`
+    : now ? `${now.label}. ${now.sentence}` : 'No Bench verdict yet',
+  (now && now.tone === 'alarm') || (b && bad(b)) ? 'bad' : '']);
   const gh = !pr ? 'not observed — bench has not read this pull request'
     : pr.review === 'approved' ? 'approved on the pull request — not bound to a commit here'
     : pr.review === 'changes' ? 'changes requested on the pull request'

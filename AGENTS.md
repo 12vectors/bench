@@ -1326,6 +1326,31 @@ make, and only when the delivery status has nothing to say on the face:
 a phase card nobody has started (or one held), and `idle` (in progress,
 nobody on it, nothing changed for a day).
 
+**Every card in `review/` says whether its review approved it** (task
+152), on a line of its own under the title, whatever the pill says:
+being in Review is a stage, not an approval. The words are the server's
+(`delivery.review_status`, carried as `delivery[file].review`), read from
+Bench's own verdict bound to the commit the card would merge — never from
+the lane, GitHub's formal state, a verdict parsed out of the card's text
+or a review checkout's label:
+
+| word | label | when |
+| --- | --- | --- |
+| `review-approved` | Review approved | Bench's verdict at this exact commit, since the newest retarget, is APPROVE |
+| `review-changes` | Changes requested | that verdict is REQUEST CHANGES |
+| `review-running` | Review in progress | a ◔ review PR run is alive on the card |
+| `review-outdated` | Review outdated | the newest verdict is about an earlier commit, or was given before a retarget |
+| `review-incomplete` | Review incomplete | the newest review run ended without recording a verdict |
+| `review-unavailable` | Review status unavailable | no commit can be named here, or the card's text claims a verdict about this commit that Bench has no record of |
+| `review-pending` | Review pending | nothing about this commit yet |
+
+An approval is Bench's review and nothing more: not GitHub approval, not
+a person's acceptance, not a passed check and not permission to merge, so
+it can sit beside `Check failed` or `Sign-off needed` and the pill still
+names the blocker. The line is a button: it opens the card on Reviews,
+whose PR group and Overview's Signals lead with the same words. Reading
+it runs and writes nothing.
+
 The chips follow the same rule. Active work and current problems stay on
 the face: red CI, conflicts, a PR open against the wrong base, changes
 requested by Copilot, a policy that does not parse, a running drive or
