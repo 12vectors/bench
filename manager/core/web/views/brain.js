@@ -142,7 +142,7 @@ function sourceItem(s) {
   return `<li>${esc(s.text)} <span class="b-note">(as written; not a link bench follows)</span></li>`;
 }
 
-const back = '<p class="b-back"><a href="/brain" data-route>← All Brain entries</a></p>';
+const back = '<p class="b-back"><a href="/brain" data-route>All Brain entries</a></p>';
 
 function entryHtml(slot, id) {
   const e = slot.data;
