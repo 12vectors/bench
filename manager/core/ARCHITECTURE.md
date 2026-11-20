@@ -472,6 +472,7 @@ neither.
 | orchestrated launch ledger (append-only) | `orchestrator` | append | no |
 | orchestration operations: intent and receipt (task 141) | `operations` (`scheduler` and `coordinate` decide) | `operations._LOCK`, interprocess | yes |
 | recovery incidents and their attempts; the circuit breaker (task 144) | `recovery` | `recovery._LOCK`, interprocess | yes |
+| Brain entry files (portable) and their write journal (machine-local) (task 158) | `brainwrite` | `brainwrite.LOCK`, interprocess; each entry write is also held to the file's exact revision | yes |
 
 **Durable writers** — the call sites passing `durable=True`, held equal
 to the code by `tests/test_records_adoption.py`:
@@ -483,6 +484,8 @@ artifacts.ingest
 artifacts.ingest_report
 artifacts.sweep
 artifacts.withhold
+brainwrite._journal_put
+brainwrite._write
 completion._record_delivered
 completion._remember
 evidence.store

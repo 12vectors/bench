@@ -62,6 +62,7 @@ from pathlib import Path
 import acceptance
 import brain
 import config
+import gitrepo
 import records
 import state
 import sync
@@ -603,13 +604,10 @@ def _commit(path: Path, entry_id: str, what: str, actor: str) -> dict:
 
 
 def _git(*args: str, timeout: float = 20) -> subprocess.CompletedProcess:
-    root = config.state_repo()
+    root = gitrepo.state()
     if root is None:
         return subprocess.CompletedProcess(args, 128, "", "no work-state repository")
-    try:
-        return config.git_run(root, *args, timeout=timeout)
-    except (subprocess.SubprocessError, OSError) as exc:
-        return subprocess.CompletedProcess(args, 128, "", str(exc))
+    return gitrepo.git(root, *args, timeout=timeout)
 
 
 def write(kind: str, payload: dict) -> dict:
