@@ -2,10 +2,12 @@
 import { allTasks } from '../app/data.js';
 import { S } from '../app/state.js';
 import { phaseOf } from '../lib/arm.js';
+import { post } from '../lib/api.js';
 import { $, esc } from '../lib/dom.js';
 import { markScroll, restoreScroll, scrollMarks } from '../lib/keep.js';
 import { emptyNote, holdFocus, keyedPool, placeChildren, setHtml } from '../lib/keyed.js';
 import { plainClick, syncRoute } from '../lib/nav.js';
+import { toast } from '../lib/toast.js';
 import { cardId, findCard, formatRoute } from '../lib/route.js';
 import { phaseFlight } from './board.js';
 import { actLabel, holdPhase, keyedCard, runPhase, showDetail, wireAction } from './card.js';
@@ -299,6 +301,27 @@ function laneFor(task, el) {
       const cards = document.createElement('div');
       cards.className = 'lcards';
       box.appendChild(cards);
+      // A member is drawn here and nowhere else (the Board hides it), so
+      // its stage columns accept a drop exactly as the Board's do (task
+      // 160): before this a member dragged in its lane had nowhere to
+      // land, and the only way back for one moved by mistake was the API.
+      // The move is the same request, held by the same server guards.
+      // "Merged in" is the phase's own column, not a stage: no drop.
+      if (col.slug !== 'merged') {
+        box.dataset.stage = col.slug;
+        box.addEventListener('dragover', (e) => { e.preventDefault(); box.classList.add('over'); });
+        box.addEventListener('dragleave', () => box.classList.remove('over'));
+        box.addEventListener('drop', (e) => {
+          e.preventDefault();
+          box.classList.remove('over');
+          let carried;
+          try { carried = JSON.parse(e.dataTransfer.getData('application/json')); }
+          catch { return; }
+          if (carried && carried.file && carried.from !== col.slug) {
+            laneMove(carried.file, carried.from, col.slug);
+          }
+        });
+      }
       stages.appendChild(box);
     }
     stages.__cols = slugs;
@@ -322,6 +345,17 @@ function laneFor(task, el) {
   });
   el.__replaced = replaced;
   return el;
+}
+
+/* A move made in a lane (task 160): the same request the Board's drop
+   sends, refused in the server's words by the same guards. The board frame
+   the move causes brings the new reading; nothing here guesses where the
+   card went. */
+async function laneMove(file, from, to) {
+  const answer = await post('/api/move', { file, from, to });
+  if (answer.ok) toast(`${file} → ${to}/`);
+  else toast(answer.error || 'move failed', true);
+  return answer.ok;
 }
 
 /* A phase's controls are card actions in every way that matters, so they

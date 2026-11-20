@@ -134,8 +134,60 @@ def _strategy(phase: dict) -> str:
     return here.get("strategy") or agreements.STRATEGIES[0]
 
 
+def has_work(task: dict) -> bool:
+    """Whether a card's own work exists: its `task/<stem>` branch. That is
+    the first thing ▸ start work makes, so a card without one has never
+    been worked on this repository, whatever stage it sits in."""
+    return phases.branch_exists(f"task/{task['file'][:-3]}")
+
+
+def _open_ops(ops: list[dict] | None) -> dict[str, list[dict]]:
+    found: dict[str, list[dict]] = {}
+    for op in operations.all_ops() if ops is None else ops:
+        if op.get("status") in operations.OPEN and op.get("file"):
+            found.setdefault(op["file"], []).append(op)
+    return found
+
+
+def in_flight(member: dict, running: set[str],
+              open_ops: dict[str, list[dict]]) -> bool:
+    """Is this member genuinely being worked (task 160)? A run on it, an
+    operation about it with no settled receipt (an intent, a launch, an
+    unobserved run, an unknown outcome — each may hold a real process),
+    work in review/ waiting to be integrated, or in-progress/ with its own
+    branch. A card that is merely *in* in-progress/ — moved there by hand,
+    with no run, no reservation and no branch — is not in flight: reading
+    its stage as work is how two members of one phase came to wait on
+    each other for ever."""
+    if member["file"] in running or open_ops.get(member["file"]):
+        return True
+    if member["stage"] == "review":
+        return True
+    return member["stage"] == "in-progress" and has_work(member)
+
+
+def moved_early(member: dict, tasks: list[dict], running: set[str],
+                open_ops: dict[str, list[dict]]) -> tuple[str, str] | None:
+    """A member sitting in in-progress/ with nothing working it whose turn
+    has not come (task 160): (code, why) or None. It is not launched —
+    dependencies and the strategy still hold it — and it no longer holds
+    anyone else up; what it needs is a person's deliberate move back."""
+    if member["stage"] != "in-progress" or in_flight(member, running, open_ops):
+        return None
+    held = may_start(member, tasks, running, open_ops=open_ops)
+    if not held or held[0] not in ("waiting-member", "waiting-integration"):
+        return None
+    return ("moved-early", f"it is in In Progress with nothing working it "
+            f"(no run, no reservation, no branch), and its turn has not "
+            f"come: {held[1]}. It is not started out of order and it does "
+            f"not hold the phase up — move it back to To Do (queued) or "
+            f"Backlog (not queued)")
+
+
 def may_start(task: dict, tasks: list[dict],
-              running: set[str] | None = None) -> tuple[str, str] | None:
+              running: set[str] | None = None, *,
+              open_ops: dict[str, list[dict]] | None = None
+              ) -> tuple[str, str] | None:
     """Why a member of a scoped phase may not start now, or None. Read
     from the board and the phase log only: it launches nothing."""
     phase = phase_of(task, tasks)
@@ -167,12 +219,15 @@ def may_start(task: dict, tasks: list[dict],
                         + (" — it is in Backlog, which the phase scope never "
                            "pulls a card out of" if member["stage"] == "backlog"
                            else ""))
+        # in flight means being worked, never merely sitting in a stage
+        # (task 160): a later member moved into in-progress/ by mistake
+        # would otherwise hold the earlier one while waiting on it
+        opened = _open_ops(None) if open_ops is None else open_ops
         for member in order:
             number = _number(member)
             if number == mine or number in done:
                 continue
-            if member["file"] in running or member["stage"] in ("in-progress",
-                                                                 "review"):
+            if in_flight(member, running, opened):
                 return ("phase-member-in-flight", f"sequential: card {number} "
                         f"of this phase is in flight")
     return None
@@ -530,51 +585,381 @@ def reconcile(ops: list[dict] | None = None) -> list[dict]:
 
 # ── the public reading ────────────────────────────────────────────────
 
-def projection(board: dict | None = None) -> dict:
-    """Every phase with its scheduling owner and, for adopted ones, each
-    member's state as the phase scope reads it. A read."""
+def _plural(n: int, one: str, many: str | None = None) -> str:
+    return f"{n} {one if n == 1 else (many or one + 's')}"
+
+
+def budget(here: dict | None, reading: dict, used: dict) -> dict | None:
+    """A scope's allocations in words (task 160): how many implementation
+    slots it has and how many are in use, its launches today, and — for a
+    phase — that both are reserved out of the Bench scope's total. A daily
+    launch is one agent run (an implementation, an independent review, a
+    repair, a diagnosis), never one card's whole lifecycle, so a one-launch
+    budget is named as the limit it is. Read only: it explains, and never
+    raises an allocation."""
+    if here is None:
+        return None
+    sid = here["id"]
+    bench = agreements.scope(reading, agreements.BENCH) or {}
+    bench_cap = bench.get("capacity") or {}
+    cap = here["capacity"]
+    slots = cap["implementation"]["own"]
+    in_use = used["running"].get(sid, {}).get("implementation", 0)
+    starts = cap["dailyStarts"]["own"]
+    spent = used["startsToday"].get(sid, 0)
+    review_slots = cap["review"]["own"]
+    lines = [
+        f"{in_use} of {_plural(slots, 'implementation slot')} in use "
+        f"(slots are runs at the same time)",
+        f"{spent} of {_plural(starts, 'launch', 'launches')} used today "
+        f"(every agent launch counts: implementation, independent review, "
+        f"repair, diagnosis)",
+        f"{_plural(review_slots, 'review slot')}",
+    ]
+    if sid != agreements.BENCH:
+        total_slots = (bench_cap.get("implementation") or {}).get("total", 0)
+        total_starts = (bench_cap.get("dailyStarts") or {}).get("total", 0)
+        lines.append(f"reserved out of the Bench scope's total of "
+                     f"{_plural(total_slots, 'implementation slot')} and "
+                     f"{_plural(total_starts, 'launch', 'launches')} a day; the "
+                     f"Bench scope does not use what this phase holds")
+    missing, warnings = [], []
+    if slots == 0:
+        missing.append("no implementation slot is allocated to this scope, so "
+                       "no member can start; allocate one in Orchestrator → "
+                       "Operating agreement")
+    if starts == 0:
+        missing.append("no daily launches are allocated to this scope, so "
+                       "nothing can start; allocate some in Orchestrator → "
+                       "Operating agreement")
+    elif spent >= starts:
+        missing.append(f"today's {_plural(starts, 'launch', 'launches')} "
+                       f"{'is' if starts == 1 else 'are'} used up, so the next "
+                       f"launch waits for tomorrow; allocate more in "
+                       f"Orchestrator → Operating agreement to go on today")
+    if starts == 1:
+        warnings.append("one launch a day is one agent run: a member's "
+                        "implementation, or its independent review, or one "
+                        "repair, not a member's whole lifecycle. Its review or "
+                        "repair waits for the next day")
+    if review_slots == 0 and here["authority"]["review"]["allowed"]:
+        warnings.append("no review slot is allocated, so an independent review "
+                        "of a member cannot launch")
+    return {"slots": {"own": slots, "inUse": in_use},
+            "dailyStarts": {"own": starts, "used": spent},
+            "reviewSlots": review_slots, "lines": lines,
+            "missing": missing, "warnings": warnings}
+
+
+def _member_rows(phase: dict, tasks: list[dict], running: set[str],
+                 opened: dict, items: dict | None) -> list[dict]:
+    """Each member's state as the phase scope reads it, in run order.
+    Stage is one input, never the whole answer: a Backlog member is not
+    ready however eligible its turn, and a member merely sitting in
+    in-progress/ is not working."""
+    done = integrated(phase)
+    rows = []
+    for member in members(phase, tasks):
+        number = _number(member)
+        code = None
+        mine = opened.get(member["file"], [])
+        if number in done or member["stage"] == "done":
+            word, why = "integrated", ("in the phase branch, not yet delivered "
+                                       "to the application base")
+        elif member["file"] in running:
+            word, why = "working", "a run is working on it"
+        elif any(o["status"] == "unknown" for o in mine):
+            word, why = "unknown", ("an operation on it has an unknown outcome; "
+                                    "settle it in Orchestrator → Recovery")
+        elif mine:
+            word, why = "launching", (f"operation {mine[0]['key']} is "
+                                      f"{mine[0]['status']}; its receipt "
+                                      f"settles it")
+        elif member["stage"] == "review":
+            word, why = "integrating", ("its checks, review and integration "
+                                        "are the phase scope's next steps")
+        elif member["stage"] == "backlog":
+            word, why = "in-backlog", ("in Backlog: the phase scope never pulls "
+                                       "a card out of Backlog; move it into "
+                                       "To Do to queue it")
+        else:
+            early = moved_early(member, tasks, running, opened)
+            blocked = None if early else may_start(member, tasks, running,
+                                                   open_ops=opened)
+            item = (items or {}).get(member["file"])
+            if early:
+                word, why, code = "moved-early", early[1], early[0]
+            elif member["stage"] == "in-progress" and has_work(member):
+                word, why = "stopped", ("its work is on its branch and nothing "
+                                        "is running on it; see Orchestrator → "
+                                        "Recovery, or ▸ start work to resume")
+            elif blocked:
+                word, why, code = "waiting", blocked[1], blocked[0]
+            elif item is not None and item.get("state") in ("chosen", "ready"):
+                word, why, code = "ready", "chosen to start on the next pass", \
+                    item.get("code")
+            elif item is not None:
+                word = item.get("state") or "waiting"
+                why, code = item.get("reason") or "", item.get("code")
+            else:
+                word, why = "queued", ("queued: the phase scope starts it on its "
+                                       "next pass if it is authorized and a slot "
+                                       "and a launch are free")
+        rows.append({"card": member["file"], "number": number,
+                     "title": member.get("title"),
+                     "stage": member["stage"], "state": word, "why": why,
+                     "code": code})
+    return rows
+
+
+LABELS = {
+    "not-configured": "Phase runner",
+    "not-adopted": "Not adopted",
+    "paused": "Paused",
+    "unknown": "Outcome unknown",
+    "preparing": "Preparing",
+    "working": "Working",
+    "moved-early": "Member moved early",
+    "queue-needed": "Member in Backlog",
+    "waiting": "Waiting",
+    "ready": "Ready to start",
+    "stopped": "Stopped",
+    "integrating": "Integrating",
+    "finishing": "Finishing",
+    "integration-review": "Integration review",
+    "delivered": "Delivered",
+}
+
+
+def _names(rows: list[dict]) -> str:
+    return ", ".join(f"#{r['number']}" for r in rows)
+
+
+def lifecycle(phase: dict, tasks: list[dict], reading: dict,
+              running: set[str], opened: dict, used: dict | None = None,
+              items: dict | None = None) -> dict:
+    """One phase's execution owner and lifecycle, in words, with the one
+    concrete next step and who holds it (task 160). The Board's phase
+    face, the Phases lane and the Orchestrator all draw this, so they
+    cannot disagree about whether a phase has started or who runs it. A
+    read: it adopts, queues, launches and moves nothing. `items` is the
+    scheduler's plan by card, when the caller has it; without it a member
+    that may start reads `queued`."""
+    sid = f"phase:{_number(phase)}"
+    valid = bool(reading.get("configured") and reading.get("valid"))
+    here = agreements.scope(reading, sid) if valid else None
+    scoped = mode(phase) == "scoped"
+    out = {"card": phase["file"], "scope": sid if here else None,
+           "named": here is not None, "adopted": scoped}
+
+    def done(word, line, who=None, step=None, **extra):
+        out.update(word=word, label=LABELS[word], line=line,
+                   next=({"who": who, "text": step} if step else None), **extra)
+        return out
+
+    if not scoped:
+        out["owner"] = "phase runner"
+        if here is None:
+            return done("not-configured", "run by the phase runner: ▸ run phase "
+                        "starts and advances it. The operating agreement names "
+                        "no phase scope for it, so no orchestrator touches it")
+        busy = quiescence(phase, tasks)
+        adoptable = not busy and phase["stage"] in ADOPTABLE
+        if adoptable:
+            step = ("adopt it in Orchestrator → Phases; the phase scope then "
+                    "prepares its branch and schedules its members")
+        elif busy:
+            step = "it cannot be adopted yet: " + "; ".join(busy[:3])
+        else:
+            step = (f"move it into To Do, then adopt it (a phase in "
+                    f"{phase['stage']}/ is not adopted)")
+        return done("not-adopted", f"named in the agreement as {sid} but not "
+                    f"adopted: until a person adopts it the phase runner owns "
+                    f"it, and no orchestrator schedules its members",
+                    "you", step, adoptable=adoptable)
+    out["owner"] = "phase scope"
+    if used is None:
+        used = orchestrator.usage(reading, tasks)
+    out["budget"] = budget(here, reading, used) if here else None
+    rows = _member_rows(phase, tasks, running, opened, items)
+    out["members"] = rows
+    by_state: dict[str, list[dict]] = {}
+    for row in rows:
+        by_state.setdefault(row["state"], []).append(row)
+    backlog = by_state.get("in-backlog") or []
+    out["backlog"] = [r["card"] for r in backlog]
+    if phase["stage"] == "done":
+        return done("delivered", "delivered: the integrated phase branch is in "
+                    "the application base")
+    if phase["stage"] == "review":
+        return done("integration-review", "every member is integrated; the "
+                    "integrated head is checked, reviewed and merged under the "
+                    "integration merge rule", "board",
+                    "see the phase card's merge requirements")
+    if here is None:
+        return done("paused", "adopted, but the operating agreement no longer "
+                    "names its scope, so nothing schedules it", "you",
+                    "name the phase again in Orchestrator → Operating agreement, "
+                    "or release it to the phase runner")
+    if not here["active"]:
+        why = (f"paused by the {here['pausedBy']} scope" if here.get("pausedBy")
+               else f"its scope is off ({here.get('off')})")
+        return done("paused", f"{why}: nothing new starts; work already running "
+                    f"is observed, not cancelled", "you",
+                    "resume it in Orchestrator → Overview")
+    if by_state.get("unknown"):
+        return done("unknown", f"an operation on {_names(by_state['unknown'])} "
+                    f"has an unknown outcome; nothing about it is repeated",
+                    "you", "settle it in Orchestrator → Recovery")
+    early = by_state.get("moved-early") or []
+    early_step = (f"move {_names(early)} back to To Do or Backlog: ↩ on its "
+                  f"card in the Phases lane, or drag it there")
+    working = (by_state.get("working") or []) + (by_state.get("launching") or [])
+    if working:
+        w = working[0]
+        line = f"on #{w['number']} — {w.get('title') or w['card']}"
+        if early:
+            return done("working", line + f"; {_names(early)} was moved into "
+                        f"In Progress ahead of its turn", "you", early_step,
+                        on=w["card"])
+        return done("working", line, "agent", "the phase scope checks and "
+                    "integrates it once it reaches review", on=w["card"])
+    if phase["stage"] != "in-progress" or not phases.branch_exists(
+            agents.phase_branch(phase["file"])):
+        return done("preparing", f"adopted; the phase scope moves it into In "
+                    f"Progress and cuts {agents.phase_branch(phase['file'])} on "
+                    f"its next pass", "board", "wait for the next pass")
+    if early:
+        return done("moved-early", f"{_names(early)} sits in In Progress with "
+                    f"nothing working it, ahead of its turn; it is not started "
+                    f"out of order and does not hold the phase up", "you",
+                    early_step)
+    if by_state.get("integrating"):
+        return done("integrating", f"{_names(by_state['integrating'])} is in "
+                    f"review: its checks, review and integration into the phase "
+                    f"branch come next", "board",
+                    "see the member's merge requirements")
+    if rows and all(r["state"] == "integrated" for r in rows):
+        return done("finishing", "every member is integrated; the phase scope "
+                    "publishes the branch and opens the phase's PR on its next "
+                    "pass", "board", "wait for the next pass")
+    if by_state.get("stopped"):
+        return done("stopped", f"{_names(by_state['stopped'])} has work on its "
+                    f"branch and nothing running on it", "you",
+                    "see Orchestrator → Recovery, or ▸ start work on it")
+    front = next((r for r in rows if r["state"] != "integrated"), None)
+    if front and front["state"] == "in-backlog":
+        later = [r for r in backlog if r is not front]
+        return done("queue-needed", f"#{front['number']} is next and is in "
+                    f"Backlog; the phase scope never pulls a card out of Backlog"
+                    + (f" ({_names(later)} {'waits' if len(later) == 1 else 'wait'} "
+                       f"there too)" if later else ""),
+                    "you", f"move #{front['number']} into To Do to queue it")
+    missing = (out["budget"] or {}).get("missing") or []
+    candidates = (by_state.get("ready") or []) + (by_state.get("queued") or [])
+    if missing and candidates:
+        return done("waiting", f"#{candidates[0]['number']} is queued but cannot "
+                    f"start: {missing[0]}", "you", missing[0].split("; ")[-1])
+    if candidates:
+        r = candidates[0]
+        return done("ready", f"#{r['number']} is queued in To Do and may start: "
+                    f"{r['why']}", "board", "the phase scope starts it on its "
+                    f"next pass", on=r["card"])
+    waiting = [r for r in rows if r["state"] in ("waiting", "blocked", "held")]
+    if waiting:
+        w = waiting[0]
+        return done("waiting", f"#{w['number']} waits: {w['why']}", "board",
+                    "nothing to do unless the reason names you")
+    if backlog:
+        return done("queue-needed", f"{_names(backlog)} "
+                    f"{'is' if len(backlog) == 1 else 'are'} in Backlog; the "
+                    f"phase scope never pulls a card out of Backlog", "you",
+                    f"move #{backlog[0]['number']} into To Do to queue it")
+    return done("waiting", "nothing to start right now")
+
+
+def _context(board: dict) -> tuple:
+    return _tasks(board), agreements.effective(), _running(), _open_ops(None)
+
+
+def board_lifecycle(board: dict) -> dict:
+    """Every phase card's lifecycle, for `/api/state` (task 160): the
+    Board's face and the Phases lane read it rather than guessing from the
+    phase runner's snapshot. Without the scheduler's plan, so a member
+    that may start reads `queued`; the Orchestrator's reading names the
+    rest."""
+    tasks, reading, running, opened = _context(board)
+    found = [t for t in tasks if t.get("isPhase")]
+    if not found:
+        return {}
+    used = (orchestrator.usage(reading, tasks)
+            if any(mode(t) == "scoped" for t in found) else None)
+    out = {}
+    for phase in found:
+        try:
+            out[phase["file"]] = lifecycle(phase, tasks, reading, running,
+                                           opened, used)
+        except (ValueError, OSError, KeyError):
+            continue
+    return out
+
+
+def return_refusal(filename: str, source: str, target: str) -> str | None:
+    """Whether a person may move a scoped phase's member back out of
+    in-progress/ or review/ to To Do or Backlog now (task 160). Refused,
+    with what to do instead, while anything may be working it: a run on
+    it, or an operation on it without a settled receipt. Its stage is no
+    evidence either way, and nothing here cancels, settles or rewinds."""
+    if source not in orchestrator.WORKING_STAGES or \
+            target not in ("to-do", "backlog"):
+        return None
+    tasks = _tasks(taskfiles.collect())
+    task = next((t for t in tasks if t["file"] == filename), None)
+    if task is None or task.get("isPhase") or mode(task) != "scoped":
+        return None
+    if filename in _running():
+        return (f"{filename} has a run working on it; ‖ hold that run first "
+                f"(its branch and worktree are kept), then move it back")
+    for op in _open_ops(None).get(filename, []):
+        if op["status"] == "unknown":
+            return (f"operation {op['key']} ({op.get('action')}) on {filename} "
+                    f"has an unknown outcome; settle it in Orchestrator → "
+                    f"Recovery before moving the card back")
+        return (f"operation {op['key']} ({op.get('action')}) on {filename} is "
+                f"{op['status']}, so something may be running; wait for its "
+                f"receipt, or settle it in Orchestrator → Recovery, first")
+    return None
+
+
+def projection(board: dict | None = None,
+               items: list[dict] | None = None) -> dict:
+    """Every phase with its scheduling owner and its lifecycle (task 160),
+    each member's state read through the scheduler's own plan when the
+    caller passes it. A read."""
     board = taskfiles.collect() if board is None else board
-    tasks = _tasks(board)
-    reading = agreements.effective()
-    running = _running()
+    tasks, reading, running, opened = _context(board)
+    by_card = {i["card"]: i for i in items or []}
+    used = orchestrator.usage(reading, tasks)
     out = []
     for phase in [t for t in tasks if t.get("isPhase")]:
         sid = f"phase:{_number(phase)}"
         named = bool(reading["configured"] and reading["valid"]
                      and agreements.scope(reading, sid))
         here = agreements.scope(reading, sid) if named else None
+        life = lifecycle(phase, tasks, reading, running, opened, used, by_card)
         entry = {"card": phase["file"], "number": _number(phase),
                  "stage": phase["stage"], "mode": mode(phase),
                  "named": named, "scope": sid if named else None,
-                 "owner": ("phase scope" if named and mode(phase) == "scoped"
-                           else "phase runner"),
+                 "owner": life["owner"],
                  "strategy": (here or {}).get("strategy"),
-                 "integrated": sorted(integrated(phase), key=int)}
+                 "integrated": sorted(integrated(phase), key=int),
+                 "lifecycle": {k: v for k, v in life.items() if k != "members"}}
         if named and mode(phase) != "scoped":
             busy = quiescence(phase, tasks)
             entry["adoptable"] = not busy and phase["stage"] in ADOPTABLE
             entry["working"] = busy
         if mode(phase) == "scoped":
-            rows = []
-            done = set(entry["integrated"])
-            for member in members(phase, tasks):
-                number = _number(member)
-                if number in done:
-                    word, why = "integrated", "in the phase branch, not yet " \
-                        "delivered to the application base"
-                elif member["file"] in running:
-                    word, why = "working", "a run is working on it"
-                elif member["stage"] == "review":
-                    word, why = "integrating", "its checks, review and " \
-                        "integration are the phase scope's next steps"
-                else:
-                    blocked = may_start(member, tasks, running)
-                    word, why = (("waiting", blocked[1]) if blocked else
-                                 ("ready", "may start when a slot is free"))
-                rows.append({"card": member["file"], "number": number,
-                             "stage": member["stage"], "state": word,
-                             "why": why})
-            entry["members"] = rows
+            entry["members"] = life.get("members") or []
             entry["delivered"] = phase["stage"] == "done"
         out.append(entry)
     return {"phases": out, "branchPrefix": config.PHASE_BRANCH_PREFIX}
