@@ -245,8 +245,28 @@ def jam(spec: dict | None) -> None:
                timeout=None, commits=[])
     if collide:
         JAM.update(collide=collide, collided=None)
-    placed, collided = threading.Event(), threading.Event()
+    placed, collided, staged = threading.Event(), threading.Event(), threading.Event()
     real_commit = taskfiles.commit_paths
+    real_git = taskfiles._git
+    stager: dict = {}
+
+    def _git(*args, **kwargs):
+        # `collide.staged`: the colliding commit's `git add` succeeds, and
+        # only then is the index held — so its commit fails with the
+        # card's paths already staged, as the 06:58 full-suite run's did
+        done = real_git(*args, **kwargs)
+        if (stager.get("thread") is threading.current_thread()
+                and args[:1] == ("add",) and done.returncode == 0
+                and not staged.is_set()):
+            JAM["stagedBeforeJam"] = True
+            staged.set()
+            if not placed.wait(RACE_SECONDS):
+                JAM["timeout"] = "the jam was never placed after the staged add"
+        return done
+
+    if collide.get("staged"):
+        JAM["stagedBeforeJam"] = False
+        taskfiles._git = _git
 
     def real(filename, message, spec_, failure):
         # every board commit while the jam is installed, and its outcome:
@@ -266,7 +286,9 @@ def jam(spec: dict | None) -> None:
             # meets the held index — as the observed report commit did
             # (task 155). It waits for the jam to be in place, boundedly,
             # and the jam waits for it to end before its own commit runs.
-            if not placed.wait(RACE_SECONDS):
+            if collide.get("staged"):
+                stager["thread"] = threading.current_thread()
+            elif not placed.wait(RACE_SECONDS):
                 JAM["timeout"] = "the jam was never placed for the colliding commit"
             try:
                 JAM["collided"] = real(filename, message, spec_, failure)
@@ -274,6 +296,9 @@ def jam(spec: dict | None) -> None:
             finally:
                 collided.set()
         if filename != target or f"→ {stage} " not in message or JAM["jammed"]:
+            return real(filename, message, spec_, failure)
+        if collide.get("staged") and not staged.wait(RACE_SECONDS):
+            JAM["timeout"] = "the colliding commit never staged"
             return real(filename, message, spec_, failure)
         root = config.state_repo()
         found = config.git_run(root, "rev-parse", "--git-path", "index.lock")
