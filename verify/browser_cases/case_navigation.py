@@ -276,8 +276,8 @@ class Navigation(unittest.TestCase):
                                "location.search === '?card=900'", 5))
         self.assertEqual("page", b.eval("document.querySelector('#views [data-view=\"orchestrator\"]')"
                                         ".getAttribute('aria-current')"))
-        if b.wait("!!document.querySelector('#oshell a[data-o=\"board-phase\"]')", 10):
-            b.click('#oshell a[data-o="board-phase"]')
+        if b.wait("!!document.querySelector('#ophase-900 a[data-o=\"board-phase\"]')", 10):
+            b.click('#ophase-900 a[data-o="board-phase"]')
             self.assertTrue(b.wait("location.pathname === '/phases/900'", 5),
                             "the Orchestrator's way to the phase on the Board")
         # a card opened from Tasks returns to Tasks

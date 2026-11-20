@@ -295,6 +295,17 @@ class AWorkBase(unittest.TestCase):
         before its toggle is delivered. Waits for that late toggle, so the
         reading below is after both."""
         b = S["browser"]
+        # the detail view's own readings (its delivery, its result) land a
+        # moment after it opens and redraw it; the race this case makes is
+        # its own, so it starts once those have settled
+        b.eval("(() => { const body = document.querySelector('#drawerbody');"
+               " const html = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');"
+               " if (!body.__wbQuiet) { body.__wbQuiet = true; window.__wbLast = Date.now();"
+               "  Object.defineProperty(body, 'innerHTML', { configurable: true,"
+               "   get() { return html.get.call(this); },"
+               "   set(v) { window.__wbLast = Date.now(); html.set.call(this, v); } }); }"
+               " return true; })()")
+        b.wait("Date.now() - window.__wbLast > 600", 8)
         b.eval(self.RACE_JS)
         act()
         self.assertTrue(b.wait("(window.__wbRace || []).some(e => e.startsWith('toggle:'))", 5),
