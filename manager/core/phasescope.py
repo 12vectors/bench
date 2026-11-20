@@ -179,8 +179,8 @@ def moved_early(member: dict, tasks: list[dict], running: set[str],
         return None
     return ("moved-early", f"it is in In Progress with nothing working it "
             f"(no run, no reservation, no branch), and its turn has not "
-            f"come: {held[1]}. It is not started out of order and it does "
-            f"not hold the phase up — move it back to To Do (queued) or "
+            f"come: {held[1]}. Nothing launches it out of order, and it "
+            f"does not hold the phase up — move it back to To Do (queued) or "
             f"Backlog (not queued)")
 
 
@@ -831,8 +831,8 @@ def lifecycle(phase: dict, tasks: list[dict], reading: dict,
                     f"its next pass", "board", "wait for the next pass")
     if early:
         return done("moved-early", f"{_names(early)} sits in In Progress with "
-                    f"nothing working it, ahead of its turn; it is not started "
-                    f"out of order and does not hold the phase up", "you",
+                    f"nothing working it, ahead of its turn; nothing launches "
+                    f"it out of order and it does not hold the phase up", "you",
                     early_step)
     if by_state.get("integrating"):
         return done("integrating", f"{_names(by_state['integrating'])} is in "

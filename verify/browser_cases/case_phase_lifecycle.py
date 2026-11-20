@@ -219,12 +219,19 @@ class AScopedPhase(unittest.TestCase):
         sel = f".lane article.card[data-file=\"{LATER}\"] .hoveracts button"
         if not b.wait(f"[...document.querySelectorAll('{sel}')].some(x => /to to-do/.test(x.innerText))", 15):
             raise bv.CheckFailed("the moved member offered no way back in its lane")
-        # keyboard: focus the action, Enter arms it, Enter fires it
+        # keyboard: the card's actions show while it holds focus, as they
+        # do on hover; focus the card, then the action; Enter arms, Enter fires
+        card = f".lane article.card[data-file=\"{LATER}\"]"
+        b.eval(f"document.querySelector('{card}').focus()")
+        b.hover(card)
         b.eval(f"[...document.querySelectorAll('{sel}')].find(x => /to to-do/.test(x.innerText)).focus()")
+        if not b.wait(f"document.activeElement && /to to-do/.test(document.activeElement.innerText)", 5):
+            raise bv.CheckFailed("the way back could not take keyboard focus")
         b.key("Enter")
         if not b.wait(f"[...document.querySelectorAll('{sel}')].some(x => x.classList.contains('armed'))", 5):
             raise bv.CheckFailed("the way back did not ask for confirmation")
         # the armed window redraws the card; the keyboard stays on the action
+        b.hover(card)
         b.eval(f"(() => {{ const x = document.querySelector('{sel}.armed');"
                f" if (x && document.activeElement !== x) x.focus(); }})()")
         b.key("Enter")
