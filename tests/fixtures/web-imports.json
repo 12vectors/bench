@@ -61,6 +61,7 @@
   "views/focus.js -> views/sessions.js": 2,
   "views/frame.js -> views/activity.js": 2,
   "views/frame.js -> views/board.js": 2,
+  "views/frame.js -> views/brain.js": 1,
   "views/frame.js -> views/card.js": 2,
   "views/frame.js -> views/focus.js": 2,
   "views/frame.js -> views/header.js": 6,

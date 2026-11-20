@@ -46,6 +46,27 @@ test('every documented destination parses, and formats back to itself', async ()
   }
 });
 
+test('a Brain entry is addressed by its stable id, and nothing else is one (task 157)', async () => {
+  const { parseRoute, formatRoute, routeOf } = await load('lib/route.js');
+  for (const [path, want] of [
+    ['/brain', { view: 'brain' }],
+    ['/brain/e/e-report-routing', { view: 'brain', entry: 'e-report-routing' }],
+    ['/brain/e/0abc', { view: 'brain', entry: '0abc' }],
+  ]) {
+    assert.deepEqual(parseRoute(at(path)), want, path);
+    assert.equal(formatRoute(want), path);
+  }
+  for (const bad of ['/brain/e', '/brain/x/e-a', '/brain/e/E-A', '/brain/e/a.b',
+                     '/brain/e/e-a/more', '/brain/e/%2e%2e']) {
+    const got = parseRoute(at(bad));
+    assert.equal(got.view, 'brain', bad);
+    assert.equal(got.invalid, 'entry', bad);
+    assert.equal(got.entry, undefined, bad);
+  }
+  assert.deepEqual(routeOf({ view: 'brain', brainEntry: 'e-a', dtab: {} }), { view: 'brain', entry: 'e-a' });
+  assert.deepEqual(routeOf({ view: 'brain', brainEntry: null, dtab: {} }), { view: 'brain' });
+});
+
 test('aliases are read and marked, so the page can correct them in place', async () => {
   const { parseRoute, formatRoute } = await load('lib/route.js');
   for (const [where, canonical] of [

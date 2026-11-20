@@ -15,6 +15,10 @@ const S = {
   // stem), and whether the next paint should bring its lane into view
   phaseSel: null,
   phaseScroll: false,
+  // The Brain (task 157): the entry an address names (its stable id), or
+  // null for the list; and what an address named that is not an entry
+  brainEntry: null,
+  brainBad: null,
   disc: {},              // file -> {data, stamp, error}: the card's discussion
   commentDraft: {},      // file -> unsent comment text, kept across redraws
   refineKey: {},         // file -> the request key for that text's refinement

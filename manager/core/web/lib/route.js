@@ -6,6 +6,8 @@
    The public destinations, and the view key each stands for:
 
      /board                      the Board        (`/`, `/index.html` too)
+     /brain[/e/<entry>]          the Brain (task 157), its list or one entry
+                                 by its stable id
      /cards/<card>[?tab=<tab>]   a card's detail view over the Board
      /phases[/<card>]            the Phases view, optionally one phase
      /sessions[/<session>]       Sessions (`flight`), optionally one session
@@ -25,9 +27,9 @@
    `.md`). Never by its lane, its title or its place in a column. A phase
    is a card, so it is named the same way. A session is named by its id. */
 
-const VIEWS = ['board', 'orchestrator', 'phases', 'flight', 'focus', 'settings'];
+const VIEWS = ['board', 'brain', 'orchestrator', 'phases', 'flight', 'focus', 'settings'];
 // the user-facing word for each view's path; `flight` is internal
-const VIEW_PATHS = { board: 'board', orchestrator: 'orchestrator', phases: 'phases',
+const VIEW_PATHS = { board: 'board', brain: 'brain', orchestrator: 'orchestrator', phases: 'phases',
   flight: 'sessions', focus: 'focus', settings: 'settings' };
 // the Orchestrator's sections (task 145), in the order its navigation lists
 const ORCH_SECTIONS = ['overview', 'work', 'decisions', 'phases', 'recovery',
@@ -42,6 +44,8 @@ const CARD_VIEWS = ['board', 'phases'];
 // link reads the way it is typed and nothing else can be smuggled in.
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,199}$/;
 const SECTION_RE = /^[a-z][a-z0-9-]{0,39}$/;
+// a Brain entry's id: what the server's `brain.ID_RE` reads
+const ENTRY_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
 
 function decodeSegment(raw) {
   try { return decodeURIComponent(raw); } catch (e) { return null; }
@@ -62,7 +66,7 @@ function sessionIdOf(raw) {
 
 /* `{pathname, search, hash}` → a route:
 
-     {view, card?, tab?, phase?, session?, section?, invalid?, alias?}
+     {view, card?, tab?, phase?, session?, section?, entry?, invalid?, alias?}
 
    `invalid` names what did not parse (`path`, `card`, `tab`, `phase`,
    `session`, `section`) with `raw` the text, so the page can say so rather
@@ -80,6 +84,13 @@ function parseRoute(where) {
   if (root && hash === '#setup') return { view: 'settings', section: 'setup', alias: true };
   if (root) return { view: 'board', alias: true };
   const [head, rest, ...extra] = parts;
+  if (head === 'brain') {
+    // `/brain` or `/brain/e/<entry>`, nothing else
+    if (rest === undefined) return { view: 'brain' };
+    const id = extra.length === 1 && rest === 'e' ? decodeSegment(extra[0]) : null;
+    if (id !== null && ENTRY_RE.test(id)) return { view: 'brain', entry: id };
+    return { view: 'brain', invalid: 'entry', raw: decodeSegment(pathname) ?? pathname };
+  }
   if (extra.length) return { view: 'board', invalid: 'path', raw: pathname };
   switch (head) {
     case 'board':
@@ -169,6 +180,7 @@ function formatRoute(route) {
   }
   const view = VIEWS.includes(r.view) ? r.view : 'board';
   const base = '/' + VIEW_PATHS[view];
+  if (view === 'brain' && r.entry) return `${base}/e/${enc(r.entry)}`;
   if (view === 'phases' && r.phase) return `${base}/${enc(r.phase)}`;
   if ((view === 'flight' || view === 'focus') && r.session) return `${base}/${enc(r.session)}`;
   if (view === 'settings' && r.section && r.section !== 'overview') return `${base}/${enc(r.section)}`;
@@ -249,6 +261,7 @@ function routeOf(S) {
              tab: S.cardLink.state === 'archived' ? 'overview' : (S.cardLink.tab || 'overview') };
   }
   switch (view) {
+    case 'brain': return S.brainEntry ? { view, entry: S.brainEntry } : { view };
     case 'phases': return S.phaseSel ? { view, phase: S.phaseSel } : { view };
     case 'flight': return S.flightSid ? { view, session: S.flightSid } : { view };
     case 'focus': return S.focusSid ? { view, session: S.focusSid } : { view };

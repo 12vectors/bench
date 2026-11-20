@@ -40,6 +40,9 @@
     <!-- links, not buttons (task 134): each view has an address, so a
          modifier-click or a middle-click opens it in a new tab -->
     <a href="/board" data-view="board" class="on" aria-current="page">Board</a>
+    <!-- the Brain (task 157): maintained entries in the work root's brain/,
+         read only. A first entry point; #159 settles the navigation -->
+    <a href="/brain" data-view="brain">Brain</a>
     <!-- the label is written by renderOrchTab(): how many decisions wait
          on you and the mark a pause or a held incident wears (task 145) -->
     <a href="/orchestrator" data-view="orchestrator">Orchestrator</a>
@@ -95,6 +98,12 @@
          it needs attention, and takes you to it. Not drawn above 760px. -->
     <nav id="stagenav" class="stagenav" aria-label="Stages"></nav>
     <div id="board"></div>
+  </div>
+
+  <!-- the Brain (task 157): the list of maintained entries and one entry,
+       read from brain/ by the server; opening it reads and writes nothing -->
+  <div class="view" id="view-brain">
+    <div class="b-shell" id="bshell"></div>
   </div>
 
   <!-- the Orchestrator (task 145): managed work, phase scopes, decisions,
