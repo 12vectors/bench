@@ -110,11 +110,12 @@ class BrainWriting(unittest.TestCase):
         return b
 
     def type(self, b, field, text):
-        """Focus the field and type into it, as a keyboard does."""
+        """Focus the field and replace its text, firing the input event a
+        keyboard would (both browser transports support this)."""
         sel = f'#bshell [data-bf="{field}"]'
         b.eval(f"(() => {{ const f = document.querySelector({json.dumps(sel)}); f.focus(); "
-               f"f.select && f.select(); }})()")
-        b.call("Input.insertText", {"text": text})
+               f"f.value = {json.dumps(text)}; "
+               "f.dispatchEvent(new Event('input', {bubbles: true})); })()")
 
     def choose(self, b, field, value):
         sel = f'#bshell [data-bf="{field}"]'
