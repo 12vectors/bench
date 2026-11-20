@@ -249,6 +249,14 @@ class TheDuplicateIsNeverCalledPublished(Incident):
         self.assertEqual(record["merge"], local)
         self.assertIn("recovery/", record["action"],
                       "the next step names keeping the local merge under a ref")
+        # the card says the same, from the same record
+        import delivery
+        delivery.bump()
+        status = delivery.for_card(FILENAME, "review")
+        self.assertEqual(status["status"]["word"], "not-published")
+        self.assertIn("Delivered elsewhere", status["status"]["sentence"])
+        self.assertIn("recovery/", status["status"]["sentence"])
+        self.assertEqual(status["primary"]["action"], "complete")
 
     def test_after_the_person_aligns_main_the_card_is_reconciled(self):
         provider, local = self.leave_the_duplicate()

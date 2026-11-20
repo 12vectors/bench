@@ -1581,6 +1581,67 @@ function completionWords(facts, task, driving, swept) {
   return { ship, tickets };
 }
 
+/* What an unfinished completion is (task 166), from the server's record and
+   nothing else: the outcome in words, the one next step, and — folded —
+   the identities kept apart (the card's head, the merge this checkout
+   made, the remote's tip) with the operation that left them. The text is
+   the server's, already scrubbed; the page adds no reading of its own. */
+const PUBLICATION_OUTCOMES = {
+  rejected: 'the remote refused the push',
+  diverged: "the remote's target has commits this checkout's does not",
+  unavailable: 'the remote could not be read',
+  unknown: 'whether the remote holds the merge is not established',
+};
+
+function unfinishedPanel(pending) {
+  const short = (sha) => esc(String(sha || '').slice(0, 12) || '—');
+  const outcome = pending.outcome ||
+    (pending.publication === 'failed' ? 'rejected' : 'unknown');
+  const where = pending.mode === 'origin' ? 'on GitHub' : 'in this checkout';
+  const headline = pending.deliveredElsewhere
+    ? 'Delivered elsewhere — the merge made here is not published'
+    : `Merged, not published — ${PUBLICATION_OUTCOMES[outcome] || outcome}`;
+  const happened = pending.deliveredElsewhere
+    ? `${esc(pending.remote || 'the remote')}/${esc(pending.target)} already holds ` +
+      `${short(pending.commit)} through another merge, so this card's work is delivered. ` +
+      `The merge this checkout made, ${short(pending.merge)}, is not on the remote.`
+    : `${esc(pending.branch)} was merged into ${esc(pending.target)} ${where} at ` +
+      `${short(pending.commit)}, and ${esc(pending.remote || 'the remote')}/` +
+      `${esc(pending.target)} does not hold ${pending.merge && pending.merge !== pending.commit
+        ? `the merge ${short(pending.merge)}` : 'it'}: ${esc(pending.detail || pending.publication)}.`;
+  const next = pending.action ||
+    (pending.diverged
+      ? `${pending.remote}/${pending.target} has commits this checkout does not — bring them ` +
+        `into ${pending.target} (pull, then merge; never force), then retry.`
+      : 'Resolve what the remote refused (a protection rule, access, the network), then retry.');
+  const op = pending.operation || {};
+  const history = (pending.history || []).map(h =>
+    `<li><span class="mono">${esc(h.id || '')}</span> · ${esc(h.source || 'api')}` +
+    ` · ${h.actor ? esc(h.actor) : 'actor not verified'} · ${esc(h.outcome || h.publication || '')}</li>`).join('');
+  return `<div class="panel bad" data-outcome="${esc(outcome)}"><div class="phead"><span class="label">` +
+    `${esc(headline)}</span></div>` +
+    `<div class="check-row fail"><span class="glyph">✕</span><span class="name">what happened</span>` +
+    `<span class="state">${happened} Nothing was rolled back, nothing was cleaned up, and ` +
+    `the card stayed in review/.</span></div>` +
+    `<div class="check-row"><span class="glyph">·</span><span class="name">what to do</span>` +
+    `<span class="state">${esc(next)} The retry checks the remote first and does not merge twice.` +
+    `</span></div>` +
+    `<details class="cmp-evidence"><summary>Identities and evidence</summary>` +
+    `<dl class="cmp-ids">` +
+    `<dt>card head</dt><dd class="mono">${short(pending.commit)}</dd>` +
+    `<dt>merge made here</dt><dd class="mono">${pending.merge ? short(pending.merge) : 'none'}</dd>` +
+    `<dt>remote's ${esc(pending.target)}</dt><dd class="mono">${pending.remoteTip ? short(pending.remoteTip) : 'not read'}</dd>` +
+    `<dt>outcome</dt><dd>${esc(outcome)}</dd>` +
+    `<dt>what the remote said</dt><dd>${esc(pending.detail || '—')}</dd>` +
+    `<dt>operation</dt><dd><span class="mono">${esc(op.id || '—')}</span> · ${esc(op.source || 'api')}` +
+    ` · ${op.actor ? esc(op.actor) : 'actor not verified (the board endpoint authenticates nobody)'}</dd>` +
+    `</dl>${history ? `<ul class="cmp-history">${history}</ul>` : ''}</details>` +
+    `<div class="check-row"><span class="glyph">·</span><span class="name">settled by hand?</span>` +
+    `<span class="state"><button id="sh-forget" class="linkish">Discard this record</button> ` +
+    `— changes nothing in git; use it once you have decided what the unfinished merge means.` +
+    `</span></div></div>`;
+}
+
 async function completeSheet(task, from) {
   // read before anything is drawn: the sheet describes the completion that
   // would run, and a sheet that guessed would be the bug this replaced
@@ -1613,25 +1674,7 @@ async function completeSheet(task, from) {
     ? `<div class="panel bad"><div class="phead"><span class="label">Merge &amp; clean up ` +
       `is refused here</span></div><div class="check-row fail"><span class="glyph">✕</span>` +
       `<span class="state">${esc(facts.refusal)}</span></div></div>` : '';
-  const unfinished = pending
-    ? `<div class="panel bad"><div class="phead"><span class="label">Merged, ` +
-      `publication ${pending.publication === 'failed' ? 'failed' : 'unconfirmed'}</span></div>` +
-      `<div class="check-row fail"><span class="glyph">✕</span><span class="name">what happened</span>` +
-      `<span class="state">${esc(pending.branch)} was merged into ${esc(pending.target)} ` +
-      `${pending.mode === 'origin' ? 'on GitHub' : 'in this checkout'} at ` +
-      `${esc(String(pending.commit).slice(0, 12))}, and ${esc(pending.remote || 'the remote')}/` +
-      `${esc(pending.target)} does not hold it: ${esc(pending.detail || pending.publication)}. ` +
-      `Nothing was rolled back, nothing was cleaned up, and the card stayed in review/.</span></div>` +
-      `<div class="check-row"><span class="glyph">·</span><span class="name">what to do</span>` +
-      `<span class="state">${pending.diverged
-        ? `${esc(pending.remote)}/${esc(pending.target)} has commits this checkout does not — ` +
-          `bring them into ${esc(pending.target)} (pull, then merge; never force), then retry. `
-        : 'Resolve what the remote refused (a protection rule, access, the network), then retry. '}` +
-      `The retry checks the remote first and does not merge twice.</span></div>` +
-      `<div class="check-row"><span class="glyph">·</span><span class="name">settled by hand?</span>` +
-      `<span class="state"><button id="sh-forget" class="linkish">Discard this record</button> ` +
-      `— changes nothing in git; use it once you have decided what the unfinished merge means.` +
-      `</span></div></div>` : '';
+  const unfinished = pending ? unfinishedPanel(pending) : '';
   const wrap = $('#sheetwrap');
   wrap.innerHTML =
     `<div class="sheet">` +
@@ -1697,10 +1740,15 @@ async function completeSheet(task, from) {
       /* merged, not delivered: say what already happened and what did not,
          and never call it done — the card is still in review/ */
       const p = data.publication;
-      toast(`${task.file} merged into ${p.target} at ${String(p.commit).slice(0, 12)}, but ` +
-            `publication failed or is unconfirmed — ${p.remote || 'the remote'}/${p.target} does not ` +
-            `hold it (${p.detail}). Nothing was cleaned up; the card stays in review/. ` +
-            `Resolve it, then drag to done/ to retry.`, true);
+      const next = (data.recovery && data.recovery.action) || 'Resolve it, then drag to done/ to retry.';
+      toast(p.deliveredElsewhere
+        ? `${task.file}: ${p.remote || 'the remote'}/${p.target} already holds its work through ` +
+          `another merge; the merge made here (${String(p.merge).slice(0, 12)}) is not published ` +
+          `— publication failed. Nothing was cleaned up; the card stays in review/. ${next}`
+        : `${task.file} merged into ${p.target} at ${String(p.commit).slice(0, 12)}, but ` +
+          `publication failed or is unconfirmed (${p.outcome || p.state}) — ` +
+          `${p.remote || 'the remote'}/${p.target} does not hold it (${p.detail}). ` +
+          `Nothing was cleaned up; the card stays in review/. ${next}`, true);
     } else {
       const went = (data.swept || []).length;
       const kept = (data.kept || []).length;
@@ -1714,7 +1762,14 @@ async function completeSheet(task, from) {
       } else {
         const local = data.publication && data.publication.state === 'local-only';
         const notes = (data.cleanup && data.cleanup.notes) || [];
-        toast((data.merged ? `${task.file} merged${local ? ' locally (no remote — nothing published)' : ' and published'}` +
+        const caught = data.baseCatchUp && !['synced', 'sync-beat', 'no-remote'].includes(data.baseCatchUp.state)
+          ? ` · the local base was not caught up (${data.baseCatchUp.detail || data.baseCatchUp.state})` : '';
+        if (data.reconciled) notes.push(...(caught ? [caught.slice(3)] : []));
+        toast((data.reconciled
+                ? `${task.file} was already delivered — the remote holds ` +
+                  `${String((data.publication || {}).head || '').slice(0, 12)}; nothing was merged` +
+                  (notes.length ? `; kept — ${notes.join('; ')}` : ', cleaned up')
+                : data.merged ? `${task.file} merged${local ? ' locally (no remote — nothing published)' : ' and published'}` +
                 (notes.length ? `; kept — ${notes.join('; ')}` : ', cleaned up') +
                 (went ? ` — ${went} card${went === 1 ? '' : 's'} went to done/ with it` : '')
               : `${task.file} moved to done`) +
@@ -1864,5 +1919,5 @@ export {
   rawMove, replan, REQ_ITEM, requiredItemRow, requiredSheet, requiredTimer,
   rerunCheck, reuseDetail, REVIEW_LABELS, REVIEW_TARGETS, reviewChip,
   reviewPanel, reviewSheet, runCommand, runPhase, showDetail, startDrive,
-  verifyDetail, verifySheet, wireAction
+  unfinishedPanel, verifyDetail, verifySheet, wireAction
 };

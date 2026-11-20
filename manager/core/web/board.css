@@ -574,6 +574,15 @@
   .pwell .pblock{color:var(--alarm);font-weight:500}
   .check-row{display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--line)}
   .check-row:last-child{border-bottom:none}
+  /* an unfinished completion's identities and evidence (task 166) */
+  .cmp-evidence{padding:7px 0;border-bottom:1px solid var(--line);font-size:11.5px;color:var(--text)}
+  .cmp-evidence summary{cursor:pointer;font-family:var(--mono);font-size:12px;color:var(--text)}
+  .cmp-evidence summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .cmp-ids{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 12px;margin:8px 0 0}
+  .cmp-ids dt{font-family:var(--mono);color:var(--dim)}
+  .cmp-ids dd{margin:0;overflow-wrap:anywhere}
+  .cmp-history{margin:8px 0 0;padding-left:18px;overflow-wrap:anywhere}
+  @media (max-width:760px){.cmp-ids{grid-template-columns:minmax(0,1fr)}.cmp-ids dd{margin-bottom:4px}}
   .check-row .glyph{font-family:var(--mono);font-size:12px;width:12px;flex:none}
   .check-row .name{flex:1;font-family:var(--mono);font-size:12.5px;color:var(--text)}
   .check-row .state{font-size:11.5px;text-align:right}
