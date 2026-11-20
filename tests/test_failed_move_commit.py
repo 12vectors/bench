@@ -117,7 +117,99 @@ class _FailedMoveCommit:
                          "the move's commit must have met the held index and failed")
         return seen
 
+    def staged_then_failing_move(self, source: str, target: str) -> dict:
+        """The full-suite failure's shape (task 155): the move's `git add`
+        succeeds — the old path's deletion and the new path are *staged* —
+        and only then is the index held, so its `git commit` (and every
+        retry) fails. The index then no longer lists the old path, though
+        HEAD still does. Returns what happened; a lock never placed after
+        a staged add is not a reproduction."""
+        lock = self.repo / ".git" / "index.lock"
+        seen = {"staged": False, "committed": None, "heldAtEnd": None}
+        real_git, real_commit = taskfiles._git, taskfiles.commit_paths
+
+        def _git(*args, **kwargs):
+            done = real_git(*args, **kwargs)
+            if args[:1] == ("add",) and done.returncode == 0 and not seen["staged"]:
+                os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                seen["staged"] = True
+            return done
+
+        def commit_paths(filename, message, spec, failure):
+            taskfiles._git = _git
+            try:
+                seen["committed"] = real_commit(filename, message, spec, failure)
+            finally:
+                taskfiles._git = real_git
+                seen["heldAtEnd"] = lock.is_file()
+                if lock.is_file():
+                    lock.unlink()
+            return seen["committed"]
+
+        taskfiles.commit_paths = commit_paths
+        try:
+            taskfiles.move_task(FILENAME, source, target, actor="agent")
+        finally:
+            taskfiles.commit_paths = real_commit
+            taskfiles._git = real_git
+        self.assertEqual(seen, {"staged": True, "committed": False, "heldAtEnd": True},
+                         "the move must have staged, then met the held index and failed")
+        return seen
+
     # — the reproduction: the state a failed move commit leaves —
+
+    def test_a_staged_then_failed_move_commit_leaves_the_deletion_staged(self):
+        self.staged_then_failing_move("to-do", "in-progress")
+
+        self.assertTrue(self.head_has("to-do"))
+        self.assertFalse(self.head_has("in-progress"))
+        self.assertIn(f"D  {self.rel('to-do')}\n", self.porcelain(),
+                      "the deletion is staged: the index no longer lists the old path")
+        self.assertEqual(git(self.repo, "ls-files", "--", self.rel("to-do")).stdout, "")
+
+    def test_the_cards_next_edit_records_a_staged_then_failed_move(self):
+        """The 06:58 full-suite failure (task 155): the standalone card's
+        move into review/ staged and then failed to commit. Its next edit
+        looked for the stale path in the *index* only, found none, named
+        only review/ — so git read the card as created there (eligibility
+        `no-movement`), and the staged deletion of in-progress/ was the
+        local change the phase's merge refused over."""
+        self.staged_then_failing_move("to-do", "in-progress")
+        [move_id] = self.journal_ids()
+
+        taskfiles.append_to_task(FILENAME, "in-progress", "\n## Report\n\nDone.\n", "report")
+
+        self.assertEqual(self.porcelain(), "", "nothing the board did is left unrecorded")
+        self.assertFalse(self.head_has("to-do"))
+        self.assertTrue(self.head_has("in-progress"))
+        message = git(self.repo, "log", "-1", "--format=%B").stdout
+        self.assertIn(f"Bench-Move-Id: {move_id}", message)
+        movements._MEMO.clear()
+        newest = movements.history(FILENAME)["events"][0]
+        self.assertEqual((newest["source"], newest["from"], newest["to"]),
+                         ("commit", "to-do", "in-progress"))
+
+    def test_the_cards_next_move_records_a_staged_then_failed_move(self):
+        self.staged_then_failing_move("to-do", "in-progress")
+
+        taskfiles.move_task(FILENAME, "in-progress", "review", actor="agent")
+
+        self.assertEqual(self.porcelain(), "")
+        self.assertFalse(self.head_has("to-do"))
+        self.assertFalse(self.head_has("in-progress"))
+        self.assertTrue(self.head_has("review"))
+
+    def test_unrelated_staged_work_survives_a_staged_then_failed_moves_healing(self):
+        self.staged_then_failing_move("to-do", "in-progress")
+        (self.repo / "unrelated.txt").write_text("two\n", encoding="utf-8")
+        git(self.repo, "add", "--", "unrelated.txt")
+
+        taskfiles.append_to_task(FILENAME, "in-progress", "\n## Report\n", "report")
+
+        files = git(self.repo, "show", "--name-only", "--no-renames",
+                    "--pretty=format:", "HEAD").stdout.split()
+        self.assertEqual(sorted(files), sorted([self.rel("to-do"), self.rel("in-progress")]))
+        self.assertEqual(self.porcelain(), "M  unrelated.txt\n")
 
     def test_a_failed_move_commit_leaves_the_old_path_unrecorded(self):
         self.failing_move("to-do", "in-progress")
