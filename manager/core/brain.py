@@ -133,11 +133,13 @@ def _header(lines: list[str]) -> tuple[str | None, list[tuple[str, str]], int]:
     if i >= len(lines):
         return None, [], i
     match = TITLE_RE.match(lines[i])
-    if not match or lines[i].startswith("##"):
-        return None, [], i
-    title = match.group(1)
+    title = None
+    if match and not lines[i].startswith("##"):
+        # a header with no title is still read, so the record can say
+        # what is wrong with it rather than claim it is not one at all
+        title = match.group(1)
+        i += 1
     fields: list[tuple[str, str]] = []
-    i += 1
     while i < len(lines):
         line = lines[i]
         if not line.strip():
