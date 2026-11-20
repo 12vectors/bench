@@ -250,7 +250,15 @@ def jam(spec: dict | None) -> None:
         lock = Path(found.stdout.strip())
         if not lock.is_absolute():
             lock = root / lock
-        lock.write_text("", encoding="utf-8")     # exclusive: git's own create
+        try:   # exclusive, as git itself creates it
+            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        except FileExistsError:
+            import traceback
+            JAM["contended"] = [
+                "".join(traceback.format_stack(frame)[-6:])
+                for ident, frame in sys._current_frames().items()
+                if ident != threading.get_ident()]
+            raise
         JAM["jammed"] = True
         try:
             JAM["committed"] = real(filename, message, spec_, failure)

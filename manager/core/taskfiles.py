@@ -1012,13 +1012,44 @@ def _move_spec(src: Path, dst: Path) -> list[str]:
     destination, since a pathspec matching nothing in HEAD would fail the
     commit outright.
     """
-    spec = [str(dst)]
+    return _card_spec(dst, also=src)
+
+
+def _card_spec(path: Path, also: Path | None = None) -> list[str]:
+    """The paths one commit of the card at `path` names: `path` itself,
+    `also` (a move's source) when git knows it, and every other copy of
+    this card git still records under tasks/ that is no longer on disk.
+
+    That last part is what a move whose own commit failed leaves behind
+    (task 155): the card moved on disk — the disk is the truth — but the
+    deletion of where it was is unrecorded, and the card's later commits
+    named only the paths *they* moved between, so the stale path stayed a
+    local change for good: sync paused over it, and a merge that touched
+    it refused. Naming it here records it with the card's next move.
+    Only a move's commit does this — never an edit's: a move's commit
+    carries the movement trailers `movements` reads, and an edit recording
+    a stage change without them would read as an unattributed move. Only
+    this card's own filename, only under the stage and archive
+    directories, and only a path that is gone from disk — so nothing
+    anyone else changed, and no copy of the card that still exists, is
+    swept into the commit."""
+    spec = [str(path)]
+    candidates = [config.TASKS / slug / path.name
+                  for slug in sorted({*config.STAGE_DIRS, "archive"})]
+    if also is not None and also not in candidates:
+        candidates.append(also)
+    root = config.state_repo()
     try:
-        tracked = _git("ls-files", "--", str(src))
-        if tracked.returncode == 0 and tracked.stdout.strip():
-            spec.insert(0, str(src))   # git knew the old path: record its removal
+        tracked = _git("ls-files", "--full-name", "--",
+                       *(str(p) for p in candidates if p != path))
     except (subprocess.SubprocessError, OSError):
-        pass
+        return spec
+    if tracked.returncode != 0 or root is None:
+        return spec
+    for line in tracked.stdout.splitlines():
+        known = root / line
+        if not known.exists() and not known.is_symlink():
+            spec.insert(0, str(known))   # git knew it: record its removal
     return spec
 
 
