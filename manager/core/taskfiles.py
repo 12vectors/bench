@@ -661,16 +661,52 @@ def weave_stacks(stages: list[dict]) -> None:
                 f"from; change one card's base")
 
 
-def collect() -> dict:
-    stages = []
-    for slug, label in config.STAGES:
+# How many times a reading of the stage directories is taken again when a
+# card moved while it was being read (task 155).
+COLLECT_ATTEMPTS = 4
+
+
+def _listing() -> dict[str, list[Path]]:
+    found = {}
+    for slug, _label in config.STAGES:
         directory = config.TASKS / slug
+        found[slug] = sorted(directory.glob("*.md")) if directory.is_dir() else []
+    return found
+
+
+def _read_stages(final: bool) -> tuple[list[dict], bool]:
+    """One reading of every stage directory, and whether it held still.
+
+    A reading is a directory listing and then one read per card, and a
+    card can move between the two — a run's reaper moving its card into
+    review/, a person's move on the page, a pull. Read as it was, that
+    raised FileNotFoundError out of every caller (task 155: a scheduler
+    pass recorded a phase member's launch as an unknown outcome because
+    another card's run ended mid-reading), or showed the moved card twice
+    or not at all. So a reading that lost a file, or whose listing changed
+    while it was taken, says it did not hold still and is taken again. The
+    last attempt keeps what it could read rather than raising."""
+    listing = _listing()
+    stages, steady = [], True
+    for slug, label in config.STAGES:
         tasks = []
-        if directory.is_dir():
-            for path in sorted(directory.glob("*.md")):
+        for path in listing[slug]:
+            try:
                 tasks.append(read_task(path, slug))
+            except FileNotFoundError:
+                steady = False
+                if not final:
+                    return [], False
         tasks.sort(key=lambda t: (int(t["number"]) if t["number"] else 9999, t["file"]))
         stages.append({"slug": slug, "label": label, "tasks": tasks})
+    return stages, steady and _listing() == listing
+
+
+def collect() -> dict:
+    for attempt in range(COLLECT_ATTEMPTS):
+        stages, steady = _read_stages(final=attempt == COLLECT_ATTEMPTS - 1)
+        if steady:
+            break
     weave_phases(stages)
     weave_stacks(stages)
 
