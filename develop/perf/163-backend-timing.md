@@ -78,5 +78,54 @@ as the runner.
 
 ## Comparison (measured)
 
-See the candidate section appended below, from `bench-backend` at the
-final commit.
+Both runs used `bench-backend` on the same machine with the same runner
+and environment, the same 4657 test ids, all passing, none skipped:
+
+| | baseline `464f1fa` | candidate `ab83b88` |
+| --- | --- | --- |
+| evidence | `ev:verification@1ec92f011698` | `ev:verification@15524bacda14` |
+| check took | 1573.0s | 1565.9s |
+| elapsed (collector) | 1568.5s | 1561.4s |
+| tests / fixtures | 1531.2s / 35.9s | 1527.3s / 32.7s |
+| `OnlyMissingRequired` | 121.8s | under 7.7s (no longer in the top 15) |
+| collector overhead | 0.8µs/test | 0.6µs/test |
+
+**The totals did not move, and the reason is measured.** Each run holds a
+few one-off stalls in tests that are fast everywhere else, and the stalls
+land in different tests in each run:
+
+| test | in the run where it stalled | elsewhere |
+| --- | --- | --- |
+| `test_gate_compare … same_resolver_twice…` | 86.6s (baseline) | not in the candidate's top 25 (≤7.5s); its whole module takes 5.1s in a shell |
+| `test_gate_invalid_wording` (2 tests) | 70.9s + 20.7s (baseline) | not in the candidate's top 15 classes; 0.37s in a shell |
+| `test_failed_move_commit.External … quoted_cards_failed_move…` | 169.6s (candidate) | baseline class 15.6s for 20 tests; 20.2s in a shell with the stalled journey below |
+| `test_orchestration_journey.FailureWindows … crash_before_the_launch…` | 140.6s (candidate) | baseline class 51.5s for 11 tests |
+
+Together that is roughly 175s of stall in the baseline and 300s in the
+candidate. The 120s the fix removed is real (the class reading above) but
+smaller than the run-to-run spread these stalls make. Two single runs
+cannot show a whole-suite speed-up, and none is claimed. **Hypothesis,
+not measured:** the stalls are contention from other work on the shared
+machine, or the directed environment's cold start-up described above. A
+test does not stall in one run and finish in under a second in the next
+because of anything in its own logic.
+
+## Remaining hotspots (measured, candidate run)
+
+- `test_orchestration_journey` (Vendored, SourceHosted, External,
+  FailureWindows): about 370s across 38 tests even without a stall. These
+  are the end-to-end journeys (real git repositories, a bare origin, the
+  adapter's own `run`), at 8–18s each. Shortening them means sharing a
+  journey's prepared board between tests, which needs its own isolation
+  evidence. Out of scope here.
+- `test_architecture.ScratchCopyCatchesViolations`: 33–39s for 19 tests,
+  each copying the tree into a scratch directory.
+- `test_verify_entrypoints.RemotePlaywright`: 26s, mostly two
+  `…times_out…` tests at 11s each. Each waits out a deliberate timeout it
+  asserts on, so this is not changed.
+
+## Reproducing
+
+    bench-verify bench-backend          # prints the ranking into its evidence
+    bench-verify --details <evidence>   # reads it back
+    verify/timing-report --baseline A… --candidate B…   # compares timings.json sets
