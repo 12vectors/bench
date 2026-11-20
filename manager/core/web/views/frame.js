@@ -241,11 +241,12 @@ function renderBoardNav() {
     where = crumbsHtml(activityTrail(), esc);
   }
   setHtml($('#bnwhere'), where);
-  // the board-wide activity: a link everywhere but at itself
+  // the board-wide activity: a link everywhere but at itself. Following it
+  // keeps the session chosen there, so in its own view without a context —
+  // a session chosen or not — it would land where it started: there it is
+  // not drawn, and the breadcrumb's "All sessions" is the way to the list
   nav.querySelectorAll('.bn-act [data-view]').forEach(a => {
-    const here = a.dataset.view === S.view && !S.activityCtx &&
-      !(S.view === 'flight' ? S.flightSid : S.focusSid);
-    a.hidden = here;
+    a.hidden = a.dataset.view === S.view && !S.activityCtx;
   });
 }
 

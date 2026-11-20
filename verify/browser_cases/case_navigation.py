@@ -23,14 +23,21 @@ with the pointer and the keyboard, and takes screenshots to look at:
   malformed file explained;
 - **themes and widths**: Night and Daylight at 1280px and 390px, nothing
   overflowing;
-- **passive navigation**: every navigation above (but the one edit, made
-  in this fixture) sends no write and changes no file in the work root,
-  and an armed action still arms before it fires.
+- **passive navigation**: the browser reaches the backend only through a
+  loopback proxy (`Watch`) that records every request that is not a read,
+  page loads and deep links included. Every navigation above — but the
+  one edit, made in this fixture and seen to send its own save and nothing
+  else — sends no write (so no move, launch or check can have been asked
+  for) and changes no file in the work root, and an armed action still
+  arms before it fires.
 """
 
 import hashlib
+import http.client
+import http.server
 import json
 import shutil
+import threading
 import time
 import unittest
 
@@ -59,20 +66,96 @@ def card(title, status, extra=""):
 
 BROKEN = "# Broken\n\n**Brain:** 1\n**Id:** e-nav-broken\n**Kind:** Wiki\n**Classification:** Current\n\nx\n"
 
-# the page records every request it sends that is not a read
-SPY = """(() => {
-  if (!window.__navSpy) {
-    window.__navSpy = [];
-    const real = window.fetch;
-    window.fetch = function (input, init) {
-      const method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
-      if (method !== 'GET' && method !== 'HEAD')
-        window.__navSpy.push(method + ' ' + String(input && input.url || input));
-      return real.apply(this, arguments);
-    };
-  }
-  return true;
-})()"""
+# Hop-by-hop headers a proxy does not forward (RFC 9110 §7.6.1).
+HOP = {"connection", "keep-alive", "proxy-connection", "transfer-encoding",
+       "te", "trailer", "upgrade", "proxy-authorization", "proxy-authenticate"}
+
+
+class Watch:
+    """A loopback proxy in front of this case's backend, and the browser's
+    only way to it: every request the page sends — while an address loads,
+    after it, from a script, a form or a beacon — passes through here, and
+    every one that is not a read is recorded. A spy inside the page could
+    not do this: each page load discards it, and the requests a deep link
+    makes while it loads come before any script a case can inject.
+
+    It forwards bytes and changes nothing, and it streams, so the board's
+    event stream reaches the page as it would directly. Its origin is
+    listed in the backend's `BOARD_ALLOWED_ORIGINS`, so the one write the
+    case makes on purpose (an edit, in this fixture) is accepted — and
+    recorded like any other."""
+
+    def __init__(self):
+        self.port = bv.free_port()
+        self.url = f"http://127.0.0.1:{self.port}"
+        self.writes: list[str] = []
+        self.reads = 0
+        self.lock = threading.Lock()
+        self.upstream = None
+        self.server = None
+
+    def start(self, upstream_port: int):
+        self.upstream = upstream_port
+        watch = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.0"
+
+            def log_message(self, fmt, *args):
+                pass
+
+            def relay(self):
+                method = self.command.upper()
+                with watch.lock:
+                    if method in ("GET", "HEAD"):
+                        watch.reads += 1
+                    else:
+                        watch.writes.append(f"{method} {self.path}")
+                length = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(length) if length > 0 else None
+                headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP}
+                conn = http.client.HTTPConnection("127.0.0.1", watch.upstream, timeout=600)
+                try:
+                    conn.request(method, self.path, body=body, headers=headers)
+                    resp = conn.getresponse()
+                    self.send_response_only(resp.status, resp.reason)
+                    for k, v in resp.getheaders():
+                        if k.lower() not in HOP:
+                            self.send_header(k, v)
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    if method == "HEAD":
+                        return
+                    while True:
+                        chunk = resp.read1(65536)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                except (OSError, http.client.HTTPException):
+                    pass
+                finally:
+                    conn.close()
+
+            do_GET = do_HEAD = do_POST = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = relay
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
+        self.server.daemon_threads = True
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        return self
+
+    def mark(self) -> int:
+        with self.lock:
+            return len(self.writes)
+
+    def since(self, mark: int) -> list[str]:
+        with self.lock:
+            return list(self.writes[mark:])
+
+    def stop(self):
+        if self.server:
+            self.server.shutdown()
+            self.server.server_close()
 
 
 def setUpModule():
@@ -100,7 +183,12 @@ class Navigation(unittest.TestCase):
         shared = S["backend"]
         base = shared.base.parent / "navigation-fixture"
         shutil.rmtree(base, ignore_errors=True)
-        cls.backend = bv.Backend(shared.tool, base, dict(shared.env), shared.python)
+        # the browser reaches this backend only through the watch (above)
+        cls.watch = Watch()
+        env = dict(shared.env)
+        env["BOARD_ALLOWED_ORIGINS"] = ",".join(
+            o for o in (env.get("BOARD_ALLOWED_ORIGINS", "").strip(), cls.watch.url) if o)
+        cls.backend = bv.Backend(shared.tool, base, env, shared.python)
         tasks = cls.backend.work / "tasks"
         (tasks / "to-do" / "900-navigation-phase.md").write_text(PHASE, encoding="utf-8")
         (tasks / "review" / "901-first-navigation-member.md").write_text(
@@ -144,7 +232,14 @@ class Navigation(unittest.TestCase):
         cls.ids = {e["title"]: e["id"] for e in json.loads(cls.backend.get("/api/brain")[1])
                    ["brain"]["entries"]}
         cls.origin = S["browser"].origin
-        cls.before = tree(cls.backend.work)
+        cls.watch.start(cls.backend.port)
+
+    def setUp(self):
+        # what each test's navigation is held to: no write sent from here on,
+        # and the work root exactly as it is now
+        self.mark = self.watch.mark()
+        self.reads = self.watch.reads
+        self.before = tree(self.backend.work)
 
     @classmethod
     def tearDownClass(cls):
@@ -154,6 +249,7 @@ class Navigation(unittest.TestCase):
         except (bv.CheckFailed, bv.SetupError):
             pass
         b.origin = cls.origin
+        cls.watch.stop()
         cls.backend.stop()
         shutil.rmtree(cls.backend.base, ignore_errors=True)
 
@@ -161,13 +257,12 @@ class Navigation(unittest.TestCase):
 
     def open(self, path, ready, width=1280, height=860, dark=True):
         b = S["browser"]
-        b.origin = self.backend.url
+        b.origin = self.watch.url
         b.viewport(width, height)
         b.goto(path)
         if not b.wait(f"typeof S === 'object' && !!S.state && ({ready})", 15):
             raise bv.CheckFailed(f"{path}: never ready ({ready})")
         b.eval(f"S.dark = {str(dark).lower()}; applyTheme(); true")
-        b.eval(SPY)
         # the page writes addresses only once its first one is applied
         time.sleep(0.3)
         return b
@@ -179,8 +274,14 @@ class Navigation(unittest.TestCase):
         return S["browser"].eval(f"[...document.querySelectorAll('{where} .crumbs li')]"
                                  ".map(li => li.innerText.trim())")
 
-    def passive(self, b, what):
-        self.assertEqual([], b.eval("window.__navSpy || []"), f"{what}: navigation sent a write")
+    def passive(self, what):
+        """Everything since this test began — every page load, deep link,
+        click, key and Back — sent no write, and the work root is as it was.
+        The reads are counted too, so a watch the page went round could not
+        pass this by seeing nothing."""
+        self.assertGreater(self.watch.reads, self.reads,
+                           f"{what}: the page sent nothing through the watch")
+        self.assertEqual([], self.watch.since(self.mark), f"{what}: navigation sent a write")
         self.assertEqual(self.before, tree(self.backend.work), f"{what}: the work root changed")
 
     def one_click(self, b, selector, path, what):
@@ -233,8 +334,7 @@ class Navigation(unittest.TestCase):
         b.key("Enter")
         self.assertTrue(b.wait("location.pathname === '/brain'", 5), "Enter on the Brain link")
         self.assertNotEqual("none", ring, "the focused primary link draws no focus ring")
-        b.eval(SPY)
-        self.passive(b, "the primary navigation")
+        self.passive("the primary navigation")
 
     # ── 2. Tasks / Phases and a phase drilled into ──
 
@@ -288,8 +388,7 @@ class Navigation(unittest.TestCase):
         self.assertTrue(b.wait("location.pathname === '/board' && "
                                "!document.querySelector('#drawer').classList.contains('open')", 5),
                         "the Tasks crumb closes the card back to Tasks")
-        b.eval(SPY)
-        self.passive(b, "Tasks, Phases and the drilldown")
+        self.passive("Tasks, Phases and the drilldown")
 
     # ── 3. Sessions and Focus in context ──
 
@@ -316,7 +415,6 @@ class Navigation(unittest.TestCase):
         # from a phase's lane: the phase and its members' sessions
         b.goto("/phases/900")
         b.wait("!!document.querySelector('#lanes a[data-phase-sessions]')", 10)
-        b.eval(SPY)
         self.one_click(b, '#lanes a[data-phase-sessions]', "/sessions?card=900", "Sessions for the phase")
         self.assertTrue(b.wait("document.querySelectorAll('#frail .sess-row').length === 1", 5))
         self.assertEqual("nav-member-session", b.eval("document.querySelector('#frail .sess-row').dataset.sid"))
@@ -327,8 +425,7 @@ class Navigation(unittest.TestCase):
         # Back walks the visited context
         b.eval("history.back()")
         self.assertTrue(b.wait("location.pathname === '/phases/900'", 5))
-        b.eval(SPY)
-        self.passive(b, "Sessions and Focus in context")
+        self.passive("Sessions and Focus in context")
 
     def test_4_direct_and_missing_session_links_say_what_they_know(self):
         # a session link with no context names the card it recorded
@@ -337,6 +434,15 @@ class Navigation(unittest.TestCase):
         self.assertIn("#901 First navigation member", line)
         self.assertIn("Sessions for #901", line)
         self.assertEqual(["Board", "All sessions"], self.crumbs()[:2])
+        # the board-wide Sessions link would land where it is (it keeps the
+        # chosen session), so it is not drawn here; Focus is another place
+        hidden = "[...document.querySelectorAll('#bnact [data-view]')].filter(a => a.hidden).map(a => a.dataset.view)"
+        self.assertEqual(["flight"], b.eval(hidden), "at /sessions/<session>, no link to itself")
+        # the crumb is the way to the whole list, one click, nothing chosen
+        self.one_click(b, '#bnwhere .crumbs a[href="/sessions"]', "/sessions", "the All sessions crumb")
+        self.assertFalse(b.eval("!!document.querySelector('#frail .sess-row.sel')"),
+                         "the All sessions crumb leaves no session chosen")
+        self.assertEqual(["flight"], b.eval(hidden), "at /sessions, no link to itself")
         # one with no card says so, and invents no parent
         b.goto("/sessions/nav-orphan-session")
         b.wait("!!document.querySelector('#fsession .s-ctx')", 10)
@@ -356,8 +462,7 @@ class Navigation(unittest.TestCase):
         b.goto("/sessions/nav-plain-session?card=903")
         b.wait("!!document.querySelector('#frail .sess-row.sel')", 10)
         self.assertEqual("/sessions/nav-plain-session?card=903", self.here())
-        b.eval(SPY)
-        self.passive(b, "direct and missing session links")
+        self.passive("direct and missing session links")
 
     # ── 5. the Brain ──
 
@@ -418,14 +523,14 @@ class Navigation(unittest.TestCase):
                                "document.querySelector('#views [data-view=\"board\"]').classList.contains('on')", 5))
         b.eval("history.back()")
         self.assertTrue(b.wait(f"location.pathname === '/brain/e/{guide}'", 5))
-        b.eval(SPY)
-        self.passive(b, "browsing the Brain")
+        self.passive("browsing the Brain")
         # an armed action still arms first: Retire writes nothing on one click
         b.wait("!!document.querySelector('#bshell [data-bact=\"retire\"]')", 5)
         b.click('#bshell [data-bact="retire"]')
         b.wait("!!document.querySelector('#bshell .b-form')", 5)
-        self.assertEqual([], b.eval("window.__navSpy"), "opening Retire sent a write")
         b.click('#bshell [data-bact="cancel"]')
+        self.passive("opening Retire, and cancelling it")
+        edit_mark = self.watch.mark()
         # and an edit is a real write, in this fixture only
         b.wait("!!document.querySelector('#bshell [data-bact=\"edit\"]')", 5)
         b.click('#bshell [data-bact="edit"]')
@@ -442,8 +547,11 @@ class Navigation(unittest.TestCase):
         self.assertTrue(b.wait("document.querySelectorAll('#bshell .b-list a[data-brain-id]').length === 1", 5),
                         "the edited summary is found")
         self.search(b, "")
-        # the one write this case makes is the baseline from here on
-        type(self).before = tree(self.backend.work)
+        # the edit is the one write this case makes, and the only one sent:
+        # the Save, and nothing on the way to it or back to the list
+        sent = self.watch.since(edit_mark)
+        self.assertTrue(sent and all(w == "POST /api/brain/edit" for w in sent),
+                        f"the edit sent something besides its own save: {sent}")
 
     # ── 6. themes and widths ──
 
@@ -463,8 +571,7 @@ class Navigation(unittest.TestCase):
                     self.assertTrue(four, f"{path} {label}: a primary link is cut off or too small")
                     name = path.strip("/").replace("/", "-").replace("?card=", "-ctx-") or "board"
                     shot(f"nav-{name}-{label}-{'night' if dark else 'day'}")
-        S["browser"].eval(SPY)
-        self.passive(S["browser"], "themes and widths")
+        self.passive("themes and widths")
 
 
 if __name__ == "__main__":

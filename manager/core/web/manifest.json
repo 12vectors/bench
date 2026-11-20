@@ -311,8 +311,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/frame.js": {
-   "bytes": 14868,
-   "sha256": "59d2e675fee03f3e31a08f8cfd2891a626c6dc9b9764e93839cdf6fd1a8768d8",
+   "bytes": 15030,
+   "sha256": "b03edaedc77b14ad675234a522bb19783701fef5f32079e987b4cc241ba16f1a",
    "type": "text/javascript; charset=utf-8"
   },
   "views/gates.js": {
