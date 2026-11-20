@@ -358,8 +358,13 @@ class FirstEnabledCommitmentLaunches(Sandbox):
         self.assertEqual("run-1", op["agent"])
         self.assertEqual("bench", op["scope"])
         # the card keeps the public record: intent before, receipt after
-        phases = [(n["phase"], n["outcome"]) for n in self.notes]
+        phases = [(n["phase"], n["outcome"]) for n in self.notes
+                  if n["kind"] == "action"]
         self.assertEqual([("intent", "intended"), ("receipt", "launched")], phases)
+        # and, before the intent, the work-base decision (task 150): an
+        # independent card starts from the normal base
+        self.assertEqual("base", self.notes[0]["kind"])
+        self.assertEqual("normal", self.notes[0]["decision"])
 
     def test_a_designated_board_takes_its_own_lock_and_no_one_elses(self):
         self.board.add("1")

@@ -324,6 +324,86 @@ class BoundAndRefused(ActionCase):
 # ── update from parent ─────────────────────────────────────────────────
 
 
+class DecidedStack(ActionCase):
+    """The same three actions on a card stacked by the orchestrator's
+    work-base decision (task 150) rather than by a `**Base branch:**`
+    header: the decision is the card's base, so the confirmed actions —
+    and the retarget record the merge rules read — apply to it unchanged."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(setattr, taskfiles, "actor_name", taskfiles.actor_name)
+        taskfiles.actor_name = lambda: "ada"
+
+    def decided_pair(self) -> tuple[str, str]:
+        import basechoice
+        import gitrepo
+        ptip = self.branch(P_BRANCH)
+        self.write(PARENT, card("56 — The parent"))
+        self.write(CHILD, "# 57 — The child\n\n**Status:** To Do\n**Priority:** High\n"
+                          "**Depends on:** 56\n\nWhat this card is for.\n", "to-do")
+        task = next(t for g in taskfiles.collect()["stages"] for t in g["tasks"]
+                    if t["file"] == CHILD)
+        found = basechoice.decide(task)
+        self.assertEqual(("stacked", ptip), (found["decision"], found["commit"]))
+        plan = plans.require(plans.preflight(CHILD, "to-do", fetch=False))
+        self.assertEqual((ptip, P_BRANCH), (plan["startRef"], plan["prBase"]))
+        tree = Path(plan["worktree"])
+        made = gitrepo.worktree_add(tree, plan["branch"], new=True, start=plan["startRef"])
+        self.assertEqual(0, made.returncode, made.stderr)
+        plans.record(plan)
+        (tree / "child.txt").write_text("child\n", encoding="utf-8")
+        git(tree, "add", "-A")
+        git(tree, "commit", "-q", "-m", "child")
+        git(tree, "push", "-q", "origin", C_BRANCH)
+        text = (self.tasks / "to-do" / CHILD).read_text(encoding="utf-8")
+        (self.tasks / "to-do" / CHILD).unlink()
+        self.write(CHILD, text.replace("**Status:** To Do", "**Status:** Review"))
+        self.assertNotIn("**Base branch:**", text, "stacked by the decision alone")
+        return ptip, sha(self.repo, C_BRANCH)
+
+    def test_the_stack_reading_and_the_retarget_follow_the_decision(self):
+        ptip, ctip = self.decided_pair()
+        self.assertEqual(self.stacked()[CHILD]["parent"]["file"], PARENT)
+        git(self.repo, "merge", "-q", "--no-ff", "-m", "merge 56", P_BRANCH)
+        git(self.repo, "push", "-q", "origin", "main")
+        self.delivered(PARENT, ptip)
+        url = self.host.create(C_BRANCH, P_BRANCH, "child")
+        text = self.card_text().replace("**Priority:** High\n",
+                                        f"**Priority:** High\n**PR:** {url}\n")
+        self.write(CHILD, text)
+        self.snapshot(CHILD, head=ctip, prState="OPEN", base=P_BRANCH)
+        self.assertEqual(self.edge(), "parent-landed")
+        result = self.confirm("retarget")
+        self.assertTrue(result["ok"], result)
+        number = url.rstrip("/").rsplit("/", 1)[-1]
+        self.assertEqual(self.edits(), [["pr", "edit", number, "--base", "main"]])
+        self.assertEqual(self.host.view(number, ["baseRefName"])["baseRefName"], "main")
+        plan = plans.recorded(CHILD)
+        self.assertEqual(plan["prBase"], "main")
+        # the record the merge rules read to stop counting an earlier
+        # Bench verdict or approval at this head (`ReviewFollowsTheTarget`)
+        self.assertEqual((P_BRANCH, "main", ctip),
+                         (plan["retargets"][-1]["from"], plan["retargets"][-1]["to"],
+                          plan["retargets"][-1]["head"]))
+        self.assertEqual(self.edge(), "retargeted")
+        self.assertEqual(sha(self.repo, C_BRANCH), ctip,
+                         "a retarget changes the target, never the branch's contents")
+
+    def test_update_from_the_parent_is_an_additive_merge(self):
+        _, ctip = self.decided_pair()
+        ptip = self.commit_on(P_BRANCH, "more-parent-work")
+        self.assertIn("update", [a["action"] for a in
+                                 self.stacked()[CHILD]["actions"]])
+        result = self.confirm("update")
+        self.assertTrue(result["ok"], result)
+        head = sha(self.repo, C_BRANCH)
+        parents = git(self.repo, "rev-list", "--parents", "-n", "1",
+                      head).stdout.split()[1:]
+        self.assertEqual(parents, [ctip, ptip], "not an additive merge")
+        self.assertEqual(self.edge(), "on-parent")
+
+
 class UpdateFromParent(ActionCase):
 
     def test_an_additive_merge_published_with_a_plain_push(self):

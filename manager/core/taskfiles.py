@@ -40,6 +40,7 @@ from pathlib import Path
 import config
 import records
 import state
+import workbase
 
 # Every read-modify-write of a card's text in this module takes this lock,
 # so two of the board's own writers — a comment being saved and a report
@@ -49,6 +50,16 @@ import state
 # being replaced) also compare the file to what they read immediately
 # before replacing it.
 WRITE_LOCK = threading.RLock()
+
+# The board's own commits share one index: a run's ending committing its
+# card's move on one thread and a scheduler pass committing another card's
+# on the next would each find the other's `index.lock` and one would fail,
+# leaving a move staged and never recorded — which later stops a merge on
+# that checkout. So the board's commits take turns, and a lock held by a
+# git outside this process (a sync, a person's command) is waited out
+# briefly rather than read as a failure.
+COMMIT_LOCK = threading.RLock()
+_INDEX_LOCK_TRIES = 6
 
 TITLE_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 STATUS_RE = re.compile(r"^\*\*Status:\*\*\s*(.+?)\s*$", re.MULTILINE)
@@ -266,6 +277,12 @@ def read_task(path: Path, stage: str) -> dict:
         # drift` and `phase drift`: flagged on the card, never guessed
         # around. `plans.preflight` adds what only git can answer.
         "planDrift": plan_drift,
+        # The orchestrator's work-base decision (task 150), read back off
+        # the card's own Orchestration record: which code a new start is
+        # built on when neither a header nor a phase says. None on every
+        # card that has none, which reads exactly as before.
+        "workBase": (workbase.reading(card_parts(text)["history"])
+                     if "bench:orchestration" in text else None),
         # A phase and its members: `cards` is what this card claims (empty
         # for everything that is not a phase), `members`, `phase` and the
         # drift between them are derived across the whole board by
@@ -565,6 +582,21 @@ def _stack_name(task: dict) -> str:
     return f"#{task['number']}" if task.get("number") else task["file"]
 
 
+def decided_base(task: dict) -> str | None:
+    """The branch an accepted `stacked` work-base decision builds this card
+    on (task 150), or None. A card's own **Base branch:** header outranks
+    it and a phase member or phase card never reads one, so the decision
+    only ever fills the application default's place."""
+    if task.get("baseBranch") or task.get("phase") or task.get("isPhase"):
+        return None
+    accepted = (task.get("workBase") or {}).get("accepted") or {}
+    branch = accepted.get("branch")
+    if accepted.get("decision") == "stacked" and branch \
+            and ref_problem(branch) is None:
+        return branch
+    return None
+
+
 def weave_stacks(stages: list[dict]) -> None:
     """Resolve every card's **Base branch:** against the board: which card,
     if any, its work is stacked on, which cards are stacked on it, and
@@ -601,10 +633,12 @@ def weave_stacks(stages: list[dict]) -> None:
             here.update(mapping="integration",
                         base=config.PHASE_BRANCH_PREFIX + task["phase"]["file"][:-3])
             continue
-        base = task.get("baseBranch")
+        base = task.get("baseBranch") or decided_base(task)
         if not base or base == config.APP_BASE:
             continue
         here["base"] = base
+        if not task.get("baseBranch"):
+            here["decided"] = True
         if base.startswith(config.TASK_BRANCH_PREFIX):
             stem, phase = base[len(config.TASK_BRANCH_PREFIX):], False
         elif base.startswith(config.PHASE_BRANCH_PREFIX):
@@ -655,22 +689,60 @@ def weave_stacks(stages: list[dict]) -> None:
         for member in loop:
             card = by_file[member]
             card["stack"]["cycle"] = list(loop)
+            said = ("the work-base decision" if card["stack"].get("decided")
+                    else "**Base branch:**")
             card["planDrift"].append(
-                f"**Base branch:** {card['stack']['base']} makes a loop of "
+                f"{said} {card['stack']['base']} makes a loop of "
                 f"stacked cards ({names}) — a stack needs a bottom to start "
                 f"from; change one card's base")
 
 
-def collect() -> dict:
-    stages = []
-    for slug, label in config.STAGES:
+# How many times a reading of the stage directories is taken again when a
+# card moved while it was being read (task 155).
+COLLECT_ATTEMPTS = 4
+
+
+def _listing() -> dict[str, list[Path]]:
+    found = {}
+    for slug, _label in config.STAGES:
         directory = config.TASKS / slug
+        found[slug] = sorted(directory.glob("*.md")) if directory.is_dir() else []
+    return found
+
+
+def _read_stages(final: bool) -> tuple[list[dict], bool]:
+    """One reading of every stage directory, and whether it held still.
+
+    A reading is a directory listing and then one read per card, and a
+    card can move between the two — a run's reaper moving its card into
+    review/, a person's move on the page, a pull. Read as it was, that
+    raised FileNotFoundError out of every caller (task 155: a scheduler
+    pass recorded a phase member's launch as an unknown outcome because
+    another card's run ended mid-reading), or showed the moved card twice
+    or not at all. So a reading that lost a file, or whose listing changed
+    while it was taken, says it did not hold still and is taken again. The
+    last attempt keeps what it could read rather than raising."""
+    listing = _listing()
+    stages, steady = [], True
+    for slug, label in config.STAGES:
         tasks = []
-        if directory.is_dir():
-            for path in sorted(directory.glob("*.md")):
+        for path in listing[slug]:
+            try:
                 tasks.append(read_task(path, slug))
+            except FileNotFoundError:
+                steady = False
+                if not final:
+                    return [], False
         tasks.sort(key=lambda t: (int(t["number"]) if t["number"] else 9999, t["file"]))
         stages.append({"slug": slug, "label": label, "tasks": tasks})
+    return stages, steady and _listing() == listing
+
+
+def collect() -> dict:
+    for attempt in range(COLLECT_ATTEMPTS):
+        stages, steady = _read_stages(final=attempt == COLLECT_ATTEMPTS - 1)
+        if steady:
+            break
     weave_phases(stages)
     weave_stacks(stages)
 
@@ -904,12 +976,19 @@ def commit_paths(filename: str, message: str, spec: list[str], failure: str) -> 
                         f"bookkeeping to the application instead")})
         return False
     try:
-        result = _git("add", "-A", "--", *spec)
-        if result.returncode == 0:
-            result = _git("commit", "--no-verify", "-m", message, "--", *spec, timeout=60)
-            if result.returncode == 0:
-                state.task_committed(filename)   # sync (when on) publishes it
-                return True
+        with COMMIT_LOCK:
+            for attempt in range(_INDEX_LOCK_TRIES):
+                result = _git("add", "-A", "--", *spec)
+                if result.returncode == 0:
+                    result = _git("commit", "--no-verify", "-m", message, "--",
+                                  *spec, timeout=60)
+                    if result.returncode == 0:
+                        state.task_committed(filename)   # sync (when on) publishes it
+                        return True
+                said = f"{result.stderr or ''}{result.stdout or ''}"
+                if "index.lock" not in said or attempt == _INDEX_LOCK_TRIES - 1:
+                    break
+                time.sleep(0.05 * (attempt + 1))
         lines = (result.stderr or result.stdout).strip().splitlines()
         detail = lines[-1] if lines else f"git exited {result.returncode}"
     except (subprocess.SubprocessError, OSError) as exc:

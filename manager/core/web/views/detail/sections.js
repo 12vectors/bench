@@ -32,6 +32,37 @@ const ACC_GLYPH = { accepted: '✓', 'needs-work': '✕', recheck: '↻', report
 const STAGE_WORDS = { backlog: 'Backlog', 'to-do': 'To do', 'in-progress': 'In progress',
                       review: 'Review', done: 'Done' };
 
+/* The Overview's Work base block (task 150): the orchestrator's decision
+   about which code this card's work starts from, in the server's words —
+   "Starting from main", "Building on #61's committed work" — with why,
+   what it rests on and what withdrew it, folded under it. It draws the
+   recorded decision only; nothing here fetches, decides or launches. */
+function workBaseBlock(t) {
+  const w = ((S.state.plans || {})[t.file] || {}).workBase;
+  if (!w) return '';
+  const a = w.accepted || {};
+  const l = w.latest || {};
+  const stale = l.decision === 'stale' || l.decision === 'blocked';
+  const fact = (k, v) => v ? `<dt>${esc(k)}</dt><dd>${v}</dd>` : '';
+  const mono = v => v ? `<span class="mono">${esc(v)}</span>` : '';
+  return `<section class="workbase" aria-label="Work base">` +
+    `<h3>Work base</h3>` +
+    `<p class="wbhead" data-decision="${esc(l.decision || '')}"${stale ? ' role="status"' : ''}>` +
+    `<b>${esc(w.headline)}.</b> ${esc((stale ? l.summary : a.summary) || '')}</p>` +
+    (w.withdrawn ? `<p class="dnote">A new start is held: ${esc(w.withdrawn)}</p>` : '') +
+    `<details class="rpt" data-keep="workbase"><summary>Refs, evidence and history</summary>` +
+    `<dl class="dfacts">` +
+    fact('Decision', esc(a.decision || l.decision || '') + (a.id ? ` · ${mono(a.id)}` : '')) +
+    fact('Starts from', a.branch ? mono(a.branch) + (a.commit ? ` at ${mono(a.commit.slice(0, 12))}` : '') : '') +
+    fact('PR targets', mono(a.prBase)) +
+    fact('Normal base', mono(a.appBase)) +
+    fact('Prerequisite', a.parent ? `#${esc(a.parent)}` + (a.parentPr ? ` · ${esc(a.parentPr)}` : '') : '') +
+    fact('Not selected', esc(a.alternatives || l.alternatives || '')) +
+    fact('Latest record', l.id && l.id !== a.id ? `${esc(l.decision)} (${esc(l.code || '')}) · ${mono(l.id)} — ${esc(l.summary || '')}` : '') +
+    fact('Recorded', esc(a.at || l.at || '') + ' · observed by Bench, not agent-reported') +
+    `</dl></details></section>`;
+}
+
 function drawerTab(t) {
   const want = S.dtab[t.file];
   return DTABS.some(([k]) => k === want) ? want : 'overview';
@@ -212,7 +243,7 @@ function overviewHtml(t, acc, failBlock, signals, plan, members) {
       ((acc.relevance || []).length > 1 ? ` · ${acc.relevance.length} on record` : '') : '') +
     `</dl>` +
     (last ? `<p class="dnote">A reviewer's verdict is about the revision it names. GitHub's formal approval and Bench's own verdict are separate facts, in Signals below.</p>` : '') +
-    stackBlock(t) + signals + members +
+    workBaseBlock(t) + stackBlock(t) + signals + members +
     `<h3>Tools</h3><div id="drawertools"><p class="dnote">This card has no tools in its current stage.</p></div>` +
     (plan ? `<details class="rpt"${S.accOpen[t.file + ':plan'] ? ' open' : ''} data-keep="plan">` +
             `<summary>Branch and plan</summary><div style="padding:6px 10px">${plan}</div></details>` : '');

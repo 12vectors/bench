@@ -150,7 +150,9 @@ class _Journeys:
         self.assertEqual(j.s.git(j.origin, "branch", "--list", f"task/{card[:-3]}"), "",
                          "cleanup removed the delivered branch from the remote")
 
-    def test_a_phase_scope_integrates_its_members_and_delivers_the_whole(self):
+    def phase_board(self) -> tuple[Journey, str, str, str, str]:
+        """A phase (20: members 21, 22) adopted by its scope, and a
+        standalone card (30), both delegated by the owner's move."""
         j = self.journey()
         phase = j.card("20", "Ship the export", author="bob",
                        extra="**Type:** Phase\n",
@@ -171,16 +173,66 @@ class _Journeys:
                                              "dailyStarts": 6}}}})
         adopted = j.step("adopt", file=phase)
         self.assertEqual(adopted["scope"], "phase:20")
+        return j, phase, one, two, solo
+
+    def assert_first_pass(self, j: Journey, first: dict, one: str, solo: str) -> None:
+        """The first pass started the phase's first member and the
+        standalone card — two launches, within the shared total — each
+        under its own scope. On a mismatch the message carries what the
+        pass chose, each result and each launch operation's status, code
+        and reason (task 155: the CI failure that first missed a member
+        printed none of them)."""
+        def why() -> str:
+            scratch = str(j.s.root)
+            lines = [f"chosen: {first['pass'].get('chosen')}"]
+            lines += [f"result: {r}" for r in first["pass"].get("results", [])]
+            lines += [f"operation: {o}" for o in first["ops"]
+                      if o["action"] == "implement"]
+            if first.get("race"):
+                lines.append(f"race: {first['race']}")
+            return "\n".join(lines).replace(scratch, "<scratch>")[-4000:]
+        launched = [r["card"] for r in first["pass"]["results"]
+                    if r.get("outcome") == "launched"]
+        self.assertEqual(sorted(launched), sorted([one, solo]), why())
+        scopes = {o["file"]: o["scope"] for o in first["ops"] if o["action"] == "implement"}
+        self.assertEqual(scopes, {one: "phase:20", solo: "bench"},
+                         "one scope per card: the Bench scope never launched a "
+                         "member\n" + why())
+
+    def test_a_card_moved_mid_reading_does_not_cost_the_member_its_launch(self):
+        """Task 155. The standalone card's run ends — its reaper files the
+        report and moves the card into review/ — while the phase's first
+        member is being launched, between `taskfiles.collect()` listing
+        in-progress/ and reading that card. Before the repair the reading
+        raised FileNotFoundError: at the authorization before the intent
+        the whole pass died, inside the launch the member's operation was
+        recorded `unknown` and it never started. Forced here at both
+        points, in this layout; the first-pass launches and their scopes
+        must hold either way."""
+        for at in ("authorize", "launch"):
+            with self.subTest(at=at):
+                j, _phase, one, _two, solo = self.phase_board()
+                first = j.step("pass", race={"hold": solo, "during": one, "at": at})
+                self.assertIn("race", first, first)
+                race = first["race"]
+                # the interleaving happened as intended, or the test says so:
+                # a barrier that timed out is the probe's failure, not bench's
+                self.assertIsNone(race["timeout"], race)
+                self.assertTrue(race["released"], race)
+                self.assertTrue(race["reaped"], race)
+                self.assertIsNone(race["reaperError"], race)
+                self.assertFalse(race["cardThere"],
+                                 f"the card had left in-progress/ when it was read: {race}")
+                self.assertEqual(first["stages"][solo], "review", race)
+                self.assert_first_pass(j, first, one, solo)
+
+    def test_a_phase_scope_integrates_its_members_and_delivers_the_whole(self):
+        j, phase, one, two, solo = self.phase_board()
 
         # the first pass: the phase is prepared, then its first member and
         # the standalone card start — two launches, within the shared total
         first = j.step("pass")
-        launched = [r["card"] for r in first["pass"]["results"]
-                    if r.get("outcome") == "launched"]
-        self.assertEqual(sorted(launched), sorted([one, solo]))
-        scopes = {o["file"]: o["scope"] for o in first["ops"] if o["action"] == "implement"}
-        self.assertEqual(scopes, {one: "phase:20", solo: "bench"},
-                         "one scope per card: the Bench scope never launched a member")
+        self.assert_first_pass(j, first, one, solo)
 
         j.until(lambda r: r["stages"].get(phase) == "done", passes=20)
         reading = j.step("read")
@@ -204,6 +256,39 @@ class _Journeys:
                          "a member is integrated, never merged on its own")
         reviewed = {c["task"] for c in j.calls("review")}
         self.assertIn(phase, reviewed, "the integrated head had its own review")
+
+
+    def test_dependent_work_builds_on_a_prerequisite_in_review(self):
+        # task 150: A is in Review and not merged (merge is not delegated);
+        # B declares it and is picked up — its decision is recorded before
+        # anything is provisioned, its branch holds A's committed work, its
+        # PR targets A's branch, and further passes decide nothing twice
+        j = self.journey()
+        api = j.card("40", "The API", author="bob")
+        j.step("move", file=api, **{"from": "backlog", "to": "to-do"})
+        j.step("enable", agreement={"authority": [w for w in ALL if w != "merge"]})
+        j.until(lambda r: r["stages"].get(api) == "review")
+        ui = j.card("41", "The UI", author="bob", extra="**Depends on:** 40\n")
+        j.step("move", file=ui, **{"from": "backlog", "to": "to-do"})
+        j.until(lambda r: r["stages"].get(ui) == "review")
+
+        a_branch, b_branch = f"task/{api[:-3]}", f"task/{ui[:-3]}"
+        text = j.card_text(ui)
+        self.assertEqual(text.count('"kind": "base"'), 1, text)
+        self.assertIn('"decision": "stacked"', text)
+        self.assertIn(a_branch, text)
+        # B's published branch holds A's committed work; main does not
+        self.assertTrue(j.remote_has("card-40.txt", ref=b_branch))
+        self.assertTrue(j.remote_has("card-41.txt", ref=b_branch))
+        self.assertFalse(j.remote_has("card-40.txt"), "A was not merged to start B")
+        # B's pull request targets A's branch, so its review is B's change
+        prs = j.host._load()["prs"].values()
+        self.assertEqual([p["base"] for p in prs if p["head"] == b_branch], [a_branch])
+        # more passes: no second decision, no second run of B
+        j.step("pass")
+        j.step("pass")
+        self.assertEqual(j.card_text(ui).count('"kind": "base"'), 1)
+        self.assertEqual([c["task"] for c in j.calls("work")].count(ui), 1)
 
 
 class Vendored(_Journeys, unittest.TestCase):
