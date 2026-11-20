@@ -82,7 +82,26 @@ def record_timing(run: bv.Run) -> None:
                              for c in doc.get("classes", [])[:10]],
              slowestTests=[{"id": x["id"], "seconds": round(x["seconds"], 2)}
                            for x in sorted(doc.get("tests", []),
-                                           key=lambda x: -x["seconds"])[:10]])
+                                           key=lambda x: -x["seconds"])[:10]],
+             slowestFixtures=[{"kind": f["kind"], "owner": f["owner"],
+                               "seconds": round(f["seconds"], 2)}
+                              for f in sorted(doc.get("fixtures", []),
+                                              key=lambda f: -f["seconds"])[:10]])
+    # The ranking is printed as well, bounded, because the check's output
+    # is what bench keeps in its own evidence log and returns to the run
+    # that asked — an artifacts directory may not be readable from there.
+    o = doc.get("overhead") or {}
+    print(f"timing: elapsed {secs.get('elapsed')}s = discovery {secs.get('discovery')}s + "
+          f"tests {secs.get('tests')}s + fixtures {secs.get('fixtures')}s + unattributed "
+          f"{secs.get('unattributed')}s; collector overhead "
+          f"{o.get('perTestSeconds', 0) * 1e6:.1f}µs/test (measured)")
+    for c in doc.get("classes", [])[:15]:
+        print(f"timing class: {c['seconds']:7.1f}s {c['tests']:4d} tests "
+              f"(fixtures {c['fixtureSeconds']:5.1f}s) {c['class']}")
+    for f in t["slowestFixtures"][:6]:
+        print(f"timing fixture: {f['seconds']:7.2f}s {f['kind']} {f['owner']}")
+    for x in t["slowestTests"][:8]:
+        print(f"timing test: {x['seconds']:7.2f}s {x['id']}")
 
 
 def body(run: bv.Run) -> str:

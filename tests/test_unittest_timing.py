@@ -240,6 +240,10 @@ class BackendKeepsTheTimings(Fixture):
         self.assertIn("elapsed", t["seconds"])
         self.assertEqual("tests.test_a.T", t["slowestClasses"][0]["class"])
         self.assertTrue(Path(data["artifacts"]["timings"]).is_file())
+        # and a bounded ranking in the check's own output, which bench keeps
+        self.assertIn("timing class:", r.stdout)
+        self.assertIn("tests.test_a.T", r.stdout)
+        self.assertLess(sum(ln.startswith("timing") for ln in r.stdout.splitlines()), 31)
         self.assertEqual(64, len(t["collectorSha256"]))
         self.assertIn("-m", data["plainCommand"])
         self.assertIn(str(VERIFY / "unittesttiming.py"), data["command"]["argv"])
