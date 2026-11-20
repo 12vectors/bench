@@ -8119,9 +8119,14 @@ messaged `board: <number> → <stage> (<name>)`, staged by pathspec so
 unrelated staged work is neither committed nor unstaged (hooks are skipped —
 this is bookkeeping, not code). A move whose commit failed — another git
 holding the index, say — has still happened on disk, and is said in the
-ticker; the card's next move also records the removal of any path of that
-same card git still has and the disk no longer does, so a failed commit
-never leaves a stale task path behind for sync or a merge to stop on.
+ticker; the card's next commit records it. A next move also records the
+removal of any path of that same card git still has and the disk no
+longer does; a next edit (a report, the `**PR:**` line, an orchestration
+record) records that removal under the failed move's own trailers from
+the movement journal, so the card reads as moved by whoever moved it
+rather than created where it landed. A path the board did not move — a
+hand `mv` — is never attributed this way. So a failed commit never leaves
+a stale task path behind for sync or a merge to stop on.
 Pushing is not part of it: those commits sit
 on your local `main` until you push it (or until `BOARD_SYNC` pushes them —
 see "Syncing boards"), which the guard in "Pull requests" will tell you

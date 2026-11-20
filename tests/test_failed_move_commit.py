@@ -1,4 +1,5 @@
-"""A move whose commit failed is recorded by the card's next move (task 155).
+"""A move whose commit failed is recorded by the card's next commit — its
+next move, or its next edit under the failed move's own trailers (task 155).
 
 Release 0.6's candidate failed CI because two of the board's commits met
 on one work-state index: one commit of a card's move failed, the card had
@@ -146,19 +147,81 @@ class _FailedMoveCommit:
         self.assertIn("Bench-Mover-Kind: automated", message,
                       "the healing rides a move's commit, with its trailers")
 
-    def test_an_edit_in_between_does_not_record_a_stage_change(self):
-        """An edit's commit carries no movement trailers, so it names only
-        the card's own path: the stale deletion waits for the next move
-        rather than reading as an unattributed move."""
+    def journal_ids(self) -> list[str]:
+        path = taskfiles.movement_journal()
+        if not path.is_file():
+            return []
+        import json
+        return [json.loads(line)["id"] for line in path.read_text().splitlines()
+                if line.strip()]
+
+    def test_the_cards_next_edit_records_the_failed_move_as_that_move(self):
+        """The full-suite failure (task 155): the card's next commit after
+        a failed move was an edit, not a move. It used to name only the
+        new path, so git read the card as created there — no mover — and
+        the old path's deletion stayed a local change. Now the edit's
+        commit records the move too, under that move's own trailers from
+        the journal: the same move id, mover and kind."""
         self.failing_move("to-do", "in-progress")
+        [move_id] = self.journal_ids()
+
         taskfiles.append_to_task(FILENAME, "in-progress", "\n## Report\n\nDone.\n", "report")
 
-        self.assertTrue(self.head_has("to-do"), "an edit does not record the move")
-        self.assertIn(f" D {self.rel('to-do')}\n", self.porcelain())
+        self.assertEqual(self.porcelain(), "", "nothing the board did is left unrecorded")
+        self.assertFalse(self.head_has("to-do"))
+        self.assertTrue(self.head_has("in-progress"))
+        self.assertIn("Done.", git(self.repo, "show", f"HEAD:{self.rel('in-progress')}").stdout)
+        message = git(self.repo, "log", "-1", "--format=%B").stdout
+        self.assertIn(f"Bench-Move-Id: {move_id}", message)
+        self.assertIn(f"Bench-Mover: {MOVER}", message)
+        self.assertIn("Bench-Mover-Kind: automated", message)
+        movements._MEMO.clear()
+        history = movements.history(FILENAME)["events"]
+        newest = history[0]
+        self.assertEqual((newest["source"], newest["kind"], newest["from"], newest["to"]),
+                         ("commit", "automated", "to-do", "in-progress"), history)
+        self.assertEqual(sum(1 for e in history if e.get("id") == move_id), 1,
+                         "the journal line is the commit's, not counted twice")
 
-        taskfiles.move_task(FILENAME, "in-progress", "review", actor="agent")
-        self.assertEqual(self.porcelain(), "")
-        self.assertIn("Done.", (self.tasks / "review" / FILENAME).read_text())
+    def test_an_edit_does_not_attribute_a_move_the_board_did_not_make(self):
+        """A card moved by hand has no journal line: the board will not
+        put a mover's name on it, so its edit names only its own path,
+        exactly as before."""
+        (self.tasks / "in-progress").mkdir(exist_ok=True)
+        shutil.move(str(self.tasks / "to-do" / FILENAME),
+                    str(self.tasks / "in-progress" / FILENAME))
+
+        taskfiles.append_to_task(FILENAME, "in-progress", "\n## Note\n", "note")
+
+        self.assertTrue(self.head_has("to-do"), "the hand move is not recorded for it")
+        self.assertIn(f" D {self.rel('to-do')}\n", self.porcelain())
+        self.assertNotIn("Bench-Move", git(self.repo, "log", "-1", "--format=%B").stdout)
+
+    def test_an_edit_in_another_stage_does_not_claim_the_failed_move(self):
+        """The journal's newest line for the card must name the stage the
+        edit is in; a failed move to somewhere else is not this edit's to
+        record."""
+        self.failing_move("to-do", "in-progress")
+        # the card is moved on by hand afterwards: no journal line names review/
+        shutil.move(str(self.tasks / "in-progress" / FILENAME),
+                    str(self.tasks / "review" / FILENAME))
+
+        taskfiles.append_to_task(FILENAME, "review", "\n## Note\n", "note")
+
+        self.assertTrue(self.head_has("to-do"))
+        self.assertNotIn("Bench-Move", git(self.repo, "log", "-1", "--format=%B").stdout)
+
+    def test_unrelated_staged_work_survives_an_edits_healing(self):
+        self.failing_move("to-do", "in-progress")
+        (self.repo / "unrelated.txt").write_text("two\n", encoding="utf-8")
+        git(self.repo, "add", "--", "unrelated.txt")
+
+        taskfiles.append_to_task(FILENAME, "in-progress", "\n## Report\n", "report")
+
+        files = git(self.repo, "show", "--name-only", "--no-renames",
+                    "--pretty=format:", "HEAD").stdout.split()
+        self.assertEqual(sorted(files), sorted([self.rel("to-do"), self.rel("in-progress")]))
+        self.assertEqual(self.porcelain(), "M  unrelated.txt\n")
 
     def test_team_sync_is_paused_by_the_stale_path_until_the_next_move(self):
         """A consequence on a shared board: sync replays and fast-forwards
