@@ -1022,14 +1022,33 @@ function briefHtml(listed) {
   // that is not a field kept as Markdown, so nothing in the head is lost
   const fields = [];
   const rest = [];
+  const field = (line) => line.match(/^\*\*([A-Za-z][A-Za-z ]{0,40}):\*\*\s*(.*)$/);
   let open = false;   // the last line was a field, or its continuation
-  for (const line of head.split('\n')) {
-    const m = line.match(/^\*\*([A-Za-z][A-Za-z ]{0,40}):\*\*\s*(.*)$/);
+  for (const line of head.replace(/\n$/, '').split('\n')) {
+    const m = field(line);
     if (m) { fields.push([m[1], m[2]]); open = true; }
-    // a field's value wrapped onto the next line is still that field's
-    // value, as Markdown reads a paragraph — never a stray line below
-    else if (open && line.trim()) fields[fields.length - 1][1] += ' ' + line.trim();
     else { rest.push(line); open = false; }
+  }
+  // The server's head ends at the first line that is neither blank nor a
+  // field (`taskfiles.card_parts`), so a field's value wrapped onto the
+  // next line — and every field after it — arrives as the start of the
+  // brief. Markdown reads that line as the same paragraph, so the grid
+  // does too: while the head ended on a field with no blank line after
+  // it, the brief's leading lines up to the first blank line (or the
+  // first line that starts a block of its own) are that field's value,
+  // or further fields. The split itself is the server's and is unchanged.
+  let brief = withoutDiscussion(parts.brief);
+  if (open && fields.length) {
+    const lines = brief.split('\n');
+    let k = 0;
+    for (; k < lines.length; k++) {
+      const line = lines[k];
+      if (!line.trim() || /^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|```|>|---\s*$)/.test(line)) break;
+      const m = field(line);
+      if (m) fields.push([m[1], m[2]]);
+      else fields[fields.length - 1][1] += ' ' + line.trim();
+    }
+    brief = lines.slice(k).join('\n');
   }
   const value = (v) => v.trim() ? md(v).replace(/^<p>/, '').replace(/<\/p>\s*$/, '') : '<span class="dim">—</span>';
   const meta = fields.length
@@ -1042,7 +1061,7 @@ function briefHtml(listed) {
       heads.map((h, i) => `<button type="button" class="dlink" data-brief-h="${i}">${esc(h)}</button>`).join('') +
       `</nav>` : '';
   return (note ? `<p class="dnote dstale" role="status">${esc(note)}</p>` : '') + meta + index +
-    `<div class="dbody bbody">${md(rest.join('\n') + '\n' + withoutDiscussion(parts.brief))}</div>` +
+    `<div class="dbody bbody">${md(rest.join('\n') + '\n' + brief)}</div>` +
     `<p class="dnote">The brief is the requirement. Earlier wordings are in the card's history: ` +
     `each applied refinement is a decision in the discussion below, and the card's git history ` +
     `holds every previous text.</p>`;

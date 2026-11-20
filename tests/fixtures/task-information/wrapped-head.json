@@ -1,0 +1,10 @@
+{
+ "wrapped": {
+  "body": "# 9 - x\n\n**Status:** Review\n**Priority:** High - the reason runs on\nonto a second line\n**Type:** Feature\n\nThe brief.\n",
+  "parts": {"brief": 68, "history": 117}
+ },
+ "unwrapped": {
+  "body": "# 9 - y\n\n**Status:** Review\n**Type:** Feature\n\nThe brief opens here\nand runs on.\n",
+  "parts": {"brief": 47, "history": 81}
+ }
+}

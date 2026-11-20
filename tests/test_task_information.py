@@ -263,6 +263,18 @@ class Readings(unittest.TestCase):
                          "tests/fixtures/task-information/readings.json is out of date: "
                          "BENCH_WRITE_READINGS=1 python3 -m unittest tests.test_task_information")
 
+    def test_the_wrapped_head_cards_carry_the_servers_own_split(self):
+        # the page's wrapped-field test (tests/node/task_information.test.mjs)
+        # is fed these offsets, so they must be the split the server sends:
+        # a value wrapped onto a second line ends the server's head there
+        cards = json.loads((FIXTURES / "wrapped-head.json").read_text(encoding="utf-8"))
+        for name, card in cards.items():
+            with self.subTest(name):
+                self.assertEqual(card["parts"], taskfiles.part_offsets(card["body"]))
+        wrapped = taskfiles.card_parts(cards["wrapped"]["body"])
+        self.assertTrue(wrapped["brief"].startswith("onto a second line\n**Type:**"),
+                        "the continuation and the fields after it start the brief")
+
 
 if __name__ == "__main__":
     unittest.main()

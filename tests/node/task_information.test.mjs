@@ -159,18 +159,36 @@ test('the Overview orders the reader\'s questions, and reading it asks the board
   assert.ok(asked.slice(before).every(u => !/launch|verify|move|refine|check-remote/.test(u)), 'nothing was started');
 });
 
-test('a header field wrapped onto a second line stays that field\'s value', async () => {
+// the split is the server's own: wrapped-head.json's offsets are held to
+// taskfiles.part_offsets by tests/test_task_information.py, and the server
+// ends the head at the wrapped line, so the continuation arrives in the brief
+const WRAPPED = JSON.parse(readFileSync(fileURLToPath(
+  new URL('../fixtures/task-information/wrapped-head.json', import.meta.url)), 'utf8'));
+
+async function briefOf(name) {
   const { briefHtml } = await load('views/detail/sections.js');
   const { S } = await setup('202-active-run.md');
-  const head = '# 9 — x\n\n**Status:** Review\n**Priority:** High — the reason runs on\nonto a second line\n**Type:** Feature\n\n';
-  const body = head + 'The brief.\n';
-  S.detail['9-x.md'] = { data: { file: '9-x.md', stage: 'review', rev: 'r1', body,
-                                 parts: { brief: head.length, history: body.length },
-                                 outline: { state: 'none', sections: [] }, words: 3 } };
-  const html = briefHtml({ file: '9-x.md', stage: 'review', rev: 'r1', mtime: 1 });
+  const c = WRAPPED[name];
+  const file = `9-${name}.md`;
+  S.detail[file] = { data: { file, stage: 'review', rev: 'r1', body: c.body, parts: c.parts,
+                             outline: { state: 'none', sections: [] }, words: 3 } };
+  const html = briefHtml({ file, stage: 'review', rev: 'r1', mtime: 1 });
   const grid = html.slice(html.indexOf('class="dfacts bmeta"'), html.indexOf('</dl>'));
-  assert.match(text(grid), /Priority High — the reason runs on onto a second line Type Feature/);
+  return { html, grid: text(grid), below: text(html.slice(html.indexOf('</dl>'))) };
+}
+
+test('a header field wrapped onto a second line stays that field\'s value', async () => {
+  const { html, grid, below } = await briefOf('wrapped');
+  assert.match(grid, /Status Review Priority High - the reason runs on onto a second line Type Feature/);
   assert.equal(html.split('onto a second line').length, 2, 'the continuation is not drawn again below the grid');
+  assert.doesNotMatch(below, /Type/, 'the fields after the wrapped one are in the grid, not the brief');
+  assert.match(below, /The brief\./);
+});
+
+test('a brief that follows a blank line is never absorbed into the last field', async () => {
+  const { grid, below } = await briefOf('unwrapped');
+  assert.match(grid, /Status Review Type Feature$/);
+  assert.match(below, /^The brief opens here and runs on\./);
 });
 
 test('the work base sits under where it stands, a held new start in view', async () => {
