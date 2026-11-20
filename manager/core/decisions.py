@@ -90,7 +90,7 @@ SUMMARY_RE = re.compile(r"^- \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC · ")
 MASK = "«redacted»"
 
 KINDS = ("question", "answer", "resolution", "response", "blocker", "attempt",
-         "action")
+         "action", "base")
 SOURCES = ("observed", "agent-reported", "person")
 QUESTION_STATES = ("open", "answered", "withdrawn", "superseded")
 
@@ -229,6 +229,13 @@ FIELDS = {
                 "outcome": "word", "summary": "text", "operation": "short"},
     "action": {"action": "word", "operation": "short", "phase": "word",
                "outcome": "word", "summary": "text"},
+    # The work-base decision (task 150): which code a new start builds on,
+    # pinned, with what selected it. `workbase` reads it for the plan.
+    "base": {"decision": "word", "code": "word", "branch": "short",
+             "commit": "short", "appBase": "short", "prBase": "short",
+             "parent": "short", "parentFile": "short", "parentHead": "short",
+             "parentPr": "short", "summary": "text", "alternatives": "text",
+             "inputs": "word", "evidence": "refs"},
 }
 COMMON = {"v": "int", "id": "id", "kind": "word", "at": "short", "actor": "short",
           "actorSource": "word", "actorKind": "word", "source": "word",
@@ -581,6 +588,12 @@ def _readable(record: dict) -> str:
         what = (f"Recovery attempt {record.get('attempt')} of {record.get('of')} "
                 f"for {record.get('incident')}: {record.get('outcome')} ({words})")
         body = record.get("summary")
+    elif kind == "base":
+        what = (f"Work base {record.get('decision')}"
+                + (f" on {record.get('branch')} at {str(record.get('commit') or '')[:9]}"
+                   if record.get("decision") == "stacked" else "")
+                + f" ({words})")
+        body = record.get("summary")
     else:
         what = (f"Action {record.get('action')} {record.get('phase')}: "
                 f"{record.get('outcome') or 'pending'} ({words})")
@@ -759,7 +772,7 @@ def note(filename: str, stage: str, kind: str, fields: dict, *, key: str,
     the orchestration engine's own bookkeeping (later members ask it);
     `key` is the caller's idempotency key, so recording the same fact
     twice — a restart replaying a receipt — writes it once."""
-    if kind not in ("blocker", "attempt", "action"):
+    if kind not in ("blocker", "attempt", "action", "base"):
         raise ValueError(f"{kind!r} is not a fact this records")
     if source not in ("observed", "agent-reported"):
         raise ValueError("a recorded fact is observed or agent-reported")
@@ -767,7 +780,8 @@ def note(filename: str, stage: str, kind: str, fields: dict, *, key: str,
         raise ValueError("an idempotency key is 8–80 of letters, digits, . _ : -")
     _card_path(filename, stage)
     who = _who()
-    record_id = _derived_id({"blocker": "b", "attempt": "t", "action": "x"}[kind],
+    record_id = _derived_id({"blocker": "b", "attempt": "t", "action": "x",
+                             "base": "g"}[kind],
                             filename, key)
     extra = dict(fields or {})
     unknown = set(extra) - set(FIELDS[kind])
