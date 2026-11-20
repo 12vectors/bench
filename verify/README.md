@@ -68,7 +68,9 @@ CDP browser and the remote Playwright adapter both provide (`goto`,
 `console`, `csp`). A case calling `call` (raw CDP) or `request` (the
 adapter's wire op) is a setup error naming the file and line; at run time
 cases are handed only that API, so a call hidden from the source check is
-refused the same way.
+refused the same way. Of the state, only `origin` may be assigned (a case
+pointing the page at a proxy or a second backend); every other assignment
+is the harness's and is refused.
 
 `verify/examples/focused-checks/` holds the walk-through (early
 architecture checks, a changed browser case over `PW_WS`, the fast loop
@@ -105,7 +107,9 @@ the host's. A copy outside git (a release artifact) is likewise run with
 | 2 | `setup-error` | nothing trustworthy ran: not a bench checkout, a dependency missing, **zero tests discovered**, **a test module that could not be imported**, **any test skipped**, a browser that would not start (including no sandbox), **a required artifact absent or not written by this run**, **the candidate changed during the run**, a timeout |
 
 A setup error is never a pass and never a skip. A browser case that
-skips is counted as a setup error. In `verify/backend` an error *inside*
+skips is counted as a setup error, and so is a transport error (an
+adapter timeout, say) inside a case or one of its `subTest`s — named by
+the sub-test — while an assertion there is a named failure. In `verify/backend` an error *inside*
 a test (an exception the product raised) is still `failed`; only a module
 unittest could not import is `setup-error`, because none of its tests ran.
 
