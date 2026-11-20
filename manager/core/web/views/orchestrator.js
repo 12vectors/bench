@@ -819,8 +819,28 @@ function phaseHtml(p, isSel) {
       `<span>${badge(m.state, m.state === 'working' ? 'working' : m.state === 'integrated' ? 'calm' : 'neutral')} ${esc(m.why || '')}</span>` +
       `<span class="o-dim">${esc(m.stage)}</span></li>`;
   });
+  // the phase's lifecycle (task 160): the same reading the Board's face
+  // and the Phases lane draw, so the three cannot disagree
+  const life = p.lifecycle || null;
+  const lifeTone = !life ? 'neutral'
+    : ['unknown', 'moved-early', 'stopped'].includes(life.word) ? 'alarm'
+    : life.word === 'working' ? 'working'
+    : ['delivered', 'finishing'].includes(life.word) ? 'calm' : 'neutral';
+  const who = life && life.next ? ({ you: 'You', agent: 'The agent', board: 'The board' }[life.next.who] || '') : '';
+  const b = life && life.budget;
+  const lifeHtml = life
+    ? `<div class="o-life" data-life="${esc(life.word)}"><p>${badge(life.label, lifeTone)} ${esc(life.line)}</p>` +
+      (life.next ? `<p><b>Next${who ? ' — ' + esc(who) : ''}:</b> ${esc(life.next.text)}</p>` : '') +
+      ((life.backlog || []).length ? `<p class="o-dim">In Backlog, not queued: ${esc(life.backlog.map(f => {
+        const bt = taskByFile(f); return bt ? num(bt) : f; }).join(', '))}. Members start only from To Do; nothing here moves them.</p>` : '') +
+      (b ? `<p class="o-dim">Budget: ${esc(b.lines.join('; '))}.</p>` +
+        (b.missing || []).map(m => `<p class="o-warn">${badge('Missing', 'alarm')} ${esc(m)}</p>`).join('') +
+        (b.warnings || []).map(w => `<p class="o-warn">${badge('Note', 'neutral')} ${esc(w)}</p>`).join('') : '') +
+      `</div>`
+    : '';
   return `<article class="o-panel o-phase${isSel ? ' sel' : ''}" id="ophase-${esc(n)}" aria-label="Phase ${esc(n)}">` +
     `<h3>${t ? cardLink(t, num(t)) : esc('#' + n)} ${esc(title(t))} ${badge(word, tone)}</h3>` +
+    lifeHtml +
     `<dl class="o-kv"><div><dt>scheduling owner</dt><dd>${esc(p.owner)}${p.mode ? ` · mode ${esc(p.mode)}` : ''}</dd></div>` +
     `<div><dt>agreement</dt><dd>${p.named ? `named (${esc(p.scope)}) · strategy ${esc(p.strategy || 'sequential')}` : 'not named — the phase runner schedules it'}</dd></div>` +
     `<div><dt>integrated</dt><dd>${(p.integrated || []).length ? esc((p.integrated || []).map(x => '#' + x).join(', ')) + ' — in the phase branch, not delivered' : 'none yet'}</dd></div>` +
