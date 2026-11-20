@@ -22,6 +22,7 @@ S = bv.SESSION
 DONE_PHASE = "81-ship-the-complete-phase"
 PART_PHASE = "84-ship-the-partial-phase"
 LAST = "86-the-last-member"
+DRIFTING = "98-a-drifting-phase"
 MANY = [(90 + i, 110 + i) for i in range(10)]   # (phase, its one member)
 
 CONTRAST = """((fgEl) => {
@@ -59,10 +60,15 @@ def lane(stem: str) -> str:
     return f'#lanes .lane[data-phase="{stem}.md"]'
 
 
-def write(stage: str, stem: str, title: str, extra: str = "") -> object:
+def write(stage: str, stem: str, title: str, sections: str = "") -> object:
+    """A card; with `sections` (its `## Cards` and any log) a phase card.
+    The prose comes before the sections: a line inside `## Cards` that
+    names no card is phase drift, and a drifting phase never closes."""
     path = S["backend"].work / "tasks" / stage / f"{stem}.md"
     path.write_text(f"# {title}\n\n**Status:** {bv.STATUS[stage]}\n**Priority:** Low\n"
-                    f"{extra}\nA disposable card for the phase-lane case.\n", encoding="utf-8")
+                    + ("**Type:** Phase\n" if sections else "")
+                    + "\nA disposable card for the phase-lane case.\n"
+                    + (f"\n{sections}" if sections else ""), encoding="utf-8")
     return path
 
 
@@ -76,19 +82,23 @@ class PhaseLanes(unittest.TestCase):
         add("review", "82-first-member", "82 — First member")
         add("done", "83-second-member", "83 — Second member")
         add("review", DONE_PHASE, "81 — Ship the complete phase",
-            "**Type:** Phase\n\n## Cards\n\n- 82 — First member\n- 83 — Second member\n\n"
+            "## Cards\n\n- 82 — First member\n- 83 — Second member\n\n"
             "## Phase log\n\n- 2026-08-01 10:20 · 82 merged into phase/" + DONE_PHASE + "\n")
         # one member short: 85 merged in, 86 still in progress
         add("review", "85-merged-member", "85 — Merged member")
         add("in-progress", LAST, "86 — The last member")
         add("in-progress", PART_PHASE, "84 — Ship the partial phase",
-            "**Type:** Phase\n\n## Cards\n\n- 85 — Merged member\n- 86 — The last member\n\n"
+            "## Cards\n\n- 85 — Merged member\n- 86 — The last member\n\n"
             "## Phase log\n\n- 2026-08-01 10:20 · 85 merged into phase/" + PART_PHASE + "\n")
         # a long page of completed phases
         for phase, member in MANY:
             add("done", f"{member}-member-of-{phase}", f"{member} — Member of phase {phase}")
             add("done", f"{phase}-a-finished-phase", f"{phase} — A finished phase",
-                f"**Type:** Phase\n\n## Cards\n\n- {member} — Member of phase {phase}\n")
+                f"## Cards\n\n- {member} — Member of phase {phase}\n")
+        # every card it lists is done, but one line names no card: drift
+        add("done", "120-member-of-a-drifting-phase", "120 — Member of a drifting phase")
+        add("done", DRIFTING, "98 — A drifting phase",
+            "## Cards\n\n- 120 — Member of a drifting phase\n- a line naming no card\n")
 
     @classmethod
     def tearDownClass(cls):
@@ -140,8 +150,11 @@ class PhaseLanes(unittest.TestCase):
         self.assertLess(done["height"], part["height"] / 2, (done, part))
         # a delivered phase says delivered, not merely merged
         finished = self.facts(f"{MANY[0][0]}-a-finished-phase")
-        self.assertTrue(finished["closed"])
+        self.assertTrue(finished["closed"], finished)
         self.assertIn("Delivered", finished["summary"])
+        drifting = self.facts(DRIFTING)
+        self.assertFalse(drifting["closed"], f"a drifting phase closed itself: {drifting}")
+        self.assertIsNone(drifting["toggle"], drifting)
         closed = b.eval("document.querySelectorAll('#lanes .lane.closed').length")
         self.assertGreaterEqual(closed, 11)
         metric("firstLoad", {"complete": done, "partial": part, "closedLanes": closed})
@@ -213,6 +226,8 @@ class PhaseLanes(unittest.TestCase):
             for w, h in ((1440, 900), (390, 780)):
                 b = self.open(w, h)
                 b.eval(f"S.dark = {str(dark).lower()}; applyTheme();")
+                # colours ease over .14s: measure the theme, not the tween
+                b.wait("false", 0.6)
                 which = "dark" if dark else "light"
                 self.assertLessEqual(b.eval("document.documentElement.scrollWidth"), w + 1,
                                      f"the Phases view overflows at {w}px {which}")
