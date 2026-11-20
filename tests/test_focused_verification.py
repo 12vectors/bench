@@ -376,6 +376,41 @@ class FocusedBrowser(BrowserFixture):
         self.assertIn("case_bad, case_ok", data["reason"])
         self.assertNotIn("browser", data, "refused before a browser was looked for")
 
+    def test_a_transport_error_inside_a_subtest_is_a_setup_error_named(self):
+        # A full run once read "FAILED — 0 of 225 browser cases failed"
+        # when the adapter timed out inside `with self.subTest(...)`: the
+        # sub-test's error reached neither classification
+        cases = self.cases(case_sub="""
+            import unittest
+            import benchverify as bv
+            class Sub(unittest.TestCase):
+                def test_widths(self):
+                    for w in (390, 1440):
+                        with self.subTest(width=w):
+                            if w == 1440:
+                                raise bv.SetupError("the Playwright adapter timed out click")
+        """)
+        r, data = self.browser(cases, "--case", "case_sub", env=self.remote_env())
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("timed out click", data["reason"])
+        self.assertIn("width=1440", data["reason"])
+        self.assertEqual(["setup-error"], [o["outcome"] for o in data["cases"]["results"]])
+
+    def test_an_assertion_inside_a_subtest_is_a_named_failure(self):
+        cases = self.cases(case_sub="""
+            import unittest
+            class Sub(unittest.TestCase):
+                def test_widths(self):
+                    for w in (390, 1440):
+                        with self.subTest(width=w):
+                            self.assertLess(w, 1000, "too wide")
+        """)
+        r, data = self.browser(cases, "--case", "case_sub", env=self.remote_env())
+        self.assertEqual(FAIL, r.returncode, r.stdout + r.stderr)
+        self.assertNotIn("0 of", data["reason"])
+        self.assertIn("1 of 1 browser cases failed", data["reason"])
+        self.assertEqual(["failed"], [o["outcome"] for o in data["cases"]["results"]])
+
     def test_an_invalid_case_selector_is_refused(self):
         cases = self.cases(case_ok=CASE_OK)
         for bad in ("cases/case_ok.py", "case_*", "ok", "case_ok.Ok.test.x.y"):

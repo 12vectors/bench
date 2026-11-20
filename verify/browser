@@ -85,6 +85,22 @@ class Result(unittest.TextTestResult):
         self.outcomes.append({"case": test.id(), "outcome": kind,
                               "detail": f"{err[0].__name__}: {err[1]}"[:2000]})
 
+    def addSubTest(self, test, subtest, err):
+        # A sub-test's error never reaches addError/addFailure, so without
+        # this a transport timeout inside `with self.subTest(...)` was
+        # neither a setup error nor a named failure: the run read
+        # "FAILED — 0 of N browser cases failed". Classified as the outer
+        # hooks classify, under the sub-test's own id.
+        super().addSubTest(test, subtest, err)
+        if err is None:
+            return
+        failed = issubclass(err[0], (test.failureException, bv.CheckFailed))
+        if not failed:
+            self.setup_errors.append(f"{subtest.id()}: {err[0].__name__}: {err[1]}")
+        self.outcomes.append({"case": subtest.id(),
+                              "outcome": "failed" if failed else "setup-error",
+                              "detail": f"{err[0].__name__}: {err[1]}"[:2000]})
+
     def addSkip(self, test, reason):
         # a skipped browser case is not coverage
         super().addSkip(test, reason)
