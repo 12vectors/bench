@@ -54,7 +54,7 @@ L12 gates
 L13 required orchestrator
 L14 doctor
 L15 commands drive events sync
-L16 changes
+L16 changes brainwrite
 L17 completion
 L18 stacks
 L19 delivery stackactions results
@@ -102,6 +102,12 @@ itself (parent, children, loops) is derived once by
 `taskfiles.weave_stacks`, beside `weave_phases`, so a loop reaches
 `plan drift` and preflight refuses it without `plans` reaching up.
 `delivery` and `routes` read it; it reads nothing above itself.
+
+`brainwrite` (task 158) sits beside `changes`, directly above `sync`:
+the Brain's one writer, kept apart from `brain` (L5, the reader) because
+a write needs the actor (`acceptance`), the scoped work-state commit
+(`taskfiles.commit_work_file`) and sync's status and push (`sync`), all
+above the reader. Only `routes` imports it.
 
 `stackactions` (task 119, WP10b) sits beside `delivery`, directly above
 `stacks`, and neither imports the other: it performs the three explicit,
@@ -361,7 +367,7 @@ L11 acceptance callers
 L12 gates
 L13 required doctor orchestrator
 L14 events drive sync commands
-L15 changes
+L15 changes brainwrite
 L16 completion
 L17 stacks
 L18 delivery stackactions results
@@ -466,6 +472,7 @@ neither.
 | orchestrated launch ledger (append-only) | `orchestrator` | append | no |
 | orchestration operations: intent and receipt (task 141) | `operations` (`scheduler` and `coordinate` decide) | `operations._LOCK`, interprocess | yes |
 | recovery incidents and their attempts; the circuit breaker (task 144) | `recovery` | `recovery._LOCK`, interprocess | yes |
+| Brain entry files (portable) and their write journal (machine-local) (task 158) | `brainwrite` | `brainwrite.LOCK`, interprocess; each entry write is also held to the file's exact revision | yes |
 
 **Durable writers** — the call sites passing `durable=True`, held equal
 to the code by `tests/test_records_adoption.py`:
@@ -477,6 +484,8 @@ artifacts.ingest
 artifacts.ingest_report
 artifacts.sweep
 artifacts.withhold
+brainwrite._journal_put
+brainwrite._write
 completion._record_delivered
 completion._remember
 evidence.store
@@ -675,5 +684,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 181
-routes 136
+routes 144
 ```

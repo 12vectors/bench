@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -250,9 +250,9 @@ gitproc / records / redact < config < githost / assets / agreements / operations
 - `brain.py` — the Brain, read (task 157): the version 1 entry contract
   for the Markdown files in the work root's `brain/`, the index and the
   single-entry resolver, every refusal (a link, a traversal, a duplicate
-  id, another contract version) and the revision a later write will be
-  held to — a digest of the bytes read. Imports `config` and `taskfiles`;
-  it writes, commits, fetches and launches nothing (see "The Brain:
+  id, another contract version) and the revision every write is held to
+  — a digest of the bytes read. Imports `config` and `taskfiles`; it
+  writes, commits, fetches and launches nothing (see "The Brain:
   maintained entries, read")
 - `doctor.py` — what this board would grant, run and refuse, asked
   without paying for a model: the same resolver a launch rides, read at
@@ -270,6 +270,14 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   the poll and its fold into one verdict, the persisted observation, and
   the owner accessors the layer above asks about a card's PR through. It
   speaks no host shape: it asks `githost`
+- `brainwrite.py` — the Brain, written (task 158): a person's create,
+  edit, classify, override and retire of one entry file under `brain/`,
+  each bound to the revision the page read and to a request identity
+  journalled before the file is touched, committed through
+  `taskfiles.commit_work_file` and published by `sync`; and each write's
+  saved / committed / shared state read again. Imports `brain`,
+  `acceptance` (the actor), `taskfiles`, `sync` and `records`; it
+  launches and fetches nothing (see "Writing the Brain")
 - `completion.py` — merge & clean up: the merge (locally, or on origin
   through `changes`), its publication confirmed on the remote, the
   recovery record a retry finishes from, the card's cleanup and a
@@ -1216,8 +1224,9 @@ The board has seven views (header switcher):
   tools" below).
 - **Brain** — the project's maintained knowledge, read from the work
   root's `brain/`: a list by classification and one entry at its stable
-  address (see "The Brain: maintained entries, read"). Read only for now;
-  where it sits in the navigation is card #159's to settle.
+  address, with a person's writes — create, edit, classify, override and
+  retire (see "The Brain: maintained entries, read" and "Writing the
+  Brain"). Where it sits in the navigation is card #159's to settle.
 - **Orchestrator** — what the Bench scope and its phase scopes are doing,
   what waits on you, and the operating agreement they work under (see
   "The Orchestrator view"). The switcher carries how many decisions wait
@@ -1576,10 +1585,11 @@ harness, model and prompt per purpose").
 
 The **Brain** is the project's maintained knowledge: explanations,
 investigations, decisions and guides, each a Markdown file in
-`<work root>/brain/` with a stable address (task 157). This first
-delivery reads them. What it does not do yet, said so nobody looks for
-it: writing or classifying entries on the board (#158), the final place
-in the navigation and search (#159), reviews appearing in the Brain, a
+`<work root>/brain/` with a stable address (task 157). Any person who can
+reach the board can write and classify them there (task 158, "Writing
+the Brain"). What it does not do yet, said so nobody looks for it: the
+final place in the navigation and search (#159), reviews appearing in
+the Brain, a
 curated handbook, seeding a Brain from an application, adopting
 `reference/` files, and any agent classification. A run is given no
 Brain entry because it exists: being in the Brain is not being approved
@@ -1590,11 +1600,12 @@ context.
 `brain/` sits beside `tasks/`, `plans/` and `reference/` in the **work
 root** — the install in a vendored or source-hosted layout,
 `BOARD_WORK_ROOT` in an external one — and is committed to the work
-repository like the cards. Nothing creates it: install, reinstall and
-update never touch it, and a board with no `brain/` works exactly as
-before, its Brain saying what fills it. Today an entry is written by
-hand and committed like any work-state file; it appears on the next
-reading, committed or not.
+repository like the cards. Install, reinstall, update and every reading
+leave it alone, and a board with no `brain/` works exactly as before,
+its Brain saying what fills it. The first entry saved through the board
+creates it — that explicit write, and nothing else. An entry may also be
+written by hand and committed like any work-state file; it appears on
+the next reading, committed or not.
 
 ### The record, version 1
 
@@ -1627,8 +1638,14 @@ The body, in Markdown.
 | **Summary** | no | one line for the list |
 | **Source** | no | where it comes from, comma-separated: `#<card>`, `plans/<file>`, `reference/<file>`, a web address, or plain text |
 | **Related**, **Supersedes**, **Superseded by** | no | other entries, by id |
+| **Invalidated** | no | on a Superseded entry with no successor: the decision that its claims no longer hold |
+| **Override** | no | a **manual override**: `manual · <who> · <when> — <reason>`. A person fixed this classification; later automation must respect it until a person clears it |
 | **Removed** | no | makes the entry a **tombstone**: kept, said to be removed, with this reason |
 | **Replaced by** | no | the entry that took a tombstone's place |
+
+**Invalidated** and **Override** were added by task 158 within version 1:
+a reader that predates them shows them as fields it ignores, and nothing
+else changes.
 
 The file's name is free (a flat name ending `.md`): **identity is the
 `**Id:**` line**. Renaming the file, changing the title or changing the
@@ -1687,8 +1704,8 @@ nothing else. They create no directory, ask git nothing, fetch nothing,
 run no project code or check and launch no agent. A **revision** is a
 digest of the bytes read — an entry's of its file, the index's of every
 file — so an uncommitted edit is a new revision and git's HEAD is never
-the question. A write (#158) will be held to these revisions. There is no
-stored index to go stale: every reading is rebuilt from the files.
+the question. Every write is held to these revisions (below). There is
+no stored index to go stale: every reading is rebuilt from the files.
 
 An entry's metadata and its body come from one reading of one file. Its
 text is untrusted: the body goes through the page's Markdown renderer
@@ -1699,6 +1716,121 @@ so `[the investigation](e-report-isolation)` opens that entry. A
 `plans/` or `reference/` source opens through the sandboxed `/files/`
 route; a web source is shown as a link and never fetched.
 `/files/brain/…` is not a route: entries are read through the Brain only.
+
+### Writing the Brain
+
+Anyone who can reach the board can write entries (task 158). That is the
+board's existing access boundary and nothing more: there is no owner-only
+approval and no new authentication. Every write is attributed to this
+board's git identity in the work state (the operating-system user where
+git has none), never to a name in the request.
+
+**The workflow.** On the Brain's list, **New entry** opens a form: title,
+kind, a one-line summary, sources (one per line), related entries (ids),
+the body in Markdown with **Write** and **Preview**, and the starting
+classification with its reason. **Save** writes the file and opens the
+entry at its new address; **Cancel** writes nothing. On an entry:
+
+- **Edit** — title, kind, summary, sources, related entries and body.
+  The id, the classification and its history are kept, and so are header
+  fields this version does not read.
+- **Classify** — Current, Historical, Superseded or Unclassified, with a
+  required reason. Each classification, and each correction of one, adds
+  a line to the entry's `## Classification history` with who, when and
+  why; the earlier lines stay. **Current** may mean an accepted
+  investigation that is not built yet — it is never a claim that the work
+  shipped. **Superseded** needs the replacing entry, which must exist, not
+  be retired, not be this entry and not lead back to it through its own
+  **Superseded by:** chain; or an explicit **invalidated, with no
+  replacing entry** decision and its reason. Choosing any other
+  classification clears both.
+- **Set override** / **Clear override** — records, with a reason, that a
+  person decided this entry's classification (`**Override:**`). Agent
+  classification is later work; when it comes it must leave an entry with
+  an override alone until a person clears it. The override grants nothing
+  else.
+- **Retire** — armed, then **Confirm: retire this entry**: the file is
+  kept as a tombstone (`**Removed:**`, optionally `**Replaced by:**`), its
+  address keeps saying what happened, and its id is never reused. A
+  tombstone is not edited further.
+- **Revisions** — the work-state commits that touched the file (read from
+  local git, nothing fetched) and this board's own saves of it.
+
+Editing is a mode of the page, not an address: following a link, Back
+and Forward read and never write, and leaving the entry puts an unsaved
+draft away.
+
+**Exact revisions; nothing is overwritten.** Every write but a create
+names the revision the page read. If the file is anything else — another
+person's save, a hand edit, a teammate's change a sync brought — it is
+refused with `409`, nothing is written, and the page shows **what you
+tried to save** beside **what is on disk now**. Your draft stays.
+**Use the current version and keep my draft** takes the current version
+as the new base so you can bring your change across and save again;
+**Discard my draft** drops it. Nothing retries a refused write.
+
+**One operation per request.** Every write carries a request identity.
+Its intent — the id allocated, the bytes about to be written, the
+revision they replace — is journalled durably under
+`manager/local/state/brain/operations.json` (machine-local) before the
+file is touched. The same request again (a double click, a reply lost on
+the network, a restart part way) answers from the record or finishes the
+same write, so it never makes a second entry or a second history line;
+the same identity with a different payload is refused. When a Save gets
+no answer, the page asks the record before saying anything happened.
+
+**Saved, committed, shared — three facts, each read again.** The page
+shows each one after a write:
+
+| what it says | what is true |
+| --- | --- |
+| **Saved** to `brain/<file>` | the bytes are on disk at that revision |
+| **Committed** `<sha>` | a `board: brain <id> …` commit in the work-state repository touching only that file (unrelated staged and untracked work is left as it is) |
+| **Not committed** | `BOARD_COMMIT_MOVES` is off: commit it yourself |
+| **Commit failed** | the bytes are saved and kept; nothing was rolled back. **Retry commit** commits them while the file still holds exactly them |
+| **Push pending** | committed; sync has not yet put it on the remote. **Push now** asks sync once |
+| **Push failed** | committed here and not shared, with sync's own reason; **Retry push** |
+| **Not shared** | `BOARD_SYNC` is off |
+| **Shared** | the remote-tracking branch holds that commit, or those exact bytes |
+
+**What a write may touch, and what it refuses.** One flat-named file
+directly under `brain/`, through the work state's own commit and sync
+path — never a card, a review, a verdict, the application, the
+configuration, a gate or an AGENTS file. Refused with nothing written: a
+`brain/` or entry file that is a link, not a directory or not a regular
+file, or that resolves outside the work root; an entry another file
+also claims, or one that breaks the contract (fix it by hand); a line
+break, a control or direction-changing character, or `<`/`>` in a title,
+summary, source or reason; a title starting or ending `#` (Markdown
+would read the trailing `#` away); a source with a comma,
+credentials in a web address, or a `javascript:`/`data:`/`file:`
+scheme; a body with its own `## Classification history` heading or an
+unclosed code fence — and a classify, override or retire of an entry
+written by hand whose body has one, since the history line would land
+inside the fence (close it first); a related, replacing or superseding id that is not
+an entry here. Sources are text: a web address is never fetched, and
+nothing in an entry grants a run any permission.
+
+| Route | Does |
+| --- | --- |
+| `POST /api/brain/create` | `{request, title, kind, summary?, sources?, related?, body?, classification?, reason?}` — a new id, and `brain/` if it is missing |
+| `POST /api/brain/edit` | `{request, id, expected, title, kind, summary?, sources?, related?, body?}` |
+| `POST /api/brain/classify` | `{request, id, expected, classification, reason, supersededBy? \| invalidation?}` |
+| `POST /api/brain/override` | `{request, id, expected, action: set \| clear, reason}` |
+| `POST /api/brain/retire` | `{request, id, expected, reason, replacedBy?}` |
+| `POST /api/brain/retry` | `{request, action: commit \| push}` — the half that did not happen |
+| `GET /api/brain/operation?request=` | one write's state now |
+| `GET /api/brain/revisions?id=` | the entry's commits and saves |
+
+The POSTs sit behind the browser-mutation door like every person's
+write. None launches an agent, runs a check or fetches anything.
+
+**Recovering.** A conflict: read both versions, choose, save again. A
+failed commit: the file is saved; fix what git said (a held
+`index.lock`, say) and **Retry commit**, or commit it by hand. A failed
+push: fix the remote, then **Retry push**, or let sync's next beat do it.
+A restart mid-write: send the same request again — the page does — and
+the journal finishes it.
 
 ## Addresses: a link to every view and card
 

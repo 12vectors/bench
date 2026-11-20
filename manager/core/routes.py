@@ -31,6 +31,7 @@ import artifacts
 import assets
 import agentsettings
 import brain
+import brainwrite
 import commands
 import completion
 import config
@@ -1055,6 +1056,47 @@ def get_brain_entry(req) -> None:
         return
     status = {"unknown": 404, "duplicate": 409}.get(found["state"], 200)
     req.reply(status, {"entry": found})
+
+
+def get_brain_revisions(req) -> None:
+    # An entry's revisions (task 158): the work-state commits that touched
+    # its file, read from local git, and this board's own saves of it.
+    try:
+        req.reply(200, {"revisions": brainwrite.revisions(_q(req, "id"))})
+    except brain.NotAnId as exc:
+        req.reply(400, {"error": str(exc), "code": "not-an-id"})
+
+
+def get_brain_operation(req) -> None:
+    # One Brain write's state now: saved, committed, shared — each read
+    # again, so a lost reply is answered from the record, never guessed.
+    try:
+        found = brainwrite.operation(_q(req, "request"))
+    except brainwrite.Refused as exc:
+        req.reply(exc.status, {"error": str(exc)})
+        return
+    if found is None:
+        req.reply(404, {"error": "no Brain write has this request identity on this board"})
+        return
+    req.reply(200, {"operation": found})
+
+
+def post_brain_write(req) -> None:
+    # The person's Brain writes (task 158): create, edit, classify, the
+    # manual override and retirement — each one file under brain/, bound to
+    # the revision the page read and to a request identity, committed
+    # through the work state's scoped commit. The actor is this board's
+    # identity, never a field in the body.
+    kind = req.path.rsplit("/", 1)[-1]
+    try:
+        if kind == "retry":
+            result = brainwrite.retry(req.body)
+        else:
+            result = brainwrite.write(kind, req.body)
+    except brainwrite.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+        return
+    req.reply(200, {"operation": result})
 
 
 # ── POST: the board's own writes ───────────────────────────────────────
@@ -2113,6 +2155,8 @@ ROUTES = (
     Route("GET", "/files/*", "read", get_files),
     Route("GET", "/api/brain", "read", get_brain),
     Route("GET", "/api/brain/entry", "read", get_brain_entry),
+    Route("GET", "/api/brain/revisions", "read", get_brain_revisions),
+    Route("GET", "/api/brain/operation", "read", get_brain_operation),
 
     Route("POST", "/api/move", "browser-mutation", post_move),
     Route("POST", "/api/events", "event-ingest", post_events),
@@ -2193,6 +2237,12 @@ ROUTES = (
           post_settings_agents),
     Route("POST", "/api/settings/agents/apply", "policy-mutation",
           post_settings_agents),
+    Route("POST", "/api/brain/create", "browser-mutation", post_brain_write),
+    Route("POST", "/api/brain/edit", "browser-mutation", post_brain_write),
+    Route("POST", "/api/brain/classify", "browser-mutation", post_brain_write),
+    Route("POST", "/api/brain/override", "browser-mutation", post_brain_write),
+    Route("POST", "/api/brain/retire", "browser-mutation", post_brain_write),
+    Route("POST", "/api/brain/retry", "browser-mutation", post_brain_write),
     Route("POST", "/api/card/comment", "browser-mutation", post_card_comment),
     Route("POST", "/api/card/refine", "browser-mutation", post_card_refine),
     Route("POST", "/api/card/refine/apply", "browser-mutation", post_card_refine_decision),

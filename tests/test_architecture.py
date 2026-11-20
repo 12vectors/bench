@@ -783,6 +783,15 @@ ROUTES: dict[str, str] = {
     "GET /brain/*": "read",
     "GET /api/brain": "read",
     "GET /api/brain/entry": "read",
+    # writing it (task 158): one entry file per write, revision-bound
+    "GET /api/brain/revisions": "read",
+    "GET /api/brain/operation": "read",
+    "POST /api/brain/create": "browser-mutation",
+    "POST /api/brain/edit": "browser-mutation",
+    "POST /api/brain/classify": "browser-mutation",
+    "POST /api/brain/override": "browser-mutation",
+    "POST /api/brain/retire": "browser-mutation",
+    "POST /api/brain/retry": "browser-mutation",
     "GET /cards/*": "read",
     # the Orchestrator view (task 145), a page like the others
     "GET /orchestrator": "read",

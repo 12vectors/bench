@@ -209,6 +209,9 @@ class BrainReading(unittest.TestCase):
     def test_4_the_keyboard_reaches_and_opens_an_entry(self):
         b = self.open("/brain")
         b.eval("document.querySelector('#bshell .b-title').focus(); true")
+        # the list's own action comes first (task 158), then its entries
+        b.key("Tab")
+        self.assertEqual(b.eval("document.activeElement?.dataset?.bact || null"), "new")
         b.key("Tab")
         first = b.eval("document.activeElement?.dataset?.brainId || null")
         self.assertEqual(first, "e-report-routing")
@@ -232,9 +235,11 @@ class BrainReading(unittest.TestCase):
         b = self.open("/brain", origin=self.origin)
         text = b.eval("document.querySelector('#bshell').innerText")
         self.assertIn("There is no brain/ directory", text)
-        self.assertIn("comes with card #158", text)
-        self.assertEqual(b.eval("document.querySelectorAll('#bshell button').length"), 0,
-                         "the empty Brain offers no control that does nothing")
+        self.assertIn("the first entry you save does", text)
+        # the one control is the one that fills it (task 158); reading made nothing
+        self.assertEqual(b.eval("[...document.querySelectorAll('#bshell button')]"
+                                ".map(x => x.dataset.bact)"), ["new"],
+                         "the empty Brain offers exactly one control: New entry")
         shot("brain-empty")
 
     def test_6_browsing_changed_nothing_in_the_work_root(self):
