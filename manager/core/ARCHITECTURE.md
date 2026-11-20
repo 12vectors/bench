@@ -103,6 +103,12 @@ itself (parent, children, loops) is derived once by
 `plan drift` and preflight refuses it without `plans` reaching up.
 `delivery` and `routes` read it; it reads nothing above itself.
 
+`brainwrite` (task 158) sits beside `changes`, directly above `sync`:
+the Brain's one writer, kept apart from `brain` (L5, the reader) because
+a write needs the actor (`acceptance`), the scoped work-state commit
+(`taskfiles.commit_work_file`) and sync's status and push (`sync`), all
+above the reader. Only `routes` imports it.
+
 `stackactions` (task 119, WP10b) sits beside `delivery`, directly above
 `stacks`, and neither imports the other: it performs the three explicit,
 confirmed stack actions a reading offers — **Retarget onto <target>**
