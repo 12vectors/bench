@@ -255,6 +255,42 @@ class _Journeys:
         self.assertEqual(j.state_status(), "",
                          "every move and report the board made is committed")
 
+    def test_a_move_whose_commit_failed_is_recorded_by_the_cards_next_edit(self):
+        """Task 155, the full-suite failure of the test above. The
+        standalone card's run ends while the member's move is committing,
+        and the reaper's commit of its *own* move into review/ meets the
+        held index and fails. The card's next commits are edits — an
+        orchestration record, its PR line — not moves. Before the repair
+        each named only review/: git read the card as created there (its
+        eligibility `no-movement`, so it was never merged), and the
+        unrecorded deletion of in-progress/ stayed a local change the
+        phase's merge refused over. Forced here deterministically: the
+        reaper's move commit waits for the jam, and the jam waits for it."""
+        j, phase, one, two, solo = self.phase_board()
+        first = j.step("pass", jam={"file": one, "to": "in-progress",
+                                    "collide": {"file": solo, "message": "→ review"}})
+        jam = first.get("jam")
+        self.assertIsNotNone(jam, first)
+        self.assertIsNone(jam["timeout"], f"a probe timeout is not a reproduction: {jam}")
+        self.assertTrue(jam["jammed"], f"the jam never applied: {jam}")
+        self.assertIs(jam["collided"], False,
+                      f"the standalone card's move commit must fail: {jam}")
+        self.assertIs(jam["committed"], False, jam)
+        self.assert_first_pass(j, first, one, solo)
+        # right after the pass: the failed move is already recorded by the
+        # card's next edit, attributed as the move it was
+        self.assertEqual(j.state_status(), "", "the failed move was recorded")
+        reading = j.step("read")
+        self.assertEqual(reading["eligibility"][solo], "own-move", reading["eligibility"])
+
+        j.until(lambda r: r["stages"].get(phase) == "done"
+                and r["stages"].get(solo) == "done", passes=20)
+        reading = j.step("read")
+        for card in (one, two, solo):
+            self.assertEqual(reading["stages"][card], "done", card)
+        self.assertEqual(j.state_status(), "",
+                         "every move and report the board made is committed")
+
     def test_a_phase_scope_integrates_its_members_and_delivers_the_whole(self):
         j, phase, one, two, solo = self.phase_board()
 
