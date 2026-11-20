@@ -82,7 +82,7 @@ def record_timing(run: bv.Run) -> None:
                              for c in doc.get("classes", [])[:10]],
              slowestTests=[{"id": x["id"], "seconds": round(x["seconds"], 2)}
                            for x in sorted(doc.get("tests", []),
-                                           key=lambda x: -x["seconds"])[:10]],
+                                           key=lambda x: -x["seconds"])[:25]],
              slowestFixtures=[{"kind": f["kind"], "owner": f["owner"],
                                "seconds": round(f["seconds"], 2)}
                               for f in sorted(doc.get("fixtures", []),
@@ -100,7 +100,9 @@ def record_timing(run: bv.Run) -> None:
               f"(fixtures {c['fixtureSeconds']:5.1f}s) {c['class']}")
     for f in t["slowestFixtures"][:6]:
         print(f"timing fixture: {f['seconds']:7.2f}s {f['kind']} {f['owner']}")
-    for x in t["slowestTests"][:8]:
+    # 25, not 8: the baseline's eight slowest were all one-off waits, and
+    # the next tier is what the following improvement needs to see
+    for x in t["slowestTests"]:
         print(f"timing test: {x['seconds']:7.2f}s {x['id']}")
 
 

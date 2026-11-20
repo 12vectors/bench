@@ -137,8 +137,8 @@ names the interpreter, platform, CPU count and argv it was taken under; the
 record beside it names the candidate revision and source digest, so a
 timing is always about a revision and a runtime. **Overhead is measured,
 not assumed**: `overhead.perTestSeconds` is the collector's own per-test
-work timed over 2000 repetitions in the same process (tens of
-microseconds against tests that take tens to hundreds of milliseconds),
+work timed over 2000 repetitions in the same process (0.8µs per test in
+the task 163 baseline, against a mean test of about 330ms),
 and writing the file happens after the run's clock stops. If a future
 Python lacks the private suite hooks, `fixtureTiming` reads `unavailable`
 and fixture time shows up as unattributed rather than being guessed.
