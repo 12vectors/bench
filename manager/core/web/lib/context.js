@@ -55,7 +55,8 @@ function activityScope(state, id) {
   if (found.ambiguous) return { state: 'ambiguous', id, files: found.ambiguous };
   const task = found.task;
   if (!task) return { state: 'missing', id };
-  if (task.isPhase) {
+  const phaseCard = !!task.isPhase;
+  if (phaseCard) {
     const files = new Set([task.file]);
     for (const m of task.members || []) if (m.file) files.add(m.file);
     return { state: 'phase', id, task, files };

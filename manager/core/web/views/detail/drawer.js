@@ -1,7 +1,7 @@
 /* The drawer: a card's detail view or an open document. */
 import { agentOnTask, failedRun } from '../../app/data.js';
 import { S } from '../../app/state.js';
-import { cardLabel, cardParent, crumbsHtml } from '../../lib/context.js';
+import { activityScope, cardLabel, cardParent, crumbsHtml, sessionsIn } from '../../lib/context.js';
 import { $, esc } from '../../lib/dom.js';
 import { harvestFolds } from '../../lib/folds.js';
 import { markScroll, restoreScroll } from '../../lib/keep.js';
@@ -78,6 +78,27 @@ function cardCrumbs(t) {
   }
   steps.push({ text: cardLabel(t) });
   return crumbsHtml(steps, esc, 'This card on the Board');
+}
+
+/* The way from a card's Activity into its sessions (task 159): the
+   sessions recorded on this card (a phase card's: on it and its members),
+   and Focus on the newest of them. Links, in the card's own activity
+   context, so Sessions and Focus say whose activity they are showing and
+   lead back here. Reading them starts nothing. */
+function activityLinks(t) {
+  const id = cardId(t, S.state);
+  const scope = activityScope(S.state, id);
+  // a card the listing does not hold (archived, ambiguous) has no link
+  if (!scope || !scope.task || scope.task.file !== t.file) return '';
+  const mine = sessionsIn(S.state, scope);
+  const newest = mine.slice().sort((a, b) => (b.last || b.started || 0) - (a.last || a.started || 0))[0];
+  const what = t.isPhase ? 'this phase and its cards' : 'this card';
+  return `<p class="dact-links">` +
+    `<a class="dlink" data-route data-sessions-for href="${esc(formatRoute({ view: 'flight', ctx: id }))}">` +
+    `Sessions for ${esc(what)} <span class="mono">${mine.length}</span></a>` +
+    (newest ? ` · <a class="dlink" data-route data-focus-for href="${esc(formatRoute({ view: 'focus', session: newest.id, ctx: id }))}">` +
+      `Focus on its newest session</a>` : ' · <span class="dnote">no session recorded on it yet</span>') +
+    `</p>`;
 }
 
 function viewControls(copy, copyLabel, wide) {
@@ -231,7 +252,7 @@ function renderDrawer() {
     dsec('inputs', tab, inputsHtml(t)) +
     dsec('acceptance', tab, acceptanceHtml(t, acc)) +
     dsec('reviews', tab, reviewsHtml(t, acc)) +
-    dsec('activity', tab, activityHtml(t, acc)) +
+    dsec('activity', tab, activityLinks(t) + activityHtml(t, acc)) +
     `<div class="dmeta">${esc(t.stage)}/${esc(t.file)} · ${t.words} words · edited ${esc(when)}</div>`;
   wireDiscussion(t);
   wireDetail(t);

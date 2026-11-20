@@ -171,8 +171,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "lib/context.js": {
-   "bytes": 6206,
-   "sha256": "fa4f958c50f2ced105fecb557ae3c5adf9a90763f08864321ce4d6a2e411395a",
+   "bytes": 6239,
+   "sha256": "aeb0e884a7b73b63aaa43fb70a8bd05a959f3dab97addda999c9a95c904032fc",
    "type": "text/javascript; charset=utf-8"
   },
   "lib/dom.js": {
@@ -286,13 +286,13 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/drawer.js": {
-   "bytes": 19645,
-   "sha256": "237f872475817eaaa24cbef6aa6c318de6392c233c059c3ba3ac013b7568262f",
+   "bytes": 20984,
+   "sha256": "4106d63f5d9ad311a66be343355e23fcea7f666f1c64ffd9b9bb121381d725ff",
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/sections.js": {
-   "bytes": 103075,
-   "sha256": "a3e4900b45a348e4bfd1d779ad874581d96636d51b2d1ca2fdc2ffbbaabc566a",
+   "bytes": 101693,
+   "sha256": "4b7d427ed1ec140f3e9e405e2ee587966a4c278d325980bd09827fef57a842a5",
    "type": "text/javascript; charset=utf-8"
   },
   "views/doctor.js": {
