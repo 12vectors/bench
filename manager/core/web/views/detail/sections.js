@@ -219,8 +219,10 @@ function sinceRound(r, acc) {
    4. What did the reviews find? — `reviewFactsHtml`.
 
    Supporting detail follows, quieter and folded where it is long: the
-   demonstration, the stack, the signals, the phase's members, every tool
-   and the branch plan. Nothing that was here is gone; it is placed. */
+   demonstration, the stack, the signals, the phase's members and the
+   branch plan. The card's tools are not here: by the owner's review they
+   sit once at the top of the detail view, under its navigation, on every
+   section (drawer.js). Nothing that was here is gone; it is placed. */
 function overviewHtml(t, acc, failBlock, signals, plan, members) {
   const d = deliveryOf(t);
   const full = loadDeliveryFull(t, () => {
@@ -234,7 +236,6 @@ function overviewHtml(t, acc, failBlock, signals, plan, members) {
     `<h3 class="ovh" id="ov-more-h">More about this card</h3>` +
     resultHtml(t) +
     stackBlock(t) + signals + members +
-    `<h3>Tools</h3><div id="drawertools"><p class="dnote">This card has no tools in its current stage.</p></div>` +
     (plan ? `<details class="rpt"${S.accOpen[t.file + ':plan'] ? ' open' : ''} data-keep="plan">` +
             `<summary>Branch and plan</summary><div style="padding:6px 10px">${plan}</div></details>` : '') +
     `</div>`;

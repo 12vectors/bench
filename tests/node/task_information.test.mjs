@@ -146,12 +146,15 @@ test('the Overview orders the reader\'s questions, and reading it asks the board
   const html = overviewHtml(listed, r.acc, '', '', '', '');
   const at = (s) => html.indexOf(s);
   for (const h of ['The work', 'Where it stands · what happens next', 'What is required',
-                   'Reviews and findings', 'More about this card', '<h3>Tools</h3>'])
+                   'Reviews and findings', 'More about this card'])
     assert.ok(at(h) > 0, `missing ${h}`);
   assert.ok(at('The work') < at('Where it stands') && at('Where it stands') < at('What is required') &&
-            at('What is required') < at('Reviews and findings') && at('Reviews and findings') < at('More about this card') &&
-            at('More about this card') < at('<h3>Tools</h3>'), 'the sections are in the reader\'s order');
-  assert.ok(at('id="drawertools"') > 0, 'every tool is still reachable');
+            at('What is required') < at('Reviews and findings') && at('Reviews and findings') < at('More about this card'),
+            'the sections are in the reader\'s order');
+  // the tools are no longer at the foot of the Overview: by the owner's
+  // review they sit once at the top of the whole detail view (drawer.js)
+  assert.equal(at('drawertools'), -1, 'the Overview carries a second tools slot');
+  assert.doesNotMatch(html, /<h3>Tools<\/h3>/, 'an outer Tools heading over the tool group');
   // the delivery reading is the server's; with none in hand it is being read
   assert.match(html, /Reading the delivery status…/);
   const extra = asked.slice(before).filter(u => !/^\/api\/card\/(delivery|inputs|result|acceptance)\?/.test(u) && !/^\/api\/card\?/.test(u));
@@ -206,4 +209,45 @@ test('the work base sits under where it stands, a held new start in view', async
   assert.ok(at('Where it stands') < at('class="workbase"') && at('class="workbase"') < at('What is required'),
             'the work base is part of where the card stands');
   assert.match(text(html), /A new start is held: the prerequisite moved/);
+});
+
+// ── the owner's visual review: compact header controls, tools at the top ──
+
+test('the header controls are three named icon buttons in one group, Expand saying its state', async () => {
+  const { viewControls } = await load('views/detail/drawer.js');
+  const { S } = await load('app/state.js');
+  S.dwide = false;
+  const html = viewControls('/cards/9?tab=reviews', "Copy a link to this card's reviews section", true);
+  assert.equal(html.match(/class="dctl"/g).length, 1, 'one group');
+  assert.match(html, /role="group" aria-label="Detail view controls"/);
+  const buttons = [...html.matchAll(/<button ([^>]*)>(.*?)<\/button>/g)];
+  assert.deepEqual(buttons.map(b => /id="([^"]+)"/.exec(b[1])[1]), ['dcopylink', 'dwide', 'closeDrawer']);
+  for (const [, attrs, inner] of buttons) {
+    assert.match(attrs, /aria-label="[A-Z][^"]+"/, 'every icon has a name in words');
+    assert.match(attrs, /title="[A-Z][^"]+"/, 'and a tooltip');
+    assert.match(inner, /^<svg [^>]*aria-hidden="true"/, 'the icon itself is decoration');
+    assert.equal(text(inner), '', 'no visible text beside the icon');
+  }
+  assert.match(html, /data-copy-link="\/cards\/9\?tab=reviews"/, 'the copy link is the section\'s address');
+  assert.match(html, /id="dwide"[^>]*aria-pressed="false" aria-label="Expand the reading view"/);
+  assert.match(html, /data-icon="expand"/);
+  S.dwide = true;
+  const wide = viewControls('/cards/9', 'Copy a link to this card', true);
+  assert.match(wide, /id="dwide"[^>]*aria-pressed="true" aria-label="Narrow the reading view"/);
+  assert.match(wide, /data-icon="narrow"/);
+  assert.doesNotMatch(wide, /data-icon="expand"/);
+  S.dwide = false;
+  // an address the board does not list has no reading view to widen
+  assert.doesNotMatch(viewControls('/cards/9', 'Copy this address', false), /id="dwide"/);
+});
+
+test('the detail view places its one tools slot under the tab row, before every section', () => {
+  const src = readFileSync(join(WEB, 'views/detail/drawer.js'), 'utf8');
+  const render = src.slice(src.indexOf('function renderDrawer('), src.indexOf('function renderCardLink('));
+  const at = (s) => render.indexOf(s);
+  assert.equal(render.split('id="drawertools"').length, 2, 'exactly one tools slot');
+  assert.ok(at('dtabsHtml(t, tab, acc)') < at('id="drawertools"') &&
+            at('id="drawertools"') < at("dsec('overview'"), 'the tools are under the tabs and above the sections');
+  assert.match(render, /label\.textContent = 'Tools'/, 'the group carries the one Tools label');
+  assert.doesNotMatch(render, /<h3>Tools<\/h3>/);
 });

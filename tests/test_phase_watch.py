@@ -540,11 +540,14 @@ class ThePhaseCardsSheet(unittest.TestCase):
                               cls.html, re.S).group(0)
 
     def test_the_sheet_lists_the_members(self):
-        # task 81: drawn in the detail view's Overview, ahead of the tools
+        # task 81: drawn in the detail view's Overview; since the owner's
+        # review of task 149 the tools sit at the top of the detail view,
+        # not after the members
         self.assertIn("planBlock(t), phaseMembers(t)))", self.html,
                       "the list belongs in the drawer's Overview")
         overview = re.search(r"function overviewHtml\(.*?\n\}\n", self.html, re.S).group(0)
-        self.assertLess(overview.index("signals + members"), overview.index("<h3>Tools</h3>"))
+        self.assertIn("signals + members", overview)
+        self.assertNotIn("drawertools", overview)
 
     def test_only_a_phase_card_gets_one(self):
         self.assertIn("if (!t.isPhase) return '';", self.block)

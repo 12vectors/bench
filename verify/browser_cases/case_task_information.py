@@ -42,7 +42,7 @@ ORDER = ("(() => { const y = s => { const e = document.querySelector(s);"
          " return e ? e.getBoundingClientRect().top : -1; };"
          " return [y('#dsec-overview .ovwork'), y('#dsec-overview .ovnow'),"
          " y('#dsec-overview .ovreq'), y('#dsec-overview .ovrev'),"
-         " y('#dsec-overview .ovdetail'), y('#dsec-overview #drawertools, #dsec-overview .cardtools')]; })()")
+         " y('#dsec-overview .ovdetail')]; })()")
 
 
 def setUpModule():

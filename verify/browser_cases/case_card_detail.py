@@ -125,14 +125,14 @@ class StructuredDetail(unittest.TestCase):
         b = S["browser"]
         self.open_card()
 
-        # — identity, state and the next step lead; tools come after —
+        # — identity leads; the card's tools sit under the tab row, above
+        #   the section's text (owner review of task 149), then the state —
         title = b.eval("document.querySelector('#drawer .dtitle').innerText")
         self.assertEqual(title, "Structured detail fixture")
         order = b.eval("(() => { const y = s => document.querySelector(s).getBoundingClientRect().top;"
-                       " return [y('#drawer .dtitle'), y('#dsec-overview .dstatus'),"
-                       " y('#dsec-overview .cardtools, #dsec-overview #drawertools')]; })()")
-        self.assertLess(order[0], order[1], "the title is not above the next step")
-        self.assertLess(order[1], order[2], "the next step is not above the tools")
+                       " return [y('#drawer .dtitle'), y('#drawer .dtabs'), y('#drawerbody > #drawertools'),"
+                       " y('#dsec-overview .dstatus')]; })()")
+        self.assertEqual(order, sorted(order), f"title, tabs, tools, next step out of order: {order}")
         overview = b.eval("document.querySelector('#dsec-overview').innerText")
         self.assertIn("Acceptance results not recorded", overview)
         self.assertIn("Olive asked for changes at 0123456789ab", overview)

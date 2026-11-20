@@ -260,6 +260,13 @@
   .card .cardtools .chip2.arch{margin-left:0}
   .dtools{display:flex;padding:10px 18px 0;border-top:none}
   .dtools .tlabel{width:100%}
+  /* in the detail view the tools sit once at the top, under the tab row
+     and before the section's text (owner review of task 149): the one
+     "Tools" label on its own line, the chips wrapping under it */
+  #drawer #drawertools.dtools{padding:0 0 14px;margin:0;gap:6px;
+    border-bottom:1px solid var(--border-soft)}
+  #drawer #drawertools .tlabel{font-family:var(--sans);font-size:12px;font-weight:600;
+    color:var(--muted)}
   .card.has-acts:focus-within .toprow .pill.status,
   .card.has-acts:focus-within .toprow .high{display:none}
   .card .title{overflow-wrap:anywhere}
@@ -1078,7 +1085,24 @@
   #drawer.wide{width:min(920px,96vw)!important}
   #drawer .dsticky{position:sticky;top:0;z-index:2;background:var(--canvas);
     margin-top:-20px;padding:14px 0 8px;flex-wrap:wrap;border-bottom:1px solid var(--border-soft)}
-  #drawer .dtitle{flex:1 1 220px;min-width:0;margin:0;font-size:16px;line-height:1.3;
+  /* a deliberate gap between the tab row's border and whatever comes
+     first under it — the tools, or a section's text — on every section,
+     at every width and in both themes (owner review of task 149): the
+     body's 14px gap plus this, so nothing starts against the line */
+  #drawer .dhead.dsticky{margin-bottom:10px}
+  /* identity and the view controls on one row; the controls are one group
+     that never wraps apart, and the title takes the whole row under them,
+     wrapping rather than shrinking */
+  #drawer .dtop{display:flex;align-items:center;gap:8px;width:100%;min-width:0}
+  #drawer .dtop .pill{flex:0 1 auto;min-width:0;white-space:normal;overflow-wrap:anywhere}
+  #drawer .dctl{display:flex;flex-wrap:nowrap;gap:4px;flex:none;margin-left:auto}
+  #drawer button.dicon{display:inline-flex;align-items:center;justify-content:center;
+    flex:none;width:32px;height:32px;padding:0;color:var(--muted)}
+  #drawer button.dicon:hover{color:var(--text)}
+  #drawer button.dicon[aria-pressed="true"]{color:var(--text);background:var(--sunken)}
+  #drawer button.dicon .dico{display:block;pointer-events:none}
+  @media (pointer:coarse){#drawer button.dicon{width:44px;height:44px}}
+  #drawer .dtitle{flex:1 1 100%;width:100%;min-width:0;margin:0;font-size:16px;line-height:1.3;
     font-weight:600;overflow-wrap:anywhere}
   #drawer .dtabs{display:flex;gap:2px;flex-wrap:wrap;width:100%;margin-top:4px}
   #drawer .dtabs button{font-size:12px;padding:4px 10px;border-radius:6px;

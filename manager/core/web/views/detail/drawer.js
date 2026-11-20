@@ -36,6 +36,42 @@ function drawerFocusKey(el, root) {
     `[data-${n.replace(/[A-Z]/g, c => '-' + c.toLowerCase())}="${CSS.escape(el.dataset[n])}"]`).join('');
 }
 
+/* The detail view's three controls as icons (owner review of task 149):
+   one group that stays on one row at every width. Each has its name in
+   words, for assistive technology and as a tooltip; Expand/Narrow says
+   which it will do and wears the matching icon. Inline SVG in the
+   button's own colour, so no font has to carry a symbol. */
+const ICONS = {
+  link: '<path d="M6.5 9.5l3-3"/><path d="M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1"/>' +
+        '<path d="M9 11.5l-1 1A2.5 2.5 0 0 1 4.5 9l1-1"/>',
+  expand: '<path d="M9.5 2.5h4v4"/><path d="M13.5 2.5L9 7"/>' +
+          '<path d="M6.5 13.5h-4v-4"/><path d="M2.5 13.5L7 9"/>',
+  narrow: '<path d="M13.5 6.5h-4v-4"/><path d="M9.5 6.5L14 2"/>' +
+          '<path d="M2.5 9.5h4v4"/><path d="M6.5 9.5L2 14"/>',
+  close: '<path d="M3.5 3.5l9 9"/><path d="M12.5 3.5l-9 9"/>',
+};
+
+function icon(name) {
+  return `<svg class="dico" data-icon="${name}" viewBox="0 0 16 16" width="16" height="16" ` +
+    `aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" ` +
+    `stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
+}
+
+function viewControls(copy, copyLabel, wide) {
+  const w = !!S.dwide;
+  const wideLabel = w ? 'Narrow the reading view' : 'Expand the reading view';
+  return `<div class="dctl" role="group" aria-label="Detail view controls">` +
+    `<button id="dcopylink" class="dicon" data-copy-link="${esc(copy)}" aria-label="${esc(copyLabel)}" ` +
+    `title="${esc(copyLabel)} — the address follows the card through moves and title edits">` +
+    `${icon('link')}</button>` +
+    (wide
+      ? `<button id="dwide" class="dicon" aria-pressed="${w ? 'true' : 'false'}" aria-label="${wideLabel}" ` +
+        `title="${wideLabel} — a wider view for long briefs and reports">${icon(w ? 'narrow' : 'expand')}</button>`
+      : '') +
+    `<button id="closeDrawer" class="dicon" aria-label="Close the detail view" ` +
+    `title="Close the detail view (Esc)">${icon('close')}</button></div>`;
+}
+
 function drawerKey() {
   if (S.fileView) return 'v:drawer:file:' + S.fileView.dir + '/' + S.fileView.name;
   // per section too: each of a card's sections keeps its own reading place
@@ -51,7 +87,8 @@ function renderDrawer() {
     const f = S.fileView;
     body.innerHTML =
       `<div class="dhead"><span class="mono" style="font-size:12px;color:var(--dim)">${esc(f.dir)}/${esc(f.name)}</span>` +
-      `<span class="spacer"></span><button id="closeDrawer">Close</button></div>` +
+      `<span class="spacer"></span><button id="closeDrawer" class="dicon" aria-label="Close the document" ` +
+      `title="Close the document (Esc)">${icon('close')}</button></div>` +
       `<div class="dbody">${md(f.content)}</div>`;
     panel.classList.add('open');
     restoreScroll(key, body);
@@ -110,19 +147,24 @@ function renderDrawer() {
   // existing tools all reach it — the others are `hidden`, not absent.
   body.innerHTML =
     `<div class="dhead dsticky">` +
-    // the card's address, as a link a new tab can take (task 134)
+    // one row of identity and controls: the card's address (a link a new
+    // tab can take, task 134), its delivery status, and the three view
+    // controls as one group that never wraps apart. The title has the
+    // whole width under it, so it wraps rather than shrinking to nothing.
+    `<div class="dtop">` +
     `<a class="mono dref" style="font-size:12px" href="${esc(formatRoute({ card: cardId(t, S.state) }))}" ` +
     `data-route title="This card's address">${t.number ? '#' + esc(t.number) : esc(stemOf(t.file))}</a>` +
-    `<h2 class="dtitle" id="dtitle">${esc(cardTitle(t))}</h2>` +
     `<span class="pill" style="background:${pill.bg};color:${pill.tint}"` +
     `${pill.word ? ` data-word="${esc(pill.word)}"` : ''}>${esc(pill.text)}</span>` +
-    `<button id="dcopylink" data-copy-link="${esc(formatRoute(routeOf(S)))}" ` +
-    `aria-label="copy a link to this card${tab === 'overview' ? '' : `'s ${esc(tab)} section`}" ` +
-    `title="Copy this card's address — it follows the card through moves and title edits">Copy link</button>` +
-    `<button id="dwide" aria-pressed="${S.dwide ? 'true' : 'false'}" ` +
-    `title="A wider reading view for long briefs and reports">${S.dwide ? 'Narrow' : 'Expand'}</button>` +
-    `<button id="closeDrawer">Close</button>` +
+    viewControls(formatRoute(routeOf(S)),
+      `Copy a link to this card${tab === 'overview' ? '' : `'s ${tab} section`}`, true) +
+    `</div>` +
+    `<h2 class="dtitle" id="dtitle">${esc(cardTitle(t))}</h2>` +
     dtabsHtml(t, tab, acc) + `</div>` +
+    // the card's tools, once, directly under the navigation and before any
+    // section's narrative (owner review of task 149). Filled below with
+    // the card's own tool group, which carries the one "Tools" label.
+    `<div id="drawertools" hidden></div>` +
     dsec('overview', tab, overviewHtml(t, acc, failBlock, signalsBlock(t), planBlock(t), phaseMembers(t))) +
     // the discussion is drawn by its own panel, as text — never through
     // the Markdown renderer, and never as part of the brief
@@ -161,9 +203,17 @@ function renderDrawer() {
   // and wired by it — so the detail view cannot offer a tool the card
   // would not, or wire one differently
   const tools = cardFor(t).querySelector('.cardtools');
+  const slot = $('#drawertools');
   if (tools && tools.querySelectorAll('button, a').length) {
     tools.classList.add('open', 'dtools');
-    $('#drawertools').replaceWith(tools);
+    tools.id = 'drawertools';
+    const label = tools.querySelector('.tlabel');
+    if (label) label.textContent = 'Tools';
+    slot.replaceWith(tools);
+  } else {
+    // no tools in this stage: nothing at the top, rather than a sentence
+    // saying so above every section
+    slot.remove();
   }
   panel.classList.add('open');
   restoreScroll(key, body);
@@ -201,13 +251,12 @@ const LINK_WORDS = {
   loading: 'Looking for the card…',
 };
 
-function linkHead(label, extra) {
-  return `<div class="dhead dsticky">` +
+function linkHead(label, title, pill) {
+  return `<div class="dhead dsticky"><div class="dtop">` +
     `<span class="mono" style="font-size:12px;color:var(--dim)">${esc(label)}</span>` +
-    `${extra || ''}<span class="spacer"></span>` +
-    `<button id="dcopylink" data-copy-link="${esc(formatRoute(routeOf(S)))}" ` +
-    `aria-label="copy this address">Copy link</button>` +
-    `<button id="closeDrawer">Close</button></div>`;
+    (pill || '') +
+    viewControls(formatRoute(routeOf(S)), 'Copy this address', false) + `</div>` +
+    (title || '') + `</div>`;
 }
 
 function renderCardLink(panel, body) {
@@ -221,7 +270,7 @@ function renderCardLink(panel, body) {
   } else if (link.state === 'archived') {
     const t = link.card;
     html = linkHead(t.number ? '#' + t.number : stemOf(t.file),
-        `<h2 class="dtitle" id="dtitle">${esc(cardTitle(t))}</h2>` +
+        `<h2 class="dtitle" id="dtitle">${esc(cardTitle(t))}</h2>`,
         `<span class="pill" data-word="archived" style="background:var(--sunken);color:var(--idle)">Archived</span>`) +
       `<div class="well" id="darchived"><span class="lead">·</span><div class="wbody">` +
       `<b>This card is archived.</b> It is out of every column and was never deleted. ` +
@@ -268,5 +317,5 @@ function clipText(text, n) {
 }
 
 export {
-  drawerFocusKey, drawerKey, renderDrawer
+  drawerFocusKey, drawerKey, renderDrawer, viewControls
 };
