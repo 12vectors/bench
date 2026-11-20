@@ -341,8 +341,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/settings/agents.js": {
-   "bytes": 32267,
-   "sha256": "7efcb4720b58f0a7c47e9d620adecbdc01d74cceaf299fad0d8638136bfd8898",
+   "bytes": 34288,
+   "sha256": "bf5ae2360677af717709df47361e44530bd106b9c58068a5084323d781429244",
    "type": "text/javascript; charset=utf-8"
   },
   "views/settings/checks.js": {
