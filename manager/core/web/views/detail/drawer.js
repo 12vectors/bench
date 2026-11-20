@@ -2,6 +2,7 @@
 import { agentOnTask, failedRun } from '../../app/data.js';
 import { S } from '../../app/state.js';
 import { $, esc } from '../../lib/dom.js';
+import { harvestFolds } from '../../lib/folds.js';
 import { markScroll, restoreScroll } from '../../lib/keep.js';
 import { md } from '../../lib/md.js';
 import { askCardLink, syncRoute } from '../../lib/nav.js';
@@ -82,6 +83,10 @@ function renderDrawer() {
   const panel = $('#drawer');
   const body = $('#drawerbody');
   if (S.drawerKey) markScroll(S.drawerKey, body);   // the document leaving
+  // a fold the reader opened or closed whose queued toggle event has not
+  // arrived yet: recorded now, under the card it was drawn for, so the
+  // redraw below draws it as the reader left it (lib/folds.js, task 155)
+  harvestFolds(S.accOpen, body);
   const key = S.drawerKey = drawerKey();
   if (S.fileView) {
     const f = S.fileView;

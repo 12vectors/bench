@@ -3,6 +3,7 @@ import { agentOnTask, loadState } from '../../app/data.js';
 import { S } from '../../app/state.js';
 import { fetch } from '../../lib/api.js';
 import { $, esc } from '../../lib/dom.js';
+import { wireFolds } from '../../lib/folds.js';
 import { md } from '../../lib/md.js';
 import { syncRoute } from '../../lib/nav.js';
 import { cardEntryHtml } from '../../lib/orchwords.js';
@@ -882,9 +883,8 @@ function wireResult(t) {
   if (retry) retry.addEventListener('click', () => { loadResult(t, true); renderDrawer(); });
   if (!d) return;
   const key = (k) => `res-${k}:${t.file}`;
-  body.querySelectorAll('[data-res-fold]').forEach(el => el.addEventListener('toggle', () => {
-    S.accOpen[`${t.file}:res-${el.dataset.resFold}`] = el.open;
-  }));
+  // a fold's open or closed choice is recorded by wireDetail's wireFolds,
+  // under the key its renderer reads (`res-<fold>`) as well as its data-keep
   body.querySelectorAll('[data-res-mode]').forEach(r => r.addEventListener('change', () => {
     S.accDraft[key('mode')] = r.value;
     S.accOpen[`${t.file}:res-edit`] = true;
@@ -1573,10 +1573,10 @@ function wireDetail(t) {
     btn.addEventListener('click', () => openReview(t, btn.dataset.goreview));
   });
   $('#dwide').addEventListener('click', () => { S.dwide = !S.dwide; renderDrawer(); $('#dwide').focus(); });
-  // open/closed folds and unsent text survive a live redraw
-  body.querySelectorAll('details[data-keep], details[data-fold]').forEach(d => d.addEventListener('toggle', () => {
-    S.accOpen[`${t.file}:${d.dataset.keep || d.dataset.fold}`] = d.open;
-  }));
+  // open/closed folds and unsent text survive a live redraw — a fold's
+  // choice recorded by its toggle, or by the redraw that replaces it
+  // before that queued event arrives (lib/folds.js, task 155)
+  wireFolds(S.accOpen, t.file, body);
   // copies the report as filed; where the clipboard is refused, the text
   // is selected instead so the reader's own copy takes it
   body.querySelectorAll('.rcopy').forEach(btn => btn.addEventListener('click', async () => {
