@@ -84,7 +84,7 @@ class BrainWriting(unittest.TestCase):
         cls.origin = S["browser"].origin
         cls.app_before = tree(cls.backend.app)
         cls.cards_before = tree(work / "tasks")
-        cls.id = None
+        cls.entry_id = None        # never `id`: that is TestCase.id()
 
     @classmethod
     def tearDownClass(cls):
@@ -131,7 +131,7 @@ class BrainWriting(unittest.TestCase):
             raise bv.CheckFailed(f"never showed {words}: {self.text(b)[:1500]}")
 
     def entry_file(self):
-        return self.backend.work / "brain" / f"{type(self).id}.md"
+        return self.backend.work / "brain" / f"{type(self).entry_id}.md"
 
     def no_overflow(self, b, where):
         wide = b.eval("(() => { const s = document.querySelector('#bshell');"
@@ -160,17 +160,17 @@ class BrainWriting(unittest.TestCase):
         b.click('#bshell [data-bact="save"]')
         if not b.wait("location.pathname.startsWith('/brain/e/e-how-brain-writes-are-protected-')", 10):
             raise bv.CheckFailed("Save did not land on the new entry: " + self.text(b)[:800])
-        type(self).id = b.eval("location.pathname.split('/').pop()")
+        type(self).entry_id = b.eval("location.pathname.split('/').pop()")
         self.wait_text(b, ["Saved", "Committed", "Not shared", "How Brain writes are protected"])
         self.assertTrue(self.entry_file().exists())
-        self.assertIn(f"board: brain {type(self).id} created",
+        self.assertIn(f"board: brain {type(self).entry_id} created",
                       git(self.backend.work, "log", "-1", "--format=%s").stdout)
         shot("brain-write-created-night")
         b.eval("S.dark = false; applyTheme(); true")
         shot("brain-write-created-day")
 
     def test_2_cancel_changes_nothing_and_save_edits_in_place(self):
-        b = self.open(f"/brain/e/{type(self).id}")
+        b = self.open(f"/brain/e/{type(self).entry_id}")
         before = self.entry_file().read_bytes()
         b.click('#bshell [data-bact="edit"]')
         self.type(b, "title", "A title nobody saves")
@@ -181,10 +181,10 @@ class BrainWriting(unittest.TestCase):
         self.type(b, "title", "How Brain writes stay safe")
         b.click('#bshell [data-bact="save"]')
         self.wait_text(b, ["How Brain writes stay safe", "edited"])
-        self.assertEqual(b.eval("location.pathname"), f"/brain/e/{type(self).id}")
+        self.assertEqual(b.eval("location.pathname"), f"/brain/e/{type(self).entry_id}")
 
     def test_3_a_concurrent_change_is_a_conflict_that_keeps_the_draft(self):
-        b = self.open(f"/brain/e/{type(self).id}")
+        b = self.open(f"/brain/e/{type(self).entry_id}")
         b.click('#bshell [data-bact="edit"]')
         self.type(b, "body", "My careful rewrite.")
         path = self.entry_file()
@@ -211,13 +211,13 @@ class BrainWriting(unittest.TestCase):
         self.wait_text(b, ["Not saved", "replaces this one"])
         self.assertEqual(b.eval("document.querySelector('#bshell [data-bf=\"reason\"]').value"),
                          "folded into the new guide")
-        self.choose(b, "supersededBy", type(self).id)
+        self.choose(b, "supersededBy", type(self).entry_id)
         b.click('#bshell [data-bact="save"]')
         self.wait_text(b, ["Superseded by", "classified Superseded", "folded into the new guide"])
         shot("brain-write-classified-night")
 
     def test_5_override_set_clear_and_revisions(self):
-        b = self.open(f"/brain/e/{type(self).id}")
+        b = self.open(f"/brain/e/{type(self).entry_id}")
         b.click('#bshell [data-bact="override"]')
         self.type(b, "reason", "a person decided this")
         b.click('#bshell [data-bact="save"]')
@@ -231,7 +231,7 @@ class BrainWriting(unittest.TestCase):
 
     def test_6_a_failed_commit_is_said_and_retried(self):
         lock = self.backend.work / ".git" / "index.lock"
-        b = self.open(f"/brain/e/{type(self).id}")
+        b = self.open(f"/brain/e/{type(self).entry_id}")
         lock.write_text("")
         try:
             b.click('#bshell [data-bact="edit"]')
@@ -247,7 +247,7 @@ class BrainWriting(unittest.TestCase):
         self.assertNotIn("Commit failed", self.text(b))
 
     def test_7_retire_is_armed_and_keeps_a_tombstone(self):
-        b = self.open(f"/brain/e/{type(self).id}")
+        b = self.open(f"/brain/e/{type(self).entry_id}")
         b.click('#bshell [data-bact="retire"]')
         self.type(b, "reason", "replaced by the handbook")
         b.click('#bshell [data-bact="save"]')
@@ -256,7 +256,7 @@ class BrainWriting(unittest.TestCase):
         self.assertNotIn("Removed", self.entry_file().read_text())
         b.click('#bshell [data-bact="save"]')
         self.wait_text(b, ["This entry was removed", "replaced by the handbook"])
-        b.goto(f"/brain/e/{type(self).id}")
+        b.goto(f"/brain/e/{type(self).entry_id}")
         self.wait_text(b, ["This entry was removed"])
         shot("brain-write-retired-night")
 
