@@ -6,6 +6,7 @@ import { syncRoute } from '../lib/nav.js';
 import { CARD_VIEWS } from '../lib/route.js';
 import { renderBar, renderLog } from './activity.js';
 import { phaseLabel, renderBoard } from './board.js';
+import { renderBrain } from './brain.js';
 import { forgetActsOfVanishedCards, showDetail } from './card.js';
 import { findTask, renderFocus } from './focus.js';
 import { renderAgentCommands, renderBuild, renderChip, renderDoctor, renderSync, runningAgents } from './header.js';
@@ -172,7 +173,7 @@ function setView(view) {
    narrowed to a few characters still shows it. It is the in-flight glyph
    the CI and copilot chips already use, not an emoji, and a quiet board
    is the plain title, byte for byte. */
-const VIEW_TITLES = { board: 'bench', orchestrator: 'orchestrator', phases: 'phases',
+const VIEW_TITLES = { board: 'bench', brain: 'brain', orchestrator: 'orchestrator', phases: 'phases',
   flight: 'sessions', focus: 'focus', settings: 'settings' };
 const WORKING_MARK = '◌';
 
@@ -216,6 +217,7 @@ function render() {
   else if (S.view === 'settings') { if (!settingsEditing()) renderSettings(); }
   // the Orchestrator holds its own paint while a person types in it
   else if (S.view === 'orchestrator') renderOrchestrator();
+  else if (S.view === 'brain') renderBrain();
   else renderCards();
   renderBar();
   renderLog();

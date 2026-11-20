@@ -160,6 +160,12 @@ function applyRoute(route, background) {
     S.cardLink = route.invalid === 'card' ? { id: route.raw, state: 'invalid' } : null;
     const named = (key) => route[key] || (route.invalid === key ? route.raw : null);
     if (route.view === 'phases') { S.phaseSel = named('phase'); S.phaseScroll = !!S.phaseSel; }
+    if (route.view === 'brain') {
+      // an address that is not an entry's is said in place, never swapped
+      // for the list or another entry
+      S.brainEntry = route.entry || null;
+      S.brainBad = route.invalid === 'entry' ? route.raw : null;
+    }
     if (route.view === 'flight') S.flightSid = named('session');
     if (route.view === 'focus') S.focusSid = named('session');
     if (route.view === 'settings') {
@@ -203,6 +209,8 @@ document.querySelectorAll('#views [data-view]').forEach(b =>
     // a new tab, a new window: the browser's, with the view's address
     if (!plainClick(e)) return;
     e.preventDefault();
+    // the switcher's Brain is the Brain's list, as its href says
+    if (b.dataset.view === 'brain') { S.brainEntry = null; S.brainBad = null; }
     setView(b.dataset.view);
   }));
 /* Keyboard as well as pointer: every header chip that opens something —

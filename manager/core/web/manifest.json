@@ -6,8 +6,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "app/state.js": {
-   "bytes": 6511,
-   "sha256": "f9cc9f3bde44a68ecac1bbe1d7aae37abb5ef12c6cb4306aa1d706a0a75e939b",
+   "bytes": 6694,
+   "sha256": "0891d906f39f4e3601b4d84035e6d9652864eb3f170b2d369461bf1ab4652acc",
    "type": "text/javascript; charset=utf-8"
   },
   "app/theme.js": {
@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 116893,
-   "sha256": "e02dd906247a8002ebaa5bf344ff22aeb93e9f54af53491fe77c76136768d82e",
+   "bytes": 121539,
+   "sha256": "f42eb1159c7a3933b88599ce76b9c0590f16195cf530d9d4315b12a8ffa76200",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -221,8 +221,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "lib/route.js": {
-   "bytes": 11746,
-   "sha256": "4f7fbaefbf30b4f018951462fa7ecb3eb39be892f776b0266f946f7927440e83",
+   "bytes": 12555,
+   "sha256": "b43610f2bf804d4e0a9131f5ebf1aa0142a26553c376afef2f437bd0fdf5edf0",
    "type": "text/javascript; charset=utf-8"
   },
   "lib/schedule.js": {
@@ -241,8 +241,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "main.js": {
-   "bytes": 21494,
-   "sha256": "d40653094866360ac3d38672a8d6f8f975d9bb511350062b20937f70743fb5f7",
+   "bytes": 21901,
+   "sha256": "10a9c35e34c86b3a09fa01de3411826f0d5ee6da6e2fec091f25d5002c8861c6",
    "type": "text/javascript; charset=utf-8"
   },
   "views/activity.js": {
@@ -253,6 +253,11 @@
   "views/board.js": {
    "bytes": 26572,
    "sha256": "de10a6cb79e41a1d86b073a82c9cd480070d2d100f300cab81c7b8d33e628745",
+   "type": "text/javascript; charset=utf-8"
+  },
+  "views/brain.js": {
+   "bytes": 15357,
+   "sha256": "5e200b7d6f06c6a7fbfe0ead9f2633faf293f50f8a480a59b026db2d814720ba",
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {
@@ -296,8 +301,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/frame.js": {
-   "bytes": 10625,
-   "sha256": "31015a8d0b5ebf4ed3c7e842d9ab03585733f54963a4e4cd7b127e487d81dc2c",
+   "bytes": 10729,
+   "sha256": "32a69272e086c3800edaf82422ddb0ad3c5f62bd7f63dc07069f479effd12542",
    "type": "text/javascript; charset=utf-8"
   },
   "views/gates.js": {

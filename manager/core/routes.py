@@ -30,6 +30,7 @@ import agents
 import artifacts
 import assets
 import agentsettings
+import brain
 import commands
 import completion
 import config
@@ -476,7 +477,8 @@ def get_page(req) -> None:
 # page itself. Only these shapes are; anything else is a 404 as it always
 # was, so `/api/…`, `/web/…` and `/files/…` keep their own answers and an
 # address nobody documented is not a page.
-UI_PATHS = {"board", "orchestrator", "phases", "sessions", "focus", "settings"}
+UI_PATHS = {"board", "brain", "orchestrator", "phases", "sessions", "focus",
+            "settings"}
 UI_ITEM_PREFIXES = {"cards", "orchestrator", "phases", "sessions", "focus",
                     "settings"}
 # segments that name a section, not a card or a session
@@ -492,8 +494,11 @@ def ui_path(path: str) -> bool:
     `/sessions/<session>`, `/focus/<session>` and `/settings/<section>`
     with a single segment of the narrow alphabet an identifier is written
     in. A trailing slash, an empty or second segment, and anything
-    percent-encoded are not."""
+    percent-encoded are not. A Brain entry is `/brain/e/<id>` (task 157),
+    its id in the narrower alphabet `brain.ID_RE` reads."""
     parts = path.split("/")
+    if len(parts) == 4 and parts[1] == "brain" and parts[2] == "e":
+        return bool(brain.ID_RE.match(parts[3]))
     if len(parts) == 2:
         return parts[1] in UI_PATHS
     if len(parts) != 3 or parts[1] not in UI_ITEM_PREFIXES:
@@ -1031,6 +1036,25 @@ def get_stream(req) -> None:
 
 def get_files(req) -> None:
     req.extra_file(req.path)
+
+
+def get_brain(req) -> None:
+    # The Brain's index (task 157): a read of brain/ under the work root
+    # and nothing else — no directory made, no git, no fetch, no launch.
+    req.reply(200, {"brain": brain.index()})
+
+
+def get_brain_entry(req) -> None:
+    # One entry by its stable id, metadata and body from one reading of its
+    # file. An id nothing carries is a 404 that says so; two files claiming
+    # one id are a 409 naming both, never one of them picked.
+    try:
+        found = brain.entry(_q(req, "id"))
+    except brain.NotAnId as exc:
+        req.reply(400, {"error": str(exc), "code": "not-an-id"})
+        return
+    status = {"unknown": 404, "duplicate": 409}.get(found["state"], 200)
+    req.reply(status, {"entry": found})
 
 
 # ── POST: the board's own writes ───────────────────────────────────────
@@ -2038,6 +2062,8 @@ ROUTES = (
     Route("GET", "/board.html", "read", get_page),
     # the page's own addresses (task 134): the shell, for exactly these
     Route("GET", "/board", "read", get_ui_page),
+    Route("GET", "/brain", "read", get_ui_page),
+    Route("GET", "/brain/*", "read", get_ui_page),
     Route("GET", "/cards/*", "read", get_ui_page),
     Route("GET", "/orchestrator", "read", get_ui_page),
     Route("GET", "/orchestrator/*", "read", get_ui_page),
@@ -2085,6 +2111,8 @@ ROUTES = (
     Route("GET", "/api/diff", "read", get_diff),
     Route("GET", "/api/stream", "read", get_stream),
     Route("GET", "/files/*", "read", get_files),
+    Route("GET", "/api/brain", "read", get_brain),
+    Route("GET", "/api/brain/entry", "read", get_brain_entry),
 
     Route("POST", "/api/move", "browser-mutation", post_move),
     Route("POST", "/api/events", "event-ingest", post_events),
