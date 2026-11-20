@@ -69,6 +69,7 @@ card*; **H** lives in its own tab, linked from the Overview.
 | Progress of a running agent | Overview → Where it stands (agent-reported) | P2 | Activity, Focus |
 | Last recorded result | Overview → Where it stands (report's first paragraph, labelled as the run's account) | P2 | Activity (whole report) |
 | Orchestration scope and waiting decisions | Overview → Where it stands | P2 | Orchestrator view |
+| Work base: which code the work starts from, and a held new start (task 150) | Overview → Where it stands → **Work base** (headline and why; "A new start is held" stays in view as a blocker) | P2 | Refs, evidence and history folded under it; ⌖ chip |
 | Inputs and tools readiness | Overview → **What is required** → *to do the work* | P2 | Inputs tab |
 | Dependencies | Overview → What is required → *to do the work* (number, stage) | P2 | `/cards/<n>` links |
 | Acceptance criteria and their record | Overview → What is required (count) | P2 | Acceptance tab |

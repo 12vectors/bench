@@ -607,6 +607,9 @@ function cardDetailHtml(t) {
     ` <span class="o-src">${esc(el.attribution || 'Git attribution, not authentication')}</span></dd></div>` +
     `<div><dt>next step</dt><dd>${item ? `${badge(item.state, item.state === 'blocked' ? 'alarm' : 'neutral')} ${esc(item.code || '')} — ${esc(item.reason || '')}` : del ? '' : 'not scheduled'}` +
     `${del ? `${badge(del.state || 'delivery', 'neutral')} ${esc(del.code || '')} — ${esc(del.reason || '')}${del.label ? `<br><span class="o-dim">${esc(del.label)}</span>` : ''}${del.head ? ` <span class="o-src">head ${esc(String(del.head).slice(0, 12))}</span>` : ''}` : ''}</dd></div>` +
+    // the work-base assessment the schedule made (task 150): a read of
+    // local refs; the decision itself is recorded on the card at launch
+    (item && item.workBase ? `<div><dt>work base</dt><dd>${badge(item.workBase.decision || 'waiting', item.workBase.decision === 'blocked' ? 'alarm' : 'neutral')} ${esc(item.workBase.summary || '')} <span class="o-src">assessed by Bench</span></dd></div>` : '') +
     `<div><dt>launches</dt><dd>${esc(`${launches} of ${scope ? scope.ceilings.launchesPerCard.value : '?'} for this card`)} <span class="o-src">ledger</span></dd></div>` +
     `<div><dt>reasoning</dt><dd>${job ? `${esc(job.status)} (${esc(job.need)}) <span class="o-src">agent-reported when valid</span>` : 'none'}</dd></div>` +
     `</dl><h4>Run signals</h4>${signalsHtml(runOf(t.file))}` +

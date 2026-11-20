@@ -32,6 +32,38 @@ const ACC_GLYPH = { accepted: '✓', 'needs-work': '✕', recheck: '↻', report
 const STAGE_WORDS = { backlog: 'Backlog', 'to-do': 'To do', 'in-progress': 'In progress',
                       review: 'Review', done: 'Done' };
 
+/* The Overview's Work base block (task 150): the orchestrator's decision
+   about which code this card's work starts from, in the server's words —
+   "Starting from main", "Building on #61's committed work" — with why,
+   what it rests on and what withdrew it, folded under it. It draws the
+   recorded decision only; nothing here fetches, decides or launches. */
+function workBaseBlock(t) {
+  const w = ((S.state.plans || {})[t.file] || {}).workBase;
+  if (!w) return '';
+  const a = w.accepted || {};
+  const l = w.latest || {};
+  const stale = l.decision === 'stale' || l.decision === 'blocked';
+  const fact = (k, v) => v ? `<dt>${esc(k)}</dt><dd>${v}</dd>` : '';
+  const mono = v => v ? `<span class="mono">${esc(v)}</span>` : '';
+  return `<section class="workbase" aria-label="Work base">` +
+    // a sub-heading of "Where it stands", where task 149 placed it
+    `<h4 class="ovsub">Work base</h4>` +
+    `<p class="wbhead" data-decision="${esc(l.decision || '')}"${stale ? ' role="status"' : ''}>` +
+    `<b>${esc(w.headline)}.</b> ${esc((stale ? l.summary : a.summary) || '')}</p>` +
+    (w.withdrawn ? `<p class="dnote">A new start is held: ${esc(w.withdrawn)}</p>` : '') +
+    `<details class="rpt" data-keep="workbase"><summary>Refs, evidence and history</summary>` +
+    `<dl class="dfacts">` +
+    fact('Decision', esc(a.decision || l.decision || '') + (a.id ? ` · ${mono(a.id)}` : '')) +
+    fact('Starts from', a.branch ? mono(a.branch) + (a.commit ? ` at ${mono(a.commit.slice(0, 12))}` : '') : '') +
+    fact('PR targets', mono(a.prBase)) +
+    fact('Normal base', mono(a.appBase)) +
+    fact('Prerequisite', a.parent ? `#${esc(a.parent)}` + (a.parentPr ? ` · ${esc(a.parentPr)}` : '') : '') +
+    fact('Not selected', esc(a.alternatives || l.alternatives || '')) +
+    fact('Latest record', l.id && l.id !== a.id ? `${esc(l.decision)} (${esc(l.code || '')}) · ${mono(l.id)} — ${esc(l.summary || '')}` : '') +
+    fact('Recorded', esc(a.at || l.at || '') + ' · observed by Bench, not agent-reported') +
+    `</dl></details></section>`;
+}
+
 function drawerTab(t) {
   const want = S.dtab[t.file];
   return DTABS.some(([k]) => k === want) ? want : 'overview';
@@ -293,7 +325,10 @@ function standsHtml(t, d, acc, failBlock) {
     // which scope holds it and what waits on you, with the link into the
     // Orchestrator at this card (task 145) — absent while nothing does
     ovFact('Orchestration', cardEntryHtml(t, S.state, cardId(t, S.state))) +
-    `</dl>`);
+    `</dl>` +
+    // where the work starts (task 150): a held new start is a blocker at
+    // the point of decision, so it sits here rather than under More
+    workBaseBlock(t));
 }
 
 /* A dependency by number, with the stage it is in on this board — or

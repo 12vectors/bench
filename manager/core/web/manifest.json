@@ -271,8 +271,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/sections.js": {
-   "bytes": 97454,
-   "sha256": "c75f11a217ed83c4052ab629d9f90d65a18e338ea532a1c704cb9da098a2fb55",
+   "bytes": 99688,
+   "sha256": "1a645e14abb3bab96ba54f3a012bb096b6fc8b3942f78a11fdfc58ca7a0b1e2d",
    "type": "text/javascript; charset=utf-8"
   },
   "views/doctor.js": {
@@ -306,8 +306,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/orchestrator.js": {
-   "bytes": 84135,
-   "sha256": "93445de28dfb080ef8a742e4233689f5a9339b3ccea36b9bab6ea59951109ccd",
+   "bytes": 84544,
+   "sha256": "140ef67331fbf6c7b2b2654cf5ac530aa458f30c83792eff4dcfcb7c17201dd5",
    "type": "text/javascript; charset=utf-8"
   },
   "views/phases.js": {

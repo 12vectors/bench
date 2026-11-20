@@ -141,6 +141,90 @@ def crash(where: str | None) -> None:
         raise SystemExit(f"journey step: no crash window {where!r}")
 
 
+RACE_SECONDS = 60
+RACE: dict = {}
+
+
+def race(spec: dict | None) -> None:
+    """Force one interleaving a live board can hit by timing alone (task
+    155): the run launched on `hold` finishes — its reaper files the
+    report and moves the card into review/ — exactly while `during` is
+    being launched, between `taskfiles.collect()` listing the in-progress
+    directory and reading `hold`'s card from it.
+
+    `at` says which read: `authorize`, the first one inside the
+    scheduler's `execute` for `during` (the authorization before its
+    intent), or `launch`, the first one inside `agents.start_agent` for
+    it (the launch's own preflight). The reaper is held until then; the
+    read waits for it to finish. Both waits are bounded, and what
+    happened is recorded in `RACE` for the step's result — a barrier that
+    timed out says so, and is never read as the product's own failure.
+    The held reaper is always let go when `during`'s launch ends, so the
+    step's `settle()` sees every thread finish."""
+    if not spec:
+        return
+    import agents
+    hold, during, at = spec["hold"], spec["during"], spec["at"]
+    if at not in ("authorize", "launch"):
+        raise SystemExit(f"journey step: no race point {at!r}")
+    go, done = threading.Event(), threading.Event()
+    RACE.update(hold=hold, during=during, at=at, released=False,
+                reaped=False, timeout=None, cardThere=None, reaperError=None)
+    # `authorize`: anywhere in the scheduler's execute of `during`, whose
+    # first board reading is the authorization before its intent
+    inside = {"authorize": False, "launch": False}
+    real_reap, real_read = agents._reap_agent, taskfiles.read_task
+    real_execute, real_start = scheduler.execute, agents.start_agent
+
+    def reap(agent_id, proc, log_file):
+        if (state.AGENTS.get(agent_id) or {}).get("task") != hold:
+            return real_reap(agent_id, proc, log_file)
+        if not go.wait(RACE_SECONDS):
+            RACE["timeout"] = "the held reaper was never released"
+        try:
+            real_reap(agent_id, proc, log_file)
+            RACE["reaped"] = True
+        except BaseException as exc:  # noqa: BLE001 — recorded, then re-raised
+            RACE["reaperError"] = type(exc).__name__
+            raise
+        finally:
+            done.set()
+
+    def read_task(path, slug, *args, **kwargs):
+        if (inside[at] and not RACE["released"] and slug == "in-progress"
+                and Path(path).name == hold):
+            RACE["released"] = True
+            go.set()
+            if not done.wait(RACE_SECONDS):
+                RACE["timeout"] = "the released reaper never finished"
+            RACE["cardThere"] = Path(path).is_file()
+        return real_read(path, slug, *args, **kwargs)
+
+    def execute(task, item, board=None, start=None):
+        mine = task["file"] == during
+        inside["authorize"] = inside["authorize"] or mine
+        try:
+            return real_execute(task, item, board, start)
+        finally:
+            if mine:
+                inside["authorize"] = False
+                go.set()
+
+    def start_agent(filename, *args, **kwargs):
+        mine = filename == during
+        inside["launch"] = inside["launch"] or mine
+        try:
+            return real_start(filename, *args, **kwargs)
+        finally:
+            if mine:
+                inside["launch"] = False
+
+    agents._reap_agent = reap
+    taskfiles.read_task = read_task
+    scheduler.execute = execute
+    agents.start_agent = start_agent
+
+
 def put_in_force(doc: dict) -> dict:
     current, _ = agreements.draft_document()
     agreements.save_draft(doc, agreements.revision(current))
@@ -164,7 +248,11 @@ def agreement(spec: dict) -> dict:
 def public_ops() -> list[dict]:
     keep = ("key", "action", "file", "status", "scope", "code", "attempt",
             "agent", "head", "outcome")
-    return [{k: o.get(k) for k in keep if k in o} for o in operations.all_ops()]
+    # the reason too, bounded, so a journey that fails on an operation's
+    # outcome can say why the operation ended as it did (task 155)
+    return [{k: o.get(k) for k in keep if k in o}
+            | ({"reason": str(o["reason"])[:300]} if o.get("reason") else {})
+            for o in operations.all_ops()]
 
 
 def calls() -> list[dict]:
@@ -205,6 +293,7 @@ def run() -> dict:
         return phasescope.adopt(STEP["file"], actor="ada")
     if kind == "pass":
         crash(STEP.get("crash"))
+        race(STEP.get("race"))
         if "backoff" in STEP:
             # the one clock a journey shortens: a retry's backoff (60s and
             # doubling on a board). Whether a retry waits is still decided
@@ -221,7 +310,7 @@ def run() -> dict:
         opened = open_prs() if STEP.get("open_prs", True) else []
         settle()
         return {"pass": result, "opened": opened, "stages": stages(),
-                "ops": public_ops()}
+                "ops": public_ops(), **({"race": dict(RACE)} if RACE else {})}
     if kind == "reason":
         found = reasoning.request(STEP["file"], STEP["need"], via=STEP.get("via", "orchestrator"))
         settle()

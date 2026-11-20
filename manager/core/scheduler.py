@@ -64,6 +64,7 @@ from pathlib import Path
 
 import agents
 import agreements
+import basechoice
 import config
 import coordinate
 import decisions
@@ -189,10 +190,19 @@ def _dependency(task: dict, by_number: dict, looped: set) -> tuple[str, str] | N
             continue    # integrated, not reviewed: the phase scope's rule
         done = other["stage"] == "done" or (same_phase and
                                             other["stage"] in ("review", "done"))
+        if not done and other["stage"] == "review":
+            # committed work in Review: whether this card may build on it
+            # is the work-base decision's question (task 150), not a wait
+            continue
         if not done:
             return ("waiting-dependency", f"it depends on card {dep}, which is "
                     f"in {other['stage']}/")
     return None
+
+
+def _has_review_dependency(task: dict, by_number: dict) -> bool:
+    return any((by_number.get(dep) or {}).get("stage") == "review"
+               for dep in task.get("dependsOn") or [])
 
 
 def overlap(a: list[str] | None, b: list[str] | None) -> bool | None:
@@ -308,6 +318,24 @@ def plan(board: dict | None = None) -> dict:
         if dep:
             item.update(state="blocked", code=dep[0], reason=dep[1])
             continue
+        if _has_review_dependency(task, by_number) and \
+                not basechoice.under_way(task):
+            # read only: local refs, nothing fetched or written (task 150).
+            # Work already under way rides its recorded plan and is not
+            # held to a decision it is no longer starting from.
+            base = basechoice.assess(task, board)
+            item["workBase"] = {"decision": base["decision"], "code": base["code"],
+                                "summary": base["summary"],
+                                "branch": base.get("branch"),
+                                "commit": base.get("commit")}
+            if base["decision"] == "blocked":
+                item.update(state="blocked", code=f"base-{base['code']}",
+                            reason=base["summary"])
+                continue
+            if base["decision"] is None:
+                item.update(state="blocked", code=base["code"],
+                            reason=base["summary"])
+                continue
         answer = orchestrator.authorize(ACTION, task["file"], board=board)
         if not answer["allowed"]:
             item.update(state="waiting" if answer["code"] in WAITING else "blocked",
@@ -564,6 +592,23 @@ def execute(task: dict, item: dict, board: dict | None = None,
     if not answer["allowed"]:
         return {"card": filename, "outcome": "not-authorized",
                 "code": answer["code"], "reason": answer["reason"]}
+    # Which code this work starts from, decided and written onto the card
+    # before anything is provisioned (task 150). The plan reads it back;
+    # a blocked decision launches nothing and says why on the card.
+    base = basechoice.decide(task, board)
+    if base["decision"] in ("blocked", None):
+        return {"card": filename, "outcome": "base-blocked",
+                "code": base["code"], "reason": base["summary"]}
+    # A decision that never reached the card is not one the plan can read:
+    # launching would start from whatever the card already says — for a
+    # stacked choice, the application base this exists to avoid. Nothing
+    # is provisioned; the next pass decides and writes again.
+    if base.get("error") or (base["decision"] != "under-way" and not base.get("record")):
+        return {"card": filename, "outcome": "base-unrecorded",
+                "code": "base-unrecorded",
+                "reason": (f"the work-base decision ({base['decision']}) could not "
+                           f"be written onto the card, so nothing was launched: "
+                           f"{base.get('error') or 'no record'}")}
     here_basis = basis(task)
     prior = operations.for_card(filename, ACTION)
     # The attempt counts only attempts that provably ran nothing, so the
@@ -602,6 +647,18 @@ def execute(task: dict, item: dict, board: dict | None = None,
         again = orchestrator.authorize(ACTION, filename, operation=key)
         if not again["allowed"]:
             return _refused(op, again["code"], again["reason"], moved)
+        # and the work base, as it is now: a prerequisite that moved since
+        # the decision is a decision about other code. Nothing ran, so the
+        # attempt is abandoned rather than refused — the next pass decides
+        # again on what is there then.
+        stale = basechoice.recheck(filename)
+        if stale:
+            _walk_back(filename, moved)
+            done = operations.update(key, "abandoned", code="base-stale",
+                                     reason=stale)
+            _note(done, "receipt", "abandoned", f"not launched: {stale}")
+            return {"card": filename, "outcome": "base-stale", "key": key,
+                    "reason": stale}
         record = start(filename, "in-progress")
     except ValueError as exc:
         message = str(exc)
@@ -655,6 +712,32 @@ def _enabled() -> bool:
     return bool(bench and bench["enabled"])
 
 
+def record_base_blocks(found: dict, board: dict) -> list[dict]:
+    """Every card `plan` held on a blocked work-base decision has that
+    decision written onto it (`basechoice.decide`, once per set of inputs)
+    and an open blocker naming the conflict and its remedy — on a card this
+    scope may act on now, or would but for a full slot or spent starts. A
+    paused, excluded, handed-back or someone else's card is not written
+    on. Launches nothing."""
+    tasks = {t["file"]: t for g in board.get("stages") or [] for t in g.get("tasks") or []}
+    out = []
+    for item in found.get("items") or []:
+        if item.get("state") != "blocked" or \
+                not str(item.get("code") or "").startswith("base-"):
+            continue
+        task = tasks.get(item["card"])
+        if task is None:
+            continue
+        answer = orchestrator.authorize(ACTION, task["file"], board=board)
+        if not answer["allowed"] and answer["code"] not in WAITING:
+            continue
+        base = basechoice.decide(task, board)
+        if base.get("written"):
+            out.append({"card": task["file"], "outcome": "base-blocked-recorded",
+                        "code": base.get("code"), "reason": base.get("summary")})
+    return out
+
+
 def run_pass(board: dict | None = None, start=None) -> dict:
     """One bounded pass. Off, it reads the agreement and returns; not the
     owner, it returns before observing anything. Holds one lock, so two
@@ -673,6 +756,10 @@ def run_pass(board: dict | None = None, start=None) -> dict:
     try:
         started = time.time()
         observed = observe() + coordinate.observe()
+        # stacked decisions whose prerequisite moved, landed, went back or
+        # vanished: reassessed visibly, on the card (task 150)
+        observed += basechoice.observe(taskfiles.collect()
+                                       if board is None else board)
         reconciled = reconcile() + coordinate.reconcile() + phasescope.reconcile()
         given = board
         # a phase scope's own steps first (task 143): its card put
@@ -683,6 +770,9 @@ def run_pass(board: dict | None = None, start=None) -> dict:
         board = taskfiles.collect() if board is None else board
         found = plan(board)
         results = list(prepared)
+        # a blocked work-base decision goes onto its card, with its remedy
+        # as an open blocker — not only into the schedule (task 150)
+        results.extend(record_base_blocks(found, board))
         tripped = recovery.breaker()
         if tripped["open"]:
             results.append({"outcome": "breaker-open",

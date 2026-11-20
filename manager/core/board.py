@@ -57,6 +57,7 @@ import agreements  # noqa: F401
 import artifacts  # noqa: F401
 import appinspect  # noqa: F401
 import assets
+import basechoice  # noqa: F401
 import callers  # noqa: F401
 import changes
 import commands  # noqa: F401
@@ -113,6 +114,7 @@ import templates  # noqa: F401
 import verifierreport  # noqa: F401
 import verify
 import watch
+import workbase  # noqa: F401
 
 
 def load_provider() -> None:

@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -117,6 +117,10 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   `ensure_worktree` for every "recreate it from its branch", and
   `fresh_branch_point` — the default branch point, below `plans` and
   `agents` so neither reaches up for it. Imports `config` only
+- `workbase.py` — a card's work-base decision read back off the card
+  (task 150): the newest `base` record in its `## Orchestration record`,
+  field by field, and whether a *new* start may act on it. Pure; imports
+  no core module, so `taskfiles` attaches it to every card it reads
 - `taskfiles.py` — reading and moving task files; the only code touching tasks/
 - `plans.py` — one card's execution plan: which application branch its work
   starts from, which branch its PR targets, what selected each, and the
@@ -148,6 +152,14 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   Inputs tab, the move into in-progress and every implementation launch;
   reading it fetches nothing (see "Required information: inputs and
   tools")
+- `basechoice.py` — choosing a card's work base (task 150): the
+  application base, or a declared dependency's committed work in Review.
+  `assess` reads local refs and parsed cards only; `decide` writes the
+  decision onto the card once per set of inputs, immediately before a
+  launch the scheduler is authorized to make; `recheck` holds the launch
+  to it; `observe` writes a `stale` record when a stacked decision's
+  parent moves, lands, goes back or vanishes (see "Choosing a work base:
+  main, or committed work in Review")
 - `evidence.py` — the verification record: where it lives, how it is
   stored (through `records`, durably once its outcome is final) and read
   back, the reuse records, the outcome vocabulary every reader branches
@@ -1340,8 +1352,10 @@ arrow keys, Home and End move along it.
   where it was never given a channel), the **last result** a run
   recorded (the first paragraph of its newest work report or PR update,
   labelled *the run's own account, not a check result*; a card in review
-  or done with none says its result is not stated) and the orchestration
-  line. **What is required**, in two halves: *to do the work* — the
+  or done with none says its result is not stated), the orchestration
+  line and, where one is recorded, the **Work base** (which code the
+  work starts from, and a held new start kept in view as the blocker it
+  is). **What is required**, in two halves: *to do the work* — the
   card's information, its dependencies (each by number, with its stage,
   or *not on this board*) and its criteria — and *to merge it* —
   **Merge requirements**, `1 of 2 merge requirements met for <commit>`,
@@ -1835,7 +1849,7 @@ anything.
 
 ### Where a plan comes from
 
-Three structured inputs, in this order, and nothing else:
+Four structured inputs, in this order, and nothing else:
 
 1. **Phase membership.** A member inherits its phase's branch and targets
    it — that is what a phase's branch is for. A member card that *also*
@@ -1849,7 +1863,12 @@ Three structured inputs, in this order, and nothing else:
    end up in an argument list, so anything that is not a branch name is
    refused by the parser rather than by the process that would have run
    it.
-3. **The application default** — `BOARD_APP_BASE`, `main` unless the
+3. **The orchestrator's work-base decision** — only where neither of the
+   above says anything: a `stacked` decision recorded on the card starts
+   the work from a Review prerequisite's pinned commit and targets its
+   branch (see "Choosing a work base: main, or committed work in
+   Review"). A card with no such record is unaffected.
+4. **The application default** — `BOARD_APP_BASE`, `main` unless the
    operator changed it. A card with neither header and no phase resolves
    exactly as it always did, which is the whole of "no new metadata keeps
    established behaviour".
@@ -6246,6 +6265,133 @@ section above), keyed by the operation so a replay writes once. `GET
 `unmanaged`), its code and its reason, the circuit breaker, the last
 pass and the ledger's counts — read from files, with nothing reserved,
 acquired, written or launched.
+
+### Choosing a work base: main, or committed work in Review
+
+Before the scheduler launches implementation work, it decides which code
+the work starts from (task 150, `basechoice.py`), writes that decision
+onto the card, and the execution plan carries it through the branch,
+the worktree and the pull request. It is a decision bench makes and
+checks. The coding agent is never asked to find the right base after
+its checkout already exists.
+
+**The example.** Card A adds an API and is in Review: its branch
+`task/A` holds the committed API, and `main` does not have it yet. Card
+B builds a UI on that API and says so: `**Depends on:** A`. Card C has
+nothing to do with either.
+
+- **B** builds on A's committed work. The orchestrator records *Building
+  on #A's committed work*, pinned to the exact commit `task/A` held. B's
+  branch is cut from that commit, so its checkout contains A's API. B's
+  PR targets `task/A`, so its review shows B's changes and not A's again.
+  `main` is kept on the record as the normal base, for when A lands.
+  Nothing of A's is merged to make this happen.
+- **C** starts from `main`, recorded as *Starting from main*.
+- Before this change, B waited until A was done. A dependency in Review
+  is now something the decision weighs, not a wait.
+
+**What counts as evidence, and what does not.** Only a dependency the
+card declares in `**Depends on:**` can be selected. Being in Review, a
+similar title or touching the same files is never enough on its own.
+Such cards are listed under *Not selected*, with the reason. Only
+committed work counts: the prerequisite's branch must exist here and
+hold commits the normal base lacks, and uncommitted edits in its
+worktree are invisible to the decision. A dependency already in `done/`
+is part of the normal base. A dependency still being worked (backlog,
+to-do, in-progress) holds the card as before. There is no relevance
+score.
+
+| decision | when | what a new start does |
+| --- | --- | --- |
+| `normal` | no declared dependency has committed work in Review | starts from the configured base (`main`) |
+| `stacked` | exactly one has, or several form one chain | starts from that pinned commit, PR into its branch |
+| `explicit` | the card has its own `**Base branch:**` header | the header governs. The decision never overrides it |
+| `integration` | a phase member | its phase branch governs |
+| `blocked` | the prerequisite's branch is missing, holds no committed work, makes a cycle, or there are several unrelated prerequisites, or a phase member needs a Review card outside its phase | nothing starts. The card says why and gives the remedy |
+| `stale` | the parent changed after the decision | a new start is refused until the next pass decides again |
+
+**Automatic, and where the owner decides.** Inside an enabled operating
+agreement with the `implement` authority, the ordinary choice is made
+automatically, with no question asked. Bench does not resolve the cases
+it cannot decide safely:
+
+- Several unrelated prerequisites are never combined, cherry-picked or
+  put on a new integration branch. The card is blocked until a person
+  picks an option: wait for all but one to land, stack the
+  prerequisites on each other, or write a `**Base branch:**` header.
+- A phase member never leaves its phase branch. A prerequisite outside
+  the phase is a conflict. The fix is a person's: add the prerequisite
+  to the phase, wait for it to be delivered, or remove the dependency.
+- An explicit header always wins. If a declared prerequisite is not on
+  the header's branch, the record says so and the header still governs.
+
+**What the card records.** A `base` record goes into the card's `##
+Orchestration record` (see "The card keeps everything"). It holds the
+decision and its code, the branch and the exact commit, the normal
+base, the intended PR target, the prerequisite card, its head and its
+PR, a fingerprint of the inputs, the rationale, and the alternatives
+not selected. The record is portable, so a sync, a restart and a replica
+all read the same decision. Writing it is idempotent: the same inputs
+find the record already there, so a repeated tick writes nothing new.
+The card's Overview shows the record as a **Work base** block under
+**Where it stands · what happens next**: the plain headline and why,
+with the refs, the evidence and the history folded under it. Reading the board, the card or the schedule never fetches,
+decides or writes. The schedule's assessment reads local refs only.
+
+**Held to it before launch.** The plan reads the decision as a fourth
+input, after phase membership and the card's headers and before the
+application default (see "Execution plans"). A new start must begin from
+the pinned commit itself. If the prerequisite's branch moved after the
+decision, the preflight refuses before any branch, worktree or run
+exists. The scheduler also checks again immediately before the launch,
+through the launch's own branch resolver, fetching as the launch will.
+When it finds the branch moved, it records the decision `stale` on the
+card. That attempt counts as one that ran nothing, and the next pass
+decides again on the new commit. The decision, its freshness and the
+launch all read a branch the same way: the remote's copy as last
+fetched, else this checkout's. So a prerequisite whose local and remote
+copies differ cannot be pinned by one reading and refused by the other.
+A decision the board could not write onto the card (its record section
+full, say) launches nothing, because the plan could not read it and the
+work would start from the application base instead.
+
+A stale decision says who decides it again. While an orchestrator
+manages the card, its next pass does. On a card worked by hand nothing
+does, and ▸ start work's refusal says so and names the
+`**Base branch:**` header as the way through. A card whose work is
+under way reads *stale; the work under way keeps its recorded plan*,
+never that something is reassessing it.
+
+Once the work is under way (its task branch exists), resuming follows
+its recorded plan, exactly as before. A retry, a resume or a restart
+never makes the decision again. It does not re-pin a moved parent, and
+it does not rewrite the decision to `normal` once the parent landed.
+
+A blocked decision is written onto its card by the scheduler's pass,
+with an open blocker naming the conflict and the remedy, on any card the
+scope may act on. The next decision that is not blocked clears the
+blocker. No reasoning run is launched for it. The blocker is the owner's
+prompt, and the remedy is a person's choice.
+
+**As the prerequisite evolves.** Every pass checks each card whose
+decision stacked it on another. When the parent has moved, gone back to
+an earlier stage (its review rejected it), landed in `done/`, lost its
+branch or left the board, bench writes one `stale` record naming the
+change and the remedy. For work not yet started, the next pass decides
+again. Work already under way is never changed under its worker. Its
+next steps are the confirmed stack actions, each a separate, armed
+click (see "Maintaining a stack: three confirmed actions"):
+
+- **Update from** the parent: an additive merge that brings in the
+  parent's new commits.
+- **Retarget onto** the normal base once the host shows the parent
+  merged, squash and rebase merges included. Bench reads the result back
+  from the host. When the host cannot do it, bench names the manual step.
+- **Finish: clean up**.
+
+A retarget stops counting reviews and approvals given before it, so no
+old approval carries over to the changed change. Bench never rebases or
+force-pushes, and the orchestrator does not retarget by itself.
 
 ### Recovery: diagnose, don't kill
 

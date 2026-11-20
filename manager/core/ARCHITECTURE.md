@@ -41,10 +41,10 @@ composition.
 L0  gitproc records redact
 L1  config
 L2  githost assets agreements operations
-L3  state reports templates gitrepo verifierreport
+L3  state reports templates gitrepo verifierreport workbase
 L4  taskfiles
 L5  plans profiles execowner movements decisions
-L6  gatepolicy reviews inputs
+L6  gatepolicy reviews inputs basechoice
 L7  evidence resultidentity artifacts
 L8  staleness
 L9  verify
@@ -348,11 +348,11 @@ be checked against it when they land. Not enforced.
 ```architecture proposed
 L0  gitproc records redact
 L1  config
-L2  state reports templates gitrepo assets verifierreport agreements operations
+L2  state reports templates gitrepo assets verifierreport agreements operations workbase
 L3  githost
 L4  taskfiles
 L5  profiles plans execowner movements decisions
-L6  gatepolicy reviews inputs
+L6  gatepolicy reviews inputs basechoice
 L7  evidence resultidentity artifacts
 L8  staleness
 L9  verify
