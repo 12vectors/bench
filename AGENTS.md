@@ -1638,8 +1638,18 @@ came from. A Current entry is not authoritative because it is Current: an
 entry explains, and never overrides the code, the configuration, a merge
 rule or a person's decision.
 
+**Where the header ends.** The header is the title, then one block of
+field lines with no blank line inside it. It ends at the first blank line
+or the first line that is not a field, and everything after it is body —
+so a body that opens with a bold lead-in such as `**Note:** …` stays
+body and is never read as a field.
+
 The `## Classification history` section records who classified the entry
-what, when and why, one line each, oldest first. The header's
+what, when and why, one line each, oldest first. It is read only as the
+entry's **last** section: its heading counts outside a code fence
+(```` ``` ```` or `~~~`) and only when no other `#` or `##` heading
+follows it, so an entry that quotes this format in a fence, or has a
+section after one, keeps its whole body. The header's
 **Classification** is what is shown; a newest history line that
 disagrees, a Superseded entry that names no successor, a missing summary
 and an id named in a link that no entry carries are each shown as a note

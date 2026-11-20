@@ -80,6 +80,7 @@ NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.md$")
 FIELD_RE = re.compile(r"^\*\*([A-Za-z][A-Za-z ]{0,30}):\*\*\s*(.*?)\s*$")
 TITLE_RE = re.compile(r"^#\s+(.+?)\s*#*\s*$")
 HISTORY_HEADING = "## Classification history"
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 HISTORY_RE = re.compile(
     r"^-\s+(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?Z?)?)\s+·\s+"
     r"(" + "|".join(CLASSIFICATIONS) + r")\s+·\s+([^—]{1,80}?)\s+—\s+(.+?)\s*$")
@@ -125,8 +126,10 @@ def _split_list(value: str) -> list[str]:
 
 def _header(lines: list[str]) -> tuple[str | None, list[tuple[str, str]], int]:
     """The title, the header's field lines in order and the index of the
-    first body line. The header is the title, then field lines, blank lines
-    allowed between; it ends at the first line that is neither."""
+    first body line. The header is the title, then one block of field
+    lines (blank lines are allowed before the first). It ends at the first
+    blank line or the first line that is not a field, so a body that opens
+    with a bold lead-in (`**Note:** …`) is body, never a field."""
     i = 0
     while i < len(lines) and not lines[i].strip():
         i += 1
@@ -139,13 +142,11 @@ def _header(lines: list[str]) -> tuple[str | None, list[tuple[str, str]], int]:
         # what is wrong with it rather than claim it is not one at all
         title = match.group(1)
         i += 1
+    while i < len(lines) and not lines[i].strip():
+        i += 1
     fields: list[tuple[str, str]] = []
     while i < len(lines):
-        line = lines[i]
-        if not line.strip():
-            i += 1
-            continue
-        field = FIELD_RE.match(line)
+        field = FIELD_RE.match(lines[i])
         if not field:
             break
         fields.append((field.group(1), field.group(2)))
@@ -153,18 +154,43 @@ def _header(lines: list[str]) -> tuple[str | None, list[tuple[str, str]], int]:
     return title, fields, i
 
 
+def _fence_marks(lines: list[str]) -> list[bool]:
+    """Per line, whether it is a code fence or inside one: a line opening
+    with three or more backticks or tildes opens a fence, and a bare line
+    of at least as many of the same character closes it. An unclosed
+    fence runs to the end."""
+    marks: list[bool] = []
+    opener = None
+    for line in lines:
+        fence = FENCE_RE.match(line)
+        if opener is None:
+            if fence:
+                opener = fence.group(1)
+            marks.append(opener is not None)
+            continue
+        marks.append(True)
+        if (fence and fence.group(1)[0] == opener[0]
+                and len(fence.group(1)) >= len(opener) and not fence.group(2).strip()):
+            opener = None
+    return marks
+
+
 def _history(body_lines: list[str]) -> tuple[list[str], list[dict], list[str]]:
     """The body without its `## Classification history` section, the
-    section's records, oldest first, and the lines it could not read."""
-    start = next((n for n, line in enumerate(body_lines)
-                  if line.strip() == HISTORY_HEADING), None)
-    if start is None:
+    section's records, oldest first, and the lines it could not read.
+
+    The section is the body's last top-level section: its heading counts
+    only outside a code fence, and only when no other `#` or `##` heading
+    follows it outside one. So an entry that quotes the format in a fence,
+    or has a section after one, keeps its whole body."""
+    fenced = _fence_marks(body_lines)
+    headings = [n for n, line in enumerate(body_lines)
+                if not fenced[n] and (line.startswith("## ") or line.startswith("# "))]
+    if not headings or body_lines[headings[-1]].strip() != HISTORY_HEADING:
         return body_lines, [], []
-    end = next((n for n in range(start + 1, len(body_lines))
-                if body_lines[n].startswith("## ") or body_lines[n].startswith("# ")),
-               len(body_lines))
+    start = headings[-1]
     records, unread = [], []
-    for line in body_lines[start + 1:end]:
+    for line in body_lines[start + 1:]:
         if not line.strip():
             continue
         match = HISTORY_RE.match(line.strip())
@@ -175,7 +201,7 @@ def _history(body_lines: list[str]) -> tuple[list[str], list[dict], list[str]]:
                         "classification": match.group(2),
                         "actor": _clean(match.group(3), 80),
                         "reason": _clean(match.group(4))})
-    return body_lines[:start] + body_lines[end:], records, unread
+    return body_lines[:start], records, unread
 
 
 def parse(name: str, data: bytes) -> dict:
@@ -193,6 +219,8 @@ def parse(name: str, data: bytes) -> dict:
     except UnicodeDecodeError:
         rec.update(state="invalid", problems=["the file is not UTF-8 text"])
         return rec
+    if text.startswith("﻿"):
+        text = text[1:]  # a byte-order mark is not part of the title
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     title, fields, at = _header(lines)
     seen: dict[str, str] = {}

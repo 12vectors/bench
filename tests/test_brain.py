@@ -207,6 +207,46 @@ class TheContract(_WorkRoot):
         self.assertIn("**Colour:** is not a version 1 field", warnings)
         self.assertIn("could not be read", warnings)
 
+    def test_the_header_ends_at_its_first_blank_line(self):
+        body = ("**Note:** read this first.\n\n**Kind:** Decision\n\n"
+                "**Removed:** not really\n\nThe rest.\n")
+        self.write("a.md", entry_text("e-a", body=body))
+        found = brain.entry("e-a")
+        self.assertEqual((found["state"], found["entryKind"]), ("entry", "Guide"))
+        self.assertEqual(found["warnings"], [])
+        for line in ("**Note:** read this first.", "**Kind:** Decision",
+                     "**Removed:** not really", "The rest."):
+            self.assertIn(line, found["body"])
+        # a blank line inside the header ends it: what follows is body
+        split = entry_text("e-b").replace("**Kind:** Guide\n", "\n**Kind:** Guide\n")
+        self.write("b.md", split)
+        self.assertEqual(brain.entry("e-b")["state"], "invalid")
+        self.assertIn("**Kind:**", brain.entry("e-b")["problems"][0])
+
+    def test_a_history_heading_in_a_fence_or_before_another_section_is_body(self):
+        quoted = ("The format, as an example:\n\n```markdown\n## Classification history\n\n"
+                  "- 2026-01-01 · Historical · someone — an example\n```\n\nAfter the example.\n")
+        self.write("a.md", entry_text("e-a", body=quoted))
+        found = brain.entry("e-a")
+        self.assertEqual([h["actor"] for h in found["history"]], ["ronald"])
+        self.assertIn("- 2026-01-01 · Historical · someone — an example\n```", found["body"])
+        self.assertIn("After the example.", found["body"])
+        # ~~~ fences count too, and a history heading followed by another
+        # section is not the history: the whole body is kept
+        tilde = entry_text("e-b", body="~~~\n## Classification history\n~~~\n",
+                           history="- 2026-11-20 · Current · ronald — x\n\n## Later\n\nKept.\n")
+        self.write("b.md", tilde)
+        found = brain.entry("e-b")
+        self.assertEqual(found["history"], [])
+        self.assertIn("## Later", found["body"])
+        self.assertIn("Kept.", found["body"])
+
+    def test_a_byte_order_mark_is_not_part_of_the_title(self):
+        self.write("a.md", "﻿" + entry_text("e-a"))
+        found = brain.entry("e-a")
+        self.assertEqual((found["state"], found["title"]),
+                         ("entry", "How review reports stay on their own board"))
+
     def test_a_present_card_and_file_are_said_to_be_present(self):
         (self.work / "tasks" / "done" / "148-a-card.md").write_text("# A\n")
         (self.work / "plans").mkdir()
