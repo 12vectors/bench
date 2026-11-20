@@ -168,7 +168,11 @@ function laneFor(task, el) {
   const members = laneMembers(task);
   const at = laneProgress(members);
   const halted = !!(snap && snap.halted);
-  const running = !!(snap && snap.running);
+  // an adopted phase runs through its phase scope, not the runner (task
+  // 160): a member being worked there is the lane running too
+  const flight = phaseFlight(task);
+  const running = !!(snap && snap.running)
+    || !!(flight && flight.owner === 'phase scope' && !flight.idle && !flight.bad);
   const id = cardId(task, S.state);
   const chosen = !!S.phaseSel && id === S.phaseSel;
   el.className = 'lane' + (halted ? ' halted' : running ? ' running' : '') + (chosen ? ' sel' : '');
@@ -179,7 +183,6 @@ function laneFor(task, el) {
   // the branch is only claimed to be missing when the runner has just
   // looked; without a pass to read, the name is offered without a verdict
   const uncut = !!(snap && !snap.started);
-  const flight = phaseFlight(task);
   const head =
     `<div class="lhead">` +
     `<span class="mark${running ? ' breathing' : ''}" style="background:${
@@ -280,7 +283,9 @@ function laneFor(task, el) {
     }
     // ‖ hold means here what it means everywhere: the run stops, the member
     // agent in flight stops with it, and nothing is unwound
-    if (running || halted) {
+    // the runner's hold only: an adopted phase's runs are each cancelled
+    // on their own card (task 160)
+    if ((snap && snap.running) || halted) {
       laneAction(el.querySelector('.lhead .lacts'), task,
         { glyph: '‖', label: 'hold', confirm: 'hold it?', busy: 'holding…',
           title: 'Stop the phase and the agent it has in flight — the phase branch, every '

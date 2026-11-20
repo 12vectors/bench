@@ -315,7 +315,13 @@ function phaseFlight(task) {
     if (task.stage !== 'in-progress') return null;
     if (snap.scoped) {
       // adopted, but no lifecycle reading arrived with this state: say
-      // whose it is rather than recommending the runner it stood down
+      // whose it is rather than recommending the runner it stood down,
+      // and name the member a run is on when the snapshot saw one
+      const on = (snap.members || []).find(m => m.state === 'running');
+      if (on) {
+        return { bad: false, owner: 'phase scope',
+                 line: `phase scope — on #${on.number || on.file} — ${on.title || ''}` };
+      }
       return { idle: true, owner: 'phase scope', pill: 'phase scope',
                line: 'run by its phase scope — Orchestrator → Phases has its members' };
     }
