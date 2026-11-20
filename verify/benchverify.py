@@ -1376,11 +1376,24 @@ def case_api_problems(path: Path) -> list[str]:
                 and isinstance(node.slice, ast.Constant)
                 and node.slice.value == "browser")
 
+    functions = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+    def own(scope):
+        """The scope's nodes, not its nested functions' (those are scopes
+        of their own), so a name bound in one function says nothing
+        about the same name in another."""
+        out, todo = [], [scope]
+        while todo:
+            node = todo.pop()
+            out.append(node)
+            todo += [c for c in ast.iter_child_nodes(node)
+                     if not isinstance(c, functions)]
+        return out
+
     found: dict = {}
-    scopes = [tree, *[n for n in ast.walk(tree)
-                      if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]]
+    scopes = [tree, *[n for n in ast.walk(tree) if isinstance(n, functions)]]
     for scope in scopes:
-        nodes = list(ast.walk(scope))
+        nodes = own(scope)
         names = set()
         for n in nodes:
             if isinstance(n, ast.Assign) and is_browser(n.value):
