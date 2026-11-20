@@ -788,6 +788,63 @@ class PageOps:
             self.click("#hdrmore")
 
 
+# Task 164: what a browser health probe can and cannot say. A connection
+# that answers proved, in #158, nothing about whether a real page would
+# load and respond; so the probe also navigates the disposable board and
+# switches a view with a person's click. It still proves no feature and
+# no stable full run — those are the cases' — and says so.
+PROBE_STEPS = ("connection", "navigation", "interaction")
+PROBE_LIMITS = ("a health probe: one page of the disposable board loaded and "
+                "one view switched by a click. It is not feature coverage and "
+                "does not show that a full browser run will be stable")
+
+
+def interaction_probe(page, *, timeout: float = 15.0) -> dict:
+    """Load the disposable board and switch view by a click, then back.
+    Returns the coverage reached; raises SetupError naming the step that
+    did not complete, with the coverage reached so far on `.coverage`.
+    A failure here is the browser or the host, not the product: it is a
+    setup error, never an assertion."""
+    coverage = {step: "not reached" for step in PROBE_STEPS}
+    coverage.update(connection="passed", featureCoverage=False,
+                    limits=PROBE_LIMITS)
+
+    def stop(step: str, why: str):
+        coverage[step] = "failed"
+        error = SetupError(f"browser health probe: {step} failed — {why}")
+        error.coverage = coverage
+        raise error
+
+    try:
+        page.viewport(1280, 800)
+        page.goto("/")
+        if not page.wait("document.querySelectorAll('.drop[data-stage]').length >= 5",
+                         timeout):
+            stop("navigation", "the board did not draw its stage columns")
+    except SetupError as exc:
+        if getattr(exc, "coverage", None):
+            raise
+        stop("navigation", str(exc))
+    except (CheckFailed, OSError, ValueError, RuntimeError) as exc:
+        stop("navigation", f"{type(exc).__name__}: {exc}")
+    coverage["navigation"] = "passed"
+    try:
+        for view in ("phases", "board"):
+            page.click(f'#views [data-view="{view}"]')
+            if not page.wait(f"document.querySelector('#view-{view}')"
+                             f" && document.querySelector('#view-{view}')"
+                             f".classList.contains('on')", timeout):
+                stop("interaction", f"a click on the {view} view did not switch to it")
+    except SetupError as exc:
+        if getattr(exc, "coverage", None):
+            raise
+        stop("interaction", str(exc))
+    except (CheckFailed, OSError, ValueError, RuntimeError) as exc:
+        stop("interaction", f"{type(exc).__name__}: {exc}")
+    coverage["interaction"] = "passed"
+    return coverage
+
+
 # Resolves a selector to the point a click should land on, or says why
 # there is none. `scrollIntoView` moves whichever scrollers hold the
 # element; `elementFromPoint` then confirms the point is the element

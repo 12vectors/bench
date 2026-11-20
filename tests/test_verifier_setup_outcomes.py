@@ -252,5 +252,109 @@ class TheReportItself(unittest.TestCase):
                              ["report.json"])
 
 
+class FakePage:
+    """A page that answers the probe's questions from a script: which
+    step breaks, and how. Records what was done to it."""
+
+    def __init__(self, breaks: str | None = None, how: type = None):
+        self.breaks, self.how = breaks, how
+        self.done: list = []
+        self.view = "board"
+
+    def viewport(self, w, h):
+        self.done.append(("viewport", w, h))
+
+    def goto(self, path):
+        self.done.append(("goto", path))
+        if self.breaks == "navigation" and self.how:
+            raise self.how("Target closed")
+
+    def wait(self, expression, timeout=10.0):
+        if ".drop[data-stage]" in expression:
+            return self.breaks != "navigation"
+        return self.breaks != "interaction" and f"#view-{self.view}" in expression
+
+    def click(self, selector):
+        self.done.append(("click", selector))
+        if self.breaks == "interaction" and self.how:
+            raise self.how(f"{selector}: a click at its centre would land on div")
+        self.view = selector.split('"')[1]
+
+
+class TheHealthProbe(unittest.TestCase):
+    def test_a_pass_reaches_every_step_and_claims_no_feature(self):
+        page = FakePage()
+        found = benchverify.interaction_probe(page, timeout=0.1)
+        self.assertEqual({k: found[k] for k in benchverify.PROBE_STEPS},
+                         {"connection": "passed", "navigation": "passed",
+                          "interaction": "passed"})
+        self.assertIs(found["featureCoverage"], False)
+        self.assertIn("not feature coverage", found["limits"])
+        # actual interactions: a navigation and two clicks on the switcher
+        self.assertIn(("goto", "/"), page.done)
+        self.assertEqual([d for d in page.done if d[0] == "click"],
+                         [("click", '#views [data-view="phases"]'),
+                          ("click", '#views [data-view="board"]')])
+
+    def test_a_page_that_never_draws_is_a_setup_error_at_navigation(self):
+        for how in (None, benchverify.SetupError, RuntimeError):
+            with self.subTest(how):
+                with self.assertRaises(benchverify.SetupError) as caught:
+                    benchverify.interaction_probe(FakePage("navigation", how),
+                                                  timeout=0.1)
+                coverage = caught.exception.coverage
+                self.assertEqual(("passed", "failed", "not reached"),
+                                 (coverage["connection"], coverage["navigation"],
+                                  coverage["interaction"]))
+                self.assertIn("navigation failed", str(caught.exception))
+
+    def test_a_click_that_does_not_land_is_setup_not_an_assertion(self):
+        for how in (None, benchverify.CheckFailed):
+            with self.subTest(how):
+                with self.assertRaises(benchverify.SetupError) as caught:
+                    benchverify.interaction_probe(FakePage("interaction", how),
+                                                  timeout=0.1)
+                coverage = caught.exception.coverage
+                self.assertEqual(("passed", "failed"),
+                                 (coverage["navigation"], coverage["interaction"]))
+
+    def test_the_probe_keeps_the_sandbox(self):
+        text = (REPO / "verify" / "preflight").read_text(encoding="utf-8")
+        probe = text[text.index("def probe("):text.index('if __name__')]
+        # it launches through the same constructors the cases use, which
+        # never weaken the sandbox, and names no flag that would
+        self.assertIn("bv.browser_argv(exe, profile)", probe)
+        self.assertIn("bv.RemoteBrowser(", probe)
+        for flag in ("--no-sandbox", "chromiumSandbox", "--disable-setuid-sandbox"):
+            self.assertNotIn(flag, probe)
+        argv = benchverify.browser_argv("/usr/bin/chromium", Path("/tmp/p"))
+        self.assertFalse(any("no-sandbox" in a for a in argv))
+
+    def test_the_cli_probe_without_a_browser_is_a_setup_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {k: v for k, v in os.environ.items()
+                   if not k.startswith("BENCH_VERIFY") and k != "PW_WS"}
+            env["BENCH_VERIFY_BROWSER"] = str(Path(tmp) / "no-such-chromium")
+            r = subprocess.run(
+                [sys.executable, str(REPO / "verify" / "preflight"), "browser",
+                 "--probe", "--root", str(REPO), "--artifacts",
+                 str(Path(tmp) / "art"), "--scratch", tmp],
+                env=env, capture_output=True, text=True, timeout=120)
+            self.assertEqual(benchverify.SETUP_ERROR, r.returncode, r.stdout + r.stderr)
+            self.assertIn("SETUP-ERROR", r.stdout)
+            record = next(Path(tmp, "art").rglob("result.json"))
+            data = json.loads(record.read_text())
+            self.assertEqual(data["probe"]["coverage"]["connection"], "not reached")
+            self.assertIs(data["probe"]["coverage"]["featureCoverage"], False)
+
+    def test_a_coverage_extension_rides_the_report(self):
+        out = benchverify.contract_report(
+            {"check": "preflight", "probe": {"coverage": {"connection": "passed"}}},
+            benchverify.SETUP_ERROR, "probe failed")
+        parsed = verifierreport.parse(json.dumps(out).encode())
+        self.assertEqual(parsed["extensions"]["bench.verify"]["probe"],
+                         {"connection": "passed"})
+
+
 if __name__ == "__main__":
     unittest.main()
