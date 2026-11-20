@@ -1637,7 +1637,7 @@ def _blocks(lines: list[str]) -> list[tuple[str, str]]:
     quote."""
     out: list[tuple[str, str]] = []
     para: list[str] = []
-    fenced = False
+    fenced = commented = False
 
     def flush():
         if para:
@@ -1653,6 +1653,18 @@ def _blocks(lines: list[str]) -> list[tuple[str, str]]:
         if fenced:
             continue
         s = line.strip()
+        # an HTML comment is invisible where the brief is drawn, so it is
+        # never quoted — over several lines as much as on one
+        if commented:
+            commented = "-->" not in s
+            continue
+        if s.startswith("<!--") and "-->" not in s:
+            flush()
+            commented = True
+            continue
+        if TITLE_LINE_RE.match(s):
+            flush()
+            continue
         heading = re.match(r"^(#{2,6})\s+(.*?)\s*#*\s*$", s)
         if heading:
             flush()
@@ -1710,9 +1722,16 @@ def brief_outline(text: str) -> dict:
     """What the brief says the work is (see above). Every excerpt names
     the section it came from; parts the brief does not have are listed in
     `missing`, and `state` is `none` when there is nothing to quote."""
-    brief = card_parts(text)["brief"]
-    brief = DISCUSSION_SECTION_RE.sub("", brief)
+    parts = card_parts(text)
+    brief = DISCUSSION_SECTION_RE.sub("", parts["brief"])
     blocks = _blocks(brief.splitlines())
+    # a header field wrapped onto a second line leaves that line at the top
+    # of the brief, with no blank line before it: it is the field's, not
+    # the brief's opening, so it is not quoted as one
+    head_lines = parts["head"].splitlines()
+    if (blocks and blocks[0][0] == "para" and head_lines and head_lines[-1].strip()
+            and HEADER_LINE_RE.match(head_lines[-1].strip())):
+        blocks = blocks[1:]
     out: dict = {"v": OUTLINE_VERSION, "rev": brief_sha(brief)[:12],
                  "lead": None, "problem": None, "scope": None,
                  "boundaries": None, "questions": None,
@@ -1731,7 +1750,20 @@ def brief_outline(text: str) -> dict:
             if len(paras) > 1 or any(b[0] == "list" for b in problem[1]):
                 out["problem"]["clipped"] = True
     scope = _section(blocks, _SCOPE_HEADINGS)
+    inline_bounds = None
     if scope:
+        # the seed template's `**Out of scope** — …` paragraph inside the
+        # scope section ends the scope: what follows it is its boundary
+        body = scope[1]
+        for at, (kind, block) in enumerate(body):
+            lead = re.match(r"^\*\*(?:Out of scope|Non-goals|Not in scope)\*\*\s*[—–:-]?\s*(.*)$",
+                            block, re.IGNORECASE) if kind == "para" else None
+            if lead:
+                after = body[at + 1] if at + 1 < len(body) else None
+                inline_bounds = (after[1] if after and after[0] == "list"
+                                 else lead.group(1) or None)
+                scope = (scope[0], body[:at])
+                break
         heads = [b[1] for b in scope[1] if b[0] == "h3"]
         items = heads or [b[1] for b in scope[1] if b[0] == "list"]
         if items:
@@ -1751,10 +1783,15 @@ def brief_outline(text: str) -> dict:
             out["boundaries"] = _excerpt(prose[0], OUTLINE_PART_CHARS, bounds[0])
             if len(prose) > 1:
                 out["boundaries"]["clipped"] = True
+    elif inline_bounds:
+        out["boundaries"] = _excerpt(inline_bounds, OUTLINE_PART_CHARS, "Out of scope")
     questions = _section(blocks, _QUESTION_HEADINGS)
     if questions:
-        asked = [b for b in questions[1] if b[0] in ("para", "list")
-                 and plain_inline(b[1]).lower().strip(" .") not in ("none", "n/a", "-")]
+        # questions are the section's bullets when it has any (prose around
+        # them explains), else its paragraphs; "None." is not a question
+        kinds = ("list",) if any(b[0] == "list" for b in questions[1]) else ("para",)
+        asked = [b for b in questions[1] if b[0] in kinds
+                 and plain_inline(b[1]).lower().strip(" .") not in ("none", "n/a", "-", "")]
         if asked:
             out["questions"] = {"count": len(asked), "from": questions[0]}
     parts = ("lead", "problem", "scope", "boundaries")

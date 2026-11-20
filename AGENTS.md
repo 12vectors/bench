@@ -1319,22 +1319,41 @@ head is sticky, and **Expand** widens the view for long briefs and
 reports), and five sections follow as tabs — Tab reaches the row, the
 arrow keys, Home and End move along it.
 
-- **Overview** — the delivery status: its word as a heading, its
-  sentence (announced as an alert only in the alarm tone), the one
-  primary action and who holds it, and every other legitimate action
-  under **More actions** — a guide, not a wizard: nothing in the list is
-  disabled because the primary comes first, and an action whose handler
-  belongs to a later card is drawn disabled with that reason. Then
-  **Merge requirements** — `1 of 2 merge requirements met for <commit>`,
+- **Overview** — four sections in the order a busy reader asks their
+  questions (task 149), then everything else. **The work**: what the
+  card is and why, quoted from the brief as it reads now — its opening
+  paragraph, the first paragraph of its problem section (`Context`,
+  `Problem`, `Background`…), the headings or leading bullets of its scope
+  section (`What to build`, `Scope`…) and its boundaries (`Out of
+  scope`…), each labelled with the section it came from, clipped at a
+  sentence and marked when it continues, with the brief's revision and a
+  link to the whole brief; open questions in the brief are raised there.
+  **Where it stands · what happens next**: the delivery status — its
+  word as a heading, its sentence (announced as an alert only in the
+  alarm tone), the one primary action and who holds it, and every other
+  legitimate action under **More actions** — a guide, not a wizard:
+  nothing in the list is disabled because the primary comes first, and
+  an action whose handler belongs to a later card is drawn disabled with
+  that reason — then a failed run, the stage, the latest run's progress
+  as #73 reports it (agent-reported with its age while the run lives;
+  *history, not current* once it has ended; *reporting unavailable*
+  where it was never given a channel), the **last result** a run
+  recorded (the first paragraph of its newest work report or PR update,
+  labelled *the run's own account, not a check result*; a card in review
+  or done with none says its result is not stated) and the orchestration
+  line. **What is required**, in two halves: *to do the work* — the
+  card's information, its dependencies (each by number, with its stage,
+  or *not on this board*) and its criteria — and *to merge it* —
+  **Merge requirements**, `1 of 2 merge requirements met for <commit>`,
   one row per required obligation with its state in words and, for a
-  problem, its remedy — with **Optional checks and earlier runs** and
+  problem, its remedy, with **Optional checks and earlier runs** and
   **Technical details** (the commit, the merge rule, the completion, the
-  PR as of when it was observed) folded underneath. Then the stage, the
-  latest run's progress as #73 reports it (agent-reported with its age
-  while the run lives; *history, not current* once it has ended;
-  *reporting unavailable* where it was never given a channel), the
-  acceptance count, the findings, and the last review round explained
-  against its revision and what has happened since. Then the **Signals**
+  PR as of when it was observed) folded underneath. **Reviews and
+  findings**: the findings and the last review round explained against
+  its revision and what has happened since, and the brief's own
+  relevance review. Then, under **More about this card**, Show the
+  result (one line and a fold while nothing is asked for or kept), the
+  stack, the **Signals**
   block — Bench checks (`Required: 1 of 1 passed on <commit>. Optional:
   2 (see ◫).`), external CI, review and the merge requirements as
   separate rows, each in its own words — and every tool and action the
@@ -1349,21 +1368,45 @@ arrow keys, Home and End move along it.
   its revision). A verdict about another commit reads *an earlier
   commit, history*, never as today's answer, and none of the three is
   inferred from another.
-- **Brief** — the requirement alone (the head's fields and the brief, no
-  history), then #65's discussion and its refinement controls.
+- **Brief** — the requirement alone: the head's fields as a grid of
+  their own, an index of the brief's sections when it has more than two
+  (each moves focus to its heading), and the brief, no history; then
+  #65's discussion and its refinement controls.
+- **Inputs** — the card's required information (see "Required
+  information: inputs and tools"). A card that names no input or tool
+  says so in one sentence; what readiness does and does not prove, and
+  how to write the section, is one fold away.
 - **Acceptance** — the criteria and their results; see "Acceptance and
-  review findings".
-- **Reviews** — two groups, each with its own empty state: **Relevance
-  reviews** (is the brief still needed and current? — see "Relevance
-  reviews: comment, then update the card from one") and **PR reviews**
-  (the implementation at a code revision): open findings first, each with
-  its fix and resolution chain, then resolved findings and earlier rounds
-  folded away.
+  review findings". An untracked criterion leads with its first clause,
+  so a long list scans by its leads.
+- **Reviews** — two groups, each with its own empty state, the code's
+  first: **PR reviews** (the implementation at a code revision): open
+  findings first, each with its fix and resolution chain, then the
+  newest round, with resolved findings and earlier rounds folded away;
+  then **Relevance reviews** (is the brief still needed and current? —
+  see "Relevance reviews: comment, then update the card from one"). What
+  each kind is, and is not, is a fold under its group.
 - **Activity** — the dated record, newest first: progress updates
   (labelled as the run's), work reports (each folded, whole), each review
   as a dated line linking to the exact review in Reviews rather than a
   second copy, comments and decisions, and acceptance and finding
   records. Raw reads, edits and commands stay in the Sessions view.
+
+**Who owns the summary: nobody but the brief** (task 149). The Overview's
+account of the work is not a second text to keep in step. It is read out
+of the brief on every read of the card's text (`taskfiles.brief_outline`,
+sent with `GET /api/card` as `outline`): verbatim excerpts, never a
+paraphrase, never persisted, and never asked of a model — opening a card
+launches nothing and writes nothing. So it cannot go stale: an edited
+brief is a new outline, and a new revision, on the next read; a report or
+review appended to the history changes nothing about it, so an old work
+report never becomes the requirement; and while a newer text is being
+read the summary says it is not current. To change what the Overview
+says, edit the brief — its opening paragraph first. A brief with none of
+the parts above to quote (a legacy card, a title and a checklist) says
+so, and nothing is written in their place; the title is never offered as
+the summary. The last result is the same kind of excerpt, of a report
+the run wrote, and is labelled as the run's own account.
 
 A filed report — a review round, a work report, a PR update, a
 relevance review — is drawn as the document it is: through the same

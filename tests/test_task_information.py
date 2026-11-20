@@ -164,6 +164,19 @@ class Outline(unittest.TestCase):
         self.assertEqual(o["problem"]["text"], "The real problem.")
         self.assertNotIn("bench:", json.dumps(o))
 
+    def test_the_seed_templates_inline_out_of_scope_bounds_the_scope(self):
+        seed = (ROOT / "manager" / "core" / "seed" / "task-template.md").read_text(encoding="utf-8")
+        o = taskfiles.brief_outline(seed)
+        self.assertEqual(o["scope"]["items"], ["First piece", "Second piece"])
+        self.assertEqual(o["boundaries"]["text"], "Not this, even though it is nearby")
+        self.assertNotIn("Copy this file", json.dumps(o), "an HTML comment is not prose")
+        self.assertIsNone(o["questions"], "`- None.` is not an open question")
+        inline = taskfiles.brief_outline(
+            "# 9 — x\n\n**Status:** Backlog\n\nDo it.\n\n## What to build\n\n- A\n\n"
+            "**Out of scope** — exports and imports.\n\nA closing note.\n")
+        self.assertEqual(inline["scope"]["items"], ["A"])
+        self.assertEqual(inline["boundaries"]["text"], "exports and imports.")
+
     def test_a_first_sentence_longer_than_the_cap_says_it_was_cut(self):
         text, clipped = taskfiles.clip_sentences("word " * 200, 50)
         self.assertTrue(clipped)
