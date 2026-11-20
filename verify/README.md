@@ -72,7 +72,26 @@ than a test failure is a required preparation step that did not complete
 dependency or a browser that cannot start its sandbox is caught there and
 recorded in the right word. Setup errors the preflight cannot foresee
 (an unimportable test module, a disposable backend that will not start,
-source drift) still read `failed` in bench's evidence.
+source drift, a page that crashes mid-run) still read `failed` in bench's
+evidence — **unless the check declares the verifier report contract**.
+
+**With `"report": "v1"` on the check (task 164)** bench hands the
+entrypoint `$BENCH_VERIFY_REPORT`, and `benchverify.Run` writes the
+report there: exit 0 `passed`, 1 `failed`, 2 `setup-failed`, a cancelled
+run `incomplete`, with one finding per browser case that did not pass.
+Bench then records a setup error as `prepare-failed` (`verifier-setup`)
+and an assertion as `failed`; a timeout, cancellation or launch error
+stays bench's own reading. Adding `"report": "v1"` to a registered check
+is the operator's decision in the policy document — nothing here changes
+a live policy — and it changes the check's identity, so its earlier
+passes read `check-changed` once.
+
+`verify/preflight browser --probe` goes further than "a Chromium starts":
+it starts a disposable backend, loads the board and switches a view by a
+click and back, recording `connection`, `navigation` and `interaction`
+separately with the logs and a screenshot. It is a health probe, never
+feature coverage (`featureCoverage: false`), and never proof that a full
+run will be stable.
 
 A timeout kills the child's whole process group (each child is started
 in a session of its own), so a forked backend or browser does not outlive
