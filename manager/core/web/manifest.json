@@ -175,6 +175,11 @@
    "sha256": "1bcc70329a431d4777a227afddaf6802d5e8fb2bf60ea83ba97a424a5cab306d",
    "type": "text/javascript; charset=utf-8"
   },
+  "lib/folds.js": {
+   "bytes": 2949,
+   "sha256": "e09f28c980dc3ef183caa41f8fed8ef6c5f63961901861b647e06ac1738ad07d",
+   "type": "text/javascript; charset=utf-8"
+  },
   "lib/keep.js": {
    "bytes": 2608,
    "sha256": "c392b875f46f57f27d9646dc46028e7518c3a8779659d1d4f5852ee0fce0ce4c",
@@ -271,13 +276,13 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/drawer.js": {
-   "bytes": 17007,
-   "sha256": "5eeb7809e4c19cef1e71907f32abec872b6506a12435fe8f97427ec5a44972c5",
+   "bytes": 17311,
+   "sha256": "326a99b25c532e99435f83a38f8107b2c8ea6070645fb565ebb4c6a1cbd9fbba",
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/sections.js": {
-   "bytes": 101667,
-   "sha256": "bb34a3b1a414a04972e39711675df1adb860e52fc021b87206263b63ca380400",
+   "bytes": 101690,
+   "sha256": "3cae2462b946598405f7c8ea65d3ede96ca5412578efc0fdb2ee6df22d97c42a",
    "type": "text/javascript; charset=utf-8"
   },
   "views/doctor.js": {
