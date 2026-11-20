@@ -240,11 +240,39 @@ def jam(spec: dict | None) -> None:
     if not spec:
         return
     target, stage = spec["file"], spec["to"]
+    collide = spec.get("collide") or {}
     JAM.update(file=target, to=stage, jammed=False, committed=None, lockHeld=None,
-               timeout=None)
-    real = taskfiles.commit_paths
+               timeout=None, commits=[])
+    if collide:
+        JAM.update(collide=collide, collided=None)
+    placed, collided = threading.Event(), threading.Event()
+    real_commit = taskfiles.commit_paths
+
+    def real(filename, message, spec_, failure):
+        # every board commit while the jam is installed, and its outcome:
+        # the evidence of which commits met the held index
+        ok = real_commit(filename, message, spec_, failure)
+        JAM["commits"].append({"file": filename, "message": message.splitlines()[0],
+                               "committed": ok,
+                               "thread": threading.current_thread().name})
+        return ok
 
     def commit_paths(filename, message, spec_, failure):
+        if (collide and filename == collide["file"]
+                and collide.get("message", "") in message
+                and JAM.get("collided") is None
+                and threading.current_thread() is not threading.main_thread()):
+            # `collide`: the next commit another thread makes of this card
+            # meets the held index — as the observed report commit did
+            # (task 155). It waits for the jam to be in place, boundedly,
+            # and the jam waits for it to end before its own commit runs.
+            if not placed.wait(RACE_SECONDS):
+                JAM["timeout"] = "the jam was never placed for the colliding commit"
+            try:
+                JAM["collided"] = real(filename, message, spec_, failure)
+                return JAM["collided"]
+            finally:
+                collided.set()
         if filename != target or f"→ {stage} " not in message or JAM["jammed"]:
             return real(filename, message, spec_, failure)
         root = config.state_repo()
@@ -270,6 +298,10 @@ def jam(spec: dict | None) -> None:
                 time.sleep(0.01)
         JAM["jammed"] = True
         try:
+            if collide:
+                placed.set()
+                if not collided.wait(RACE_SECONDS):
+                    JAM["timeout"] = "the colliding commit never ended"
             JAM["committed"] = real(filename, message, spec_, failure)
         finally:
             JAM["lockHeld"] = lock.is_file()
