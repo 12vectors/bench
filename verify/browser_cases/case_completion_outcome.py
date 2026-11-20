@@ -119,7 +119,7 @@ class AnUnfinishedCompletion(unittest.TestCase):
                     "(() => { const p = document.querySelector("
                     f"{json.dumps(PANEL)}); const s = p.closest('.sheet');"
                     " const d = p.querySelector('details.cmp-evidence');"
-                    " return {head: p.querySelector('.phead').innerText,"
+                    " return {head: p.querySelector('.phead').textContent,"
                     " text: p.innerText, open: d && d.open,"
                     " ship: (document.querySelector('#sh-ship') || {}).innerText || '',"
                     " overflow: s.scrollWidth - s.clientWidth,"
