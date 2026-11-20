@@ -734,7 +734,8 @@ function renderBrain(force) {
     const keep = active && el.contains(active) && active.dataset
       ? (active.dataset.brainId ? `[data-brain-id="${CSS.escape(active.dataset.brainId)}"]`
         : active.dataset.bact ? `[data-bact="${CSS.escape(active.dataset.bact)}"]`
-          : active.dataset.bf ? `[data-bf="${CSS.escape(active.dataset.bf)}"]` : null) : null;
+          : active.dataset.bf ? `[data-bf="${CSS.escape(active.dataset.bf)}"]` +
+            (active.type === 'radio' ? `[value="${CSS.escape(active.value)}"]` : '') : null) : null;
     el.innerHTML = `<div class="b-main">${html}</div>`;
     painted = html;
     if (S.brainEntry) settleLinks(el, S.brainEntry);
