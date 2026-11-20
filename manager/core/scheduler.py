@@ -432,7 +432,9 @@ def projection(board: dict | None = None) -> dict:
     found = plan(board)
     found.pop("_chosen", None)
     return {**found, "delivery": coordinate.projection(board),
-            "phases": phasescope.projection(board),
+            # a member's readiness is this plan's — authorization, capacity,
+            # dependencies and the ledger — never the strategy alone (160)
+            "phases": phasescope.projection(board, found.get("items")),
             "recovery": recovery.projection(board),
             "breaker": breaker(), "lastPass": LAST["pass"],
             "interval": config.ORCHESTRATE_INTERVAL,

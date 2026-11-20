@@ -6804,6 +6804,82 @@ whether it is adoptable now and what still works it. Reading it launches,
 merges and writes nothing. The event wording of a phase on a non-default
 base is card 61's, not repeated here.
 
+### A phase's owner, its state, and recovering from a mistaken move
+
+A phase has two supported ways to run (task 160), and the card says
+which one it is on:
+
+| path | how it starts | who advances it | the face says |
+| --- | --- | --- | --- |
+| **the phase runner** | move the phase card into In Progress, then **▸ run phase** | the runner's beat, one member at a time | `not started`, the member in flight, `held` or `halted` |
+| **its phase scope** | name the phase in the operating agreement (with an allocation), move it into To Do, then **adopt** it in Orchestrator → Phases | the scheduler's passes, under the agreement | the phase scope's lifecycle word and its next step |
+
+Naming a phase in the agreement does not adopt it: until a person does,
+it reads `not adopted` and the runner still owns it. Once adopted, the
+runner's ▸ run phase and its ‖ hold are not offered on the phase card;
+the card offers **⟶ orchestrator** instead, and each member run is
+cancelled on its own card.
+
+**One reading for every surface.** `phasescope.lifecycle` is the one
+answer, carried by `/api/state` as `phaseLifecycle` and by `GET
+/api/orchestration` as each phase's `lifecycle`. The Board's phase face,
+the Phases lane and Orchestrator → Phases draw it word for word: the
+owner (`phase runner` or `phase scope`), a word, a sentence and the one
+next step with who holds it. An adopted phase is never read off the
+runner's snapshot, so a scoped phase whose member is running reads
+`phase scope — on #157 …`, never "not started".
+
+| word | means | next step |
+| --- | --- | --- |
+| `not-configured` | the agreement names no scope for it: the runner's | ▸ run phase |
+| `not-adopted` | named, not adopted: still the runner's | adopt it, or what still works it |
+| `preparing` | adopted; its branch is cut on the next pass | wait |
+| `queue-needed` | the next member is in Backlog | move it into To Do. Nothing pulls a card out of Backlog |
+| `ready` | a member is queued and may start | the next pass starts it |
+| `waiting` | a dependency, a slot, today's launches, or a missing allocation | the reason says whose |
+| `working` | a run is on a member | the agent's; integration follows review |
+| `moved-early` | a later member sits in In Progress with nothing working it | move it back to To Do or Backlog |
+| `stopped` | a member has work on its branch and no run | Orchestrator → Recovery, or ▸ start work |
+| `unknown` | an operation on a member has an unknown outcome | settle it in Orchestrator → Recovery |
+| `paused` | a pause, or the scope is off | resume it |
+| `integrating`, `finishing`, `integration-review`, `delivered` | a member in review, every member integrated, the phase in review, done | the board's, or the merge requirements' |
+
+A member's readiness in Orchestrator → Phases is the scheduler's own
+plan — authorization, capacity, dependencies and the operation ledger —
+never the strategy alone, and a member in Backlog reads `in-backlog`,
+never `ready`.
+
+**Budgets in plain words.** Each phase lists its implementation slots
+(runs at the same time) and its launches today, reserved out of the
+Bench scope's total. A launch is one agent run: an implementation, an
+independent review, a repair or a diagnosis. So a budget of one launch a
+day is named as covering one of those, not a member's whole lifecycle.
+An allocation of zero, or today's launches used up, is said as what is
+missing and where to change it. Nothing here raises an allocation,
+queues a member or adopts a phase.
+
+**In flight means worked, never staged.** Under the sequential strategy
+a member is held while another member of the phase is in flight. In
+flight is a run on that member, an operation about it without a settled
+receipt, work in review, or In Progress *with its own branch*. A later
+member moved into In Progress by mistake — no run, no reservation, no
+branch — used to hold the first member as `phase-member-in-flight` while
+it waited on that member itself, and neither could ever move. Now it
+holds nobody: the first member starts, the later one still waits for its
+dependency to be integrated, and both the member and the phase read
+`moved-early` with the way back.
+
+**The way back is a person's, and guarded.** A phase's members are drawn
+in the Phases lane, not on the Board, so the lane's stage columns take a
+dropped member exactly as the Board's columns take a card, through the
+same `/api/move`. A member that moved early also carries **↩ to to-do**,
+armed and then fired. Moving a scoped phase's member out of In Progress
+or Review back to To Do or Backlog is refused while a run is on it
+(**‖ hold** it first) or while an operation about it has no settled
+receipt (settle it in Orchestrator → Recovery), with nothing moved.
+Nothing here cancels a run, settles an operation, rewinds a stage or
+forces an integration.
+
 ### The Orchestrator view
 
 Everything above has one place a person reads and acts on it (D15, task
