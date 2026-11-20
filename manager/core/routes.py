@@ -334,6 +334,11 @@ def _state_payload() -> dict:
         # why, and where), and each member's state — the header chip and the
         # phase card's own list are both read from here
         "phases": phases.public_state(),
+        # per phase card, who schedules it and where its lifecycle stands,
+        # with the one next step and who holds it (task 160): the face,
+        # the lane and the Orchestrator draw this one reading, so an
+        # adopted phase is never read as a runner nobody started
+        "phaseLifecycle": phasescope.board_lifecycle(collected),
         "drive": drive.public(),
         "hasDriver": config.driver_path() is not None,
         # whether this project gave its headless agents anything to run. The
@@ -1108,6 +1113,16 @@ def post_move(req) -> None:
     # so it does not move while one of them has an agent in it
     # — the refusal names ‖ hold, which stops both
     phases.assert_not_working(payload["file"])
+    # A scoped phase's member goes back to To Do or Backlog only while
+    # nothing may be working it (task 160): a run, or an operation with no
+    # settled receipt. The refusal says what to do instead; it cancels,
+    # settles and rewinds nothing.
+    held = phasescope.return_refusal(payload["file"], payload["from"],
+                                     payload["to"])
+    if held:
+        req.reply(409, {"error": held, "code": "member-working",
+                        "file": payload["file"]})
+        return
     # A person's move into in-progress is the commitment work starts
     # from, so it is held to the card's required information (task 132):
     # refused, with the card where it was, while anything required is
