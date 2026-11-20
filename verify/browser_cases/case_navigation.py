@@ -440,8 +440,9 @@ class Navigation(unittest.TestCase):
         self.assertEqual(["flight"], b.eval(hidden), "at /sessions/<session>, no link to itself")
         # the crumb is the way to the whole list, one click, nothing chosen
         self.one_click(b, '#bnwhere .crumbs a[href="/sessions"]', "/sessions", "the All sessions crumb")
-        self.assertFalse(b.eval("!!document.querySelector('#frail .sess-row.sel')"),
-                         "the All sessions crumb leaves no session chosen")
+        # (the list may still mark the page's own pick of a live session:
+        # a pick is not a choice and has no address, task 134)
+        self.assertIsNone(b.eval("S.flightSid"), "the All sessions crumb leaves no session chosen")
         self.assertEqual(["flight"], b.eval(hidden), "at /sessions, no link to itself")
         # one with no card says so, and invents no parent
         b.goto("/sessions/nav-orphan-session")
