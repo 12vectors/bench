@@ -112,10 +112,12 @@ async function loadOp(id) {
   renderBrain();
 }
 
-/* A write changed the files: every reading is asked again. */
+/* A write changed the files: every reading is asked again. What was read
+   stays drawn until the new reading lands, rather than blanking the page
+   into "Reading…" under the person who just saved. */
 function forget() {
-  cache.index = null;
-  cache.entries = {};
+  if (cache.index) cache.index.at = 0;
+  Object.values(cache.entries).forEach(slot => { slot.at = 0; });
   cache.revisions = {};
 }
 
@@ -406,7 +408,7 @@ function writeStatus(id) {
 function revisionsHtml(id) {
   const slot = cache.revisions[id];
   let inner;
-  if (!slot) inner = '<p class="b-loading">Reading revisions…</p>';
+  if (!slot) inner = '<p class="b-note" role="status">Reading revisions…</p>';
   else if (!slot.data) inner = `<p class="b-warn">${esc(slot.error || 'could not be read')}</p>`;
   else {
     const r = slot.data;
@@ -532,15 +534,15 @@ function payloadOf() {
 async function save() {
   if (!ed || ed.busy) return;
   if (ed.mode === 'retire') {
-    const said = armed.click('retire', undefined, () => renderBrain());
-    if (said === 'armed') { renderBrain(); return; }
+    const said = armed.click('retire', undefined, () => renderBrain(true));
+    if (said === 'armed') { renderBrain(true); return; }
     if (said === 'busy') return;
     armed.disarm('retire');
   }
   ed.busy = true;
   ed.error = null;
   ed.lostReply = false;
-  renderBrain();
+  renderBrain(true);
   const mine = ed;
   const res = await post('/api/brain/' + mine.mode, payloadOf());
   mine.busy = false;
@@ -554,7 +556,10 @@ async function save() {
       : `Saved: ${op.what}` + (op.commit && op.commit.state === 'failed' ? ' — the commit failed' : ''),
       !!(op.commit && op.commit.state === 'failed'));
     if (mine.mode === 'create') { S.brainEntry = op.id; S.brainBad = null; syncRoute(); }
-    renderBrain();
+    renderBrain(true);
+    // the form that held focus is gone: the entry's heading takes it (a
+    // new entry's arrives with its reading, and is focused then)
+    if (mine.mode !== 'create') $('#bshell .b-title')?.focus();
     return;
   }
   if (res.status === 0) {
@@ -571,7 +576,7 @@ async function save() {
         if (mine.mode === 'create') { S.brainEntry = data.operation.id; syncRoute(); }
       }
     } catch (e) { /* the warning stands */ }
-    renderBrain();
+    renderBrain(true);
     return;
   }
   // any answer is final for this identity: the next Save is a new request
@@ -581,7 +586,7 @@ async function save() {
   } else {
     mine.error = res.error;
   }
-  renderBrain();
+  renderBrain(true);
   const focus = $('#bshell .b-conflict, #bshell .b-form [role="alert"]');
   if (focus) { focus.setAttribute('tabindex', '-1'); focus.focus(); }
 }
@@ -592,7 +597,7 @@ async function retryOp(action, request) {
   if (res.ok && id) ops[id].op = res.data.operation;
   toast(res.ok ? (action === 'commit' ? 'Commit retried.' : 'Push asked for.') : res.error, !res.ok);
   forget();
-  renderBrain();
+  renderBrain(true);
 }
 
 function currentEntry() {
@@ -623,7 +628,9 @@ function act(name, arg) {
     delete cache.entries[key()];
   } else if (name === 'retry-commit') { retryOp('commit', arg); return; }
   else if (name === 'retry-push') { retryOp('push', arg); return; }
-  renderBrain();
+  // a person's own action paints at once, wherever focus is: only a live
+  // reading waits for the person to stop typing
+  renderBrain(true);
   const target = $('#bshell .b-form input, #bshell .b-form textarea, #bshell .b-form select');
   if (ed && ['new', 'edit', 'classify', 'override', 'retire'].includes(name) && target) target.focus();
   if (!ed && name === 'cancel') $('#bshell .b-title')?.focus();
@@ -703,6 +710,10 @@ function renderBrain(force) {
   if (!force && ((isField(document.activeElement) && el.contains(document.activeElement))
       || pressing().held())) return;
   let html;
+  // a destination has not arrived until its reading has: an entry's own
+  // markup may hold other loading notes (its Revisions fold), so this is
+  // said, never searched for in the markup
+  let loading = false;
   if (S.brainBad) {
     html = back + '<div class="b-panel" role="alert"><h1 class="b-title" tabindex="-1">Not a Brain address</h1>' +
       `<p><code>${esc(S.brainBad)}</code> does not name an entry. An entry's address is ` +
@@ -717,6 +728,7 @@ function renderBrain(force) {
       if (settling && Date.now() - (o.at || 0) > FRESH_MS) loadOp(id);
       if (revsOpen === id && !cache.revisions[id]) loadRevisions(id);
     }
+    loading = !slot;
     html = !slot ? '<p class="b-loading" role="status" aria-busy="true">Reading brain/…</p>'
       : k === 'index' ? (slot.data ? listHtml(slot)
         : `<div class="b-panel b-bad" role="alert"><h1 class="b-title" tabindex="-1">Brain</h1><p>` +
@@ -726,7 +738,7 @@ function renderBrain(force) {
       html = back + formHtml(null);
     }
   }
-  const arrived = k !== paintedKey && !/b-loading/.test(html);
+  const arrived = k !== paintedKey && !loading;
   if (html !== painted) {
     // a live repaint keeps the reader's place: replaced only when the
     // reading changed, and focus is put back where it was
