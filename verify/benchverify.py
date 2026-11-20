@@ -38,6 +38,7 @@ test with a path can still read or write anywhere this user can.
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import datetime
 import glob
@@ -403,12 +404,17 @@ class Run:
         if tmp is not None:
             shutil.rmtree(tmp / "tmp", ignore_errors=True)
         word = OUTCOME[status].upper()
+        if (self.record.get("coverage") or {}).get("kind") == "focused":
+            # said on the verdict line itself, so nobody reads a focused
+            # pass as the whole suite's
+            word += " (FOCUSED — not a whole-suite result)"
         print(f"bench-verify {self.check}: {word}" + (f" — {reason}" if reason else ""))
         c = self.record.get("candidate", {})
         print("bench-verify summary: " + json.dumps(
             {"check": self.check, "outcome": OUTCOME[status],
              "revision": c.get("revision"), "dirty": c.get("dirty"),
-             "sourceDigest": c.get("sourceDigest"), "tests": self.record.get("tests")},
+             "sourceDigest": c.get("sourceDigest"), "tests": self.record.get("tests"),
+             "coverage": (self.record.get("coverage") or {}).get("kind")},
             sort_keys=True))
         if out is not None:
             print(f"record: {out}")
@@ -1275,6 +1281,143 @@ class Backend:
             except subprocess.TimeoutExpired:
                 os.killpg(self.proc.pid, signal.SIGKILL)
                 self.proc.wait(5)
+
+
+# ── focused selection: a declared subset, never the whole ─────────────
+#
+# `verify/backend --select <test>` and `verify/browser --case <case>` run
+# only what was named. The record says so (`coverage.kind: "focused"`),
+# the verdict line says so, and bench binds the arguments into the
+# check's identity — a scope's arguments are its coverage — so a focused
+# pass never answers a requirement for the full run, nor a declared
+# equivalent of it. Nothing here infers a selection from changed files.
+
+MAX_SELECTORS = 32
+FOCUSED_NOTE = ("focused: only the declared selection ran; this is not a "
+                "whole-suite result and satisfies no whole-suite requirement")
+_IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
+BACKEND_SELECTOR = re.compile(r"^tests(?:\." + _IDENT + r"){1,4}$")
+BROWSER_SELECTOR = re.compile(r"^case_[A-Za-z0-9_]+(?:\." + _IDENT + r"){0,2}$")
+
+
+def validate_selection(values, pattern: re.Pattern, what: str, example: str) -> list[str]:
+    """The selectors as given, checked by shape before anything runs:
+    bounded in number, each a dotted name (never a path, a glob or a
+    pattern), none repeated and none inside another — `tests.test_x` and
+    `tests.test_x.T.test_a` together would run test_a twice and count it
+    once. No selector at all is the default, whole-suite invocation."""
+    selection = list(values or [])
+    if not selection:
+        return []
+    if len(selection) > MAX_SELECTORS:
+        raise SetupError(f"{len(selection)} {what} selectors given; at most "
+                         f"{MAX_SELECTORS}. A selection that large is the whole "
+                         f"suite's job: run it without a selection")
+    for sel in selection:
+        if not isinstance(sel, str) or not pattern.match(sel):
+            raise SetupError(f"invalid {what} selector {str(sel)[:120]!r}: name a "
+                             f"module, class or test as a dotted name, such as "
+                             f"{example} — never a path, glob or pattern")
+    if len(set(selection)) != len(selection):
+        dup = sorted({s for s in selection if selection.count(s) > 1})
+        raise SetupError(f"{what} selector given twice: {', '.join(dup)}")
+    for a in selection:
+        for b in selection:
+            if a != b and b.startswith(a + "."):
+                raise SetupError(f"{what} selector {b!r} is inside {a!r}; name "
+                                 f"one or the other, so nothing runs twice")
+    return selection
+
+
+def coverage(selection: list[str], discovered: int | None, ran: int | None,
+             available: int | None = None) -> dict:
+    """What a run covered, as the record states it."""
+    if not selection:
+        return {"kind": "full", "selection": None, "discovered": discovered,
+                "ran": ran}
+    out = {"kind": "focused", "selection": list(selection),
+           "discovered": discovered, "ran": ran, "note": FOCUSED_NOTE}
+    if available is not None:
+        out["available"] = available
+    return out
+
+
+# ── what a browser case may call ──────────────────────────────────────
+#
+# A case runs against either transport: the local CDP Browser or the
+# remote Playwright adapter. Only what both provide is a case's API. A
+# case reaching for something one transport lacks (`call`, CDP's raw
+# method; `request`, the adapter's wire op) passes on one machine and
+# breaks on the other — so it is refused by name before a browser
+# starts, and again at run time if it gets there by a route the source
+# check cannot see.
+
+CASE_STATE = frozenset({"origin", "console", "csp", "log", "argv", "proc"})
+CASE_API = frozenset({
+    # PageOps, written once over the transport primitives
+    "goto", "wait", "click", "press", "release", "hover", "reveal",
+    # each transport's own, with one meaning on both
+    "eval", "viewport", "zoom", "key", "screenshot", "ax_nodes", "close",
+    "_navigate"}) | CASE_STATE
+
+
+def case_api_problems(path: Path) -> list[str]:
+    """Attribute uses on the session's browser that are not CASE_API,
+    read from the case's source (nothing is imported or run). A browser
+    is `<anything>["browser"]`, or a name bound to one in the same
+    function or module."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError, ValueError) as exc:
+        return [f"{path.name}: unreadable ({type(exc).__name__}: {exc})"]
+
+    def is_browser(node) -> bool:
+        return (isinstance(node, ast.Subscript)
+                and isinstance(node.slice, ast.Constant)
+                and node.slice.value == "browser")
+
+    found: dict = {}
+    scopes = [tree, *[n for n in ast.walk(tree)
+                      if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]]
+    for scope in scopes:
+        nodes = list(ast.walk(scope))
+        names = set()
+        for n in nodes:
+            if isinstance(n, ast.Assign) and is_browser(n.value):
+                names |= {t.id for t in n.targets if isinstance(t, ast.Name)}
+        for n in nodes:
+            if not isinstance(n, ast.Attribute) or n.attr in CASE_API:
+                continue
+            if is_browser(n.value) or (isinstance(n.value, ast.Name)
+                                       and n.value.id in names):
+                found[(n.lineno, n.attr)] = f"{path.name}:{n.lineno}: browser.{n.attr}"
+    return [found[k] for k in sorted(found)]
+
+
+def case_api_remedy(problems: list[str]) -> str:
+    return ("browser cases use an API one transport does not provide: "
+            + "; ".join(problems[:10])
+            + (f" and {len(problems) - 10} more" if len(problems) > 10 else "")
+            + f". A case may use only what the local CDP browser and the remote "
+              f"Playwright adapter both support: {', '.join(sorted(CASE_API))}. "
+              f"Rewrite it over eval/click/key, or add the operation to Browser, "
+              f"RemoteBrowser and the adapter together")
+
+
+class CaseBrowser:
+    """The browser as a case sees it: CASE_API and nothing else."""
+
+    def __init__(self, inner):
+        object.__setattr__(self, "_inner", inner)
+
+    def __getattr__(self, name):
+        if name not in CASE_API:
+            raise SetupError(case_api_remedy([f"browser.{name}"]))
+        return getattr(object.__getattribute__(self, "_inner"), name)
+
+    def __setattr__(self, name, value):
+        raise SetupError(f"a case may not set browser.{name}; the transport "
+                         f"is the harness's")
 
 
 # Set by verify/browser for the cases it discovers.
