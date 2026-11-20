@@ -1935,6 +1935,61 @@
   .b-diag ul{margin:6px 0;padding-left:18px}
   .b-diag summary{cursor:pointer}
   .b-loading{color:var(--muted)}
+  /* writing (task 158): the person's controls, one register with the
+     Orchestrator's — primary, outlined, and armed/busy over both themes */
+  .b-headrow{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 14px}
+  .b-btn{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:8px 14px;
+    border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);
+    font:500 13px/1.25 var(--sans);cursor:pointer;text-align:center;max-width:100%;overflow-wrap:anywhere}
+  .b-btn:hover{border-color:var(--accent)}
+  .b-btn.b-primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+  .b-btn.b-primary:hover{filter:brightness(1.08)}
+  .b-btn.b-alarm{color:var(--alarm)}
+  .b-btn.armed,.b-btn.armed:hover,.b-btn.b-primary.armed{color:var(--alarm);border-color:var(--alarm);
+    background:var(--surface);filter:none;font-weight:600}
+  .b-btn.busy,.b-btn.busy:hover,.b-btn.b-primary.busy{color:var(--accent);border-color:var(--accent);
+    background:var(--surface);filter:none}
+  .b-btn:disabled{cursor:not-allowed;opacity:.6}
+  .b-btn.busy:disabled{opacity:1;cursor:progress}
+  .b-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .b-form{display:flex;flex-direction:column;gap:12px;border-left:4px solid var(--accent)}
+  .b-field{display:flex;flex-direction:column;gap:4px;min-width:0}
+  .b-field label,.b-label{font-size:12.5px;font-weight:600;color:var(--text)}
+  .b-main input[type="text"],.b-main textarea,.b-main select{width:100%;box-sizing:border-box;min-height:38px;
+    padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--canvas);color:var(--text);
+    font:13.5px/1.4 var(--sans)}
+  .b-main textarea{font-family:var(--mono);font-size:12.5px;resize:vertical}
+  .b-main input:focus-visible,.b-main textarea:focus-visible,.b-main select:focus-visible,
+  .b-main input[type="radio"]:focus-visible,.b-main input[type="checkbox"]:focus-visible{
+    outline:2px solid var(--accent);outline-offset:2px}
+  .b-fieldset{border:1px solid var(--border-soft);border-radius:6px;padding:8px 12px;margin:0;
+    display:flex;flex-direction:column;gap:6px;min-width:0}
+  .b-fieldset legend{font-size:12.5px;font-weight:600;padding:0 4px}
+  .b-radio{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-height:32px;cursor:pointer}
+  .b-sub{display:flex;flex-direction:column;gap:8px;padding-left:12px;border-left:2px solid var(--border-soft)}
+  .b-tabs{display:flex;gap:4px;margin-bottom:4px}
+  .b-tab{min-height:32px;padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);
+    color:var(--muted);font:500 12.5px var(--sans);cursor:pointer}
+  .b-tab[aria-pressed="true"]{color:var(--text);border-color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+  .b-preview{min-height:120px}
+  .b-conflict h3{font-size:13px;margin:6px 0}
+  .b-compare{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+  .b-diffpane{white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;background:var(--sunken);
+    padding:8px 10px;border-radius:6px;font:12px/1.5 var(--mono);margin:0}
+  .b-status h2{font-size:13.5px}
+  .b-steps{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px}
+  .b-steps li{overflow-wrap:anywhere}
+  .b-bad-row{color:var(--alarm)}
+  .b-bad-row .b-btn{margin-left:6px}
+  .b-override{color:var(--accent);border-color:var(--accent)}
+  .b-revs summary{cursor:pointer;font-weight:600}
+  .b-revs h3{font-size:13px;margin:10px 0 4px}
+  .b-main button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  @media (pointer:coarse){.b-btn,.b-tab,.b-radio,.b-revs summary,.b-main input[type="text"],.b-main select{min-height:44px}}
+  @media (max-width:760px){
+    .b-compare{grid-template-columns:minmax(0,1fr)}
+    .b-entryactions .b-btn{flex:1 1 40%}
+  }
   @media (max-width:760px){
     .b-main{padding:12px 12px 36px}
     .b-read{grid-template-columns:minmax(0,1fr)}
