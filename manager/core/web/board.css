@@ -1652,3 +1652,121 @@
   @media (max-width:560px){
     .views{flex-wrap:wrap}
   }
+
+  /* ── a phone (task 154): the board is what is shown ─────────────────
+     On a phone the page is for checking where cards stand. So below
+     760px (lib/layout.js reads the same width) the header folds its
+     secondary controls behind one labelled More button, the board shows
+     one stage per screen with a strip naming every stage, and the
+     activity panel starts closed, is sized to leave the board in view,
+     and can be closed from inside itself. Warnings never fold. A window
+     shorter than 480px (a phone held sideways) gets the compact header,
+     bar and panel but keeps the columns. Anywhere else none of this
+     applies: the strip and the More button are not drawn, and nothing
+     is folded.
+
+     The page is one window high, and that window is the one a phone
+     actually shows: `100vh` there is the height with the browser's own
+     toolbars hidden, which put the activity bar — and the panel's only
+     toggle — underneath them. */
+  @supports (height:100dvh){ body{height:100dvh} }
+  #hdrmore{display:none}
+  .stagenav{display:none}
+  #loggrip{touch-action:none}
+  #loghead .lfilters{display:contents}
+  #loghead .logclose{display:inline-flex;align-items:center;gap:6px}
+  /* the header, the bar and the panel: compact on a phone, and on a
+     window as short as a phone held sideways */
+  @media (max-width:760px), (max-height:480px){
+    header{gap:6px 8px;padding:6px 10px}
+    .brand .path{display:none}
+    /* the secondary controls, until More is opened. Warnings and the
+       configuration check are not secondary: they stay, compacted */
+    header:not(.more-open) .hsec{display:none}
+    #doctorchip .dlab{display:none}
+    header.more-open .hsec{order:20}
+    #hdrmore{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+      min-height:40px;min-width:44px;padding:0 12px}
+    #hdrmore[aria-expanded="true"]{border-color:var(--accent);color:var(--text)}
+    /* a folded chip with something to say (the setup invitation, the
+       agent-commands note) marks the door it is behind */
+    #hdrmore{position:relative}
+    header:not(.more-open):has(.livechip.hsec:not([hidden])) #hdrmore::after{
+      content:"";position:absolute;top:5px;right:5px;width:7px;height:7px;
+      border-radius:99px;background:var(--accent)}
+    #themebtn,#refresh{min-height:40px}
+    header .livechip{min-height:36px}
+    #livechip .mono{display:none}
+    /* the views in one row that scrolls sideways, never wider than the page */
+    header .views{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;min-width:0}
+    header .views::-webkit-scrollbar{display:none}
+    .views a{flex:none;min-height:40px;padding:0 12px}
+
+    /* the bar: the panel's toggle is a full-size target */
+    #statusbar{height:52px;gap:8px;padding:0 8px}
+    #actbtn{min-height:44px;padding:0 12px;border-color:var(--border)}
+    #tray{min-height:44px;padding:0 12px}
+    /* the panel: one row — its close first, then the filters, which
+       scroll sideways, and no repeated label */
+    #loggrip{height:18px}
+    #loghead{padding:0 10px 6px;gap:8px;flex-wrap:nowrap}
+    #loghead .label,#loghead .spacer,#loghead > .mono{display:none}
+    #loghead .logclose{order:-1;flex:none;min-height:40px;padding:0 12px;font-size:12.5px}
+    #loghead details{flex:none}
+    #loghead .lfilters{display:flex;gap:6px;flex:1 1 auto;
+      overflow-x:auto;scrollbar-width:none;min-width:0}
+    #loghead .lfilters::-webkit-scrollbar{display:none}
+    #loghead .lfilters button{flex:none;min-height:36px}
+    #logbody{padding:4px 10px 10px;max-height:45vh;max-height:45dvh}
+    .ev{grid-template-columns:auto 14px minmax(0,1fr);gap:8px}
+  }
+  /* the board itself: one stage per screen on a narrow one */
+  @media (max-width:760px){
+    header .views{order:10;flex:1 0 100%}
+
+    /* the stage strip, and one stage per screen with the next peeking in */
+    .stagenav{display:flex;gap:6px;padding:8px 10px 0;overflow-x:auto;
+      scrollbar-width:none;flex:none}
+    .stagenav::-webkit-scrollbar{display:none}
+    .stagenav button{flex:none;display:inline-flex;align-items:center;gap:6px;
+      min-height:40px;padding:0 12px;border-radius:99px;font-size:12.5px;color:var(--muted)}
+    .stagenav button[aria-current="true"]{background:var(--surface);
+      border-color:var(--accent);color:var(--text)}
+    .stagenav button.attention{border-color:color-mix(in oklab, var(--alarm) 60%, var(--border))}
+    .stagenav .tickmark{width:6px;height:6px;border-radius:2px;flex:none}
+    .stagenav .scount{font-family:var(--mono);font-size:11px;color:var(--dim)}
+    .stagenav .salarm{display:inline-flex;align-items:center;justify-content:center;
+      width:16px;height:16px;border-radius:99px;font-size:10.5px;font-weight:700;
+      background:var(--alarm);color:var(--on-accent)}
+    .stagenav .salarm[hidden]{display:none}
+    #board{padding:8px 10px 10px;gap:10px;scroll-snap-type:x mandatory;
+      scroll-padding-inline:10px;overscroll-behavior-x:contain}
+    .kcol{flex:0 0 calc(100% - 22px);min-width:0;max-width:none;scroll-snap-align:start}
+
+    /* a card's detail view takes the whole screen, and gives it back */
+    #drawer{min-width:100vw;max-width:100vw;border-left:none}
+    #drawergrip{display:none}
+    #drawerbody{padding:14px 12px}
+  }
+  /* a phone held upright keeps the header to two rows: More is its
+     glyph, and the connection chip is its dot — breathing while anyone
+     works — unless the board may be stale, which it still says in
+     words. Their names keep every word. */
+  @media (max-width:430px){
+    #hdrmore .mlab{display:none}
+    #livechip:not(.stale) > span:not(.dot){display:none}
+  }
+  /* a window as short as a phone held sideways: every row the board does
+     not use is as thin as its targets allow */
+  @media (max-height:480px){
+    header{padding-top:4px;padding-bottom:4px}
+    #statusbar{height:46px}
+    #loggrip{height:10px}
+    #loghead{padding-bottom:2px}
+  }
+  /* the narrowest cut the configuration chip's reading to fit; its name
+     and title keep all of it */
+  @media (max-width:360px){
+    header{column-gap:6px}
+    #doctorchip .mono{max-width:10ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  }

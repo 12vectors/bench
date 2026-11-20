@@ -19,6 +19,9 @@ function renderChip() {
   const agents = runningAgents();
   const liveYou = sessionsOf(m => isLiveSession(m) && !m.agentId);
   const el = $('#livechip');
+  // the narrowest phones draw the chip as its dot (task 154) — its name
+  // keeps the words — unless what is drawn may be stale, which is said
+  el.classList.toggle('stale', !!(S.sseDown || S.stateError));
   // the chip is a keyboard stop (task 125): its name says what it opens
   // and, when the board is out of reach, that what is drawn may be old
   if (S.sseDown || S.stateError) {
@@ -150,7 +153,8 @@ function renderDoctor() {
   el.title = title;
   el.setAttribute('aria-label', `open the configuration check — ${tail}`);
   el.innerHTML = `<span class="dot" style="background:var(--${colour === 'muted' ? 'idle' : colour})"></span>` +
-    `<span style="color:var(--${colour})">⚕ configuration</span>` +
+    // a phone draws the glyph and the reading without the word (task 154)
+    `<span style="color:var(--${colour})">⚕ <span class="dlab">configuration</span></span>` +
     `<span class="mono">${esc(clip(String(tail), 28))}</span>`;
 }
 

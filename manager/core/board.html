@@ -54,6 +54,13 @@
     <a href="/settings" data-view="settings">Settings</a>
   </nav>
   <span class="spacer"></span>
+  <!-- a phone's one door to the header's secondary controls (task 154):
+       the ones marked hsec fold behind it below 760px, and it is not drawn
+       above that. Warnings and the configuration check are never marked:
+       they stay in view. -->
+  <button id="hdrmore" type="button" aria-expanded="false"
+          aria-label="More controls: theme, refresh and setup"><span aria-hidden="true">⋯</span>
+    <span class="mlab">More</span></button>
   <div class="phasechips" id="phasechips" hidden></div>
   <!-- the configuration check: always here, because it is the way in to a
        diagnosis rather than a state that comes and goes. Opening it reads;
@@ -62,10 +69,10 @@
        aria-label="open the configuration check"></div>
   <!-- the setup guide's invitation (task 88): only while an area waits on
        a decision, and only ever a way in — the board works without it -->
-  <div class="livechip" id="setupchip" role="button" tabindex="0" hidden
+  <div class="livechip hsec" id="setupchip" role="button" tabindex="0" hidden
        aria-label="open the setup guide"></div>
   <div class="livechip" id="syncchip" hidden style="cursor:default"></div>
-  <div class="livechip" id="cmdchip" hidden style="cursor:default"></div>
+  <div class="livechip hsec" id="cmdchip" hidden style="cursor:default"></div>
   <!-- the version chip (task 123): only when this page or the files on
        disk are not the build the board is serving -->
   <div class="livechip" id="buildchip" hidden style="cursor:default"></div>
@@ -73,8 +80,8 @@
        read. A keyboard stop like the two chips above (task 125) -->
   <div class="livechip" id="livechip" role="button" tabindex="0" title="open Sessions"
        aria-label="open Sessions"></div>
-  <button id="themebtn">Daylight</button>
-  <button id="refresh">Refresh</button>
+  <button id="themebtn" class="hsec">Daylight</button>
+  <button id="refresh" class="hsec">Refresh</button>
 </header>
 
 <main>
@@ -83,6 +90,10 @@
     <!-- the orchestrator's strip (task 145): only while an agreement is in
          force, and only ever a way in to the Orchestrator view -->
     <div id="orchstrip" class="o-strip" hidden></div>
+    <!-- a phone's stage strip (task 154): one stage fills the screen
+         there, so this names every stage, its count and whether a card in
+         it needs attention, and takes you to it. Not drawn above 760px. -->
+    <nav id="stagenav" class="stagenav" aria-label="Stages"></nav>
     <div id="board"></div>
   </div>
 

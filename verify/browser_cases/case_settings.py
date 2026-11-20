@@ -80,6 +80,7 @@ def set_theme(theme: str):
     """Through the header's own theme button, which is what a person uses."""
     b = S["browser"]
     if b.eval("document.documentElement.dataset.theme") != theme:
+        b.reveal('#themebtn')
         b.click('#themebtn')
     if not b.wait(f"document.documentElement.dataset.theme === '{theme}'", 5):
         raise bv.CheckFailed(f"the theme button did not switch to {theme}")

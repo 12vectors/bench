@@ -698,6 +698,19 @@ class PageOps:
         self._mouse("move", hit["x"], hit["y"])
         return hit
 
+    def reveal(self, selector: str) -> None:
+        """On a phone-width page the header folds its secondary controls
+        (the theme, Refresh) behind its More button (task 154). A person
+        reaching for one opens More first; so does this, with a click,
+        and only when the control is folded. Anywhere else it does
+        nothing."""
+        folded = self.eval(
+            "(() => { const e = document.querySelector(%s), m = document.querySelector('#hdrmore');"
+            " return !!e && !e.getClientRects().length && !!m && !!m.getClientRects().length"
+            " && m.getAttribute('aria-expanded') !== 'true'; })()" % json.dumps(selector))
+        if folded:
+            self.click("#hdrmore")
+
 
 # Resolves a selector to the point a click should land on, or says why
 # there is none. `scrollIntoView` moves whichever scrollers hold the
