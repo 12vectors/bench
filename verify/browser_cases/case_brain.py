@@ -190,28 +190,27 @@ class BrainReading(unittest.TestCase):
         b.wait("!!document.querySelector('#btitle')", 10)
         b.click('.b-prose a[href="/brain/e/e-report-isolation"]')
         if not b.wait("location.pathname === '/brain/e/e-report-isolation' && "
-                      "document.querySelector('#btitle').textContent.includes('leaked')", 10):
+                      "(document.querySelector('#btitle')?.textContent || '').includes('leaked')", 10):
             raise bv.CheckFailed("a link in the entry's body did not reach the other entry")
         self.assertIn("How review reports stay on their own board",
                       b.eval("document.querySelector('.b-side').innerText"),
                       "the investigation lists the guide that links to it")
         b.eval("history.back()")
         if not b.wait("location.pathname === '/brain/e/e-report-routing' && "
-                      "document.querySelector('#btitle').textContent.includes('stay on')", 10):
+                      "(document.querySelector('#btitle')?.textContent || '').includes('stay on')", 10):
             raise bv.CheckFailed("Back did not return to the first entry")
         b.eval("history.back()")
         if not b.wait("location.pathname === '/brain' && !!document.querySelector('.b-list')", 10):
             raise bv.CheckFailed("Back did not return to the list")
-        b.wait("document.activeElement && document.activeElement.dataset.brainId === "
-               "'e-report-routing'", 3)
-        self.assertEqual(b.eval("document.activeElement && document.activeElement.dataset.brainId"),
+        b.wait("document.activeElement?.dataset?.brainId === 'e-report-routing'", 3)
+        self.assertEqual(b.eval("document.activeElement?.dataset?.brainId || null"),
                          "e-report-routing", "focus returns to the entry the reader came from")
 
     def test_4_the_keyboard_reaches_and_opens_an_entry(self):
         b = self.open("/brain")
         b.eval("document.querySelector('#bshell .b-title').focus(); true")
         b.key("Tab")
-        first = b.eval("document.activeElement && document.activeElement.dataset.brainId")
+        first = b.eval("document.activeElement?.dataset?.brainId || null")
         self.assertEqual(first, "e-report-routing")
         ring = b.eval("getComputedStyle(document.activeElement).outlineStyle")
         self.assertNotEqual(ring, "none", "the focused entry link shows no focus ring")

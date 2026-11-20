@@ -247,6 +247,13 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   each bound to what the page showed. Imports `config`, `redact` and
   `taskfiles`; reading it sends and launches nothing (see "The card
   keeps everything: decisions and public history")
+- `brain.py` — the Brain, read (task 157): the version 1 entry contract
+  for the Markdown files in the work root's `brain/`, the index and the
+  single-entry resolver, every refusal (a link, a traversal, a duplicate
+  id, another contract version) and the revision a later write will be
+  held to — a digest of the bytes read. Imports `config` and `taskfiles`;
+  it writes, commits, fetches and launches nothing (see "The Brain:
+  maintained entries, read")
 - `doctor.py` — what this board would grant, run and refuse, asked
   without paying for a model: the same resolver a launch rides, read at
   four honest distances, with every diagnostic's remedy and a coverage
@@ -1193,7 +1200,7 @@ system font, as they always were; `tests/fixtures/page-symbols.json`
 lists them and `verify/browser_cases/case_fonts.py` checks which glyphs
 come from where.
 
-The board has six views (header switcher):
+The board has seven views (header switcher):
 
 - **Board** — the kanban, live, and only what you are holding yourself: a
   phase's members are drawn elsewhere, with the phase card standing for
@@ -1207,6 +1214,10 @@ The board has six views (header switcher):
   (origin unreachable, self-healing) or stalled on something only a human
   can settle. A card's face is kept quiet (see "The card face and its
   tools" below).
+- **Brain** — the project's maintained knowledge, read from the work
+  root's `brain/`: a list by classification and one entry at its stable
+  address (see "The Brain: maintained entries, read"). Read only for now;
+  where it sits in the navigation is card #159's to settle.
 - **Orchestrator** — what the Bench scope and its phase scopes are doing,
   what waits on you, and the operating agreement they work under (see
   "The Orchestrator view"). The switcher carries how many decisions wait
@@ -1561,6 +1572,124 @@ against their contract in **Settings → Agents**, and an override that
 breaks it refuses the launch rather than reaching the agent (see "Agents:
 harness, model and prompt per purpose").
 
+## The Brain: maintained entries, read
+
+The **Brain** is the project's maintained knowledge: explanations,
+investigations, decisions and guides, each a Markdown file in
+`<work root>/brain/` with a stable address (task 157). This first
+delivery reads them. What it does not do yet, said so nobody looks for
+it: writing or classifying entries on the board (#158), the final place
+in the navigation and search (#159), reviews appearing in the Brain, a
+curated handbook, seeding a Brain from an application, adopting
+`reference/` files, and any agent classification. A run is given no
+Brain entry because it exists: being in the Brain is not being approved
+context.
+
+### Where entries live
+
+`brain/` sits beside `tasks/`, `plans/` and `reference/` in the **work
+root** — the install in a vendored or source-hosted layout,
+`BOARD_WORK_ROOT` in an external one — and is committed to the work
+repository like the cards. Nothing creates it: install, reinstall and
+update never touch it, and a board with no `brain/` works exactly as
+before, its Brain saying what fills it. Today an entry is written by
+hand and committed like any work-state file; it appears on the next
+reading, committed or not.
+
+### The record, version 1
+
+```markdown
+# How review reports stay on their own board
+
+**Brain:** 1
+**Id:** e-report-routing
+**Kind:** Guide
+**Classification:** Current
+**Summary:** A report is filed on the card its run was launched for.
+**Source:** #148, plans/148-report-isolation.md, https://example.com/notes
+**Related:** e-report-isolation
+
+The body, in Markdown.
+
+## Classification history
+
+- 2026-11-19 · Unclassified · ronald — written before the fix landed
+- 2026-11-20 · Current · ronald — explains the shipped routing
+```
+
+| Field | Required | Value |
+| --- | --- | --- |
+| `# Title` | yes | the first line; free to change |
+| **Brain** | yes | the contract version, `1` |
+| **Id** | yes | the stable, opaque id: `a-z`, `0-9` and `-`, 2–64 characters. Allocated once, never reused |
+| **Kind** | yes | `Review`, `Investigation`, `Decision`, `Guide`, `Prototype` or `Attachment` |
+| **Classification** | yes | `Current`, `Historical`, `Superseded` or `Unclassified` — exactly one |
+| **Summary** | no | one line for the list |
+| **Source** | no | where it comes from, comma-separated: `#<card>`, `plans/<file>`, `reference/<file>`, a web address, or plain text |
+| **Related**, **Supersedes**, **Superseded by** | no | other entries, by id |
+| **Removed** | no | makes the entry a **tombstone**: kept, said to be removed, with this reason |
+| **Replaced by** | no | the entry that took a tombstone's place |
+
+The file's name is free (a flat name ending `.md`): **identity is the
+`**Id:**` line**. Renaming the file, changing the title or changing the
+classification keeps the id and the address `/brain/e/<id>`.
+Classification and kind are separate facts, and so is where an entry
+came from. A Current entry is not authoritative because it is Current: an
+entry explains, and never overrides the code, the configuration, a merge
+rule or a person's decision.
+
+The `## Classification history` section records who classified the entry
+what, when and why, one line each, oldest first. The header's
+**Classification** is what is shown; a newest history line that
+disagrees, a Superseded entry that names no successor, a missing summary
+and an id named in a link that no entry carries are each shown as a note
+on the entry, never fixed up.
+
+### What a reading does with each file
+
+| The file | What the Brain shows |
+| --- | --- |
+| a valid version 1 record | the entry, in the list and at its address |
+| one carrying **Removed** | a tombstone at its address, saying what replaced it; never an unknown id |
+| two files with one **Id** | neither: the address names both files until one changes |
+| a version 1 record that breaks the contract (a missing field, an unknown kind or classification, a field written twice, not UTF-8) | a diagnostic naming the file and what is wrong |
+| another **Brain** version | `unsupported`: listed, never interpreted |
+| no **Brain** line | not an entry, said so |
+| a link (the directory itself included), a FIFO, a name that is not flat, a file over 256 KiB | refused, unread |
+| anything not ending `.md`, or hidden | skipped; reserved for later versions |
+
+An id nothing carries reads **No entry … on this board**: it may belong
+to another board, or was never written. A traversal is not an id at all.
+
+**Versions and migration.** The contract is versioned so a reader never
+guesses. A file declaring a version this board does not read is listed
+and left alone. A later version will ship its reader with it; where
+records must change, the change is an explicit write through the board's
+write path, previewed and committed — never a rewrite on read, and never
+a second record store.
+
+### Reading changes nothing
+
+`GET /api/brain` (the index) and `GET /api/brain/entry?id=<id>` (one
+entry: `200`, or `404` for an unknown id, `409` naming the files for a
+duplicate, `400` for something that is not an id) read `brain/` and
+nothing else. They create no directory, ask git nothing, fetch nothing,
+run no project code or check and launch no agent. A **revision** is a
+digest of the bytes read — an entry's of its file, the index's of every
+file — so an uncommitted edit is a new revision and git's HEAD is never
+the question. A write (#158) will be held to these revisions. There is no
+stored index to go stale: every reading is rebuilt from the files.
+
+An entry's metadata and its body come from one reading of one file. Its
+text is untrusted: the body goes through the page's Markdown renderer
+(raw HTML stays text, a link is followed only to the web, mail, an anchor
+or a relative path, an image is a link), and every other string is
+escaped. A relative link in an entry resolves against its own address,
+so `[the investigation](e-report-isolation)` opens that entry. A
+`plans/` or `reference/` source opens through the sandboxed `/files/`
+route; a web source is shown as a link and never fetched.
+`/files/brain/…` is not a route: entries are read through the Brain only.
+
 ## Addresses: a link to every view and card
 
 Every place the page can show has an address (task 134). Open a card,
@@ -1572,6 +1701,7 @@ once the board has been read.
 | Address | What it opens |
 | --- | --- |
 | `/board` | the Board. `/` is the same page, and the bar is corrected to `/board` |
+| `/brain`, `/brain/e/<id>` | the Brain's list, and one entry by its stable id (task 157) |
 | `/cards/<card>` | the card's detail view, on its Overview, over the Board |
 | `/cards/<card>?tab=<section>` | one of its sections: `brief`, `inputs`, `acceptance`, `reviews`, `activity` |
 | `/phases`, `/phases/<card>` | the Phases view, and one phase's lane selected and scrolled to |
