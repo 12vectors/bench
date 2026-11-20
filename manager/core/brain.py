@@ -90,7 +90,8 @@ URL_RE = re.compile(r"^https?://[^\s<>\"']{1,400}$")
 
 # the fields version 1 reads; anything else is noted and ignored
 FIELDS = ("Brain", "Id", "Kind", "Classification", "Summary", "Source",
-          "Related", "Supersedes", "Superseded by", "Removed", "Replaced by")
+          "Related", "Supersedes", "Superseded by", "Removed", "Replaced by",
+          "Invalidated", "Override")
 REQUIRED = ("Brain", "Id", "Kind", "Classification")
 
 # characters that change how text reads without being text: C0/C1 control
@@ -204,6 +205,49 @@ def _history(body_lines: list[str]) -> tuple[list[str], list[dict], list[str]]:
     return body_lines[:start], records, unread
 
 
+def fence_marks(lines: list[str]) -> list[bool]:
+    """Per line, whether it is a code fence or inside one — the same
+    reading the history section is found by."""
+    return _fence_marks(lines)
+
+
+def fence_unclosed(lines: list[str]) -> bool:
+    """Whether a code fence opened in `lines` is still open at the end."""
+    opener = None
+    for line in lines:
+        fence = FENCE_RE.match(line)
+        if opener is None:
+            if fence:
+                opener = fence.group(1)
+        elif (fence and fence.group(1)[0] == opener[0]
+              and len(fence.group(1)) >= len(opener) and not fence.group(2).strip()):
+            opener = None
+    return opener is not None
+
+
+def split_record(text: str) -> dict:
+    """A record's text in the parts `parse` reads it by, for the writer
+    (task 158) to rewrite one part and keep the rest: the title, the
+    header's field lines in order, the body's lines and the history
+    section's non-blank lines exactly as written."""
+    if text.startswith("﻿"):
+        text = text[1:]
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    title, fields, at = _header(lines)
+    body_lines = lines[at:]
+    kept, _records, _unread = _history(body_lines)
+    history = [line.rstrip() for line in body_lines[len(kept) + 1:] if line.strip()] \
+        if len(kept) < len(body_lines) else []
+    return {"title": title, "fields": fields, "body": "\n".join(kept).strip("\n"),
+            "history": history}
+
+
+def read_regular(path: Path) -> bytes:
+    """A regular file's bytes, never through a link and never over the
+    cap — the one way an entry is read, for the writer as for the index."""
+    return _read_regular(path)
+
+
 def parse(name: str, data: bytes) -> dict:
     """One file, read as a version 1 record — or said not to be one.
 
@@ -288,6 +332,8 @@ def parse(name: str, data: bytes) -> dict:
         related=links["related"], supersedes=links["supersedes"],
         supersededBy=links["supersededBy"][:1], replacedBy=links["replacedBy"][:1],
         removed=_clean(seen["Removed"]) if "Removed" in seen else None,
+        invalidated=(_clean(seen["Invalidated"]) or None) if "Invalidated" in seen else None,
+        override=(_clean(seen["Override"]) or None) if "Override" in seen else None,
         history=history,
         body="\n".join(body_lines).strip("\n"),
     )
@@ -299,8 +345,10 @@ def parse(name: str, data: bytes) -> dict:
                 f"the newest classification history line says "
                 f"{history[-1]['classification']}, and the header says "
                 f"{rec['classification']}; the header is what is shown")
-        if rec["classification"] == "Superseded" and not rec["supersededBy"]:
-            rec["warnings"].append("it is Superseded and names no **Superseded by:** entry")
+        if (rec["classification"] == "Superseded" and not rec["supersededBy"]
+                and not rec["invalidated"]):
+            rec["warnings"].append("it is Superseded and names no **Superseded by:** "
+                                   "entry and no **Invalidated:** decision")
         if rec["removed"] is not None and not rec["removed"]:
             rec["removed"] = "removed — no reason was recorded"
     return rec
@@ -497,12 +545,21 @@ def _read() -> dict:
             "revision": digest.hexdigest()[:16] if scan["state"] == "present" else "none"}
 
 
+def reading() -> dict:
+    """Every record under brain/, read once — the same reading `index` and
+    `entry` are made from, for the writer (`brainwrite`, task 158) to hold
+    a write to: `scan` (the directory's state, every parsed file, the
+    refused ones), the valid `entries`, the `duplicates` and `revision`."""
+    return _read()
+
+
 def _listed(e: dict) -> dict:
     return {"id": e["id"], "title": e["title"], "kind": e["kind"],
             "classification": e["classification"], "summary": e["summary"],
             "tombstone": e["removed"] is not None, "revision": e["revision"],
             "file": e["file"], "sources": e["sourceRefs"],
-            "supersededBy": e["supersededBy"], "warnings": len(e["warnings"])}
+            "supersededBy": e["supersededBy"], "override": e["override"] is not None,
+            "warnings": len(e["warnings"])}
 
 
 def index() -> dict:
@@ -580,6 +637,7 @@ def entry(entry_id: str) -> dict:
         "title": found["title"], "entryKind": found["kind"],
         "classification": found["classification"], "summary": found["summary"],
         "removed": found["removed"],
+        "invalidated": found["invalidated"], "override": found["override"],
         "sources": found["sourceRefs"],
         "related": [name(t) for t in found["related"]],
         "supersedes": [name(t) for t in found["supersedes"]],

@@ -54,7 +54,7 @@ L12 gates
 L13 required orchestrator
 L14 doctor
 L15 commands drive events sync
-L16 changes
+L16 changes brainwrite
 L17 completion
 L18 stacks
 L19 delivery stackactions results
@@ -361,7 +361,7 @@ L11 acceptance callers
 L12 gates
 L13 required doctor orchestrator
 L14 events drive sync commands
-L15 changes
+L15 changes brainwrite
 L16 completion
 L17 stacks
 L18 delivery stackactions results
@@ -675,5 +675,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 181
-routes 136
+routes 144
 ```
