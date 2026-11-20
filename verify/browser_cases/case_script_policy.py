@@ -41,7 +41,9 @@ import benchverify as bv
 
 S = bv.SESSION
 ROOT = Path(__file__).resolve().parents[2]
-VIEWS = ["board", "orchestrator", "phases", "flight", "focus", "settings", "board"]
+# the Board's own views are reached from the Board's bar (task 159), so
+# the tour visits them before leaving the Board
+VIEWS = ["board", "phases", "flight", "focus", "brain", "orchestrator", "settings", "board"]
 # the build before the script moved: the base WP15 started from, whose page
 # is the one inline classic script
 BASELINE = "7780f042f125e0f587535119d464888fc49fe951"
@@ -68,7 +70,22 @@ CHANGED_ON_PURPOSE = {
     **{f"{view}-{size}-{theme}": "task 145 added Orchestrator to the view switcher"
        for view in ("board", "phases", "flight", "focus")
        for size in ("1280x800", "390x844") for theme in ("night", "day")},
+    # task 159 made the switcher Board / Brain / Orchestrator / Settings and
+    # put Tasks / Phases and the Board's activity in a bar under the header,
+    # and the detail view gained its breadcrumb
+    **{f"{view}-{size}-{theme}": "task 159 changed the primary navigation and added the Board's bar"
+       for view in ("board", "phases", "flight", "focus", "detail")
+       for size in ("1280x800", "390x844") for theme in ("night", "day")},
 }
+# where a view's switch is (task 159): the four primary destinations in the
+# header, the Board's own views in the bar under it — on this build only;
+# the baseline build has every view in the header
+PRIMARY = ("board", "brain", "orchestrator", "settings")
+
+
+def switch(view: str, baseline: bool = False) -> str:
+    return f'#views [data-view="{view}"]' if baseline or view in PRIMARY \
+        else f'#boardnav [data-view="{view}"]'
 
 
 def setUpModule():
@@ -233,7 +250,7 @@ class TheScriptRunsClean(unittest.TestCase):
         b = load()
         toured = []
         for view in VIEWS:
-            b.click(f'#views [data-view="{view}"]')
+            b.click(switch(view))
             if not b.wait(f"document.querySelector('#view-{view}').classList.contains('on')", 10):
                 raise bv.CheckFailed(f"the {view} view never opened")
             toured.append(view)
@@ -352,7 +369,7 @@ class TheScriptRunsClean(unittest.TestCase):
                         if view == "detail":
                             open_detail(b)
                         elif view != "board":
-                            b.click(f'#views [data-view="{view}"]')
+                            b.click(switch(view, baseline=which == "baseline"))
                             b.wait(f"document.querySelector('#view-{view}').classList.contains('on')", 10)
                         b.eval(STILL_JS)
                         time.sleep(0.4)

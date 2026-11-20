@@ -289,10 +289,12 @@ class ShareableUrls(unittest.TestCase):
         b = self.open("/board", f"!!document.querySelector('#board article.card[data-file=\"{CARD}\"] a.ref')")
         self.assertEqual("/cards/310", b.eval(
             f"document.querySelector('#board article.card[data-file=\"{CARD}\"] a.ref').getAttribute('href')"))
-        # the Brain (task 157) sits beside the Board until #159 settles navigation
-        self.assertEqual(["/board", "/brain", "/orchestrator", "/phases", "/sessions", "/focus",
-                          "/settings"],
+        # four primary destinations (task 159); the Board's own views are
+        # links in its bar, with the addresses they always had
+        self.assertEqual(["/board", "/brain", "/orchestrator", "/settings"],
                          b.eval("[...document.querySelectorAll('#views a[data-view]')].map(a => a.getAttribute('href'))"))
+        self.assertEqual(["/board", "/phases", "/sessions", "/focus"],
+                         b.eval("[...document.querySelectorAll('#boardnav a[data-view]')].map(a => a.getAttribute('href'))"))
         # a modifier-click is the browser's: the page neither handles nor cancels it
         left = b.eval(f"""(() => {{
           const a = document.querySelector('#board article.card[data-file="{CARD}"] a.ref');

@@ -408,8 +408,10 @@ class Wiring(unittest.TestCase):
         return match.group(0)
 
     def test_the_switcher_offers_a_fourth_view(self):
-        # a link to its address since task 134
-        self.assertIn('<a href="/phases" data-view="phases">Phases</a>', self.html)
+        # a link to its address since task 134, in the Board's own bar
+        # since task 159 (Board › Phases)
+        self.assertIn('<a href="/phases" data-view="phases" data-route>Phases</a>', self.html)
+        self.assertIn('<nav class="boardnav" id="boardnav" aria-label="Board">', self.html)
         self.assertIn('id="view-phases"', self.html)
         self.assertIn("phases: 'phases'", self.body(r"const VIEW_TITLES = [^\n]*"),
                       "the tab title names the view like the other three")

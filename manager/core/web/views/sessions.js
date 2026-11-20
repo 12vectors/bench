@@ -1,5 +1,5 @@
 /* Sessions: the flight recorder. */
-import { agentFor, isLiveSession, loadSession, loadState, modelChip, sessionMeta, sessionsOf } from '../app/data.js';
+import { agentFor, isLiveSession, loadSession, loadState, modelChip, sessionMeta } from '../app/data.js';
 import { S } from '../app/state.js';
 import { fetch } from '../lib/api.js';
 import { $, esc } from '../lib/dom.js';
