@@ -238,7 +238,13 @@ def jam(spec: dict | None) -> None:
     git already holds, or for a colliding commit's events, each recorded
     as a timeout if it runs out: the commit meets a held index on every attempt, so it
     fails exactly as the observed one did, and the card has moved on disk
-    with the move unrecorded. What happened is in `JAM`."""
+    with the move unrecorded. What happened is in `JAM`.
+
+    No wait of the fixture's is ever made inside `taskfiles.COMMIT_LOCK`
+    while the other side still needs that lock to get where it is going:
+    a colliding commit waits for the jammed commit to arrive before it
+    enters the real commit, so whichever of the two threads gets here
+    first, the board's other commits in between still go through."""
     if not spec:
         return
     target, stage = spec["file"], spec["to"]
@@ -248,6 +254,7 @@ def jam(spec: dict | None) -> None:
     if collide:
         JAM.update(collide=collide, collided=None)
     placed, collided, staged = threading.Event(), threading.Event(), threading.Event()
+    armed = threading.Event()     # the jammed commit has arrived (`staged` only)
     real_commit = taskfiles.commit_paths
     real_git = taskfiles._git
     stager: dict = {}
@@ -267,7 +274,7 @@ def jam(spec: dict | None) -> None:
         return done
 
     if collide.get("staged"):
-        JAM["stagedBeforeJam"] = False
+        JAM.update(stagedBeforeJam=False, armed=False)
         taskfiles._git = _git
 
     def real(filename, message, spec_, failure):
@@ -288,7 +295,18 @@ def jam(spec: dict | None) -> None:
             # meets the held index — as the observed report commit did
             # (task 155). It waits for the jam to be in place, boundedly,
             # and the jam waits for it to end before its own commit runs.
+            JAM["collideArrived"] = True
             if collide.get("staged"):
+                # Its add must stage before the jam, and the jam is placed
+                # inside the jammed commit — so it waits for that commit to
+                # arrive, here, *outside* `taskfiles.COMMIT_LOCK`: the
+                # board's other commits on the way there (a member's
+                # orchestration records) need that lock, and an add that
+                # waited for the jam while holding it held them back until
+                # its own timeout — the Python 3.11 CI failure of the
+                # staged-add journey (task 155, tests/test_jam_fixture.py).
+                if not armed.wait(RACE_SECONDS):
+                    JAM["timeout"] = "the jammed commit never arrived for the staged add"
                 stager["thread"] = threading.current_thread()
             elif not placed.wait(RACE_SECONDS):
                 JAM["timeout"] = "the jam was never placed for the colliding commit"
@@ -299,6 +317,9 @@ def jam(spec: dict | None) -> None:
                 collided.set()
         if filename != target or f"→ {stage} " not in message or JAM["jammed"]:
             return real(filename, message, spec_, failure)
+        if collide.get("staged"):
+            JAM["armed"] = True
+            armed.set()
         if collide.get("staged") and not staged.wait(RACE_SECONDS):
             JAM["timeout"] = "the colliding commit never staged"
             return real(filename, message, spec_, failure)
