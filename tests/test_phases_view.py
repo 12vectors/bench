@@ -52,6 +52,8 @@ PARTS = (
     r"function laneColumnOf\(task, merged\) \{.*?\n\}",
     r"function laneMembers\(task\) \{.*?\n\}",
     r"function laneProgress\(members\) \{.*?\n\}",
+    r"function laneComplete\(task, members\) \{.*?\n\}",
+    r"function laneClosed\(task, complete, halted\) \{.*?\n\}",
 )
 
 
@@ -337,6 +339,177 @@ class TheLastColumnIsThePhasesOwn(LaneCase):
                          {"done": 1, "total": 3})
 
 
+MERGED_ALL = ("- 2026-08-01 10:20 · 31 merged into phase/40-the-site\n"
+              "- 2026-08-01 11:05 · 32 merged into phase/40-the-site\n"
+              "- 2026-08-01 12:00 · 33 merged into phase/40-the-site\n")
+
+
+class ACompleteLaneClosesItself(LaneCase):
+    """Task 161: a lane whose every listed card is in Merged in is drawn
+    closed, read off the same placement the columns use; anything short of
+    every declared member accounted for keeps it open."""
+
+    def reading(self, file: str = "40-the-site.md", **extra) -> dict:
+        return self.run_js(
+            "(() => { const t = findTask(" + json.dumps(file) + ");"
+            " const m = laneMembers(t); const c = laneComplete(t, m);"
+            " return { complete: c, closed: laneClosed(t, c, false) }; })()", **extra)
+
+    def test_a_phase_whose_every_card_is_merged_in_is_closed_on_first_load(self):
+        self.a_phase_of_three(phase_stage="review", log=MERGED_ALL)
+
+        self.assertEqual(self.reading(), {"complete": True, "closed": True})
+
+    def test_members_in_done_count_as_merged_in(self):
+        self.write("31-stand-up-site.md", card("31 — Stand up site/", status="Done"), "done")
+        self.write("40-the-site.md", card("40 — Ship the site", kind="Phase",
+                                          cards="- 31 — Stand up site/\n",
+                                          status="Done"), "done")
+
+        self.assertEqual(self.reading(), {"complete": True, "closed": True})
+
+    def test_a_mix_of_merged_and_unfinished_stays_open(self):
+        self.a_phase_of_three(log="- 2026-08-01 10:20 · 31 merged into phase/40-the-site\n")
+
+        self.assertEqual(self.reading(), {"complete": False, "closed": False})
+
+    def test_the_last_card_merging_closes_it_on_the_next_paint(self):
+        """The same page, two readings: the update that brings the last
+        member in is what closes the lane — no reload and no write."""
+        self.a_phase_of_three(log="- 2026-08-01 10:20 · 31 merged into phase/40-the-site\n"
+                                  "- 2026-08-01 11:05 · 32 merged into phase/40-the-site\n")
+        before = self.state()
+        self.a_phase_of_three(log=MERGED_ALL)
+        after = self.state()
+        script = (self.src + "\nvar S = { state: " + json.dumps(before) + " };\n"
+                  "const read = () => { const t = findTask('40-the-site.md');"
+                  " const c = laneComplete(t, laneMembers(t)); return laneClosed(t, c, false); };\n"
+                  "const out = [read()];\nS.state = " + json.dumps(after) + ";\n"
+                  "out.push(read());\nconsole.log(JSON.stringify(out));\n")
+        out = subprocess.run([NODE, "-e", script], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout), [False, True])
+
+    def test_a_halted_phase_is_not_closed_for_you(self):
+        """A halt waits on a person who reads its log: complete or not, it
+        stays open unless that person closes it."""
+        self.a_phase_of_three(phase_stage="in-progress", log=MERGED_ALL)
+
+        self.assertEqual(self.run_js(
+            "(() => { const t = findTask('40-the-site.md');"
+            " return laneClosed(t, laneComplete(t, laneMembers(t)), true); })()"), False)
+
+
+class APersonsChoiceStands(LaneCase):
+    """The toggle's choice is the page session's, and only while the lane
+    stays complete."""
+
+    STEPS = ("const t = () => findTask('40-the-site.md');"
+             " const read = () => laneClosed(t(), laneComplete(t(), laneMembers(t())), false);")
+
+    def run_steps(self, body: str, states: list[dict]) -> list:
+        script = (self.src + "\nvar S = { state: " + json.dumps(states[0]) + ", laneOpen: {} };\n"
+                  "const STATES = " + json.dumps(states) + ";\n" + self.STEPS + "\n"
+                  "const out = [];\n" + body + "\nconsole.log(JSON.stringify(out));\n")
+        out = subprocess.run([NODE, "-e", script], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)
+
+    def test_a_reopened_lane_stays_open_across_redraws(self):
+        self.a_phase_of_three(phase_stage="review", log=MERGED_ALL)
+        complete = self.state()
+
+        out = self.run_steps(
+            "out.push(read());"
+            " S.laneOpen['40-the-site.md'] = true;"      # the person opens it
+            " out.push(read()); out.push(read());"       # ordinary redraws
+            " S.state = STATES[0]; out.push(read());"    # a reconnect's reading
+            " S.laneOpen['40-the-site.md'] = false;"     # and closes it again
+            " out.push(read());", [complete])
+
+        self.assertEqual(out, [True, False, False, False, True])
+
+    def test_work_coming_back_opens_it_and_forgets_the_choice(self):
+        """A member returned to unfinished draws the lane whole again; when it
+        merges in once more, the lane closes itself again."""
+        self.a_phase_of_three(phase_stage="review", log=MERGED_ALL)
+        complete = self.state()
+        self.a_phase_of_three(phase_stage="review",
+                              log="- 2026-08-01 10:20 · 31 merged into phase/40-the-site\n")
+        reopened = self.state()
+
+        out = self.run_steps(
+            "S.laneOpen['40-the-site.md'] = false; out.push(read());"
+            " S.state = STATES[1]; out.push(read());"
+            " out.push('40-the-site.md' in S.laneOpen);"
+            " S.state = STATES[0]; out.push(read());", [complete, reopened])
+
+        self.assertEqual(out, [True, False, False, True])
+
+    def test_a_newly_listed_unfinished_card_opens_it(self):
+        self.a_phase_of_three(phase_stage="review", log=MERGED_ALL)
+        self.assertTrue(self.run_js(
+            "(() => { const t = findTask('40-the-site.md');"
+            " return laneComplete(t, laneMembers(t)); })()"))
+        self.write("34-another.md", card("34 — Another", status="To Do"), "to-do")
+        self.write("40-the-site.md",
+                   card("40 — Ship the site", kind="Phase", log=MERGED_ALL, status="Review",
+                        cards="- 31 — Stand up site/\n- 32 — Serve it\n"
+                              "- 33 — The landing page\n- 34 — Another\n"), "review")
+
+        self.assertEqual(self.run_js(
+            "(() => { const t = findTask('40-the-site.md'); const c = laneComplete(t, laneMembers(t));"
+            " return [c, laneClosed(t, c, false)]; })()"), [False, False])
+
+
+class UnresolvedMembershipIsNeverComplete(LaneCase):
+    def complete(self) -> bool:
+        return self.run_js("(() => { const t = findTask('40-the-site.md');"
+                           " return laneComplete(t, laneMembers(t)); })()")
+
+    def test_a_phase_that_lists_nothing(self):
+        self.write("40-the-site.md", card("40 — Ship the site", kind="Phase",
+                                          cards="", status="Review"), "review")
+        self.assertFalse(self.complete())
+
+    def test_a_phase_with_no_cards_section(self):
+        self.write("40-the-site.md", card("40 — Ship the site", kind="Phase",
+                                          status="Review"), "review")
+        self.assertFalse(self.complete())
+
+    def test_a_listed_number_no_card_has(self):
+        """Every card that does exist is merged in; one listed number is not
+        on the board. Not every declared member is accounted for."""
+        self.a_phase_of_three(phase_stage="review", log=MERGED_ALL)
+        self.write("40-the-site.md",
+                   card("40 — Ship the site", kind="Phase", log=MERGED_ALL, status="Review",
+                        cards="- 31 — Stand up site/\n- 32 — Serve it\n"
+                              "- 33 — The landing page\n- 99 — not here\n"), "review")
+        self.assertFalse(self.complete())
+
+    def test_an_archived_member(self):
+        """Archived, a member is off the board: what the phase branch holds
+        of it cannot be placed in a lane, so the phase is not complete."""
+        self.a_phase_of_three(phase_stage="review", log=MERGED_ALL)
+        (self.tasks / "to-do" / "33-landing.md").rename(self.tasks / "archive" / "33-landing.md")
+        self.assertFalse(self.complete())
+
+    def test_a_card_listed_twice(self):
+        self.a_phase_of_three(phase_stage="review", log=MERGED_ALL)
+        self.write("40-the-site.md",
+                   card("40 — Ship the site", kind="Phase", log=MERGED_ALL, status="Review",
+                        cards="- 31 — Stand up site/\n- 32 — Serve it\n"
+                              "- 33 — The landing page\n- 33 — again\n"), "review")
+        self.assertFalse(self.complete())
+
+    def test_a_card_two_phases_list(self):
+        self.a_phase_of_three(phase_stage="review", log=MERGED_ALL)
+        self.write("41-the-docs.md", card("41 — Ship the docs", kind="Phase",
+                                          cards="- 33 — The landing page\n",
+                                          status="To Do"), "to-do")
+        self.assertFalse(self.complete())
+
+
 class ThePhaseLog(LaneCase):
     """The runner's decisions, read off the card it wrote them on."""
 
@@ -480,6 +653,29 @@ class Wiring(unittest.TestCase):
                               "addToPhase", "'/api/move'"):
                 self.assertNotIn(forbidden, body,
                                  f"{forbidden} does not belong in the Phases view")
+
+    def test_a_closed_lane_keeps_what_waits_on_a_person_in_view(self):
+        """Task 161: closing hides the columns and the log only. The halt,
+        the gate line and a summary that says the phase itself is not
+        delivered stay in the top part, which is never hidden."""
+        lane = self.body(r"function laneFor\(task, el\) \{.*?\n\}")
+        self.assertIn("const top = head + halt + gateLine + summary + well;", lane)
+        self.assertIn("stagesBox.hidden = closed;", lane)
+        self.assertIn("logBox.hidden = closed;", lane)
+        self.assertIn("aria-expanded", lane)
+        self.assertIn("aria-controls", lane)
+        summary = self.body(r"function laneSummary\(task, at\) \{.*?\n\}")
+        self.assertIn("the phase itself is not delivered", summary)
+        self.assertIn("Delivered", summary)
+        self.assertIn("data-open", summary, "the summary reaches the phase card's own actions")
+
+    def test_the_toggle_writes_nothing(self):
+        lane = self.body(r"function laneFor\(task, el\) \{.*?\n\}")
+        toggle = lane[lane.index("[data-ltoggle]"):lane.index("[data-ltoggle]") + 400]
+        self.assertIn("S.laneOpen", toggle)
+        self.assertIn("renderLanes()", toggle)
+        for forbidden in ("fetch(", "/api/", "post(", "localStorage"):
+            self.assertNotIn(forbidden, toggle)
 
     def test_the_empty_view_says_so_plainly(self):
         render = self.body(r"function renderLanes\(\) \{.*?\n\}")

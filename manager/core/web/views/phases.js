@@ -135,6 +135,61 @@ function laneProgress(members) {
            total: members.length };
 }
 
+/* Whether every card the phase lists is in Merged in (task 161), read off
+   the very placement the columns draw by and the head counts — so a lane
+   cannot close on a reading the columns would contradict. Accounted for
+   means every listed number resolved to a member on this board: a phase
+   that lists nothing, a number no card has (an archived member included —
+   the board no longer holds it, so nothing here can say where it landed),
+   a card listed twice or by two phases, all wear `phase drift` and are
+   never read as complete. Complete is about the members only: it says
+   nothing about the phase's own PR, which is why the summary says that
+   apart. */
+function laneComplete(task, members) {
+  const listed = (task.cards || []).length;
+  if (!listed || (task.phaseDrift || []).length) return false;
+  return members.length === listed && members.every(m => m.column === 'merged');
+}
+
+/* Whether a lane is drawn closed. A complete lane closes itself unless it
+   halted — a halt waits on a person, who reads its log. A person's own
+   choice, made with the lane's toggle, stands for the page session while
+   the lane stays complete; once it is not complete the choice is
+   forgotten and the lane is open, so the next completion closes it
+   again. Nothing is written anywhere: this is presentation. */
+function laneClosed(task, complete, halted) {
+  const chosen = S.laneOpen || (S.laneOpen = {});
+  if (!complete) { delete chosen[task.file]; return false; }
+  if (task.file in chosen) return !chosen[task.file];
+  return !halted;
+}
+
+/* What a complete lane says about the phase itself, kept apart from what
+   it says about its members: every card merged into the phase branch is
+   not the phase delivered — its own PR into main is still a person's. The
+   phase's status is the server's delivery reading where it has one. */
+function laneSummary(task, at) {
+  const d = ((S.state && S.state.delivery) || {})[task.file];
+  const status = d && d.status;
+  const cards = `${at.total} card${at.total === 1 ? '' : 's'}`;
+  if (task.stage === 'done') {
+    return `<div class="lsum done"><b>Delivered</b> — the phase was merged and cleaned ` +
+      `up, and its ${esc(cards)} with it.</div>`;
+  }
+  const stage = (((S.state.board || {}).stages || []).find(s => s.slug === task.stage) || {}).label
+    || task.stage;
+  const tone = status && status.tone === 'alarm' ? ' bad' : '';
+  return `<div class="lsum${tone}"><b>All ${esc(cards)} merged into the phase branch</b>` +
+    ` — the phase itself is not delivered. ` +
+    `<span class="lstate">Phase: ${esc(status ? status.label : stage)}</span>` +
+    (status && status.sentence ? ` <span class="lwhy2">${esc(status.sentence)}</span>` : '') +
+    `<span class="lsacts">` +
+    (task.pr ? `<a class="chip2" href="${esc(task.pr)}" target="_blank" rel="noopener" ` +
+      `data-lkey="pr">PR<span class="g2">↗</span></a>` : '') +
+    `<button class="chip2" data-open="1" data-lkey="act" title="Open the phase card — its ` +
+      `status, its next step and its PR">Open the phase card</button></span></div>`;
+}
+
 function laneLog(task) {
   const entries = phaseLog(task);
   const lines = entries.map(entry =>
@@ -167,9 +222,13 @@ function laneFor(task, el) {
   const at = laneProgress(members);
   const halted = !!(snap && snap.halted);
   const running = !!(snap && snap.running);
+  const complete = laneComplete(task, members);
+  const closed = laneClosed(task, complete, halted);
   const id = cardId(task, S.state);
   const chosen = !!S.phaseSel && id === S.phaseSel;
-  el.className = 'lane' + (halted ? ' halted' : running ? ' running' : '') + (chosen ? ' sel' : '');
+  const bodyId = 'lane-' + task.file.replace(/[^A-Za-z0-9_-]/g, '_');
+  el.className = 'lane' + (halted ? ' halted' : running ? ' running' : '') + (chosen ? ' sel' : '') +
+    (complete ? ' complete' : '') + (closed ? ' closed' : '');
   if (chosen) el.setAttribute('aria-current', 'true'); else el.removeAttribute('aria-current');
   el.dataset.phase = task.file;
 
@@ -186,16 +245,25 @@ function laneFor(task, el) {
     // takes it
     `<a class="lref" href="${esc(formatRoute({ view: 'phases', phase: id }))}" data-phaselink="${esc(id)}" ` +
       `title="This phase's address">${task.number ? '#' + esc(task.number) : esc(id)}</a>` +
-    `<button class="ltitle" data-open="1" title="Open the phase card — its text, ` +
+    `<button class="ltitle" data-open="1" data-lkey="title" title="Open the phase card — its text, ` +
       `its list and its PR">${esc(task.title)}</button>` +
     `<span class="lprog">${at.total ? `${at.done} of ${at.total} merged`
                                     : 'no cards listed'} · ${esc(task.stage)}</span>` +
-    `<button class="chip2" data-open="1" title="Open the phase card">card<span class="g2">↗</span></button>` +
+    // only a complete lane folds (task 161): an unfinished one is always
+    // drawn whole, so there is nothing to toggle there
+    (complete
+      ? `<button class="chip2 ltoggle" data-ltoggle="1" data-lkey="toggle" ` +
+        `aria-expanded="${closed ? 'false' : 'true'}" ` +
+        `aria-controls="${esc(bodyId)}-stages ${esc(bodyId)}-log" ` +
+        `aria-label="${closed ? 'Show' : 'Hide'} the cards and log of ${esc(task.title)}">` +
+        `<span class="g2">${closed ? '▸' : '▾'}</span>${closed ? 'Show cards' : 'Hide cards'}</button>`
+      : '') +
+    `<button class="chip2" data-open="1" data-lkey="card" title="Open the phase card">card<span class="g2">↗</span></button>` +
     `<span class="chip2${uncut ? ' dim' : ''}" title="${uncut
       ? 'The phase branch has not been cut yet — running the phase cuts it from the newest main'
       : "The phase's integration branch: every member is branched from its tip and merged back into it"
       }">${esc(branch)}</span>` +
-    `<button class="chip2" data-copy-link="${esc(formatRoute({ view: 'phases', phase: id }))}" ` +
+    `<button class="chip2" data-lkey="copy" data-copy-link="${esc(formatRoute({ view: 'phases', phase: id }))}" ` +
       `aria-label="copy a link to this phase">Copy link</button>` +
     `<span class="lacts"></span></div>`;
 
@@ -232,7 +300,9 @@ function laneFor(task, el) {
       `</b> — ${esc(gate.summary)}</span><span class="lacts"></span></div>`
     : '';
 
-  const top = head + halt + gateLine + well;
+  // a complete lane says what that does and does not mean, open or closed
+  const summary = complete ? laneSummary(task, at) : '';
+  const top = head + halt + gateLine + summary + well;
   // what the lane's own controls draw depends on their armed windows too
   const topSig = [top, halted, running,
     ...['run again', 'hold'].map(l => phaseOf(S.acts, `${task.file}::${l}`))].join('\u0001');
@@ -241,10 +311,19 @@ function laneFor(task, el) {
     el.__log = laneLog(task);
   } else if (el.__topSig !== topSig) {
     // the head, the halt and the gate line go, and their new copies come
-    // in where they were — above the columns, which stay
+    // in where they were — above the columns, which stay. A control in
+    // them that held focus hands it to its new copy (task 161), so the
+    // lane's toggle keeps the keyboard where it was.
+    const active = document.activeElement;
+    const kept = active && el.contains(active) && active.closest('[data-lkey]');
+    const key = kept ? kept.dataset.lkey : null;
     const stagesEl = el.querySelector('.lstages');
     while (el.firstElementChild && el.firstElementChild !== stagesEl) el.firstElementChild.remove();
     stagesEl.insertAdjacentHTML('beforebegin', top);
+    if (key) {
+      const again = el.querySelector(`[data-lkey="${key}"]`);
+      if (again) again.focus({ preventScroll: true });
+    }
   }
   const log = fresh ? el.__log : laneLog(task);
   if (el.__log !== log) {
@@ -253,6 +332,12 @@ function laneFor(task, el) {
     el.insertAdjacentHTML('beforeend', log);
     el.__log = log;
   }
+  // closed, the columns and the log are kept and only hidden: opening the
+  // lane again draws them as they are, with nothing rebuilt
+  const stagesBox = el.querySelector('.lstages'), logBox = el.querySelector('.plog');
+  stagesBox.id = bodyId + '-stages';
+  stagesBox.hidden = closed;
+  if (logBox) { logBox.id = bodyId + '-log'; logBox.hidden = closed; }
   if (fresh || el.__topSig !== topSig) {
     el.__topSig = topSig;
     el.querySelectorAll('[data-open]').forEach(btn =>
@@ -265,6 +350,14 @@ function laneFor(task, el) {
         S.phaseSel = a.dataset.phaselink;
         renderLanes();
         syncRoute();
+      }));
+    // a person's choice for a complete lane, kept for the page session;
+    // it moves no card and asks the board for nothing
+    el.querySelectorAll('[data-ltoggle]').forEach(btn =>
+      btn.addEventListener('click', () => {
+        const open = S.laneOpen || (S.laneOpen = {});
+        open[el.__task.file] = el.classList.contains('closed');
+        renderLanes();
       }));
 
     // ▸ run again lives here and nowhere else: clearing a halt should mean
@@ -427,7 +520,8 @@ function renderLanes() {
 }
 
 export {
-  canonicalNumber, laneAction, laneColumnOf, laneColumns, laneFor, laneLog,
-  laneMembers, lanePhases, laneProgress, laneRank, mergedIn, PHASE_LOG_LINE,
+  canonicalNumber, laneAction, laneClosed, laneColumnOf, laneColumns, laneComplete,
+  laneFor, laneLog, laneMembers, lanePhases, laneProgress, laneRank, laneSummary,
+  mergedIn, PHASE_LOG_LINE,
   phaseLog, renderLanes
 };
