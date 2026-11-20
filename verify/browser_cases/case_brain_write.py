@@ -70,9 +70,10 @@ class BrainWriting(unittest.TestCase):
         shared = S["backend"]
         base = shared.base.parent / "brain-write-fixture"
         shutil.rmtree(base, ignore_errors=True)
-        env = dict(shared.env)
-        env["BOARD_COMMIT_MOVES"] = "1"
-        cls.backend = bv.Backend(shared.tool, base, env, shared.python)
+        cls.backend = bv.Backend(shared.tool, base, dict(shared.env), shared.python)
+        # Backend sets its own defaults over the environment it is given, so
+        # committing board edits is turned on here, after it, or not at all
+        cls.backend.env["BOARD_COMMIT_MOVES"] = "1"
         work = cls.backend.work
         git(work, "config", "user.name", "brain-tester")
         git(work, "config", "user.email", "t@example.com")

@@ -625,7 +625,10 @@ function act(name, arg) {
     ed.base = fresh && fresh.revision ? fresh.revision : (e ? e.revision : ed.base);
     ed.conflict = null;
     ed.error = null;
-    delete cache.entries[key()];
+    // read again, keeping the form drawn meanwhile: blanking the page into
+    // "Reading…" took the Save button away from the person about to press it
+    const slot = cache.entries[key()];
+    if (slot) slot.at = 0;
   } else if (name === 'retry-commit') { retryOp('commit', arg); return; }
   else if (name === 'retry-push') { retryOp('push', arg); return; }
   // a person's own action paints at once, wherever focus is: only a live
