@@ -456,8 +456,26 @@ class TransportApi(BrowserFixture):
         with self.assertRaises(bv.SetupError) as cm:
             b.call("Page.reload")
         self.assertIn("browser.call", str(cm.exception))
+        # origin is shared state a case may point elsewhere (a proxy, a
+        # second backend), and the assignment reaches the transport
+        inner = object.__getattribute__(b, "_inner")
+        b.origin = "http://proxy"
+        self.assertEqual("http://proxy", inner.origin)
+        self.assertEqual("http://proxy", b.origin)
+        with self.assertRaises(bv.SetupError) as cm:
+            b.proc = None
+        self.assertIn("browser.proc", str(cm.exception))
         with self.assertRaises(bv.SetupError):
-            b.origin = "elsewhere"
+            b.call = None
+
+    def test_the_shipped_cases_that_repoint_origin_are_allowed(self):
+        # case_proxy_writes and case_reference_files set browser.origin;
+        # the source check and the wrapper must both let them
+        cases = Path(__file__).resolve().parent.parent / "verify" / "browser_cases"
+        for name in ("case_proxy_writes.py", "case_reference_files.py"):
+            src = (cases / name).read_text(encoding="utf-8")
+            self.assertIn('S["browser"].origin = ', src)
+            self.assertEqual([], bv.case_api_problems(cases / name))
 
 
 # ── layouts ────────────────────────────────────────────────────────────

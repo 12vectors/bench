@@ -1353,6 +1353,7 @@ def coverage(selection: list[str], discovered: int | None, ran: int | None,
 # check cannot see.
 
 CASE_STATE = frozenset({"origin", "console", "csp", "log", "argv", "proc"})
+CASE_SETTABLE = frozenset({"origin"})
 CASE_API = frozenset({
     # PageOps, written once over the transport primitives
     "goto", "wait", "click", "press", "release", "hover", "reveal",
@@ -1429,8 +1430,14 @@ class CaseBrowser:
         return getattr(object.__getattribute__(self, "_inner"), name)
 
     def __setattr__(self, name, value):
-        raise SetupError(f"a case may not set browser.{name}; the transport "
-                         f"is the harness's")
+        # `origin` is plain state on both transports, and a case may point
+        # the page at another backend or a proxy (case_proxy_writes,
+        # case_reference_files). Everything else is the harness's.
+        if name not in CASE_SETTABLE:
+            raise SetupError(f"a case may not set browser.{name}; only "
+                             f"{', '.join(sorted(CASE_SETTABLE))} may be set, "
+                             f"and the transport is the harness's")
+        setattr(object.__getattribute__(self, "_inner"), name, value)
 
 
 # Set by verify/browser for the cases it discovers.
