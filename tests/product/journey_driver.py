@@ -233,8 +233,10 @@ def jam(spec: dict | None) -> None:
     """Make one board commit fail the way a concurrent git makes it fail
     (task 155): the work-state index is held — `index.lock` exists, as
     git itself creates it — for the whole of the commit of `file`'s move
-    into `to`, and let go when that commit returns. No sleep, no thread
-    and no timing: the commit meets a held index on every attempt, so it
+    into `to`, and let go when that commit returns. Nothing is timed to
+    make it happen — the only waits are bounded ones for a lock another
+    git already holds, or for a colliding commit's events, each recorded
+    as a timeout if it runs out: the commit meets a held index on every attempt, so it
     fails exactly as the observed one did, and the card has moved on disk
     with the move unrecorded. What happened is in `JAM`."""
     if not spec:
@@ -330,7 +332,8 @@ def jam(spec: dict | None) -> None:
             JAM["committed"] = real(filename, message, spec_, failure)
         finally:
             JAM["lockHeld"] = lock.is_file()
-            lock.unlink()
+            if JAM["lockHeld"]:
+                lock.unlink()
         return JAM["committed"]
 
     taskfiles.commit_paths = commit_paths

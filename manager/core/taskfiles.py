@@ -1062,15 +1062,20 @@ def _stale_copies(path: Path, also: Path | None = None) -> list[str]:
     # `git add` had already succeeded staged the old path's deletion, so
     # the index no longer lists it while HEAD still does — and asking the
     # index alone found nothing to record (the 06:58 full-suite failure).
+    # NUL-separated (`-z`): otherwise git C-quotes a name holding a
+    # non-ASCII character, `"` or a backslash (unless `core.quotePath` is
+    # off), and the quoted text — a path that exists nowhere — would read
+    # as a stale copy and fail every commit naming it.
     names: set[str] = set()
-    for args in (("ls-files", "--full-name", "--", *others),
-                 ("ls-tree", "-r", "--full-name", "--name-only", "HEAD", "--", *others)):
+    for args in (("ls-files", "-z", "--full-name", "--", *others),
+                 ("ls-tree", "-r", "-z", "--full-name", "--name-only", "HEAD",
+                  "--", *others)):
         try:
             listed = _git(*args)
         except (subprocess.SubprocessError, OSError):
             continue
         if listed.returncode == 0:
-            names.update(line for line in listed.stdout.splitlines() if line)
+            names.update(name for name in listed.stdout.split("\0") if name)
     stale = []
     for line in sorted(names):
         known = root / line
@@ -1079,13 +1084,19 @@ def _stale_copies(path: Path, also: Path | None = None) -> list[str]:
     return stale
 
 
-def _unrecorded_move(filename: str, stage: str) -> dict | None:
+def _unrecorded_move(filename: str, stage: str,
+                     stale: list[str]) -> dict | None:
     """The board's own move of `filename` into `stage` whose commit
     failed (task 155): the newest journal line for this card, when it
-    names `stage` as where the card went. `record_movement` writes that
-    line exactly when a move's commit did not happen; None when the
-    newest line says something else, or there is none — a card moved by
-    hand, say, which the board did not make and will not attribute."""
+    names `stage` as where the card went, names as where it came from the
+    stage of one of the `stale` paths, and no commit carries its move id
+    yet. `record_movement` writes that line exactly when a move's commit
+    did not happen; None when the newest line says something else, or
+    there is none — a card moved by hand, say, which the board did not
+    make and will not attribute. The last two conditions keep an old line
+    from being used twice: once its move is recorded, a hand move back
+    into the same stage is not committed under that move's trailers."""
+    stale_stages = {Path(p).parent.name for p in stale}
     try:
         lines = movement_journal().read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -1098,12 +1109,28 @@ def _unrecorded_move(filename: str, stage: str) -> dict | None:
         if not isinstance(entry, dict) or entry.get("file") != filename:
             continue
         if (entry.get("v") == 1 and entry.get("to") == stage
+                and entry.get("from") in stale_stages
                 and isinstance(entry.get("id"), str)
                 and entry.get("kind") in ("person", "automated")
-                and isinstance(entry.get("mover"), str)):
+                and isinstance(entry.get("mover"), str)
+                and not _move_committed(entry["id"])):
             return entry
         return None
     return None
+
+
+def _move_committed(move_id: str) -> bool:
+    """Whether a commit in the work state's history already carries this
+    move's id in its trailers. History that cannot be read answers True,
+    the safe direction: the move is then not attributed again."""
+    try:
+        found = _git("log", "-1", "--format=%H", "--fixed-strings",
+                     f"--grep=Bench-Move-Id: {move_id}", "HEAD", timeout=30)
+    except (subprocess.SubprocessError, OSError):
+        return True
+    if found.returncode != 0:
+        return True
+    return bool(found.stdout.strip())
 
 
 _JOURNAL_SCAN = 5000
@@ -1277,7 +1304,7 @@ def commit_edit(filename: str, stage: str, what: str) -> bool:
     who = actor_name() or "board"
     number = _number(filename) or filename[:-3]
     stale = _stale_copies(path)
-    move = _unrecorded_move(filename, stage) if stale else None
+    move = _unrecorded_move(filename, stage, stale) if stale else None
     if move is not None:
         return commit_paths(
             filename,

@@ -90,7 +90,7 @@ class _FailedMoveCommit:
         return bool(git(self.repo, "ls-tree", "--name-only", "HEAD", "--",
                         self.rel(stage, filename)).stdout.strip())
 
-    def failing_move(self, source: str, target: str) -> dict:
+    def failing_move(self, source: str, target: str, filename: str = FILENAME) -> dict:
         """The move's commit meets a held index on every attempt. Returns
         what happened, so a lock that was never held cannot pass for a
         reproduction."""
@@ -110,7 +110,7 @@ class _FailedMoveCommit:
 
         taskfiles.commit_paths = commit_paths
         try:
-            taskfiles.move_task(FILENAME, source, target, actor="agent")
+            taskfiles.move_task(filename, source, target, actor="agent")
         finally:
             taskfiles.commit_paths = real
         self.assertEqual(seen, {"held": True, "committed": False, "heldAtEnd": True},
@@ -402,6 +402,95 @@ class _FailedMoveCommit:
         self.assertNotEqual(after.get("code"), "ambiguous-move", after)
         self.assertEqual(after.get("code"), before.get("code"), (before, after))
 
+    # — names git quotes (review at 00a7cc3c6b2e) —
+
+    QUOTED_NAMES = ("23-café-export.md", '24-the-"export".md')
+
+    def add_card(self, filename: str) -> None:
+        (self.tasks / "to-do" / filename).write_text(
+            CARD.replace("21 — Export model", filename[:-3]), encoding="utf-8")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", f"add {filename}")
+
+    def test_a_card_whose_name_git_quotes_still_commits_its_move(self):
+        """Git C-quotes a name with a non-ASCII character or a `"` in a
+        listing read line by line. The quoted text is a path that exists
+        nowhere, so it read as a stale copy, and naming it failed the
+        commit of every ordinary move of such a card."""
+        for name in self.QUOTED_NAMES:
+            with self.subTest(name=name):
+                self.add_card(name)
+                self.assertEqual(taskfiles._stale_copies(
+                    self.tasks / "in-progress" / name), [])
+
+                taskfiles.move_task(name, "to-do", "in-progress", actor="agent")
+
+                self.assertEqual(self.porcelain(), "")
+                self.assertFalse(self.head_has("to-do", name))
+                self.assertTrue(self.head_has("in-progress", name))
+                self.assertFalse(any("committing it failed" in e.get("summary", "")
+                                     for e in state.BOARD_EVENTS), state.BOARD_EVENTS)
+
+    def test_a_quoted_cards_failed_move_is_recorded_by_its_next_edit(self):
+        for name in self.QUOTED_NAMES:
+            with self.subTest(name=name):
+                self.add_card(name)
+                self.failing_move("to-do", "in-progress", name)
+                self.assertEqual(taskfiles._stale_copies(
+                    self.tasks / "in-progress" / name),
+                    [str(self.tasks / "to-do" / name)])
+
+                taskfiles.append_to_task(name, "in-progress", "\n## Report\n", "report")
+
+                self.assertEqual(self.porcelain(), "")
+                self.assertFalse(self.head_has("to-do", name))
+                self.assertIn("Bench-Move-Id:",
+                              git(self.repo, "log", "-1", "--format=%B").stdout)
+
+    # — an old journal line is never used twice (review at 00a7cc3c6b2e) —
+
+    def healed_failed_move(self) -> str:
+        """A move to-do → in-progress whose commit failed, recorded since
+        by the card's next edit. Returns that move's id."""
+        self.failing_move("to-do", "in-progress")
+        [move_id] = self.journal_ids()
+        taskfiles.append_to_task(FILENAME, "in-progress", "\n## Report\n", "report")
+        self.assertIn(f"Bench-Move-Id: {move_id}",
+                      git(self.repo, "log", "-1", "--format=%B").stdout)
+        self.assertEqual(self.porcelain(), "")
+        return move_id
+
+    def test_a_hand_move_back_into_the_stage_is_not_given_an_old_moves_trailers(self):
+        """The journal line for to-do → in-progress has been recorded. The
+        card then moves in-progress → review (committed) and is put back
+        into in-progress by hand. The stale path is review/, which the
+        old line does not come from: the edit names its own path only."""
+        self.healed_failed_move()
+        taskfiles.move_task(FILENAME, "in-progress", "review", actor="agent")
+        self.assertEqual(self.porcelain(), "")
+        shutil.move(str(self.tasks / "review" / FILENAME),
+                    str(self.tasks / "in-progress" / FILENAME))
+
+        taskfiles.append_to_task(FILENAME, "in-progress", "\n## Note\n", "note")
+
+        self.assertTrue(self.head_has("review"), "the hand move is not recorded for it")
+        self.assertNotIn("Bench-Move", git(self.repo, "log", "-1", "--format=%B").stdout)
+
+    def test_a_recorded_moves_journal_line_is_not_used_again(self):
+        """The same, where the hand move retraces the old move exactly —
+        to-do → in-progress — so only the move id already being in a
+        commit tells the old line apart from a new failed move."""
+        self.healed_failed_move()
+        taskfiles.move_task(FILENAME, "in-progress", "to-do", actor="agent")
+        self.assertEqual(self.porcelain(), "")
+        shutil.move(str(self.tasks / "to-do" / FILENAME),
+                    str(self.tasks / "in-progress" / FILENAME))
+
+        taskfiles.append_to_task(FILENAME, "in-progress", "\n## Note\n", "note")
+
+        self.assertTrue(self.head_has("to-do"), "the hand move is not recorded for it")
+        self.assertNotIn("Bench-Move", git(self.repo, "log", "-1", "--format=%B").stdout)
+
 
 class Vendored(_FailedMoveCommit, unittest.TestCase):
     TASKS_UNDER = ".task-manager"
@@ -412,13 +501,33 @@ class SourceHosted(_FailedMoveCommit, unittest.TestCase):
 
 
 class External(_FailedMoveCommit, unittest.TestCase):
-    """The work state's own repository: tasks/ at its top, no
-    application code beside it."""
+    """The work state's own repository, apart from the application's:
+    `config.EXTERNAL` on, the application a separate checkout, and the
+    state repository found from where tasks/ is. No commit may reach the
+    application."""
     TASKS_UNDER = ""
 
     def setUp(self):
         super().setUp()
+        app = self.repo.parent / "app"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(app)],
+                       check=True, capture_output=True)
+        git(app, "config", "user.name", MOVER)
+        git(app, "config", "user.email", "ada@example.com")
+        (app / "app.txt").write_text("app\n", encoding="utf-8")
+        git(app, "add", "-A")
+        git(app, "commit", "-q", "-m", "app root")
+        self.app_head = git(app, "rev-parse", "HEAD").stdout.strip()
+        self.app = app
+        self.patch(EXTERNAL=True, REPO=app)
         self.assertEqual(config.state_repo(), self.repo)
+        self.assertFalse(config.app_shares_state_repository())
+        self.addCleanup(self.application_untouched)
+
+    def application_untouched(self) -> None:
+        self.assertEqual(git(self.app, "rev-parse", "HEAD").stdout.strip(),
+                         self.app_head)
+        self.assertEqual(git(self.app, "status", "--porcelain").stdout, "")
 
 
 if __name__ == "__main__":
