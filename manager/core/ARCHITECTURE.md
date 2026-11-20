@@ -406,7 +406,7 @@ One owner per question; `AGENTS.md` describes each module in full.
 | --- | --- | --- |
 | stdlib leaves | `gitproc`, `records`, `redact` | the hardened git subprocess: which verbs are reads, the argv and environment a read runs with, the one `subprocess.run`; atomic and durable record writes; what a credential looks like |
 | settings | `config` | paths, roots and layout problems, settings and their provenance, prompt/adapter/driver resolution, the patchable git wrappers over `gitproc` |
-| shared state | `state`, `reports`, `templates` | registries and the SSE fan-out; the report clip; the four launch prompt contracts |
+| shared state | `state`, `reports`, `templates` | registries and the SSE fan-out; the report clip; the launch and orchestration prompt contracts |
 | work state | `taskfiles` | the only code touching `tasks/` |
 | policy | `plans`, `profiles`, `reviews` | which branch, what a run may do and read, the pinned review checkout |
 | evidence | `verify`, `progress`, `acceptance`, `callers` | the check runner and its records; a run's own claims; criterion decisions and findings; whether a request's claim to be a run is proved, and the Host and Origin a request names (report or enforce) |

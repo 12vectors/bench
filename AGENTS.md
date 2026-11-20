@@ -107,7 +107,9 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   rule that combines it with the exit status bench observed. Imports
   `redact` only; inside the runner revision (see "Verifier reports:
   actionable evidence from the check itself")
-- `templates.py` — the four launch prompt templates: what each may and
+- `templates.py` — the prompt templates: the four launch templates and
+  the orchestration prompts (the shared reasoning template and one
+  guidance template per reasoning need, task 153), what each may and
   must contain, which text a launch actually used (name, source, hash),
   and the contract check asked before a save and before every launch
 - `gitrepo.py` — local git on the two repositories, each named rather
@@ -500,6 +502,33 @@ paints nothing from the reply: the toast says nothing is known to have
 happened, and a reading says what did. A second archive of a card
 already on its way joins the first, and ⌘Z waits for every archive in
 flight. The timings are in `develop/perf/README.md`.
+
+### On a phone
+
+A phone is for checking where cards stand (task 154), so below 760px the
+board is what the page shows first. The header folds the theme, Refresh,
+the setup invitation and the agent-commands note behind one labelled
+**More** button (marked while a folded chip has something to say); the
+connection chip, the configuration check and every warning stay. The
+board shows one stage per screen with a **stage strip** naming each stage,
+its count and whether a card in it needs attention — read off the faces
+that column painted, never worked out again — and a card's detail view
+takes the whole screen and gives the board back where it was.
+
+The activity panel starts closed on a phone, and only a person's toggle
+opens or closes it: no event, repaint, reading, navigation or rotation
+does. A phone's choice is remembered apart from a desktop's
+(`bench-log-open-narrow` beside `bench-log-open` in the browser's
+storage). The panel has a **Hide activity** control inside it, its grip
+resizes by touch, and its height is a wish clamped to the window the
+page has now — at least 80px, at most 40% of a phone's or of a window
+shorter than 560px (60% elsewhere), and within that always leaving the
+board 160px — so an open panel can never
+push the bar holding its own toggle off the screen, which is what it used
+to do. The page is `100dvh` high where the browser knows that unit, the
+height a phone actually shows. A window shorter than 480px (a phone held
+sideways) gets the compact header, bar and panel and keeps its columns.
+Anywhere else nothing is folded and no strip is drawn.
 
 ## Local commands
 
@@ -5030,7 +5059,20 @@ values or a card you pick (its body inserted as data — a `{branch}` in a
 card stays those characters); **Diff from built-in**, **Reset to
 built-in** (staged, previewed, then applied) and **Cancel changes** sit
 beside it. Only `manager/local/prompts/<name>` is ever written, from a
-fixed list of four names; nothing under `core/` is touched.
+fixed list of names; nothing under `core/` is touched.
+
+**Orchestration prompts** have a panel of their own beneath, edited
+through the same draft, steps, backup and recovery: the shared
+**Orchestration reasoning** template (`reason.md`) and four **Reasoning
+guidance** templates, one per need (`reason-readiness.md`,
+`reason-questions.md`, `reason-plan.md`, `reason-recovery.md`). Each row
+says what uses it, that the Bench scope and every phase scope share it
+(there is no per-scope prompt), whether it is shared or specific to one
+need, and that a save reaches the next reasoning launch. Their preview is
+the composition the run receives: a guidance template is shown inside
+the shared template in force, and the shared template with the guidance
+of the need you choose. See "Orchestration prompts: adapting what
+reasoning is told".
 
 Each template is held to a contract (`templates.py`) before it is saved
 **and** before any launch uses it: the text must parse as a format
@@ -5039,7 +5081,10 @@ no `{body.x}`, `{0}`, conversion or format spec), the inputs the runner
 depends on must be present (the task, the workflow brief, the plan, the
 pinned context, the verification and progress blocks), and the marker
 the board parses (`NOT READY:`, `ADDRESSED:`, `RELEVANCE REVIEW:`,
-`PR REVIEW:`) must still be asked for. An existing local override that
+`PR REVIEW:`; for the shared reasoning template `<<<REASONING`,
+`REASONING>>>` and `REASONING DECLINED:`) must still be asked for, and
+the text must fit its bound (64 KiB; 4 KiB for a reasoning guidance
+template). An existing local override that
 fails is shown with its problems and its text, never rewritten, and
 refuses the launch that would use it until it is fixed or reset. Prompt
 text is instruction, not permission: the profile, context and
@@ -6027,6 +6072,65 @@ is what the Orchestrator view reads: no path, no private reasoning, no
 credential. That local record is not the one a person reads: when a job
 settles, its public outcome goes onto its card (next section), and the
 job's `cardRecord` says whether the card holds it.
+
+**Orchestration prompts: adapting what reasoning is told** (task 153).
+What a reasoning run reads is two managed templates, composed, and an
+operator adapts them in **Settings → Agents → Orchestration prompts**
+the way the launch templates are adapted (see "Agents: harness, model
+and prompt per purpose"):
+
+| template | used by | edit it to |
+| --- | --- | --- |
+| `reason.md`, shared | every reasoning run — all four needs, the Bench scope and every phase scope | change the framing, tone and house rules every reasoning run is given |
+| `reason-readiness.md` | a readiness request | change what "ready" means here |
+| `reason-questions.md` | a questions request; what it drafts lands on the card for the owner | change what to ask the product owner and how |
+| `reason-plan.md` | a plan request | change how delivery is sequenced |
+| `reason-recovery.md` | each recovery diagnosis attempt (see "Recovery: diagnose, don't kill") and a person's recovery request | change what a stalled or failed run's diagnosis looks at |
+
+The need's guidance is rendered first — it may name `{card}`, `{stage}`
+and `{filename}` and nothing else — and then inserted into the shared
+template as `{question}`. The shared template may use `{operation}`,
+`{need}`, `{question}`, `{filename}`, `{stage}`, `{card}`, `{inputs}`,
+`{contract}`, `{guidance_read_only}` and `{context}`, and must keep all
+but `{filename}` and `{stage}`, together with the `<<<REASONING`,
+`REASONING>>>` and `REASONING DECLINED:` instructions the board parses.
+A literal brace is written doubled. Every value is inserted as data:
+a `{branch}` in a card, a facts document or the agreement reaches the run
+as those characters, never as a placeholder.
+
+- **When it applies.** Templates are read at every reasoning request.
+  A saved change reaches the next run launched; a run already started
+  keeps the prompt it was given. The same question about unchanged
+  inputs is still answered by its earlier job (`duplicate`), so an
+  edit reaches the next new question, a deliberate `retry`, or a
+  recovery attempt — not an answer already given.
+- **What a run records.** The job's `prompt` and its manifest's
+  `template` name the shared template (name, source — `built-in` or
+  `local` — and sha256), the guidance template the same way, and, on the
+  job, the sha256 of the composed text — never the text. An earlier run's
+  record keeps the identity it was launched with.
+- **What a prompt cannot do.** It is instruction, not authority. The
+  response schema and its bounds, the evidence-reference rules, the
+  scope check on proposed actions, `orchestrator.authorize`, the reason
+  intent's grants (no shell, no edit tool, no worktree, exact reads),
+  the operating agreement, budgets, ownership and lifecycle are all
+  enforced in code whatever the prompt says, and reading, previewing,
+  saving or resetting one launches no agent and no check, moves no card
+  and changes no agreement.
+- **Troubleshooting.** A template that breaks its contract is refused
+  before saving, with the code and the field (`template-unknown-field`,
+  `template-missing-field`, `template-missing-marker`,
+  `template-malformed`, `template-too-large`, …). A local override that
+  already breaks it — edited by hand, say — is shown with its problems in
+  Settings and refuses every reasoning request that would use it, before
+  a job, a manifest or a process exists, with *fix or reset it in
+  Settings → Agents*; it is never repaired or silently replaced by the
+  built-in. **Reset to built-in** removes the override, and the replaced
+  text stays under **Recover replaced text**. Overrides live in
+  `manager/local/prompts/`, which updates never replace, so they survive
+  an update and a restart; a built-in that changes in an update reaches
+  you only where you have no override, and **Diff from built-in** shows
+  how yours differs.
 
 ### The card keeps everything: decisions and public history
 

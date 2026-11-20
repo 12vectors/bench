@@ -95,7 +95,14 @@ const S = {
   fileView: null,        // {dir, name, content} open in the drawer
   drawerKey: null,       // which document the drawer last painted, for its scroll mark
   logStick: true,        // follow the newest event unless the user scrolled up
-  logOpen: localStorage.getItem('bench-log-open') === '1',
+  // the activity panel: a phone starts compact, and only an explicit
+  // open on a phone opens it there (task 154; the keys are lib/layout's
+  // logOpenKey, written out because this module imports nothing). After
+  // load only the person's toggle changes it — no event, repaint,
+  // navigation or rotation does.
+  logOpen: localStorage.getItem(
+    typeof matchMedia === 'function' && matchMedia('(max-width: 760px)').matches
+      ? 'bench-log-open-narrow' : 'bench-log-open') === '1',
   logFilter: 'all',
   acts: {},              // action key -> {phase: 'armed'|'busy', until} across re-renders
   dragging: null,        // {file, from} while a card is mid-drag

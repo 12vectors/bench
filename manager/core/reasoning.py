@@ -85,24 +85,24 @@ import records
 import redact
 import state
 import taskfiles
+import templates
 
 KIND = "bench-reasoning-response"
 FACTS_KIND = "bench-reasoning-facts"
 VERSION = 1
 
-# The reasoning needs an orchestrator has (D2), each one question.
+# The reasoning needs an orchestrator has (D2), each one question. What
+# each need *asks* is operator-adaptable prose (task 153): the guidance
+# template `templates.need_template(need)`, composed into the shared
+# `reason.md` by `templates.compose_reasoning`. What is kept here is only
+# what the need is, for a reader; the schema, bounds and authority checks
+# below never come from a prompt.
 NEEDS = {
-    "readiness": "Is this card ready to be worked on as written? Interpret "
-                 "its brief, inputs, dependencies and decision history, and "
-                 "say what stops it, if anything.",
-    "questions": "What must the product owner decide before this card can "
-                 "proceed? Draft each question with options and your "
-                 "recommendation.",
-    "plan": "How should this card's delivery be sequenced under the "
-            "authority it has? Propose the next actions.",
-    "recovery": "This card's work appears stalled or failed. From the facts "
-                "and evidence, what happened, and what bounded recovery "
-                "action do you propose?",
+    "readiness": "is this card ready to be worked on as written",
+    "questions": "what must the product owner decide first",
+    "plan": "how should this card's delivery be sequenced",
+    "recovery": "what happened to a stalled or failed run, and what bounded "
+                "recovery to propose",
 }
 
 # queued → running → valid | invalid | stale
@@ -350,7 +350,8 @@ def _card_fact(card: dict) -> dict:
 
 
 def facts(filename: str, need: str, operation: str, bound: dict,
-          tasks: list[dict], subject: dict | None = None) -> dict:
+          tasks: list[dict], subject: dict | None = None,
+          question: str | None = None) -> dict:
     """What bench tells the run in its own words: public readings only —
     no path, no environment value, no credential — scrubbed again on the
     way out because a title is a person's text."""
@@ -365,7 +366,10 @@ def facts(filename: str, need: str, operation: str, bound: dict,
                     "reason": "movement history could not be read"}
     out = {
         "kind": FACTS_KIND, "v": VERSION,
-        "operation": operation, "need": need, "question": NEEDS[need],
+        "operation": operation, "need": need,
+        # the question as the run is asked it: the need's effective
+        # guidance (task 153), or what the need is when none was composed
+        "question": question if question is not None else NEEDS[need],
         "card": _card_fact(task),
         "phase": _card_fact(cards["phase"]) if cards["phase"] else None,
         "members": [_card_fact(m) for m in cards["members"]],
@@ -397,7 +401,8 @@ def _input_item(name: str, role: str, source: str, path: Path,
 
 
 def attach(found: dict, filename: str, need: str, operation: str, bound: dict,
-           tasks: list[dict], subject: dict | None = None) -> dict:
+           tasks: list[dict], subject: dict | None = None,
+           question: str | None = None) -> dict:
     """Add the reasoning context to a launch's manifest, before the pin,
     the way a card's own inputs are added (`inputs.attach`) — so each is
     copied, hashed and granted by one exact read exactly as an approved
@@ -421,7 +426,7 @@ def attach(found: dict, filename: str, need: str, operation: str, bound: dict,
         context.append(_input_item(name, role,
                                    f"work:tasks/{card['stage']}/{card['file']}",
                                    path, data))
-    written = facts(filename, need, operation, bound, tasks, subject)
+    written = facts(filename, need, operation, bound, tasks, subject, question)
     facts_path = _dir() / "facts" / f"{operation}.json"
     records.write_json(facts_path, written)
     # named by what it is rather than by a path: the facts are bench's
@@ -728,7 +733,8 @@ PUBLIC = ("v", "id", "need", "task", "card", "stage", "via", "scope", "actor",
           "attempt", "retryOf", "status", "created", "started", "ended",
           "agent", "name", "harness", "model", "policyId", "binding",
           "inputs", "response", "diagnostics", "raw", "error", "usage",
-          "fingerprint", "provenance", "cardRecord", "action", "subject")
+          "fingerprint", "provenance", "cardRecord", "action", "subject",
+          "prompt")
 
 
 def public(job: dict) -> dict:
@@ -847,11 +853,23 @@ def request(filename: str, need: str, *, via: str = "orchestrator",
 
         stage = bound["stage"]
         operation = f"rs-{print_[:10]}-{len(prior) + 1}"
+        # the prompt first (task 153): the shared template and this need's
+        # guidance, each held to its contract, exactly as Settings → Agents
+        # shows them. A broken local override refuses here, before a
+        # manifest, a pin, a job or a process exists — never repaired,
+        # never skipped for the built-in.
+        prompts = {"main": templates.require("reason.md"),
+                   "guidance": templates.require(templates.need_template(need))}
+        question = templates.render(
+            prompts["guidance"]["name"], prompts["guidance"]["text"],
+            {"card": bound["card"], "stage": stage, "filename": filename}).strip()
         # resolved, context attached, pinned and confirmed before anything
         # is recorded: a refusal leaves no job and no launch
         found = profiles.manifest("reason", filename, stage)
         profiles.require(found)
-        attach(found, filename, need, operation, bound, tasks, subject)
+        found["template"] = {**templates.identity(prompts["main"]),
+                             "guidance": templates.identity(prompts["guidance"])}
+        attach(found, filename, need, operation, bound, tasks, subject, question)
         profiles.pin(found)
         inputs_ = delivered(found)
 
@@ -891,7 +909,7 @@ def request(filename: str, need: str, *, via: str = "orchestrator",
         JOBS[job["id"]] = job
         _save(job)
         try:
-            _launch(job, found)
+            _launch(job, found, prompts)
         except ValueError as exc:
             job.update({"status": "failed", "ended": time.time(),
                         "error": f"the reasoning run could not be launched: {exc}"})
@@ -911,7 +929,7 @@ def _inputs_text(job: dict) -> str:
     return "\n".join(lines)
 
 
-def _launch(job: dict, found: dict) -> None:
+def _launch(job: dict, found: dict, prompts: dict | None = None) -> None:
     filename = job["task"]
     agent_id = (f"reason-{filename[:-3][:40]}-{time.strftime('%H%M%S')}-"
                 f"{secrets.token_hex(2)}")
@@ -919,12 +937,19 @@ def _launch(job: dict, found: dict) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     manifest = profiles.record(agent_id, found)
     fields = config.prompt_fields(filename, job["stage"])
-    prompt = config.prompt("reason.md").format(
-        operation=job["id"], need=job["need"], question=NEEDS[job["need"]],
-        filename=filename, stage=job["stage"], card=job["card"],
-        inputs=_inputs_text(job), contract=contract_text(job),
-        guidance_read_only=fields["guidance_read_only"],
-        context=profiles.prompt_block(manifest))
+    # the same composition Settings → Agents previews (task 153), from the
+    # texts the preflight validated: card, agreement and history text are
+    # inserted as data, never re-read as a template
+    prompts = prompts or {}
+    composed = templates.compose_reasoning(job["need"], {
+        "operation": job["id"], "need": job["need"], "filename": filename,
+        "stage": job["stage"], "card": job["card"],
+        "inputs": _inputs_text(job), "contract": contract_text(job),
+        "guidance_read_only": fields["guidance_read_only"],
+        "context": profiles.prompt_block(manifest)},
+        main=prompts.get("main"), guidance=prompts.get("guidance"))
+    prompt = composed["text"]
+    job["prompt"] = composed["identity"]
     proc, log_file, model = agents.launch("reason", prompt, config.REPO,
                                           agent_id, filename, log_path, manifest)
     name = agents.pick_name(filename)

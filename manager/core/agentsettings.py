@@ -12,8 +12,9 @@ words, and writes the two kinds of file they read:
   and its per-purpose overrides — and **no other key**. Every other
   line, every comment and every unrelated setting is carried over byte
   for byte; a key the process environment set is locked and refused;
-- the four local prompt overrides under `manager/local/prompts/` — named
-  from a fixed list, never from a path a request supplied, and never a
+- the local prompt overrides under `manager/local/prompts/` — the four
+  launch templates and the orchestration reasoning templates (task 153),
+  named from a fixed list, never from a path a request supplied, and never a
   file under `core/`.
 
 Both are read fresh by the next launch (`config.agent_choice` and
@@ -232,6 +233,8 @@ def page() -> dict:
         "harnesses": harnesses(),
         "rows": rows(),
         "templates": [templates.describe(name) for name in templates.NAMES],
+        "templateGroups": dict(templates.GROUPS),
+        "reasonNeeds": list(templates.REASON_NEEDS),
         "recovery": recovery(),
         "history": history(),
         "appliesAt": "next-launch",
@@ -249,6 +252,15 @@ def page() -> dict:
             "Prompt instructions are not permissions. Templates may be edited; "
             "the profile, context and verification blocks bench inserts are "
             "required in them.",
+            "Orchestration prompts are guidance, not authority. Editing one "
+            "cannot grant a tool, a check or a budget, widen the operating "
+            "agreement, take a card someone else moved, or relax a merge "
+            "rule: those are enforced in code, every time, whatever the "
+            "prompt says. The response contract the board validates is "
+            "inserted by bench and required in the shared template.",
+            "One shared reasoning template serves the Bench scope and every "
+            "phase scope; there is no per-scope prompt. Each need's guidance "
+            "is its own small template, composed into it.",
         ],
     }
 
@@ -484,8 +496,41 @@ def render(payload: dict) -> dict:
                       branch=f"task/{card[:-3]}",
                       **config.prompt_fields(card, stage))
         source = f"the card {card} (other fields are samples)"
+        fields["card"] = card.split("-", 1)[0].lstrip("0") or card
+    if templates.SPECS[name]["group"] == "orchestration":
+        return _render_reasoning(name, text, fields, source, payload)
     return {"ok": True, "errors": [], "source": source,
             "rendered": templates.render(name, text, fields)}
+
+
+def _render_reasoning(name: str, text: str, fields: dict, source: str,
+                      payload: dict) -> dict:
+    """An orchestration prompt as the run receives it (task 153): the
+    shared template composed with one need's guidance. The text being
+    edited takes its own place in the composition; the other half is
+    the one in force now, and the preview says which. A half that does
+    not hold its contract is named rather than rendered around."""
+    spec = templates.SPECS[name]
+    need = spec.get("need") or str(payload.get("need") or "readiness")
+    if need not in templates.REASON_NEEDS:
+        raise ValueError(f"'{need}' is not a reasoning need "
+                         f"({', '.join(templates.REASON_NEEDS)})")
+    other = "reason.md" if spec.get("kind") == "guidance" else templates.need_template(need)
+    loaded = templates.load(other)
+    trouble = templates.problems(other, loaded["text"])
+    if trouble:
+        return {"ok": False, "errors": trouble, "rendered": None, "need": need}
+    edited = {"name": name, "source": "draft", "text": text,
+              "sha256": templates.digest(text)}
+    halves = ({"main": loaded, "guidance": edited} if other == "reason.md"
+              else {"main": edited, "guidance": loaded})
+    composed = templates.compose_reasoning(need, fields, **halves)
+    words = "built-in" if loaded["source"] == "built-in" else "local override"
+    return {"ok": True, "errors": [], "need": need,
+            "source": (f"{source}; the {need} need, composed with the "
+                       f"{other} in force ({words})"),
+            "question": composed["question"],
+            "rendered": composed["text"]}
 
 
 # ── applying ───────────────────────────────────────────────────────────
