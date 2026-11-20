@@ -190,7 +190,7 @@ class AScopedPhase(unittest.TestCase):
     def test_1_a_member_moved_early_is_named_with_its_way_back(self):
         before = self.passive()
         self.assertEqual("phase scope", life()["owner"])
-        projected = next(p for p in api("/api/orchestration")["orchestration"]
+        projected = next(p for p in api("/api/orchestration")
                          ["schedule"]["phases"]["phases"] if p["card"] == PHASE)
         self.assertEqual("moved-early", projected["lifecycle"]["word"],
                          "API state and the Orchestrator say one thing")
@@ -200,7 +200,8 @@ class AScopedPhase(unittest.TestCase):
             for which in ("dark", "light"):
                 b = self.board(width, height)
                 theme(b, which)
-                if not b.wait(f"/member moved early/.test(document.querySelector("
+                if not b.wait(f"/phase scope — #62 sits in In Progress.*move #62 back/s.test("
+                              f"document.querySelector("
                               f"'#board article.card[data-file=\"{PHASE}\"]').innerText)", 10):
                     raise bv.CheckFailed(f"the face never named the moved member: {self.face()}")
                 face = self.face()
@@ -223,6 +224,9 @@ class AScopedPhase(unittest.TestCase):
         b.key("Enter")
         if not b.wait(f"[...document.querySelectorAll('{sel}')].some(x => x.classList.contains('armed'))", 5):
             raise bv.CheckFailed("the way back did not ask for confirmation")
+        # the armed window redraws the card; the keyboard stays on the action
+        b.eval(f"(() => {{ const x = document.querySelector('{sel}.armed');"
+               f" if (x && document.activeElement !== x) x.focus(); }})()")
         b.key("Enter")
         until(lambda: stage_of(LATER) == "to-do", 10, "the keyboard move back")
         until(lambda: life().get("word") != "moved-early", 10, "the lifecycle after the move")
@@ -239,8 +243,10 @@ class AScopedPhase(unittest.TestCase):
         target = f"{sel}[data-lc-idx=\"{idx}\"]"
         b.hover(f".lane article.card[data-file=\"{LATER}\"]")
         b.click(target)
-        b.wait(f"document.querySelector('{target}') && document.querySelector('{target}').classList.contains('armed')", 5)
-        b.click(target)
+        if not b.wait(f"!!document.querySelector('{sel}.armed')", 5):
+            raise bv.CheckFailed("the pointer's first click did not arm the way back")
+        b.hover(f".lane article.card[data-file=\"{LATER}\"]")
+        b.click(f"{sel}.armed")
         until(lambda: stage_of(LATER) == "to-do", 10, "the pointer move back")
         shot("phase-lifecycle-moved-back-1280-light")
         # a drop on the lane's Backlog column is the same move
