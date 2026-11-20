@@ -399,6 +399,29 @@ class Operations(_Layout):
         self.assertEqual(len(list((self.work / "brain").glob("*.md"))), 1)
         self.assertEqual(len(brain.entry(plan["id"])["history"]), 1)
 
+    def test_a_write_that_met_a_change_mid_way_stays_refused_on_replay(self):
+        out = self.create()
+        e = self.entry(out["id"])
+        path = self.work / "brain" / out["file"]
+        payload = {"request": "midway-req-0001", "id": out["id"], "expected": e["revision"],
+                   "title": "Mine", "kind": "Guide"}
+        real = brainwrite._plan_edit
+
+        def plan_then_someone_saves(*a):
+            plan = real(*a)
+            path.write_text(path.read_text().replace("A report is filed", "Someone else"))
+            return plan
+        with mock.patch.dict(brainwrite.PLANS, {"edit": plan_then_someone_saves}):
+            with self.assertRaises(brainwrite.Refused) as caught:
+                brainwrite.write("edit", dict(payload))
+        self.assertEqual(caught.exception.status, 409)
+        self.assertIn("Someone else", path.read_text())
+        with self.assertRaises(brainwrite.Refused) as again:
+            brainwrite.write("edit", dict(payload))
+        self.assertEqual(again.exception.status, 409)
+        self.assertTrue(again.exception.extra["stale"])
+        self.assertIn("Someone else", path.read_text())
+
     def test_a_lost_reply_is_answered_from_the_record(self):
         out = self.create(request="lost-reply-req-1")
         found = brainwrite.operation("lost-reply-req-1")

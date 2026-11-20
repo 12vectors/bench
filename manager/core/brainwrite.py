@@ -625,6 +625,12 @@ def write(kind: str, payload: dict) -> dict:
             if prior.get("kind") != kind or prior.get("digest") != digest:
                 raise Refused("this request identity was already used for a different "
                               "Brain write; nothing was written", 409)
+            if prior.get("status") == "done" and not prior.get("saved"):
+                # the first answer was a refusal: the replay says so again
+                raise Refused(f"this request was refused ({prior.get('refused') or 'not saved'}); "
+                              "nothing was written. Read the current version and save again "
+                              "as a new request.", 409, stale=True,
+                              current=_current_entry(prior.get("id")))
             if prior.get("status") == "done":
                 return dict(_public(prior), duplicate=True)
             return _finish(request, prior, resumed=True)
@@ -681,13 +687,16 @@ def _conflict(request: str, entry: dict) -> dict:
     refused = {k: v for k, v in entry.items() if k != "text"}
     refused.update(status="done", saved=False, refused="conflict", finished=_now())
     _journal_put(request, refused)
-    try:
-        current = brain.entry(entry["id"])
-    except brain.NotAnId:
-        current = None
     raise Refused(f"brain/{entry['file']} changed while this write was being made; "
                   "nothing was written. Read the current version and save again.", 409,
-                  stale=True, current=current)
+                  stale=True, current=_current_entry(entry["id"]))
+
+
+def _current_entry(entry_id) -> dict | None:
+    try:
+        return brain.entry(entry_id)
+    except brain.NotAnId:
+        return None
 
 
 # ── what an operation says now ─────────────────────────────────────────
