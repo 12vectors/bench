@@ -8117,7 +8117,12 @@ With `BOARD_COMMIT_MOVES` on, board-made moves also **commit themselves**:
 the move and the claim land in one commit touching only that task file,
 messaged `board: <number> → <stage> (<name>)`, staged by pathspec so
 unrelated staged work is neither committed nor unstaged (hooks are skipped —
-this is bookkeeping, not code). Pushing is not part of it: those commits sit
+this is bookkeeping, not code). A move whose commit failed — another git
+holding the index, say — has still happened on disk, and is said in the
+ticker; the card's next move also records the removal of any path of that
+same card git still has and the disk no longer does, so a failed commit
+never leaves a stale task path behind for sync or a merge to stop on.
+Pushing is not part of it: those commits sit
 on your local `main` until you push it (or until `BOARD_SYNC` pushes them —
 see "Syncing boards"), which the guard in "Pull requests" will tell you
 about if you forget. The setting is off by default: a single-player
