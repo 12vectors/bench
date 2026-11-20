@@ -227,6 +227,23 @@ class RestartsAndRaces(Retries):
         self.assertEqual(1, len(self.calls["verify"]))
         self.assertIs(orig, operations.for_card)
 
+    def test_a_retry_overtaken_by_a_newer_answer_does_not_hold_the_head(self):
+        self.enable(setupRetries=2)
+        self.gate = setup_gate("ev-1")
+        item = self.item()
+
+        def overtaken(filename, stage=None, **kw):
+            raise required.Refused("nothing-needed")
+        from unittest import mock
+        with mock.patch.object(required, "start", overtaken):
+            result = coordinate.execute(item, self.board.cards[CARD],
+                                        self.board.collect())
+        self.assertEqual("refused", result["outcome"])
+        self.assertEqual([], coordinate.setup_retries(CARD, A, operations.all_ops()))
+        # someone's ↻ passed meanwhile: the gate reads met, nothing is held
+        self.gate = gate("allowed", checks=[("unit", "met", "passed", "ev-2")])
+        self.assertNotEqual("step-refused", self.item()["code"])
+
     def test_no_grant_or_budget_moves(self):
         self.enable(setupRetries=2)
         before = agreements.effective()

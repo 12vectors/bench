@@ -459,7 +459,11 @@ def assess(task: dict, reading: dict, ops: list[dict],
     for op in mine:
         if op["status"] == "refused" and op.get("basis") == head \
                 and op["action"] != "merge" \
-                and op.get("code") not in ANSWERED_AFRESH:
+                and op.get("code") not in ANSWERED_AFRESH \
+                and not (op.get("retry") and op.get("code") == "nothing-needed"):
+            # (task 164: a setup retry refused because something newer
+            # already answered the failure it was about is not a hold —
+            # the gate's reading of that newer answer decides)
             return _set(item, "step-refused", f"the {op['action']} step was "
                         f"refused at {head[:12]}: {op.get('reason')} — change "
                         f"what it names, or release it", operation=op["key"])
