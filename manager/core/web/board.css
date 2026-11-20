@@ -266,7 +266,7 @@
   #drawer #drawertools.dtools{padding:0 0 14px;margin:0;gap:6px;
     border-bottom:1px solid var(--border-soft)}
   #drawer #drawertools .tlabel{font-family:var(--sans);font-size:12px;font-weight:600;
-    color:var(--muted)}
+    color:var(--muted);text-transform:none;letter-spacing:0}
   .card.has-acts:focus-within .toprow .pill.status,
   .card.has-acts:focus-within .toprow .high{display:none}
   .card .title{overflow-wrap:anywhere}
