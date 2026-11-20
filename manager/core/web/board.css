@@ -2060,3 +2060,16 @@
   @media (max-width:760px){
     .b-findrow label{flex:1 1 100%}
   }
+  /* Sessions on a narrow window (task 159): the list above the timeline,
+     never a 250px rail beside it, so the page never runs wider than the
+     window */
+  @media (max-width:760px){
+    #view-flight.on{flex-direction:column;overflow-y:auto}
+    .f-rail{width:auto;max-height:36vh;border-right:0;border-bottom:1px solid var(--border);padding:10px 12px}
+    .f-head{gap:10px;padding:12px}
+    .f-head > div:first-child{min-width:0;flex:1 1 100%;overflow-wrap:anywhere}
+    .filters{padding:10px 12px}
+    .tl{padding:0 12px 12px;overflow-y:visible}
+    .tl-row{grid-template-columns:52px 16px minmax(0,1fr)}
+    .tl-row .tbody{min-width:0;overflow-wrap:anywhere}
+  }

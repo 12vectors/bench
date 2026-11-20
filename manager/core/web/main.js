@@ -217,6 +217,17 @@ document.querySelectorAll('#views [data-view]').forEach(b =>
     if (b.dataset.view === 'brain') { S.brainEntry = null; S.brainBad = null; }
     setView(b.dataset.view);
   }));
+/* The Board's activity (task 159): the whole board's Sessions and Focus,
+   switched to as the header switcher always switched to them — the session
+   chosen there stays chosen — with any card or phase context left behind. */
+document.querySelectorAll('#bnact [data-view]').forEach(a =>
+  a.addEventListener('click', (e) => {
+    if (!plainClick(e)) return;
+    e.preventDefault();
+    S.activityCtx = null;
+    S.activityBad = null;
+    setView(a.dataset.view);
+  }));
 /* Keyboard as well as pointer: every header chip that opens something —
    the configuration check, the setup guide and the connection chip —
    takes Enter and Space through the one key handler (task 125). */
@@ -333,7 +344,8 @@ document.addEventListener('keydown', (e) => {
   // board's BOARD_MIN comes first.
   const BOARD_MIN = 160;
   let dragging = false, startY = 0, startH = 0;
-  const chrome = () => ['header', '#statusbar', '#loghead', '#loggrip']
+  // the Board's bar (task 159) is chrome too while it is drawn
+  const chrome = () => ['header', '#boardnav', '#statusbar', '#loghead', '#loggrip']
     .reduce((n, s) => n + ($(s)?.offsetHeight || 0), 0);
   const ceiling = () => (isNarrow() || innerHeight < 560)
     ? innerHeight * 0.4 : innerHeight * 0.6;
@@ -353,7 +365,7 @@ document.addEventListener('keydown', (e) => {
   // or opened all change what is left, so each one fits the panel again
   if (typeof ResizeObserver === 'function') {
     const watch = new ResizeObserver(fit);
-    for (const s of ['header', '#loghead', '#statusbar']) watch.observe($(s));
+    for (const s of ['header', '#boardnav', '#loghead', '#statusbar']) watch.observe($(s));
   }
   // pointer events, so a finger resizes it as a mouse does
   grip.addEventListener('pointerdown', (e) => {

@@ -179,13 +179,15 @@ class Navigation(unittest.TestCase):
         self.assertEqual(self.before, tree(self.backend.work), f"{what}: the work root changed")
 
     def one_click(self, b, selector, path, what):
-        """One ordinary click opens the destination and adds one entry."""
-        depth = b.eval("history.length")
+        """One ordinary click opens the destination and adds one entry.
+        Counted by the page's own address writes (`routeWrites`), since a
+        browser caps `history.length` at 50."""
+        writes = b.eval("routeWrites()")
         b.click(selector)
         if not b.wait(f"location.pathname + location.search === {json.dumps(path)}", 5):
             raise bv.CheckFailed(f"{what}: one click did not reach {path} (at {self.here()})")
         time.sleep(0.2)
-        self.assertEqual(depth + 1, b.eval("history.length"), f"{what}: one click, one entry")
+        self.assertEqual(writes + 1, b.eval("routeWrites()"), f"{what}: one click, one entry")
 
     def no_overflow(self, b, where):
         wide = b.eval("[document.documentElement.scrollWidth, innerWidth]")
@@ -343,8 +345,9 @@ class Navigation(unittest.TestCase):
         self.assertEqual(0, b.eval("document.querySelectorAll('#frail .sess-row').length"))
         # a session that is not on this board is said, under a card context too
         b.goto("/focus/no-such-session?card=903")
-        b.wait("document.querySelector('#view-focus').classList.contains('on')", 10)
-        self.assertIn("not on this board", b.eval("document.querySelector('#cgrid').innerText"))
+        self.assertTrue(b.wait("document.querySelector('#view-focus').classList.contains('on') && "
+                               "document.querySelector('#cgrid').innerText.includes('not on this board')", 10),
+                        b.eval("document.querySelector('#cgrid').innerText"))
         # reload keeps the address and its context
         b.goto("/sessions/nav-plain-session?card=903")
         b.wait("!!document.querySelector('#frail .sess-row.sel')", 10)
