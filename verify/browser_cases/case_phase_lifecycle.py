@@ -135,7 +135,7 @@ class AScopedPhase(unittest.TestCase):
         if code != 200:
             raise bv.SetupError(f"could not save the draft: {body[:300]!r}")
         saved = json.loads(body)["result"]
-        if not saved.get("valid"):
+        if not saved.get("ok") or saved.get("problems"):
             raise bv.SetupError(f"the case's agreement is invalid: {saved}")
         effective = api("/api/orchestration")["orchestration"]["effective"]["revision"]
         code, body = backend.post("/api/orchestration/agreement/apply",
