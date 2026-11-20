@@ -21,8 +21,10 @@ import { renderSettings } from './shell.js';
 
 /* ── agents (task 77) ─────────────────────────────────────────────────
 
-   Which harness and model each purpose rides, and the four prompt
-   templates. Every value shown is the server's resolution — the one
+   Which harness and model each purpose rides, the four launch prompt
+   templates, and the orchestration prompts (task 153): one shared
+   reasoning template and one guidance template per reasoning need,
+   edited through the same draft and steps. Every value shown is the server's resolution — the one
    `config.agent_choice()` a launch reads — and every write goes through
    /api/settings/agents/*, which names agent keys and template names from
    fixed lists. Its draft is its own (S.agentsDraft), with the same four
@@ -158,8 +160,14 @@ function agentTemplate(a, d, t) {
     : action === 'set' ? 'Local override (unsaved)'
     : t.source === 'local' ? 'Local override' : 'Built-in';
   const badge = `<span class="sbadge ${t.source === 'local' || action === 'set' ? 'ok' : 'dim'}">${esc(source)}</span>`;
-  const head = `<div class="srow sline"><span class="sname">${esc(t.label)}` +
-    `<span class="shelp mono">${esc(t.name)} · ${esc(t.stance)}</span></span>` +
+  const orch = t.group === 'orchestration';
+  const head = `<div class="srow sline" data-agtplrow="${esc(t.name)}"><span class="sname">${esc(t.label)}` +
+    `<span class="shelp mono">${esc(t.name)} · ${esc(t.stance)}</span>` +
+    (orch ? `<span class="shelp">Used by ${esc(t.usedBy || '')}. ` +
+      `Scope: ${esc(t.scopes || '')}. ` +
+      `${t.kind === 'shared' ? 'Shared by every need.' : `Specific to the ${esc(t.need || '')} need.`} ` +
+      `Applies to the next reasoning launch.</span>` : '') +
+    `</span>` +
     `<span class="sval">${badge}</span><span class="sright">` +
     `<button class="sb" data-agtpl="${esc(t.name)}" aria-expanded="${open}" ` +
     `aria-label="${open ? 'close' : 'edit'} the ${esc(t.label)} prompt">${open ? 'Close' : 'Edit'}</button>` +
@@ -175,8 +183,11 @@ function agentTemplate(a, d, t) {
     `<textarea id="ag-t-${esc(t.name)}" data-agtext="${esc(t.name)}" rows="16" spellcheck="false">` +
     `${esc(text)}</textarea>` +
     `<span class="shelp">Placeholders are written {name}; a literal brace is doubled. ` +
-    `Required: ${t.fields.filter(f => f.required).map(f => `{${f.name}}`).join(' ')}. ` +
-    `It must keep the ${t.markers.map(m => `“${m}”`).join(', ')} instruction the board parses.</span>` +
+    (t.fields.some(f => f.required)
+      ? `Required: ${t.fields.filter(f => f.required).map(f => `{${f.name}}`).join(' ')}. ` : '') +
+    (t.markers.length
+      ? `It must keep the ${t.markers.map(m => `“${m}”`).join(', ')} instruction the board parses. ` : '') +
+    `At most ${Math.round((t.maxBytes || 65536) / 1024)} KiB.</span>` +
     `</div>` +
     sref('Placeholders this template may use', `<div class="skv">` +
       t.fields.map(f => `<dt>{${esc(f.name)}}</dt><dd>${esc(f.what)}` +
@@ -187,6 +198,11 @@ function agentTemplate(a, d, t) {
     `<option value="">sample values</option>` +
     allTasks().map(c => `<option value="${esc(c.file)}"${render && render.card === c.file ? ' selected' : ''}>` +
       `${esc(c.file)}</option>`).join('') + `</select>` +
+    (t.kind === 'shared'
+      ? `<label class="shelp" for="ag-need-${esc(t.name)}">for the need</label>` +
+        `<select id="ag-need-${esc(t.name)}" data-agneed="${esc(t.name)}" aria-label="the reasoning need to compose the preview with">` +
+        (a.reasonNeeds || []).map(n => `<option value="${esc(n)}"${render && render.need === n ? ' selected' : ''}>${esc(n)}</option>`).join('') +
+        `</select>` : '') +
     `<button class="sb" data-agrender="${esc(t.name)}" aria-label="render a preview of the ${esc(t.label)} prompt">Render preview</button>` +
     `<button class="sb" data-agdiff="${esc(t.name)}" aria-label="diff the ${esc(t.label)} prompt from the built-in">Diff from built-in</button>` +
     (t.source === 'local' || action === 'set'
@@ -252,7 +268,18 @@ function settingsAgents(page) {
       `<span class="shelp">${esc(a.rows.refine.why)}</span></span></div>` +
       (a.rows.reason ? reasonRow(a.rows.reason) : '')) +
     spanel('Prompt templates', 'local overrides only — the built-ins are never edited',
-      a.templates.map(t => agentTemplate(a, d, t)).join('')) +
+      a.templates.filter(t => t.group !== 'orchestration').map(t => agentTemplate(a, d, t)).join('')) +
+    (a.templates.some(t => t.group === 'orchestration')
+      ? spanel('Orchestration prompts',
+          esc((a.templateGroups || {}).orchestration ||
+            'what orchestrator reasoning and recovery runs are told'),
+          `<p class="snote" data-agorchnote="1">A prompt is guidance, not authority: editing it ` +
+          `grants no tool, check or budget, widens no agreement and changes no ownership. ` +
+          `The response contract is inserted by bench and validated in code. A saved change ` +
+          `reaches the next reasoning launch; runs already started keep the prompt they were given.</p>` +
+          a.templates.filter(t => t.group === 'orchestration').map(t => agentTemplate(a, d, t)).join(''),
+          'sorch')
+      : '') +
     spanel('Save', '', steps, 'sdraft') +
     sref('What these settings are, and are not', `<ul>` +
       a.facts.map(f => `<li>${esc(f)}</li>`).join('') + `</ul>`) +
@@ -345,9 +372,10 @@ function wireAgents(page) {
     btn.addEventListener('click', async () => {
       const name = btn.dataset.agrender;
       const card = (body.querySelector(`[data-agcard="${CSS.escape(name)}"]`) || {}).value || '';
+      const need = (body.querySelector(`[data-agneed="${CSS.escape(name)}"]`) || {}).value || '';
       try {
         const { res, data } = await agentsPost('render',
-          { template: name, text: textOf(name), card });
+          { template: name, text: textOf(name), card, ...(need ? { need } : {}) });
         if (!res.ok) { toast(data.error || 'could not render', true); return; }
         d.renders[name] = { ...data.render, card };
         renderSettings();

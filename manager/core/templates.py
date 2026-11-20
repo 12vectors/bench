@@ -1,5 +1,22 @@
-"""The four agent prompt templates: what each may contain, what each must
-keep, and which text a launch actually used (task 77).
+"""The agent prompt templates: what each may contain, what each must keep,
+and which text a launch actually used (task 77; orchestration, task 153).
+
+Two groups share one registry, one contract check, one Settings editor and
+one override directory (`manager/local/prompts/`):
+
+- **launch** — the four templates a coding-agent run on a card is filled
+  from: implementation, PR fixes, task relevance review and PR review;
+- **orchestration** — what an orchestrator's reasoning run is told
+  (`reasoning.py`). One *shared* template, `reason.md`, frames every
+  reasoning need for the Bench scope and every phase scope alike (there is
+  no per-scope template: both launch through `reasoning.request`), and one
+  short *guidance* template per need (`reason-readiness.md`,
+  `reason-questions.md`, `reason-plan.md`, `reason-recovery.md`) is the
+  question that need asks, inserted into the shared template as
+  `{question}`. The recovery need is what a stalled or failed run's
+  diagnosis attempt rides (`recovery.py`). The response schema, the
+  evidence-reference rules, the bounds and every authority check stay in
+  code: a prompt is instruction, never permission.
 
 A template is plain markdown filled by `str.format`. That made it easy to
 customise and easy to break: a stray brace, a field the launch does not
@@ -48,8 +65,17 @@ import githost
 _COMMON = ("task_path", "guidance", "guidance_read_only", "progress",
            "context", "verification", "filename", "body")
 
+# The needs the shared reasoning template frames, each composed with its
+# own guidance template. They are `reasoning.NEEDS`; a test holds the two
+# lists equal.
+REASON_NEEDS = ("readiness", "questions", "plan", "recovery")
+
+_REASON_SCOPES = ("the Bench scope's standalone cards and every phase "
+                  "scope's phase card and members: one template, shared")
+
 SPECS: dict[str, dict] = {
     "work.md": {
+        "group": "launch",
         "label": "Implementation",
         "purpose": "work",
         "intent": "work",
@@ -60,6 +86,7 @@ SPECS: dict[str, dict] = {
         "stance": "work: implement and commit on the task branch, no push",
     },
     "act-pr.md": {
+        "group": "launch",
         "label": "PR fixes",
         "purpose": "act-pr",
         "intent": "act-pr",
@@ -71,6 +98,7 @@ SPECS: dict[str, dict] = {
         "stance": "act-pr: address the PR's reviews, commit and push",
     },
     "review.md": {
+        "group": "launch",
         "label": "Task relevance review",
         "purpose": "review",
         "intent": "review",
@@ -81,6 +109,7 @@ SPECS: dict[str, dict] = {
         "stance": "review: read-only, nothing edited or committed",
     },
     "review-pr.md": {
+        "group": "launch",
         "label": "PR review",
         "purpose": "review",
         "intent": "review",
@@ -91,10 +120,75 @@ SPECS: dict[str, dict] = {
         "markers": ("PR REVIEW:",),
         "stance": "review: read-only, posts its verdict to the PR",
     },
+    "reason.md": {
+        "group": "orchestration",
+        "kind": "shared",
+        "label": "Orchestration reasoning (shared)",
+        "purpose": "reason",
+        "intent": "reason",
+        "fields": ("operation", "need", "question", "filename", "stage",
+                   "card", "inputs", "contract", "guidance_read_only",
+                   "context"),
+        "required": ("operation", "need", "question", "card", "inputs",
+                     "contract", "guidance_read_only", "context"),
+        "markers": ("<<<REASONING", "REASONING>>>", "REASONING DECLINED:"),
+        "stance": "reason: read-only, proposes; bench validates its JSON "
+                  "response and executes nothing it says",
+        "usedBy": "every orchestrator reasoning run (the readiness, "
+                  "questions, plan and recovery needs), composed with that "
+                  "need's guidance",
+        "scopes": _REASON_SCOPES,
+    },
 }
+
+# One guidance template per reasoning need: the question it asks, in the
+# operator's words. Short prose, inserted into `reason.md` as data.
+_NEED_USE = {
+    "readiness": ("readiness", "a reasoning request with the readiness need, "
+                  "from the orchestrator or a person"),
+    "questions": ("owner questions", "a reasoning request with the questions "
+                  "need; the questions it drafts land on the card for the "
+                  "product owner"),
+    "plan": ("delivery plan", "a reasoning request with the plan need"),
+    "recovery": ("recovery diagnosis", "each recovery attempt for a stalled "
+                 "or failed run (recovery.py), and a person's recovery "
+                 "request"),
+}
+GUIDANCE_MAX_BYTES = 4 * 1024
+for _need in REASON_NEEDS:
+    SPECS[f"reason-{_need}.md"] = {
+        "group": "orchestration",
+        "kind": "guidance",
+        "need": _need,
+        "label": f"Reasoning guidance: {_NEED_USE[_need][0]}",
+        "purpose": "reason",
+        "intent": "reason",
+        "fields": ("card", "stage", "filename"),
+        "required": (),
+        "markers": (),
+        "maxBytes": GUIDANCE_MAX_BYTES,
+        "stance": f"the {_need} need's question, inserted into the shared "
+                  f"reasoning prompt as its question",
+        "usedBy": _NEED_USE[_need][1],
+        "scopes": "the Bench scope and every phase scope",
+    }
 
 NAMES = tuple(SPECS)
 MAX_BYTES = 64 * 1024
+GROUPS = {
+    "launch": "the prompts a coding-agent run on a card is filled from",
+    "orchestration": "what an orchestrator's reasoning and recovery-diagnosis "
+                     "runs are told: one shared template for every need and "
+                     "scope, plus one guidance block per need",
+}
+
+
+def need_template(need: str) -> str:
+    """The guidance template a reasoning need is composed with."""
+    if need not in REASON_NEEDS:
+        raise ValueError(f"'{need}' is not a reasoning need "
+                         f"({', '.join(REASON_NEEDS)})")
+    return f"reason-{need}.md"
 
 # What each placeholder is, for the page — and the sample a preview fills
 # it with when no card is selected. Samples are visibly samples.
@@ -123,6 +217,15 @@ DESCRIBE = {
     "host_diff": "how to read the change request's diff, from the hosting "
                  "provider",
     "host_post": "how to post the verdict, from the hosting provider",
+    "operation": "the reasoning operation's id, which the response echoes",
+    "need": "the reasoning need: readiness, questions, plan or recovery",
+    "question": "the need's guidance: its own editable template, rendered "
+                "and inserted here as data",
+    "card": "the card's number",
+    "inputs": "the pinned reasoning inputs (card, phase, dependencies, "
+              "bench's facts), by name, role and path",
+    "contract": "the response shape, filled with this run's identity and "
+                "input binding: the JSON the board validates",
 }
 
 
@@ -148,6 +251,17 @@ def sample_fields() -> dict[str, str]:
         # the hosting provider in force supplies these, as a launch does
         **githost.fragments("act-pr.md", "task/00-sample-card"),
         **githost.fragments("review-pr.md", "task/00-sample-card"),
+        "operation": "rs-sample00000-1",
+        "need": "readiness",
+        "question": "(sample: the need's guidance is inserted here)",
+        "card": "0",
+        "inputs": ("- `input:reason-card` (card, from work:tasks/in-progress/"
+                   "00-sample-card.md, sha256 000000000000): `<pinned copy>` "
+                   "(sample)\n- `input:reason-facts` (facts, from bench:"
+                   "reasoning/facts/rs-sample00000-1.json, sha256 "
+                   "000000000000): `<pinned copy>` (sample)"),
+        "contract": ("(sample: the JSON response shape, filled with the run's "
+                     "own identity and input binding)"),
     }
 
 
@@ -212,9 +326,12 @@ def problems(name: str, text: str) -> list[dict]:
     if not isinstance(text, str) or not text.strip():
         add("template-empty", f"the {spec['label']} template is empty")
         return found
-    if len(text.encode("utf-8")) > MAX_BYTES:
+    limit = spec.get("maxBytes", MAX_BYTES)
+    size = len(text.encode("utf-8"))
+    if size > limit:
         add("template-too-large",
-            f"the {spec['label']} template is larger than {MAX_BYTES // 1024} KiB")
+            f"the {spec['label']} template is {size} bytes, larger than its "
+            f"{limit // 1024} KiB bound; shorten it")
         return found
     if "\x00" in text:
         add("template-binary", "the template contains a NUL byte")
@@ -280,6 +397,25 @@ def require(name: str) -> dict:
     return loaded
 
 
+def compose_reasoning(need: str, fields: dict[str, str],
+                      main: dict | None = None,
+                      guidance: dict | None = None) -> dict:
+    """The prompt a reasoning run is given: the need's guidance rendered
+    (card, stage and file name only), then inserted as data into the
+    shared template. `main` and `guidance` are what `require` returned —
+    a launch passes what it validated, so a save landing between the
+    check and the render cannot change the text — or are read now.
+    Returns the text, the rendered question and the identities a run
+    record keeps (never the text)."""
+    main = main or require("reason.md")
+    guidance = guidance or require(need_template(need))
+    question = render(guidance["name"], guidance["text"], fields).strip()
+    text = render("reason.md", main["text"], {**fields, "question": question})
+    return {"text": text, "question": question,
+            "identity": {**identity(main), "guidance": identity(guidance),
+                         "composedSha256": digest(text)}}
+
+
 def render(name: str, text: str, fields: dict[str, str]) -> str:
     """Fill a validated template. Values are inserted as data: format does
     not re-read what it substituted."""
@@ -303,6 +439,12 @@ def describe(name: str) -> dict:
     base = builtin(name)
     return {
         "name": name,
+        "group": spec["group"],
+        "kind": spec.get("kind", "launch"),
+        "need": spec.get("need"),
+        "usedBy": spec.get("usedBy"),
+        "scopes": spec.get("scopes"),
+        "maxBytes": spec.get("maxBytes", MAX_BYTES),
         "label": spec["label"],
         "purpose": spec["purpose"],
         "intent": spec["intent"],

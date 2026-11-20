@@ -7,9 +7,9 @@ response is the only thing this run leaves behind, so finish reading and
 write it in the reply that ends the turn.
 
 Operation `{operation}` asks one question about card {card} (`{filename}`,
-in `{stage}/`). The need is **{need}**:
+in `{stage}/`). The need is **{need}**, and its question is:
 
-> {question}
+{question}
 
 You have no edit tool and no shell. The board validates your response and
 records it; it executes nothing you propose. Every action you propose is a

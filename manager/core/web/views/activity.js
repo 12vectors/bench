@@ -35,10 +35,15 @@ function renderBar() {
   bar.classList.toggle('hot', hot);
 
   const merged = allRecentEvents();
-  $('#actbtn').innerHTML =
-    `<span class="chev">${S.logOpen ? '▾' : '▴'}</span>` +
+  const btn = $('#actbtn');
+  btn.innerHTML =
+    `<span class="chev" aria-hidden="true">${S.logOpen ? '▾' : '▴'}</span>` +
     `<span class="dot live"></span><span>Activity</span>` +
     `<span class="mono">${merged.length}</span>`;
+  // the toggle says what it does and which state it is in (task 154): a
+  // panel that cannot be told apart from its absence is one nobody closes
+  btn.setAttribute('aria-expanded', S.logOpen ? 'true' : 'false');
+  btn.setAttribute('aria-label', `${S.logOpen ? 'Hide' : 'Show'} activity — ${merged.length} events`);
 
   const tail = merged[merged.length - 1];
   $('#bartail').innerHTML = tail
@@ -73,9 +78,15 @@ function renderLog() {
     `<span class="label">Everything that happened</span>` +
     `<span class="mono">${merged.length} events</span>` +
     `<span class="spacer"></span>` +
+    // a close inside the panel itself (task 154): on a phone the bar's
+    // toggle is a reach, and the panel is what is in the way
+    `<button class="logclose" data-logclose aria-controls="logpanel">` +
+    `<span aria-hidden="true">▾</span> Hide activity</button>` +
+    `<span class="lfilters" role="group" aria-label="filter activity">` +
     FILTERS.filter(f => f[3] !== 'session').map(([key, label]) =>
-      `<button class="${S.logFilter === key ? 'on' : ''}" data-lf="${key}">${label}</button>`).join('') +
-    extras;
+      `<button class="${S.logFilter === key ? 'on' : ''}" data-lf="${key}"` +
+      ` aria-pressed="${S.logFilter === key}">${label}</button>`).join('') +
+    `</span>` + extras;
   document.querySelectorAll('#loghead [data-lf]').forEach(b =>
     b.addEventListener('click', () => { S.logFilter = b.dataset.lf; renderLog(); }));
   document.querySelectorAll('#loghead .xfile').forEach(li =>

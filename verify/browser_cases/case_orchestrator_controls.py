@@ -138,6 +138,7 @@ def metric(name, value):
 
 def theme(b, which):
     if b.eval("document.documentElement.dataset.theme") != which:
+        b.reveal("#themebtn")
         b.click("#themebtn")
     if not b.wait(f"document.documentElement.dataset.theme === '{which}'", 5):
         raise bv.CheckFailed(f"the page did not switch to the {which} theme")
