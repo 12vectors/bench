@@ -225,6 +225,43 @@ def race(spec: dict | None) -> None:
     agents.start_agent = start_agent
 
 
+JAM: dict = {}
+
+
+def jam(spec: dict | None) -> None:
+    """Make one board commit fail the way a concurrent git makes it fail
+    (task 155): the work-state index is held — `index.lock` exists, as
+    git itself creates it — for the whole of the commit of `file`'s move
+    into `to`, and let go when that commit returns. No sleep, no thread
+    and no timing: the commit meets a held index on every attempt, so it
+    fails exactly as the observed one did, and the card has moved on disk
+    with the move unrecorded. What happened is in `JAM`."""
+    if not spec:
+        return
+    target, stage = spec["file"], spec["to"]
+    JAM.update(file=target, to=stage, jammed=False, committed=None, lockHeld=None)
+    real = taskfiles.commit_paths
+
+    def commit_paths(filename, message, spec_, failure):
+        if filename != target or f"→ {stage} " not in message or JAM["jammed"]:
+            return real(filename, message, spec_, failure)
+        root = config.state_repo()
+        found = config.git_run(root, "rev-parse", "--git-path", "index.lock")
+        lock = Path(found.stdout.strip())
+        if not lock.is_absolute():
+            lock = root / lock
+        lock.write_text("", encoding="utf-8")     # exclusive: git's own create
+        JAM["jammed"] = True
+        try:
+            JAM["committed"] = real(filename, message, spec_, failure)
+        finally:
+            JAM["lockHeld"] = lock.is_file()
+            lock.unlink()
+        return JAM["committed"]
+
+    taskfiles.commit_paths = commit_paths
+
+
 def put_in_force(doc: dict) -> dict:
     current, _ = agreements.draft_document()
     agreements.save_draft(doc, agreements.revision(current))
@@ -294,6 +331,7 @@ def run() -> dict:
     if kind == "pass":
         crash(STEP.get("crash"))
         race(STEP.get("race"))
+        jam(STEP.get("jam"))
         if "backoff" in STEP:
             # the one clock a journey shortens: a retry's backoff (60s and
             # doubling on a board). Whether a retry waits is still decided
@@ -310,7 +348,8 @@ def run() -> dict:
         opened = open_prs() if STEP.get("open_prs", True) else []
         settle()
         return {"pass": result, "opened": opened, "stages": stages(),
-                "ops": public_ops(), **({"race": dict(RACE)} if RACE else {})}
+                "ops": public_ops(), **({"race": dict(RACE)} if RACE else {}),
+                **({"jam": dict(JAM)} if JAM else {})}
     if kind == "reason":
         found = reasoning.request(STEP["file"], STEP["need"], via=STEP.get("via", "orchestrator"))
         settle()

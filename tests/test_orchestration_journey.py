@@ -226,6 +226,33 @@ class _Journeys:
                 self.assertEqual(first["stages"][solo], "review", race)
                 self.assert_first_pass(j, first, one, solo)
 
+    def test_a_move_whose_commit_failed_does_not_stop_the_merges(self):
+        """Task 155. The commit of the member's move into in-progress/
+        meets a held work-state index — as it did when a run's ending was
+        committing another card at the same moment — and fails: the card
+        has moved on disk, its old path's deletion unrecorded. Before the
+        repair nothing ever recorded that deletion — the card's later
+        commits named only the paths it moved between — so the stale
+        to-do/ path stayed a local change, and the phase's and the
+        standalone card's merges refused over it. The journey must still
+        deliver everything, and leave the work state with nothing
+        uncommitted."""
+        j, phase, one, two, solo = self.phase_board()
+        first = j.step("pass", jam={"file": one, "to": "in-progress"})
+        jam = first.get("jam")
+        self.assertTrue(jam and jam["jammed"], f"the jam never applied: {jam}")
+        self.assertIs(jam["committed"], False,
+                      f"the jammed commit must fail, or nothing was reproduced: {jam}")
+        self.assertTrue(jam["lockHeld"], jam)
+        self.assert_first_pass(j, first, one, solo)
+
+        j.until(lambda r: r["stages"].get(phase) == "done", passes=20)
+        reading = j.step("read")
+        for card in (one, two, solo):
+            self.assertEqual(reading["stages"][card], "done", card)
+        self.assertEqual(j.state_status(), "",
+                         "every move and report the board made is committed")
+
     def test_a_phase_scope_integrates_its_members_and_delivers_the_whole(self):
         j, phase, one, two, solo = self.phase_board()
 
