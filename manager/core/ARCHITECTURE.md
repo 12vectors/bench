@@ -205,6 +205,14 @@ validates against the binding it launched with. It asks
 `orchestrator.authorize` before an orchestrator's launch and records it
 in the launch ledger; it executes nothing a response proposes.
 
+`decisiontrace` (task 184) sits beside `operations` on L2 and imports
+`config`, `records` and `redact` only: the record of every scheduling
+pass — one bounded, versioned JSON line per pass, identical idle passes
+folded losslessly, segments pruned with their boundary named. It decides
+nothing; `scheduler` builds each pass's record from what the pass itself
+read and writes it after acting, and `routes` reads it. A recording
+failure is counted, never raised into the pass.
+
 The engine's acting half is two more (task 141). `operations` (L2,
 `config` and `records` only) is the durable operation ledger: one
 versioned record per orchestrated side effect, written durably as an
