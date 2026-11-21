@@ -233,10 +233,11 @@ class DecisionTrace(unittest.TestCase):
         self.assertTrue(b.eval("document.querySelector('[data-o=\"nav-trace\"]')"
                                ".getAttribute('aria-current') === 'page'"))
         # untrusted text is drawn as text
+        # the summary carries the headline too: wait for the body's own words
         b.click(entry_sel(7) + " > summary")
-        if not b.wait(text_has("The pass stopped with an error"), 10):
-            raise bv.CheckFailed("the error pass did not open")
-        self.assertIn("<script>alert(1)</script>", b.eval(TEXT))
+        if not b.wait(f"document.querySelector('{entry_sel(7)}').innerText"
+                      f".includes('<script>alert(1)</script>')", 10):
+            raise bv.CheckFailed("the error pass did not open, or did not show its error as text")
         self.assertEqual(0, b.eval("document.querySelectorAll('#oshell script').length"))
         shot("decision-trace-list-1440-dark")
 
