@@ -2,7 +2,7 @@
 import { S } from './state.js';
 import { fetch } from '../lib/api.js';
 import { $, esc } from '../lib/dom.js';
-import { flushRender, scheduleRender } from '../lib/schedule.js';
+import { flushRender, renderPending, scheduleRender } from '../lib/schedule.js';
 import { elapsed } from '../lib/time.js';
 import { announce, toast } from '../lib/toast.js';
 
@@ -43,9 +43,19 @@ const reading = {
   // reading older than its revision, so a read sent before the write
   // cannot put back what the write took away
   confirmed: [],
+  // a test's hold on readings (task 176): who holds it, and whether an
+  // ask arrived (or a reading landed) while it was held
+  held: null, deferred: false,
 };
 
 function loadState() {
+  // Held: nothing replaces the state a test painted. The ask is noted,
+  // not lost — releasing the hold reads the board once for every ask
+  // that came in meanwhile.
+  if (reading.held) {
+    reading.deferred = true;
+    return Promise.resolve();
+  }
   // A queued follow-up answers every ask until it has started, even in
   // the moment after the in-flight read cleared itself and before the
   // follow-up's callback ran: a caller resuming from `await loadState()`
@@ -128,6 +138,12 @@ async function readState() {
   if (!res.ok || !data || !data.board) {
     return stateFailed((data && data.error) || `the board answered ${res.status}`);
   }
+  // a reading that was already out when a hold began lands into the
+  // hold: it is set aside, and the release reads the board afresh
+  if (reading.held) {
+    reading.deferred = true;
+    return;
+  }
   orderReading(data);
   S.state = data;
   const was = S.stateError;
@@ -178,6 +194,79 @@ function stateReading() {
    still laid over the page waiting for a reading that holds them */
 function boardOrder() {
   return { rev: reading.rev, known: reading.known, pending: reading.confirmed.length };
+}
+
+/* A test's hold on the board's readings (task 176). The browser suite's
+   rendering benchmark paints synthetic boards of 1000 cards through the
+   page's own render(), across awaited frames; a live reading landing in
+   between — a stream frame, the 30s safety net, the window's focus —
+   used to replace that board with the real one in mid-measurement. So a
+   benchmark holds readings for as long as it measures, and only then.
+
+   Held, an ask is noted and answered at once, and a reading that was
+   already out is set aside when it lands; nothing else changes — the
+   stream stays connected and every other frame (a session's event, a
+   toast) is handled as ever. Releasing the last hold reads the board
+   once if anything was asked meanwhile, so nothing is lost, only late.
+   No product code holds: it is the console seam's, for a test that
+   needs a board of its own, and a page reload ends it. */
+function holdReadings(why) {
+  if (reading.held) throw new Error(`readings are already held (${reading.held})`);
+  reading.held = String(why || 'held');
+  reading.deferred = false;
+  return reading.held;
+}
+
+function releaseReadings() {
+  const was = reading.held, deferred = reading.deferred;
+  reading.held = null;
+  reading.deferred = false;
+  if (!was) return Promise.resolve({ held: null, read: false });
+  return (deferred ? loadState() : Promise.resolve())
+    .then(() => ({ held: was, read: deferred }));
+}
+
+function readingsHeld() {
+  return { held: reading.held, deferred: reading.deferred };
+}
+
+/* Is the page settled? (task 176) No reading out or queued, and no
+   paint asked for and not yet run. The browser suite waits on this
+   instead of sleeping a fixed time after an action that asks the board
+   or the renderer for something: too short under load, wasted
+   otherwise. It reads; it holds and suppresses nothing. */
+function pageSettled() {
+  const out = [];
+  if (reading.inflight) out.push('a board reading is in flight');
+  if (reading.queued) out.push('a board reading is queued');
+  if (renderPending()) out.push('a paint is scheduled');
+  return { settled: out.length === 0, unsettled: out, held: reading.held };
+}
+
+/* Resolves once pageSettled() has held across one animation frame, or
+   with what was still unsettled when `ms` ran out — never rejects, so a
+   caller can name the condition rather than a timeout. */
+async function whenSettled(ms = 10000) {
+  const frame = () => new Promise((r) => (globalThis.requestAnimationFrame
+    ? globalThis.requestAnimationFrame(() => setTimeout(r, 0)) : setTimeout(r, 16)));
+  const until = Date.now() + ms;
+  let last = pageSettled();
+  while (Date.now() < until) {
+    const waits = [reading.queued, reading.inflight].filter(Boolean);
+    if (waits.length) {
+      await Promise.race([Promise.allSettled(waits),
+                          new Promise((r) => setTimeout(r, Math.max(0, until - Date.now())))]);
+    }
+    await frame();
+    last = pageSettled();
+    if (last.settled) {
+      await frame();
+      const again = pageSettled();
+      if (again.settled) return again;
+      last = again;
+    }
+  }
+  return last;
 }
 
 async function loadSession(sid) {
@@ -337,8 +426,9 @@ function connectStream(hooks = {}) {
 export {
   agentFor, agentOnTask, allTasks, boardChanged, boardOrder, afterWrite,
   connectStream,
-  failedRun, isLiveSession,
-  lastRunOn, loadSession, loadState, modelChip, scheduleRender,
+  failedRun, holdReadings, isLiveSession,
+  lastRunOn, loadSession, loadState, modelChip, pageSettled, readingsHeld,
+  releaseReadings, scheduleRender,
   sessionElapsed, sessionMeta, sessionsOf, shortModel, stateReading,
-  whyFailed
+  whenSettled, whyFailed
 };

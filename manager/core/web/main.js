@@ -4,7 +4,7 @@
    declares. It wires the page's listeners, starts the clock, the
    theme, the state read and the stream, in the order the classic
    script did. */
-import { connectStream, loadState, scheduleRender, sessionElapsed, sessionMeta } from './app/data.js';
+import { connectStream, holdReadings, loadState, pageSettled, readingsHeld, releaseReadings, scheduleRender, sessionElapsed, sessionMeta, whenSettled } from './app/data.js';
 import { S } from './app/state.js';
 import { applyTheme } from './app/theme.js';
 import { fetch, onStalePage, post } from './lib/api.js';
@@ -499,4 +499,4 @@ fetchSetup().then(() => { if (setupAlias) openSetupGuide(); });
    name a global; modules make none. The browser suite (and a person
    at the console) reaches the page through these names and no
    others. Replacing one here does not replace it inside a module. */
-Object.assign(globalThis, { ago, applyTheme, checkbox, closeSheet, deliveryOf, ensureDraft, FACE_WORDS, fetchSetup, field, findTask, fold, gateSheet, isolated, loadState, move, paintDoctorSheet, rawMove, render, renderChip, renderDoctor, renderDrawer, renderFocus, renderSettings, requiredSheet, routeOf, routeWrites, S, scheduleRender, SETTINGS_HEADERS, setView, toast });
+Object.assign(globalThis, { ago, applyTheme, checkbox, closeSheet, deliveryOf, ensureDraft, FACE_WORDS, fetchSetup, field, findTask, fold, gateSheet, holdReadings, isolated, loadState, move, pageSettled, readingsHeld, releaseReadings, paintDoctorSheet, rawMove, render, renderChip, renderDoctor, renderDrawer, renderFocus, renderSettings, requiredSheet, routeOf, routeWrites, S, scheduleRender, SETTINGS_HEADERS, setView, toast, whenSettled });
