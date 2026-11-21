@@ -266,7 +266,15 @@ class OnlyMissingRequired(BatchCase):
         self.assertEqual(states["slow"], "joined")
         self.assertEqual(self.runs("slow"), 1)
 
+    def not_hanging(self):
+        """`slow` hangs only where a test joins a run of it in flight. A
+        batch that requests it itself would otherwise wait out the whole
+        VERIFY_TIMEOUT (60s) for a check the test says nothing about —
+        measured as the suite's two slowest tests (task 163)."""
+        self.flag("slow", "pass")
+
     def test_unavailable_check_names_the_configuration_remedy(self):
+        self.not_hanging()
         plan = required.plan(CARD, "in-progress")
         item = next(i for i in plan["items"] if i["check"] == "forbidden")
         self.assertEqual(item["state"], "unavailable")
@@ -293,6 +301,7 @@ class OnlyMissingRequired(BatchCase):
             self.assertEqual(self.runs(call), 1)
 
     def test_requests_are_a_persons_work_reading(self):
+        self.not_hanging()
         batch = self.run_batch()
         record = evidence.read(self.item(batch, "missing")["evidence"])
         self.assertEqual(record["actor"], "you")

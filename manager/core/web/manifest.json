@@ -6,8 +6,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "app/state.js": {
-   "bytes": 7239,
-   "sha256": "a49df36dfa4cf840f2821c9a73e3d62440068219958b659b1a6786929b7f00a8",
+   "bytes": 7328,
+   "sha256": "64f7ec6dc15749778f614ce3a30d9d41b78ed8820fb591b1fc5c467324aff8f5",
    "type": "text/javascript; charset=utf-8"
   },
   "app/theme.js": {
@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 131138,
-   "sha256": "55d5ac5cf5474fdb17fed4314dfd1d78fc34ffae851ad3cce6f5a94a73c6bac4",
+   "bytes": 132381,
+   "sha256": "7438b06bec5248d8841e1836a6a04f99855a96874ca1d445fe8a7a6783a987c1",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -241,8 +241,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "lib/time.js": {
-   "bytes": 808,
-   "sha256": "6fbc78a577a3d1a3b457d893cde394653e7af33131b1f9e5caf3976282913d7e",
+   "bytes": 1325,
+   "sha256": "2ca806b2f1fdbc5c90fac64dbba32ece13c7275547420f1ada97394cc4d887e0",
    "type": "text/javascript; charset=utf-8"
   },
   "lib/toast.js": {
@@ -286,13 +286,13 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/drawer.js": {
-   "bytes": 20984,
-   "sha256": "4106d63f5d9ad311a66be343355e23fcea7f666f1c64ffd9b9bb121381d725ff",
+   "bytes": 21105,
+   "sha256": "eb11c596fa808a7c49053ef5f142d76ace464c8d9a2eb41b42c0a8ee91cd9f55",
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/sections.js": {
-   "bytes": 101693,
-   "sha256": "4b7d427ed1ec140f3e9e405e2ee587966a4c278d325980bd09827fef57a842a5",
+   "bytes": 113868,
+   "sha256": "785cfe4924935d63f1ab9197e881497911b54571e714bb04b83c429b2a1147d4",
    "type": "text/javascript; charset=utf-8"
   },
   "views/doctor.js": {
@@ -326,8 +326,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/orchestrator.js": {
-   "bytes": 86040,
-   "sha256": "380a5ff4f690295d9ca6ec233b1d53cd4ce882c3fcb323025050b944c89a8069",
+   "bytes": 86056,
+   "sha256": "2f4bbc5e27a452087701b691450423ce050ed749165a5062015be7947587646d",
    "type": "text/javascript; charset=utf-8"
   },
   "views/phases.js": {

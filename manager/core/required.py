@@ -309,7 +309,23 @@ def _classify(row: dict, offered: dict) -> dict:
     return item
 
 
-def plan(filename: str, stage: str | None = None) -> dict:
+def _retrying(item: dict, retry: dict | None, offered: dict) -> bool:
+    """Whether a `problem` item is one a bounded setup retry asks again
+    for (task 164): named by the retry, its newest answer at this head the
+    exact evidence the retry was decided about, that answer a setup
+    failure (preparation failed), and the check one the work reading may
+    ask for. Anything else — a newer answer, a failure, a refusal — stays
+    the result to read."""
+    if not retry or item.get("state") != "problem":
+        return False
+    pairs = list(zip(retry.get("checks") or [], retry.get("of") or []))
+    return (item.get("reason") == "prepare-failed"
+            and item.get("check") in offered
+            and (item.get("check"), item.get("evidence")) in pairs)
+
+
+def plan(filename: str, stage: str | None = None, *,
+         retry: dict | None = None) -> dict:
     """What **Run required checks** would do for this card, now.
 
     A reading: the gate, the candidate, the checkout's cleanliness and the
@@ -345,6 +361,8 @@ def plan(filename: str, stage: str | None = None) -> dict:
         if row.get("kind") != "check":
             continue
         item = _classify(row, offered)
+        if _retrying(item, retry, offered):
+            item.update(state="request", retry=True, retryOf=item.get("evidence"))
         if item["check"] in offered:
             item["definition"] = _definition(offered[item["check"]], manifest)
         out["items"].append(item)
@@ -372,7 +390,7 @@ def plan(filename: str, stage: str | None = None) -> dict:
 def start(filename: str, stage: str | None = None, *,
           head: str | None = None, actor: str = "you",
           agent: str | None = None, wait: bool = False,
-          trigger: str = "click") -> dict:
+          trigger: str = "click", retry: dict | None = None) -> dict:
     """Begin a batch, on a person's click. Returns the batch record at once
     (the requests run on a thread of their own); `wait` runs them inline,
     for a caller that must see the ending (the tests).
@@ -381,8 +399,16 @@ def start(filename: str, stage: str | None = None, *,
     plan refuses, or when `head` — the commit the confirmation was shown,
     which a request must name — is missing or is not the candidate now. A
     batch already in flight for this card is returned rather than
-    doubled."""
+    doubled.
+
+    `retry` is the delivery coordinator's bounded setup retry (task 164):
+    it may name required checks whose newest answer at this head was a
+    setup failure, each with that answer's evidence id, and only those are
+    asked again. It names; it grants nothing a person's work reading could
+    not ask for, and the HTTP route never passes it."""
     if agent:
+        raise Refused("authority", status=403)
+    if retry is not None and trigger != "orchestrator":
         raise Refused("authority", status=403)
     head = head.strip() if isinstance(head, str) else None
     with _LOCK:
@@ -391,7 +417,7 @@ def start(filename: str, stage: str | None = None, *,
             found = json.loads(json.dumps(live))
             found["joinedBatch"] = True
             return public(found)
-    reading = plan(filename, stage)
+    reading = plan(filename, stage, retry=retry)
     if not head:
         # Nothing confirmed, so nothing starts. A plan that refuses anyway
         # (no candidate, a dirty checkout) says that instead: it is the
@@ -795,6 +821,12 @@ def _run(batch: dict) -> None:
                 _halt(batch, "policy-changed")
                 break
             now = _classify(row, {item["check"]: True})
+            if item.get("retry") and now["state"] == "problem" \
+                    and now.get("reason") == "prepare-failed" \
+                    and now.get("evidence") == item.get("retryOf"):
+                # still the very setup failure this retry was decided
+                # about: nothing newer answered it meanwhile
+                now = {**now, "state": "request"}
             if now["state"] != "request":
                 with _LOCK:
                     item.update(state=now["state"], reason=now["reason"],

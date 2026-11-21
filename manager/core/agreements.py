@@ -81,7 +81,7 @@ AUTHORITIES = ("readiness", "reasoning", "implement", "review", "repair",
 POOLED = ("implementation", "review", "reasoning", "dailyStarts")
 # Ceilings: limits per card or per incident, which a child may only lower.
 CEILINGS = ("launchesPerCard", "repairRounds", "transientRetries",
-            "runAgeMinutes", "recoveryAttempts")
+            "runAgeMinutes", "recoveryAttempts", "setupRetries")
 
 # D7, accepted as the initial ceilings. Written into every new draft
 # explicitly rather than implied, so the page shows them as policy a
@@ -101,6 +101,13 @@ DEFAULTS = {
     # Each is an actual launch, counted against slots, daily starts and
     # the card's launches like any other — configurable, never unlimited.
     "recoveryAttempts": 2,
+    # Task 164: how many times delivery asks again, at one candidate
+    # commit, for required checks whose newest answer was a setup failure
+    # (preparation failed — a dependency, a fixture, a browser that would
+    # not start). 0, the default, asks nothing again: an agreement that
+    # predates this key, or leaves it out, behaves exactly as before.
+    # Never applies to an assertion failure, a refusal or a timeout.
+    "setupRetries": 0,
 }
 LIMITS = {key: (0, 1440 if key == "runAgeMinutes" else 1000) for key in DEFAULTS}
 

@@ -57,7 +57,7 @@ L15 commands drive events sync
 L16 changes brainwrite
 L17 completion
 L18 stacks
-L19 delivery stackactions results
+L19 delivery stackactions results cycletime
 L20 agentsettings
 L21 settings
 L22 setupbase appinspect
@@ -370,7 +370,7 @@ L14 events drive sync commands
 L15 changes brainwrite
 L16 completion
 L17 stacks
-L18 delivery stackactions results
+L18 delivery stackactions results cycletime
 L19 agentsettings
 L20 settings
 L21 setupbase appinspect
@@ -684,5 +684,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 181
-routes 144
+routes 145
 ```

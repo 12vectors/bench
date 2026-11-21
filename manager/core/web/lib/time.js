@@ -18,6 +18,18 @@ function elapsed(fromTs, toTs) {
   return h ? `${h}h ${m % 60}m` : `${m}m`;
 }
 
+/* A measured duration in seconds, as a person reads it. `null` is not a
+   duration — it is "not recorded", and is never drawn as zero (task 165). */
+function duration(seconds) {
+  if (seconds == null || !Number.isFinite(seconds)) return null;
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d) return `${d}d ${h % 24}h`;
+  if (h) return `${h}h ${m % 60}m`;
+  return `${m}m ${s % 60}s`;
+}
+
 export {
-  ago, elapsed, fmtClock, fmtShort
+  ago, duration, elapsed, fmtClock, fmtShort
 };

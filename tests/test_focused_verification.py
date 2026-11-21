@@ -105,6 +105,11 @@ class FocusedBackend(BackendFixture):
         self.assertNotIn("test_broken", log, "only the selection ran")
         self.assertEqual(["-m", "unittest", "-v", "tests.test_alpha"],
                          data["command"]["argv"][1:])
+        # a focused run is the plain command; the whole-suite timing
+        # collector (task 163) does not wrap it, and the record says so
+        self.assertFalse(data["timing"]["collected"])
+        self.assertIn("focused", data["timing"]["why"])
+        self.assertNotIn("timings", data["artifacts"])
         # the resolution step is kept beside the run's own log
         self.assertTrue(Path(data["artifacts"]["selectionLog"]).is_file())
         self.assertTrue(data["candidate"]["revision"])

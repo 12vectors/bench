@@ -147,7 +147,7 @@ class AbsentAgreementIsOff(Sandbox):
         self.assertEqual(draft["bench"]["capacity"], {
             "implementation": 2, "review": 1, "reasoning": 0, "dailyStarts": 20,
             "launchesPerCard": 6, "repairRounds": 2, "transientRetries": 2,
-            "runAgeMinutes": 120, "recoveryAttempts": 2})
+            "runAgeMinutes": 120, "recoveryAttempts": 2, "setupRetries": 0})
         self.assertFalse(any(draft["bench"]["authority"].values()))
         resolved = agreements.resolve(draft)
         self.assertTrue(resolved["valid"])
