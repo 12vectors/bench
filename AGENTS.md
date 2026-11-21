@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -192,6 +192,14 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   run-scoped channel it reports through, each report validated whole at
   ingestion, ordered, de-duplicated and coalesced, closed by the run's
   observed ending, and kept apart from anything bench verified
+- `checkload.py` — what the machine was doing while a check ran (task
+  179): a beat beside the runner reads `verify.RUNNING`, the host's load
+  average and memory, and the agent registry, and keeps a bounded,
+  sanitized sidecar per verification under `state/evidence/load/` —
+  each check's phase (waiting, preparing, running), the other checks
+  observed beside it and for how long. Diagnostic only: no runner file
+  imports it, so it changes no runner revision, identity or reuse (see
+  "Contention: what else was running")
 - `acceptance.py` — what a card's requirements have been *judged*
   against: each criterion's state computed from the card's own records,
   bench's evidence and the runs' claims; review rounds and the findings
@@ -3993,6 +4001,41 @@ Four things it guarantees:
   ran in (`checkout: "per-run"`, its ownership record) and what became of
   it — `removed`, or `kept` with the reason — and one run's cleanup never
   writes another run's record.
+
+### Contention: what else was running
+
+A check on a shared machine competes with everything else on it — other
+checks, agents, a person's own work. Capacity is not agent concurrency,
+and a slow run beside another is not proof that one slowed the other. So
+bench keeps three readings apart (task 179), and none of them is part of
+a verdict:
+
+- **Queue, preparation and execution.** The evidence record already
+  holds the request time, the slot wait (`queued`, kept over a second),
+  each preparation step and the check process. `verify/contention-report
+  <evidence dir>` prints them as separate columns, with *unknown* where a
+  record cannot say (an older record has no slot wait over a second to
+  report), never zero.
+- **Overlap**, computed from the records' execution windows, old records
+  included: which other runs intersected this one, and for how long.
+- **Observed load**, from `checkload.py`: while verifications run, a beat
+  every 5 seconds writes a sidecar per run under
+  `manager/local/state/evidence/load/` — its phase (waiting, preparing,
+  running), the other checks in each phase, the parallel limit, the
+  agent runs this board tracked, and the host's load average, CPU count
+  and available memory. Bounded (16 named peers, the rest counted) and
+  sanitized (numbers, evidence ids and check names — no command, path or
+  environment value). A run with no sidecar is *not observed*; one with
+  no `end` is a run whose ending a restart hid.
+
+**Diagnostic, never identity.** No runner file imports `checkload`, so
+the runner revision, every result identity and every reuse decision are
+unchanged by it: no pass reads `runner-changed` because of it, the
+sidecar is not evidence, and no gate reads it. Nothing in it schedules,
+throttles, cancels or serializes a check. `BOARD_VERIFY_PARALLEL` is
+still the only limit, read when a slot is asked for; what the
+measurements recommend about it, and how an operator applies and rolls
+that back, is `develop/perf/179-verification-contention.md`.
 
 ### On the board
 

@@ -48,7 +48,7 @@ L6  gatepolicy reviews inputs basechoice
 L7  evidence resultidentity artifacts
 L8  staleness
 L9  verify
-L10 progress
+L10 progress checkload
 L11 acceptance callers
 L12 gates
 L13 required orchestrator
@@ -362,7 +362,7 @@ L6  gatepolicy reviews inputs basechoice
 L7  evidence resultidentity artifacts
 L8  staleness
 L9  verify
-L10 progress
+L10 progress checkload
 L11 acceptance callers
 L12 gates
 L13 required doctor orchestrator
