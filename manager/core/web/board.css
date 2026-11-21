@@ -2127,7 +2127,7 @@
   /* the controls stay in view while a long list scrolls under them (the
      shell is the scroller); a window too short for them scrolls them */
   @media (min-width:761px){
-    .b-nav{position:sticky;top:0;max-height:calc(100vh - 120px);max-height:calc(100dvh - 120px);
+    .b-nav{position:sticky;top:0;max-height:calc(100vh - 160px);max-height:calc(100dvh - 160px);
       overflow-y:auto;overscroll-behavior:contain}
   }
   .b-navbody{display:flex;flex-direction:column;gap:14px}

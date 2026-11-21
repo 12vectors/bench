@@ -374,12 +374,21 @@ class BrainLibrary(unittest.TestCase):
                 self.assertEqual("sticky", b.eval("getComputedStyle(document.querySelector('#bshell .b-nav')).position"))
                 self.show(b, "Historical")
                 self.show(b, "Superseded")
+                unstuck = self.rect(b, "#bshell .b-nav")
                 b.eval("(() => { const s = document.querySelector('#bshell'); s.scrollTop = s.scrollHeight; })(); true")
                 time.sleep(0.2)
-                if b.eval("document.querySelector('#bshell').scrollTop > 0"):
+                scrolled = b.eval("document.querySelector('#bshell').scrollTop")
+                if scrolled > 0:
+                    # sticky: held at the scroller's top, or — at the very end
+                    # — pressed against the end of the library it sits in;
+                    # either way it moved less than the list did
                     shell, nav = self.rect(b, "#bshell"), self.rect(b, "#bshell .b-nav")
-                    self.assertGreaterEqual(nav["top"], shell["top"] - 1, f"{label}: the sidebar scrolled away {nav}")
-                    self.assertLessEqual(nav["top"], shell["top"] + 40, f"{label}: the sidebar is held at the top {nav}")
+                    lib = self.rect(b, "#bshell .b-lib")
+                    self.assertTrue(nav["top"] >= shell["top"] - 1 or nav["bottom"] >= lib["bottom"] - 1,
+                                    f"{label}: the sidebar scrolled away {nav} {shell} {lib}")
+                    if lib["bottom"] - lib["top"] > (nav["bottom"] - nav["top"]) + 20:
+                        self.assertGreater(nav["top"], unstuck["top"] - scrolled + 0.5,
+                                           f"{label}: the sidebar scrolled with the list {nav} {unstuck} {scrolled}")
                 b.eval("document.querySelector('#bshell').scrollTop = 0; true")
                 self.reset_view(b)
         for dark in (True, False):
