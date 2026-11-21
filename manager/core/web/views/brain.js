@@ -800,14 +800,15 @@ function composerHtml() {
       ag.target ? 'For example: “The export now writes UTF-8 with a BOM — correct this.”'
         : 'For example: “Explain how verification works” or “Capture this architecture decision”.') +
     (ag.target ? '' : '<p class="b-note"><button type="button" class="b-link" data-bact="ag-manual">Write it yourself instead</button></p>') +
-    preflightHtml(pf) + related +
     (ag.error ? `<p class="b-warn" role="alert">Not started: ${esc(ag.error)}</p>` : '') +
     '<div class="b-actions">' +
     button('ag-generate', ph === 'armed' ? 'Confirm: launch the Brain Agent' : ag.busy ? 'Starting…' : 'Generate',
       { primary: true, armed: ph === 'armed', busy: ag.busy, disabled: ag.busy || !ag.text.trim() || !!blocked }) +
     button('ag-close', 'Cancel', { disabled: ag.busy }) +
     (ph === 'armed' ? '<span class="b-note" role="status">Click again to launch one bounded, read-only run. It costs tokens.</span>' : '') +
-    '</div></section>';
+    // what the run would read arrives after the composer opens: drawn
+    // below the actions, so its arrival never moves Generate under a hand
+    '</div>' + preflightHtml(pf) + related + '</section>';
 }
 
 function progressHtml(d) {
