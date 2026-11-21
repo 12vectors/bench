@@ -211,6 +211,7 @@ def usage(reading: dict, tasks: list[dict], exclude: str | None = None) -> dict:
         running[sid][pool] += 1
         reserved += 1
         holders.append({"card": op.get("file"), "pool": pool, "scope": sid,
+                        "stage": (by_file.get(op.get("file")) or {}).get("stage"),
                         "mode": op.get("action"), "operation": op.get("key"),
                         "status": op.get("status"), "kind": "reservation"})
     starts, per_card = {}, {}

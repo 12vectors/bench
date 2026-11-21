@@ -203,6 +203,13 @@ class SharedCapacity(unittest.TestCase):
             "status": "unknown", "intentAt": "2026-11-21T12:00:00Z",
             "intentEpoch": time.time(), "day": time.strftime("%Y-%m-%d", time.gmtime()),
             "history": []}), encoding="utf-8")
+        try:
+            self._holds_a_slot()
+        finally:
+            (ops / f"{OP}.json").unlink(missing_ok=True)
+        metric("reviewRepairHoldsSlot", True)
+
+    def _holds_a_slot(self):
         b = visit("/orchestrator", text_has("1 of 2 in use on the board · 1 available"))
         text = b.eval(TEXT)
         self.assertIn("Runs holding a slot", text)
@@ -222,8 +229,6 @@ class SharedCapacity(unittest.TestCase):
                        ".find(x => /first come, first served/.test(x.textContent));"
                        " if (h) h.scrollIntoView(); return true; })()")
                 shot(f"shared-capacity-holders-{width}-{which}")
-        (ops / f"{OP}.json").unlink()
-        metric("reviewRepairHoldsSlot", True)
 
     # ── 3. global limits and the default ceiling, edited ─────────────────
 
