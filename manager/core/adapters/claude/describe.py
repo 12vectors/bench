@@ -69,8 +69,13 @@ def described() -> dict:
                                              os.environ.get("AGENT_GUIDANCE"))
     except hook_settings.ReadRefused as exc:
         reads, refused = [], str(exc)
-    settings = hook_settings.settings(mode, commands, profile,
-                                      os.environ.get("AGENT_PROGRESS"), reads)
+    try:
+        settings = hook_settings.settings(mode, commands, profile,
+                                          os.environ.get("AGENT_PROGRESS"), reads)
+    except hook_settings.ReadRefused as exc:
+        refused = refused or str(exc)
+        settings = hook_settings.settings(mode, commands, None,
+                                          os.environ.get("AGENT_PROGRESS"), reads)
     model = os.environ.get("AGENT_MODEL", "").strip()
 
     argv = ["-p", prompt, "--settings", json.dumps(settings)]

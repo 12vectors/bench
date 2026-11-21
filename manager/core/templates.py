@@ -141,6 +141,28 @@ SPECS: dict[str, dict] = {
     },
 }
 
+# What a Brain drafting run is told (task 175): one template, for a new
+# entry and an update alike. The request, the conversation, the entry
+# being updated and the source list are inserted as data; the response
+# contract, its bounds and every authority check stay in `braindraft`.
+SPECS["brain.md"] = {
+    "group": "brain",
+    "label": "Brain drafting",
+    "purpose": "brain",
+    "intent": "brain",
+    "fields": ("draft", "round", "rounds", "mode", "request", "conversation",
+               "target", "sources", "app", "exclusions", "contract",
+               "guidance_read_only", "context"),
+    "required": ("draft", "round", "request", "conversation", "target",
+                 "sources", "app", "contract"),
+    "markers": ("<<<BRAIN", "BRAIN>>>", "BRAIN DECLINED:"),
+    "stance": "brain: read-only, asks or proposes one entry; bench validates "
+              "the JSON and only a person's Apply writes it",
+    "usedBy": "every Brain drafting round — a new entry and an update to "
+              "one, the first round and every answer or revision",
+    "scopes": "the Brain view's Ask Brain Agent and New entry requests",
+}
+
 # One guidance template per reasoning need: the question it asks, in the
 # operator's words. Short prose, inserted into `reason.md` as data.
 _NEED_USE = {
@@ -180,6 +202,8 @@ GROUPS = {
     "orchestration": "what an orchestrator's reasoning and recovery-diagnosis "
                      "runs are told: one shared template for every need and "
                      "scope, plus one guidance block per need",
+    "brain": "what a Brain drafting run is told when a person asks it to "
+             "write or update one entry",
 }
 
 
@@ -226,6 +250,20 @@ DESCRIBE = {
               "bench's facts), by name, role and path",
     "contract": "the response shape, filled with this run's identity and "
                 "input binding: the JSON the board validates",
+    "draft": "the Brain drafting request's id, which the response echoes",
+    "round": "which round of the request this run is (1 is the first)",
+    "rounds": "how many rounds one request may take",
+    "mode": "whether the request creates a new entry or updates one",
+    "request": "what the person asked to have captured, as data",
+    "conversation": "the public conversation so far: questions asked and "
+                    "the person's answers and revision requests",
+    "target": "the entry being updated, its id, revision and text — or that "
+              "a new entry is being written",
+    "sources": "the pinned work-root sources (Brain entries, cards, plans, "
+               "reference documents), by reference, revision and path",
+    "app": "the application checkout the run starts in, its revision and "
+           "what it may not read there",
+    "exclusions": "what is excluded from the sources and why",
 }
 
 
@@ -262,6 +300,18 @@ def sample_fields() -> dict[str, str]:
                    "000000000000): `<pinned copy>` (sample)"),
         "contract": ("(sample: the JSON response shape, filled with the run's "
                      "own identity and input binding)"),
+        "draft": "bd-sample0000",
+        "round": "1",
+        "rounds": "4",
+        "mode": "create a new entry",
+        "request": "(sample: what the person asked to have captured)",
+        "conversation": "(sample: no questions asked yet)",
+        "target": "(sample: a new entry — nothing is being updated)",
+        "sources": ("- `work:brain/e-sample.md` (sha256 000000000000): "
+                    "`<pinned copy>` (sample)"),
+        "app": "(sample: the application checkout, its revision and what is "
+               "denied there)",
+        "exclusions": "(sample: what was left out of the sources and why)",
     }
 
 

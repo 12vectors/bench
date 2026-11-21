@@ -74,7 +74,12 @@ function settingsPolicy(page) {
       `<code>${esc('reason')}</code></span></div><p>An orchestrator reasoning ` +
       `run runs no command and asks for no check: it reads its pinned context ` +
       `and answers with one public response, which bench validates and never ` +
-      `executes.</p></div>`
+      `executes.</p></div>` +
+      `<div class="item"><div class="ihead"><span class="label">` +
+      `<code>${esc('brain')}</code></span></div><p>A Brain drafting run runs ` +
+      `no command and asks for no check: it reads the application and its ` +
+      `pinned work-root sources and proposes one entry, which only a person's ` +
+      `Apply writes.</p></div>`
     : '';
 
   const gateItems = Object.keys(page.acceptance.scopes).map(scope => {

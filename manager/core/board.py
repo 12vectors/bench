@@ -59,6 +59,7 @@ import appinspect  # noqa: F401
 import assets
 import basechoice  # noqa: F401
 import brain  # noqa: F401
+import braindraft
 import brainwrite  # noqa: F401
 import callers  # noqa: F401
 import changes
@@ -269,6 +270,10 @@ def main() -> None:
     # response with the process: closed as failed, naming the restart, and
     # never re-run by itself (task 139).
     reasoning.recover()
+    # A Brain drafting round a dead board left running lost its answer with
+    # the process: closed as failed, naming the restart, never re-run; an
+    # Apply left unfinished is settled from the Brain's own journal (task 175).
+    braindraft.recover()
     # Agent-reported progress survives the restart as history. A run this
     # board was tracking is closed `unobserved` — its ending will not be
     # seen, so its last update must stop reading as "doing now".

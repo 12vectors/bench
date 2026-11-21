@@ -220,6 +220,16 @@ def rows(values: dict | None = None) -> dict:
                 "review model on the same harness, else the default"),
         "effective": _intent_reading("reason", file_values),
     }
+    # the Brain Agent (task 175): read-only here too, with its effective
+    # model and, where its harness cannot launch it, the refusal
+    out["brain"] = {
+        "label": "Brain drafting",
+        "readOnly": True,
+        "why": ("Brain drafting rides the default harness; its model is "
+                "BOARD_AGENT_MODEL_BRAIN in manager/local/.env, else the "
+                "default. Its prompt is the Brain drafting template below"),
+        "effective": _intent_reading("brain", file_values),
+    }
     return out
 
 
