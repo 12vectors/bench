@@ -227,12 +227,28 @@ or failing tests is not an improvement. Measured numbers and hypotheses
 are kept apart in `develop/perf/163-backend-timing.md`, which records the
 baseline, the changes made and the comparison.
 
+**Dead time and sharding (task 178).** The verifier's environment used to
+set `PYTHONDONTWRITEBYTECODE=1`, so every Python process a test started
+compiled `manager/core` again; a run-owned `PYTHONPYCACHEPREFIX` removes
+that (measured: `import board` 0.45s cold, 0.12s cached). The suite has no
+remaining wait on a timeout it does not assert on (a clean-shell ranking
+of all 4909 tests, kept in `develop/perf/178-backend-dead-time.md`).
+Parallel shards are **not shipped**: the multi-minute stalls in bench's
+runs were not reproduced by the directed environment or by a controlled
+CPU load, so whether they are contention is unresolved, and sharding
+would add load to a host whose stalls may be load. That document says what
+would have to be measured before it is reconsidered. The runner stays
+serial.
+
 ## What the child is given — and what that is not
 
 Inherited `BOARD_*`, `AGENT_*`, `BENCH_*`, `GIT_*`, `GH_*`, `GITHUB_*`,
 `PLAYWRIGHT_*`, `PYTHONPATH`-family, credential-shaped names and
-`CHROME_DEVEL_SANDBOX` are removed. `HOME`, XDG, `TMPDIR` and the pip and
-npm caches point into the run's work directory; git reads a config
+`CHROME_DEVEL_SANDBOX` are removed. `HOME`, XDG, `TMPDIR`, the pip and
+npm caches and Python's bytecode cache (`PYTHONPYCACHEPREFIX`) point into
+the run's work directory, so no `__pycache__` is written into the checkout
+and a child Python compiles each module once per run rather than once per
+process (task 178); git reads a config
 written there (`bench-verify` identity, `main` as the default branch).
 The browser backend is a copy of the candidate's `manager/core` serving
 its own throwaway application and work-state repositories on a loopback
