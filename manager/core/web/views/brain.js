@@ -887,8 +887,12 @@ function proposalHtml(d) {
       (d.conflict.sources ? '<ul>' + d.conflict.sources.map(s => `<li><span class="mono">${esc(s.ref)}</span> ${esc(s.why)}</li>`).join('') + '</ul>'
         : `<p>${esc(d.conflict.why || '')}</p>`) +
       '<p>Nothing was written. Ask for a revised draft (below) so the agent reads them again, or discard this draft.</p></div>' : '';
+  const kept = d.error && d.error.kept
+    ? `<div class="b-panel b-bad" role="alert"><p><strong>The last round failed (${esc(d.error.code || 'failed')}).</strong> ` +
+      `${esc(d.error.why || '')}</p>${d.error.problems ? '<ul>' + d.error.problems.map(x =>
+        `<li>${esc(x)}</li>`).join('') + '</ul>' : ''}</div>` : '';
   const ap = phaseOf(armed.store, 'ag-apply');
-  return suggest + conflict + tabs + `<div class="b-panel b-agdraft">${pane}</div>` +
+  return kept + suggest + conflict + tabs + `<div class="b-panel b-agdraft">${pane}</div>` +
     (p.uncertainty ? `<p class="b-warn"><strong>Uncertain:</strong> ${esc(p.uncertainty)}</p>` : '') + claims + sources +
     '<div class="b-actions">' +
     button('ag-apply', ap === 'armed' ? (d.mode === 'update' ? `Confirm: apply to ${d.target}` : 'Confirm: create this entry')
@@ -901,8 +905,11 @@ function proposalHtml(d) {
 
 function continueHtml(d) {
   if (!d.canContinue) {
-    return d.status === 'proposed' || d.status === 'questions' || d.status === 'failed'
-      ? `<p class="b-note">This request has used its ${esc(String(d.maxRounds))} rounds: apply, edit and apply, or discard it.</p>` : '';
+    if (d.status === 'proposed') {
+      return `<p class="b-note">This request has used its ${esc(String(d.maxRounds))} rounds: apply, edit and apply, or discard it.</p>`;
+    }
+    return d.status === 'questions' || d.status === 'failed'
+      ? `<p class="b-note">This request has used its ${esc(String(d.maxRounds))} rounds and has no draft to apply: discard it and start a new request.</p>` : '';
   }
   const qs = d.status === 'questions' ? (d.questions || []).map(q =>
     field('ag-q-' + q.id, esc(q.question), `<textarea id="bf-ag-q-${esc(q.id)}" data-agq="${esc(q.id)}" rows="2"` +

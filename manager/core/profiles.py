@@ -2232,7 +2232,7 @@ def _bundle_revision(inputs: list[dict]) -> str:
     return digest(*parts)
 
 
-def pin(manifest: dict) -> dict:
+def pin(manifest: dict, base: Path | None = None) -> dict:
     """Copy every resolved input into a read-only bundle, and make that
     the run's declared boundary.
 
@@ -2252,7 +2252,9 @@ def pin(manifest: dict) -> dict:
         manifest["bundle"] = None
         return manifest
     revision = _bundle_revision(inputs)
-    bundle = config.CONTEXT_DIR / revision[:16]
+    # `base` lets an intent keep its bundles apart from every other run's
+    # (the Brain drafting run denies `context/` whole and pins elsewhere)
+    bundle = (base or config.CONTEXT_DIR) / revision[:16]
     bundle.mkdir(parents=True, exist_ok=True)
     for item in inputs:
         suffix = (item.get("suffix") if item.get("kind") == "card-input"

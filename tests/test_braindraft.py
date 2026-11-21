@@ -156,6 +156,18 @@ elif scenario == "decline":
 elif scenario == "crash":
     print("API Error: 500")
     sys.exit(3)
+elif scenario == "crash-secret":
+    print("API Error: key sk-ant-abcdefghijklmnopqrstuvwxyz0123 was refused")
+    sys.exit(3)
+elif scenario == "repeat-evidence":
+    # an update that keeps the entry's text as told — including the
+    # evidence section an earlier Apply appended
+    current = next((Path(p).read_text() for p in reads
+                    if "**Id:** e-exports" in Path(p).read_text()), "")
+    body = current.split("\n\n", 2)[-1]
+    body = body.split("## Classification history", 1)[0].strip()
+    doc.update(outcome="proposal", summary="Kept the entry.",
+               proposal=dict(proposal, body=body))
 else:
     doc.update(outcome="proposal", summary="Drafted from the code and the plan.",
                proposal=proposal)
@@ -164,6 +176,8 @@ else:
         proposal["suggestWhy"] = "it already covers exports"
     elif scenario == "cite-env":
         proposal["sources"].append({"ref": "app:.env", "why": "settings"})
+    elif scenario == "cite-link":
+        proposal["sources"].append({"ref": "app:src/settings.txt", "why": "x"})
     elif scenario == "cite-outside":
         proposal["sources"].append({"ref": "app:../outside.txt", "why": "x"})
     elif scenario == "cite-unpinned":
@@ -533,6 +547,81 @@ class Update(_Board):
         self.assertEqual(updated["proposal"]["action"], "update")
 
 
+    def test_a_second_update_keeps_one_sources_and_claims_section(self):
+        first = self.start("propose", target="e-exports")
+        self.apply(first)
+        self.assertEqual(brain.entry("e-exports")["body"].count("## Sources and claims"), 1)
+        again = self.start("repeat-evidence", target="e-exports")
+        self.assertEqual(again["status"], "proposed", again.get("error"))
+        self.assertIn("Drafted by the Brain Agent", again["proposal"]["body"])
+        self.assertEqual(again["proposal"]["body"].count("## Sources and claims"), 1,
+                         "the earlier section is replaced, not stacked")
+        self.apply(again)
+        self.assertEqual(brain.entry("e-exports")["body"].count("## Sources and claims"), 1)
+
+    def test_without_evidence_keeps_a_fenced_heading_and_later_sections(self):
+        body = ("Intro.\n\n```\n## Sources and claims\n```\n\n## Sources and claims\n\n"
+                "- old\n\n## Later\n\nKept.")
+        self.assertEqual(braindraft.without_evidence(body),
+                         "Intro.\n\n```\n## Sources and claims\n```\n\n## Later\n\nKept.")
+
+
+class FailedRevision(_Board):
+    """A revision that fails never strands the draft the person had."""
+
+    def test_a_failed_revision_keeps_the_earlier_draft_applicable(self):
+        for scenario, code in (("crash", "run-failed"), ("unknown-field", "invalid"),
+                               ("decline", "declined")):
+            with self.subTest(scenario):
+                draft = self.start("propose")
+                revised = self.proceed(draft, scenario, note="shorter, please")
+                self.assertEqual(revised["status"], "proposed")
+                self.assertEqual(revised["error"]["code"], code)
+                self.assertEqual(revised["error"]["kept"], 1)
+                self.assertEqual(revised["proposalRound"], 1)
+                self.assertEqual(revised["proposal"], draft["proposal"])
+                self.assertEqual(revised["rounds"][-1]["outcome"], "failed")
+                self.assertTrue(revised["canContinue"])
+                done = self.apply(revised, body=draft["proposal"]["body"] + "\n\nEdited.")
+                self.assertEqual(done["draft"]["status"], "applied")
+                self.assertNotIn("error", done["draft"])
+
+    def test_at_the_round_limit_the_kept_draft_is_still_the_way_on(self):
+        config.BRAIN_DRAFT_ROUNDS = 2
+        draft = self.start("propose")
+        revised = self.proceed(draft, "crash", note="shorter, please")
+        self.assertEqual(revised["status"], "proposed")
+        self.assertFalse(revised["canContinue"])
+        with self.assertRaises(braindraft.Refused) as caught:
+            braindraft.continue_({"id": draft["id"], "request": self.key(),
+                                  "round": revised["round"], "note": "again"})
+        self.assertIn("Apply it", str(caught.exception))
+        self.assertEqual(self.apply(revised)["draft"]["status"], "applied")
+
+    def test_with_no_earlier_draft_the_limit_says_there_is_nothing_to_apply(self):
+        config.BRAIN_DRAFT_ROUNDS = 1
+        draft = self.start("crash")
+        self.assertEqual(draft["status"], "failed")
+        with self.assertRaises(braindraft.Refused) as caught:
+            braindraft.continue_({"id": draft["id"], "request": self.key(),
+                                  "round": draft["round"], "note": "again"})
+        self.assertIn("no draft to apply", str(caught.exception))
+
+    def test_a_restart_during_a_revision_keeps_the_earlier_draft(self):
+        draft = self.start("propose")
+        self.scenario("slow")
+        braindraft.continue_({"id": draft["id"], "request": self.key(),
+                              "round": draft["round"], "note": "longer"})
+        self.assertTrue(wait_for(lambda: self.calls() == 2))
+        braindraft.reset()
+        braindraft.recover()
+        now = braindraft.get(draft["id"])
+        self.assertEqual((now["status"], now["error"]["code"]), ("proposed", "restart"))
+        for agent in list(state.AGENTS.values()):
+            agent["proc"].kill()
+        self.assertEqual(self.apply(now)["draft"]["status"], "applied")
+
+
 class Conflicts(_Board):
     """Drift of the destination or a source refuses the Apply."""
 
@@ -615,9 +704,57 @@ class Refusals(_Board):
         self.assertIn(f"Read(/{config.STATE / 'agent'}/**)", perms["deny"])
         self.assertIn(f"Read(/{config.STATE / 'brain'}/**)", perms["deny"])
         self.assertIn(f"Read(/{config.LOCAL / '.env'})", perms["deny"])
+        # every other run's bundles — those made while this round reads too —
+        # are denied as one directory; this round's own copies sit apart
+        self.assertIn(f"Read(/{config.STATE / 'context'}/**)", perms["deny"])
+        self.assertTrue(all(r.startswith(f"Read(/{braindraft.pin_dir()}/")
+                            for r in perms["allow"]), perms["allow"])
+        for pattern in ("**/*secret*", "**/*credential*", "**/*_token*"):
+            self.assertIn(f"Read({pattern})", perms["deny"])
         self.assertTrue(draft["bindings"])
         # nothing the run did wrote the Brain
         self.assertEqual(len(brain.reading()["entries"]), 1)
+
+    def test_another_rounds_bundle_is_denied_and_its_own_is_not(self):
+        self.start("propose")
+        first = sorted(os.listdir(braindraft.pin_dir()))
+        self.assertEqual(len(first), 1)
+        (self.work / "plans" / "more.md").write_text("another fact\n", encoding="utf-8")
+        self.start("propose")
+        perms = json.loads(self.seen()["argv"][self.seen()["argv"].index("--settings") + 1]
+                           )["permissions"]
+        self.assertIn(f"Read(/{braindraft.pin_dir() / first[0]}/**)", perms["deny"])
+        own = {r for r in perms["allow"]}
+        self.assertFalse(any(first[0] in r for r in own))
+
+    def test_a_deny_path_the_adapter_cannot_render_refuses_before_launch(self):
+        spaced = self.tmp / "lo cal"
+        (spaced / "state" / "agent").mkdir(parents=True)
+        for attr, value in (("LOCAL", spaced), ("STATE", spaced / "state"),
+                            ("AGENT_DIR", spaced / "state" / "agent"),
+                            ("MANIFESTS_DIR", spaced / "state" / "manifests"),
+                            ("CONTEXT_DIR", spaced / "state" / "context")):
+            setattr(config, attr, value)
+        found = braindraft.preflight()
+        self.assertFalse(found["ready"])
+        self.assertIn("cannot put in a deny rule", " ".join(found["blockers"]))
+        with self.assertRaises(braindraft.Refused) as caught:
+            braindraft.start({"request": self.key(), "text": "Explain exports"})
+        self.assertIn("deny rule", str(caught.exception))
+        self.assertEqual(braindraft.DRAFTS, {})
+        self.assertEqual(self.calls(), 0)
+
+    def test_a_link_to_a_credential_cannot_be_cited(self):
+        os.symlink(self.app / ".env", self.app / "src" / "settings.txt")
+        draft = self.start("cite-link")
+        self.assertEqual(draft["status"], "failed")
+        self.assertIn("reaches a credential-shaped path", json.dumps(draft["error"]))
+        self.assertNotIn("sha256", json.dumps(draft.get("bindings") or []))
+
+    def test_a_crashed_runs_last_words_are_scrubbed(self):
+        draft = self.start("crash-secret")
+        self.assertEqual(draft["error"]["code"], "run-failed")
+        self.assertNotIn("sk-ant-abcdefghijklmnop", json.dumps(draft))
 
 
 class Endings(_Board):
@@ -685,6 +822,112 @@ class Endings(_Board):
         self.assertEqual(now["status"], "applied")
         self.assertEqual(now["applied"]["request"], request)
         self.assertEqual(len(brain.reading()["entries"]), 2)
+
+
+class Vendored(_Board):
+    """A vendored (or source-hosted) layout: the tool, its private state and
+    the work root all sit inside the application checkout the run starts
+    in. The run can then read the work root through the app as well as its
+    pinned copies, so the deny rules carry the boundary: the tool's state
+    and .env, other bundles and the archived cards."""
+
+    def setUp(self):
+        super().setUp()
+        install = self.app / ".task-manager"
+        install.mkdir()
+        shutil.move(str(self.work), str(install / "work-moved"))
+        for name in os.listdir(install / "work-moved"):
+            shutil.move(str(install / "work-moved" / name), str(install / name))
+        (install / "work-moved").rmdir()
+        self.work = install
+        self.entry_file = install / "brain" / "e-exports.md"
+        (install / "tasks" / "archive").mkdir()
+        (install / "tasks" / "archive" / "9-old.md").write_text(
+            "# 9 — Old\n\n**Status:** Archived\n**Priority:** Low\n\nARCHIVED-FACT\n",
+            encoding="utf-8")
+        local = install / "manager" / "local"
+        (local / "state" / "agent").mkdir(parents=True)
+        (local / ".env").write_text("BOARD_AGENT_MODEL=opus\n", encoding="utf-8")
+        for attr, value in (("TASKS", install / "tasks"), ("LOCAL", local),
+                            ("STATE", local / "state"),
+                            ("AGENT_DIR", local / "state" / "agent"),
+                            ("MANIFESTS_DIR", local / "state" / "manifests"),
+                            ("CONTEXT_DIR", local / "state" / "context")):
+            setattr(config, attr, value)
+
+    def test_the_journey_holds_and_the_boundary_is_the_deny_rules(self):
+        found = braindraft.preflight(None, "exports")
+        self.assertTrue(found["ready"], found["blockers"])
+        self.assertIn("archive", found["denied"])
+        refs = [s["ref"] for s in found["work"]["list"]]
+        self.assertFalse(any("archive" in r for r in refs), refs)
+        draft = self.start("propose")
+        self.assertEqual(draft["status"], "proposed", draft.get("error"))
+        self.assertEqual(Path(self.seen()["cwd"]).resolve(), self.app)
+        perms = json.loads(self.seen()["argv"][self.seen()["argv"].index("--settings") + 1]
+                           )["permissions"]
+        archive = (self.work / "tasks" / "archive").resolve()
+        state_dir = config.STATE.resolve()
+        for path in (archive, state_dir / "context", state_dir / "agent",
+                     state_dir / "brain"):
+            self.assertIn(f"Read(/{path}/**)", perms["deny"])
+        self.assertIn(f"Read(/{config.LOCAL.resolve() / '.env'})", perms["deny"])
+        self.assertIn("Read(**/.env)", perms["deny"])
+        done = self.apply(draft)
+        self.assertEqual(done["draft"]["status"], "applied")
+        self.assertEqual(brain.entry(done["operation"]["id"])["state"], "entry")
+
+    def test_a_citation_of_bench_private_state_through_the_app_is_refused(self):
+        rel = (config.STATE / "brain").relative_to(self.app)
+        (config.STATE / "brain").mkdir(parents=True, exist_ok=True)
+        (config.STATE / "brain" / "x.json").write_text("{}", encoding="utf-8")
+        binding, why = braindraft._app_binding(
+            f"{rel.as_posix()}/x.json", {"app": {"root": str(self.app), "commit": None}})
+        self.assertIsNone(binding)
+        self.assertIn("private runtime", why)
+
+
+class CommitAndPush(_Board):
+    """The drafting Apply goes through the Brain's one writer, so a failed
+    commit is said truthfully and finished by that writer's retry."""
+
+    def setUp(self):
+        super().setUp()
+        git(self.work, "init", "-q", "-b", "main")
+        git(self.work, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+            "add", ".")
+        git(self.work, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+            "commit", "-qm", "work")
+        git(self.work, "config", "user.name", "t")
+        git(self.work, "config", "user.email", "t@example.invalid")
+        for attr, value in (("COMMIT_MOVES", True), ("EXTERNAL", True),
+                            ("STATE_GIT_REMOTE", ""), ("STATE_BASE", "main")):
+            self.addCleanup(setattr, config, attr, getattr(config, attr))
+            setattr(config, attr, value)
+
+    def test_a_failed_commit_keeps_the_entry_and_the_retry_commits_it(self):
+        draft = self.start("propose")
+        lock = self.work / ".git" / "index.lock"
+        lock.write_text("")
+        done = self.apply(draft)
+        self.assertEqual(done["draft"]["status"], "applied")
+        self.assertTrue(done["operation"]["saved"])
+        self.assertEqual(done["operation"]["commit"]["state"], "failed")
+        # a repeated Apply answers with the one write, not a second entry
+        again = self.apply(draft)
+        self.assertTrue(again["already"])
+        self.assertEqual(len(brain.reading()["entries"]), 2)
+        lock.unlink()
+        retried = brainwrite.retry({"request": done["draft"]["applied"]["request"],
+                                    "action": "commit"})
+        self.assertEqual(retried["commit"]["state"], "committed")
+        self.assertIn(f"brain/{done['operation']['file']}",
+                      git(self.work, "show", "--name-only", "HEAD"))
+
+    def test_a_committed_apply_is_not_shared_without_sync(self):
+        done = self.apply(self.start("propose"))
+        self.assertEqual(done["operation"]["commit"]["state"], "committed")
+        self.assertNotEqual(done["operation"]["push"]["state"], "shared")
 
 
 class ThePageDiff(unittest.TestCase):

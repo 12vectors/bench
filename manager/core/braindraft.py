@@ -203,13 +203,31 @@ def recover() -> int:
 
 
 def _fail(draft: dict, code: str, why: str) -> None:
-    draft.update(status="failed", error={"code": code, "why": why})
     rnd = _current(draft)
     if rnd is not None and rnd.get("ended") is None:
         rnd["ended"] = time.time()
         rnd["outcome"] = "failed"
-    _say(draft, "board", "failed", why)
+    _round_failed(draft, {"code": code, "why": why})
     _save(draft)
+
+
+def _round_failed(draft: dict, error: dict) -> None:
+    """A round ended without a usable answer. Where an earlier round left a
+    valid draft, that draft stands — still reviewable, editable and
+    applicable — and the failure is said beside it: a failed revision
+    never strands what the person already had. Otherwise the request
+    reads failed."""
+    if draft.get("proposal") and draft.get("proposalRound"):
+        kept = dict(error)
+        kept["why"] = (f"{error['why']} — the draft from round "
+                       f"{draft['proposalRound']} is unchanged and can still be "
+                       f"edited and applied")
+        kept["kept"] = draft["proposalRound"]
+        draft.update(status="proposed", error=kept)
+        _say(draft, "board", "failed", kept["why"])
+    else:
+        draft.update(status="failed", error=error)
+        _say(draft, "board", "failed", error["why"])
 
 
 # ── small helpers ──────────────────────────────────────────────────────
@@ -404,37 +422,81 @@ def work_sources() -> dict:
             "bytes": total}
 
 
-def read_deny() -> list[str]:
-    """Absolute paths a drafting run may not read inside its checkout:
-    the tool's private runtime — its settings, secrets, every run's logs,
-    manifests and records, other runs' pinned bundles — wherever the
-    layout puts it. A run's own pinned copies are the one part of
-    `state/context/` it is granted, by exact reads, so the bundles are
-    denied one by one rather than as a directory."""
+# Where a drafting round's own pinned copies go: a directory of their own
+# under the state directory, so every other part of it — `context/`, where
+# every other run pins, included — is denied whole, and a bundle another
+# run makes while this round reads is denied with it.
+PIN_DIR = "brain-context"
+# Every directory bench keeps under its state directory, denied whether or
+# not it exists yet, beside whatever else is there at launch.
+STATE_CHILDREN = ("agent", "artifacts", "bootstrap", "brain", "commands",
+                  "completions", "context", "doctor", "drives", "evidence", "gates",
+                  "hooks", "inputs", "manifests", "movements", "orchestration",
+                  "plans", "preview", "reasoning", "refine", "results", "reviews",
+                  "sessions", "settings", "setup", "verify")
+# The characters the adapter can put in a deny rule. A path outside them
+# is a launch refused, never a deny rule dropped.
+DENY_PATH = re.compile(r"/[A-Za-z0-9._@+=,:~/-]+")
+
+
+def pin_dir() -> Path:
+    return config.STATE / PIN_DIR
+
+
+def read_deny(own_bundle: str | None = None) -> list[str]:
+    """Absolute paths a drafting run may not read: the tool's private
+    runtime — its settings, secrets, every run's logs, manifests, records
+    and pinned bundles — wherever the layout puts it. Every state
+    directory but `brain-context/` is denied whole, so whatever appears in
+    one while the round runs is denied too; inside `brain-context/`, every
+    bundle but this round's own (each holds only work-root text a drafting
+    run is approved to read). Where the work root sits inside the
+    application checkout (a vendored or source-hosted install), its
+    archived cards are denied, since they are not part of the selection.
+    Nothing is filtered: `deny_problems` names a path the adapter could
+    not put in a rule, and the launch is refused for it."""
     local = config.LOCAL.resolve()
     out = [str(local / ".env"), str(local / "preview.secrets")]
     state_dir = config.STATE.resolve()
     try:
-        children = sorted(os.listdir(state_dir))
+        children = set(os.listdir(state_dir))
     except OSError:
-        children = []
-    for name in sorted(set(children) | {"agent", "sessions", "brain", "manifests",
-                                         "evidence", "refine", "reasoning", "verify"}):
-        if name == "context":
-            continue
-        out.append(str(state_dir / name))
-    return [p for p in out if re.fullmatch(r"/[A-Za-z0-9._@+=,:~/-]+", p)]
-
-
-def _bundle_denies(own: str | None) -> list[str]:
-    """Every pinned bundle but this run's own."""
-    base = config.CONTEXT_DIR.resolve()
+        children = set()
+    for name in sorted(children | set(STATE_CHILDREN)):
+        if name != PIN_DIR:
+            out.append(str(state_dir / name))
+    pins = state_dir / PIN_DIR
     try:
-        names = sorted(os.listdir(base))
+        bundles = sorted(os.listdir(pins))
     except OSError:
-        return []
-    return [str(base / n) for n in names if n != own
-            and re.fullmatch(r"[A-Za-z0-9._-]+", n)]
+        bundles = []
+    out += [str(pins / n) for n in bundles if n != own_bundle]
+    if _work_inside_app():
+        out.append(str(config.work_root().resolve() / "tasks" / "archive"))
+    return out
+
+
+def _work_inside_app() -> bool:
+    """A vendored or source-hosted layout: the work root is inside the
+    checkout the run starts in, so the run can read it through the app as
+    well as through its pinned copies."""
+    app = gitrepo.app()
+    return app is not None and _within(Path(app), config.work_root())
+
+
+def deny_problems(paths: list[str] | None = None) -> list[str]:
+    """Deny paths the adapter could not render as a rule — a space in the
+    install's path, say. Each refuses the launch: a deny that went missing
+    would widen what the run may read."""
+    return [p for p in (read_deny() if paths is None else paths)
+            if not DENY_PATH.fullmatch(p) or "//" in p]
+
+
+def _deny_refusal(unsafe: list[str]) -> str:
+    return (f"the read rules a drafting run needs name {unsafe[0][:120]!r}, which has "
+            f"a character the adapter cannot put in a deny rule (a space, say); the "
+            f"run is refused rather than launched without that rule. Move the "
+            f"install to a plain path")
 
 
 def app_identity() -> dict:
@@ -487,6 +549,9 @@ def preflight(target: str | None = None, text: str | None = None) -> dict:
     blockers = list(found["blockers"])
     if app.get("problem"):
         blockers.append(app["problem"])
+    unsafe = deny_problems()
+    if unsafe:
+        blockers.append(_deny_refusal(unsafe))
     try:
         templates.require(TEMPLATE)
     except ValueError as exc:
@@ -509,11 +574,18 @@ def preflight(target: str | None = None, text: str | None = None) -> dict:
         "app": {**app, "how": ("the run starts in this checkout and reads it with "
                                "the vendor's read-only tools; credential-shaped paths "
                                "and bench's private state are denied by read rules")},
-        "denied": {"patterns": ["**/.env", "**/.env.*", "*.pem", "*.key", "id_rsa*",
-                                ".git/", ".netrc", ".npmrc", ".pypirc"],
+        "denied": {"patterns": ["**/.env", "**/.env.*", "*.pem", "*.key", "*.p12",
+                                "*.pfx", "id_rsa*", "id_ed25519*", ".git/", ".netrc",
+                                ".npmrc", ".pypirc", "*secret*", "*credential*",
+                                "*password*", "token, tokens, *_token*, *-token*"],
                    "private": "the tool's manager/local/.env, preview secrets and "
                               "every directory of manager/local/state/ but this "
-                              "run's own pinned copies"},
+                              "run's own pinned copies",
+                   **({"archive": "the work root sits inside the application "
+                                  "checkout, so the run can read it there too; its "
+                                  "archived cards are denied, and only the pinned "
+                                  "selection below can be cited"}
+                      if _work_inside_app() else {})},
         "budget": {"rounds": config.BRAIN_DRAFT_ROUNDS,
                    "secondsPerRound": int(config.BRAIN_DRAFT_TIMEOUT),
                    "questions": MAX_QUESTIONS, "sources": MAX_SOURCES,
@@ -606,8 +678,11 @@ def continue_(payload: dict) -> dict:
         _expect_round(draft, payload)
         if len(draft["rounds"]) >= config.BRAIN_DRAFT_ROUNDS:
             raise Refused(f"this request has used its {config.BRAIN_DRAFT_ROUNDS} "
-                          f"rounds — edit the draft and Apply it, Discard it, or start "
-                          f"a new request", 409, limit=True)
+                          f"rounds — " + ("edit the draft and Apply it, Discard it, "
+                                          "or start a new request"
+                                          if draft.get("proposal") else
+                                          "there is no draft to apply: Discard it and "
+                                          "start a new request"), 409, limit=True)
         answers = payload.get("answers") or {}
         note = _text(payload.get("note"), "your note", MAX_ANSWER, required=False)
         said = []
@@ -744,7 +819,10 @@ def _launch(draft: dict, *, continue_request: str) -> None:
             "contextId": profiles.context_id(f"brain-src-{n}", s["sha256"]),
             "pinned": None, "path": s["path"], "why": None, "remedy": None,
             "access": "read-only", "kind": "brain-input"})
-    profiles.pin(found)
+    unsafe = deny_problems()
+    if unsafe:
+        raise Refused(_deny_refusal(unsafe), 409)
+    profiles.pin(found, base=pin_dir())
     pinned: dict[str, str] = {}
     expected = {s["ref"]: s["sha256"] for s in sel["sources"]}
     for item in context:
@@ -757,7 +835,10 @@ def _launch(draft: dict, *, continue_request: str) -> None:
                           f"try again", 409)
         pinned[item["source"]] = item["pinned"]
     bundle = Path(found["bundle"]["path"]).name if found.get("bundle") else None
-    found["readDeny"] = read_deny() + _bundle_denies(bundle)
+    found["readDeny"] = read_deny(bundle)
+    unsafe = deny_problems(found["readDeny"])
+    if unsafe:
+        raise Refused(_deny_refusal(unsafe), 409)
 
     agent_id = f"brain-{draft['id']}-{round_no}-{secrets.token_hex(2)}"
     fields = {
@@ -903,6 +984,14 @@ def _app_binding(rel: str, rnd: dict) -> tuple[dict | None, str | None]:
         return None, "it is bench's private runtime state, which is never read"
     if not _within(root, path):
         return None, "it resolves outside the application checkout"
+    # a link inside the checkout is judged by what it reaches, so a
+    # harmless name pointing at a credential is never hashed
+    try:
+        reached = real.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return None, "it resolves outside the application checkout"
+    if SECRET_NAME.search(reached):
+        return None, "it reaches a credential-shaped path, which is never read"
     try:
         st = os.stat(path)
     except OSError:
@@ -1126,8 +1215,8 @@ def validate(draft: dict, rnd: dict, answer: dict) -> dict:
         "suggestTarget": suggest, "suggestWhy": suggest_why,
         "title": fields["title"], "kind": fields["kind"],
         "summary": fields["summary"],
-        "body": (fields["body"] + "\n\n" + evidence_section(draft, rnd, bindings, claims))
-        .strip("\n"),
+        "body": (without_evidence(fields["body"]) + "\n\n"
+                 + evidence_section(draft, rnd, bindings, claims)).strip("\n"),
         "agentBody": fields["body"],
         "classification": klass, "classificationWhy": klass_why,
         "sources": entry_sources, "related": related,
@@ -1166,12 +1255,39 @@ def header_sources(bindings: list[dict], self_id: str | None) -> tuple[list[str]
     return sources[:brain.MAX_LIST_ITEMS], related[:brain.MAX_LIST_ITEMS]
 
 
+EVIDENCE_HEADING = "## Sources and claims"
+_FENCE = re.compile(r"^\s*(```|~~~)")
+
+
+def without_evidence(body: str) -> str:
+    """The body with any `## Sources and claims` section removed — the one
+    an earlier Apply left in the entry, which an update is told to keep —
+    so a second update replaces it rather than stacking a second copy.
+    The section runs to the next `#`/`##` heading; a heading inside a code
+    fence is text, not a section."""
+    out: list[str] = []
+    skipping = False
+    fenced = False
+    for line in body.split("\n"):
+        if _FENCE.match(line):
+            fenced = not fenced
+        elif not fenced:
+            if line.strip() == EVIDENCE_HEADING:
+                skipping = True
+                continue
+            if skipping and re.match(r"^#{1,2}\s", line):
+                skipping = False
+        if not skipping:
+            out.append(line)
+    return "\n".join(out).rstrip("\n")
+
+
 def evidence_section(draft: dict, rnd: dict, bindings: list[dict],
                      claims: list[dict]) -> str:
     """What bench appends to a proposed body, from what it bound itself:
     the claims with how far each goes, and every source with the revision
     read. Editable like the rest of the draft before Apply."""
-    lines = ["## Sources and claims", "",
+    lines = [EVIDENCE_HEADING, "",
              f"Drafted by the Brain Agent for request `{draft['id']}` (round "
              f"{rnd['n']}) and reviewed by a person before it was applied. Each "
              f"source below is the revision bench read; a later change to one of "
@@ -1208,22 +1324,21 @@ def _reap(draft_id: str, agent_id: str, proc, log_file) -> None:
         elif draft.get("limitHit") == agent_id:
             draft.pop("limitHit", None)
             rnd["outcome"] = "failed"
-            draft["status"] = "failed"
-            draft["error"] = {"code": "limit", "why": (
+            _round_failed(draft, {"code": "limit", "why": (
                 f"the round reached its {int(config.BRAIN_DRAFT_TIMEOUT)}-second limit "
                 f"and was stopped; nothing was written. Continue to try again, or "
-                f"narrow the request")}
-            _say(draft, "board", "failed", draft["error"]["why"])
+                f"narrow the request")})
         elif stopped:
             draft["status"] = "cancelled"
             rnd["outcome"] = "cancelled"
             _say(draft, "board", "cancelled", "the run was stopped; nothing was written")
         elif rc != 0:
             rnd["outcome"] = "failed"
-            draft["status"] = "failed"
-            draft["error"] = {"code": "run-failed", "why": (
-                f"the run exited rc={rc}: {agents.died_on(record)}"[:600])}
-            _say(draft, "board", "failed", draft["error"]["why"])
+            # the log's last words are the run's: scrubbed before they reach
+            # the page or the conversation
+            died = redact.scrub(str(agents.died_on(record)), "«redacted»")
+            _round_failed(draft, {"code": "run-failed", "why": (
+                f"the run exited rc={rc}: {died}"[:600])})
         else:
             try:
                 log = Path(record["log"]).read_text(encoding="utf-8", errors="replace")
@@ -1231,7 +1346,9 @@ def _reap(draft_id: str, agent_id: str, proc, log_file) -> None:
                 log = ""
             settled = validate(draft, rnd, parse(log))
             rnd["outcome"] = settled["status"]
-            draft["status"] = settled["status"]
+            if settled["status"] != "failed":
+                draft["status"] = settled["status"]
+                draft.pop("error", None)
             if settled.get("summary"):
                 rnd["summary"] = settled["summary"]
             if settled["status"] == "questions":
@@ -1249,16 +1366,16 @@ def _reap(draft_id: str, agent_id: str, proc, log_file) -> None:
                 _say(draft, "agent", "proposal",
                      settled.get("summary") or "proposed a draft for your review")
             else:
-                draft["error"] = settled["error"]
                 if settled.get("raw"):
                     rnd["raw"] = settled["raw"]
-                _say(draft, "board", "failed", settled["error"]["why"])
+                _round_failed(draft, settled["error"])
         _save(draft)
+        failed_round = rnd.get("outcome") == "failed"
         summary = {"questions": "asked follow-up questions — answer and Continue",
                    "proposed": "proposed a draft — review it, edit it, then apply or "
                                "discard it",
                    "cancelled": "was cancelled"}.get(
-            draft["status"], f"failed — {(draft.get('error') or {}).get('why', '')}")
+            "failed" if failed_round else draft["status"], f"failed — {(draft.get('error') or {}).get('why', '')}")
     state.record_board_event({"kind": "agent", "actor": "agent",
                               "file": f"brain:{draft_id}",
                               "summary": f"Brain draft {draft_id}: {rnd.get('name') or 'the agent'} "
@@ -1393,6 +1510,7 @@ def _reconcile_apply(draft: dict) -> None:
 
 
 def _applied(draft: dict, op: dict) -> None:
+    draft.pop("error", None)
     draft.update(status="applied", applied={
         "id": op.get("id"), "file": op.get("file"), "revision": op.get("revision"),
         "what": op.get("what"), "request": draft.get("applyRequest"),
@@ -1521,11 +1639,14 @@ def _progress(draft: dict) -> dict:
         doing = "Waiting for you to continue"
         remaining = ["Continue", "A draft", "Apply"]
     elif status == "proposed":
-        done.append("Draft proposed")
+        done.append(f"Draft proposed (round {draft.get('proposalRound')})")
         doing = "Waiting for your review"
         remaining = ["Edit if needed", "Apply or Discard"]
         if draft.get("conflict"):
             blocked = "a conflict: revise or discard"
+        elif draft.get("error"):
+            blocked = (f"the last round failed; the round "
+                       f"{draft.get('proposalRound')} draft still stands")
     elif status == "applying":
         doing = "Writing the entry"
     elif status == "applied":

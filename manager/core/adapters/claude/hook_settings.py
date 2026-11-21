@@ -137,7 +137,15 @@ NO_RULE_MODES = {"refine", "reason", "brain"}
 # rules the vendor applies to its file-reading tools, not an OS sandbox.
 BRAIN_READ_DENY = ["**/.env", "**/.env.*", "**/*.pem", "**/*.key",
                    "**/id_rsa*", "**/id_ed25519*", "**/*.p12", "**/*.pfx",
-                   "**/.git/**", "**/.netrc", "**/.npmrc", "**/.pypirc"]
+                   "**/.git/**", "**/.netrc", "**/.npmrc", "**/.pypirc",
+                   # the shapes bench refuses to cite (braindraft.SECRET_NAME),
+                   # denied as reads too, so what cannot be cited cannot be
+                   # read either. A glob cannot say "token as a word", so
+                   # these err towards denying: `secrets.yaml`,
+                   # `credentials.json`, `api_token.txt`, `passwords.csv`
+                   "**/*secret*", "**/*credential*", "**/*password*",
+                   "**/token", "**/tokens", "**/token.*", "**/tokens.*",
+                   "**/*_token*", "**/*-token*", "**/*.token*"]
 # History must never rewrite under a public PR: deny the canonical force
 # and rebase spellings even though nothing allows them — `git push` alone
 # would otherwise cover `git push --force` by prefix. (Prefix rules can't
