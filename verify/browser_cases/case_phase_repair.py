@@ -17,8 +17,8 @@ written at each phase's integrated head, as `gates.record_verdict` keeps it.
 - **Running and handoff** — the second click fires `/api/agent/act-pr`
   for the phase card. The fixture's vendor CLI is a stub that refuses, so
   the run starts on the phase branch and ends failed: the card stays in
-  Review, its delivery status hands off to *Run failed* with **↻ act on
-  PR** to try again, and no task branch or new card is created.
+  Review, its delivery status hands off to *Run failed* with **Read what
+  happened**, and no task branch or new card is created.
 
 Nothing reaches a remote and everything is put back. Run through
 verify/browser.
