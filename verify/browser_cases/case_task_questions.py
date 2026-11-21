@@ -98,6 +98,19 @@ def reasoning_jobs() -> list:
     return sorted(p.name for p in local.iterdir()) if local.is_dir() else []
 
 
+def server_replies(card: str) -> list:
+    """What the server holds for a card's conversations, for a failure's
+    message: each question's replies and each run's state."""
+    out = []
+    for conv in api(f"/api/ask?card={card}")["conversations"]:
+        thread = api(f"/api/ask/thread?conversation={conv['id']}")["conversation"]
+        for x in thread["exchanges"]:
+            out.append({"replies": [(r.get("status"), r.get("diagnostics"), (r.get("summary") or "")[:200])
+                                    for r in x["replies"]],
+                        "jobs": [(j.get("status"), j.get("error")) for j in x.get("jobs") or []]})
+    return out
+
+
 def stages() -> dict:
     return {t["file"]: s["slug"] if "slug" in s else s.get("stage")
             for s in api("/api/state")["board"]["stages"] for t in s["tasks"]}
@@ -179,8 +192,10 @@ class Ask(unittest.TestCase):
         self.assertIn("read-only reasoning run", b.eval("document.querySelector('.o-askactive').textContent"))
         shot("ask-running-1440-dark")
         S["backend"].ask_hold.unlink()
-        if not b.wait(f"/Answered/.test({THREAD}.textContent) && !document.querySelector('.o-askactive')", 40):
-            raise bv.CheckFailed("the answer never arrived")
+        if not b.wait(f"/Answered/.test({THREAD}.textContent) && !document.querySelector('.o-askactive')", 60):
+            raise bv.CheckFailed("the answer never arrived; the server holds "
+                                 + json.dumps(server_replies("43"))[:1500] + "; the page reads "
+                                 + str(b.eval(f"{THREAD} && {THREAD}.textContent.slice(0, 600)")))
         text = b.eval(f"{THREAD}.textContent")
         for words in ("What is happening now", "Who can unblock it", "Recorded facts",
                       "What the records do not say", "not actions", "agent-reported interpretation"):

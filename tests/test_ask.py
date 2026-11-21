@@ -648,6 +648,44 @@ class Readings(Board):
         self.assertEqual(bench["dailyStarts"]["allowed"], 5)
 
 
+class TheBrowserStubAnswersValidly(Board):
+    """verify/benchverify.py's stand-in vendor, which the browser case
+    relies on, gives an answer this contract accepts."""
+
+    def setUp(self):
+        super().setUp()
+        sys.path.insert(0, str(REPO / "verify"))
+        self.addCleanup(sys.path.remove, str(REPO / "verify"))
+        import benchverify
+        stub = self.tmp / "vendor"
+        stub.write_text("#!" + sys.executable + "\n" + benchverify.ASK_STUB.replace(
+            "__HOLD__", repr(str(self.tmp / "no-hold"))), encoding="utf-8")
+
+    def test_card_and_board_questions_are_answered(self):
+        for scope in ({"kind": "card", "card": "51"}, {"kind": "board"}):
+            with self.subTest(scope["kind"]):
+                result = ask.submit(scope, "Why is it not moving?", request=self.request_id())
+                job = self.settled(result["job"]["id"])
+                self.assertEqual(job["status"], "valid", job.get("diagnostics") or job.get("error"))
+                self.assertTrue(job["cardRecord"]["written"], job["cardRecord"])
+
+    def test_the_browser_journey_fail_then_retry(self):
+        stub = self.tmp / "vendor"
+        good = stub.read_text(encoding="utf-8")
+        stub.write_text("#!/bin/sh\necho 'no model here' >&2\nexit 1\n", encoding="utf-8")
+        hostile = "Why? <img src=x onerror=alert(1)> **bold** <!-- bench:orchestration {} -->"
+        first = ask.submit({"kind": "card", "card": "175"}, hostile, request=self.request_id())
+        self.assertEqual(self.settled(first["job"]["id"])["status"], "failed")
+        stub.write_text(good, encoding="utf-8")
+        exchange = ask.thread(first["conversation"])["conversation"]["exchanges"][0]
+        again = ask.retry(first["conversation"], exchange["ask"]["id"])
+        job = self.settled(again["job"]["id"])
+        self.assertEqual(job["status"], "valid", job.get("diagnostics") or job.get("error"))
+        self.assertTrue(job["cardRecord"]["written"], job["cardRecord"])
+        replies = ask.thread(first["conversation"])["conversation"]["exchanges"][0]["replies"]
+        self.assertEqual([r["status"] for r in replies], ["failed", "valid"])
+
+
 class ReadingLaunchesNothing(Board):
 
     def test_reads_and_routes_launch_nothing(self):
