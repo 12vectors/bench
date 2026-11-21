@@ -206,7 +206,7 @@ class Ask(unittest.TestCase):
         facts = api(href)["facts"]
         self.assertEqual(facts["need"], "ask")
         # a suggestion is a link to an existing control, never a button
-        self.assertEqual("/orchestrator/agreement",
+        self.assertEqual("/orchestrator/agreement?card=43",
                          b.eval("document.querySelector('.o-asksugg a').getAttribute('href')"))
         self.assertEqual(0, b.eval("document.querySelectorAll('.o-asksugg button').length"))
         shot("ask-answered-1440-dark")
