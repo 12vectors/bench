@@ -15,6 +15,8 @@ screenshots of each state to look at:
   changes → **Discard** (armed) — the file byte for byte what it was;
 - a proposal bench refuses (it cites the checkout's `.env`) — **Failed**,
   nothing written; a running round **Cancelled**;
+- a revision that fails after a draft — the failure shown above the kept
+  draft, the person's edit kept, and **Apply** still writing it;
 - the draft at 390px and in both themes, with nothing overflowing;
 - and nothing else moved: the application and the cards are unchanged.
 """
@@ -285,6 +287,41 @@ class BrainAgent(unittest.TestCase):
         shot("brain-agent-cancelled-night")
         self.assertEqual(len(list((self.backend.work / "brain").glob("*.md"))), 1,
                          "a refused or cancelled request wrote nothing")
+
+    def test_3b_a_failed_revision_keeps_the_draft_and_the_edits(self):
+        # a revision that fails after a valid draft keeps that draft, the
+        # person's edits on the page and Apply, and shows the failure above
+        # them (the repair of the first review's finding 1)
+        b = self.open("/brain")
+        b.click('#bshell [data-bact="ag-new"]')
+        b.wait("!!document.querySelector('#bshell [data-ag=\"text\"]')", 5)
+        self.type(b, "data-ag", "text", "Explain how contributors are onboarded")
+        self.answer_with(block(reply("proposal")))
+        self.armed_click(b, "ag-generate")
+        self.wait_text(b, ["Draft ready for review", "Onboarding new contributors"])
+        b.click('#bshell [data-bact="ag-view"][data-barg="edit"]')
+        if not b.wait("!!document.querySelector('#bshell [data-age=\"title\"]')", 5):
+            raise bv.CheckFailed("Edit drew no fields")
+        self.type(b, "data-age", "title", "Onboarding, as edited by a person")
+        self.type(b, "data-ag", "note", "Say who answers questions in review.")
+        # the revised round answers with a proposal bench refuses
+        self.answer_with(block(reply("proposal", extra_source="app:.env")))
+        self.armed_click(b, "ag-continue")
+        self.wait_text(b, ["The last round failed", "credential", "Draft ready for review"])
+        drafts = self.drafts()
+        self.assertEqual(drafts[0]["status"], "proposed", "the earlier draft was kept")
+        self.assertEqual(drafts[0]["round"], 2)
+        self.assertEqual(b.eval("document.querySelector('#bshell [data-age=\"title\"]')?.value || null"),
+                         "Onboarding, as edited by a person", "the person's edit survived the failed round")
+        self.assertFalse(b.eval("document.querySelector('#bshell [data-bact=\"ag-apply\"]').disabled"),
+                         "Apply is still offered for the kept draft")
+        shot("brain-agent-failed-revision-kept-night")
+        self.armed_click(b, "ag-apply")
+        self.wait_text(b, ["Applied as"])
+        code, raw = self.backend.get("/api/brain")
+        titles = [e["title"] for e in json.loads(raw)["brain"]["entries"]]
+        self.assertIn("Onboarding, as edited by a person", titles)
+        self.assertEqual(len(titles), 2, "the kept draft applied as one entry")
 
     def test_4_narrow_and_both_themes(self):
         for dark in (True, False):

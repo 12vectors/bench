@@ -1997,7 +1997,9 @@ the run would use (`GET /api/brain/draft/preflight`, a read):
   `**/.env.*`, keys, `.git/`, `.netrc`, `.npmrc`, `.pypirc`, and the
   shapes bench refuses to cite — `*secret*`, `*credential*`,
   `*password*`, `token`/`tokens` and `*_token*`-style names; a glob errs
-  towards denying, so `secretscan.py` is unreadable too), the tool's
+  towards denying, so `secretscan.py` is unreadable too; each is denied
+  in its plain spelling and again case-blind, `**/.[eE][nN][vV]`, since
+  bench refuses to cite `Secrets.yaml` or `.ENV` case-blind), the tool's
   `manager/local/.env` and preview secrets, and every directory of
   `manager/local/state/` but `state/brain-context/`, where a drafting
   round's own copies are pinned. `state/context/`, where every other run

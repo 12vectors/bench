@@ -382,6 +382,32 @@ class TheAdapter(unittest.TestCase):
         with self.assertRaises(hook_settings.ReadRefused):
             hook_settings.settings("brain", [], {"readDeny": ["/srv/*"]})
 
+    def test_the_credential_denies_are_case_blind_too(self):
+        # bench refuses to cite `Secrets.yaml` or `.ENV` case-blind, so the
+        # read denies carry a case-blind spelling of every shape as well as
+        # the plain one (the second review's smaller finding)
+        sys.path.insert(0, str(CORE / "adapters" / "claude"))
+        import hook_settings
+        import fnmatch
+        deny = hook_settings.settings("brain", [], {})["permissions"]["deny"]
+        for plain, folded in (("**/.env", "**/.[eE][nN][vV]"),
+                              ("**/*secret*", "**/*[sS][eE][cC][rR][eE][tT]*"),
+                              ("**/*.pem", "**/*.[pP][eE][mM]")):
+            self.assertIn(f"Read({plain})", deny)
+            self.assertIn(f"Read({folded})", deny)
+        self.assertLess(deny.index("Read(**/.env)"), deny.index("Read(**/.[eE][nN][vV])"),
+                        "the plain spelling comes first")
+        for pattern in hook_settings.BRAIN_READ_DENY:
+            self.assertNotIn("[", pattern)
+        # every name bench refuses to cite, in any case, meets a case-blind
+        # deny under the gitignore-style reading of a bracket class
+        folded = [p[3:] for p in hook_settings.BRAIN_READ_DENY_ANY_CASE]
+        for name in ("Secrets.yaml", ".ENV", "Credentials.JSON", "API_TOKEN.txt",
+                     "Passwords.csv", "Server.PEM", ".Env.local"):
+            self.assertTrue(braindraft.SECRET_NAME.search(name), name)
+            self.assertTrue(any(fnmatch.fnmatchcase(name, p) for p in folded),
+                            f"{name} meets no case-blind deny")
+
 
 class Reading(_Board):
     """Reading launches nothing and writes nothing."""

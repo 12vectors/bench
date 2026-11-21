@@ -146,6 +146,22 @@ BRAIN_READ_DENY = ["**/.env", "**/.env.*", "**/*.pem", "**/*.key",
                    "**/*secret*", "**/*credential*", "**/*password*",
                    "**/token", "**/tokens", "**/token.*", "**/tokens.*",
                    "**/*_token*", "**/*-token*", "**/*.token*"]
+
+
+def _any_case(pattern: str) -> str:
+    """The same glob, every letter a bracket class of both cases
+    (`**/.env` → `**/.[eE][nN][vV]`): bench refuses to cite these shapes
+    case-blind, so `Secrets.yaml` or `.ENV` must not stay readable. The
+    vendor's rules are gitignore-style globs, matched case-sensitively."""
+    return "".join(f"[{c.lower()}{c.upper()}]" if c.isalpha() else c for c in pattern)
+
+
+# Each pattern above, case-blind as well. The plain spelling stays first,
+# so a matcher that does not read bracket classes still denies the common
+# lower-case name; whether the installed CLI honours the classes is the
+# opt-in probe's question, not something a stub run shows.
+BRAIN_READ_DENY_ANY_CASE = [_any_case(p) for p in BRAIN_READ_DENY
+                            if _any_case(p) != p]
 # History must never rewrite under a public PR: deny the canonical force
 # and rebase spellings even though nothing allows them — `git push` alone
 # would otherwise cover `git push --force` by prefix. (Prefix rules can't
@@ -413,7 +429,7 @@ def brain_read_denies(profile: dict | None) -> list[str]:
     adapter would not put in a rule (not absolute, not canonical, a
     wildcard character) is refused rather than dropped — a narrowing that
     silently went missing would widen what the run may read."""
-    rules = [f"Read({pattern})" for pattern in BRAIN_READ_DENY]
+    rules = [f"Read({pattern})" for pattern in BRAIN_READ_DENY + BRAIN_READ_DENY_ANY_CASE]
     for path in (profile or {}).get("readDeny") or []:
         if not isinstance(path, str) or not path.startswith("/") \
                 or not _SAFE_PATH.fullmatch(path) or "//" in path \
