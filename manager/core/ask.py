@@ -530,6 +530,13 @@ def submit(scope, text, *, request, conversation: str | None = None,
         target.pop("conversation", None)
     else:
         target = resolve_target(scope, board)
+    # A resend of a submission already made — a double click, a reply lost
+    # on the network — is answered with its run before anything is
+    # checked: the run it made may be the very one holding the slot or
+    # the card, and that is not a reason to refuse the resend.
+    replay = _replayed(target, conversation, request)
+    if replay is not None:
+        return replay
     pre = preflight(None, board)
     if not pre["ready"]:
         raise Refused(pre["reason"] or "a question cannot run here",
@@ -556,6 +563,24 @@ def submit(scope, text, *, request, conversation: str | None = None,
     found = _launch(target, conversation, ask_record, text.strip(), board)
     return {"conversation": conversation, "ask": ask_record, "job": found["job"],
             "duplicate": found["duplicate"], "where": _public_where(target)}
+
+
+def _replayed(target: dict, conversation: str | None, request) -> dict | None:
+    """The run an earlier submission with this request identity made,
+    when there is one. Reads the derived ids and the runtime record only;
+    a question recorded with no run yet falls through to the normal
+    path, which finds the record and launches."""
+    try:
+        conv = conversation or decisions.conversation_id(
+            target["kind"], target.get("subject") or "board", request)
+        record = decisions.ask_id(conv, request)
+    except ValueError:
+        return None
+    jobs = reasoning.for_ask(conv, record)
+    if not jobs:
+        return None
+    return {"conversation": conv, "ask": record, "job": jobs[-1],
+            "duplicate": True, "where": _public_where(target)}
 
 
 def _public_where(target: dict) -> dict:

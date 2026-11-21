@@ -383,6 +383,50 @@ class CardQuestions(Board):
         self.assertEqual(len(exchange), 1, "the refused question was not recorded")
         self.assertEqual(exchange[0]["replies"][0]["status"], "cancelled")
 
+    def test_a_resend_while_its_run_is_in_flight_is_a_duplicate(self):
+        # a reply lost on the network: the same submission again is
+        # answered with the run it already made, not refused as busy —
+        # for a card question, a follow-up and a board question alike
+        self.scenario("slow")
+        req = self.request_id()
+        first = ask.submit({"kind": "card", "card": "51"}, "Slow question?",
+                           request=req)
+        operation = first["job"]["id"]
+        self.assertTrue(wait_for(lambda: reasoning.JOBS[operation]["status"] == "running"))
+        again = ask.submit({"kind": "card", "card": "51"}, "Slow question?",
+                           request=req)
+        self.assertTrue(again["duplicate"])
+        self.assertEqual(again["job"]["id"], operation)
+        self.assertEqual((again["conversation"], again["ask"]),
+                         (first["conversation"], first["ask"]))
+        self.assertEqual(1, len([j for j in reasoning.JOBS.values()
+                                 if j["need"] == "ask"]))
+        ask.cancel(operation)
+        self.settled(operation)
+        board = ask.submit({"kind": "board"}, "What is consuming capacity?",
+                           request=(breq := self.request_id()))
+        self.assertTrue(wait_for(
+            lambda: reasoning.JOBS[board["job"]["id"]]["status"] == "running"))
+        resent = ask.submit({"kind": "board"}, "What is consuming capacity?",
+                            request=breq)
+        self.assertTrue(resent["duplicate"])
+        self.assertEqual(resent["job"]["id"], board["job"]["id"])
+        follow = self.request_id()
+        ask.cancel(board["job"]["id"])
+        self.settled(board["job"]["id"])
+        up = ask.submit(None, "And which card first?", request=follow,
+                        conversation=board["conversation"])
+        self.assertTrue(wait_for(
+            lambda: reasoning.JOBS[up["job"]["id"]]["status"] == "running"))
+        resent = ask.submit(None, "And which card first?", request=follow,
+                            conversation=board["conversation"])
+        self.assertTrue(resent["duplicate"])
+        self.assertEqual(resent["job"]["id"], up["job"]["id"])
+        ask.cancel(up["job"]["id"])
+        self.settled(up["job"]["id"])
+        conv = ask.thread(board["conversation"])["conversation"]
+        self.assertEqual(2, len(conv["exchanges"]))
+
     def test_a_card_changed_while_it_ran_reads_stale(self):
         result = self.ask("Why?", scenario="drift")
         job = reasoning.JOBS[result["job"]["id"]]

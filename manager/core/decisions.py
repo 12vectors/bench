@@ -618,6 +618,14 @@ def conversation_id(scope: str, subject: str, request) -> str:
     return _derived_id("k", scope, subject, request)
 
 
+def ask_id(conversation: str, request) -> str:
+    """The id `record_ask` gives a question sent with this request
+    identity in this conversation — derived, so a resend can be
+    recognised before anything is read or written. Raises ValueError for
+    a request identity that is not one."""
+    return _request_id("a", conversation, request)
+
+
 def record_ask(target: dict, *, conversation: str, text, request,
                basis: str | None = None) -> dict:
     """A person's question, written where it belongs before anything is
@@ -631,7 +639,7 @@ def record_ask(target: dict, *, conversation: str, text, request,
     text = _clean("question", text, required=True)
     if len(text) > 1000:
         raise ValueError(f"'question' is {len(text)} characters; the limit is 1000")
-    record_id = _request_id("a", conversation, request)
+    record_id = ask_id(conversation, request)
     record = _base("ask", record_id, "person", who,
                    target.get("subject") if target["kind"] != "board" else None,
                    "person")
