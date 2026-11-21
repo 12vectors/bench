@@ -102,6 +102,14 @@ browser, docs, preflight) gets it. Regressions:
 an inherited one is replaced, and two child imports write one `.pyc` into
 the prefix and nothing into the checkout.
 
+One property changes with it, said plainly: a cached `.pyc` is validated
+by the source's modification second and size, so a test that rewrites a
+`.py` file to the same size within one second and imports it again in a
+new process could read the older bytecode. That is exactly how CI and any
+developer shell already run the suite (`python3 -m unittest` writes
+`__pycache__`), so no test can depend on the old no-cache behaviour
+without already failing there.
+
 The whole-suite effect under bench's runner is the evidence recorded with
 this card's closing report, not a claim here: one serial run cannot be
 separated from 175–300s of run-to-run stall, so a speed-up is claimed only
