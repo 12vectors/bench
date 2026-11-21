@@ -637,6 +637,25 @@ def _setup_failed(item: dict, here: dict, head: str, setup: list[dict],
     elif ceiling <= 0:
         why_held = ("the operating agreement sets no setup retries "
                     "(setupRetries is 0)")
+    elif len(retryable) > operations.RETRY_MAX:
+        # the ledger keeps at most RETRY_MAX of the checks a retry names, so
+        # a larger retry could never be recognised as already asked
+        why_held = (f"{len(retryable)} checks failed their setup at once, "
+                    f"more than the {operations.RETRY_MAX} a bounded retry "
+                    f"asks about")
+    elif refused_same := [o for o in mine if o["status"] == "refused"
+                          and o.get("action") == "verify" and o.get("retry")
+                          and o.get("basis") == head
+                          and set(evidence) <= set(o["retry"].get("of") or [])]:
+        # the retry was refused about this very answer — most often a
+        # check a person's work reading may not ask for (one only the
+        # review profile is offered, say). The gate still reads the same
+        # failure, so asking again would be refused again on every pass
+        why_held = (f"a retry of this exact failure was refused "
+                    f"({refused_same[-1].get('reason') or refused_same[-1].get('code')}); "
+                    f"a check a person's work reading may not ask for is "
+                    f"never retried — add it to the work profile's verify "
+                    f"list, or run it where it is offered")
     elif any(set(evidence) <= set((o.get("retry") or {}).get("of") or [])
              for o in spent):
         # the retry asked about this very answer and ended without a newer

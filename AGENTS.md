@@ -6738,16 +6738,24 @@ fact about the environment, not the code, so it is never repaired. With
 `setupRetries` set above 0 in the operating agreement (Orchestrator →
 Operating agreement → Ceilings; a phase may only lower it), delivery asks
 for exactly those checks again, at the same head, through the same
-**Run required checks** batch, each request naming the evidence id it
-answers. Every retry is a `verify` operation in the ledger marked
-`retry`, counted per card and head from the ledger itself — so a
+**Run required checks** batch. The operation and each batch item record
+the evidence id the retry answers (`retryOf`); `verify.request` itself
+is asked exactly as a click asks. Every retry is a `verify` operation in
+the ledger marked `retry`, counted per card and head from the ledger
+itself — so a
 restart, a pause or an agreement edit resets nothing, an intent that
 provably ran nothing (`abandoned`) is not counted, an `unknown` outcome
 holds the card before anything is asked again, and two callers with one
 decision run it once. Nothing else is asked again: an assertion failure
 goes to repair as before, and a denial, a timeout, a verifier's refusal
 and a missing or broken report hold the card at once. A retry whose
-batch ended without a newer answer is not repeated. When the ceiling is
+batch ended without a newer answer is not repeated, and neither is one
+the batch refused about the same failure — most often a check a person's
+work reading may not ask for (one only the review profile is offered):
+the card is held after that one refused operation, naming the work
+profile's `verify` list as the remedy. More than 32 setup failures at
+once are held rather than retried, since the ledger records at most 32
+per retry. When the ceiling is
 spent the card is held with an `attempt` record marked *exhausted* and a
 blocker naming the check, the reason, `n of m` retries and the way
 through. A retry takes no slot and spends no launch; it widens no grant,

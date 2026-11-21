@@ -244,6 +244,45 @@ class RestartsAndRaces(Retries):
         self.gate = gate("allowed", checks=[("unit", "met", "passed", "ev-2")])
         self.assertNotEqual("step-refused", self.item()["code"])
 
+    def test_a_retry_refused_about_the_same_failure_holds_instead_of_looping(self):
+        # review finding at 18a6f39: a check only the review profile is
+        # offered failed its setup; the work reading may not ask for it, so
+        # required.start refuses `nothing-needed` while the gate still reads
+        # the same failure. That must be one operation and a hold, not a
+        # new ledger entry and card record on every pass.
+        self.enable(setupRetries=3)
+        self.gate = setup_gate("ev-1")
+        refusals = []
+
+        def not_offered(filename, stage=None, **kw):
+            refusals.append(kw.get("retry"))
+            raise required.Refused("nothing-needed")
+        from unittest import mock
+        with mock.patch.object(required, "start", not_offered):
+            for _ in range(5):
+                self.tick()
+        self.assertEqual(1, len(refusals))
+        self.assertEqual(1, len(self.ops("verify")))
+        held = self.item()
+        self.assertEqual("verification-setup-failed", held["code"])
+        self.assertIn("a retry of this exact failure was refused", held["reason"])
+        self.assertIn("work profile's verify", held["reason"])
+        self.assertEqual(0, held["setupRetry"]["attempts"])
+        # a new setup failure at the same head is a new answer to retry
+        self.gate = setup_gate("ev-2")
+        self.assertEqual("retry-setup", self.item()["code"])
+
+    def test_more_setup_failures_than_the_ledger_keeps_are_held(self):
+        self.enable(setupRetries=2)
+        many = operations.RETRY_MAX + 1
+        self.gate = gate("blocked", checks=[
+            (f"c{i}", "unmet", "prepare-failed", f"ev-{i}") for i in range(many)])
+        held = self.item()
+        self.assertEqual("verification-setup-failed", held["code"])
+        self.assertIn(f"more than the {operations.RETRY_MAX}", held["reason"])
+        self.tick()
+        self.assertEqual([], self.calls["verify"])
+
     def test_no_grant_or_budget_moves(self):
         self.enable(setupRetries=2)
         before = agreements.effective()
