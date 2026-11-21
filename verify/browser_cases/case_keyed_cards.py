@@ -303,8 +303,11 @@ def release(b) -> dict:
       if (window.__kbOrig) S.state = window.__kbOrig;
       if (window.__kc) S.state = __kc.orig;
       const r = await releaseReadings();
+      if (S.view !== 'board') setView('board');
       await loadState();
-      const files = [...document.querySelectorAll('article.card')].map(c => c.dataset.file);
+      // the Board as painted now: a view not on screen (the Phases lanes)
+      // keeps its last nodes until it is shown, and is not this question
+      const files = [...document.querySelectorAll('#board article.card')].map(c => c.dataset.file);
       const synthetic = ({SYNTHETIC});
       return {{ was, released: r, now: readingsHeld(),
                 stateSynthetic: S.state.board.stages.flatMap(s => s.tasks).filter(t => synthetic(t.file)).length,
@@ -312,7 +315,7 @@ def release(b) -> dict:
     }})()""")
     if not out or out["now"]["held"] is not None:
         raise bv.SetupError(f"the page's readings were not released: {out!r}")
-    if out["stateSynthetic"] or out["drawnSynthetic"]:
+    if out["stateSynthetic"] or out["drawnSynthetic"] or not out["drawn"]:
         raise bv.SetupError(f"the live board was not restored after the benchmark: {out!r}")
     return out
 
