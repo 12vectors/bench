@@ -7546,7 +7546,7 @@ write. `tests/test_ask.py` holds the lifecycle through the Claude
 adapter's real `run` against a stub vendor — read-only tools asserted on
 the compiled command line, opencode refused by name, card, phase and
 board scopes, follow-ups, duplicates, retry, cancel, drift, hostile text
-and persistence — and `verify/browser_cases/case_ask.py` the page. Whether
+and persistence — and `verify/browser_cases/case_task_questions.py` the page. Whether
 the installed CLI with a real model answers well is the opt-in, billable
 `develop/reasoning-probe.py`, which nothing runs by itself.
 

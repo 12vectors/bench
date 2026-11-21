@@ -951,7 +951,7 @@ class AgentsSection(unittest.TestCase):
         names = b.eval("[...document.querySelectorAll('.sorch [data-agtplrow]')]"
                        ".map(e => e.dataset.agtplrow)")
         self.assertEqual(["reason.md", "reason-readiness.md", "reason-questions.md",
-                          "reason-plan.md", "reason-recovery.md"], names)
+                          "reason-plan.md", "reason-recovery.md", "reason-ask.md"], names)
         text = b.eval("document.querySelector('.sorch').innerText")
         for words in ("Orchestration prompts", "guidance, not authority",
                       "Shared by every need", "phase scope", "Specific to the recovery need",

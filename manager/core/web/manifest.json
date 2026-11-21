@@ -326,8 +326,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/orchestrator.js": {
-   "bytes": 107698,
-   "sha256": "2ec8b8990f883060f0d2e2ac460c0d4f51b905459c24b8a39e4f2be29ab98dab",
+   "bytes": 107722,
+   "sha256": "65264800a4950bc75ac40ef22b6927a79e0f6b18d2d01a9abedfbe146f99550c",
    "type": "text/javascript; charset=utf-8"
   },
   "views/phases.js": {

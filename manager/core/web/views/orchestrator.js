@@ -617,8 +617,8 @@ function activeHtml(x) {
 }
 
 function threadHtml(entry) {
-  if (!entry) return `<p class="o-empty" aria-busy="true">Reading the conversation…</p>`;
-  if (entry.error && !entry.data) return `<p class="o-empty" role="alert">The conversation could not be read: ${esc(entry.error)}.</p>`;
+  if (entry && entry.error && !entry.data) return `<p class="o-empty" role="alert">The conversation could not be read: ${esc(entry.error)}.</p>`;
+  if (!entry || !entry.data) return `<p class="o-empty" aria-busy="true">Reading the conversation…</p>`;
   const conv = entry.data.conversation;
   const notes = [];
   const where = entry.data.where || {};

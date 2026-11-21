@@ -22,6 +22,10 @@ added afterwards:
 - the controls are reachable by keyboard; both themes at 1440 and 390 px
   without document overflow.
 
+Its runs stay in the board's agent registry, which nothing clears, so
+this file is named to run after every case that asserts the board has
+never launched an agent (case_board, case_settings).
+
 Run through verify/browser; any other way these refuse.
 """
 
@@ -148,7 +152,8 @@ class Ask(unittest.TestCase):
         if not b.wait("location.pathname === '/orchestrator/ask' && location.search === '?card=43'"
                       " && document.querySelector('#o-asktext')", 15):
             raise bv.CheckFailed("Ask about this card did not open the Ask section")
-        label = b.eval("document.querySelector('.o-askcomposer label').innerText")
+        # the label's own text, not its uppercased rendering
+        label = b.eval("document.querySelector('.o-askcomposer label').textContent")
         self.assertIn("Card #43", label)
         before = stages()
         type_question(b, HOSTILE)
@@ -194,7 +199,7 @@ class Ask(unittest.TestCase):
         b.click("#oshell .o-askconv")
         if not b.wait(f"{THREAD}", 15):
             raise bv.CheckFailed("the conversation did not open")
-        self.assertIn("Ask a follow-up", b.eval("document.querySelector('.o-askcomposer label').innerText"))
+        self.assertIn("Ask a follow-up", b.eval("document.querySelector('.o-askcomposer label').textContent"))
         type_question(b, "And what would unblock it?")
         double(b, "#oshell [data-o='ask-submit']")
         if not b.wait(f"document.querySelectorAll('#oshell .o-exchange').length === 2 && "
@@ -206,6 +211,7 @@ class Ask(unittest.TestCase):
         self.assertEqual(2, convs[0]["count"])
 
     def test_4_a_board_question_and_a_cancelled_one(self):
+        S["backend"].ask_answers.write_text("1", encoding="utf-8")
         b = visit("/orchestrator/ask", "document.querySelector('#oshell [data-o=\"askkind-board\"]')")
         b.click("#oshell [data-o='askkind-board']")
         b.wait("document.querySelector('[data-o=\"askkind-board\"]').checked", 5)
