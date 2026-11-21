@@ -473,5 +473,72 @@ class TheDeliveryStatusOffersTheRepair(PhaseRepairCase):
         self.assertIn("closed", primary["why"])
 
 
+# ── a scoped phase selects the same repair ───────────────────────────
+
+from tests.test_phase_scopes import ScopedPhaseCase, phase_agreement  # noqa: E402
+
+import coordinate  # noqa: E402
+import phasescope  # noqa: E402
+
+
+class AScopedPhaseRepairsThroughTheSameTarget(ScopedPhaseCase):
+    """The phase scope carries the phase to review/; its integration review
+    asks for changes; the next pass selects ↻ act on PR through the same
+    `repair_target` a person's click rides, within the repair budget."""
+
+    PHASE_STAGE = "to-do"
+
+    def to_review(self, **authority) -> str:
+        self.orchestrate(phase_agreement(authority={"review": False,
+                                                    "merge": False,
+                                                    **authority}))
+        phasescope.adopt(PHASE, "tester")
+        for _ in range(12):
+            self.tick()
+            if self.stage_of(PHASE) == "review":
+                break
+        self.assertEqual("review", self.stage_of(PHASE))
+        if "**PR:**" not in self.text(PHASE):
+            path = self.tasks / "review" / PHASE
+            path.write_text(path.read_text(encoding="utf-8").replace(
+                "**Priority:** High\n", f"**Priority:** High\n**PR:** {PHASE_PR}\n"),
+                encoding="utf-8")
+        head = self.tip(PHASE_BRANCH)
+        gates.record_verdict(PHASE, verdict="REQUEST CHANGES", head=head,
+                             agent="review-x", actor="agent")
+        return head
+
+    def item(self) -> dict:
+        return next(i for i in coordinate.plan()["items"] if i["card"] == PHASE)
+
+    def test_the_delegated_repair_runs_and_the_new_head_is_asked_afresh(self):
+        head = self.to_review()
+        found = self.item()
+        self.assertEqual("repair", found["code"], found.get("reason"))
+        self.assertEqual(PHASE_BRANCH, found["repairTarget"]["branch"])
+
+        self.tick()
+        [repair] = self.ops("repair")
+        self.assertEqual(PHASE, repair["file"])
+        self.assertIn(repair["status"], ("launched", "ended"))
+        new = self.tip(PHASE_BRANCH)
+        self.assertNotEqual(head, new, "the repair committed on the phase branch")
+        self.assertEqual(("review", "review", "review"),
+                         (self.stage_of(PHASE), self.stage_of(ONE),
+                          self.stage_of(TWO)))
+        after = self.item()
+        self.assertEqual(new, after["head"])
+        self.assertNotIn(after["code"], ("repair", "repair-unavailable"),
+                         "the old request for changes is history at the new head")
+        self.assertFalse(self.branch_exists(f"task/{PHASE[:-3]}"))
+
+    def test_repair_not_delegated_is_the_persons(self):
+        self.to_review(repair=False)
+        found = self.item()
+        self.assertEqual("repair-not-delegated", found["code"])
+        self.tick()
+        self.assertEqual([], self.ops("repair"))
+
+
 if __name__ == "__main__":
     unittest.main()
