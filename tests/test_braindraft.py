@@ -687,5 +687,27 @@ class Endings(_Board):
         self.assertEqual(len(brain.reading()["entries"]), 2)
 
 
+class ThePageDiff(unittest.TestCase):
+    """The draft's exact changes, as the page draws them: a pure function,
+    run in node as the other page-script tests are."""
+
+    def test_the_body_diff_marks_additions_removals_and_no_change(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not available — the page script is unchecked")
+        from tests.test_agents_settings_ui import lift
+        script = ("const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');\n"
+                  + lift("bodyDiff") + "\nconsole.log(JSON.stringify(["
+                  "bodyDiff('a\\nb\\nc', 'a\\nb\\nc'),"
+                  "bodyDiff('a\\nb\\nc', 'a\\nB\\nc\\n<d>')]));")
+        out = subprocess.run([node, "-e", script], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        same, changed = json.loads(out.stdout)
+        self.assertIn("No change", same)
+        self.assertIn("− b", changed)
+        self.assertIn("+ B", changed)
+        self.assertIn("+ &lt;d>", changed, "the agent's text is escaped, never markup")
+
+
 if __name__ == "__main__":
     unittest.main()

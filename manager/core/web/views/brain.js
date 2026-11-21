@@ -716,7 +716,7 @@ function seedEdit(d) {
 
 /* A line diff, bounded: the exact change against the entry this draft
    read. Equal runs are folded to their edges. */
-function lineDiff(before, after) {
+function bodyDiff(before, after) {
   const a = (before || '').split('\n').slice(0, 1500);
   const b = (after || '').split('\n').slice(0, 1500);
   const n = a.length, m = b.length;
@@ -859,8 +859,8 @@ function proposalHtml(d) {
       ? (target ? `<p class="b-note">Against ${esc(d.target)} as this draft read it (${esc(d.targetRevision || '')}).</p>` +
           (target.revision !== d.targetRevision ? '<p class="b-warn">The entry has changed since; applying will be refused.</p>' : '') +
           (e.title !== target.title ? `<p><strong>Title:</strong> <del>${esc(target.title)}</del> → <ins>${esc(e.title)}</ins></p>` : '') +
-          lineDiff(target.body, e.body) : '<p class="b-note" role="status">Reading the entry…</p>')
-      : lineDiff('', e.body);
+          bodyDiff(target.body, e.body) : '<p class="b-note" role="status">Reading the entry…</p>')
+      : bodyDiff('', e.body);
   } else {
     pane = `<h3>${esc(e.title)}</h3>${e.summary ? `<p class="b-lede">${esc(e.summary)}</p>` : ''}` +
       `<div class="b-prose">${md(e.body || '', { base: 3 })}</div>`;
