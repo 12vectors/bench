@@ -725,6 +725,29 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
     return out
 
 
+def _phase_repair_action(filename: str, has_pr: bool, pr: dict | None) -> dict | None:
+    """↻ act on PR on a phase card in review (task 174): it repairs the
+    phase's own integration branch and PR, named on the action, so the
+    person sees the target before the confirmation. A pull request this
+    board observed merged or closed has nothing to push to, and says so
+    disabled. Read from the PR snapshot only — the launch asks the whole
+    target contract again (`agents.repair_target`)."""
+    if not has_pr:
+        return None
+    branch = config.PHASE_BRANCH_PREFIX + filename[:-3]
+    ended = str((pr or {}).get("prState") or "").upper()
+    if (pr or {}).get("merged") or ended in ("MERGED", "CLOSED"):
+        word = "merged" if (pr or {}).get("merged") or ended == "MERGED" \
+            else "closed"
+        return action("act-pr", "↻ act on PR", enabled=False,
+                      why=f"The integration PR is {word}, so a push to "
+                          f"{branch} would not reach it. Open a card for "
+                          f"the change instead.", target=branch)
+    return action("act-pr", "↻ act on PR", target=branch,
+                  title=f"An agent repairs the integration PR on {branch} — "
+                        f"the same branch and PR; its members stay merged")
+
+
 def _decide(*, task, ctx, candidate, decision, requirements, alive,
             failure, recovery, pr, completion, open_findings, on_board,
             others_hold, holder, member, merged_elsewhere, gated,
@@ -913,13 +936,19 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
     # 10. nothing to assess
     if candidate["state"] in ("unavailable", "none-yet") and gated:
         check = _check_remote_action(ctx, candidate)
-        back = action("move", "Move back to in-progress", to="in-progress")
+        # a phase card's work is its integration branch: walking the card
+        # back would start nothing (task 174) — its lane is where it is read
+        back = (action("phases", "⟶ phases") if is_phase else
+                action("move", "Move back to in-progress", to="in-progress"))
         return ("cannot-assess",
                 f"Cannot assess: {no_commit[0].lower()}{no_commit[1:]}",
                 check or back, [back] if check else [])
 
-    act_pr = action("act-pr", "↻ act on PR") if has_pr and not is_phase \
-        and not (pr or {}).get("merged") else None
+    if is_phase:
+        act_pr = _phase_repair_action(filename, has_pr, pr)
+    else:
+        act_pr = action("act-pr", "↻ act on PR") if has_pr \
+            and not (pr or {}).get("merged") else None
     review_pr = action("review-pr", "◔ review PR") if has_pr else None
 
     # 12. a current-commit problem
@@ -927,8 +956,13 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
                                decision, verdict_now)
     if problem:
         word, sentence = problem
-        fix = act_pr or action("move", "Move back to in-progress",
-                               to="in-progress")
+        if is_phase:
+            # a phase repairs its integration branch in place (task 174):
+            # never "move back", which would start no supported run
+            fix = act_pr if has_pr else action("open-pr", "↑ open PR")
+        else:
+            fix = act_pr or action("move", "Move back to in-progress",
+                                   to="in-progress")
         rest = [action("read-failure", "Read the failure")]
         if review_pr:
             rest.append(review_pr)
@@ -1175,7 +1209,9 @@ COMPACT = ("status", "primary", "candidate", "counts", "history", "detail",
 # What an action keeps in the compact reading: enough for the page to draw
 # it and route it, never anything the page would re-decide from.
 _ACTION_KEYS = ("action", "label", "who", "enabled", "why", "arm", "to",
-                "url", "agent", "evidence", "intent", "takeover")
+                "url", "agent", "evidence", "intent", "takeover",
+                # task 174: what an action acts on, drawn beside it
+                "target", "title")
 
 
 def bump() -> None:

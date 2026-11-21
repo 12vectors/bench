@@ -599,6 +599,8 @@ def budget(here: dict | None, reading: dict, used: dict) -> dict | None:
     raises an allocation."""
     if here is None:
         return None
+    if here["capacity"]["implementation"].get("shared"):
+        return _shared_budget(here, reading, used)
     sid = here["id"]
     bench = agreements.scope(reading, agreements.BENCH) or {}
     bench_cap = bench.get("capacity") or {}
@@ -648,6 +650,61 @@ def budget(here: dict | None, reading: dict, used: dict) -> dict | None:
     return {"slots": {"own": slots, "inUse": in_use},
             "dailyStarts": {"own": starts, "used": spent},
             "reviewSlots": review_slots, "lines": lines,
+            "missing": missing, "warnings": warnings}
+
+
+def _shared_budget(here: dict, reading: dict, used: dict) -> dict:
+    """The same answer under shared capacity (task 182): what this scope
+    uses now against its ceiling, what the board uses against the global
+    total, and what is free. Nothing is set aside, so an idle phase uses
+    nothing and a ceiling is never named as something the phase holds."""
+    sid = here["id"]
+    cap = here["capacity"]
+    ceiling = cap["implementation"]["own"]
+    total = cap["implementation"]["total"]
+    in_use = used["running"].get(sid, {}).get("implementation", 0)
+    board_use = used["totals"].get("implementation", 0)
+    free = max(0, total - board_use)
+    starts = cap["dailyStarts"]["own"]
+    spent = used["startsToday"].get(sid, 0)
+    starts_total = cap["dailyStarts"]["total"]
+    spent_total = used.get("startsTodayTotal", 0)
+    review_slots = cap["review"]["own"]
+    by = {"default": "the default phase ceiling",
+          "global": "the global total"}.get(cap["implementation"].get("by"),
+                                            "this phase's own limit")
+    lines = [
+        f"{in_use} running here, at most {ceiling} at once ({by}); "
+        f"{board_use} of {_plural(total, 'implementation slot')} in use on the "
+        f"board, {free} free — shared, first come first served",
+        f"{spent} of {_plural(starts, 'launch', 'launches')} today for this "
+        f"phase; {spent_total} of {starts_total} on the board (every agent "
+        f"launch counts: implementation, independent review, repair, "
+        f"diagnosis, and none is refunded when a run ends)",
+        f"at most {_plural(review_slots, 'review')} at once",
+    ]
+    missing, warnings = [], []
+    if ceiling == 0:
+        missing.append("this phase's implementation ceiling is 0, so no member "
+                       "can start; raise its limit or the default in "
+                       "Orchestrator → Operating agreement")
+    elif free == 0 and in_use < ceiling:
+        warnings.append("every implementation slot on the board is in use; the "
+                        "next member is admitted in its turn when one frees")
+    if starts == 0:
+        missing.append("this phase may make no launches today (its daily "
+                       "ceiling is 0); raise it in Orchestrator → Operating "
+                       "agreement")
+    elif spent >= starts or spent_total >= starts_total:
+        missing.append("today's launches are used up, so the next launch waits "
+                       "for tomorrow")
+    if review_slots == 0 and here["authority"]["review"]["allowed"]:
+        warnings.append("this phase's review ceiling is 0, so an independent "
+                        "review of a member cannot launch")
+    return {"slots": {"own": ceiling, "inUse": in_use, "ceiling": ceiling,
+                      "total": total, "boardInUse": board_use, "free": free},
+            "dailyStarts": {"own": starts, "used": spent},
+            "reviewSlots": review_slots, "lines": lines, "shared": True,
             "missing": missing, "warnings": warnings}
 
 

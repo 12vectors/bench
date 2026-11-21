@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < ask < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < ask < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -192,6 +192,14 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   run-scoped channel it reports through, each report validated whole at
   ingestion, ordered, de-duplicated and coalesced, closed by the run's
   observed ending, and kept apart from anything bench verified
+- `checkload.py` — what the machine was doing while a check ran (task
+  179): a beat beside the runner reads `verify.RUNNING`, the host's load
+  average and memory, and the agent registry, and keeps a bounded,
+  sanitized sidecar per verification under `state/evidence/load/` —
+  each check's phase (waiting, preparing, running), the other checks
+  observed beside it and for how long. Diagnostic only: no runner file
+  imports it, so it changes no runner revision, identity or reuse (see
+  "Contention: what else was running")
 - `acceptance.py` — what a card's requirements have been *judged*
   against: each criterion's state computed from the card's own records,
   bench's evidence and the runs' claims; review rounds and the findings
@@ -219,7 +227,9 @@ gitproc / records / redact < config < githost / assets / agreements / operations
 - `agreements.py`, `execowner.py`, `orchestrator.py` — the scoped
   orchestration engine (task 137): the operating agreement and its
   effective reading (authority intersected from Bench to phase scope,
-  capacity allocated from one shared total, D7 defaults written out,
+  capacity as global pools with non-reserving scope ceilings — the
+  legacy per-phase allocation read until a person migrates it (task
+  182) — D7 defaults written out,
   draft → preview → apply under revision guards, pause, exclusion and
   hand-back); the one designated execution installation and its OS lock,
   handed over only after quiescence and adopted explicitly, never by a
@@ -2073,10 +2083,12 @@ or the other and never both, but a UI layer can be stale or bypassed, so
 the rule lives where every other launch refusal lives: with the stage
 check, ahead of the claim and well ahead of the worktree, costing nothing
 and leaving nothing to clean up. Which headless kinds a phase card may
-host is decided rather than left to omission: **▸ start work** and **↻ act
-on PR** refuse it (both are work agents, and a phase's work belongs to its
-members' cards), while the read-only pair — **◔ still true?** and **◔
-review PR**, the latter told the phase's own branch — are allowed. The
+host is decided rather than left to omission: **▸ start work** refuses
+it (a phase's work belongs to its members' cards); **↻ act on PR** is
+allowed on a phase card in `review/` and repairs the phase's own
+integration branch and PR, never a member (task 174, see "Repairing a
+phase's integration PR"); and the read-only pair — **◔ still true?** and
+**◔ review PR**, the latter told the phase's own branch — are allowed. The
 guard is about *starting*: a card that gains `**Type:** Phase` while an
 ordinary run is in flight is left alone, and that run ends as it would
 have.
@@ -4001,6 +4013,42 @@ Four things it guarantees:
   it — `removed`, or `kept` with the reason — and one run's cleanup never
   writes another run's record.
 
+### Contention: what else was running
+
+A check on a shared machine competes with everything else on it — other
+checks, agents, a person's own work. Capacity is not agent concurrency,
+and a slow run beside another is not proof that one slowed the other. So
+bench keeps three readings apart (task 179), and none of them is part of
+a verdict:
+
+- **Queue, preparation and execution.** The evidence record already
+  holds the request time, the slot wait (`queued`, kept over a second),
+  each preparation step and the check process. `python3
+  verify/contention-report <evidence dir>` prints them as separate
+  columns, with *unknown* where a
+  record cannot say (an older record has no slot wait over a second to
+  report), never zero.
+- **Overlap**, computed from the records' execution windows, old records
+  included: which other runs intersected this one, and for how long.
+- **Observed load**, from `checkload.py`: while verifications run, a beat
+  every 5 seconds writes a sidecar per run under
+  `manager/local/state/evidence/load/` — its phase (waiting, preparing,
+  running), the other checks in each phase, the parallel limit, the
+  agent runs this board tracked, and the host's load average, CPU count
+  and available memory. Bounded (16 named peers, the rest counted) and
+  sanitized (numbers, evidence ids and check names — no command, path or
+  environment value). A run with no sidecar is *not observed*; one with
+  no `end` is a run whose ending a restart hid.
+
+**Diagnostic, never identity.** No runner file imports `checkload`, so
+the runner revision, every result identity and every reuse decision are
+unchanged by it: no pass reads `runner-changed` because of it, the
+sidecar is not evidence, and no gate reads it. Nothing in it schedules,
+throttles, cancels or serializes a check. `BOARD_VERIFY_PARALLEL` is
+still the only limit, read when a slot is asked for; what the
+measurements recommend about it, and how an operator applies and rolls
+that back, is `develop/perf/179-verification-contention.md`.
+
 ### On the board
 
 A `◫` chip in the card's footer row, beside `⚿`, `⌖` and `CI`, opens the
@@ -5672,7 +5720,16 @@ or moved by any of it.
    counting (changing a check's definition changes its identity, so every
    pass of it reads `stale` — it is not deleted and it is not re-run; an
    edit elsewhere in the document leaves a pass with a result identity
-   standing, and only legacy records read `policy-changed`), and
+   standing, and only legacy records read `policy-changed`). Each change
+   names the dimension it moves: `check-changed` for the check's own
+   substance (command, root, time limit, inputs, environment, report
+   contract) or what a preparation step it runs does, and
+   `check-scopes-changed` when only its declared scopes moved — a scope
+   is coverage asked for by name, so a full-run pass still stands, while
+   the passes of a scope whose arguments changed, or that was removed,
+   read `stale` (`scope-changed`) and are named; a scope only added
+   costs nothing. A change no recorded pass depends on, such as renaming
+   a preparation step, is `check-revision-changed` (task 177). And it says
    which cards waiting in `review/` would change their merge decision.
    Writes nothing.
 4. **Apply** — armed, and refused rather than repaired. An invalid
@@ -5749,7 +5806,7 @@ so a route cannot skip it by forgetting to ask:
 | --- | --- | --- |
 | `read` | every GET | nothing; reading changes nothing |
 | `browser-mutation` | every person-operated POST | a JSON object body within a size cap; `Sec-Fetch-Site` same-origin or none when sent; an `Origin`, when sent, that is this board on the port it actually serves or exactly one of `BOARD_ALLOWED_ORIGINS`; `Origin: null` refused; and no run named by a request that says it is a browser's |
-| `policy-mutation` | the 35 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
+| `policy-mutation` | the 36 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
 | `run-authenticated` | `/api/progress`, `/api/verify/details` | the same door, then the run's own token |
 | `event-ingest` | `/api/events` | the same door; a run the event names is proved by that run's token (next section) |
 
@@ -6379,9 +6436,11 @@ action.
 **The agreement, v1.** A `bench` scope — `enabled`, `paused`,
 `authority` (`readiness`, `reasoning`, `implement`, `review`, `repair`,
 `recovery`, `integrate`, `merge`, each true or false, false when
-unnamed), `capacity`, `exclusions`, `handback` — and `phases`, keyed by
-phase card number, each with `authority`, `allocation`, `ceilings` and
-the same toggles. The D7 defaults are written into every new draft:
+unnamed), `capacityModel`, `capacity`, `scopeDefaults`, `exclusions`,
+`handback` — and `phases`, keyed by phase card number, each with
+`authority`, `limits`, `ceilings` and the same toggles (task 182; see
+"Shared capacity, first come first served" below). The D7 defaults are
+written into every new draft:
 2 implementation slots, 1 review slot, 0 reasoning slots (reasoning and
 recovery then take implementation slots — counted, never free),
 20 launches a day, 6 launches per card, 2 repair rounds, 2 transient
@@ -6394,13 +6453,107 @@ it, and an agreement written before it reads 0).
 intersection with the Bench scope's, every word carrying the scope that
 decided it; a phase asking for more is refused (`authority-expansion`).
 Ceilings may only be lowered (`ceiling-expansion`). Slots and daily
-starts are **allocations** of the Bench scope's total: the phases'
-allocations may not exceed it (`capacity-overcommitted`), the Bench
-scope keeps the rest, and every running agent — a person's own launch
-included — counts against the scope that holds its card and the board's
-total, and is never cancelled to make a limit look met. A phase entry
-naming phases is refused (`nesting-refused`). Any refusal turns every
-scope off.
+starts are the board's **shared** totals (below): every running agent —
+a person's own launch included — counts against the scope that holds
+its card and the board's total, and is never cancelled to make a limit
+look met. A phase entry naming phases is refused (`nesting-refused`).
+Any refusal turns every scope off.
+
+**Shared capacity, first come first served (task 182).** Capacity is a
+set of global pools, not slices handed to phases:
+
+| key | what it is | example |
+| --- | --- | --- |
+| `bench.capacity.implementation` | the most implementation runs at once on the whole board — repairs included | 8 |
+| `bench.capacity.review`, `.reasoning` | the same for independent reviews and for reasoning/diagnosis runs (0 reasoning: diagnoses take an implementation slot) | 2, 1 |
+| `bench.capacity.dailyStarts` | launches a day on the whole board; a finished run refunds nothing | 40 |
+| `bench.scopeDefaults` | the **default ceiling** every phase scope inherits: the most it may use at once, and launch in a day. A ceiling reserves nothing | `{"implementation": 2}` |
+| `phases.<n>.limits` | one phase's own ceilings, replacing the default for that phase only; the global total always wins | `{"implementation": 1}` |
+
+Standalone work has no partition of its own: the Bench scope's ceiling is
+the global total. A slot is used only while a run holds it — a run, or
+an operation whose outcome is not yet settled — so an idle, Backlog,
+unadopted, paused or delivered phase uses none. **A worked example:**
+with 8 implementation slots and a default phase ceiling of 2, a phase
+with one member running uses 1 slot, not 2; the other 7 are open to any
+eligible card, standalone or another phase's, each within its own
+ceiling. If the phase starts a second member it uses 2, and a third
+waits on its ceiling (`slots-full`, the scope's) while a standalone card
+behind it in the queue still starts.
+
+**Who is admitted, and when.** Every eligible launch request — new
+implementation work, a review, a repair — waits in one durable queue
+(`manager/local/state/orchestration/queue.json`) from the first pass that
+finds it eligible but for capacity: authorized, its dependencies met, its
+phase's strategy allowing it, nothing in the ledger holding it. Each
+pool is admitted **first come, first served** across the Bench scope and
+every phase scope, in the order the queue assigned each request when it
+became ready — the queue's own count, never the wall clock, so a clock
+stepped backwards moves nobody (requests that became ready in the same
+pass are ordered by card number, file and action). Priority, kind (a repair is not
+ahead of older new work) and the order scopes are read in decide
+nothing, and a poll, a restart or a re-read never moves a request
+forward. A request whose scope is at its ceiling, or whose declared
+`**Touches:**` overlap running work, waits *without* stopping the ones
+behind it — there is no head-of-line blocking. The queue on the page
+shows each request's position, since when it has waited, and any hold.
+
+| what happens to a request | its place |
+| --- | --- |
+| a temporary hold: its scope paused, a dependency that went back, a declared overlap, a transient backoff, the circuit breaker, its work base | kept, marked with the hold; it blocks nobody until the hold clears |
+| admitted (its operation's intent written) | it leaves the queue |
+| no longer wanted: its brief or head changed, its card left the stage or its scope, it was excluded or handed back, someone else moved it, the ledger settled it (ran, refused, unknown, retries spent), its card has had its `launchesPerCard` | it leaves; if it comes back it joins at the back |
+| a card moves from implementation to review | the review is a new request (its head), queued when delivery says a review is next; a repair after it is another |
+
+Dependencies and a phase's sequential order are unchanged: they decide
+whether a request is eligible, and the queue decides only the order among
+eligible ones. A recovery diagnosis or restart is admitted through the
+same step and waits behind every older eligible request in its pool
+(`queued-behind`); it is never queued ahead of them.
+
+**Admission is one step.** The capacity reading and the intent that
+reserves the slot are written under one lock (`orchestrator.admit`), so
+the scheduler's launches, delivery's reviews and repairs and a recovery
+restart can never each read the same free slot. One process executes at
+all (the OS execution lock), and one request is one operation key, so it
+never launches twice. A person's own ▸ start work and the legacy phase
+runner's members are not orchestrated, are never refused for capacity and
+are counted the moment they run.
+
+**Release is what was observed.** A slot is freed when the run's ending
+is observed, when a start is refused or provably ran nothing, or when a
+person settles an unknown outcome. An intent with no receipt, an
+`unknown` outcome and a run still alive after a restart keep their slot;
+a handover is refused while any of them is open. Completion needs no
+release step. Lowering a limit below what is running stops new admission
+and stops nothing; each run keeps the grants frozen in its manifest.
+Daily starts and launches per card are counted from the ledger and are
+never refunded when a run ends.
+
+**Migrating a reserved agreement.** An agreement written before task 182
+names no `capacityModel` and is read as `reserved`, exactly as before:
+each phase's `allocation` is set aside from the total and the Bench scope
+keeps the rest — which is how a board with 8 slots, 7 of them allocated
+to idle phases, left standalone work waiting on `slots-full (1 of 1)`.
+Nothing migrates on a read, a restart, an install or an update. In
+**Orchestrator → Operating agreement**, **Preview the migration** shows
+each phase's old allocation and what it becomes, and per pool how many
+requests wait, how many slots are in use and how many more standalone
+work could start now and after migrating; **Migrate to shared
+capacity** (`POST /api/orchestration/agreement/migrate`, `"apply": true`
+with the revision the page read) writes the agreement once: the global
+totals, every authority word, pause, exclusion, hand-back, strategy, note
+and per-card ceiling stay exactly as they were; each `allocation` is
+removed, and either the phase inherits `scopeDefaults` (the default) or,
+with *keep each phase's old numbers*, its old values become its own
+`limits` — ceilings that reserve nothing (a 0 stays a 0). Adoption,
+cards, operations, the launch ledger and the history are not touched, so
+usage and budgets carry over. A stale revision, or an agreement already
+shared, is refused with nothing written. Afterwards a phase entry with
+an `allocation` is refused (`allocation-retired`), and applying a draft
+still written in the reserved model is refused
+(`capacity-model-downgrade`), so an old page or file cannot bring
+reservations back.
 
 **One scope per card.** A standalone card is the Bench scope's; a phase
 card and its members are their phase scope's when the agreement names
@@ -6442,8 +6595,10 @@ its processes stopped, then remove the designation by hand.
 
 **Reading it is free.** `GET /api/orchestration` returns the effective
 agreement and the draft side by side (revisions, problems, the preview's
-changes), each scope's authority with provenance, capacity allocations
-and current usage, the installation's role, and what each merge rule
+changes), each scope's authority with provenance, its capacity (global
+totals and the scope's ceiling, or a legacy allocation) and current
+usage with the runs holding each slot, the admission queue, the
+installation's role, and what each merge rule
 would require. It names no path, scrubs free text, launches nothing and
 writes nothing.
 
@@ -6804,13 +6959,15 @@ and claim. There is no second way to cut a branch or make a worktree. A
 launch the board's own move preceded and that is then refused walks the
 card back to To Do.
 
-**Who goes first.** Within a scope: dependencies first (a card whose
-`**Depends on:**` names unfinished work waits, a card on a dependency
-cycle is blocked by name, a number not on the board is said so), then
-priority, a phase member's run order, then card number. Across scopes,
-round-robin, the scope with fewest starts today first. A phase's members
-are only ever its phase scope's; the Bench scope never schedules them,
-and a phase the agreement does not name stays the legacy runner's.
+**Who goes first.** Eligibility first: a card whose `**Depends on:**`
+names unfinished work waits, a card on a dependency cycle is blocked by
+name, a number not on the board is said so, and a phase member waits for
+its phase's strategy. Among eligible requests — implementation work,
+reviews and repairs alike — first come, first served per pool, across
+every scope (task 182; see "Shared capacity, first come first served").
+Priority does not reorder the queue. A phase's members are only ever its
+phase scope's; the Bench scope never schedules them, and a phase the
+agreement does not name stays the legacy runner's.
 
 **Declared overlap (D10).** An optional `**Touches:**` header lists what
 a card's work changes — `**Touches:** src/api, docs/guide.md` — compared
@@ -6830,8 +6987,8 @@ unknown outcome and a run still alive after a restart exactly as it
 counts a running agent — a person's own run included, which is counted
 and never cancelled. Daily starts and launches per card are counted from
 the ledger, so a restart, a pause and resume, or an agreement edit
-resets nothing; a phase's starts are its allocation and the Bench
-total's alike.
+resets nothing; a phase's starts count against its own daily ceiling
+and the board's total alike.
 
 **Re-checked immediately before every side effect.** The agreement, the
 card's last mover and holder, exclusions, hand-back and pauses (a Bench
@@ -7280,13 +7437,15 @@ did — which is also why the phase building this feature is not migrated
 mid-flight: nothing adopts a phase by itself.
 
 **What the phase entry says.** Beside `enabled`, `paused`, `authority`,
-`allocation`, `ceilings`, `exclusions` and `handback` (each only narrowing
-the Bench scope's), a phase names its `strategy`:
+`limits` (its own ceilings at once and per day, which reserve nothing;
+`allocation` in a legacy reserved agreement), `ceilings`, `exclusions`
+and `handback` (authority and ceilings only narrowing the Bench scope's),
+a phase names its `strategy`:
 
 | strategy | which member may start |
 | --- | --- |
 | `sequential` (default) | the runner's rule: one at a time, in the order `## Cards` lists them, each after the one before it is **integrated** into the phase branch |
-| `dependencies` | any member whose in-phase `**Depends on:**` are integrated, side by side within the phase's own allocation |
+| `dependencies` | any member whose in-phase `**Depends on:**` are integrated, side by side up to the phase's ceiling and the board's free slots |
 
 Membership stays the phase card's `## Cards` list, and members still
 inherit the phase branch: no member names a base of its own. A member in
@@ -7320,8 +7479,13 @@ in the operation ledger and its record on the card it is about:
 5. **Deliver** — the phase card is delivered like any card, under the
    **integration** merge rule: its checks run and its review is read at
    the *integrated head*, never a member's, and an independent review
-   must differ from every member's implementer. A phase card is not
-   repaired as a card (`repair-unavailable`). The merge, where `merge` is
+   must differ from every member's implementer. A failed check or a
+   request for changes at the integrated head is repaired, where `repair`
+   is delegated and within `repairRounds`, by **↻ act on PR** on the
+   phase card's own integration branch and PR — the same target contract
+   a person's click rides (task 174, "Repairing a phase's integration
+   PR"); `repair-unavailable` now means only that the integration PR was
+   observed merged or closed. The merge, where `merge` is
    delegated, is merge & clean up — publication confirmed on the remote,
    the members swept to done/ with it.
 
@@ -7348,7 +7512,7 @@ which one it is on:
 | path | how it starts | who advances it | the face says |
 | --- | --- | --- | --- |
 | **the phase runner** | move the phase card into In Progress, then **▸ run phase** | the runner's beat, one member at a time | `not started`, the member in flight, `held` or `halted` |
-| **its phase scope** | name the phase in the operating agreement (with an allocation), move it into To Do, then **adopt** it in Orchestrator → Phases | the scheduler's passes, under the agreement | the phase scope's lifecycle word and its next step |
+| **its phase scope** | name the phase in the operating agreement (it inherits the default ceiling), move it into To Do, then **adopt** it in Orchestrator → Phases | the scheduler's passes, under the agreement | the phase scope's lifecycle word and its next step |
 
 Naming a phase in the agreement does not adopt it: until a person does,
 it reads `not adopted` and the runner still owns it. Once adopted, the
@@ -7372,7 +7536,7 @@ runner's snapshot, so a scoped phase whose member is running reads
 | `preparing` | adopted; its branch is cut on the next pass | wait |
 | `queue-needed` | the next member is in Backlog | move it into To Do. Nothing pulls a card out of Backlog |
 | `ready` | a member is queued and may start | the next pass starts it |
-| `waiting` | a dependency, a slot, today's launches, or a missing allocation | the reason says whose |
+| `waiting` | a dependency, a slot (its ceiling or the board's), today's launches, or a ceiling of 0 | the reason says whose |
 | `working` | a run is on a member | the agent's; integration follows review |
 | `moved-early` | a later member sits in In Progress with nothing working it | move it back to To Do or Backlog |
 | `stopped` | a member has work on its branch and no run | Orchestrator → Recovery, or ▸ start work |
@@ -7385,14 +7549,19 @@ plan — authorization, capacity, dependencies and the operation ledger —
 never the strategy alone, and a member in Backlog reads `in-backlog`,
 never `ready`.
 
-**Budgets in plain words.** Each phase lists its implementation slots
-(runs at the same time) and its launches today, reserved out of the
-Bench scope's total. A launch is one agent run: an implementation, an
-independent review, a repair or a diagnosis. So a budget of one launch a
-day is named as covering one of those, not a member's whole lifecycle.
-An allocation of zero, or today's launches used up, is said as what is
-missing and where to change it. Nothing here raises an allocation,
-queues a member or adopts a phase.
+**Budgets in plain words.** Each phase lists how many runs it has now
+against its ceiling (the default phase ceiling or its own limit), how
+many of the board's slots are in use and free, and its launches today
+against its daily ceiling and the board's total (task 182). Nothing is
+reserved for it: an idle phase uses nothing and its ceiling is never
+named as something it holds. (A legacy reserved agreement still says
+"reserved out of the Bench scope's total" until it is migrated.) A
+launch is one agent run: an implementation, an independent review, a
+repair or a diagnosis. So a budget of one launch a day is named as
+covering one of those, not a member's whole lifecycle. A ceiling of
+zero, or today's launches used up, is said as what is missing and where
+to change it. Nothing here raises a limit, queues a member or adopts a
+phase.
 
 **In flight means worked, never staged.** Under the sequential strategy
 a member is held while another member of the phase is in flight. In
@@ -7579,8 +7748,12 @@ the rule.
   when the page cannot reach the board), its sentence and the one next
   step; then each scope — Bench, and every phase scope — with its
   authority word by word and the scope that decided it, its slots as
-  `n of m in use` (an allocation from the shared total for a phase), its
-  launches today and its ceilings; the merge policy, where an ungated
+  the board's global total, in use and available, and a phase's own use
+  against its ceiling (task 182; a legacy agreement shows its allocation
+  and a migration notice), its launches today and its ceilings; the
+  admission queue — each waiting request's position, since when, and any
+  hold — and which runs hold a slot, a repair of a card in Review
+  included; the merge policy, where an ungated
   rule reads **No checks required by your policy** and a delegated merge
   under it *not verified*; and the execution installation.
 - **Work** — every card in To Do, In Progress and Review in five groups:
@@ -7916,7 +8089,8 @@ about two revisions, and the board keeps them apart:
   profile, the worktree or the model. Nothing is pushed and nothing is
   retargeted; the refusal names the integration head as the separate
   target it is — the card that owns that branch, which is a phase card's
-  own PR.
+  own PR, where **↻ act on PR** repairs it (see "Repairing a phase's
+  integration PR").
 - **The record says which it was.** `target` is `member` or
   `integration`, and `label` is `current`, `superseded` or `historical`.
 - **Nothing on the page implies otherwise.** A `⌾` chip in the card's
@@ -7966,8 +8140,84 @@ appended to the task file under a `## Relevance review — <date>` heading,
 with the verdict (`Still relevant | Partly done | Already done | Needs
 rewrite`) in the ticker. The card does not move; deciding what to do with
 the verdict is yours — in the card's **Reviews**, where you can comment
-on it and ask for the card to be updated from it (next section). One
-agent per task at a time applies across both kinds.
+on it and ask for the card to be updated from it (see "Relevance
+reviews: comment, then update the card from one"). One agent per task at
+a time applies across both kinds.
+
+### Repairing a phase's integration PR
+
+When a phase's integration PR is asked for changes, its members' own PRs
+are merged already — there is nothing to push to on a member, and nothing
+to reopen. So **↻ act on PR** on the phase card itself repairs the
+integration work in place (task 174): the same action, the same arm-then-
+fire confirmation, the same `act-pr` intent, profile, model, prompt
+template and grants as on an ordinary card. One resolver,
+`agents.repair_target`, answers what is repaired for every door — the
+card's button, its launch check and a delegated repair an orchestrator
+scope selects — so the three cannot disagree.
+
+| | ordinary card | phase card in `review/` |
+| --- | --- | --- |
+| branch | `task/<stem>` | its existing `phase/<stem>`, never a task branch |
+| worktree | the card's, recreated from the branch if cleaned up | the phase's Bench-managed worktree, recreated from `phase/<stem>` if cleaned up |
+| pull request | the card's | the open integration PR — updated, never replaced |
+| refused when | the PR is merged or closed | the same, and every case below |
+
+A phase repair is refused, naming its prerequisite, with no branch,
+worktree, claim or run created and nothing reset, force-pushed or
+switched:
+
+| code | what it means | the way through |
+| --- | --- | --- |
+| `no-pr` | the phase has no integration PR | **↑ open PR** on the phase card |
+| `pr-merged`, `pr-closed` | the integration PR has ended | open a card for the change |
+| `head-drift` | the PR proposes another branch, or a head this checkout's `phase/<stem>` does not hold | fix the PR, or fetch and fast-forward the branch |
+| `base-drift` | the PR targets another base than the board recorded | ⌖ replan, or change the PR back |
+| `no-branch` | `phase/<stem>` is not here | **Check the remote** |
+| `foreign-checkout`, `wrong-branch` | something else sits where the worktree goes, or it is on another branch | settle it by hand; bench never switches it |
+| `dirty`, `conflicting` | the worktree has uncommitted changes, or a merge or rebase in progress | commit, remove or finish it by hand |
+| `busy` | a run is on the phase or a member, or a repair is already being started | **‖ hold** it, or wait for it to end |
+| `operation-pending`, `operation-unknown` | an orchestrator operation on the phase or a member has no settled receipt (an `unobserved` run a restarted board never saw end included) | wait for it, or settle it in Orchestrator → Recovery |
+
+**When the host cannot be read.** Without an answer from the hosting
+provider the target is the phase's own branch in this checkout, as it is
+for an ordinary card, and the launch check says the PR's head and base
+were not compared. The repair's push is a plain one, so a remote branch
+that moved on without this checkout refuses it and nothing is forced over
+it; the run fails, the commit stays here, and the card stays in Review.
+
+**What stays where it is.** The phase and every member stay in
+`review/`; the member list, the phase log's integration lines and the
+members' PRs are untouched. The run is told it is repairing the
+integration PR, given the card (its brief and the integration review
+filed on it) and its pinned approved inputs, reports its progress on the
+phase card, and files its `## PR update` there. The card's delivery
+status offers the action with the branch it repairs; a phase card is
+never told to move back to in-progress, which would start no supported
+run.
+
+**A new head is asked afresh.** The repair's push is a new integration
+head, so the checks recorded and the review given at the old one are
+history: the merge rules ask for the integration rule's checks and a
+fresh, independent review of the exact updated head (the repair run
+counts as an implementer). A repaired or approved phase still merges into
+the application base only by merge & clean up under your merge rules, and
+none of this promotes the operator, activates a policy or authorizes a
+later phase.
+
+**Orchestration.** In an adopted phase scope, a failed check or a request
+for changes at the integrated head is repaired where the agreement
+delegates `repair`, within `repairRounds` and the phase's daily starts,
+as an operation in the ledger like any repair; without the word, the
+card reads `repair-not-delegated` and **↻ act on PR** is yours. Its own
+operation is not counted as a competitor. A run on the phase or a member,
+or an operation on one still in flight, is read by the plan itself
+through the launch's own check (`agents.phase_repair_wait`): the card
+reads `repair-waiting` (or `repair-held`, for an unknown outcome) and no
+repair operation is opened — so nothing is refused and recorded on the
+card pass after pass. A launch that still loses that race is refused
+`busy` or `operation-pending`, and that refusal is answered afresh on the
+next pass rather than held.
 
 ### Relevance reviews: comment, then update the card from one
 

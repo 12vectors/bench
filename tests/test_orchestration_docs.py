@@ -27,7 +27,11 @@ PAGES = {
                                "Export the table as CSV", "Include hidden columns?",
                                "What it never does", "Turning it on, the first time"),
     "/concepts/orchestration-agreements/": ("Off until a person turns it on",
-                                            "Last mover, not last editor"),
+                                            "Last mover, not last editor",
+                                            # task 182
+                                            "Shared capacity, first come first served",
+                                            "Migrating a reserved agreement",
+                                            "uses 1 slot, not 2"),
     "/concepts/orchestration-reasoning/": ("The response, version 1",
                                            "The card keeps everything"),
     "/concepts/orchestration-scheduling/": ("Declared overlap (D10)",

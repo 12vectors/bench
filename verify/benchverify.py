@@ -29,8 +29,10 @@ lives inside it.
 Built, not inherited. Every `BOARD_*`, `AGENT_*`, `BENCH_*`, `GIT_*`,
 `GH_*` and `GITHUB_*` name is removed, as is anything credential-shaped
 and anything that turns a browser sandbox off. `HOME`, the XDG
-directories, `TMPDIR` and the package caches point into a work directory
-made for this run, and git reads a configuration written there. That
+directories, `TMPDIR`, the package caches and Python's bytecode cache
+(`PYTHONPYCACHEPREFIX`, so no `__pycache__` lands in the checkout and a
+child process does not recompile what an earlier one already compiled)
+point into a work directory made for this run, and git reads a configuration written there. That
 *directs* where a well-behaved suite writes. It is not an OS sandbox: a
 test with a path can still read or write anywhere this user can.
 """
@@ -247,6 +249,15 @@ def child_env(work: Path, parent=None) -> tuple[dict, list[str]]:
             stripped.append(k)
             continue
         env[k] = v
+    # Bytecode goes to a cache this run owns, never into the checkout it
+    # judges (task 178). It used to be PYTHONDONTWRITEBYTECODE=1, which kept
+    # the checkout clean by writing nothing at all — so every Python process
+    # a test started (a board, a driver step, gate-compare) compiled
+    # manager/core from source again: 0.45s against 0.12s for `import board`
+    # in this environment, measured (develop/perf/178-backend-dead-time.md).
+    for k in ("PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX"):
+        if env.pop(k, None) is not None:
+            stripped.append(k)
     home, tmp, cache = work / "home", work / "tmp", work / "cache"
     for d in (home / ".config", home / ".local" / "share", home / ".local" / "state",
               tmp, cache):
@@ -261,7 +272,7 @@ def child_env(work: Path, parent=None) -> tuple[dict, list[str]]:
         "XDG_STATE_HOME": str(home / ".local" / "state"),
         "TMPDIR": str(tmp), "TMP": str(tmp), "TEMP": str(tmp),
         "PIP_CACHE_DIR": str(cache / "pip"), "npm_config_cache": str(cache / "npm"),
-        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPYCACHEPREFIX": str(cache / "pycache"),
         "GIT_CONFIG_GLOBAL": str(home / ".gitconfig"), "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_TERMINAL_PROMPT": "0",
     })
@@ -270,7 +281,7 @@ def child_env(work: Path, parent=None) -> tuple[dict, list[str]]:
 
 DIRECTED = ("HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME",
             "XDG_STATE_HOME", "TMPDIR", "PIP_CACHE_DIR", "npm_config_cache",
-            "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "PYTHONDONTWRITEBYTECODE")
+            "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "PYTHONPYCACHEPREFIX")
 
 
 # ── one run and its record ────────────────────────────────────────────
@@ -312,10 +323,18 @@ def contract_report(record: dict, status: int, reason: str | None) -> dict:
         if case.get("outcome") == "passed":
             continue
         kind = case.get("outcome")
+        # the harness's last word on the case, when it had one (task 176):
+        # the target a click lost, or the condition that never settled
+        notes = case.get("harness") or []
+        last = notes[-1] if notes else None
+        said = ""
+        if isinstance(last, dict):
+            what = last.get("target") or last.get("condition") or last.get("unsettled")
+            said = f" [harness: {last.get('kind')} {what}]" if what else f" [harness: {last.get('kind')}]"
         findings.append({
             "message": _contract_text(
                 f"{case.get('case', '?')}: "
-                f"{'assertion failed' if kind == 'failed' else 'setup error'}"
+                f"{'assertion failed' if kind == 'failed' else 'setup error'}{said}"
                 f" — {case.get('detail') or ''}", 1900),
             "severity": "error" if kind == "failed" else "warning"})
         if len(findings) >= CONTRACT_FINDINGS:
@@ -737,7 +756,28 @@ class PageOps:
             if self.eval(f"!!({expression})"):
                 return True
             time.sleep(0.15)
+        # the condition that never came true, kept for the case's log
+        harness_note("wait-timeout", condition=expression[:300], seconds=timeout)
         return False
+
+    def settled(self, timeout: float = 10.0) -> dict:
+        """Wait until the page is settled (task 176): no board reading in
+        flight or queued, no paint scheduled, and the window's scroll
+        positions and size still across two animation frames. What a
+        fixed sleep after a viewport change, a click or a reading used to
+        stand in for — too short under load, wasted otherwise.
+
+        Raises CheckFailed naming every condition still unsettled when
+        `timeout` runs out. A page without the console seam (a sandboxed
+        reference file, say) is judged on scroll and size alone."""
+        ms = int(timeout * 1000)
+        out = self.eval(SETTLED_JS % ms)
+        if not isinstance(out, dict) or not out.get("settled"):
+            why = (out or {}).get("unsettled") if isinstance(out, dict) else None
+            harness_note("unsettled", unsettled=why or ["no answer"], seconds=timeout)
+            raise CheckFailed(f"the page did not settle within {timeout:g}s: "
+                              + "; ".join(why or ["no answer from the page"]))
+        return out
 
     def click(self, selector: str) -> None:
         """A person's click: the target is brought into view first, and a
@@ -746,13 +786,65 @@ class PageOps:
         Mouse input is dispatched at viewport coordinates, so a control
         below the fold used to be "clicked" at a point outside the window
         — hitting nothing, raising nothing, and surfacing seconds later as
-        a timeout about whatever the click should have done."""
-        hit = self.eval(CLICK_TARGET_JS % json.dumps(selector))
-        if not hit:
-            raise CheckFailed(f"{selector}: not found to click")
-        if hit.get("problem"):
-            raise CheckFailed(f"{selector}: {hit['problem']}")
-        self._click_at(hit["x"], hit["y"])
+        a timeout about whatever the click should have done.
+
+        The point is found in one round trip and the trusted mouse events
+        dispatched in another, and a repaint can land in between (task
+        176). So the hit-test also arms a guard that watches the trusted
+        press: one that lands on the target (or on what the selector
+        names by then) goes through untouched, and whatever the page does
+        between that press and the release is the page's — a redraw that
+        loses the click there is a product defect the case sees, and is
+        recorded as `lost`. A press that lands on something else is a
+        harness targeting defect: the guard swallows that whole gesture
+        before any of the page's handlers sees it, so nothing was
+        activated, and the click is aimed again from a fresh hit-test, at
+        most CLICK_AIMS times, each one in the harness trail."""
+        misses = []
+        for aim in range(1, CLICK_AIMS + 1):
+            hit = self.eval(ARMED_CLICK_JS % (CLICK_TARGET_JS % json.dumps(selector),
+                                              json.dumps(selector)))
+            if not hit:
+                raise CheckFailed(f"{selector}: not found to click")
+            if hit.get("problem"):
+                raise CheckFailed(f"{selector}: {hit['problem']}")
+            try:
+                self._click_at(hit["x"], hit["y"])
+            except BaseException:
+                # a guard left armed would judge the next trusted press
+                try:
+                    self.eval(CLICK_SEEN_JS)
+                except (CheckFailed, SetupError, OSError):
+                    pass
+                raise
+            seen = self._click_seen()
+            if not seen or seen.get("landed") is not False:
+                if seen and seen.get("landed") and not seen.get("clicked"):
+                    harness_note("lost-click", target=selector, aim=aim,
+                                 events=seen.get("events"))
+                elif aim > 1:
+                    harness_note("click-reaimed", target=selector, aim=aim)
+                return
+            misses.append(seen.get("pressedOn") or "nothing")
+            harness_note("target-moved", target=selector, aim=aim,
+                         at=[round(hit["x"]), round(hit["y"])],
+                         pressedOn=seen.get("pressedOn"), swallowed=seen.get("swallowed"))
+        raise CheckFailed(f"{selector}: the target moved between hit-test and click on "
+                          f"all {CLICK_AIMS} aims (the press landed on "
+                          f"{', '.join(misses)}; each stray press was swallowed, so "
+                          f"nothing else was activated)")
+
+    def _click_seen(self):
+        """What the click guard saw, or None when it cannot say (the
+        click navigated the page, or the guard is not there)."""
+        try:
+            seen = self.eval(CLICK_SEEN_JS)
+        except (CheckFailed, SetupError):
+            # a click that navigated destroys the page it was read from:
+            # local CDP says so as a protocol error, Playwright as a page
+            # error. A transport that is really gone fails the next call.
+            return None
+        return seen if isinstance(seen, dict) else None
 
     def press(self, selector: str) -> dict:
         """The first half of a person's click: the button goes down on the
@@ -874,6 +966,125 @@ CLICK_TARGET_JS = """(() => {
   }
   return {x, y};
 })()"""
+
+
+# How many times a click whose press provably missed its target (and was
+# swallowed) is aimed again. A miss is a fact about the harness's two
+# round trips, never about the product: the product's own lost clicks are
+# not re-aimed.
+CLICK_AIMS = 3
+CLICK_GUARD_MS = 5000
+
+# The hit-test above, then — only when it found a point — a guard on the
+# trusted press that will follow (task 176). Capture listeners on the
+# window run before any of the page's own on the document or below. The
+# first trusted pointerdown/mousedown decides: on the target (or inside
+# it, or on what the selector names by then) the gesture is the page's
+# and passes untouched; anywhere else every event of the gesture is
+# swallowed — preventDefault and stopImmediatePropagation — so a press
+# meant for one control activates nothing else. Untrusted events (a
+# case's own el.click()) are never touched. The guard disarms itself when
+# read, and after CLICK_GUARD_MS whatever happens.
+ARMED_CLICK_JS = """(() => {
+  const hit = %s;
+  if (!hit || hit.problem) return hit;
+  const sel = %s;
+  const old = window.__benchClick;
+  if (old) old.off();
+  const el = document.querySelector(sel);
+  const name = (n) => !n ? 'nothing' : n.nodeType !== 1 ? '#text' :
+    n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') +
+    (typeof n.className === 'string' && n.className.trim() ? '.' + n.className.trim().split(/\\s+/).join('.') : '');
+  const within = (t, e) => !!t && !!e && (t === e || e.contains(t));
+  const on = (t) => within(t, el) || within(t, document.querySelector(sel));
+  const types = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'contextmenu'];
+  const g = { landed: null, pressedOn: null, clicked: false, swallowed: 0, events: [],
+              until: Date.now() + %d };
+  const h = (e) => {
+    if (!e.isTrusted) return;
+    if (Date.now() > g.until) { g.off(); return; }
+    const t = e.target;
+    if (g.landed === null && (e.type === 'pointerdown' || e.type === 'mousedown')) {
+      g.landed = on(t); g.pressedOn = name(t);
+    }
+    if (g.events.length < 12) g.events.push(e.type + '@' + name(t) + (on(t) ? '' : ' (off target)'));
+    if (e.type === 'click' && on(t)) g.clicked = true;
+    if (g.landed === false) { e.preventDefault(); e.stopImmediatePropagation(); g.swallowed++; }
+  };
+  for (const ty of types) window.addEventListener(ty, h, true);
+  g.off = () => {
+    for (const ty of types) window.removeEventListener(ty, h, true);
+    if (window.__benchClick === g) delete window.__benchClick;
+  };
+  window.__benchClick = g;
+  return hit;
+})()""".replace("%d", str(CLICK_GUARD_MS))
+
+CLICK_SEEN_JS = """(() => {
+  const g = window.__benchClick;
+  if (!g) return null;
+  g.off();
+  return { landed: g.landed, pressedOn: g.pressedOn, clicked: g.clicked,
+           swallowed: g.swallowed, events: g.events };
+})()"""
+
+# Settled (task 176): the page's own answer from the console seam
+# (`whenSettled`: no board reading out or queued, no paint scheduled),
+# then the window itself still — its size and every scroll position
+# unchanged across two animation frames, since a viewport change or a
+# smooth scroll moves things without asking the renderer for anything.
+SETTLED_JS = """(async () => {
+  const ms = %d, until = Date.now() + ms;
+  const frame = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+  const scrolls = () => {
+    const out = [innerWidth, innerHeight, scrollX, scrollY];
+    for (const e of document.querySelectorAll('*'))
+      if (e.scrollTop || e.scrollLeft) out.push(e.tagName, e.id, e.scrollTop, e.scrollLeft);
+    return JSON.stringify(out);
+  };
+  let page = { settled: true, unsettled: [] };
+  if (typeof window.whenSettled === 'function') page = await window.whenSettled(ms);
+  if (!page.settled) return { settled: false, unsettled: page.unsettled };
+  let last = scrolls(), still = 0;
+  while (Date.now() < until) {
+    await frame();
+    const now = scrolls();
+    still = now === last ? still + 1 : 0;
+    last = now;
+    if (still >= 2) {
+      const p = typeof window.pageSettled === 'function' ? window.pageSettled() : { settled: true, unsettled: [] };
+      if (p.settled) return { settled: true, unsettled: [] };
+      still = 0;
+    }
+  }
+  return { settled: false, unsettled: ['the window was still scrolling or resizing'] };
+})()"""
+
+
+# The harness's own account of what it did that a case failure may turn
+# on (task 176): a click aimed again, a press that landed but lost its
+# click, a wait whose condition never came true, a page that did not
+# settle. verify/browser prints the entries a failing case made beside
+# its traceback, so a log names the target and the unsettled condition.
+HARNESS_TRAIL: list[dict] = []
+_HARNESS_SEQ = [0]
+
+
+def harness_mark() -> int:
+    """The trail's position now: entries after it are a later case's."""
+    return _HARNESS_SEQ[0]
+
+
+def harness_since(mark: int) -> list[dict]:
+    return [e for e in HARNESS_TRAIL if e["n"] > mark]
+
+
+def harness_note(kind: str, **fields) -> None:
+    _HARNESS_SEQ[0] += 1
+    HARNESS_TRAIL.append({"n": _HARNESS_SEQ[0], "kind": kind,
+                          "at": round(time.time(), 3), **fields})
+    if len(HARNESS_TRAIL) > 500:
+        del HARNESS_TRAIL[:-500]
 
 
 class Browser(PageOps):
@@ -1539,7 +1750,7 @@ CASE_STATE = frozenset({"origin", "console", "csp", "log", "argv", "proc"})
 CASE_SETTABLE = frozenset({"origin"})
 CASE_API = frozenset({
     # PageOps, written once over the transport primitives
-    "goto", "wait", "click", "press", "release", "hover", "reveal",
+    "goto", "wait", "settled", "click", "press", "release", "hover", "reveal",
     # each transport's own, with one meaning on both
     "eval", "viewport", "zoom", "key", "screenshot", "ax_nodes", "close",
     "_navigate"}) | CASE_STATE

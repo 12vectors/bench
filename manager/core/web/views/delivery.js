@@ -195,10 +195,18 @@ function deliveryButtonHtml(a, slot, primary) {
     return `<a class="dact${primary ? ' dprimary' : ''}" href="${esc(a.url)}" target="_blank" ` +
       `rel="noopener" data-dslot="${slot}">${esc(a.label)} ↗</a>`;
   }
+  // an action that names what it acts on (task 174: a phase's repair
+  // names the integration branch) says so beside itself, before the
+  // confirmation, rather than only in a tooltip
+  const target = a.target && a.enabled
+    ? `<small class="dtarget" id="dtarget-${slot}">on <code>${esc(a.target)}</code></small>` : '';
+  const title = a.title ? ` title="${esc(a.title)}"` : '';
+  const described = a.enabled ? (target ? ` aria-describedby="dtarget-${slot}"` : '')
+                              : ` disabled aria-describedby="dwhy-${slot}"`;
   return `<span class="dactwrap"><button type="button" class="dact${primary ? ' dprimary' : ''}" ` +
-    `data-dslot="${slot}"${a.enabled ? '' : ` disabled aria-describedby="dwhy-${slot}"`}>` +
+    `data-dslot="${slot}"${title}${described}>` +
     `${a.arm && a.enabled ? actLabel(a.label, ACT_CONFIRM[a.action] || 'click again to confirm', 'working…')
-                          : esc(a.label)}</button>${why}</span>`;
+                          : esc(a.label)}</button>${target}${why}</span>`;
 }
 
 const ACT_CONFIRM = {

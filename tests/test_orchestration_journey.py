@@ -160,17 +160,23 @@ class _Journeys:
                             "- 21 — Export model\n- 22 — Export button\n")
         one = j.card("21", "Export model", stage="to-do", author="bob")
         two = j.card("22", "Export button", stage="to-do", author="bob")
-        solo = j.card("30", "Fix the footer", author="bob")
+        # numbered below the members: requests ready in one pass are
+        # admitted first come, first served with ties by card number (task
+        # 182), and the race probes below expect the standalone card's
+        # launch, and its run's ending, first — as the old Bench-first
+        # round robin gave them
+        solo = j.card("19", "Fix the footer", author="bob")
         for card in (phase, solo):
             j.step("move", file=card, **{"from": "backlog", "to": "to-do"})
         j.step("enable", agreement={
-            # one shared total; the phase is allocated part of it and the
-            # Bench scope keeps the rest (D6, D7)
+            # one shared total, first come first served (task 182); the
+            # phase's limits cap what it may use at once and reserve
+            # nothing — the Bench scope may use every free slot (D6, D7)
             "capacity": {"implementation": 2, "review": 2},
             "phases": {"20": {"enabled": True, "strategy": "sequential",
                               "authority": {w: True for w in ALL},
-                              "allocation": {"implementation": 1, "review": 1,
-                                             "dailyStarts": 6}}}})
+                              "limits": {"implementation": 1, "review": 1,
+                                         "dailyStarts": 6}}}})
         adopted = j.step("adopt", file=phase)
         self.assertEqual(adopted["scope"], "phase:20")
         return j, phase, one, two, solo
@@ -346,7 +352,7 @@ class _Journeys:
         self.assertEqual(works.count(two), 1)
         # the phase's integrated head is what was reviewed and merged —
         # never a member's head on its own
-        for card in ("card-21.txt", "card-22.txt", "card-30.txt"):
+        for card in ("card-21.txt", "card-22.txt", "card-19.txt"):
             self.assertTrue(j.remote_has(card), card)
         actions = [(o["file"], o["action"], o.get("outcome") or o["status"])
                    for o in reading["ops"]]
