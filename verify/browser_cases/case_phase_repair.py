@@ -277,7 +277,7 @@ class PhaseRepairInTheBrowser(unittest.TestCase):
         shot("phase-repair-handoff-1280")
         backend = S["backend"]
         refs = bv._git(backend.app, "branch", "--list", f"task/{OPEN}").stdout.strip()
-        self.assertEqual("", refs, "a task branch was cut for the phase")
+        self.assertFalse(refs, "a task branch was cut for the phase")
         self.assertTrue((backend.work / "tasks" / "review" / f"{OPEN}.md").exists())
         listed = sorted(p.name for p in (backend.work / "tasks" / "backlog").iterdir())
         self.assertFalse([n for n in listed if "phase-repair" in n],
