@@ -147,7 +147,8 @@ class Refused(ValueError):
 
 
 def _dir() -> Path:
-    return config.BRAIN_DRAFTS_DIR
+    # beside the Brain's write journal, wherever the state directory is
+    return config.STATE / "brain" / "drafts"
 
 
 def _path(draft_id: str) -> Path:
@@ -310,7 +311,7 @@ def _work_candidates() -> list[tuple[str, Path]]:
     """Every work-root file the selection would consider, in order: the
     Brain, then cards (newest number first, every stage), plans and
     reference text. Directories that are links are not entered."""
-    work = config.WORK
+    work = config.work_root()
     out: list[tuple[str, Path]] = []
 
     def listing(directory: Path) -> list[Path]:
@@ -342,7 +343,7 @@ def _work_candidates() -> list[tuple[str, Path]]:
 
 def _relative(path: Path) -> str:
     try:
-        return path.relative_to(config.WORK).as_posix()
+        return path.relative_to(config.work_root()).as_posix()
     except ValueError:
         return path.name
 
@@ -360,7 +361,7 @@ def work_sources() -> dict:
         if SECRET_NAME.search(rel):
             excluded.append({"ref": f"work:{rel}", "why": "its name is credential-shaped"})
             continue
-        ok, why = _regular(path, config.WORK)
+        ok, why = _regular(path, config.work_root())
         if not ok:
             excluded.append({"ref": f"work:{rel}", "why": why})
             continue
@@ -497,7 +498,7 @@ def preflight(target: str | None = None, text: str | None = None) -> dict:
         "selection": profiles.agent_selection(config.agent_choice(INTENT)),
         "adapter": (found.get("adapter") or {}).get("name"),
         "profile": profiles.summary(found),
-        "work": {"root": str(config.WORK), "sources": len(sel["sources"]),
+        "work": {"root": str(config.work_root()), "sources": len(sel["sources"]),
                  "bytes": sel["bytes"], "counts": sel["counts"],
                  "list": [{"ref": s["ref"], "sha256": s["sha256"][:12],
                            **({"entry": s["entry"]} if s.get("entry") else {})}
@@ -1348,8 +1349,8 @@ def drift(draft: dict) -> list[dict]:
             current = now["sha256"] if now else None
         else:
             rel = (b.get("file") or b["ref"]).partition(":")[2]
-            path = config.WORK / rel
-            ok, why = _regular(path, config.WORK)
+            path = config.work_root() / rel
+            ok, why = _regular(path, config.work_root())
             try:
                 current = _sha(path.read_bytes()) if ok else None
             except OSError:

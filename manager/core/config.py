@@ -62,7 +62,6 @@ DOCTOR_DIR = STATE / "doctor"                      # fixtures a diagnosis makes 
 GATES_DIR = STATE / "gates"                        # Bench review verdicts and gate overrides
 REFINE_DIR = STATE / "refine"                      # card-refinement jobs and their proposals
 REASONING_DIR = STATE / "reasoning"                # orchestrator reasoning jobs, facts and responses
-BRAIN_DRAFTS_DIR = STATE / "brain" / "drafts"      # private Brain drafting requests, rounds and proposals
 # Agent-reported progress, one record per run. None = beside the agent
 # logs (`AGENT_DIR / "progress"`), so whatever relocates a run's log
 # relocates what it reported with it — see `progress._dir`.
