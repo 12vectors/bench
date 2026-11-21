@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate / braindraft < recovery < scheduler < ask < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate / braindraft < recovery < scheduler < ask < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -241,6 +241,14 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   before it and updated with the observed receipt after; which statuses
   reserve a slot and which spent a start, so a restart, a pause or a lost
   reply resets no budget. Imports `config` and `records` only
+- `decisiontrace.py` — the orchestrator's decision trace (task 184): one
+  versioned, bounded, installation-local record per scheduling pass —
+  what each candidate was read as, the rule and reason, what was
+  selected and what became of it — with identical idle passes compacted
+  losslessly, segment retention and its boundary named, and recording
+  failures counted rather than raised. Imports `config`, `records` and
+  `redact`; reading it writes and launches nothing (see "The decision
+  trace: why it acted, and why it did not")
 - `movements.py` — who last moved a card, and whether that makes it this
   board's to orchestrate (task 138, D1): each move's provenance read back
   from the `Bench-Move` trailers `taskfiles` writes on a move's commit and
@@ -2185,7 +2193,8 @@ once the board has been read.
 | `/focus`, `/focus/<session>` | Focus, and one session |
 | `/sessions[/<session>]?card=<card>`, `/focus[/<session>]?card=<card>` | the same, in the activity context of one card, or of one phase and its cards (task 159) |
 | `/settings`, `/settings/<section>` | Settings → Overview, or one section: `setup`, `verification` (Checks), `acceptance` (Merge rules), `agents`, `access`, `diagnostics`, `installation`, `policy` |
-| `/orchestrator`, `/orchestrator/<section>` | the Orchestrator's Overview, or one section: `ask`, `work`, `decisions`, `phases`, `recovery`, `activity`, `agreement` |
+| `/orchestrator`, `/orchestrator/<section>` | the Orchestrator's Overview, or one section: `ask`, `trace`, `work`, `decisions`, `phases`, `recovery`, `activity`, `agreement` |
+| `/orchestrator/trace?entry=<id>` | one decision-trace entry, opened, by its stable id (task 184); `card=` narrows it to that card's decisions |
 | `/orchestrator/<section>?card=<card>` | that section with one card or phase selected in it, named as a card's address names it |
 | `/#setup` | kept from the terminal handoff: Settings → Setup guide, corrected to `/settings/setup` |
 
@@ -7969,7 +7978,7 @@ operation ledger), `GET /api/orchestration/reasoning` and
 owns it, which decides again. A disabled button is a hint; the route is
 the rule.
 
-**Eight sections**, each with an address (`/orchestrator/<section>`, and
+**Nine sections**, each with an address (`/orchestrator/<section>`, and
 `?card=<card>` for the card or phase selected in it):
 
 - **Ask orchestrator** (`/orchestrator/ask`) — a person's free-text
@@ -7991,6 +8000,10 @@ the rule.
   included; the merge policy, where an ungated
   rule reads **No checks required by your policy** and a delegated merge
   under it *not verified*; and the execution installation.
+- **Decision trace** — every scheduling pass this installation
+  evaluated, newest first: why it started this card, why not that one,
+  and why nothing happened. See "The decision trace: why it acted, and
+  why it did not" below.
 - **Work** — every card in To Do, In Progress and Review in five groups:
   yours to orchestrate (your last stage move), driven by you (handed back
   or excluded), someone else's, unattributed (who moved it is not known)
@@ -8069,6 +8082,98 @@ by keyboard, by touch (44px targets on a touch screen) and at 390px in
 both themes. Question text, reasoning summaries and findings are card
 text: escaped, rendered by the page's own Markdown renderer, and masked
 where they look like a credential — pattern matching, not a promise.
+
+### The decision trace: why it acted, and why it did not
+
+A busy person asks an orchestrator the same things again and again: *why did it
+start this?*, *why not that card?* and *why is nothing happening?*
+**Orchestrator → Decision trace** answers them in one place (task 184),
+from a record of every scheduling pass — not by piecing together the
+operation ledger, card histories and today's blockers.
+
+**What a pass is, and what it is not.** A scheduling pass is
+deterministic: it reads the cards, the agreement, the ledger and the
+capacity in use, applies the rules in this document and acts. It asks no
+model. Three different things are therefore kept apart in every entry:
+
+| | what it is | how the trace shows it |
+| --- | --- | --- |
+| a **decision** | what the pass read and selected, with the rule code and its reason | the entry itself, as written when the pass decided |
+| an **agent recommendation** | a bounded reasoning job's public response (a recovery diagnosis, say) | linked by job id and labelled *agent-reported* — validated by bench, never an observed result |
+| an **execution** | what then happened: the intent, the receipt, the run, its ending | linked by operation key to the ledger and the card's own history, read as they are *now* |
+
+**One entry per pass.** Newest first, each entry begins with the time,
+the scope and cards, the selected action or **Wait / No action**, the
+reason, and the outcome. A selection is never called a launch because it
+was chosen: *Selected this pass* is planning's word, and *Then:
+launched*, *refused at execution*, *outcome unknown* is what the side
+effect came to. A card eligible when the pass planned, and refused when
+it was re-authorized immediately before the launch (someone else moved
+it, a pause, a spent budget), keeps both halves; nothing is rewritten to
+pretend it was always blocked. An uncertain launch stays *unknown* — the
+next pass holds it, and nothing is launched twice.
+
+Expanding an entry shows, per decision: **Facts considered** (stage,
+scope, priority, the brief revision or commit decided on, dependencies,
+declared Touches, the queue position, the work base — only what was
+captured; a fact not listed is unknown, not absent), **Alternatives
+skipped** for a selection or **Selected instead** for a wait (the other
+candidates for the same pool that pass actually evaluated, each with its
+reason), **Rule or limit** (the code, such as `slots-full`,
+`waiting-dependency`, `card-launches-exhausted`), and **Evidence and
+links** — the operation and its ledger status now, the run and its
+Focus, a recovery incident and its diagnoses, and the card's history.
+A wait says what happens next and who takes the step: *automatic* (a slot
+frees, a dependency lands, the next pass reconsiders) or *a person* (move
+the card yourself, settle an unknown outcome in Recovery, raise a limit
+in the Operating agreement), naming only actions that exist and never an
+ETA. Passes that were not evaluated — the agreement off or invalid, this
+installation a replica, a pass already running — are entries too, said
+as *Not evaluated*; a pass that stopped on an error is an *Error —
+partial pass* with what it had read.
+
+**Finding an entry.** Filter by card, scope (Bench or a phase), outcome,
+action and a date range; **Show older passes** pages back by a stable
+cursor, so passes recorded meanwhile never shift a page. Each entry has a
+link of its own (`/orchestrator/trace?entry=<id>`), and a card's Overview
+has a **Decision trace** link to its own decisions
+(`/orchestrator/trace?card=<card>`), which in turn link back to the card
+and its history. Opening, filtering, expanding, refreshing and paging
+are reads: they launch, reserve, move, fetch and write nothing.
+
+**Repeated waits are folded, never dropped.** A pass that acted on
+nothing and decided exactly what the previous one decided is stored as
+a small repeat of it. The entry then reads *×N identical passes* with
+the first and last time and every pass's id; any of those ids opens it.
+A restart, a change in any decision, or anything acted on starts a new
+entry.
+
+**What is kept, where, and for how long.** The trace is this
+installation's: one versioned JSON line per pass under
+`manager/local/state/orchestration/trace/`, never committed and never
+synced. The shared, public record of what was done stays the card's
+`## Orchestration record` — every intent and receipt the scheduler
+writes there, exactly as before — so passes add no card commits and no
+sync traffic. Records are bounded: text clipped and scrubbed of anything
+credential-shaped, at most 80 decisions a pass, 96 KiB a record.
+Retention keeps the newest 8 segments of 512 KiB; what was pruned is
+named as the older-history boundary.
+
+**Coverage is said, not assumed.** The trace starts with the first pass
+this feature recorded on this board; nothing earlier is reconstructed,
+and a board with no agreement at all records nothing. The page says
+when it started, the last pass evaluated (apart from the last that
+acted, and from any run's tool activity), the scheduler's interval, and
+every hole: a stretch with no pass (the board stopped or orchestration
+off), a restart, pass records missing from the sequence, unreadable
+lines, and passes that could not be recorded (a full disk, say) — counted
+and shown on the next entry. A recording failure never changes what the
+pass did and never triggers a retry.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/orchestration/trace` | `card`, `scope`, `outcome`, `action`, `since`, `until`, `before`, `limit` — passes newest first, with the trace's coverage and integrity |
+| `GET /api/orchestration/trace/entry?id=` | one entry with every pass it stands for, and what its operations and incidents read as now |
 
 ### What is proved end to end, and what stays yours
 

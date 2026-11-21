@@ -214,7 +214,8 @@ class Orchestrator(unittest.TestCase):
         self.assertEqual("Off", b.eval("document.querySelector('#oshell .o-status .o-badge').textContent"))
         self.assertIn("Nothing starts by itself", b.eval("document.querySelector('#oshell').innerText"))
         sections = b.eval("[...document.querySelectorAll('#oshell .o-nav a')].map(a => a.getAttribute('href'))")
-        self.assertEqual(["/orchestrator", "/orchestrator/ask", "/orchestrator/work", "/orchestrator/decisions",
+        self.assertEqual(["/orchestrator", "/orchestrator/ask", "/orchestrator/trace", "/orchestrator/work",
+                          "/orchestrator/decisions",
                           "/orchestrator/phases", "/orchestrator/recovery", "/orchestrator/activity",
                           "/orchestrator/agreement"], sections)
         shot("orchestrator-off-1440-dark")

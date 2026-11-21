@@ -41,7 +41,10 @@ PAGES = {
                                           "in the phase branch, not delivered"),
     "/guides/ask-orchestrator/": ("Ask about this card", "Ask is not act",
                                   "Where replies are kept", "Asking needs no orchestration authority"),
-    "/concepts/orchestrator-view/": ("Eight sections",
+    "/concepts/orchestrator-view/": ("Nine sections",
+                                     # task 184
+                                     "The decision trace: why it acted",
+                                     "Repeated waits are folded, never dropped",
                                      "What is proved end to end",
                                      "Maintenance boundaries"),
 }

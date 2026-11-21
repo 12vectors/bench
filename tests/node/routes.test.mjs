@@ -37,6 +37,12 @@ test('every documented destination parses, and formats back to itself', async ()
     ['/orchestrator/decisions?card=140', { view: 'orchestrator', section: 'decisions', item: '140' }],
     ['/orchestrator/phases?card=136', { view: 'orchestrator', section: 'phases', item: '136' }],
     ['/orchestrator?card=a-card-with-no-number', { view: 'orchestrator', section: 'overview', item: 'a-card-with-no-number' }],
+    // the decision trace (task 184): a card's decisions, and one entry
+    ['/orchestrator/trace', { view: 'orchestrator', section: 'trace' }],
+    ['/orchestrator/trace?card=184', { view: 'orchestrator', section: 'trace', item: '184' }],
+    ['/orchestrator/trace?entry=0a1b2c3d-42', { view: 'orchestrator', section: 'trace', entry: '0a1b2c3d-42' }],
+    ['/orchestrator/trace?card=184&entry=0a1b2c3d-42',
+      { view: 'orchestrator', section: 'trace', item: '184', entry: '0a1b2c3d-42' }],
   ];
   for (const [path, want] of cases) {
     const [pathname, query] = path.split('?');
@@ -110,6 +116,9 @@ test('a malformed identifier is named as malformed, never swapped for another', 
   assert.equal(parseRoute(at('/orchestrator/Not_A_Section')).invalid, 'section');
   assert.equal(parseRoute(at('/orchestrator/work', '?card=..%2Fx')).invalid, 'item');
   assert.equal(parseRoute(at('/orchestrator/work', '?card=..%2Fx')).item, undefined);
+  // a trace entry is an id of one shape; anything else is said, not followed
+  assert.equal(parseRoute(at('/orchestrator/trace', '?entry=..%2Fx')).invalid, 'entry');
+  assert.equal(parseRoute(at('/orchestrator/trace', '?entry=..%2Fx')).entry, undefined);
   assert.deepEqual(parseRoute(at('/orchestrator/nosuch')), { view: 'orchestrator', section: 'nosuch' });
   assert.equal(parseRoute(at('/orchestrator/a/b')).invalid, 'path');
 });

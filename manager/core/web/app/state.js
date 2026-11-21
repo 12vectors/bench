@@ -92,6 +92,8 @@ const S = {
   // nothing is read for a view nobody looked at.
   orchSection: 'overview',
   orchItem: null,
+  // one decision-trace entry an address named (task 184), by its id
+  orchEntry: null,
   orch: null,
   // The draft being edited, and nothing else: {document, revision, checked,
   // preview, dirty}. `revision` is the one the editor was opened at, sent
