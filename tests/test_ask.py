@@ -713,6 +713,22 @@ class ReadingLaunchesNothing(Board):
         self.assertTrue(all(status == 200 for status, _ in replies), replies[:2])
         self.assertEqual([r["mode"] for r in state.AGENTS.values()], ["reason"])
 
+    def test_the_binding_reaches_the_run_exactly_even_when_it_looks_like_a_secret(self):
+        # a revision the credential scrubber would mask must still be
+        # echoed exactly, or every honest answer is a binding mismatch
+        token = "ghp_" + "Q7w8" * 9
+        # found in the browser case: `sk-…` (an API key's shape) matches
+        # inside the card file name "43-ask-about-the-export.md"
+        bound = {"card": "board", "conversation": "k-0123456789",
+                 "file": "43-ask-about-the-export.md",
+                 "conversationRev": token, "boardRev": "a" * 16, "agreementRev": token}
+        target = {"kind": "board", "subject": "board"}
+        facts = reasoning.facts(None, "ask", "rs-0123456789-1", bound, [], ask={
+            "target": target, "conversation": "k-0123456789", "question": f"Is {token} leaked?",
+            "history": [], "snapshot": "2026-11-21T00:00:00Z", "facts": {}})
+        self.assertEqual(facts["binding"], bound)
+        self.assertNotIn(token, facts["ask"]["question"], "the rest is still scrubbed")
+
     def test_the_need_is_a_managed_template(self):
         self.assertIn("ask", reasoning.NEEDS)
         self.assertEqual(templates.need_template("ask"), "reason-ask.md")

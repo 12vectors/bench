@@ -395,7 +395,14 @@ def _card_fact(card: dict) -> dict:
 
 
 def _scrubbed(doc: dict) -> dict:
-    return json.loads(redact.scrub(json.dumps(doc, sort_keys=True), "«redacted»"))
+    """The facts with credential-shaped text masked — except the binding,
+    which is bench's own revisions and names and which a response must
+    echo byte for byte: a long revision hash read as a token and masked
+    would make every honest response a binding mismatch."""
+    out = json.loads(redact.scrub(json.dumps(doc, sort_keys=True), "«redacted»"))
+    if "binding" in doc:
+        out["binding"] = json.loads(json.dumps(doc["binding"]))
+    return out
 
 
 def _ask_facts(ask: dict) -> dict:
