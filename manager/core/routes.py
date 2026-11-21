@@ -1535,6 +1535,23 @@ def post_orchestration_agreement(req) -> None:
             result = agreements.preview(body.get("document"))
         elif action == "discard":
             result = agreements.discard_draft(body.get("expected"))
+        elif action == "migrate":
+            # task 182: legacy phase reservations to shared capacity, an
+            # explicit person's act bound to the revision the page read.
+            # `"apply": false` previews and writes nothing.
+            keep = bool(body.get("keepLimits"))
+            defaults = body.get("scopeDefaults")
+            if not body.get("apply"):
+                result = agreements.migration_preview(keep, defaults)
+                result["queue"] = orchestrator.migration_queue(result)
+            else:
+                result = agreements.migrate(body.get("expected"), keep,
+                                            defaults, actor)
+                state.record_board_event({
+                    "kind": "other", "actor": "you",
+                    "summary": f"orchestration: agreement migrated to shared "
+                               f"capacity ({result['revision']})"})
+                state.broadcast({"type": "board"})
         else:
             result = agreements.apply(body.get("expected"),
                                       body.get("draft"), actor)
@@ -2227,6 +2244,8 @@ ROUTES = (
     Route("POST", "/api/orchestration/agreement/discard", "policy-mutation",
           post_orchestration_agreement),
     Route("POST", "/api/orchestration/agreement/apply", "policy-mutation",
+          post_orchestration_agreement),
+    Route("POST", "/api/orchestration/agreement/migrate", "policy-mutation",
           post_orchestration_agreement),
     Route("POST", "/api/orchestration/scope", "policy-mutation",
           post_orchestration_scope),

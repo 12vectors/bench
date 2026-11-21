@@ -890,22 +890,30 @@ def _receipt(op: dict, outcome: str, summary: str) -> None:
 # ── execute ───────────────────────────────────────────────────────────
 
 
-def _begin(item: dict, answer: dict, task: dict) -> dict:
+def _begin(item: dict, answer: dict, task: dict,
+           board: dict | None = None) -> tuple[dict, dict | None]:
+    """The step's intent, written in one step with its capacity reading
+    (task 182) so a review or a repair never takes a slot another launch
+    took meanwhile. (answer, None) when the admission refused it."""
     action, head = item["action"], item["head"]
     prior = _same(operations.for_card(task["file"]), action, head)
     attempt = len(prior) + 1
     key = operations.key_for(action, task["file"], head, attempt)
-    op = operations.begin(key, action=action, card=task["file"],
-                          number=_number(task), scope=answer["scope"],
-                          pool=orchestrator.LAUNCHES.get(action, "none"),
-                          basis=head, attempt=attempt,
-                          note="; ".join(answer.get("provenance") or []),
-                          retry=item.get("retry") if action == "verify" else None)
+    request = operations.request_id(action, task["file"], head) \
+        if action in LAUNCH_STEPS else None
+    answer, op = orchestrator.admit(
+        action, task["file"], key, board=board, request=request,
+        number=_number(task), pool=orchestrator.LAUNCHES.get(action, "none"),
+        basis=head, attempt=attempt,
+        note="; ".join(answer.get("provenance") or []),
+        retry=item.get("retry") if action == "verify" else None)
+    if op is None:
+        return answer, None
     _note(task["file"], "action", {
         "action": action, "operation": key, "phase": "intent",
         "outcome": "intended", "summary": item.get("reason", "")[:400]},
         f"{key}-intent")
-    return op
+    return answer, op
 
 
 def _refused(op: dict, code: str, reason: str) -> dict:
@@ -928,15 +936,21 @@ def execute(item: dict, task: dict, board: dict | None = None) -> dict:
     """One delivery step, with its intent before and its receipt after,
     authorized at the decision and again immediately before the act."""
     action, head, filename = item["action"], item["head"], task["file"]
-    answer = orchestrator.authorize(action, filename, board=board)
+    request = operations.request_id(action, filename, head) \
+        if action in LAUNCH_STEPS else None
+    answer = orchestrator.authorize(action, filename, board=board,
+                                    request=request)
     if not answer["allowed"]:
         return {"card": filename, "action": action, "outcome": "not-authorized",
                 "code": answer["code"], "reason": answer["reason"]}
     try:
-        op = _begin(item, answer, task)
+        answer, op = _begin(item, answer, task, board)
     except operations.Exists as exists:
         return {"card": filename, "action": action, "outcome": "duplicate",
                 "key": exists.op["key"]}
+    if op is None:
+        return {"card": filename, "action": action, "outcome": "not-authorized",
+                "code": answer["code"], "reason": answer["reason"]}
     again = orchestrator.authorize(action, filename, operation=op["key"])
     if not again["allowed"]:
         return _revoked(op, again)
@@ -1267,11 +1281,21 @@ def _reconcile_merge(op: dict, since: float) -> dict:
 # ── the pass ──────────────────────────────────────────────────────────
 
 
-def run(board: dict) -> list[dict]:
+# The delivery steps that launch a coding agent. They wait in the
+# scheduler's first-come-first-served admission queue (task 182) beside
+# implementation work; the steps that launch none — checks, merge,
+# integration — are taken here directly.
+LAUNCH_STEPS = ("review", "repair")
+
+
+def run(board: dict, found: dict | None = None,
+        launches: bool = True) -> list[dict]:
     """The delivery half of one scheduler pass: plan every review-stage
-    card, record its blockers, and take each card's one next step. Called
+    card (or take `found`, the reading the pass already made), record its
+    blockers, and take each card's one next step. With `launches` off, a
+    review or repair is left to the scheduler's admission order. Called
     by `scheduler.run_pass` under its lock, after observe and reconcile."""
-    found = plan(board)
+    found = plan(board) if found is None else found
     if found["status"] != "on":
         return []
     record_blockers(found["items"], board)
@@ -1279,6 +1303,8 @@ def run(board: dict) -> list[dict]:
     results = []
     for item in found["items"]:
         if item.get("state") != "ready":
+            continue
+        if not launches and item.get("action") in LAUNCH_STEPS:
             continue
         results.append(execute(item, tasks[item["card"]], board))
     return results

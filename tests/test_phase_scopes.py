@@ -61,6 +61,9 @@ def phase_agreement(**phase) -> dict:
                             "allocation": {"implementation": 1,
                                            "dailyStarts": 10},
                             **phase}}
+    # the reserved model that predates task 182, kept until migrated
+    doc["bench"]["capacityModel"] = agreements.RESERVED
+    doc["bench"].pop("scopeDefaults", None)
     return doc
 
 
@@ -405,6 +408,9 @@ class ScopedBoard(Sandbox):
         doc["phases"] = {"9": {"enabled": True,
                                "allocation": {"implementation": 2,
                                               "dailyStarts": 10}, **phase}}
+        # the reserved model that predates task 182, kept until migrated
+        doc["bench"]["capacityModel"] = agreements.RESERVED
+        doc["bench"].pop("scopeDefaults", None)
         return doc
 
     def members(self, *numbers, depends=None) -> None:
