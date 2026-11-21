@@ -95,9 +95,25 @@ bench's runner, where it was paid cold.
 `PYTHONDONTWRITEBYTECODE=1`. It sets `PYTHONPYCACHEPREFIX` to
 `<run work>/cache/pycache` and removes any inherited value of either. The
 checkout still receives no `__pycache__` (that was the reason for the old
-setting), the cache belongs to the run and goes with its work directory,
-and every check that builds its child through `child_env` (backend,
-browser, docs, preflight) gets it. Regressions:
+setting), the cache belongs to the run, and every check that builds its
+child through `child_env` (backend, browser, docs, preflight) gets it.
+
+Who removes it: `Run.finish` removes only `<run work>/tmp`, so
+`<run work>/cache` — now holding the bytecode cache beside the pip and npm
+caches it already held — is left to whoever owns the work directory. Under
+bench's own runner the work directory is made in the check's `TMPDIR`,
+which bench removes when the check ends, so the cache goes with it. A
+wrapper run by hand leaves its work directory, cache included, in the
+scratch directory (`--scratch`, `BENCH_VERIFY_SCRATCH`, else the system
+temporary directory), exactly as it already left the pip and npm caches.
+
+One further cost, from Python's documented behaviour and not measured
+here: with `PYTHONPYCACHEPREFIX` set, Python looks for every module's
+bytecode under the prefix only, so the standard library's precompiled
+`.pyc` files are not used either. The first child process of each run
+compiles the standard-library modules it imports into the run's cache;
+later children read them from there. That one-off cost is inside every
+"new" reading below, since each repetition starts from an empty cache. Regressions:
 `tests.test_verify_entrypoints.BytecodeCache` — the variable is the run's,
 an inherited one is replaced, and two child imports write one `.pyc` into
 the prefix and nothing into the checkout.

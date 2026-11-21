@@ -15,10 +15,11 @@ falls on both. Every child runs ``-v``; the test ids each one reported are
 compared and must be equal. No load is added: the host's load average and
 the other verifier processes in flight are recorded around every run.
 
-    M178_REP=0 python3 -m unittest develop/perf/178_same_ids_compare.py
+    python3 -m unittest develop/perf/178_same_ids_compare.py
 
-prints one JSON document for that repetition (``M178_OUT`` appends it to
-a file instead). Results are in 178-backend-dead-time.md §3.
+runs one repetition and appends one JSON line to ``M178_OUT`` (default
+``$TMPDIR/m178-same-ids.jsonl``); the repetition number, which decides
+the order, is the count of lines already there unless ``M178_REP`` says. Results are in 178-backend-dead-time.md §3.
 """
 import json, os, re, shutil, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
@@ -60,7 +61,10 @@ def run(tree: Path, env: dict, mod: str) -> dict:
 
 class Measure(unittest.TestCase):
     def test_measure(self):
-        rep = int(os.environ.get("M178_REP", "0"))
+        out = Path(os.environ.get("M178_OUT")
+                   or Path(tempfile.gettempdir()) / "m178-same-ids.jsonl")
+        done = out.read_text(encoding="utf-8").count("\n") if out.exists() else 0
+        rep = int(os.environ.get("M178_REP", done))
         order = ["old", "new"] if rep % 2 == 0 else ["new", "old"]
         rev = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                              capture_output=True, text=True).stdout.strip()
@@ -81,12 +85,9 @@ class Measure(unittest.TestCase):
                 r[name].pop("ids")
             r["sameIds"] = True
         doc["pycacheInCheckout"] = leaked
-        text = json.dumps(doc, indent=1)
-        out = os.environ.get("M178_OUT")
-        if out:
-            with open(out, "a", encoding="utf-8") as f:
-                f.write(text + "\n")
-        print(text)
+        with open(out, "a", encoding="utf-8") as f:
+            f.write(json.dumps(doc) + "\n")
+        print(json.dumps(doc, indent=1))
 
 
 if __name__ == "__main__":
