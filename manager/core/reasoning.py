@@ -1112,8 +1112,8 @@ def request(filename: str | None, need: str, *, via: str = "orchestrator",
                     and j.get("status") in ACTIVE]
         if busy:
             raise Busy(f"a reasoning run is already in flight for "
-                             f"{filename or 'this conversation'} "
-                             f"({busy[0]['need']}); one at a time")
+                       f"{filename or 'this conversation'} "
+                       f"({busy[0]['need']}); one at a time")
         label = filename or f"board-{ask['conversation']}"
 
         authorized = None
