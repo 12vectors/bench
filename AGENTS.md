@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -192,6 +192,14 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   run-scoped channel it reports through, each report validated whole at
   ingestion, ordered, de-duplicated and coalesced, closed by the run's
   observed ending, and kept apart from anything bench verified
+- `checkload.py` — what the machine was doing while a check ran (task
+  179): a beat beside the runner reads `verify.RUNNING`, the host's load
+  average and memory, and the agent registry, and keeps a bounded,
+  sanitized sidecar per verification under `state/evidence/load/` —
+  each check's phase (waiting, preparing, running), the other checks
+  observed beside it and for how long. Diagnostic only: no runner file
+  imports it, so it changes no runner revision, identity or reuse (see
+  "Contention: what else was running")
 - `acceptance.py` — what a card's requirements have been *judged*
   against: each criterion's state computed from the card's own records,
   bench's evidence and the runs' claims; review rounds and the findings

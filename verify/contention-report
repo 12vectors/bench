@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Say how long each verification waited, prepared and executed, and what
+else was running beside it (task 179).
+
+    verify/contention-report EVIDENCE_DIR                # every check
+    verify/contention-report EVIDENCE_DIR --check bench-browser
+    verify/contention-report EVIDENCE_DIR --json
+
+EVIDENCE_DIR is a board's `manager/local/state/evidence/`. The report reads
+the evidence records there and, where they exist, the diagnostic load
+sidecars under `load/` (task 179); it writes, runs and schedules nothing.
+
+Scoped runs and a diagnosis's own runs are left out unless
+`--include-scoped` is given, since only full runs of one check are
+comparable. Every interval is measured from the records; an interval a
+record cannot give is printed blank and listed as unknown, never as zero.
+Overlap is co-occurrence: the comparison at the end says how many runs it
+rests on and calls a small sample too small to read.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import contention  # noqa: E402
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="verification timing and overlap from bench's evidence")
+    parser.add_argument("evidence_dir")
+    parser.add_argument("--check", help="only this check's runs")
+    parser.add_argument("--include-scoped", action="store_true",
+                        help="include runs over a declared scope")
+    parser.add_argument("--limit", type=int, default=50,
+                        help="how many of the newest runs to print (text)")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    where = Path(args.evidence_dir)
+    if not where.is_dir():
+        print(f"{where}: not a directory", file=sys.stderr)
+        return 2
+    records, sidecars = contention.read_dir(where)
+    report = contention.analyse(records, sidecars, check=args.check,
+                                include_scoped=args.include_scoped)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(contention.render(report, limit=max(1, args.limit)))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
