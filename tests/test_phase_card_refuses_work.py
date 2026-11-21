@@ -402,7 +402,10 @@ class TheDocumentedGuard(unittest.TestCase):
         self.assertIn("the refusal names ▸ run phase", self.flat)
 
     def test_the_kinds_a_phase_card_may_host_are_named(self):
-        self.assertIn("▸ start work and ↻ act on PR refuse it", self.flat)
+        self.assertIn("▸ start work refuses it", self.flat)
+        # task 174: ↻ act on PR repairs the phase's own integration PR
+        self.assertIn("↻ act on PR is allowed on a phase card in `review/`",
+                      self.flat)
         self.assertIn("◔ still true? and ◔ review PR", self.flat)
 
     def test_the_unstarted_card_is_described(self):

@@ -2066,10 +2066,12 @@ or the other and never both, but a UI layer can be stale or bypassed, so
 the rule lives where every other launch refusal lives: with the stage
 check, ahead of the claim and well ahead of the worktree, costing nothing
 and leaving nothing to clean up. Which headless kinds a phase card may
-host is decided rather than left to omission: **▸ start work** and **↻ act
-on PR** refuse it (both are work agents, and a phase's work belongs to its
-members' cards), while the read-only pair — **◔ still true?** and **◔
-review PR**, the latter told the phase's own branch — are allowed. The
+host is decided rather than left to omission: **▸ start work** refuses
+it (a phase's work belongs to its members' cards); **↻ act on PR** is
+allowed on a phase card in `review/` and repairs the phase's own
+integration branch and PR, never a member (task 174, see "Repairing a
+phase's integration PR"); and the read-only pair — **◔ still true?** and
+**◔ review PR**, the latter told the phase's own branch — are allowed. The
 guard is about *starting*: a card that gains `**Type:** Phase` while an
 ordinary run is in flight is left alone, and that run ends as it would
 have.
@@ -7313,8 +7315,13 @@ in the operation ledger and its record on the card it is about:
 5. **Deliver** — the phase card is delivered like any card, under the
    **integration** merge rule: its checks run and its review is read at
    the *integrated head*, never a member's, and an independent review
-   must differ from every member's implementer. A phase card is not
-   repaired as a card (`repair-unavailable`). The merge, where `merge` is
+   must differ from every member's implementer. A failed check or a
+   request for changes at the integrated head is repaired, where `repair`
+   is delegated and within `repairRounds`, by **↻ act on PR** on the
+   phase card's own integration branch and PR — the same target contract
+   a person's click rides (task 174, "Repairing a phase's integration
+   PR"); `repair-unavailable` now means only that the integration PR was
+   observed merged or closed. The merge, where `merge` is
    delegated, is merge & clean up — publication confirmed on the remote,
    the members swept to done/ with it.
 
@@ -7769,7 +7776,8 @@ about two revisions, and the board keeps them apart:
   profile, the worktree or the model. Nothing is pushed and nothing is
   retargeted; the refusal names the integration head as the separate
   target it is — the card that owns that branch, which is a phase card's
-  own PR.
+  own PR, where **↻ act on PR** repairs it (see "Repairing a phase's
+  integration PR").
 - **The record says which it was.** `target` is `member` or
   `integration`, and `label` is `current`, `superseded` or `historical`.
 - **Nothing on the page implies otherwise.** A `⌾` chip in the card's
@@ -7819,8 +7827,73 @@ appended to the task file under a `## Relevance review — <date>` heading,
 with the verdict (`Still relevant | Partly done | Already done | Needs
 rewrite`) in the ticker. The card does not move; deciding what to do with
 the verdict is yours — in the card's **Reviews**, where you can comment
-on it and ask for the card to be updated from it (next section). One
-agent per task at a time applies across both kinds.
+on it and ask for the card to be updated from it (see "Relevance
+reviews: comment, then update the card from one"). One agent per task at
+a time applies across both kinds.
+
+### Repairing a phase's integration PR
+
+When a phase's integration PR is asked for changes, its members' own PRs
+are merged already — there is nothing to push to on a member, and nothing
+to reopen. So **↻ act on PR** on the phase card itself repairs the
+integration work in place (task 174): the same action, the same arm-then-
+fire confirmation, the same `act-pr` intent, profile, model, prompt
+template and grants as on an ordinary card. One resolver,
+`agents.repair_target`, answers what is repaired for every door — the
+card's button, its launch check and a delegated repair an orchestrator
+scope selects — so the three cannot disagree.
+
+| | ordinary card | phase card in `review/` |
+| --- | --- | --- |
+| branch | `task/<stem>` | its existing `phase/<stem>`, never a task branch |
+| worktree | the card's, recreated from the branch if cleaned up | the phase's Bench-managed worktree, recreated from `phase/<stem>` if cleaned up |
+| pull request | the card's | the open integration PR — updated, never replaced |
+| refused when | the PR is merged or closed | the same, and every case below |
+
+A phase repair is refused, naming its prerequisite, with no branch,
+worktree, claim or run created and nothing reset, force-pushed or
+switched:
+
+| code | what it means | the way through |
+| --- | --- | --- |
+| `no-pr` | the phase has no integration PR | **↑ open PR** on the phase card |
+| `pr-merged`, `pr-closed` | the integration PR has ended | open a card for the change |
+| `head-drift` | the PR proposes another branch, or a head this checkout's `phase/<stem>` does not hold | fix the PR, or fetch and fast-forward the branch |
+| `base-drift` | the PR targets another base than the board recorded | ⌖ replan, or change the PR back |
+| `no-branch` | `phase/<stem>` is not here | **Check the remote** |
+| `foreign-checkout`, `wrong-branch` | something else sits where the worktree goes, or it is on another branch | settle it by hand; bench never switches it |
+| `dirty`, `conflicting` | the worktree has uncommitted changes, or a merge or rebase in progress | commit, remove or finish it by hand |
+| `busy` | a run is on the phase or a member, or a repair is already being started | **‖ hold** it, or wait for it to end |
+| `operation-pending`, `operation-unknown` | an orchestrator operation on the phase or a member has no settled receipt | wait for it, or settle it in Orchestrator → Recovery |
+
+**What stays where it is.** The phase and every member stay in
+`review/`; the member list, the phase log's integration lines and the
+members' PRs are untouched. The run is told it is repairing the
+integration PR, given the card (its brief and the integration review
+filed on it) and its pinned approved inputs, reports its progress on the
+phase card, and files its `## PR update` there. The card's delivery
+status offers the action with the branch it repairs; a phase card is
+never told to move back to in-progress, which would start no supported
+run.
+
+**A new head is asked afresh.** The repair's push is a new integration
+head, so the checks recorded and the review given at the old one are
+history: the merge rules ask for the integration rule's checks and a
+fresh, independent review of the exact updated head (the repair run
+counts as an implementer). A repaired or approved phase still merges into
+the application base only by merge & clean up under your merge rules, and
+none of this promotes the operator, activates a policy or authorizes a
+later phase.
+
+**Orchestration.** In an adopted phase scope, a failed check or a request
+for changes at the integrated head is repaired where the agreement
+delegates `repair`, within `repairRounds` and the phase's daily starts,
+as an operation in the ledger like any repair; without the word, the
+card reads `repair-not-delegated` and **↻ act on PR** is yours. Its own
+operation is not counted as a competitor; anything else unsettled on the
+phase or a member refuses the launch, and a refusal for a run or an
+operation still in flight is answered afresh on the next pass rather
+than held.
 
 ### Relevance reviews: comment, then update the card from one
 
