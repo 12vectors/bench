@@ -1949,7 +1949,7 @@ once the board has been read.
 | `/focus`, `/focus/<session>` | Focus, and one session |
 | `/sessions[/<session>]?card=<card>`, `/focus[/<session>]?card=<card>` | the same, in the activity context of one card, or of one phase and its cards (task 159) |
 | `/settings`, `/settings/<section>` | Settings → Overview, or one section: `setup`, `verification` (Checks), `acceptance` (Merge rules), `agents`, `access`, `diagnostics`, `installation`, `policy` |
-| `/orchestrator`, `/orchestrator/<section>` | the Orchestrator's Overview, or one section: `work`, `decisions`, `phases`, `recovery`, `activity`, `agreement` |
+| `/orchestrator`, `/orchestrator/<section>` | the Orchestrator's Overview, or one section: `ask`, `work`, `decisions`, `phases`, `recovery`, `activity`, `agreement` |
 | `/orchestrator/<section>?card=<card>` | that section with one card or phase selected in it, named as a card's address names it |
 | `/#setup` | kept from the terminal handoff: Settings → Setup guide, corrected to `/settings/setup` |
 
@@ -7416,6 +7416,140 @@ receipt (settle it in Orchestrator → Recovery), with nothing moved.
 Nothing here cancels a run, settles an operation, rewinds a stage or
 forces an integration.
 
+### Asking the orchestrator
+
+"Why is card 175 still in To Do?" "What is consuming capacity?" "In what
+order will this phase deliver?" A person asks those on the board itself
+(task 181): **Ask orchestrator** in the Orchestrator view, or **Ask about
+this card** (**Ask about this phase** on a phase card) in a card's
+Overview, beside its Orchestration line. Asking explains; it never acts.
+
+**How to ask.** Choose what the question is about — **Board**, a
+**Phase** or a **Card** (from a card, that card is already chosen) —
+write the question, and press **Ask**; it arms, and the second press
+sends it. Above the button the page says what that costs before you
+send: the harness and model the `reason` intent resolves to (Settings →
+Agents), that it is one read-only reasoning run, and how it is counted.
+A reply appears in the conversation; **Ask follow-up** asks again in the
+same conversation without restating the subject, and **New
+conversation** starts another. Opening the section, reloading it,
+choosing a conversation and reconnecting launch nothing: only a
+submission does.
+
+**One reasoning run, the shared lifecycle.** A question is the `ask`
+reasoning need, asked by a person (`reasoning.request(…, "ask",
+via="person")`): the same read-only `reason` intent as every reasoning
+run — no worktree, no shell, no edit tool — with its context delivered
+by exact reads, the same validation, the same duplicate and retry rules,
+and its guidance template `reason-ask.md` editable in Settings → Agents →
+Orchestration prompts. There is no second agent stack and no scheduler
+behind it. The question itself is data in the facts document the run
+reads, never part of the prompt.
+
+**What the run reads.** Bench's own readings at one moment, labelled with
+when they were taken: the scheduler's plan for the cards concerned with
+each one's state, code and reason (a dependency hold, `daily-starts-
+exhausted`, `slots-full`, `not-eligible`, a refused launch), capacity and
+today's starts from the agreement in force, the runs in flight as
+observed processes beside their last *agent-reported* progress, recent
+operations with their outcomes, delivery steps, the circuit breaker and
+the last pass; for a card or phase, also its brief, phase, dependencies,
+eligibility and check evidence. A board question reads the cards in To
+Do, In Progress and Review. Every list is capped and says how many it
+left out, and the readings name what they exclude — above all that a
+past scheduler pass keeps no reason for a choice it did not make, so a
+cause no record holds is a gap, never a guess. Earlier exchanges of the
+conversation are given as history, beside freshly read facts: a
+follow-up never answers from a frozen snapshot.
+
+**What an answer is.** Four plain parts — **what is happening now**,
+**why**, **what happens next by itself** (if anything) and **who can
+unblock it** — then the **recorded facts**, each citing the record it
+came from (bench's readings, a card, an evidence record), **what the
+records do not say**, and **suggestions**: who could act and through
+which existing control. A suggestion is a link to where that control
+lives — the card, Recovery, the Operating agreement, Settings → Agents —
+with its own confirmation and preflight; nothing in a reply presses it.
+The evidence rail opens each citation: a card, or the readings
+themselves (`GET /api/ask/facts?operation=…`, read-only JSON). Every
+answer is labelled an *agent-reported interpretation*. The contract
+refuses an answer that proposes an action or opens a question, a fact
+without evidence, a control or a card the run was not given, an unknown
+field, an HTML comment or a control character; a refused answer is kept
+as a diagnostic, never shown as an answer.
+
+**Outcomes, said as they are.** *Reasoning* while the run is in flight —
+its harness, model and how long it has run; the board observes the
+process and invents no steps — with **Cancel this question**.
+*Answered*; *Answered — no longer current* when the card, the board's
+cards, the conversation or the agreement changed since (read it as
+history and ask again); *Stale* when they changed while it ran;
+*Refused by validation*; *Failed* (the vendor's ending, named);
+*Cancelled*; and *Not launched* when the run could not start after the
+question was recorded. **Retry this question** asks again, only after a
+failure, a cancellation, a refusal or a stale answer — never over a run
+in flight or an answer that stands. The same submission sent twice (a
+double click, a resend after a lost reply) asks once.
+
+**Before asking, and what it costs.** A harness that cannot run the
+`reason` intent (opencode today) refuses the question by name with the
+remedy — choose another harness in Settings → Agents; bench never falls
+back to another harness or widens a grant. A question takes a reasoning
+slot while it runs (an implementation slot where the agreement allocates
+none), counted with every running agent; with every slot of that pool in
+use it is refused, naming the runs to wait for or hold. It spends none of
+the orchestrator's daily starts, and token use and cost are *not
+reported*. **Asking needs no orchestration authority**: no agreement, no
+delegated word and no designated installation. That a card's
+orchestration is off, or that the orchestrator may not act on it, is a
+separate fact the answer may explain — and asking changes nothing about
+it. One question runs at a time per card, and per board conversation.
+
+**Ask is not act.** A question or a follow-up launches one read-only
+reasoning run and writes its public conversation, and nothing else: no
+card moves, no work starts, stops or retries, no check or command runs,
+no code, agreement, gate, budget or authority changes, nothing merges or
+is published. Hostile text in a question, a card or an answer is data:
+it is escaped where it is shown, quoted in a record, and cannot turn a
+suggestion into a step.
+
+**Where replies are kept.** In the work state, synced like any board
+edit — never only in the machine-local job records:
+
+| about | kept in |
+| --- | --- |
+| a card | the card's `## Orchestration record`, as `ask` and `reply` records |
+| a phase | the phase card's record (its members are not written) |
+| the board | `<work root>/orchestration/conversations/<k-…>.md`, one shared file per conversation, its id stable on every board |
+
+Each write is one `board:` commit under `BOARD_COMMIT_MOVES` and is
+published by `BOARD_SYNC`; a write that meets a concurrent edit is
+refused and read again, so a teammate's hand edit is kept. A reply keeps
+the public fields above, the harness, model and run name, and when the
+readings were taken — never hidden reasoning, a raw transcript, a path
+or a credential (masked where it is shaped like one). The conversation
+survives a restart and losing every runtime record; the run's own job
+record stays machine-local, and a reply whose run this board no longer
+holds simply has no live state beside it.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/ask` | the conversations (`?card=` narrows to one card's) and the preflight: harness, model, accounting, readiness. A read |
+| `GET /api/ask/thread?conversation=` | one conversation, each reply beside its run's live state and freshness. A read |
+| `GET /api/ask/facts?operation=` | the readings one run was given. A read |
+| `POST /api/ask` | `{scope: {kind, card?}, text, request}` or `{conversation, text, request}` for a follow-up — records the question, then launches one run |
+| `POST /api/ask/retry` | `{conversation, ask}` |
+| `POST /api/ask/cancel` | `{operation}` |
+
+The POSTs sit behind the browser-mutation door like every person's
+write. `tests/test_ask.py` holds the lifecycle through the Claude
+adapter's real `run` against a stub vendor — read-only tools asserted on
+the compiled command line, opencode refused by name, card, phase and
+board scopes, follow-ups, duplicates, retry, cancel, drift, hostile text
+and persistence — and `verify/browser_cases/case_ask.py` the page. Whether
+the installed CLI with a real model answers well is the opt-in, billable
+`develop/reasoning-probe.py`, which nothing runs by itself.
+
 ### The Orchestrator view
 
 Everything above has one place a person reads and acts on it (D15, task
@@ -7429,9 +7563,13 @@ operation ledger), `GET /api/orchestration/reasoning` and
 owns it, which decides again. A disabled button is a hint; the route is
 the rule.
 
-**Seven sections**, each with an address (`/orchestrator/<section>`, and
+**Eight sections**, each with an address (`/orchestrator/<section>`, and
 `?card=<card>` for the card or phase selected in it):
 
+- **Ask orchestrator** (`/orchestrator/ask`) — a person's free-text
+  questions about the board, a phase or a card, and the conversations
+  they started (see "Asking the orchestrator" above). Opening it asks
+  nothing.
 - **Overview** — the one state the whole thing is in, in words (Off,
   Paused, Agreement invalid, Outcome unknown, Recovery needs you, Circuit
   breaker open, Needs your decision, Adoption needed, Read-only here,

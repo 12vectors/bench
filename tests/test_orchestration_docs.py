@@ -35,7 +35,9 @@ PAGES = {
     "/concepts/orchestration-delivery/": ("Independent means a different model",
                                           "Phase scopes: one scheduler per phase",
                                           "in the phase branch, not delivered"),
-    "/concepts/orchestrator-view/": ("Seven sections",
+    "/guides/ask-orchestrator/": ("Ask about this card", "Ask is not act",
+                                  "Where replies are kept", "Asking needs no orchestration authority"),
+    "/concepts/orchestrator-view/": ("Eight sections",
                                      "What is proved end to end",
                                      "Maintenance boundaries"),
 }

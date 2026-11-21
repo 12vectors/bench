@@ -300,6 +300,17 @@
       "lede": "From a card in Review to Done without a click of yours, and the same for a phase: what independent review has to prove, why ungated is never called verified, how uncertain merges reconcile, and why a member integrated into its phase branch is not delivered.",
       "source": "AGENTS.md",
       "from": "### Delivery: checks, independent review, repair and your merge policy",
+      "to": "### Asking the orchestrator"
+    },
+    {
+      "path": "/guides/ask-orchestrator/",
+      "title": "Ask the orchestrator",
+      "layout": "article",
+      "section": "Guides",
+      "description": "Ask why work is or is not moving — about the board, a phase or a card — and get an evidence-linked answer from one read-only reasoning run, kept as a synced conversation. Asking explains; it never acts.",
+      "lede": "How to ask from the Orchestrator or a card, what the run reads and how fresh it is, what an answer holds, what it costs and who may ask, where replies are kept, and the line between asking and acting.",
+      "source": "AGENTS.md",
+      "from": "### Asking the orchestrator",
       "to": "### The Orchestrator view"
     },
     {
@@ -308,7 +319,7 @@
       "layout": "article",
       "section": "Concepts",
       "description": "One place to read and steer orchestration — work, decisions, phases, recovery, activity and the agreement — and what the end-to-end tests prove about all of it, and what stays yours.",
-      "lede": "Where a person reads and acts on everything orchestration does: the seven sections and their actions, the ways in from the Board and a card, then what the cross-layout journeys prove, what they cannot, and the maintenance acts that stay a person's.",
+      "lede": "Where a person reads and acts on everything orchestration does: the eight sections and their actions, the ways in from the Board and a card, then what the cross-layout journeys prove, what they cannot, and the maintenance acts that stay a person's.",
       "source": "AGENTS.md",
       "from": "### The Orchestrator view",
       "to": "## Pull requests"
