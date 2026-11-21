@@ -857,6 +857,14 @@ ROUTES: dict[str, str] = {
     "POST /api/card/acceptance/decide": "browser-mutation",
     "POST /api/card/decisions/answer": "browser-mutation",
     "POST /api/card/decisions/withdraw": "browser-mutation",
+    # asking the orchestrator (task 181): a person's question launches one
+    # read-only reasoning run; reading conversations launches nothing
+    "GET /api/ask": "read",
+    "GET /api/ask/thread": "read",
+    "GET /api/ask/facts": "read",
+    "POST /api/ask": "browser-mutation",
+    "POST /api/ask/retry": "browser-mutation",
+    "POST /api/ask/cancel": "browser-mutation",
     "POST /api/card/acceptance/track": "browser-mutation",
     "POST /api/card/comment": "browser-mutation",
     "POST /api/card/delivery/check-remote": "browser-mutation",

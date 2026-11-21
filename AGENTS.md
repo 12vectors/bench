@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < ask < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -400,6 +400,13 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   `orchestrator.authorize` asked again before every side effect. A beat
   that does nothing while no agreement is enabled; its reading is a read
   (see "Scheduling: bounded passes, durable operations")
+- `ask.py` — asking the orchestrator (task 181): a person's free-text
+  question about a card, a phase or the board, checked before it runs
+  (harness, capacity), recorded in its conversation, and answered by one
+  `reasoning` run with the `ask` need from bench's own bounded readings;
+  conversations read back from cards and the work state's
+  `orchestration/conversations/`. It executes nothing an answer suggests
+  (see "Asking the orchestrator")
 - `watch.py` — 2s disk poller narrating moves made outside the API, and
   the gate that keeps a move a pull applied from triggering anything
 - `routes.py` — every HTTP route: its method and path, its request
