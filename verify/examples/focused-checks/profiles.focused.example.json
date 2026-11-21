@@ -1,0 +1,62 @@
+{
+  "v": 1,
+  "_doc": [
+    "EXAMPLE ONLY, AND INACTIVE. Adds focused scopes to bench's own",
+    "verify/ entrypoints so a run can check what it touched before it",
+    "asks for the whole suite. Nothing reads this file: it changes no grant,",
+    "gate or prompt until an operator reviews it and applies it through",
+    "Settings (validate, preview, apply) or copies the parts they want into",
+    "manager/local/profiles.json by hand.",
+    "",
+    "A focused selection is a SCOPE of the full check, never a check of its",
+    "own name and never part of the check's `run`. That is what keeps it",
+    "honest: bench binds a scope's arguments into the check's coverage and",
+    "result identity, so `bench-backend contracts` passing does not answer a",
+    "requirement for `bench-backend`, is not reused for a full request, and",
+    "reads stale when its selection changes. The bare name is still the",
+    "whole suite. This document declares NO gates block: a merge rule, if",
+    "you want one, requires the bare name (the full run), never a focused",
+    "scope, and adding it is a separate decision in Settings → Merge rules.",
+    "",
+    "Scopes name modules and cases explicitly. None is inferred from changed",
+    "files: choosing what to check early is the run's judgement, and the",
+    "full run at the final commit is still the evidence a merge reads.",
+    "",
+    "bench-browser's scopes run over whichever transport the machine has;",
+    "on the devbox that is the remote Playwright server PW_WS names",
+    "(verify/README.md, 'Remote Playwright'). A case using an API only one",
+    "transport has is refused before the browser starts, focused or not."
+  ],
+  "prepare": [
+    {"name": "backend-deps", "run": "python3 verify/preflight backend", "required": true,
+     "help": "node runs on the check's PATH and the interpreter imports markdown_it"},
+    {"name": "browser-start", "run": "python3 verify/preflight browser", "required": true,
+     "help": "a Chromium is found and starts WITH its sandbox"}
+  ],
+  "checks": [
+    {"name": "bench-backend", "run": "python3 verify/backend", "root": "source",
+     "prepare": ["backend-deps"], "timeout": 1800,
+     "help": "the full unittest suite of this commit, no skips; scopes are focused subsets",
+     "scopes": {
+       "contracts": ["--select", "tests.test_gitrepo",
+                     "--select", "tests.test_records_adoption"],
+       "architecture": ["--select", "tests.test_architecture",
+                        "--select", "tests.test_script_policy"],
+       "verify-harness": ["--select", "tests.test_verify_entrypoints",
+                          "--select", "tests.test_focused_verification"]
+     }},
+    {"name": "bench-browser", "run": "python3 verify/browser", "root": "source",
+     "prepare": ["browser-start"], "timeout": 900,
+     "help": "the board UI in a sandboxed Chromium; scopes are focused subsets",
+     "scopes": {
+       "board": ["--case", "case_board"],
+       "settings": ["--case", "case_settings"],
+       "card-detail": ["--case", "case_card_detail", "--case", "case_lazy_detail"]
+     }}
+  ],
+  "profiles": {
+    "work": {"verify": ["bench-backend", "bench-browser"]},
+    "act-pr": {"verify": ["bench-backend", "bench-browser"]},
+    "review": {"verify": ["bench-backend", "bench-browser"]}
+  }
+}

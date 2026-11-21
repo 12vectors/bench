@@ -968,6 +968,23 @@
   .lhalt .lglyph{color:var(--alarm);font-family:var(--mono);font-size:12px;flex:none}
   .lhalt .lwhy{flex:1;min-width:0;color:var(--muted);overflow-wrap:anywhere}
   .lhalt .lwhy b{color:var(--alarm);font-weight:500}
+  /* a lane whose every card is merged in (task 161): closed, it is its
+     head, anything still waiting on a person (a halt, the gate) and one
+     summary line; the columns and the log are kept, hidden */
+  .lane.closed{gap:8px;padding:10px 14px}
+  .lane.closed > .lstages,.lane.closed > .plog,.lane > [hidden]{display:none}
+  .lhead .ltoggle{gap:5px}
+  .lsum{
+    display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:12.5px;
+    color:var(--muted);padding:7px 11px;background:var(--sunken);
+    border-left:2px solid var(--calm);border-radius:0 7px 7px 0;overflow-wrap:anywhere;
+  }
+  .lsum b{color:var(--text);font-weight:500}
+  .lsum.done{border-left-color:var(--idle)}
+  .lsum.bad{border-left-color:var(--alarm)}
+  .lsum .lstate{font-family:var(--mono);font-size:11.5px;color:var(--text)}
+  .lsum .lsacts{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+  @media (pointer:coarse){.lhead .ltoggle,.lsum .lsacts .chip2{min-height:44px;padding:0 14px}}
   .lstages{display:flex;gap:var(--gap);align-items:flex-start;overflow-x:auto}
   .lcol{flex:1 1 0;min-width:var(--col-min);display:flex;flex-direction:column;gap:8px}
   .lcol > h3{

@@ -15,6 +15,11 @@ const S = {
   // stem), and whether the next paint should bring its lane into view
   phaseSel: null,
   phaseScroll: false,
+  // file -> true (a person opened a lane that closed itself because every
+  // member is merged in) or false (they closed it again). The page
+  // session's memory only (task 161): a lane that stops being complete
+  // forgets it, so its next completion closes it again.
+  laneOpen: {},
   disc: {},              // file -> {data, stamp, error}: the card's discussion
   commentDraft: {},      // file -> unsent comment text, kept across redraws
   refineKey: {},         // file -> the request key for that text's refinement
