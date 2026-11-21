@@ -44,6 +44,7 @@ import agreements  # noqa: E402
 import ask  # noqa: E402
 import config  # noqa: E402
 import decisions  # noqa: E402
+import execowner  # noqa: E402
 import movements  # noqa: E402
 import operations  # noqa: E402
 import orchestrator  # noqa: E402
@@ -690,6 +691,103 @@ class Readings(Board):
         bench = next(s for s in readings["capacity"]["scopes"] if s["id"] == "bench")
         self.assertEqual(bench["slots"]["implementation"], {"allowed": 2, "inUse": 1})
         self.assertEqual(bench["dailyStarts"]["allowed"], 5)
+
+
+class ReadingsFromTheRealScheduler(Board):
+    """The same scenarios with nothing mocked between the disposable board
+    and `scheduler.projection`: an agreement in force, a real dependency,
+    a real running agent, real ledger lines and a real refused operation.
+    The readings carry the scheduler's own codes for each."""
+
+    def setUp(self):
+        super().setUp()
+        tasks = self.work / "tasks"
+        (tasks / "to-do" / "176-a-report-on-the-table.md").write_text(
+            "# 176 — A report on the table\n\n**Status:** To Do\n"
+            "**Priority:** High\n**Depends on:** 49\n\nNeeds the model.\n",
+            encoding="utf-8")
+
+    def in_force(self, **bench) -> None:
+        doc = agreement(**bench)
+        agreements.save_draft(doc, agreements.revision(agreements.draft_document()[0]))
+        agreements.apply(agreements.effective()["revision"], agreements.revision(doc))
+        execowner.designate("none")
+        self.assertTrue(execowner.acquire_lock())
+        self.addCleanup(execowner.release_lock)
+
+    def readings(self, target=None) -> dict:
+        board = taskfiles.collect()
+        return ask.snapshot(target or {"kind": "board", "subject": "board"}, board)
+
+    def plan(self, readings) -> dict:
+        return {i["number"]: (i.get("state"), i.get("code"))
+                for i in readings["plan"]}
+
+    def running_49(self) -> None:
+        state.AGENTS["run-49"] = {"id": "run-49", "task": "49-table-model.md",
+                                  "mode": "work", "status": "running", "name": "Wren",
+                                  "started": time.time()}
+
+    def test_dependency_hold_active_work_and_a_queued_selection(self):
+        self.in_force()
+        self.running_49()
+        readings = self.readings()
+        plan = self.plan(readings)
+        self.assertEqual(plan["176"], ("blocked", "waiting-dependency"))
+        self.assertEqual(plan["49"], ("working", "running"))
+        # chosen by the plan is a selection, not a run: nothing runs on it
+        self.assertIn(plan["175"][0], ("chosen", "ready"))
+        self.assertEqual(["49"], [r["card"] for r in readings["running"]])
+        # a phase the agreement does not name is said to be the runner's
+        self.assertEqual(plan["51"], ("unmanaged", "legacy-phase"))
+
+    def test_occupied_capacity(self):
+        self.in_force(capacity={"implementation": 1})
+        self.running_49()
+        readings = self.readings()
+        self.assertEqual(self.plan(readings)["175"], ("waiting", "slots-full"))
+        bench = next(s for s in readings["capacity"]["scopes"] if s["id"] == "bench")
+        self.assertEqual(bench["slots"]["implementation"], {"allowed": 1, "inUse": 1})
+
+    def test_exhausted_daily_starts(self):
+        self.in_force(capacity={"dailyStarts": 1})
+        orchestrator.record_launch("bench", "49", "implement", "op-earlier")
+        readings = self.readings()
+        self.assertEqual(self.plan(readings)["175"],
+                         ("waiting", "daily-starts-exhausted"))
+
+    def test_missing_eligibility(self):
+        self.in_force()
+        with mock.patch.object(movements, "eligibility",
+                               lambda task, tasks=None, snap=None:
+                               {"eligible": False, "code": "foreign-move",
+                                "via": "other", "reason": "ada moved it last"}):
+            readings = self.readings()
+        state_, code = self.plan(readings)["175"]
+        self.assertEqual(code, "not-eligible")
+        item = next(i for i in readings["plan"] if i["number"] == "175")
+        self.assertIn("ada moved it last", item["reason"])
+
+    def test_a_refused_launch(self):
+        self.in_force()
+        task = {"file": "175-a-card-in-to-do.md", "stage": "to-do"}
+        brief = scheduler.basis(task)
+        key = operations.key_for("implement", task["file"], brief)
+        operations.begin(key, action="implement", card=task["file"], number="175",
+                         scope="bench", pool="implementation", basis=brief, attempt=1)
+        operations.update(key, "refused", code="launch-refused",
+                          reason="the plan's base branch does not exist")
+        readings = self.readings(ask.resolve_target(
+            {"kind": "card", "card": "175"}, taskfiles.collect()))
+        self.assertEqual(self.plan(readings), {"175": ("blocked", "refused")})
+        self.assertEqual([(o["key"], o["status"]) for o in readings["operations"]],
+                         [(key, "refused")])
+
+    def test_no_agreement_says_so_rather_than_inventing_a_cause(self):
+        readings = self.readings()
+        self.assertEqual(readings["plan"], [])
+        self.assertEqual(readings["agreement"]["status"], "off")
+        self.assertTrue(any("keeps no reason" in e for e in readings["exclusions"]))
 
 
 class TheBrowserStubAnswersValidly(Board):
