@@ -1111,6 +1111,16 @@ def validate(draft: dict, rnd: dict, answer: dict) -> dict:
             "code": "invalid", "why": f"the proposal was refused: {problems[0]}",
             "problems": problems[:12]}}
     entry_sources, related = header_sources(bindings, draft.get("target"))
+    if draft["mode"] == "update":
+        # an update keeps what the entry already records and adds what this
+        # draft cites; dropping a source is the person's edit, not the run's
+        current = next((e for e in brain.reading()["entries"]
+                        if e["id"] == draft["target"]), None)
+        if current is not None:
+            entry_sources = list(dict.fromkeys(list(current["sources"]) + entry_sources))
+            related = list(dict.fromkeys(list(current["related"]) + related))
+            entry_sources = entry_sources[:brain.MAX_LIST_ITEMS]
+            related = related[:brain.MAX_LIST_ITEMS]
     proposal = {
         "action": draft["mode"], "target": draft.get("target"),
         "suggestTarget": suggest, "suggestWhy": suggest_why,

@@ -503,6 +503,8 @@ class Update(_Board):
         self.assertEqual(after["classification"], "Current")
         self.assertEqual(after["history"], before["history"])
         self.assertEqual(after["file"], before["file"])
+        # the entry's own source survives beside what the draft cited
+        self.assertEqual([s["text"] for s in after["sources"]][:2], ["#12", "app:src/export.py"])
 
     def test_a_stale_page_cannot_ask(self):
         with self.assertRaises(braindraft.Refused) as caught:
