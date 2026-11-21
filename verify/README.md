@@ -227,6 +227,63 @@ or failing tests is not an improvement. Measured numbers and hypotheses
 are kept apart in `develop/perf/163-backend-timing.md`, which records the
 baseline, the changes made and the comparison.
 
+## Waiting, executing and what else was running (task 179)
+
+A slow or failed run on a shared machine is easy to blame on load and
+hard to show. Two pieces keep the readings apart; neither changes how a
+check runs, what it records as its verdict, or whether a pass is reused.
+
+**`verify/contention-report`** reads a board's evidence directory and
+prints, per run, four intervals that answer different questions:
+
+| column | from | means |
+| --- | --- | --- |
+| `before` | request → first process (preparation, else the check) | making the checkout plus waiting for a slot |
+| `slot` | the record's `queued` | the part of that spent behind `BOARD_VERIFY_PARALLEL`. Kept by the runner only over a second, so blank is *unknown*, never zero |
+| `prep` | the preparation steps' durations | dependency and fixture time |
+| `exec` | first process start → end | preparation plus the check process |
+
+and `overlap`, the seconds its execution window intersected another
+run's, with which checks. Overlap is computed from the records alone, so
+records written long before this report take part. Scoped runs and a
+diagnosis's runs are left out unless `--include-scoped` is given. The
+closing comparison takes each check's full runs that reached a verdict
+(passed, failed, preparation failed), splits them into *quiet* and
+*overlapped*, and gives each side's count, median and range; with fewer
+than three runs on a side it says the sample is too small to read, and a
+ratio it does print is labelled an association, not a cause.
+
+    python3 verify/contention-report <board>/manager/local/state/evidence
+    python3 verify/contention-report <dir> --check bench-browser --json
+
+**The load sidecar** (`manager/core/checkload.py`) adds what the records
+cannot: while a board runs verifications, a beat every 5 seconds reads the
+runner's registry of runs in flight and keeps, per verification,
+`state/evidence/load/<evidence id>.json` — the phase it was in (`waiting`,
+`preparing`, `running`), how many other checks were in each phase, the
+slot limit, how many agent runs the board tracked, and the host's load
+average, CPU count and available memory, as a first, last and end
+reading plus the mean and maximum 1-minute load; and up to 16 other checks
+seen beside it, each with the seconds observed together and executing
+together (more are counted). The report prints those beside the run.
+
+What it does not claim, said plainly: readings are within one interval of
+the real start and end, a check shorter than an interval may not be seen,
+and a sidecar without an `end` (`complete: false`) is a run whose ending
+the board did not observe (a restart). A record with no sidecar was
+written before task 179, or was never observed: it reads as *not
+observed*, never as quiet. The sidecar holds numbers, evidence ids and
+check names only — no command, argument, path or environment value.
+
+**Outside the identity, by construction.** No file in
+`resultidentity.RUNNER_FILES` imports `checkload`, so adding it moved no
+runner revision: every recorded pass keeps answering for its check, and
+nothing reads `runner-changed` because of it. The sidecar is not evidence
+(`evidence.all_evidence()` does not list it) and no gate, reuse decision
+or freshness reading opens it. `tests/test_checkload.py` holds all of
+this. What the measurements recommend, and what is pending an operator's
+decision, is in `develop/perf/179-verification-contention.md`.
+
 ## What the child is given — and what that is not
 
 Inherited `BOARD_*`, `AGENT_*`, `BENCH_*`, `GIT_*`, `GH_*`, `GITHUB_*`,

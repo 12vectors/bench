@@ -4002,6 +4002,41 @@ Four things it guarantees:
   it — `removed`, or `kept` with the reason — and one run's cleanup never
   writes another run's record.
 
+### Contention: what else was running
+
+A check on a shared machine competes with everything else on it — other
+checks, agents, a person's own work. Capacity is not agent concurrency,
+and a slow run beside another is not proof that one slowed the other. So
+bench keeps three readings apart (task 179), and none of them is part of
+a verdict:
+
+- **Queue, preparation and execution.** The evidence record already
+  holds the request time, the slot wait (`queued`, kept over a second),
+  each preparation step and the check process. `verify/contention-report
+  <evidence dir>` prints them as separate columns, with *unknown* where a
+  record cannot say (an older record has no slot wait over a second to
+  report), never zero.
+- **Overlap**, computed from the records' execution windows, old records
+  included: which other runs intersected this one, and for how long.
+- **Observed load**, from `checkload.py`: while verifications run, a beat
+  every 5 seconds writes a sidecar per run under
+  `manager/local/state/evidence/load/` — its phase (waiting, preparing,
+  running), the other checks in each phase, the parallel limit, the
+  agent runs this board tracked, and the host's load average, CPU count
+  and available memory. Bounded (16 named peers, the rest counted) and
+  sanitized (numbers, evidence ids and check names — no command, path or
+  environment value). A run with no sidecar is *not observed*; one with
+  no `end` is a run whose ending a restart hid.
+
+**Diagnostic, never identity.** No runner file imports `checkload`, so
+the runner revision, every result identity and every reuse decision are
+unchanged by it: no pass reads `runner-changed` because of it, the
+sidecar is not evidence, and no gate reads it. Nothing in it schedules,
+throttles, cancels or serializes a check. `BOARD_VERIFY_PARALLEL` is
+still the only limit, read when a slot is asked for; what the
+measurements recommend about it, and how an operator applies and rolls
+that back, is `develop/perf/179-verification-contention.md`.
+
 ### On the board
 
 A `◫` chip in the card's footer row, beside `⚿`, `⌖` and `CI`, opens the
