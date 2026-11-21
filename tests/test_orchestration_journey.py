@@ -359,6 +359,33 @@ class _Journeys:
         self.assertIn(phase, reviewed, "the integrated head had its own review")
 
 
+    def test_a_later_member_moved_early_is_recovered_not_a_mutual_wait(self):
+        """Task 160 (#157/#158): the second member moved into In Progress
+        by mistake, with no run and no branch. The first member still
+        launches, the second never launches before the first is
+        integrated, both readings name the mistake, and the person's
+        move back to To Do is allowed and launches nothing."""
+        j, phase, one, two, solo = self.phase_board()
+        j.step("move", file=two, **{"from": "to-do", "to": "in-progress"})
+        first = j.step("pass")
+        self.assertIn(one, [c["task"] for c in j.calls("work")],
+                      [(r.get("card"), r.get("outcome"), r.get("code"))
+                       for r in first["pass"].get("results", [])])
+        self.assertNotIn(two, [c["task"] for c in j.calls("work")])
+        reading = j.step("read")
+        entry = next(p for p in reading["phases"]["phases"] if p["card"] == phase)
+        rows = {m["card"]: m["state"] for m in entry["members"]}
+        self.assertEqual("moved-early", rows[two], rows)
+        self.assertEqual("you", entry["lifecycle"]["next"]["who"])
+        self.assertIn(two[:2], entry["lifecycle"]["next"]["text"])
+        j.step("move", file=two, **{"from": "in-progress", "to": "to-do"})
+        after = j.step("read")
+        self.assertEqual("to-do", after["stages"][two])
+        self.assertEqual(1, [c["task"] for c in j.calls("work")].count(one),
+                         "no duplicate launch of the first member")
+        self.assertNotIn(two, [c["task"] for c in j.calls("work")],
+                         "moving it back launched nothing")
+
     def test_dependent_work_builds_on_a_prerequisite_in_review(self):
         # task 150: A is in Review and not merged (merge is not delegated);
         # B declares it and is picked up — its decision is recorded before

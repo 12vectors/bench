@@ -265,15 +265,70 @@ function phaseSummary(task) {
    card says it itself. `idle` is not work — it takes no accent, no
    breathing mark and no caret, because nothing is happening. Null when the
    phase has no story to tell here: one waiting in to-do/ is just a card. */
+/* An adopted phase is its phase scope's (task 160), and the runner's
+   snapshot of it says only that the runner is not running it — which is
+   true and means nothing about the phase. So its face is the server's
+   lifecycle reading, word for word: who schedules it, what it is doing,
+   and the one next step with who holds it. Only a member actually being
+   worked wears the working register; a step that is yours is the alarm
+   register only where something is wrong (an unknown outcome, a member
+   moved ahead of its turn), and otherwise settled. The page decides
+   nothing here: it maps a word to a register. */
+const SCOPED_ALARM = new Set(['unknown', 'moved-early', 'stopped']);
+const SCOPED_QUIET = new Set(['integration-review', 'delivered']);
+
+function scopedFlight(life) {
+  if (SCOPED_QUIET.has(life.word)) return null;
+  const step = life.next && life.next.text
+    ? ` · next (${life.next.who === 'you' ? 'you' : life.next.who === 'agent'
+        ? 'the agent' : 'the board'}): ${life.next.text}` : '';
+  const line = `phase scope — ${life.line}${step}`;
+  if (life.word === 'working') {
+    // a member is being worked, and something may still be yours — a
+    // member moved ahead of its turn — which the line carries
+    return { bad: false, owner: 'phase scope', line, life };
+  }
+  if (SCOPED_ALARM.has(life.word)) {
+    return { bad: true, owner: 'phase scope', line, life, pill: life.label.toLowerCase() };
+  }
+  return { idle: true, owner: 'phase scope', pill: life.label.toLowerCase(), line, life };
+}
+
 function phaseFlight(task) {
+  const life = ((S.state && S.state.phaseLifecycle) || {})[task.file];
+  if (life && life.owner === 'phase scope') return scopedFlight(life);
   const snap = (S.state.phases || {})[task.file];
-  if (!snap) return null;
+  if (!snap) {
+    // named in the agreement and not adopted: still the runner's, and
+    // saying so is the step a person needs (task 160)
+    if (life && life.word === 'not-adopted' && task.stage !== 'done') {
+      return { idle: true, owner: 'phase runner', pill: 'not adopted',
+               line: `${life.line} · next (you): ${(life.next || {}).text || ''}`, life };
+    }
+    return null;
+  }
   if (snap.halted) {
     return { bad: true, line: 'halted' + (snap.haltedAt ? ` at #${snap.haltedAt}` : '') +
       ' — ' + (snap.haltedWhy || snap.halted) };
   }
   if (!snap.running) {
     if (task.stage !== 'in-progress') return null;
+    if (snap.scoped) {
+      // adopted, but no lifecycle reading arrived with this state: say
+      // whose it is rather than recommending the runner it stood down,
+      // and name the member a run is on when the snapshot saw one
+      const on = (snap.members || []).find(m => m.state === 'running');
+      if (on) {
+        return { bad: false, owner: 'phase scope',
+                 line: `phase scope — on #${on.number || on.file} — ${on.title || ''}` };
+      }
+      return { idle: true, owner: 'phase scope', pill: 'phase scope',
+               line: 'run by its phase scope — Orchestrator → Phases has its members' };
+    }
+    if (life && life.word === 'not-adopted') {
+      return { idle: true, owner: 'phase runner', pill: 'not adopted',
+               line: `${life.line} · next (you): ${(life.next || {}).text || ''}`, life };
+    }
     return snap.stopped
       ? { idle: true, pill: 'held',
           line: 'held — ▸ run phase carries on from where it stopped' }

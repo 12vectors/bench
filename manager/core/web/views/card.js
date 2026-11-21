@@ -622,6 +622,14 @@ function reviewLine(task, d) {
     `<span class="srx"> — ${esc(r.sentence || '')} Opens the card's Reviews.</span></button>`;
 }
 
+/* A member of an adopted phase, as its phase scope reads it (task 160):
+   the server's row from the phase's lifecycle, or null. */
+function memberRow(task) {
+  const phase = task.phase && task.phase.file;
+  const life = phase && ((S.state && S.state.phaseLifecycle) || {})[phase];
+  return (life && (life.members || []).find(m => m.card === task.file)) || null;
+}
+
 function cardSpec(task) {
   const agent = agentOnTask(task.file);
   // a running phase has an agent alive on a card this view no longer draws,
@@ -757,9 +765,27 @@ function cardSpec(task) {
         title: 'Open the Phases view — this phase\'s lane, the halt that stopped it '
              + 'and ▸ run again beneath it',
         run: () => { setView('phases'); return true; } };
-      if (ph && ph.running) actions.push(hold);
+      // an adopted phase is its phase scope's (task 160): ▸ run phase and
+      // ‖ hold are the runner's, which stood down, so they are not offered
+      // — the way in is the Orchestrator's Phases section
+      const life = (S.state.phaseLifecycle || {})[task.file];
+      const scoped = (life && life.owner === 'phase scope') || (ph && ph.scoped);
+      const orch = { glyph: '⟶', label: 'orchestrator', busy: 'opening…',
+        title: 'Run by its phase scope — open Orchestrator → Phases for its members, '
+             + 'its budget and the next step',
+        run: () => { setView('orchestrator'); return true; } };
+      if (scoped) actions.push(orch);
+      else if (ph && ph.running) actions.push(hold);
       else if (ph && ph.halted) actions.push(room, hold);
       else actions.push(start);
+    } else if (task.stage === 'in-progress' && memberRow(task)
+               && memberRow(task).state === 'moved-early') {
+      // a member of an adopted phase sitting in in-progress/ with nothing
+      // working it and its turn not come (task 160): the deliberate way
+      // back, through the same move the server guards
+      actions.push({ glyph: '↩', label: 'to to-do', confirm: 'move it back?', busy: 'moving…',
+        title: memberRow(task).why,
+        run: () => move(task.file, 'in-progress', 'to-do') });
     } else if (task.stage === 'in-progress') {
       actions.push(held
         ? { glyph: '▸', label: 'take over', confirm: `take from ${held}?`, busy: 'starting…',

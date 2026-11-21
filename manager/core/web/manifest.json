@@ -6,8 +6,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "app/state.js": {
-   "bytes": 6511,
-   "sha256": "f9cc9f3bde44a68ecac1bbe1d7aae37abb5ef12c6cb4306aa1d706a0a75e939b",
+   "bytes": 6799,
+   "sha256": "4856f40a892c06ae0a25c85a1550140486bf6108b8fd1a9b60d6ebe57453a74e",
    "type": "text/javascript; charset=utf-8"
   },
   "app/theme.js": {
@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 116893,
-   "sha256": "e02dd906247a8002ebaa5bf344ff22aeb93e9f54af53491fe77c76136768d82e",
+   "bytes": 117871,
+   "sha256": "e060706baba0f157f05d63352d19653f97a8c46ab44f39e71eb861359dad57f6",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -256,13 +256,13 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/board.js": {
-   "bytes": 26572,
-   "sha256": "de10a6cb79e41a1d86b073a82c9cd480070d2d100f300cab81c7b8d33e628745",
+   "bytes": 29493,
+   "sha256": "1b81692b07bc2fa49984b769a2b48b6f2f8ef24097344b04f24ef68b85734373",
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {
-   "bytes": 98165,
-   "sha256": "e06898393dac2c1ffa88a8c1b5e1fe04877abc2838f2deb579204341d3ef4d79",
+   "bytes": 99740,
+   "sha256": "f3b77e42a4c99c8be6263ab36c7a4e22a7f58628b35d4cb8b14f7d89c5ccefcc",
    "type": "text/javascript; charset=utf-8"
   },
   "views/delivery.js": {
@@ -316,13 +316,13 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/orchestrator.js": {
-   "bytes": 84544,
-   "sha256": "140ef67331fbf6c7b2b2654cf5ac530aa458f30c83792eff4dcfcb7c17201dd5",
+   "bytes": 85928,
+   "sha256": "d63e2b84d7ba6de723b4b10878b5cac7779f99e4ee2ed9c27eac6884775fd0ae",
    "type": "text/javascript; charset=utf-8"
   },
   "views/phases.js": {
-   "bytes": 20611,
-   "sha256": "19f4a816a79e977fd3ee13e136c9d93358516ae134b8f1909921493591e76d9e",
+   "bytes": 27979,
+   "sha256": "864d987b4fdccd09d6c980e133681584a96b04eba7866393ab6cf83ea594fca3",
    "type": "text/javascript; charset=utf-8"
   },
   "views/profile.js": {
