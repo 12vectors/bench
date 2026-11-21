@@ -1,24 +1,27 @@
 """↻ act on PR on a phase card in Review (task 174), in a real browser.
 
-Two disposable phase cards are written into the fixture's work state, each
-with its `phase/<stem>` branch in the fixture's application repository and
-one member card already delivered. Bench's own REQUEST CHANGES verdict is
-written at each phase's integrated head, as `gates.record_verdict` keeps it.
+Three disposable phase cards are written into the fixture's work state,
+each with its `phase/<stem>` branch in the fixture's application repository
+and one member card already delivered. Bench's own REQUEST CHANGES verdict
+is written at each phase's integrated head, as `gates.record_verdict` keeps
+it.
 
 - **Offered** — the open-PR phase's Overview leads with *Changes
-  requested* and offers **↻ act on PR**, enabled, naming its integration
-  branch on the action; nothing says "Move back to in-progress". At 1280px
-  and 390px, Daylight and Night, with screenshots.
+  requested* and offers **↻ act on PR**, enabled, with the integration
+  branch it repairs drawn beside it on the page; nothing says "Move back
+  to in-progress". At 1280px and 390px, Daylight and Night.
 - **Disabled, with its reason** — the phase whose integration PR this board
   observed closed offers the same action disabled, its reason drawn beside
-  it in words.
+  it in words, at both widths and in both themes.
 - **Confirmation** — the first click arms the action and fires nothing;
   reading and arming post nothing and write nothing.
 - **Running and handoff** — the second click fires `/api/agent/act-pr`
-  for the phase card. The fixture's vendor CLI is a stub that refuses, so
-  the run starts on the phase branch and ends failed: the card stays in
-  Review, its delivery status hands off to *Run failed* with **Read what
-  happened**, and no task branch or new card is created.
+  for the phase card, and the page draws the action working. The fixture's
+  vendor CLI is a stub that refuses, so the run starts on the phase branch
+  and ends failed: the card stays in Review, its delivery status hands off
+  to *Run failed* with **Read what happened**, and no task branch or new
+  card is created. Once at 1280px in Daylight, once at 390px in Night,
+  each on a phase of its own.
 
 Nothing reaches a remote and everything is put back. Run through
 verify/browser.
@@ -35,7 +38,9 @@ S = bv.SESSION
 PR = "https://github.com/example/fixture/pull/{n}"
 OPEN = "96-phase-repair-open"
 CLOSED = "97-phase-repair-closed"
-MEMBERS = {OPEN: "94-phase-repair-member-a", CLOSED: "95-phase-repair-member-b"}
+NARROW = "98-phase-repair-narrow"
+MEMBERS = {OPEN: "94-phase-repair-member-a", CLOSED: "95-phase-repair-member-b",
+           NARROW: "93-phase-repair-member-c"}
 
 
 def setUpModule():
@@ -70,7 +75,9 @@ def overview() -> dict | None:
       const why = p && p.getAttribute('aria-describedby')
         ? document.getElementById(p.getAttribute('aria-describedby')) : null;
       const r = p ? p.getBoundingClientRect() : null;
+      const t = p && p.parentElement ? p.parentElement.querySelector('.dtarget') : null;
       return { word: s.dataset.word, heading: s.querySelector('h3').innerText,
+               target: t ? t.innerText : null,
                primary: p ? p.innerText.trim() : null,
                disabled: p ? !!p.disabled : null,
                armed: p ? p.classList.contains('armed') : null,
@@ -223,6 +230,8 @@ class PhaseRepairInTheBrowser(unittest.TestCase):
                     self.assertEqual("changes-requested", ov["word"])
                     self.assertIn("act on PR", ov["primary"])
                     self.assertFalse(ov["disabled"])
+                    self.assertIn(f"phase/{OPEN}", ov["target"] or "",
+                                  "the page names the branch it repairs")
                     self.assertTrue(ov["visible"])
                     self.assertFalse(ov["overflow"], "the page scrolls sideways")
                     self.assertNotIn("Move back to in-progress", ov["text"])
@@ -237,48 +246,83 @@ class PhaseRepairInTheBrowser(unittest.TestCase):
         self.assertEqual(("act-pr", False), (found["primary"]["action"],
                                              found["primary"]["enabled"]))
         for width, height in ((1280, 900), (390, 844)):
-            with self.subTest(width=width):
-                self.load(width, height)
-                self.wait_word(CLOSED, found["status"]["word"])
-                self.open_detail(CLOSED)
-                ov = overview()
-                self.assertIn("act on PR", ov["primary"])
-                self.assertTrue(ov["disabled"])
-                self.assertIn("closed", ov["why"] or "")
-                shot(f"phase-repair-disabled-{width}")
-                S["browser"].key("Escape")
+            for dark in (False, True):
+                with self.subTest(width=width, dark=dark):
+                    self.load(width, height, dark)
+                    self.wait_word(CLOSED, found["status"]["word"])
+                    self.open_detail(CLOSED)
+                    ov = overview()
+                    self.assertIn("act on PR", ov["primary"])
+                    self.assertTrue(ov["disabled"])
+                    self.assertIn("closed", ov["why"] or "")
+                    self.assertFalse(ov["overflow"], "the page scrolls sideways")
+                    shot(f"phase-repair-disabled-{width}-{'night' if dark else 'day'}")
+                    S["browser"].key("Escape")
 
     def test_3_confirm_then_run_and_hand_off(self):
-        b = self.load()
-        self.wait_word(OPEN, "changes-requested")
-        self.open_detail(OPEN)
+        # one phase per layout, since a fired repair is spent: desktop in
+        # Daylight, a phone in Night
+        for stem, width, height, dark in ((OPEN, 1280, 900, False),
+                                          (NARROW, 390, 844, True)):
+            with self.subTest(width=width, dark=dark):
+                self.confirm_run_and_hand_off(stem, width, height, dark)
+
+    def confirm_run_and_hand_off(self, stem, width, height, dark):
+        theme = "night" if dark else "day"
+        b = self.load(width, height, dark)
+        self.wait_word(stem, "changes-requested")
+        self.open_detail(stem)
         slot = "#dsec-overview .dsacts [data-dslot]"
         b.click(slot)
         self.assertTrue(b.wait(f"document.querySelector('{slot}').classList.contains('armed')", 5),
                         "the first click did not arm the action")
-        shot("phase-repair-armed-1280")
+        shot(f"phase-repair-armed-{width}-{theme}")
         self.assertEqual([], b.eval("window.__posts"), "arming fired something")
+        # every state the page draws from here on, kept as it is drawn: the
+        # fired button's busy state and the delivery words that follow it
+        b.eval("""window.__seen = new Set(); (() => {
+          const note = () => {
+            const s = document.querySelector('#drawer.open #dsec-overview .dstatus');
+            if (s) window.__seen.add('word:' + s.dataset.word);
+            const p = s && s.querySelector('.dsacts [data-dslot]');
+            if (p && p.classList.contains('busy')) window.__seen.add('busy');
+            const w = (S.state.delivery || {})[%s];
+            if (w) window.__seen.add('state:' + w.status.word);
+          };
+          window.__seer = new MutationObserver(note);
+          window.__seer.observe(document.body, {subtree: true, childList: true,
+                                                attributes: true});
+          note(); })()""" % json.dumps(stem + ".md"))
         b.click(slot)
         self.assertTrue(b.wait("window.__posts.some(u => u.endsWith('/api/agent/act-pr'))", 10),
                         "the second click did not ask for ↻ act on PR")
         # the stub CLI refuses, so the run ends failed on the phase card;
-        # the card stays in Review and the next step is ↻ act on PR again
+        # the card stays in Review and its next step is the failed run's own
         deadline = time.time() + 60
-        found = read(OPEN)
+        found = read(stem)
         while time.time() < deadline and found["status"]["word"] != "run-failed":
             time.sleep(0.5)
-            found = read(OPEN)
+            found = read(stem)
         self.assertEqual("run-failed", found["status"]["word"], found["status"])
-        # the hand-off is the failed run's own, as on any card: what
-        # happened first, read on the phase card itself
         self.assertEqual("read-failure", found["primary"]["action"])
         self.assertEqual("review", found["stage"])
-        self.wait_word(OPEN, "run-failed")
-        shot("phase-repair-handoff-1280")
+        self.wait_word(stem, "run-failed")
+        seen = set(b.eval("Array.from(window.__seen)"))
+        b.eval("window.__seer && window.__seer.disconnect()")
+        # running: the fired action locked as working while the run was
+        # asked for, and — where the page read the board mid-run — the
+        # agent's own word
+        self.assertTrue("busy" in seen or "state:agent-working" in seen
+                        or "word:agent-working" in seen,
+                        f"the page never drew the repair running: {sorted(seen)}")
+        self.assertFalse(b.eval("document.documentElement.scrollWidth > innerWidth + 1"),
+                         "the page scrolls sideways")
+        shot(f"phase-repair-handoff-{width}-{theme}")
+        b.key("Escape")
         backend = S["backend"]
-        refs = bv._git(backend.app, "branch", "--list", f"task/{OPEN}").stdout.strip()
+        refs = bv._git(backend.app, "branch", "--list", f"task/{stem}").stdout.strip()
         self.assertFalse(refs, "a task branch was cut for the phase")
-        self.assertTrue((backend.work / "tasks" / "review" / f"{OPEN}.md").exists())
+        self.assertTrue((backend.work / "tasks" / "review" / f"{stem}.md").exists())
         listed = sorted(p.name for p in (backend.work / "tasks" / "backlog").iterdir())
         self.assertFalse([n for n in listed if "phase-repair" in n],
                          "a corrective card was written")
