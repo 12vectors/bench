@@ -51,6 +51,7 @@ import gates
 import githost
 import gitrepo
 import inputs
+import operations
 import plans
 import profiles
 import progress
@@ -212,6 +213,9 @@ def _agent_public(record: dict) -> dict:
     # The outcome a failed run leaves behind, for the card to wear (see
     # _record_failure). None on every run that did not die.
     public["failure"] = record.get("failure")
+    # For ↻ act on PR: what it repairs — a card's own branch, or a phase's
+    # integration branch and PR (task 174). None on every other kind.
+    public["repair"] = record.get("repair")
     return public
 
 
@@ -268,10 +272,12 @@ def working_on(files: set[str]) -> list[dict]:
 # - **▸ start work** (`start_agent`) refuses. A phase is run with ▸ run
 #   phase, which works its list into a branch of its own; its members are
 #   worked on their own cards.
-# - **↻ act on PR** (`start_pr_fix`) refuses. It is the same work agent
-#   with a push, and the phase's PR carries its members' commits — review
-#   feedback on it belongs on the member's own card, or on the phase
-#   branch by hand.
+# - **↻ act on PR** (`start_pr_fix`) is allowed on a phase card in
+#   review/ since task 174 — but on the phase's *integration* target only:
+#   its existing `phase/<stem>` branch, its Bench-managed worktree and its
+#   open integration PR, resolved by `repair_target` and refused, with the
+#   prerequisite named, whenever any of them is not what it should be.
+#   Its members are merged already; nothing here reopens one.
 # - **◔ still true?** (`start_review`) is allowed. Read-only, no worktree:
 #   asking whether a phase is still worth running is a fair question, and
 #   the report is appended to the card like any other.
@@ -583,8 +589,7 @@ def launch_refusals(filename: str, stage: str, intent: str = "work",
     else:
         rules = {
             "act-pr": ({"review"}, "acting on a PR happens from review/",
-                       "↻ act on PR is a work agent — address the review on "
-                       "the member's own card", "act-pr.md"),
+                       None, "act-pr.md"),
             "review": (set(config.STAGE_DIRS), None, None, "review.md"),
         }
         if intent not in rules:
@@ -598,6 +603,11 @@ def launch_refusals(filename: str, stage: str, intent: str = "work",
         if intent == "act-pr":
             steps.append(lambda: inputs.require_ready(filename, stage,
                                                       intent="act-pr"))
+            # the repair target — a phase's integration branch, worktree
+            # and PR, or the card's own task branch — read exactly as the
+            # launch reads it (task 174), so the check and the launch
+            # cannot disagree about what would be repaired
+            steps.append(lambda: _require_target(filename, stage))
     for index, step in enumerate(steps):
         try:
             step()
@@ -1167,29 +1177,298 @@ def start_pr_review(filename: str, stage: str) -> dict:
     return _agent_public(record)
 
 
-def start_pr_fix(filename: str, stage: str) -> dict:
-    """Fire a work agent that addresses the review feedback on the task's PR,
-    working in the task's existing worktree (recreated from the branch if it
-    was cleaned up), committing and pushing to update the PR."""
-    validate_launch(filename, stage, {"review"},
-              "acting on a PR happens from review/",
-              phase="↻ act on PR is a work agent, and a phase's PR carries "
-                    "its members' commits — address the review on the member's "
-                    "own card, or on the phase branch by hand")
-    task = read_task(config.TASKS / stage / filename, stage)
-    if not task.get("pr"):
-        raise ValueError(f"{filename} has no PR to act on")
+# ── what ↻ act on PR repairs (task 174) ─────────────────────────────────
+#
+# One resolver for every door into a PR repair — the person's click, the
+# launch check and a delegated repair an orchestrator scope selects — so
+# manual and automated launches ride the same validated target contract.
+#
+# An ordinary card's target is what it always was: `task/<stem>`, its
+# worktree and its PR, refused only when the PR is merged or closed.
+#
+# A phase card's target is its *integration* work: the existing
+# `phase/<stem>` branch the runner (or its phase scope) merged every member
+# into, the Bench-managed worktree beside it and the open integration PR.
+# Never a task branch, a member, a new card or a replacement PR. Because a
+# push there changes what the phase delivers, it is held to more before
+# anything is created: the PR must be open and still propose exactly that
+# branch into the base the board recorded; the local branch must exist and
+# contain the head the PR proposes; the worktree must be this repository's,
+# on that branch, clean and not mid-merge — or absent, and then it is
+# recreated from the branch; and nothing may be working on the phase or any
+# member, or be held by an unsettled operation. Each refusal names its
+# prerequisite and changes nothing: no reset, no force-push, no branch
+# switch, no edit of another run's checkout.
+
+REPAIR_TARGET_VERSION = 1
+
+# who is preparing a PR repair right now: a second click lands here
+# before the registry has a record, and is refused rather than doubled
+_REPAIRING: set[str] = set()
+
+
+class RepairRefused(ValueError):
+    """A repair target that cannot be acted on, with the code a delegated
+    repair's receipt records (`coordinate` reads `code`)."""
+
+    def __init__(self, code: str, reason: str):
+        super().__init__(reason)
+        self.code = code
+
+
+def _phase_members(card: dict) -> list[str]:
+    return [m["file"] for m in card.get("members") or [] if m.get("file")]
+
+
+def _worktree_state(path: Path, branch: str) -> tuple[str | None, str]:
+    """(code, sentence) when an existing worktree cannot be repaired in;
+    (None, "") when it can. Reads only."""
+    mismatch = gitrepo.worktree_mismatch(path)
+    if mismatch:
+        return "foreign-checkout", mismatch
+    current = gitrepo.git(path, "branch", "--show-current").stdout.strip()
+    if current != branch:
+        return ("wrong-branch",
+                f"the worktree at {path} is on '{current or 'a detached HEAD'}', "
+                f"not {branch} — bench will not switch it; settle it by hand")
+    gitdir = gitrepo.git(path, "rev-parse", "--absolute-git-dir").stdout.strip()
+    if gitdir and any((Path(gitdir) / name).exists() for name in
+                      ("MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD",
+                       "rebase-merge", "rebase-apply")):
+        return ("conflicting",
+                f"the worktree at {path} is in the middle of a merge or rebase "
+                f"— finish or abort it by hand first; nothing was changed")
+    dirty = gitrepo.git(path, "status", "--porcelain").stdout.strip()
+    if dirty:
+        count = len(dirty.splitlines())
+        return ("dirty",
+                f"the worktree at {path} has {count} uncommitted "
+                f"change{'' if count == 1 else 's'} — commit or remove "
+                f"{'it' if count == 1 else 'them'} by hand first; bench "
+                f"does not repair on top of work it cannot account for")
+    return None, ""
+
+
+def repair_target(filename: str, stage: str, *,
+                  operation: str | None = None) -> dict:
+    """What ↻ act on PR would repair for this card, and whether it may.
+
+    A read: it creates no branch, worktree, claim or run (an ordinary
+    card's answer may ask the hosting provider for its PR's state, as it
+    always did). `problem` empty means the launch may go ahead; `code`
+    names the refusal. `operation` is the delegated repair's own ledger
+    entry, which is not a competing one."""
+    stem = filename[:-3]
+    card = plans.woven(filename, stage)
+    phase = bool(card.get("isPhase"))
+    branch = (config.PHASE_BRANCH_PREFIX if phase
+              else config.TASK_BRANCH_PREFIX) + stem
+    worktree = config.WORKTREES / stem
+    out: dict = {
+        "v": REPAIR_TARGET_VERSION, "kind": "phase" if phase else "task",
+        "card": filename, "stage": stage, "branch": branch,
+        "worktree": str(worktree), "pr": card.get("pr") or None,
+        "base": None, "head": None, "state": None,
+        "recreate": not worktree.exists(),
+        "members": _phase_members(card) if phase else [],
+        "notes": [], "problem": None, "code": None,
+    }
+
+    def refuse(code: str, sentence: str) -> dict:
+        out.update(code=code, problem=sentence)
+        return out
+
+    if stage != "review":
+        return refuse("stage", "acting on a PR happens from review/")
+    if not card.get("pr"):
+        if phase:
+            return refuse("no-pr", f"{filename} has no integration PR to act "
+                          f"on — ↑ open PR on the phase card first")
+        return refuse("no-pr", f"{filename} has no PR to act on")
     # A merged or closed pull request is not a target a push repairs, and
     # a phase member's PR is merged into the phase branch early — so this
     # is the common case rather than the rare one. Refused here, ahead of
     # the profile, the worktree and the model, so nothing is pushed and
     # nothing is represented as having repaired the integration branch.
-    obsolete = reviews.repair_problem(filename, task)
+    found = reviews.identity(filename, card, fetch=False)
+    out["state"] = found.get("state")
+    out["head"] = dict(found.get("head") or {})
+    out["base"] = plans.pr_base(filename, card)
+    obsolete = reviews.repair_problem(filename, card, found=found)
     if obsolete:
-        raise ValueError(obsolete)
+        return refuse("pr-" + str(found.get("state") or "ended").lower(),
+                      obsolete)
+    if not phase:
+        return out
+
+    # ── the integration target, held to more ──
+    proposed = (found.get("head") or {})
+    if proposed.get("authority") in (None, "local"):
+        # The host could not be read: the phase's own branch in this
+        # checkout is the target, as it is for an ordinary card. The
+        # PR's head and base cannot be compared here, and that is said
+        # rather than assumed; what keeps the repair safe is that its push
+        # is a plain one, which the remote refuses unless it fast-forwards
+        # what the PR already proposes.
+        out["notes"].append("the hosting provider could not be read, so the "
+                            "integration PR's head and base were not checked "
+                            "against this branch; the repair's push is a plain "
+                            "one, which the remote refuses unless it "
+                            "fast-forwards the PR's branch")
+    if proposed.get("authority") not in (None, "local") \
+            and proposed.get("ref") and proposed["ref"] != branch:
+        return refuse("head-drift",
+                      f"the integration PR ({card['pr']}) proposes "
+                      f"{proposed['ref']}, not {branch} — bench repairs the "
+                      f"phase's own branch only; fix the PR or the card's "
+                      f"**PR:** line by hand")
+    # a base read from the plan is the plan's own answer, so any other
+    # value is the host's — and it must be the base the board recorded
+    said_base = (found.get("base") or {})
+    if said_base.get("authority") != "plan" \
+            and said_base.get("ref") and said_base["ref"] != out["base"]:
+        return refuse("base-drift",
+                      f"the integration PR targets {said_base['ref']}, and the "
+                      f"board recorded {out['base']} for this phase — settle "
+                      f"which is right (⌖ replan, or change the PR back) before "
+                      f"repairing it")
+    if not gitrepo.branch_exists(branch):
+        return refuse("no-branch",
+                      f"{branch} is not in this checkout, so there is nothing "
+                      f"to repair in — fetch it (Check the remote) first")
+    tip = gitrepo.git(config.REPO, "rev-parse", "--verify", "--quiet",
+                      f"refs/heads/{branch}").stdout.strip()
+    commit = proposed.get("commit")
+    if commit and proposed.get("authority") != "local" and commit != tip:
+        held = gitrepo.git(config.REPO, "merge-base", "--is-ancestor",
+                           commit, tip).returncode == 0
+        if not held:
+            return refuse("head-drift",
+                          f"the integration PR's head {commit[:12]} is not in "
+                          f"this checkout's {branch} ({tip[:12]}) — someone "
+                          f"pushed to it; bring it in here (fetch and "
+                          f"fast-forward) before repairing, so the repair "
+                          f"builds on what the PR proposes")
+        out["notes"].append(f"{branch} holds commits the PR does not yet "
+                            f"show; the repair's push publishes them too")
+    out["head"]["local"] = tip
+    if worktree.exists():
+        code, sentence = _worktree_state(worktree, branch)
+        if code:
+            return refuse(code, sentence)
+    else:
+        mismatch = gitrepo.worktree_mismatch(worktree)
+        if mismatch:
+            return refuse("foreign-checkout", mismatch)
+        out["notes"].append(f"the phase's worktree is not on disk; it will be "
+                            f"recreated from {branch}")
+    # nothing else may be working on the phase or any member: one agent at
+    # a time on the integration branch, and a member's run would merge into
+    # the same branch
+    code, sentence = phase_repair_wait(filename, out["members"],
+                                       operation=operation)
+    if code:
+        return refuse(code, sentence)
+    return out
+
+
+def phase_repair_wait(filename: str, members: list[str], *,
+                      operation: str | None = None) -> tuple[str | None, str]:
+    """(code, sentence) when something else is working on a phase or any
+    of its members, so a repair of its integration branch must wait;
+    (None, "") when nothing is. A read of the run registry and the
+    operation ledger: the one answer the launch and the orchestrator's
+    plan both ask (task 174), so the plan waits rather than opening an
+    operation the launch would refuse on every pass."""
+    cards = {filename, *members}
+    busy = working_on(cards)
+    if busy:
+        who = busy[0]
+        return ("busy", f"{who.get('name') or 'an agent'} is working on "
+                f"{who['task']} — ‖ hold it, or let it end, before "
+                f"repairing the phase's integration branch")
+    for op in operations.all_ops():
+        if op.get("file") not in cards \
+                or op.get("key") == operation \
+                or op.get("status") not in operations.RESERVING:
+            continue
+        if op["status"] == "unknown":
+            return ("operation-unknown",
+                    f"operation {op['key']} ({op.get('action')}) on "
+                    f"{op['file']} has an unknown outcome — settle it "
+                    f"in Orchestrator → Recovery before repairing")
+        return ("operation-pending",
+                f"operation {op['key']} ({op.get('action')}) on "
+                f"{op['file']} is still {op['status']} — wait for its "
+                f"receipt before repairing")
+    return None, ""
+
+
+def public_target(target: dict) -> dict:
+    """What a reader is given: words, refs and commits, never a path."""
+    keep = ("v", "kind", "card", "branch", "pr", "base", "state", "recreate",
+            "members", "notes", "problem", "code")
+    out = {k: target.get(k) for k in keep}
+    head = target.get("head") or {}
+    out["head"] = {k: head.get(k) for k in ("ref", "commit", "authority",
+                                             "local")}
+    return out
+
+
+def _require_target(filename: str, stage: str) -> dict:
+    target = repair_target(filename, stage)
+    if target["problem"]:
+        raise RepairRefused(target["code"], target["problem"])
+    return target
+
+
+def repair_brief(target: dict) -> str:
+    """What a run repairing a phase's integration PR is told about its
+    target, beside its plan — nothing for an ordinary card, whose brief
+    is unchanged."""
+    if target.get("kind") != "phase":
+        return ""
+    members = ", ".join(m[:-3] for m in target.get("members") or []) or "none"
+    return (
+        f"\n\nThis is a phase card's integration PR. Repair it on "
+        f"`{target['branch']}` only — the branch every member was merged "
+        f"into — and push to that same branch so the same PR updates. Its "
+        f"members ({members}) are already merged into it: do not reopen, "
+        f"recreate or push to a member's branch or PR, and do not open a new "
+        f"pull request. The review feedback to address is the integration "
+        f"review on this PR and the review sections in the card below.")
+
+
+def start_pr_fix(filename: str, stage: str, *,
+                 operation: str | None = None) -> dict:
+    """Fire a work agent that addresses the review feedback on the card's
+    PR, working in its existing worktree (recreated from the branch if it
+    was cleaned up), committing and pushing to update the PR.
+
+    The target is `repair_target`'s: an ordinary card's `task/<stem>`, or
+    a phase card's existing integration branch, worktree and PR."""
+    validate_launch(filename, stage, {"review"},
+                    "acting on a PR happens from review/")
+    with state.LOCK:
+        if filename in _REPAIRING:
+            raise RepairRefused("busy", f"a PR repair on {filename} is "
+                                f"already being started — nothing was doubled")
+        _REPAIRING.add(filename)
+    try:
+        return _start_pr_fix(filename, stage, operation)
+    finally:
+        with state.LOCK:
+            _REPAIRING.discard(filename)
+
+
+def _start_pr_fix(filename: str, stage: str, operation: str | None) -> dict:
+    target = repair_target(filename, stage, operation=operation)
+    if target["problem"]:
+        raise RepairRefused(target["code"], target["problem"])
+    task = read_task(config.TASKS / stage / filename, stage)
 
     stem = filename[:-3]
-    branch = f"task/{stem}"
+    branch = target["branch"]
     worktree = config.WORKTREES / stem
     # Resolved and pinned before the worktree is recreated, not after: a
     # profile that cannot be honoured must not leave a checkout behind to
@@ -1209,7 +1488,13 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     # ordinary card on the application default. It carries the
     # repository-identity refusal with it: a foreign checkout sitting where
     # this card's worktree goes is a blocker there, not a second check here.
-    plan = plans.record(plans.require(plans.preflight(filename, stage)))
+    plan = plans.require(plans.preflight(filename, stage))
+    if plan["branch"] != branch:
+        # the plan and the repair target name one branch, or nothing runs
+        raise RepairRefused("plan-drift", f"the plan resolves {plan['branch']} "
+                            f"and the repair target is {branch} — nothing was "
+                            f"started; ⌖ replan first")
+    plan = plans.record(plan)
     made = gitrepo.ensure_worktree(stem, branch)
     if made["problem"] == "mismatch":
         raise ValueError(made["detail"])
@@ -1227,7 +1512,8 @@ def start_pr_fix(filename: str, stage: str) -> dict:
     prompt = templates.render("act-pr.md", template["text"], dict(
         filename=filename, branch=branch, pr=task["pr"], body=task["body"],
         base=plan["prBase"], remote=plan.get("appRemote") or "origin",
-        plan=plans.brief(plan), context=_context_block(manifest),
+        plan=plans.brief(plan) + repair_brief(target),
+        context=_context_block(manifest),
         verification=profiles.verification_block(
             manifest, gatepolicy.required_lines(manifest)),
         **githost.fragments("act-pr.md", branch),
@@ -1243,10 +1529,20 @@ def start_pr_fix(filename: str, stage: str) -> dict:
         "log": str(log_path), "proc": proc, "origin": stage, "mode": "work",
         "name": name, "model": model or None, "plan": plans.portable(plan),
         "profile": profiles.summary(manifest),
+        "repair": {"kind": target["kind"], "branch": branch,
+                   "pr": target["pr"], "base": target["base"],
+                   "head": (target.get("head") or {}).get("local")
+                   or (target.get("head") or {}).get("commit"),
+                   "operation": operation},
     }
+    if target["kind"] == "phase":
+        # the commit the repair starts from, so the run's diff is its own
+        record["base"] = (target.get("head") or {}).get("local")
     with state.LOCK:
         state.AGENTS[agent_id] = record
-    summary = f"{name} is acting on the review of {filename}'s PR"
+    summary = (f"{name} is acting on the review of {filename}'s integration "
+               f"PR on {branch}" if target["kind"] == "phase" else
+               f"{name} is acting on the review of {filename}'s PR")
     for note in (_profile_note(manifest), _no_commands_note()):
         if note:
             summary += f" — {note}"

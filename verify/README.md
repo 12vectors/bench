@@ -227,6 +227,19 @@ or failing tests is not an improvement. Measured numbers and hypotheses
 are kept apart in `develop/perf/163-backend-timing.md`, which records the
 baseline, the changes made and the comparison.
 
+**Dead time and sharding (task 178).** The verifier's environment used to
+set `PYTHONDONTWRITEBYTECODE=1`, so every Python process a test started
+compiled `manager/core` again; a run-owned `PYTHONPYCACHEPREFIX` removes
+that (measured: `import board` 0.45s cold, 0.12s cached). The suite has no
+remaining wait on a timeout it does not assert on (a clean-shell ranking
+of all 4909 tests, kept in `develop/perf/178-backend-dead-time.md`).
+Parallel shards are **not shipped**: the multi-minute stalls in bench's
+runs were not reproduced by the directed environment or by a controlled
+CPU load, so whether they are contention is unresolved, and sharding
+would add load to a host whose stalls may be load. That document says what
+would have to be measured before it is reconsidered. The runner stays
+serial.
+
 ## Waiting, executing and what else was running (task 179)
 
 A slow or failed run on a shared machine is easy to blame on load and
@@ -288,8 +301,11 @@ decision, is in `develop/perf/179-verification-contention.md`.
 
 Inherited `BOARD_*`, `AGENT_*`, `BENCH_*`, `GIT_*`, `GH_*`, `GITHUB_*`,
 `PLAYWRIGHT_*`, `PYTHONPATH`-family, credential-shaped names and
-`CHROME_DEVEL_SANDBOX` are removed. `HOME`, XDG, `TMPDIR` and the pip and
-npm caches point into the run's work directory; git reads a config
+`CHROME_DEVEL_SANDBOX` are removed. `HOME`, XDG, `TMPDIR`, the pip and
+npm caches and Python's bytecode cache (`PYTHONPYCACHEPREFIX`) point into
+the run's work directory, so no `__pycache__` is written into the checkout
+and a child Python compiles each module once per run rather than once per
+process (task 178); git reads a config
 written there (`bench-verify` identity, `main` as the default branch).
 The browser backend is a copy of the candidate's `manager/core` serving
 its own throwaway application and work-state repositories on a loopback
@@ -481,6 +497,70 @@ Chromium suite, not Settings evidence, not broad layout or accessibility
 coverage, and not an approval. Firefox showed seccomp filters but shared
 user/pid/net namespaces, so **no strong OS isolation is claimed**.
 `verify/browser` has no Firefox driver.
+
+## Deterministic browser cases: clicks, settling, a board of one's own (task 176)
+
+Three harness behaviours make a browser result about the product rather
+than about timing. Each is held by a deterministic fixture that fails
+without it: `tests/test_verify_click.py` (the click guard, under Node),
+`tests/node/requests_and_rendering.test.mjs` (the page's hold and settled
+signal), and `verify/browser_cases/case_harness.py` and
+`case_keyed_cards.py` (both in a real browser, on whichever transport
+runs).
+
+- **The click is guarded.** `click()` finds its point in one round trip
+  and dispatches trusted mouse input in another, and a repaint can land
+  in between. The hit-test now also arms a capture guard on the window
+  for the press that follows. A press on the target — or on what the
+  selector names by then — passes untouched, and whatever the page does
+  between that press and the release is the page's: a click the page
+  loses there (it replaced the control on pointerdown, say) is a product
+  defect, recorded as `lost-click` and never aimed again. A press that
+  lands on anything else is a harness targeting defect: the guard
+  swallows every event of that gesture before any page handler sees it,
+  so nothing else is activated, and the click is aimed again from a fresh
+  hit-test — at most `CLICK_AIMS` (3) times, each miss named
+  (`target-moved`). `press()`/`release()`, which cases use to race a
+  repaint against a click on purpose, are never guarded. The input is
+  still real, trusted pointer input on both transports; nothing is
+  replaced by a DOM `click()`.
+- **`settled()` instead of fixed sleeps.** The page exposes
+  `whenSettled`/`pageSettled` on its console seam: no board reading in
+  flight or queued, no paint scheduled. `PageOps.settled(timeout)` waits
+  on that and then on the window's size and every scroll position being
+  still across two frames; when it runs out it raises naming what was
+  still going. The mobile board and orchestrator cases use it (or a named
+  condition) where they used to sleep 0.4–2.5 s. Condition polls that
+  remain (`time.sleep` inside a loop over a condition) are polls, not
+  waits.
+- **A benchmark holds the board's readings.** `holdReadings(why)` on the
+  console seam: while held, an ask for the board (a stream frame, the 30 s
+  safety net, the window's focus) is noted and answered at once, and a
+  reading already out is set aside when it lands; the stream stays
+  connected and every other frame is handled as ever.
+  `releaseReadings()` reads the board once if anything was asked. Only
+  `case_keyed_cards.py` holds, for the tests that paint synthetic boards,
+  and it releases in a `finally` and proves the live board is back (no
+  hold left, no synthetic card in the state or the page). No product code
+  holds and no other case runs held. The benchmark's numbers are still
+  observations, not a gate; its functional assertions (every card drawn,
+  kept and moved) stay in the normal run.
+
+**The harness trail.** Each of these leaves a note — a click aimed again,
+a lost click, a wait whose condition never came true, a page that did not
+settle — and a case that fails or errors has its notes printed under its
+traceback in `cases.log`, kept on its outcome (`harness`) and named in the
+v1 report's finding. Nothing is retried because a case failed: a re-aim
+happens only for a press the guard proved missed and swallowed.
+
+**What is not claimed.** The historic sign-off and keyed-cards failures
+were diagnosed from code and stack traces, not replayed: the fixtures
+above reproduce each *mechanism* deterministically, which is not proof
+that it caused every historic failure. The `Cannot set properties of
+undefined` frame needs a live board whose first column is empty; that
+detail was not reproduced. The work-base toggle failure (`d8eac78fe63b`)
+was not examined. Contention between concurrent browser and backend runs
+is still unmeasured.
 
 ## Activating, and rolling back
 

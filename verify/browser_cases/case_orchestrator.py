@@ -189,7 +189,16 @@ class Orchestrator(unittest.TestCase):
                 (backend.work / "tasks" / stage / name).unlink(missing_ok=True)
         (cls.local / "orchestration.json").unlink(missing_ok=True)
         shutil.rmtree(cls.local / "state" / "orchestration", ignore_errors=True)
-        time.sleep(2.5)    # let the watcher read the board without them
+        # the board lists them no longer (task 176: a condition, where a
+        # fixed 2.5s used to stand in for the watcher's beat)
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            files = {t["file"] for s in api("/api/state")["board"]["stages"] for t in s["tasks"]}
+            if not files & {CARD, PHASE, MEMBER}:
+                break
+            time.sleep(0.2)    # polling the condition above
+        else:
+            raise bv.SetupError("the backend still lists the orchestrator case's cards")
 
     # ── 1. a top-level view, and reading it changes nothing ──────────────
 
@@ -214,8 +223,9 @@ class Orchestrator(unittest.TestCase):
             if not b.wait(f"location.pathname === '{href}' && !document.querySelector('#oshell [aria-busy]')", 10):
                 raise bv.CheckFailed(f"{href} did not settle")
         # the section's address is shareable: a fresh load opens it
-        visit("/orchestrator/agreement", "/No draft/.test(document.querySelector('#oshell').innerText)")
-        time.sleep(1)
+        b = visit("/orchestrator/agreement", "/No draft/.test(document.querySelector('#oshell').innerText)")
+        # every reading the page asked for has landed and been painted
+        b.settled()
         self.assertEqual(before, passive_facts(), "reading the Orchestrator changed something")
         metric("passiveReads", "unchanged")
 

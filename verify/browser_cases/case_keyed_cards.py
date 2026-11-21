@@ -18,6 +18,17 @@ after it) and `visible` (from the start of the paint until the next frame
 has run, which includes the browser's paint). They are measurements, not
 assertions: the target and how it was met are reported in
 `develop/perf/README.md`.
+
+The synthetic boards are this case's own (task 176). The page keeps its
+stream and its 30s safety net, so a live reading could land between two
+awaited frames and replace a 1000-card board with the fixture's real one
+— the benchmark then measured the wrong board, or threw `Cannot set
+properties of undefined` moving a card out of a column that board did
+not have. So every test here that paints a synthetic board holds the
+page's readings for its duration (`holdReadings`, the console seam) and
+releases them afterwards, failing or not; the release is verified by
+reading the live board back. Only this case holds: every other case, and
+the archive test below, runs with live updates as a person has them.
 """
 
 import json
@@ -65,13 +76,25 @@ window.__kbench = async function (n, reps) {
   if (S.view !== 'board') setView('board');
   const out = { n, initial: [], single: [], unrelatedEvent: [], sameReading: [],
                 reorder: [], move: [], burst: [], toolsClick: [] };
+  // the board measured is this benchmark's, or the run says it was not
+  // (task 176): a reading that replaced it would make every later sample
+  // about another board
+  let step = 'initial';
+  const ours = () => {
+    if (!S.state || S.state.__kbench !== n)
+      throw new Error(`a live reading replaced the ${n}-card benchmark board during '${step}'` +
+                      ` (readings held: ${JSON.stringify(window.readingsHeld ? readingsHeld() : null)})`);
+  };
   for (let r = 0; r < reps; r++) {
     document.querySelector('#board').innerHTML = '';
     const st = make();
+    st.__kbench = n;
     out.initial.push(await time(() => { S.state = st; render(); }));
+    ours();
   }
   out.cardsDrawn = cards().length;
   for (let r = 0; r < reps; r++) {
+    step = 'single'; ours();
     const st = clone(S.state);
     const col = st.board.stages[r % st.board.stages.length];
     const t = col.tasks[Math.floor(col.tasks.length / 2)];
@@ -86,6 +109,7 @@ window.__kbench = async function (n, reps) {
   for (let r = 0; r < reps; r++) {
     // a session event: the stream files it and asks for a paint; the
     // board's own reading has not changed
+    step = 'unrelatedEvent'; ours();
     (S.events['kbench-session'] = S.events['kbench-session'] || []).push(
       { kind: 'tool', ts: Date.now() / 1000, tool: 'Read', summary: `read ${r}` });
     mark();
@@ -94,6 +118,7 @@ window.__kbench = async function (n, reps) {
     out.unrelatedEvent.push(s);
   }
   for (let r = 0; r < reps; r++) {
+    step = 'sameReading'; ours();
     const st = clone(S.state);
     mark();
     const s = await time(() => { S.state = st; render(); });
@@ -101,6 +126,7 @@ window.__kbench = async function (n, reps) {
     out.sameReading.push(s);
   }
   for (let r = 0; r < reps; r++) {
+    step = 'reorder'; ours();
     const st = clone(S.state);
     st.board.stages[0].tasks.reverse();
     mark();
@@ -112,6 +138,7 @@ window.__kbench = async function (n, reps) {
     out.reorder.push(s);
   }
   for (let r = 0; r < reps; r++) {
+    step = 'move'; ours();
     const st = clone(S.state);
     const from = st.board.stages[0], to = st.board.stages[1];
     const t = from.tasks.shift(); t.stage = to.slug; to.tasks.unshift(t);
@@ -123,6 +150,7 @@ window.__kbench = async function (n, reps) {
     out.move.push(s);
   }
   for (let r = 0; r < reps; r++) {
+    step = 'burst'; ours();
     mark();
     const t0 = performance.now();
     for (let i = 0; i < 20; i++) {
@@ -138,6 +166,7 @@ window.__kbench = async function (n, reps) {
                      kept: kept(), total: cards().length });
   }
   for (let r = 0; r < reps; r++) {
+    step = 'toolsClick'; ours();
     const card = cards()[Math.floor(cards().length / 2)];
     const more = card && card.querySelector('[data-more]');
     if (!more) break;
@@ -149,6 +178,7 @@ window.__kbench = async function (n, reps) {
     out.toolsClick.push({ script: +(t1 - t0).toFixed(2), visible: +(t2 - t0).toFixed(2), open });
     S.cardMenu = null; render(); await frame();
   }
+  step = 'end'; ours();
   return out;
 };
 return true;
@@ -253,6 +283,43 @@ def median(xs):
     return xs[len(xs) // 2] if xs else None
 
 
+SYNTHETIC = "(f) => /^(5\\d{3}-bench-card|7\\d{3}-kc-)/.test(f)"
+
+
+def hold(b, why: str) -> None:
+    """The page's readings held for a synthetic board (task 176)."""
+    held = b.eval(f"(() => {{ holdReadings({json.dumps(why)}); return readingsHeld(); }})()")
+    if not held or held.get("held") != why:
+        raise bv.SetupError(f"the page did not hold its readings for {why}: {held!r}")
+
+
+def release(b) -> dict:
+    """Release the hold and prove the live board is back: no hold left,
+    and a reading of the board painted with none of the synthetic cards.
+    Called whether or not the test passed; raises when restoration did
+    not happen, so a benchmark can never leave its board behind."""
+    out = b.eval(f"""(async () => {{
+      const was = readingsHeld();
+      if (window.__kbOrig) S.state = window.__kbOrig;
+      if (window.__kc) S.state = __kc.orig;
+      const r = await releaseReadings();
+      if (S.view !== 'board') setView('board');
+      await loadState();
+      // the Board as painted now: a view not on screen (the Phases lanes)
+      // keeps its last nodes until it is shown, and is not this question
+      const files = [...document.querySelectorAll('#board article.card')].map(c => c.dataset.file);
+      const synthetic = ({SYNTHETIC});
+      return {{ was, released: r, now: readingsHeld(),
+                stateSynthetic: S.state.board.stages.flatMap(s => s.tasks).filter(t => synthetic(t.file)).length,
+                drawnSynthetic: files.filter(synthetic).length, drawn: files.length }};
+    }})()""")
+    if not out or out["now"]["held"] is not None:
+        raise bv.SetupError(f"the page's readings were not released: {out!r}")
+    if out["stateSynthetic"] or out["drawnSynthetic"] or not out["drawn"]:
+        raise bv.SetupError(f"the live board was not restored after the benchmark: {out!r}")
+    return out
+
+
 class KeyedCardsMeasured(unittest.TestCase):
 
     @classmethod
@@ -277,9 +344,41 @@ class KeyedCardsMeasured(unittest.TestCase):
                           for f in ("visible", "script", "layout", "kept")
                           if any(f in s for s in v)]
                 print(f"kc {n} {k} " + " ".join(fields))
+
+    def test_0_a_live_reading_cannot_replace_the_benchmark_board(self):
+        """The race reproduced on purpose, both ways: a live reading of the
+        board landing while a synthetic board is painted replaces it —
+        what broke the benchmark — and, held, it does not."""
         b = S["browser"]
-        b.eval("(async () => { if (window.__kbOrig) { S.state = window.__kbOrig; } "
-               "await loadState(); render(); return true; })()")
+        b.viewport(1440, 900)
+        b.goto("/")
+        self.assertTrue(b.wait("document.querySelectorAll('#board article.card').length > 0", 15),
+                        "the board never drew a card")
+        b.eval(BENCH)
+        probe = f"""(async (held) => {{
+          const synthetic = ({SYNTHETIC});
+          if (held) holdReadings('keyed-cards reproduction');
+          window.__kbOrig = window.__kbOrig || JSON.parse(JSON.stringify(S.state));
+          const st = JSON.parse(JSON.stringify(window.__kbOrig));
+          st.board.stages.forEach((s, i) => {{ s.tasks = s.tasks.slice(0, 1).map(t =>
+            ({{ ...t, file: `${{5000 + i}}-bench-card-${{i}}.md`, number: String(5000 + i), stage: s.slug }})); }});
+          S.state = st; render();
+          await loadState();          // the stream's, the safety net's, the focus's reading
+          const kept = S.state === st;
+          const drawn = [...document.querySelectorAll('#board article.card')].map(c => c.dataset.file);
+          return {{ kept, drawnSynthetic: drawn.filter(synthetic).length, held: readingsHeld() }};
+        }})"""
+        try:
+            unheld = b.eval(f"{probe}(false)")
+            self.assertFalse(unheld["kept"], "reproduction: without a hold a live reading "
+                             "replaces a synthetic board")
+            self.assertEqual(0, unheld["drawnSynthetic"])
+            held = b.eval(f"{probe}(true)")
+            self.assertTrue(held["kept"], "held, a live reading replaced the benchmark board")
+            self.assertGreater(held["drawnSynthetic"], 0)
+            self.assertTrue(held["held"]["deferred"], "the ask made while held was not noted")
+        finally:
+            release(b)
 
     def test_measure_100_500_1000(self):
         b = S["browser"]
@@ -290,14 +389,18 @@ class KeyedCardsMeasured(unittest.TestCase):
         self.measured["userAgent"] = b.eval("navigator.userAgent")
         self.measured["viewport"] = [1440, 900]
         b.eval(BENCH)
-        for n in SIZES:
-            result = b.eval(f"window.__kbench({n}, {REPS})")
-            self.assertEqual(result["cardsDrawn"], n, f"{n} cards were not all drawn")
-            self.measured["sizes"][str(n)] = result
-            if n == SIZES[-1]:
-                path = S["shots"] / "keyed-cards-1000.png"
-                b.screenshot(path)
-                S["required"].append(path)
+        hold(b, "keyed-cards benchmark")
+        try:
+            for n in SIZES:
+                result = b.eval(f"window.__kbench({n}, {REPS})")
+                self.assertEqual(result["cardsDrawn"], n, f"{n} cards were not all drawn")
+                self.measured["sizes"][str(n)] = result
+                if n == SIZES[-1]:
+                    path = S["shots"] / "keyed-cards-1000.png"
+                    b.screenshot(path)
+                    S["required"].append(path)
+        finally:
+            self.measured["restored"] = release(b)
         # the measured target, as an observation and not a gate: a single
         # changed card at 1000 cards, visible within 50 ms
         single = median([s["visible"] for s in self.measured["sizes"]["1000"]["single"]])
@@ -317,11 +420,20 @@ class KeyedCards(unittest.TestCase):
                         "the board never drew a card")
         b.eval(KC)
         self.b = b
+        # synthetic boards are painted across awaited frames and separate
+        # evals; the one test that works the live backend is not held
+        self.held = not self._testMethodName.endswith("_through_the_backend")
+        if self.held:
+            hold(b, f"keyed-cards {self._testMethodName}")
 
     def tearDown(self):
-        self.b.eval("(async () => { S.selected = null; S.cardMenu = null; S.acts = S.acts || {}; "
-                    "if (S.view !== 'board') setView('board'); "
-                    "if (window.__kc) S.state = __kc.orig; render(); return true; })()")
+        try:
+            self.b.eval("(async () => { S.selected = null; S.cardMenu = null; S.acts = S.acts || {}; "
+                        "if (S.view !== 'board') setView('board'); "
+                        "if (window.__kc) S.state = __kc.orig; render(); return true; })()")
+        finally:
+            if self.held:
+                release(self.b)
 
     def ev(self, js):
         return self.b.eval(js)
