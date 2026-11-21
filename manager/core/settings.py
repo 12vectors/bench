@@ -1875,10 +1875,22 @@ def preview(payload: dict) -> dict:
             changes.append({"kind": "check-added", "what": name,
                             "detail": f"{now['run']} in the {now['root']} "
                                       f"checkout"})
-        elif was and now and was["checkId"] != now["checkId"]:
-            changes.append({"kind": "check-changed", "what": name,
-                            "detail": "its definition changed, so every "
-                                      "passing record of it now reads stale"})
+        elif was and now:
+            moved = _identity_moved(was, now)
+            if moved:
+                changes.append({"kind": "check-changed", "what": name,
+                                "dimension": moved,
+                                "detail": IDENTITY_MOVED[moved]})
+            elif was["checkId"] != now["checkId"]:
+                # Only its declared scopes (or nothing a result depends on)
+                # changed: a scope is coverage, asked for by name, so a
+                # full-run pass keeps its result identity (task 177).
+                changes.append({
+                    "kind": "check-scopes-changed", "what": name,
+                    "detail": "its declared scopes changed. A full-run pass "
+                              "still stands; a pass of a scope whose "
+                              "arguments changed, or that was removed, reads "
+                              "stale (scope-changed)"})
 
     for scope in sorted(profiles.GATE_SCOPES):
         was = _requirement_words(before_gate["scopes"].get(scope))
@@ -1932,6 +1944,36 @@ def preview(payload: dict) -> dict:
         ],
         "wroteNothing": True,
     }
+
+
+# Why a check's recorded passes stop counting, by the result-identity
+# dimension a policy edit moves (task 177). The check id is not that
+# answer on its own: it includes the declared scopes, which a full run's
+# identity does not, and excludes a preparation step's definition, which
+# its identity does.
+IDENTITY_MOVED = {
+    "check": "its definition changed (command, root, time limit, declared "
+             "inputs or environment, or verifier report contract), so every "
+             "passing record of it now reads stale (check-changed)",
+    "prepare": "a preparation step it runs changed, so every passing record "
+               "of it now reads stale (prepare-changed)",
+}
+
+
+def _step_words(step: dict) -> tuple:
+    return (step.get("name"), step.get("run"), step.get("required"),
+            step.get("network"))
+
+
+def _identity_moved(was: dict, now: dict) -> str | None:
+    """Which dimension of a check's result identity a policy edit moves,
+    or None when a recorded full-run pass keeps it."""
+    if was.get("checkSubstance") != now.get("checkSubstance"):
+        return "check"
+    if [_step_words(s) for s in was.get("prepare") or []] != \
+            [_step_words(s) for s in now.get("prepare") or []]:
+        return "prepare"
+    return None
 
 
 def checks_of(doc: dict) -> dict:
