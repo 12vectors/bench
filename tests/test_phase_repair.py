@@ -571,6 +571,9 @@ class TheDeliveryStatusOffersTheRepair(PhaseRepairCase):
         everything = [primary, *(found.get("others") or [])]
         self.assertFalse([a for a in everything if a["action"] == "move"],
                          "no move-back on a phase card")
+        # the compact reading the page draws from carries the target too
+        self.assertEqual(PHASE_BRANCH,
+                         delivery.compact(found)["primary"].get("target"))
         self.assertEqual([], self.seen(), "reading starts nothing")
 
     def test_a_merged_integration_pr_says_why_it_cannot_repair(self):

@@ -1209,7 +1209,9 @@ COMPACT = ("status", "primary", "candidate", "counts", "history", "detail",
 # What an action keeps in the compact reading: enough for the page to draw
 # it and route it, never anything the page would re-decide from.
 _ACTION_KEYS = ("action", "label", "who", "enabled", "why", "arm", "to",
-                "url", "agent", "evidence", "intent", "takeover")
+                "url", "agent", "evidence", "intent", "takeover",
+                # task 174: what an action acts on, drawn beside it
+                "target", "title")
 
 
 def bump() -> None:
