@@ -250,8 +250,7 @@ def _complete(filename: str, stage: str, expect_head: str | None = None,
         # remote, the base catches up and the workspace is cleared — so
         # obsolete checks, reviews and sign-off are not asked for.
         # Confirmed against the remote itself, never the snapshot.
-        landed = _merged_elsewhere(filename, task, branch,
-                                   local_merge=not config.app_merge_on_origin())
+        landed = _merged_elsewhere(filename, task, branch)
         if landed:
             pending = {"commit": landed,
                        "target": plans.pr_base(filename, task),
@@ -1020,8 +1019,7 @@ def completion_facts(filename: str, stage: str) -> dict:
     return facts
 
 
-def _merged_elsewhere(filename: str, task: dict, branch: str,
-                      *, local_merge: bool = False) -> str | None:
+def _merged_elsewhere(filename: str, task: dict, branch: str) -> str | None:
     """The card's exact head when the application remote's target already
     holds it, or None.
 
@@ -1032,8 +1030,9 @@ def _merged_elsewhere(filename: str, task: dict, branch: str,
     The head is the branch's tip; with no branch left, the head the
     snapshot last saw.
 
-    `local_merge` is the mode about to merge in this checkout. There, a
-    remote that cannot be read is refused rather than merged past: the
+    In the local merge mode (asked only then, so the mode is read where
+    it always was), a remote that cannot be read is refused rather than
+    merged past: the
     merge would be made blind to whether it already happened elsewhere,
     and its push could not be confirmed either. On origin the host itself
     refuses to merge a change twice, so the merge goes ahead and its
@@ -1047,7 +1046,7 @@ def _merged_elsewhere(filename: str, task: dict, branch: str,
     held, _remote_tip, why = _remote_holds(rname, target, tip)
     if held is True:
         return tip
-    if held is None and local_merge:
+    if held is None and not config.app_merge_on_origin():
         raise ValueError(
             f"{why} — so whether {tip[:12]} is already delivered to "
             f"{target} cannot be established, and nothing was merged. Merge & "
