@@ -369,6 +369,29 @@ def _complete(filename: str, stage: str, expect_head: str | None = None,
 
         publication = _publish(filename, target, merged_tip, on_origin,
                                merge=merge_identity, delivered=delivered)
+        if delivered and publication["state"] not in ("published",
+                                                      "local-only"):
+            # The remote said it held the head a moment ago and no longer
+            # answers so (it could not be read, or its target moved). This
+            # completion merged nothing, so there is nothing to recover: no
+            # record is written — a record claiming an origin merge would
+            # be untrue on a local-merge board and refuse its retry — and
+            # nothing is cleaned up or moved. Asking again reads the remote
+            # first, as this one did.
+            state.record_board_event({
+                "kind": "agent", "actor": "board", "file": filename,
+                "summary": (f"{filename}: {publication['remote'] or 'the remote'}"
+                            f"/{target} held {merged_tip[:12]} and then could "
+                            f"not confirm it ({publication['detail'][:160]}). "
+                            f"Nothing was merged or cleaned up and the card "
+                            f"stays in {stage}/; merge & clean up again once "
+                            f"the remote answers")})
+            state.broadcast({"type": "board"})
+            return {"merged": False, "published": False, "reconciled": False,
+                    "publication": publication, "moved": False,
+                    "stage": stage, "swept": [],
+                    "operation": _operation_public(operation),
+                    "recovery": recovery_public(filename)}
         if publication["state"] not in ("published", "local-only"):
             # Merged, and not delivered. Nothing below runs: the branch,
             # the worktree, the remote branch and the phase's members are
@@ -1045,6 +1068,14 @@ def _merged_elsewhere(filename: str, task: dict, branch: str) -> str | None:
     target = plans.pr_base(filename, task)
     held, _remote_tip, why = _remote_holds(rname, target, tip)
     if held is True:
+        # A branch with no commits of its own — its head still the commit
+        # its work was cut from, or one that commit already contained — is
+        # trivially "held" by the target, and was delivered by nobody. It
+        # takes the ordinary path, merge rules included, rather than being
+        # recorded as merged on the host. Read from the recorded cut only.
+        cut = str((plans.recorded(filename) or {}).get("startCommit") or "")
+        if cut and (cut == tip or _contains(tip, cut)):
+            return None
         return tip
     if held is None and not config.app_merge_on_origin():
         raise ValueError(
@@ -1449,7 +1480,7 @@ def _merge_on_origin(filename: str, stage: str, branch: str,
                     + (f" at {commit[:12]}" if commit else ""))})
 
 
-def _catch_up_base(filename: str) -> None:
+def _catch_up_base(filename: str) -> dict:
     """Bring the application's own base branch to the merge origin made.
 
     Vendored, the sync beat does this — it fetches and fast-forwards the

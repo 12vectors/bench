@@ -268,8 +268,11 @@ def maybe_open_pr(filename: str) -> None:
     _OPENING.add(filename)
     try:
         _open_pr(filename)
+        _forget_open_failure(filename)
     except _Quiet:
-        pass
+        # No branch, or a PR already on the card: an earlier failure's
+        # reason no longer describes this card, so it is not kept showing.
+        _forget_open_failure(filename)
     except ValueError as exc:
         _remember_open_failure(filename, str(exc))
         state.record_board_event({
@@ -288,8 +291,11 @@ def open_pr_now(filename: str) -> str:
         raise ValueError(f"a PR for {filename} is already being opened")
     _OPENING.add(filename)
     try:
-        return _open_pr(filename)
+        url = _open_pr(filename)
+        _forget_open_failure(filename)
+        return url
     except _Quiet:
+        _forget_open_failure(filename)
         raise
     except ValueError as exc:
         _remember_open_failure(filename, str(exc))

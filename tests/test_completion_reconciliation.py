@@ -28,6 +28,7 @@ import subprocess
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import tests.test_completion_publication as pub
 from tests.test_completion_publication import BRANCH, FILENAME, STEM, git
@@ -432,6 +433,61 @@ class GuardsHold(Incident):
         self.assertEqual(refs, (self.tip(self.app, "main"),
                                 self.tip(self.origin, "refs/heads/main")))
         self.assertEqual(self.stage_of(), "review")
+
+
+class ReviewFollowUps(Incident):
+    """The independent review's follow-ups at 562c217: a remote that answers
+    the delivery pre-check and then cannot be read, a branch with no work of
+    its own, and a PR-opening reason that no longer applies."""
+
+    def test_a_remote_lost_after_the_precheck_records_nothing_untrue(self):
+        self.provider_merge()
+        real = completion._remote_holds
+        calls = []
+
+        def flaky(rname, target, commit):
+            calls.append(commit)
+            if len(calls) == 1:
+                return real(rname, target, commit)
+            return None, "", "the remote could not be read"
+
+        with mock.patch.object(completion, "_remote_holds", flaky):
+            result = self.complete()
+
+        self.assertFalse(result["merged"], result)
+        self.assertFalse(result["published"])
+        self.assertFalse(result["reconciled"])
+        self.assertFalse(result["moved"])
+        self.assertEqual(self.stage_of(), "review")
+        self.assertTrue(self.worktree.is_dir())
+        self.assertEqual(self.merges_on_main(), 0)
+        # nothing was merged, so no record — least of all one claiming an
+        # origin merge on this local-merge board, which would refuse a retry
+        self.assertIsNone(completion.recovery(FILENAME))
+        said = self.said()
+        self.assertNotIn("GitHub reported the merge", said)
+        self.assertIn("Nothing was merged", said)
+        # and the retry, with the remote answering, reconciles
+        self.assertTrue(self.complete().get("reconciled"))
+
+    def test_a_branch_with_no_work_of_its_own_is_not_merged_on_the_host(self):
+        self.provider_merge()
+        branch = changes.branch_of(FILENAME)
+        task = changes.woven(FILENAME, "review")
+        parent = self.tip(self.app, f"{self.work}^")
+        with mock.patch.object(completion.plans, "recorded",
+                               return_value={"startCommit": self.work}):
+            self.assertIsNone(completion._merged_elsewhere(FILENAME, task, branch))
+        with mock.patch.object(completion.plans, "recorded",
+                               return_value={"startCommit": parent}):
+            self.assertEqual(completion._merged_elsewhere(FILENAME, task, branch),
+                             self.work)
+
+    def test_a_later_quiet_attempt_clears_the_old_reason(self):
+        changes._remember_open_failure(NEXT, "local main is ahead of origin")
+        self.assertIsNotNone(changes.open_failure(NEXT))
+        changes.maybe_open_pr(NEXT)   # no branch: a quiet ending
+        self.assertIsNone(changes.open_failure(NEXT))
 
 
 class ThePrOpeningCauseIsKept(Incident):
