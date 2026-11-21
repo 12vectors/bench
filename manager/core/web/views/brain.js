@@ -190,19 +190,34 @@ function diagnosticsBlock(index) {
     'a plain Markdown file. It appears on the next reading.</p></details>';
 }
 
-/* ── finding an entry (task 159) ───────────────────────────────────────
+/* ── browsing the library (tasks 159, 183) ────────────────────────────
 
-   Search and filters over the index the board already sent: a plain,
-   case-insensitive substring match over each entry's title, summary, id,
-   kind, file name, sources and related ids, and two filters —
-   classification and kind, independent of each other and of the Board's
-   stages. Deterministic and bounded by the index (brain.py caps the files
-   it reads); no model, no request. Kept across navigation, so coming back
+   The list is organised by **kind** first: an All kinds view groups the
+   entries by their kind, and choosing a kind narrows to it. Within a kind
+   the classifications stay apart, each under its own heading — Current
+   and Unclassified are shown by default, Historical and Superseded are
+   hidden by default and shown by an explicit control. Hidden is never
+   removed: counts say how many are hidden, an entry's address opens it
+   whatever the view, and nothing here writes or reclassifies anything.
+
+   Search is a plain, case-insensitive substring match of every word over
+   each entry's title, summary, id, kind, file name, sources and related
+   ids, composed with the kind and the classification controls.
+   Deterministic and bounded by the index (brain.py caps the files it
+   reads); no model, no request. Kept across navigation, so coming back
    to the list finds it as it was left; not part of an address, which
    names a destination, never a moment. */
-const find = { q: '', cls: 'all', kind: 'all' };
+const LIB_ORDER = ['Current', 'Unclassified', 'Historical', 'Superseded'];
+const DEFAULT_SHOW = { Current: true, Unclassified: true, Historical: false, Superseded: false };
+const find = { q: '', kind: 'all', show: { ...DEFAULT_SHOW } };
+let navOpen = false;     // the compact controls on a narrow window
 
-function finding() { return !!(find.q.trim() || find.cls !== 'all' || find.kind !== 'all'); }
+function finding() {
+  return !!(find.q.trim() || find.kind !== 'all' ||
+    LIB_ORDER.some(c => find.show[c] !== DEFAULT_SHOW[c]));
+}
+
+function resetFind() { find.q = ''; find.kind = 'all'; find.show = { ...DEFAULT_SHOW }; }
 
 function haystack(e) {
   return [e.title, e.summary, e.id, e.kind, e.file,
@@ -210,46 +225,148 @@ function haystack(e) {
     .filter(Boolean).join('\n').toLowerCase();
 }
 
-function matches(e) {
-  if (find.cls !== 'all' && e.classification !== find.cls) return false;
-  if (find.kind !== 'all' && e.kind !== find.kind) return false;
+function searchHit(e) {
   const words = find.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return true;
   const hay = haystack(e);
   return words.every(w => hay.includes(w));
 }
 
-function findHtml(index, hits) {
-  const total = index.entries.length;
-  const count = (list, pick) => list.filter(pick).length;
-  const opt = (v, label, on) => `<option value="${esc(v)}"${on ? ' selected' : ''}>${esc(label)}</option>`;
-  const classes = opt('all', `All classifications (${total})`, find.cls === 'all') + CLASSES.map(c =>
-    opt(c, `${c} (${count(index.entries, e => e.classification === c)})`, find.cls === c)).join('');
-  const kinds = opt('all', 'All kinds', find.kind === 'all') + KINDS.map(k =>
-    opt(k, `${k} (${count(index.entries, e => e.kind === k)})`, find.kind === k)).join('');
-  return `<form class="b-panel b-find" role="search" aria-label="Find Brain entries" data-bfindform>` +
-    `<div class="b-findrow">` +
-    `<label class="b-findq"><span>Search</span><input type="search" data-bfind="q" value="${esc(find.q)}" ` +
-    `placeholder="Title, summary, id, source or related entry" autocomplete="off" spellcheck="false" ` +
-    `aria-describedby="bfindcount"></label>` +
-    `<label><span>Classification</span><select data-bfind="cls">${classes}</select></label>` +
-    `<label><span>Kind</span><select data-bfind="kind">${kinds}</select></label>` +
-    (finding() ? button('clear-find', 'Clear') : '') + `</div>` +
-    `<p class="b-note" id="bfindcount" role="status" aria-live="polite">` +
-    (finding() ? `${hits.length} of ${total} entr${total === 1 ? 'y' : 'ies'} match.`
-      : `${total} entr${total === 1 ? 'y' : 'ies'}. Search reads this list only; it asks nothing of a model.`) +
-    `</p></form>`;
+const shownClass = (c) => !!find.show[c];
+const entries = (n) => `${n} ${n === 1 ? 'entry' : 'entries'}`;
+
+// the six kinds of the contract, and any other a reading carries (none
+// should: brain.py refuses another kind, but a list never hides a row)
+function kindsOf(index) {
+  const extra = [...new Set(index.entries.map(e => e.kind))].filter(k => !KINDS.includes(k)).sort();
+  return KINDS.concat(extra);
 }
 
-function noResults(index) {
-  const said = [find.q.trim() ? `“${find.q.trim()}”` : '',
-    find.cls !== 'all' ? `classified ${find.cls}` : '', find.kind !== 'all' ? `of kind ${find.kind}` : '']
+/* One reading of the list's numbers, each with a stated scope:
+   `searched` — every entry the search matches (all kinds, all
+   classifications); `inKind` — those of the selected kind; `visible` —
+   those the classification controls show. */
+function tally(index) {
+  const searched = index.entries.filter(searchHit);
+  const inKind = find.kind === 'all' ? searched : searched.filter(e => e.kind === find.kind);
+  const visible = inKind.filter(e => shownClass(e.classification));
+  return { searched, inKind, visible };
+}
+
+function hiddenWords(list) {
+  return LIB_ORDER.filter(c => !shownClass(c))
+    .map(c => [c, list.filter(e => e.classification === c).length]).filter(([, n]) => n)
+    .map(([c, n]) => `${n} ${c}`).join(', ');
+}
+
+function viewWords() {
+  const shown = LIB_ORDER.filter(shownClass);
+  return (find.kind === 'all' ? 'All kinds' : find.kind) + ' · ' +
+    (shown.length ? shown.join(', ') : 'no classification shown') +
+    (find.q.trim() ? ` · “${find.q.trim()}”` : '');
+}
+
+function navHtml(index, t) {
+  const total = index.entries.length;
+  const kindButton = (k, label, shown, all) => {
+    const on = find.kind === k;
+    return `<li><button type="button" class="b-kindbtn${on ? ' on' : ''}" data-bkind="${esc(k)}" ` +
+      `aria-pressed="${on}" aria-label="${esc(label)}: ${shown} shown of ${entries(all)}">` +
+      `<span class="b-kindname">${esc(label)}</span><span class="b-kindcount">${shown}` +
+      `${shown !== all ? `<span class="b-of"> of ${all}</span>` : ''}</span></button></li>`;
+  };
+  const shownIn = (k) => t.searched.filter(e => e.kind === k && shownClass(e.classification)).length;
+  const kindList = kindButton('all', 'All kinds', t.searched.filter(e => shownClass(e.classification)).length, total) +
+    kindsOf(index).map(k => kindButton(k, k, shownIn(k), index.entries.filter(e => e.kind === k).length)).join('');
+  const boxes = LIB_ORDER.map(c => {
+    const n = t.inKind.filter(e => e.classification === c).length;
+    return `<label class="b-show"><input type="checkbox" data-bshow="${c}"${shownClass(c) ? ' checked' : ''}> ` +
+      `${classChip(c)} <span class="b-showcount">${n}</span>` +
+      (DEFAULT_SHOW[c] ? '' : '<span class="b-note b-showdef">hidden by default</span>') + '</label>';
+  }).join('');
+  return `<aside class="b-nav${navOpen ? '' : ' b-navclosed'}" id="bnav" aria-label="Browse and filter the Brain">` +
+    `<button type="button" class="b-navtoggle" data-bact="toggle-nav" aria-expanded="${navOpen}" ` +
+    `aria-controls="bnavbody"><span class="b-navlab">Browse and filter</span>` +
+    `<span class="b-navnow">${esc(viewWords())}</span></button>` +
+    `<div class="b-navbody" id="bnavbody">` +
+    `<form class="b-find" role="search" aria-label="Find Brain entries" data-bfindform>` +
+    `<label class="b-findq"><span class="b-navh">Search</span><input type="search" data-bfind="q" value="${esc(find.q)}" ` +
+    `placeholder="Title, summary, id, source…" autocomplete="off" spellcheck="false" ` +
+    `aria-describedby="bfindcount"></label></form>` +
+    `<nav class="b-kinds" aria-labelledby="bkinds-h"><h2 class="b-navh" id="bkinds-h">Kind</h2>` +
+    `<ul>${kindList}</ul><p class="b-note">Each count: entries shown, of all entries of that kind.</p></nav>` +
+    `<fieldset class="b-shows"><legend class="b-navh">Show classifications</legend>${boxes}` +
+    `<p class="b-note">Counts: ${find.kind === 'all' ? 'all kinds' : esc(find.kind)}` +
+    `${find.q.trim() ? ', matching the search' : ''}. Hiding changes no entry.</p></fieldset>` +
+    (finding() ? `<p class="b-navreset">${button('clear-find', 'Reset to default view')}</p>`
+      : '<p class="b-note b-navreset">Default view: all kinds, Current and Unclassified.</p>') +
+    `</div></aside>`;
+}
+
+function rowHtml(e) {
+  return `<li class="b-row${e.tombstone ? ' b-tomb' : ''}"><div class="b-rowhead">${entryLink(e)}` +
+    classChip(e.classification) + (e.tombstone ? chip('b-c-removed', 'Removed') : '') +
+    (e.override ? chip('b-override', 'Manual override', 'a person fixed this classification') : '') +
+    '</div>' +
+    (e.summary ? `<p class="b-sum">${esc(e.summary)}</p>` : '<p class="b-sum b-none">No summary.</p>') +
+    `<p class="b-meta mono">${esc(e.id)}${e.sources.length ? ' · from ' +
+      e.sources.slice(0, 3).map(s => esc(s.text)).join(', ') : ''}</p></li>`;
+}
+
+/* One kind: its classifications apart, each under its own heading, and
+   what the controls hide said in numbers, never dropped silently. */
+function kindSection(index, k, t) {
+  const all = index.entries.filter(e => e.kind === k);
+  const searched = t.searched.filter(e => e.kind === k);
+  const rows = searched.filter(e => shownClass(e.classification));
+  const hiddenList = searched.filter(e => !shownClass(e.classification));
+  const slug = k.replace(/[^A-Za-z0-9-]/g, '');
+  let body;
+  if (!all.length) {
+    body = `<p class="b-none">No ${esc(k)} entries in this Brain yet. Choose another kind, or write one with <strong>New entry</strong>.</p>`;
+  } else if (!rows.length) {
+    body = `<p class="b-none">${find.q.trim() && !searched.length
+      ? `No ${esc(k)} entry matches the search.`
+      : `No ${esc(k)} entry is shown with the classifications chosen.`}</p>`;
+  } else {
+    body = LIB_ORDER.filter(shownClass).map(c => {
+      const list = rows.filter(e => e.classification === c);
+      if (!list.length) return '';
+      return `<div class="b-group" data-bgroup="${c}"><h3 id="bgrp-${slug}-${c}">${classChip(c)} ` +
+        `<span class="b-count" aria-label="${entries(list.length)}">${list.length}</span>` +
+        `<span class="b-note b-groupnote">${esc(ABOUT[c])}</span></h3>` +
+        `<ul class="b-list" aria-labelledby="bgrp-${slug}-${c}">${list.map(rowHtml).join('')}</ul></div>`;
+    }).join('');
+  }
+  const hid = hiddenList.length
+    ? `<p class="b-hidden" data-bhidden="${esc(k)}">${esc(hiddenWords(hiddenList))} ` +
+      `${hiddenList.length === 1 ? 'entry is' : 'entries are'} hidden here, kept and not deleted — ` +
+      'show them with <strong>Show classifications</strong>.</p>' : '';
+  return `<section class="b-panel b-kind" id="bkind-${slug}" data-bkindsec="${esc(k)}" aria-labelledby="bkindh-${slug}">` +
+    `<h2 id="bkindh-${slug}">${esc(k)} <span class="b-count" aria-label="${rows.length} shown of ${entries(all.length)}">` +
+    `${rows.length}${rows.length !== all.length ? ` of ${all.length}` : ''}</span></h2>${body}${hid}</section>`;
+}
+
+function noResults(index, t) {
+  const said = [find.q.trim() ? `“${find.q.trim()}”` : '', find.kind !== 'all' ? `of kind ${find.kind}` : '']
     .filter(Boolean).join(', ');
-  return `<div class="b-panel b-empty" role="status"><p><strong>No entry matches</strong> ${esc(said)}.</p>` +
-    `<p>Search looks at each entry's title, summary, id, kind, file name, sources and related ids. ` +
-    `${index.diagnostics && index.diagnostics.length ? 'A file listed below as not shown cannot match until it is fixed. ' : ''}` +
-    `Clear the search and filters to see all ${index.entries.length}, or write the entry you were looking for.</p>` +
-    `<p>${button('clear-find', 'Clear search and filters')} ${button('ag-new', 'New entry')}</p></div>`;
+  const hiddenHere = t.inKind.filter(e => !shownClass(e.classification));
+  const why = hiddenHere.length
+    ? `<p>${esc(hiddenWords(hiddenHere))} ${hiddenHere.length === 1 ? 'entry matches' : 'entries match'} ` +
+      'but the classification controls hide ' + (hiddenHere.length === 1 ? 'it' : 'them') + '.</p>'
+    : `<p>Search looks at each entry's title, summary, id, kind, file name, sources and related ids. ` +
+      `${index.diagnostics && index.diagnostics.length ? 'A file listed below as not shown cannot match until it is fixed.' : ''}</p>`;
+  // the default view has nothing to reset to: where the controls hide every
+  // match (a Brain of history alone, say) the way on is to show them
+  const actions = [
+    hiddenHere.length ? button('show-hidden', 'Show hidden classifications') : '',
+    finding() ? button('clear-find', 'Reset to default view') : '',
+    button('ag-new', 'New entry')].filter(Boolean).join(' ');
+  return `<div class="b-panel b-empty" role="status"><p><strong>No entry matches</strong>` +
+    `${said ? ' ' + esc(said) : ' the classifications chosen'}.</p>${why}` +
+    (finding() ? `<p>Reset to the default view of the ${entries(index.entries.length)}, or write the entry you were looking for.</p>`
+      : '<p>This is the default view. Show the hidden classifications, or write the entry you were looking for.</p>') +
+    `<p>${actions}</p></div>`;
 }
 
 function listHtml(slot) {
@@ -257,8 +374,8 @@ function listHtml(slot) {
   const head = '<header class="b-head"><div class="b-headrow"><h1 class="b-title" tabindex="-1">Brain</h1>' +
     (index.directory.state !== 'refused' ? button('ag-new', 'New entry', { primary: true }) : '') + '</div>' +
     '<p class="b-lede">Maintained project knowledge kept in the work repository\'s ' +
-    '<code>brain/</code>. Each entry has a stable address that survives a rename, a new title ' +
-    'or a new classification. An entry explains; it does not override configuration, ' +
+    '<code>brain/</code>, organised by kind. Each entry has a stable address that survives a rename, ' +
+    'a new title or a new classification. An entry explains; it does not override configuration, ' +
     'merge rules or a person\'s decision.</p></header>';
   const stale = slot.error ? `<p class="b-warn" role="status">${esc(slot.error)} — showing the last reading.</p>` : '';
   if (index.directory.state === 'refused') {
@@ -268,29 +385,26 @@ function listHtml(slot) {
   if (!index.entries.length) {
     return head + stale + requestsHtml() + emptyGuidance(index.directory) + diagnosticsBlock(index);
   }
-  const hits = index.entries.filter(matches);
-  const filtering = finding();
-  const shown = CLASSES.filter(c => find.cls === 'all' || find.cls === c);
-  const sections = !hits.length ? noResults(index) : shown.map(c => {
-    const rows = hits.filter(e => e.classification === c);
-    // while a search or filter narrows the list, a classification with no
-    // match is left out rather than drawn as an empty section
-    if (filtering && !rows.length) return '';
-    const body = rows.length ? '<ul class="b-list">' + rows.map(e =>
-      `<li class="b-row${e.tombstone ? ' b-tomb' : ''}"><div class="b-rowhead">${entryLink(e)}` +
-      chip('b-kind', e.kind) + (e.tombstone ? chip('b-c-removed', 'Removed') : '') +
-      (e.override ? chip('b-override', 'Manual override', 'a person fixed this classification') : '') +
-      '</div>' +
-      (e.summary ? `<p class="b-sum">${esc(e.summary)}</p>` : '<p class="b-sum b-none">No summary.</p>') +
-      `<p class="b-meta mono">${esc(e.id)}${e.sources.length ? ' · from ' +
-        e.sources.slice(0, 3).map(s => esc(s.text)).join(', ') : ''}</p></li>`).join('') + '</ul>'
-      : '<p class="b-none">None.</p>';
-    return `<section class="b-panel" aria-labelledby="bsec-${c}"><h2 id="bsec-${c}">${c} ` +
-      `<span class="b-count">${rows.length}</span></h2><p class="b-note">${esc(ABOUT[c])}.</p>${body}</section>`;
-  }).join('');
-  return head + stale + requestsHtml() + findHtml(index, hits) + sections + diagnosticsBlock(index) +
-    `<p class="b-note mono">brain/ revision ${esc(index.revision)} · ${index.entries.length} ` +
-    `entr${index.entries.length === 1 ? 'y' : 'ies'}</p>`;
+  const t = tally(index);
+  const total = index.entries.length;
+  const hiddenAll = t.inKind.filter(e => !shownClass(e.classification));
+  const status = `<div class="b-libstatus"><p id="bfindcount" role="status" aria-live="polite">` +
+    `Showing ${t.visible.length} of ${entries(total)} · ${esc(viewWords())}.` +
+    (hiddenAll.length ? ` ${esc(hiddenWords(hiddenAll))} hidden by the classification controls — ` +
+      'kept, not deleted.' : '') + '</p>' +
+    (finding() ? button('clear-find', 'Reset to default view') : '') + '</div>';
+  // a chosen kind with no entries at all says so in its own section; any
+  // other view that shows nothing explains what matched and what is hidden
+  const emptyKind = find.kind !== 'all' && !index.entries.some(e => e.kind === find.kind);
+  const kinds = find.kind === 'all'
+    ? kindsOf(index).filter(k => t.searched.some(e => e.kind === k))
+    : [find.kind];
+  const results = !t.visible.length && !emptyKind
+    ? noResults(index, t)
+    : kinds.map(k => kindSection(index, k, t)).join('');
+  return head + stale + requestsHtml() + `<div class="b-lib">` + navHtml(index, t) +
+    `<div class="b-results">${status}${results}${diagnosticsBlock(index)}` +
+    `<p class="b-note mono">brain/ revision ${esc(index.revision)} · ${entries(total)}</p></div></div>`;
 }
 
 function linkList(label, items) {
@@ -583,7 +697,10 @@ function entryHtml(slot, id) {
   const facts = '<dl class="b-facts">' +
     `<dt>Id</dt><dd class="mono">${esc(e.id)}</dd>` +
     `<dt>Kind</dt><dd>${esc(e.entryKind)}</dd>` +
-    `<dt>Classification</dt><dd>${classChip(e.classification)} <span class="b-note">${esc(ABOUT[e.classification] || '')}</span></dd>` +
+    `<dt>Classification</dt><dd>${classChip(e.classification)} <span class="b-note">${esc(ABOUT[e.classification] || '')}</span>` +
+    (DEFAULT_SHOW[e.classification] === false
+      ? `<p class="b-note b-hiddenby">Hidden from the Brain's default list; its address always opens it, ` +
+        `and <strong>Show classifications → ${esc(e.classification)}</strong> lists it.</p>` : '') + '</dd>' +
     (e.override ? `<dt>Override</dt><dd><span class="b-note">${esc(e.override)}</span></dd>` : '') +
     `<dt>Sources</dt><dd>${e.sources.length ? '<ul class="b-links">' + e.sources.map(sourceItem).join('') + '</ul>'
       : '<span class="b-none">No source is recorded.</span>'}</dd>` +
@@ -1184,9 +1301,24 @@ function act(name, arg) {
   }
   const e = currentEntry();
   if (name === 'clear-find') {
-    find.q = ''; find.cls = 'all'; find.kind = 'all';
+    resetFind();
     renderBrain(true);
-    $('#bshell [data-bfind="q"]')?.focus();
+    $('#bshell [data-bkind="all"]')?.focus();
+    return;
+  }
+  if (name === 'toggle-nav') {
+    navOpen = !navOpen;
+    renderBrain(true);
+    $('#bshell [data-bact="toggle-nav"]')?.focus();
+    return;
+  }
+  if (name === 'show-hidden') {
+    // shows every classification the current view hides — a view change,
+    // never an entry's; Reset to default view is the way back
+    for (const c of LIB_ORDER) find.show[c] = true;
+    renderBrain(true);
+    // focus lands on the first entry it brought into view
+    $('#bshell .b-results [data-brain-id]')?.focus();
     return;
   }
   if (name === 'new') {
@@ -1229,6 +1361,13 @@ function wire(el) {
   if (wired) return;
   wired = true;
   el.addEventListener('click', (ev) => {
+    const k = ev.target.closest && ev.target.closest('[data-bkind]');
+    if (k && el.contains(k)) {
+      // choosing a kind narrows the library; it reads and writes nothing
+      find.kind = k.dataset.bkind;
+      renderBrain(true);
+      return;
+    }
     const b = ev.target.closest && ev.target.closest('[data-bact]');
     if (!b || !el.contains(b) || b.disabled) return;
     act(b.dataset.bact, b.dataset.barg);
@@ -1240,6 +1379,13 @@ function wire(el) {
       // painted at once with the caret kept where it was
       if (find[f.dataset.bfind] === f.value) return;
       find[f.dataset.bfind] = f.value;
+      renderBrain(true);
+      return;
+    }
+    if (f.dataset && f.dataset.bshow) {
+      // showing or hiding a classification changes the view, never an entry
+      if (ev.type !== 'change' || find.show[f.dataset.bshow] === f.checked) return;
+      find.show[f.dataset.bshow] = f.checked;
       renderBrain(true);
       return;
     }
@@ -1395,6 +1541,8 @@ function renderBrain(force) {
     const keep = active && el.contains(active) && active.dataset
       ? (active.classList.contains('b-conflict') ? '.b-conflict'
         : active.dataset.bfind ? `[data-bfind="${CSS.escape(active.dataset.bfind)}"]`
+        : active.dataset.bkind ? `[data-bkind="${CSS.escape(active.dataset.bkind)}"]`
+        : active.dataset.bshow ? `[data-bshow="${CSS.escape(active.dataset.bshow)}"]`
         : active.dataset.ag ? `[data-ag="${CSS.escape(active.dataset.ag)}"]`
         : active.dataset.agq ? `[data-agq="${CSS.escape(active.dataset.agq)}"]`
         : active.dataset.age && active.type !== 'radio' ? `[data-age="${CSS.escape(active.dataset.age)}"]`

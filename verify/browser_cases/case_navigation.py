@@ -471,34 +471,44 @@ class Navigation(unittest.TestCase):
         b.eval("(() => { const f = document.querySelector('#bshell [data-bfind=\"q\"]'); f.focus(); "
                f"f.value = {json.dumps(text)}; f.dispatchEvent(new Event('input', {{bubbles: true}})); }})()")
 
-    def choose(self, b, which, value):
-        b.eval(f"(() => {{ const f = document.querySelector('#bshell [data-bfind=\"{which}\"]'); "
-               f"f.value = {json.dumps(value)}; f.dispatchEvent(new Event('change', {{bubbles: true}})); }})()")
+    def kind(self, b, value):
+        b.click(f'#bshell [data-bkind="{value}"]')
+        b.wait(f"document.querySelector('#bshell [data-bkind=\"{value}\"]').getAttribute('aria-pressed') === 'true'", 5)
+
+    def show(self, b, klass, on):
+        b.eval(f"(() => {{ const f = document.querySelector('#bshell [data-bshow=\"{klass}\"]'); "
+               f"f.checked = {json.dumps(on)}; f.dispatchEvent(new Event('change', {{bubbles: true}})); }})()")
 
     def listed(self, b):
         return b.eval("[...document.querySelectorAll('#bshell .b-list a[data-brain-id]')].map(a => a.textContent)")
 
     def test_5_brain_search_filter_open_link_and_edit(self):
         b = self.open("/brain", "!!document.querySelector('#bshell [data-bfind=\"q\"]')")
-        self.assertEqual(3, len(self.listed(b)))
+        # kind first, Historical hidden by default (task 183)
+        self.assertEqual(2, len(self.listed(b)))
         self.assertIn("broken.md", b.eval("document.querySelector('#bshell').innerText"))
         self.assertIn("duplicate-id", b.eval("document.querySelector('.b-diag').innerText"),
                       "the diagnostics say how each problem is fixed")
-        # by title, then by summary, keeping focus and the caret in the box
+        # by title, keeping focus and the caret in the box: the match is
+        # Historical, so it is said to match and to be hidden
         self.search(b, "sync stalled")
-        self.assertTrue(b.wait("document.querySelectorAll('#bshell .b-list a[data-brain-id]').length === 1", 5))
-        self.assertEqual(["Why sync stalled in March"], self.listed(b))
+        self.assertTrue(b.wait("document.querySelector('#bshell').innerText"
+                               ".includes('1 Historical entry matches')", 5))
+        self.assertEqual([], self.listed(b))
         self.assertEqual("q", b.eval("document.activeElement && document.activeElement.dataset.bfind"))
+        self.show(b, "Historical", True)
+        b.wait("document.querySelectorAll('#bshell .b-list a[data-brain-id]').length === 1", 5)
+        self.assertEqual(["Why sync stalled in March"], self.listed(b))
         self.search(b, "loopback port")
         b.wait("document.querySelectorAll('#bshell .b-list a[data-brain-id]').length === 1", 5)
         self.assertEqual(["Deploying the preview"], self.listed(b))
-        # filters, independent of the search and of each other
+        # a kind, and the classification controls, compose with the search
         self.search(b, "")
-        self.choose(b, "cls", "Unclassified")
-        b.wait("document.querySelectorAll('#bshell .b-list a[data-brain-id]').length === 1", 5)
-        self.assertEqual(["Choosing the work base"], self.listed(b))
-        self.choose(b, "cls", "all")
-        self.choose(b, "kind", "Investigation")
+        self.show(b, "Current", False)
+        b.wait("document.querySelectorAll('#bshell .b-list a[data-brain-id]').length === 2", 5)
+        self.assertEqual({"Choosing the work base", "Why sync stalled in March"}, set(self.listed(b)))
+        self.show(b, "Current", True)
+        self.kind(b, "Investigation")
         b.wait("document.querySelectorAll('#bshell .b-list a[data-brain-id]').length === 1", 5)
         self.assertEqual(["Why sync stalled in March"], self.listed(b))
         # no results says why and offers the way out
@@ -506,7 +516,7 @@ class Navigation(unittest.TestCase):
         self.assertTrue(b.wait("document.querySelector('#bshell').innerText.includes('No entry matches')", 5))
         shot("nav-brain-no-results-1280-night")
         b.click('#bshell .b-empty [data-bact="clear-find"]')
-        self.assertTrue(b.wait("document.querySelectorAll('#bshell .b-list a[data-brain-id]').length === 3", 5))
+        self.assertTrue(b.wait("document.querySelectorAll('#bshell .b-list a[data-brain-id]').length === 2", 5))
         # a search survives going to an entry and back
         self.search(b, "work base")
         guide = self.ids["Choosing the work base"]

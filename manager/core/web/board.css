@@ -2165,18 +2165,72 @@
     .crumbs ol{font-size:12.5px}
     .crumbs a{display:inline-flex;align-items:center;min-height:32px}
   }
-  /* the Brain's search and filters (task 159) */
-  .b-find{display:flex;flex-direction:column;gap:6px}
-  .b-findrow{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px 12px}
-  .b-findrow label{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:var(--muted)}
-  .b-findrow .b-findq{flex:1 1 260px}
-  .b-findrow input[type=search]{font:inherit;font-size:13px;color:var(--text);background:var(--surface);
-    border:1px solid var(--border);border-radius:8px;padding:8px 10px;min-height:40px;width:100%}
-  .b-findrow select{min-height:40px}
-  .b-findrow input:focus-visible,.b-findrow select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-  .b-find .b-note{margin:0}
+  /* the Brain's library (tasks 159, 183): kind first, the entries in the
+     main column and the way to browse them — search, kind, which
+     classifications are shown — in a sidebar on the right */
+  .b-lib{display:grid;grid-template-columns:minmax(0,1fr) 272px;grid-template-areas:"list nav";
+    gap:18px;align-items:start}
+  .b-results{grid-area:list;display:flex;flex-direction:column;gap:12px;min-width:0}
+  .b-nav{grid-area:nav;background:var(--surface);border:1px solid var(--border-soft);border-radius:var(--radius);
+    padding:12px 14px;min-width:0}
+  /* the controls stay in view while a long list scrolls under them (the
+     shell is the scroller); a window too short for them scrolls them */
+  @media (min-width:761px){
+    .b-nav{position:sticky;top:0;max-height:calc(100vh - 160px);max-height:calc(100dvh - 160px);
+      overflow-y:auto;overscroll-behavior:contain}
+  }
+  .b-navbody{display:flex;flex-direction:column;gap:14px}
+  .b-navtoggle{display:none}
+  .b-navh{display:block;margin:0 0 6px;font-size:12px;font-weight:600;color:var(--text);
+    text-transform:uppercase;letter-spacing:.04em}
+  .b-find{display:flex;flex-direction:column;gap:6px;margin:0}
+  .b-findq{display:flex;flex-direction:column}
+  .b-find input[type=search]{font:inherit;font-size:13px;color:var(--text);background:var(--canvas);
+    border:1px solid var(--border);border-radius:8px;padding:8px 10px;min-height:40px;width:100%;box-sizing:border-box}
+  .b-find input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  .b-kinds{margin:0}
+  .b-kinds ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+  .b-kindbtn{display:flex;width:100%;align-items:center;justify-content:space-between;gap:8px;min-height:34px;
+    padding:5px 10px;border:1px solid transparent;border-radius:6px;background:none;color:var(--muted);
+    font:500 13px var(--sans);cursor:pointer;text-align:left}
+  .b-kindbtn:hover{color:var(--text);border-color:var(--border)}
+  .b-kindbtn.on{color:var(--text);font-weight:600;background:var(--sunken);border-color:var(--border);
+    box-shadow:inset 3px 0 0 var(--accent)}
+  .b-kindcount{font:500 11.5px var(--mono);color:var(--muted);white-space:nowrap}
+  .b-of{color:var(--dim)}
+  .b-shows{border:0;margin:0;padding:0;min-width:0;display:flex;flex-direction:column;gap:4px}
+  .b-show{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-height:32px;cursor:pointer}
+  .b-show input{margin:0;accent-color:var(--accent)}
+  .b-showcount{font:500 11.5px var(--mono);color:var(--muted)}
+  .b-showdef{flex-basis:100%;margin:-4px 0 0 22px}
+  .b-navreset{margin:0}
+  .b-nav .b-note{margin:4px 0 0}
+  .b-nav button:focus-visible,.b-nav input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .b-libstatus{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+  .b-libstatus p{margin:0;color:var(--muted);font-size:12.5px;flex:1 1 280px}
+  .b-kind h2{font-size:16px}
+  .b-group{margin-top:8px}
+  .b-group h3{margin:6px 0 2px;display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px;font-weight:600}
+  .b-groupnote{font-weight:400}
+  .b-group + .b-group{border-top:1px dashed var(--border-soft);padding-top:6px}
+  .b-hidden{margin:8px 0 0;font-size:12px;color:var(--muted);border-left:3px solid var(--idle);padding:2px 8px}
+  .b-hiddenby{margin:4px 0 0}
+  @media (pointer:coarse){.b-kindbtn,.b-show{min-height:44px}}
   @media (max-width:760px){
-    .b-findrow label{flex:1 1 100%}
+    /* one column: the controls fold into one button above the list rather
+       than squeezing the entries beside them */
+    .b-lib{grid-template-columns:minmax(0,1fr);grid-template-areas:"nav" "list";gap:12px}
+    .b-nav{padding:0}
+    .b-navtoggle{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;min-height:44px;
+      padding:8px 12px;border:0;border-radius:var(--radius);background:none;color:var(--text);
+      font:600 13px var(--sans);cursor:pointer;text-align:left}
+    .b-navtoggle::after{content:'▾';position:absolute;right:14px;top:12px;color:var(--muted)}
+    .b-nav{position:relative}
+    .b-nav:not(.b-navclosed) .b-navtoggle::after{content:'▴'}
+    .b-navnow{font:400 12px var(--sans);color:var(--muted);overflow-wrap:anywhere;padding-right:18px}
+    .b-navbody{padding:4px 12px 12px}
+    .b-navclosed .b-navbody{display:none}
+    .b-kindbtn{min-height:40px}
   }
   /* Sessions on a narrow window (task 159): the list above the timeline,
      never a 250px rail beside it, so the page never runs wider than the
