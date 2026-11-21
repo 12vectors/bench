@@ -141,6 +141,8 @@ CODES = {
     "integrate-not-delegated": "awaiting",
     "integrated": "integrated",
     "repair-unavailable": "blocked",
+    "repair-waiting": "waiting",
+    "repair-held": "held",
     "no-candidate": "blocked",
     "no-pr": "blocked",
     "rules-invalid": "blocked",
@@ -734,6 +736,16 @@ def _repair(item: dict, task: dict, here: dict, head: str, mine: list[dict],
             return _set(item, "repair-unavailable", f"{reason}; the "
                         f"integration PR is {ended.lower() or 'merged'}, so "
                         f"there is nothing to push a repair to", **extra)
+        # something else working on the phase or a member is a wait the
+        # plan reads itself, every pass — so no repair operation is opened
+        # only to be refused (and recorded on the card) again and again
+        members = [m["file"] for m in task.get("members") or []
+                   if m.get("file")]
+        code, sentence = agents.phase_repair_wait(task["file"], members)
+        if code:
+            return _set(item, "repair-held" if code == "operation-unknown"
+                        else "repair-waiting", f"{reason}; {sentence}",
+                        **extra)
     if not here["authority"]["repair"]["allowed"]:
         return _set(item, "repair-not-delegated", f"{reason}; the agreement "
                     f"does not delegate repair, so ↻ act on PR is yours", **extra)
@@ -748,7 +760,7 @@ def _repair(item: dict, task: dict, here: dict, head: str, mine: list[dict],
                     f"repair rounds are spent — the next step is yours", **extra)
     if not task.get("pr"):
         return _set(item, "no-pr", f"{reason}; there is no pull request to act "
-                    f"on" + _no_pr_cause(filename), **extra)
+                    f"on" + _no_pr_cause(task["file"]), **extra)
     return _set(item, "repair", f"{reason}; repair round {spent + 1} of "
                 f"{ceiling}", **extra)
 

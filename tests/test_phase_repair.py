@@ -85,10 +85,13 @@ with open(seen, "a") as fh:
                          "integration": "integration PR" in os.environ.get("AGENT_PROMPT", ""),
                          "feedback": "the totals are wrong" in os.environ.get("AGENT_PROMPT", "")}) + "\\n")
 go = os.path.join(os.path.dirname(cwd), "go")
-if os.environ.get("REPAIR_WAIT"):
+if os.environ.get("REPAIR_WAIT") or os.path.exists(go + ".wait"):
     for _ in range(1200):
         if os.path.exists(go):
             break
+        if os.path.exists(go + ".cancel"):
+            # a vendor that stops when its run is held
+            sys.exit(143)
         time.sleep(0.05)
 open(os.path.join(cwd, "fix.txt"), "w").write("the repair\\n")
 subprocess.run(["git", "-C", cwd, "add", "-A"], check=True)
@@ -426,6 +429,74 @@ class UnsafeTargetsAreRefused(PhaseRepairCase):
         self.assertEqual(1, len(self.seen()))
 
 
+class WhenTheHostOrALaterRunIsInTheWay(PhaseRepairCase):
+    def test_an_unavailable_host_repairs_the_local_branch_and_says_so(self):
+        """`gh` cannot answer: the target is the phase's own branch here, as
+        it is for an ordinary card, and the unchecked head and base are said
+        in its notes rather than assumed."""
+        self.prs_file.write_text(json.dumps({}), encoding="utf-8")
+        target = agents.repair_target(PHASE, "review")
+        self.assertIsNone(target["problem"], target["problem"])
+        self.assertEqual(PHASE_BRANCH, target["branch"])
+        self.assertTrue(any("could not be read" in n for n in target["notes"]),
+                        target["notes"])
+
+    def test_an_unavailable_host_and_a_moved_pr_branch_publishes_nothing(self):
+        """What keeps that safe: the remote's branch moved on without this
+        checkout, so the repair's plain push is refused and nothing is
+        forced over the teammate's commit."""
+        other = self.tmp / "teammate"
+        git(self.tmp, "clone", "-q", "-b", PHASE_BRANCH, str(self.origin), str(other))
+        (other / "theirs.txt").write_text("pushed elsewhere\n", encoding="utf-8")
+        git(other, "add", "-A")
+        git(other, "-c", "user.email=a@b", "-c", "user.name=t", "commit", "-q", "-m", "x")
+        git(other, "push", "-q", "origin", PHASE_BRANCH)
+        theirs = git(other, "rev-parse", "HEAD").stdout.strip()
+        self.prs_file.write_text(json.dumps({}), encoding="utf-8")
+        agents.start_pr_fix(PHASE, "review")
+        self.settle()
+        self.assertEqual(theirs, self.origin_tip(PHASE_BRANCH),
+                         "the teammate's commit is still the PR's head")
+        self.assertEqual("review", self.stage_of(PHASE))
+
+    def test_a_held_repair_can_be_asked_again(self):
+        """Cancellation: ‖ hold stops the run, the branch and worktree are
+        left as they are, and a second deliberate click starts one new run."""
+        (config.WORKTREES / "go.wait").write_text("")
+        first = agents.start_pr_fix(PHASE, "review")
+        wait_for(lambda: self.seen(), timeout=20)
+        agents.stop_agent(first["id"])
+        # ‖ hold terminates the adapter's process; the stub vendor stops
+        # with it here (a real CLI is the adapter's child to stop)
+        (config.WORKTREES / "go.cancel").write_text("")
+        wait_for(lambda: state.AGENTS[first["id"]].get("status") != "running",
+                 timeout=20)
+        self.settle()
+        self.assertEqual(self.integrated, self.tip(PHASE_BRANCH),
+                         "a held repair moved nothing")
+        self.assertEqual(self.integrated, self.origin_tip(PHASE_BRANCH))
+        self.assertTrue(self.worktree().exists(), "the worktree is kept")
+        (config.WORKTREES / "go.wait").unlink()
+        time.sleep(1.1)                    # a run's id carries its second
+        second = agents.start_pr_fix(PHASE, "review")
+        self.settle()
+        self.assertNotEqual(first["id"], second["id"])
+        self.assertEqual(2, len(self.seen()))
+        self.assertEqual(self.tip(PHASE_BRANCH), self.origin_tip(PHASE_BRANCH))
+
+    def test_an_unobserved_repair_from_before_a_restart_blocks_a_second(self):
+        """Restart: a delegated repair the previous board launched and never
+        saw end is `unobserved` — it keeps its slot, and a click does not
+        start a competing run on the same branch."""
+        op = operations.begin(operations.key_for("repair", PHASE, "h"),
+                              action="repair", card=PHASE, number="40",
+                              scope="phase:40", pool="implementation",
+                              basis="h", attempt=1)
+        operations.update(op["key"], "launched")
+        operations.update(op["key"], "unobserved")
+        self.assertIn("unobserved", str(self.refused("operation-pending")))
+
+
 class OrdinaryCardsAreUnchanged(PhaseRepairCase):
     def test_a_merged_member_pr_is_still_refused(self):
         with self.assertRaises(ValueError) as caught:
@@ -531,6 +602,45 @@ class AScopedPhaseRepairsThroughTheSameTarget(ScopedPhaseCase):
         self.assertNotIn(after["code"], ("repair", "repair-unavailable"),
                          "the old request for changes is history at the new head")
         self.assertFalse(self.branch_exists(f"task/{PHASE[:-3]}"))
+
+    def test_a_merged_or_closed_integration_pr_is_repair_unavailable(self):
+        self.to_review()
+        changes.PR_STATE[PHASE] = {"prState": "CLOSED", "merged": False,
+                                   "ts": time.time()}
+        found = self.item()
+        self.assertEqual("repair-unavailable", found["code"])
+        self.assertIn("closed", found["reason"])
+        self.tick()
+        self.assertEqual([], self.ops("repair"))
+
+    def test_a_member_still_working_is_a_wait_not_a_refusal_each_pass(self):
+        """The plan reads what the launch would refuse for: while a member
+        has a run, the phase waits, and no repair operation is opened, and
+        none is refused, on pass after pass."""
+        self.to_review()
+        state.AGENTS["m-1"] = {"id": "m-1", "task": ONE, "status": "running",
+                               "name": "Wren", "proc": None}
+        self.addCleanup(state.AGENTS.pop, "m-1", None)
+        found = self.item()
+        self.assertEqual(("repair-waiting", "waiting"),
+                         (found["code"], found["state"]))
+        self.assertIn("Wren", found["reason"])
+        state.AGENTS.pop("m-1")
+
+        operations.begin(operations.key_for("integrate", TWO, "x"),
+                         action="integrate", card=TWO, number="32",
+                         scope="phase:40", pool="none", basis="x", attempt=1)
+        [op] = [o for o in self.ops("integrate") if o["file"] == TWO
+                and o["basis"] == "x"]
+        operations.update(op["key"], "unknown")
+        before = self.text(PHASE).count("<!-- bench:orchestration")
+        for _ in range(3):
+            self.tick()
+        self.assertEqual("repair-held", self.item()["code"])
+        self.assertEqual([], self.ops("repair"), "no repair was opened")
+        after = self.text(PHASE).count("<!-- bench:orchestration")
+        self.assertLessEqual(after - before, 1,
+                             "the card is not written to on every pass")
 
     def test_repair_not_delegated_is_the_persons(self):
         self.to_review(repair=False)

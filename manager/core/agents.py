@@ -1303,6 +1303,18 @@ def repair_target(filename: str, stage: str, *,
 
     # ── the integration target, held to more ──
     proposed = (found.get("head") or {})
+    if proposed.get("authority") in (None, "local"):
+        # The host could not be read: the phase's own branch in this
+        # checkout is the target, as it is for an ordinary card. The
+        # PR's head and base cannot be compared here, and that is said
+        # rather than assumed; what keeps the repair safe is that its push
+        # is a plain one, which the remote refuses unless it fast-forwards
+        # what the PR already proposes.
+        out["notes"].append("the hosting provider could not be read, so the "
+                            "integration PR's head and base were not checked "
+                            "against this branch; the repair's push is a plain "
+                            "one, which the remote refuses unless it "
+                            "fast-forwards the PR's branch")
     if proposed.get("authority") not in (None, "local") \
             and proposed.get("ref") and proposed["ref"] != branch:
         return refuse("head-drift",
@@ -1353,27 +1365,43 @@ def repair_target(filename: str, stage: str, *,
     # nothing else may be working on the phase or any member: one agent at
     # a time on the integration branch, and a member's run would merge into
     # the same branch
-    busy = working_on({filename, *out["members"]})
+    code, sentence = phase_repair_wait(filename, out["members"],
+                                       operation=operation)
+    if code:
+        return refuse(code, sentence)
+    return out
+
+
+def phase_repair_wait(filename: str, members: list[str], *,
+                      operation: str | None = None) -> tuple[str | None, str]:
+    """(code, sentence) when something else is working on a phase or any
+    of its members, so a repair of its integration branch must wait;
+    (None, "") when nothing is. A read of the run registry and the
+    operation ledger: the one answer the launch and the orchestrator's
+    plan both ask (task 174), so the plan waits rather than opening an
+    operation the launch would refuse on every pass."""
+    cards = {filename, *members}
+    busy = working_on(cards)
     if busy:
         who = busy[0]
-        return refuse("busy", f"{who.get('name') or 'an agent'} is working on "
-                      f"{who['task']} — ‖ hold it, or let it end, before "
-                      f"repairing the phase's integration branch")
+        return ("busy", f"{who.get('name') or 'an agent'} is working on "
+                f"{who['task']} — ‖ hold it, or let it end, before "
+                f"repairing the phase's integration branch")
     for op in operations.all_ops():
-        if op.get("file") not in {filename, *out["members"]} \
+        if op.get("file") not in cards \
                 or op.get("key") == operation \
                 or op.get("status") not in operations.RESERVING:
             continue
         if op["status"] == "unknown":
-            return refuse("operation-unknown",
-                          f"operation {op['key']} ({op.get('action')}) on "
-                          f"{op['file']} has an unknown outcome — settle it "
-                          f"in Orchestrator → Recovery before repairing")
-        return refuse("operation-pending",
-                      f"operation {op['key']} ({op.get('action')}) on "
-                      f"{op['file']} is still {op['status']} — wait for its "
-                      f"receipt before repairing")
-    return out
+            return ("operation-unknown",
+                    f"operation {op['key']} ({op.get('action')}) on "
+                    f"{op['file']} has an unknown outcome — settle it "
+                    f"in Orchestrator → Recovery before repairing")
+        return ("operation-pending",
+                f"operation {op['key']} ({op.get('action')}) on "
+                f"{op['file']} is still {op['status']} — wait for its "
+                f"receipt before repairing")
+    return None, ""
 
 
 def public_target(target: dict) -> dict:
