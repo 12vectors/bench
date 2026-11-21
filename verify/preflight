@@ -3,8 +3,9 @@
 required preparation step.
 
     verify/preflight docs [--python <interpreter>]   # markdown-it importable
-    verify/preflight backend [--python <interpreter>] [--node <node>]
-                                                     # node runs, markdown-it importable
+    verify/preflight backend [--python <interpreter>] [--node <node>] [--tool lsof]
+                                                     # node runs, lsof on PATH,
+                                                     # markdown-it importable
     verify/preflight browser                         # a Chromium starts, sandboxed
     verify/preflight browser --probe                 # ...and loads and drives the
                                                      # disposable board (task 164)
@@ -60,8 +61,19 @@ def body(run: bv.Run) -> str:
                 f"({run.env.get('PATH')}): the suite's page-rule tests would skip, and "
                 f"verify/backend refuses a skip. Put node on the PATH bench runs checks "
                 f"with, or pass --node <path>")
+        tools = run.args.tool or ["lsof"]
+        found = {t: shutil.which(t, path=run.env.get("PATH")) for t in tools}
+        run.record["tools"] = found
+        missing = [t for t, where in found.items() if not where]
+        if missing:
+            raise bv.SetupError(
+                f"{', '.join(missing)} not on this check's PATH "
+                f"({run.env.get('PATH')}): the tests that need it would skip, and "
+                f"verify/backend refuses a skip. Install it, or put it on the PATH "
+                f"bench runs checks with")
         bv.probe_module(run, run.args.require_module)
-        return f"{node} {version}; {run.args.python} imports {run.args.require_module}"
+        return (f"{node} {version}; {', '.join(tools)} on PATH; "
+                f"{run.args.python} imports {run.args.require_module}")
     if run.args.probe:
         return probe(run)
     if bv.browser_mode() == "remote-playwright":
@@ -162,6 +174,10 @@ if __name__ == "__main__":
     run.parser.add_argument("--node", default="node",
                             help="the node the page-rule tests need (default: "
                                  "node on the check's PATH)")
+    run.parser.add_argument("--tool", action="append", metavar="PROGRAM",
+                            help="backend only: a program the suite needs on the "
+                                 "check's PATH (repeatable; default: lsof, which "
+                                 "the stop.sh tests use and skip without)")
     run.parser.add_argument("--probe", action="store_true",
                             help="browser only: also load the disposable board and "
                                  "switch a view by a click (a health probe, not "

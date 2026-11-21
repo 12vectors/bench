@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""Read the record one `verify/backend` run left, and say whether it is a
+complete pass of the commit and interpreter it was meant to be about.
+
+    verify/ci-summary <artifacts base> [--expect-revision <sha>]
+                      [--expect-python 3.13] [--summary <file>]
+                      [--write-context]
+
+Written for the strict backend leg in .github/workflows/tests.yml (task
+180), and runnable anywhere: point it at the directory you gave
+`verify/backend --artifacts`. Stdlib only. It runs nothing and changes
+nothing but the summary and context files it is asked to write.
+
+It finds the one run directory under the base (`<check>-<stamp>-*/
+result.json`; a fresh base holds exactly one, so two or none is itself a
+problem — an output left over from another run is never read as this
+one's) and checks the record against what the job expected:
+
+- provenance: the candidate revision is `--expect-revision` and the
+  checkout was clean; the interpreter the suite ran under (the timing
+  file's runtime, the product's own) is `--expect-python`;
+- completeness: outcome `passed`, coverage `full` (not a focused run),
+  more than zero tests ran, none skipped, timing collected, and the
+  record's `testSet` counts exactly the tests that ran.
+
+Exit 0 when every one holds; 1 when the suite ran and failed (a test
+failure, so the job reads as one); 2 when there is no usable record, the
+provenance does not match, or the run is anything less than a complete
+pass. A markdown summary is appended to `--summary`, else to
+$GITHUB_STEP_SUMMARY when that is set, on every path — including the
+failing ones, which is when it is read.
+
+`--write-context` writes `ci-context.json` beside the run directories:
+an allowlist of the CI run's own non-secret identifiers (commit, ref, run
+id and attempt, workflow, job, runner OS and image). No other environment
+variable is read into it.
+"""
+
+import argparse
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+
+CONTEXT_KEYS = ("GITHUB_SHA", "GITHUB_REF", "GITHUB_HEAD_REF", "GITHUB_BASE_REF",
+                "GITHUB_EVENT_NAME", "GITHUB_REPOSITORY", "GITHUB_WORKFLOW",
+                "GITHUB_JOB", "GITHUB_RUN_ID", "GITHUB_RUN_NUMBER",
+                "GITHUB_RUN_ATTEMPT", "RUNNER_OS", "RUNNER_ARCH", "ImageOS",
+                "ImageVersion")
+OK, FAILED, NOT_COMPLETE = 0, 1, 2
+
+
+def find_record(base: Path) -> tuple[Path | None, str | None]:
+    found = sorted(base.glob("*/result.json"))
+    if not found:
+        return None, (f"no run record under {base}: the run wrote no result.json, so "
+                      f"nothing it did can be read as a pass")
+    if len(found) > 1:
+        return None, (f"{len(found)} run records under {base} "
+                      f"({', '.join(p.parent.name for p in found)}): the base must be "
+                      f"fresh, so one run's outputs cannot be read as another's")
+    return found[0], None
+
+
+def assess(rec: dict, expect_revision: str | None,
+           expect_python: str | None) -> tuple[int, list[str]]:
+    """The exit status and every problem, in words."""
+    problems: list[str] = []
+    cand = rec.get("candidate") or {}
+    if rec.get("check") != "backend":
+        problems.append(f"the record is of check {rec.get('check')!r}, not backend")
+    if expect_revision and cand.get("revision") != expect_revision:
+        problems.append(f"the record is about revision {cand.get('revision')!r}, "
+                        f"not the expected {expect_revision}")
+    if cand.get("dirty") is not False:
+        problems.append(f"the checkout was not shown clean (dirty: {cand.get('dirty')!r})")
+    timing = rec.get("timing") or {}
+    python = (timing.get("runtime") or {}).get("python")
+    if expect_python:
+        if python is None:
+            problems.append("the record names no interpreter the suite ran under "
+                            "(no timing runtime), so --expect-python cannot be shown")
+        elif python != expect_python and not python.startswith(expect_python + "."):
+            problems.append(f"the suite ran under Python {python}, not {expect_python}")
+    tests = rec.get("tests") or {}
+    outcome = rec.get("outcome")
+    if outcome == "failed":
+        return FAILED, problems + [f"the suite failed: {rec.get('reason')}"]
+    if outcome != "passed":
+        problems.append(f"outcome {outcome!r}: {rec.get('reason')}")
+    if (rec.get("coverage") or {}).get("kind") != "full":
+        problems.append(f"coverage is {(rec.get('coverage') or {}).get('kind')!r}, "
+                        f"not the full suite")
+    if not tests.get("ran"):
+        problems.append(f"tests ran: {tests.get('ran')!r} — nothing was checked")
+    if tests.get("skipped"):
+        problems.append(f"{tests['skipped']} tests skipped")
+    if timing.get("collected") is not True:
+        problems.append(f"timing not collected: {timing.get('why')}")
+    tset = rec.get("testSet") or {}
+    if tests.get("ran") and tset.get("count") != tests.get("ran"):
+        problems.append(f"the test set names {tset.get('count')!r} tests, "
+                        f"{tests.get('ran')!r} ran")
+    return (NOT_COMPLETE if problems else OK), problems
+
+
+def summary_markdown(record: Path | None, rec: dict | None, status: int,
+                     problems: list[str]) -> str:
+    word = {OK: "complete pass", FAILED: "FAILED", NOT_COMPLETE: "NOT a complete pass"}
+    lines = [f"### Strict backend suite: {word[status]}", ""]
+    if rec is not None:
+        cand, tests = rec.get("candidate") or {}, rec.get("tests") or {}
+        timing = rec.get("timing") or {}
+        runtime, secs = timing.get("runtime") or {}, timing.get("seconds") or {}
+        tset = rec.get("testSet") or {}
+        lines += ["| | |", "| --- | --- |",
+                  f"| outcome | `{rec.get('outcome')}` |",
+                  f"| revision | `{cand.get('revision')}` (dirty: {cand.get('dirty')}) |",
+                  f"| python | `{runtime.get('python')}` "
+                  f"({runtime.get('implementation')}, {runtime.get('platform')}, "
+                  f"{runtime.get('cpus')} cpus) |",
+                  f"| tests | ran {tests.get('ran')}, skipped {tests.get('skipped', 0)}, "
+                  f"failures {tests.get('failures', 0)}, errors {tests.get('errors', 0)} |",
+                  f"| test set | {tset.get('count')} ids, sha256 `{tset.get('sha256')}` |",
+                  f"| elapsed | {secs.get('elapsed')} s (tests {secs.get('tests')} s, "
+                  f"fixtures {secs.get('fixtures')} s, discovery "
+                  f"{secs.get('discovery')} s) |",
+                  f"| record | `{record}` |", ""]
+        if rec.get("reason"):
+            lines += [f"Reason: {rec['reason']}", ""]
+        classes = timing.get("slowestClasses") or []
+        if classes:
+            lines += ["Slowest classes (this machine, this run; not comparable "
+                      "to another machine's as a speedup):", ""]
+            lines += [f"- {c['seconds']} s, {c['tests']} tests — `{c['class']}`"
+                      for c in classes[:10]]
+            lines.append("")
+    for p in problems:
+        lines.append(f"- {p}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(prog="verify/ci-summary",
+                                description=__doc__.splitlines()[0])
+    p.add_argument("base", help="the directory given to verify/backend --artifacts")
+    p.add_argument("--expect-revision", help="the commit the run must be about")
+    p.add_argument("--expect-python", help="the interpreter version, e.g. 3.13")
+    p.add_argument("--summary", help="append the markdown summary here "
+                   "(default: $GITHUB_STEP_SUMMARY when set)")
+    p.add_argument("--write-context", action="store_true",
+                   help="write ci-context.json (allowlisted CI identifiers) into base")
+    a = p.parse_args(argv)
+    base = Path(a.base)
+    if a.write_context:
+        base.mkdir(parents=True, exist_ok=True)
+        ctx = {k: os.environ[k] for k in CONTEXT_KEYS if os.environ.get(k)}
+        ctx["writtenAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat(
+            timespec="seconds")
+        (base / "ci-context.json").write_text(json.dumps(ctx, indent=2, sort_keys=True)
+                                              + "\n", encoding="utf-8")
+    record, problem = find_record(base) if base.is_dir() else (
+        None, f"{base} does not exist: the run left no artifacts")
+    rec = None
+    if record is not None:
+        try:
+            rec = json.loads(record.read_text(encoding="utf-8"))
+            if not isinstance(rec, dict):
+                raise ValueError("not a JSON object")
+        except (OSError, ValueError) as exc:
+            record, problem = None, f"the run record is not readable: {exc}"
+    if rec is None:
+        status, problems = NOT_COMPLETE, [problem]
+    else:
+        status, problems = assess(rec, a.expect_revision, a.expect_python)
+    text = summary_markdown(record, rec, status, problems)
+    print(text, end="")
+    out = a.summary or os.environ.get("GITHUB_STEP_SUMMARY")
+    if out:
+        with open(out, "a", encoding="utf-8") as fh:
+            fh.write(text)
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main())
