@@ -7503,7 +7503,9 @@ reported*. **Asking needs no orchestration authority**: no agreement, no
 delegated word and no designated installation. That a card's
 orchestration is off, or that the orchestrator may not act on it, is a
 separate fact the answer may explain — and asking changes nothing about
-it. One question runs at a time per card, and per board conversation.
+it. One question runs at a time per card, and per board conversation;
+while it runs, a recovery diagnosis the orchestrator wants for the
+card waits for it, as it waits for a slot, and is not held because of it.
 
 **Ask is not act.** A question or a follow-up launches one read-only
 reasoning run and writes its public conversation, and nothing else: no
