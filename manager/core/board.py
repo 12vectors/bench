@@ -56,6 +56,7 @@ import agentsettings  # noqa: F401
 import agreements  # noqa: F401
 import artifacts  # noqa: F401
 import appinspect  # noqa: F401
+import ask  # noqa: F401
 import assets
 import basechoice  # noqa: F401
 import brain  # noqa: F401

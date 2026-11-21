@@ -103,7 +103,19 @@ NEEDS = {
     "plan": "how should this card's delivery be sequenced",
     "recovery": "what happened to a stalled or failed run, and what bounded "
                 "recovery to propose",
+    # A person's free-text question about a card, a phase or the board
+    # (task 181). Only ever asked by a person; its answer goes into the
+    # conversation it belongs to and explains — it proposes no action and
+    # opens no question, and nothing executes from it.
+    "ask": "a person's question about what the orchestration is doing, "
+           "answered from bench's own records",
 }
+ASK_KEYS = {"answer", "gaps", "suggestions"}
+MAX_ASK_ITEMS = {"gaps": 10, "suggestions": 8}
+ASK_SUGGESTION_KEYS = ({"id", "suggestion", "by", "control", "card", "evidence"},
+                       {"id", "suggestion", "by"})
+MAX_ASK_HISTORY = 6
+MAX_ASK_CARDS = 60
 
 # queued → running → valid | invalid | stale
 #                  ↘ failed | cancelled
@@ -300,6 +312,32 @@ def binding(filename: str, board: dict | None = None) -> dict:
     }
 
 
+def board_binding(conversation: str, board: dict | None = None) -> dict:
+    """What a board-wide question's answer is bound to (task 181): which
+    cards stand in which working stage, the people's records in its
+    conversation, and the agreement in force. A card moving, a new
+    question in the conversation or an agreement edit makes an answer
+    given before it stale."""
+    tasks = _tasks(board)
+    stages = sorted(f"{t['file']}:{t['stage']}" for t in tasks
+                    if t["stage"] in orchestrator.MANAGED_STAGES)
+    try:
+        text = decisions.conversation_path(conversation).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        text = ""
+    return {"card": "board", "conversation": conversation,
+            "conversationRev": decisions.card_rev(text) if text else None,
+            "boardRev": profiles.digest("board", *stages)[:16],
+            "agreementRev": agreements.effective()["revision"]}
+
+
+def _binding_for(job: dict, board: dict | None = None) -> dict:
+    target = ((job.get("ask") or {}).get("target") or {})
+    if target.get("kind") == "board":
+        return board_binding(job["ask"]["conversation"], board)
+    return binding(job["task"], board)
+
+
 def fingerprint(need: str, bound: dict, subject: dict | None = None) -> str:
     """The question's identity: the need and the input binding — and, for
     a recovery diagnosis (task 144), the incident and attempt it serves,
@@ -349,12 +387,48 @@ def _card_fact(card: dict) -> dict:
             "title": card.get("title"), "stage": card["stage"]}
 
 
-def facts(filename: str, need: str, operation: str, bound: dict,
+def _scrubbed(doc: dict) -> dict:
+    return json.loads(redact.scrub(json.dumps(doc, sort_keys=True), "«redacted»"))
+
+
+def _ask_facts(ask: dict) -> dict:
+    """The question, the conversation so far and bench's readings for it,
+    as data in the facts document — never spliced into the prompt."""
+    return {"question": ask["question"], "conversation": ask["conversation"],
+            "scope": ask["target"]["kind"],
+            "subject": ask["target"].get("subject") or "board",
+            "snapshot": ask.get("snapshot"),
+            "history": list(ask.get("history") or [])[-MAX_ASK_HISTORY:],
+            "readings": ask.get("facts") or {},
+            "answerShape": {
+                "answer": "now, why, next (what happens by itself, if "
+                          "anything) and unblock (who can, with which "
+                          "existing control) — plain language",
+                "findings": "recorded facts only, each citing evidence",
+                "gaps": "[{id, gap}] what bench's records do not say; never "
+                        "invent a cause",
+                "suggestions": "[{id, suggestion, by, control?, card?, "
+                               "evidence?}] — by: " + ", ".join(decisions.SUGGESTION_BY)
+                               + "; control: " + ", ".join(decisions.CONTROLS),
+                "questions": "always empty", "actions": "always empty"}}
+
+
+def facts(filename: str | None, need: str, operation: str, bound: dict,
           tasks: list[dict], subject: dict | None = None,
-          question: str | None = None) -> dict:
+          question: str | None = None, ask: dict | None = None) -> dict:
     """What bench tells the run in its own words: public readings only —
     no path, no environment value, no credential — scrubbed again on the
     way out because a title is a person's text."""
+    if filename is None:
+        # a board-wide question (task 181): no card, bench's board readings
+        return _scrubbed({
+            "kind": FACTS_KIND, "v": VERSION, "operation": operation,
+            "need": need, "question": question or NEEDS[need],
+            "card": None, "binding": bound, "ask": _ask_facts(ask),
+            "contract": CONTRACT_FIELDS,
+            "notes": ["Every fact here is bench's own reading at the moment the "
+                      "run was prepared. Agent-reported claims are labelled as "
+                      "such. Lists are bounded; what was left out is counted."]})
     cards = context_cards(filename, tasks)
     task = cards["task"]
     try:
@@ -386,7 +460,9 @@ def facts(filename: str, need: str, operation: str, bound: dict,
         "notes": ["Every fact here is bench's own reading at the moment the "
                   "run was prepared. Agent-reported claims are not in it."],
     }
-    return json.loads(redact.scrub(json.dumps(out, sort_keys=True), "«redacted»"))
+    if ask is not None:
+        out["ask"] = _ask_facts(ask)
+    return _scrubbed(out)
 
 
 def _input_item(name: str, role: str, source: str, path: Path,
@@ -400,22 +476,25 @@ def _input_item(name: str, role: str, source: str, path: Path,
             "access": "read-only", "kind": "reasoning-input", "role": role}
 
 
-def attach(found: dict, filename: str, need: str, operation: str, bound: dict,
-           tasks: list[dict], subject: dict | None = None,
-           question: str | None = None) -> dict:
+def attach(found: dict, filename: str | None, need: str, operation: str,
+           bound: dict, tasks: list[dict], subject: dict | None = None,
+           question: str | None = None, ask: dict | None = None) -> dict:
     """Add the reasoning context to a launch's manifest, before the pin,
     the way a card's own inputs are added (`inputs.attach`) — so each is
     copied, hashed and granted by one exact read exactly as an approved
-    input is. A file over the pin cap refuses the request."""
-    cards = context_cards(filename, tasks)
+    input is. A file over the pin cap refuses the request. A board-wide
+    question (task 181) is given bench's facts document alone."""
     context = found.setdefault("context", [])
-    entries = [("reason-card", "card", cards["task"])]
-    if cards["phase"] is not None:
-        entries.append(("reason-phase", "phase", cards["phase"]))
-    for number, member in enumerate(cards["members"][:12], 1):
-        entries.append((f"reason-member-{number}", "member", member))
-    for number, dep in enumerate(cards["dependencies"], 1):
-        entries.append((f"reason-dependency-{number}", "dependency", dep))
+    entries = []
+    if filename is not None:
+        cards = context_cards(filename, tasks)
+        entries = [("reason-card", "card", cards["task"])]
+        if cards["phase"] is not None:
+            entries.append(("reason-phase", "phase", cards["phase"]))
+        for number, member in enumerate(cards["members"][:12], 1):
+            entries.append((f"reason-member-{number}", "member", member))
+        for number, dep in enumerate(cards["dependencies"], 1):
+            entries.append((f"reason-dependency-{number}", "dependency", dep))
     for name, role, card in entries:
         path = _card_file(card)
         data = path.read_bytes()
@@ -426,7 +505,7 @@ def attach(found: dict, filename: str, need: str, operation: str, bound: dict,
         context.append(_input_item(name, role,
                                    f"work:tasks/{card['stage']}/{card['file']}",
                                    path, data))
-    written = facts(filename, need, operation, bound, tasks, subject, question)
+    written = facts(filename, need, operation, bound, tasks, subject, question, ask)
     facts_path = _dir() / "facts" / f"{operation}.json"
     records.write_json(facts_path, written)
     # named by what it is rather than by a path: the facts are bench's
@@ -490,6 +569,22 @@ def contract_text(job: dict) -> str:
                      "evidence": ["input:reason-facts"]}],
         "blockers": [],
     }
+    if job["need"] == "ask":
+        # an answer explains: no questions opened, no actions proposed
+        example.update({
+            "summary": "one to three plain sentences answering the question",
+            "answer": {"now": "what is happening now",
+                       "why": "why, from the recorded facts — or that the "
+                              "records do not say",
+                       "next": "what happens next by itself, if anything",
+                       "unblock": "who can unblock it, with which existing control"},
+            "findings": [{"id": "f1", "statement": "one recorded fact",
+                          "severity": "info", "evidence": ["input:reason-facts"]}],
+            "gaps": [{"id": "g1", "gap": "what bench's records do not say"}],
+            "suggestions": [{"id": "s1", "suggestion": "who could act and how",
+                             "by": "you", "control": "open-card",
+                             "evidence": ["input:reason-facts"]}],
+            "questions": [], "actions": []})
     return json.dumps(example, indent=2, ensure_ascii=False)
 
 
@@ -575,7 +670,8 @@ def validate(job: dict, answer: dict, now_binding: dict | None) -> dict:
         return {"status": "invalid", "diagnostics": [
             {"code": "malformed", "why": "the response is not a JSON object"}],
             "raw": _raw(raw)}
-    unknown = sorted(set(doc) - TOP_KEYS)
+    asking = job["need"] == "ask"
+    unknown = sorted(set(doc) - TOP_KEYS - (ASK_KEYS if asking else set()))
     if unknown:
         codes.append("unknown-field")
         problems.append(f"unknown field(s) {', '.join(unknown[:6])} — the contract "
@@ -686,6 +782,8 @@ def validate(job: dict, answer: dict, now_binding: dict | None) -> dict:
                 entry["blocker"] = _text(item["blocker"], f"{where}.blocker", problems)
             kept.append(entry)
         out[key] = kept
+    if asking:
+        _validate_ask(doc, out, problems, codes, allowed)
     if problems:
         return {"status": "invalid",
                 "diagnostics": [{"code": c, "why": c} for c in sorted(set(codes))]
@@ -700,6 +798,90 @@ def validate(job: dict, answer: dict, now_binding: dict | None) -> dict:
                                      f"response is kept as history and the "
                                      f"need must be re-evaluated"}]}
     return {"status": "valid", "response": out, "diagnostics": []}
+
+
+def _validate_ask(doc: dict, out: dict, problems: list, codes: list,
+                  allowed: dict) -> None:
+    """The extra shape of an answer to a person's question (task 181):
+    what is happening now, why, what happens next by itself and who can
+    unblock it — then the recorded facts (findings, each citing evidence),
+    the gaps (what bench's records do not say) and suggestions (who could
+    act, through which existing control). Asking explains; it proposes no
+    action and opens no question, so both lists must be empty."""
+    for key in ("questions", "actions"):
+        if out.get(key):
+            codes.append("ask-not-act")
+            problems.append(f"an answer to a person's question carries no {key} "
+                            f"— asking explains; acting is a separate control")
+    answer = doc.get("answer")
+    if not isinstance(answer, dict) or set(answer) != {"now", "why", "next", "unblock"}:
+        codes.append("malformed")
+        problems.append("answer must be an object with exactly now, why, next "
+                        "and unblock")
+        answer = {}
+    out["answer"] = {part: _text(answer.get(part), f"answer.{part}", problems)
+                     for part in ("now", "why", "next", "unblock")} if answer else {}
+    for n, finding in enumerate(out.get("findings") or []):
+        if not finding.get("evidence"):
+            codes.append("unsupported-fact")
+            problems.append(f"findings[{n}] cites no evidence — a recorded fact "
+                            f"names the record it comes from, or it belongs in gaps")
+    gaps = doc.get("gaps", [])
+    kept = []
+    if not isinstance(gaps, list) or len(gaps) > MAX_ASK_ITEMS["gaps"]:
+        problems.append(f"gaps must be a list of at most {MAX_ASK_ITEMS['gaps']}")
+        gaps = []
+    for n, gap in enumerate(gaps):
+        if not isinstance(gap, dict) or set(gap) != {"id", "gap"} \
+                or not isinstance(gap.get("id"), str) or not ITEM_ID.match(gap["id"]):
+            problems.append(f"gaps[{n}] must be {{id, gap}} with a short id")
+            continue
+        kept.append({"id": gap["id"], "gap": _text(gap["gap"], f"gaps[{n}].gap", problems)})
+    out["gaps"] = kept
+    suggestions = doc.get("suggestions", [])
+    kept = []
+    if not isinstance(suggestions, list) or \
+            len(suggestions) > MAX_ASK_ITEMS["suggestions"]:
+        problems.append(f"suggestions must be a list of at most "
+                        f"{MAX_ASK_ITEMS['suggestions']}")
+        suggestions = []
+    keys, needed = ASK_SUGGESTION_KEYS
+    for n, item in enumerate(suggestions):
+        where = f"suggestions[{n}]"
+        if not isinstance(item, dict) or set(item) - keys or needed - set(item):
+            codes.append("unknown-field")
+            problems.append(f"{where} must hold {', '.join(sorted(needed))} and "
+                            f"optionally control, card, evidence")
+            continue
+        if not isinstance(item["id"], str) or not ITEM_ID.match(item["id"]):
+            problems.append(f"{where} needs a short id")
+            continue
+        if item["by"] not in decisions.SUGGESTION_BY:
+            problems.append(f"{where}.by must be one of "
+                            f"{', '.join(decisions.SUGGESTION_BY)}")
+            continue
+        control = item.get("control")
+        if control is not None and control not in decisions.CONTROLS:
+            codes.append("control-unknown")
+            problems.append(f"{where}.control {str(control)[:40]!r} is not one of "
+                            f"{', '.join(decisions.CONTROLS)}")
+            continue
+        card = item.get("card")
+        if card is not None and str(card) not in allowed["card"]:
+            codes.append("out-of-scope")
+            problems.append(f"{where} names card {str(card)[:20]}, which is not "
+                            f"in this run's context")
+            continue
+        kept.append({"id": item["id"],
+                     "suggestion": _text(item["suggestion"], f"{where}.suggestion",
+                                         problems),
+                     "by": item["by"], "control": control,
+                     "card": str(card) if card is not None else None,
+                     "evidence": _refs(item.get("evidence"), f"{where}.evidence",
+                                       problems, allowed),
+                     # pointing at a control is not pressing it
+                     "executable": False})
+    out["suggestions"] = kept
 
 
 def _raw(text: str) -> dict:
@@ -719,7 +901,7 @@ def freshness(job: dict, board: dict | None = None) -> dict:
     never repaired: a stale response is history, and the need is asked
     again under a new fingerprint."""
     try:
-        now = binding(job["task"], board)
+        now = _binding_for(job, board)
     except (OSError, ValueError):
         return {"fresh": False, "why": f"{job['task']} is no longer on the board"}
     if now != job["binding"]:
@@ -734,7 +916,7 @@ PUBLIC = ("v", "id", "need", "task", "card", "stage", "via", "scope", "actor",
           "agent", "name", "harness", "model", "policyId", "binding",
           "inputs", "response", "diagnostics", "raw", "error", "usage",
           "fingerprint", "provenance", "cardRecord", "action", "subject",
-          "prompt")
+          "prompt", "ask")
 
 
 def public(job: dict) -> dict:
@@ -772,12 +954,59 @@ def for_subject(incident: str, attempt: int) -> dict | None:
     return dict(found[-1]) if found else None
 
 
+def for_operation(operation: str) -> dict | None:
+    """One job by its operation id, public — how a conversation's reply
+    names the run that gave it (task 181). A read."""
+    with LOCK:
+        _load()
+        job = JOBS.get(operation)
+        return public(job) if job is not None else None
+
+
+def active_for(filename: str | None, conversation: str | None = None) -> dict | None:
+    """The reasoning run in flight for a card, or for a board conversation
+    (task 181) — one at a time. A read."""
+    with LOCK:
+        _load()
+        for job in JOBS.values():
+            if job.get("status") not in ACTIVE:
+                continue
+            if filename and job.get("task") == filename:
+                return public(job)
+            if conversation and (job.get("ask") or {}).get("conversation") == conversation:
+                return public(job)
+    return None
+
+
+def facts_document(operation: str) -> dict | None:
+    """The facts document bench wrote for one run — its own public readings,
+    scrubbed when written. A read."""
+    if not re.match(r"^rs-[0-9a-f]{10}-\d{1,4}$", str(operation or "")):
+        return None
+    found = records.read_json(_dir() / "facts" / f"{operation}.json")
+    return found if isinstance(found, dict) else None
+
+
+def for_ask(conversation: str, ask_record: str) -> list[dict]:
+    """Every job launched for one question in a conversation, oldest
+    first, public (task 181). A read."""
+    with LOCK:
+        _load()
+        found = [j for j in JOBS.values()
+                 if (j.get("ask") or {}).get("conversation") == conversation
+                 and (j.get("ask") or {}).get("record") == ask_record]
+    return [public(j) for j in sorted(found, key=lambda j: (j.get("created") or 0,
+                                                            j["id"]))]
+
+
 def board() -> dict:
     """Per card, the newest job's status — what a card face needs."""
     out: dict = {}
     with LOCK:
         _load()
         for job in sorted(JOBS.values(), key=lambda j: j.get("created") or 0):
+            if not job.get("task"):
+                continue                   # a board-wide question has no card
             out[job["task"]] = {"id": job["id"], "need": job["need"],
                                 "status": job["status"]}
     return out
@@ -795,10 +1024,10 @@ def readiness() -> dict:
 # ── asking ─────────────────────────────────────────────────────────────
 
 
-def request(filename: str, need: str, *, via: str = "orchestrator",
+def request(filename: str | None, need: str, *, via: str = "orchestrator",
             retry: bool = False, board: dict | None = None,
             actor: str | None = None, action: str = "reason",
-            subject: dict | None = None) -> dict:
+            subject: dict | None = None, ask: dict | None = None) -> dict:
     """Ask one reasoning question about one card, at most once per input
     binding.
 
@@ -815,7 +1044,21 @@ def request(filename: str, need: str, *, via: str = "orchestrator",
     counted as: `reason`, or `recover` for a recovery diagnosis (task 144),
     which the `recovery` authority word delegates instead and which
     carries the incident it serves in `subject` — folded into the
-    fingerprint and handed to the run in its facts."""
+    fingerprint and handed to the run in its facts.
+
+    `ask` (task 181) is a person's question, only with the `ask` need:
+    `{target, conversation, record, question, history, snapshot, facts,
+    cards}`. The `ask` record is already in its conversation, so the
+    binding names it; `target.kind` `board` has no card (`filename` is
+    None) and is bound to the board and its conversation instead. The
+    question is data in the facts document, never part of the prompt."""
+    if (need == "ask") != (ask is not None):
+        raise ValueError("the ask need carries a person's question, and only it does")
+    if need == "ask" and (via != "person" or action != "reason"):
+        raise ValueError("only a person asks the orchestrator a question")
+    board_kind = ask is not None and ask["target"]["kind"] == "board"
+    if (filename is None) != board_kind:
+        raise ValueError("a question names a card unless it is about the board")
     if action not in ("reason", "recover"):
         raise ValueError("a reasoning launch is authorized as reason or recover")
     if need not in NEEDS:
@@ -827,8 +1070,11 @@ def request(filename: str, need: str, *, via: str = "orchestrator",
         _load()
         board = taskfiles.collect() if board is None else board
         tasks = _tasks(board)
-        bound = binding(filename, board)
-        print_ = fingerprint(need, bound, subject)
+        bound = (board_binding(ask["conversation"], board) if board_kind
+                 else binding(filename, board))
+        keyed = subject if ask is None else {"conversation": ask["conversation"],
+                                             "ask": ask["record"]}
+        print_ = fingerprint(need, bound, keyed)
         prior = sorted((j for j in JOBS.values() if j.get("fingerprint") == print_),
                        key=lambda j: (j.get("created") or 0, j["id"]))
         last = prior[-1] if prior else None
@@ -838,11 +1084,17 @@ def request(filename: str, need: str, *, via: str = "orchestrator",
             raise Conflict(f"this question about these inputs was asked already "
                            f"and its last attempt {last['status']} — retry it "
                            f"deliberately")
-        busy = [j for j in JOBS.values() if j.get("task") == filename
-                and j.get("status") in ACTIVE]
+        if board_kind:
+            busy = [j for j in JOBS.values() if j.get("status") in ACTIVE
+                    and (j.get("ask") or {}).get("conversation") == ask["conversation"]]
+        else:
+            busy = [j for j in JOBS.values() if j.get("task") == filename
+                    and j.get("status") in ACTIVE]
         if busy:
             raise ValueError(f"a reasoning run is already in flight for "
-                             f"{filename} ({busy[0]['need']}); one at a time per card")
+                             f"{filename or 'this conversation'} "
+                             f"({busy[0]['need']}); one at a time")
+        label = filename or f"board-{ask['conversation']}"
 
         authorized = None
         if via == "orchestrator":
@@ -851,7 +1103,7 @@ def request(filename: str, need: str, *, via: str = "orchestrator",
                 raise ValueError(f"not authorized: {authorized['reason']} "
                                  f"({authorized['code']})")
 
-        stage = bound["stage"]
+        stage = bound.get("stage") or "board"
         operation = f"rs-{print_[:10]}-{len(prior) + 1}"
         # the prompt first (task 153): the shared template and this need's
         # guidance, each held to its contract, exactly as Settings → Agents
@@ -862,23 +1114,31 @@ def request(filename: str, need: str, *, via: str = "orchestrator",
                    "guidance": templates.require(templates.need_template(need))}
         question = templates.render(
             prompts["guidance"]["name"], prompts["guidance"]["text"],
-            {"card": bound["card"], "stage": stage, "filename": filename}).strip()
+            {"card": bound["card"], "stage": stage, "filename": label}).strip()
         # resolved, context attached, pinned and confirmed before anything
         # is recorded: a refusal leaves no job and no launch
-        found = profiles.manifest("reason", filename, stage)
+        found = profiles.manifest("reason", label, stage)
         profiles.require(found)
         found["template"] = {**templates.identity(prompts["main"]),
                              "guidance": templates.identity(prompts["guidance"])}
-        attach(found, filename, need, operation, bound, tasks, subject, question)
+        attach(found, filename, need, operation, bound, tasks, subject, question, ask)
         profiles.pin(found)
         inputs_ = delivered(found)
 
-        cards = context_cards(filename, tasks)
-        scope_cards = {bound["card"]} | {(_number(m) or m["file"])
-                                         for m in cards["members"]}
-        context_numbers = {(_number(c) or c["file"]) for c in
-                           [cards["task"], *([cards["phase"]] if cards["phase"] else []),
-                            *cards["members"], *cards["dependencies"]]}
+        if board_kind:
+            scope_cards, context_numbers = set(), set()
+        else:
+            cards = context_cards(filename, tasks)
+            scope_cards = {bound["card"]} | {(_number(m) or m["file"])
+                                             for m in cards["members"]}
+            context_numbers = {(_number(c) or c["file"]) for c in
+                               [cards["task"],
+                                *([cards["phase"]] if cards["phase"] else []),
+                                *cards["members"], *cards["dependencies"]]}
+        if ask is not None:
+            # the cards bench's readings for the question named
+            context_numbers |= {str(c) for c in (ask.get("cards") or [])
+                                [:MAX_ASK_CARDS]}
         selection = found["selection"]
         job = {
             "v": VERSION, "id": operation, "need": need, "task": filename,
@@ -891,7 +1151,13 @@ def request(filename: str, need: str, *, via: str = "orchestrator",
             "action": action, "subject": subject,
             "created": time.time(), "inputs": inputs_,
             "cards": sorted(context_numbers), "scopeCards": sorted(scope_cards),
-            "evidenceIds": [e["id"] for e in _evidence_facts(filename)],
+            "evidenceIds": ([e["id"] for e in _evidence_facts(filename)]
+                            if filename else [])
+                           + [str(e) for e in ((ask or {}).get("evidence") or [])],
+            "label": label,
+            "ask": None if ask is None else {
+                "target": ask["target"], "conversation": ask["conversation"],
+                "record": ask["record"], "snapshot": ask.get("snapshot")},
             "harness": selection["harness"]["name"],
             "model": selection["model"]["value"] or None,
             "policyId": found["policyId"],
@@ -930,7 +1196,7 @@ def _inputs_text(job: dict) -> str:
 
 
 def _launch(job: dict, found: dict, prompts: dict | None = None) -> None:
-    filename = job["task"]
+    filename = job["task"] or job["label"]
     agent_id = (f"reason-{filename[:-3][:40]}-{time.strftime('%H%M%S')}-"
                 f"{secrets.token_hex(2)}")
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
@@ -997,13 +1263,13 @@ def settle(job_id: str, record: dict, stopped: bool, rc: int) -> dict:
             except OSError:
                 log = ""
             try:
-                now = binding(job["task"])
+                now = _binding_for(job)
             except (OSError, ValueError):
                 now = {}
             job.update(validate(job, parse(log), now))
         job["ended"] = time.time()
         _save(job)
-        status, filename = job["status"], job["task"]
+        status, filename = job["status"], job["task"] or job.get("label")
         name = job.get("name") or "the agent"
         settled = dict(job)
     on_card(settled)

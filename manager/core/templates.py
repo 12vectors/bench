@@ -68,7 +68,7 @@ _COMMON = ("task_path", "guidance", "guidance_read_only", "progress",
 # The needs the shared reasoning template frames, each composed with its
 # own guidance template. They are `reasoning.NEEDS`; a test holds the two
 # lists equal.
-REASON_NEEDS = ("readiness", "questions", "plan", "recovery")
+REASON_NEEDS = ("readiness", "questions", "plan", "recovery", "ask")
 
 _REASON_SCOPES = ("the Bench scope's standalone cards and every phase "
                   "scope's phase card and members: one template, shared")
@@ -153,6 +153,9 @@ _NEED_USE = {
     "recovery": ("recovery diagnosis", "each recovery attempt for a stalled "
                  "or failed run (recovery.py), and a person's recovery "
                  "request"),
+    "ask": ("a person's question", "a question a person asks the "
+            "orchestrator about a card, a phase or the board (Ask "
+            "orchestrator); the question itself is data in the facts"),
 }
 GUIDANCE_MAX_BYTES = 4 * 1024
 for _need in REASON_NEEDS:

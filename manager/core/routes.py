@@ -26,6 +26,7 @@ from typing import Callable, NamedTuple
 
 import acceptance
 import agreements
+import ask
 import agents
 import artifacts
 import assets
@@ -918,6 +919,76 @@ def get_card_decisions(req) -> None:
         req.reply(200, decisions.for_card(name, stage))
     except (ValueError, OSError) as exc:
         req.reply(409, {"error": str(exc)})
+
+
+def get_ask(req) -> None:
+    # Asking the orchestrator (task 181): every conversation this board can
+    # read — on cards and in the board's own conversation files — with what
+    # asking would launch and count. A read: it launches no run, however
+    # often it is asked; only POST /api/ask does.
+    board = taskfiles.collect()
+    card = _q(req, "card") or None
+    scope = None
+    if _q(req, "scope"):
+        scope = {"kind": _q(req, "scope"), "card": card}
+    req.reply(200, {"conversations": ask.conversations(card, board),
+                    "preflight": ask.preflight(scope, board),
+                    "scopes": list(decisions.ASK_SCOPES),
+                    "controls": list(decisions.CONTROLS),
+                    "actor": decisions.actor()})
+
+
+def get_ask_thread(req) -> None:
+    # One conversation, each reply beside the live state of its run. A read.
+    try:
+        req.reply(200, ask.thread(_q(req, "conversation")))
+    except ask.Refused as exc:
+        req.reply(404, {"error": str(exc), "code": exc.code})
+    except ValueError as exc:
+        req.reply(400, {"error": str(exc)})
+
+
+def get_ask_facts(req) -> None:
+    # The facts one question's run was given — the evidence its answer
+    # cites, as bench wrote it. A read.
+    try:
+        req.reply(200, {"facts": ask.facts_for(_q(req, "operation"))})
+    except ask.Refused as exc:
+        req.reply(404, {"error": str(exc), "code": exc.code})
+
+
+def post_ask(req) -> None:
+    # Ask, retry or cancel: a person's explicit request, and the only way a
+    # question launches a run. Asking explains — nothing here moves a card,
+    # starts work, runs a check or changes the agreement.
+    payload, action = req.body, req.path.rsplit("/", 1)[1]
+    try:
+        if action == "retry":
+            result = ask.retry(str(payload.get("conversation") or ""),
+                               str(payload.get("ask") or ""))
+        elif action == "cancel":
+            result = {"job": ask.cancel(str(payload.get("operation") or ""))}
+        else:
+            result = ask.submit(payload.get("scope"), payload.get("text"),
+                                request=payload.get("request"),
+                                conversation=payload.get("conversation") or None)
+    except ask.Refused as exc:
+        req.reply(409, {"error": str(exc), "code": exc.code, "remedy": exc.remedy})
+        return
+    except taskfiles.StaleCard as exc:
+        req.reply(409, {"error": str(exc), "stale": True})
+        return
+    except ValueError as exc:
+        req.reply(400, {"error": str(exc)})
+        return
+    if action != "cancel":
+        state.record_board_event({
+            "kind": "agent", "actor": "you",
+            "file": (result.get("where") or {}).get("file") or "",
+            "summary": f"asked the orchestrator ({result.get('conversation')}) — "
+                       f"one read-only reasoning run; nothing is acted on"})
+    state.broadcast({"type": "board"})
+    req.reply(200, result)
 
 
 def post_card_decisions(req) -> None:
@@ -2175,6 +2246,9 @@ ROUTES = (
     Route("GET", "/api/card/discussion", "read", get_card_discussion),
     Route("GET", "/api/card/acceptance", "read", get_card_acceptance),
     Route("GET", "/api/card/decisions", "read", get_card_decisions),
+    Route("GET", "/api/ask", "read", get_ask),
+    Route("GET", "/api/ask/thread", "read", get_ask_thread),
+    Route("GET", "/api/ask/facts", "read", get_ask_facts),
     Route("GET", "/api/card/inputs", "read", get_card_inputs),
     Route("GET", "/api/card/result", "read", get_card_result),
     Route("GET", "/api/artifact", "read", get_artifact),
@@ -2284,6 +2358,9 @@ ROUTES = (
     Route("POST", "/api/card/finding", "browser-mutation", post_card_acceptance),
     Route("POST", "/api/card/decisions/answer", "browser-mutation", post_card_decisions),
     Route("POST", "/api/card/decisions/withdraw", "browser-mutation", post_card_decisions),
+    Route("POST", "/api/ask", "browser-mutation", post_ask),
+    Route("POST", "/api/ask/retry", "browser-mutation", post_ask),
+    Route("POST", "/api/ask/cancel", "browser-mutation", post_ask),
     Route("POST", "/api/card/inputs/check", "browser-mutation", post_card_inputs),
     Route("POST", "/api/card/inputs/classify", "browser-mutation", post_card_inputs),
     Route("POST", "/api/card/result/setting", "browser-mutation", post_card_result),

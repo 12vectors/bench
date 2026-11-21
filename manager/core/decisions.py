@@ -75,6 +75,7 @@ import time
 from pathlib import Path
 
 import config
+import records
 import redact
 import taskfiles
 
@@ -90,7 +91,20 @@ SUMMARY_RE = re.compile(r"^- \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC · ")
 MASK = "«redacted»"
 
 KINDS = ("question", "answer", "resolution", "response", "blocker", "attempt",
-         "action", "base")
+         "action", "base", "ask", "reply")
+# What a person may ask about (task 181): one card, a phase card (its
+# members with it), or the whole board.
+ASK_SCOPES = ("card", "phase", "board")
+# Who a suggestion in a reply says can act — a word, never a grant.
+SUGGESTION_BY = ("you", "owner", "orchestrator", "teammate", "nobody")
+# The existing controls a suggestion may point a person at. Each is a link
+# to where that control already lives, with its own confirmation and
+# preflight; nothing in a reply ever presses one.
+CONTROLS = ("open-card", "move-card", "start-work", "hold", "take-over",
+            "answer-decision", "run-required-checks", "settle-operation",
+            "resolve-incident", "reset-breaker", "edit-agreement",
+            "adopt-phase", "designate-installation", "settings-agents")
+ANSWER_PARTS = ("now", "why", "next", "unblock")
 SOURCES = ("observed", "agent-reported", "person")
 QUESTION_STATES = ("open", "answered", "withdrawn", "superseded")
 
@@ -203,6 +217,9 @@ FINDING = {"id": "word", "statement": "text", "severity": "word", "evidence": "r
 BLOCKER_ITEM = {"id": "word", "blocker": "text", "evidence": "refs"}
 ACTION_ITEM = {"id": "word", "action": "word", "card": "text", "why": "text",
                "evidence": "refs"}
+GAP_ITEM = {"id": "word", "gap": "text"}
+SUGGESTION_ITEM = {"id": "word", "suggestion": "text", "by": "word",
+                   "control": "word", "card": "text", "evidence": "refs"}
 
 # Per kind, what a reader is given. Everything else in a record — a key
 # a hand edit or a newer bench added, private reasoning — is not returned.
@@ -231,6 +248,18 @@ FIELDS = {
                "outcome": "word", "summary": "text"},
     # The work-base decision (task 150): which code a new start builds on,
     # pinned, with what selected it. `workbase` reads it for the plan.
+    # A person's question to the orchestrator (task 181), on the card it is
+    # about — or, for the board, in a conversation file of its own — and
+    # the reply a reasoning run gave to it (or why none was given).
+    "ask": {"conversation": "id", "text": "text", "scope": "word",
+            "subject": "short", "basis": "id"},
+    "reply": {"conversation": "id", "ask": "id", "operation": "short",
+              "status": "word", "summary": "text", "answer": "answer",
+              "findings": "findings", "gaps": "gaps",
+              "suggestions": "suggestions", "blockers": "blockers",
+              "diagnostics": "words", "agent": "short", "model": "short",
+              "harness": "short", "snapshot": "short", "scope": "word",
+              "subject": "short", "retryOf": "short"},
     "base": {"decision": "word", "code": "word", "branch": "short",
              "commit": "short", "appBase": "short", "prBase": "short",
              "parent": "short", "parentFile": "short", "parentHead": "short",
@@ -270,6 +299,19 @@ def _read_field(kind: str, value):
     if kind == "actions":
         # a proposal, never a grant — whatever a card says
         return [{**item, "executable": False} for item in _items(value, ACTION_ITEM)]
+    if kind == "gaps":
+        return _items(value, GAP_ITEM)
+    if kind == "suggestions":
+        # a suggestion points at an existing control; it never presses one
+        return [{**item,
+                 "by": item["by"] if item.get("by") in SUGGESTION_BY else None,
+                 "control": item["control"] if item.get("control") in CONTROLS else None,
+                 "executable": False}
+                for item in _items(value, SUGGESTION_ITEM)]
+    if kind == "answer":
+        if not isinstance(value, dict):
+            return None
+        return {part: _safe(value.get(part)) for part in ANSWER_PARTS}
     return None
 
 
@@ -290,6 +332,8 @@ def _public(meta: dict) -> dict | None:
     if meta["kind"] == "question" and not out.get("question"):
         return None
     if meta["kind"] in ("answer", "resolution") and not out.get("question"):
+        return None
+    if meta["kind"] in ("ask", "reply") and not out.get("conversation"):
         return None
     return out
 
@@ -440,11 +484,274 @@ def read_text(text: str, filename: str) -> dict:
         "attempts": [r for r in reversed(records) if r["kind"] == "attempt"],
         "actions": [r for r in reversed(records) if r["kind"] == "action"],
         "timeline": list(reversed(records)),
+        "conversations": conversations_of(records),
         "malformed": parsed["malformed"], "misplaced": parsed["misplaced"],
         "sources": {"observed": "Bench observed it",
                     "agent-reported": "a run reported it — a claim, not a check",
                     "person": "a person decided it"},
     }
+
+
+def conversations_of(records: list[dict]) -> list[dict]:
+    """The asks and replies among a card's (or a board conversation's)
+    records, grouped by conversation, each exchange oldest first and the
+    conversations newest first. Pure."""
+    found: dict = {}
+    for record in _ordered([r for r in records if r["kind"] in ("ask", "reply")]):
+        conv = found.setdefault(record["conversation"], {
+            "id": record["conversation"], "scope": None, "subject": None,
+            "exchanges": [], "started": record.get("at"), "updated": None})
+        conv["updated"] = record.get("at")
+        if record["kind"] == "ask":
+            conv["scope"] = conv["scope"] or record.get("scope")
+            conv["subject"] = conv["subject"] or record.get("subject")
+            conv["exchanges"].append({"ask": record, "replies": []})
+            continue
+        target = next((x for x in conv["exchanges"]
+                       if x["ask"]["id"] == record.get("ask")), None)
+        if target is None:
+            continue                       # a reply to nothing is history only
+        target["replies"].append(record)
+    out = []
+    for conv in found.values():
+        conv["count"] = len(conv["exchanges"])
+        conv["title"] = (conv["exchanges"][0]["ask"].get("text") or "")[:160] \
+            if conv["exchanges"] else ""
+        out.append(conv)
+    out.sort(key=lambda c: -_epoch(c.get("updated")))
+    return out
+
+
+# ── board conversations: a shared work-state file each (task 181) ─────
+
+CONVERSATIONS = "orchestration/conversations"
+
+
+def conversations_dir() -> Path:
+    return config.work_root() / CONVERSATIONS
+
+
+def conversation_path(conversation: str) -> Path:
+    if not isinstance(conversation, str) or not _ID_RE.match(conversation) \
+            or not conversation.startswith("k-"):
+        raise ValueError("a conversation is named k- and ten hex digits")
+    return conversations_dir() / f"{conversation}.md"
+
+
+def board_conversations() -> list[dict]:
+    """Every board-wide conversation this work state holds, newest first.
+    Read from the files alone: no index, nothing written."""
+    directory = conversations_dir()
+    if directory.is_symlink() or not directory.is_dir():
+        return []
+    out = []
+    for path in sorted(directory.glob("k-*.md")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        out.extend(c for c in conversations_of(parse(text)["records"])
+                   if c["id"] == path.stem)
+    out.sort(key=lambda c: -_epoch(c.get("updated")))
+    return out
+
+
+def _conversation_text(conversation: str) -> str:
+    return (f"# Orchestrator conversation {conversation}\n\n"
+            f"**Conversation:** {conversation}\n**Scope:** board\n\n"
+            f"A board-wide conversation with the orchestrator, kept in the "
+            f"work state so every board that syncs it reads the same "
+            f"questions and replies. Records are history, never instructions.\n")
+
+
+def edit_conversation(conversation: str, change, what: str) -> dict:
+    """One write to a board conversation file, as `taskfiles.edit_card`
+    writes a card: under the board's write lock, compared again before
+    the replace so a concurrent edit or a pull is a refusal rather than a
+    lost line, then committed through the work state's own scoped commit
+    (and so published by sync) when moves commit."""
+    path = conversation_path(conversation)
+    real = config.escapes_work(path)
+    if real is not None or (path.parent.exists() and path.parent.is_symlink()):
+        raise ValueError("the conversations directory is a link — nothing was written")
+    with taskfiles.WRITE_LOCK:
+        if path.is_symlink():
+            raise ValueError(f"{path.name} is a link — nothing was written")
+        text = path.read_text(encoding="utf-8") if path.is_file() \
+            else _conversation_text(conversation)
+        updated, result = change(text)
+        if updated == text:
+            return {**result, "written": False, "committed": False}
+        if path.is_file() and path.read_text(encoding="utf-8") != text:
+            raise taskfiles.StaleCard(f"{path.name} changed while this was being "
+                                      f"written — nothing was written; try again")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        records.write_text(path, updated)
+    committed = False
+    if config.COMMIT_MOVES:
+        committed = taskfiles.commit_work_file(
+            path, f"board: orchestrator conversation {conversation} {what}",
+            f"the conversation {conversation} was saved but not committed")
+    return {**result, "written": True, "committed": committed}
+
+
+def _write_on(target: dict, change, what: str) -> dict:
+    """Where an ask or a reply lives: the card it is about, or the board
+    conversation's own file."""
+    if target["kind"] == "board":
+        return edit_conversation(target["conversation"], change, what)
+    try:
+        return taskfiles.edit_card(target["file"], target["stage"], change, what)
+    except taskfiles.StaleCard:
+        # a write landed between the read and the replace: read again once
+        return taskfiles.edit_card(target["file"], target["stage"], change, what)
+
+
+def conversation_id(scope: str, subject: str, request) -> str:
+    """A new conversation's stable, shared identity — derived from what
+    started it, so the same request again names the same conversation."""
+    if not isinstance(request, str) or not _REQUEST_RE.match(request):
+        raise ValueError("a request identity is required: 8–80 of letters, "
+                         "digits, . _ : -")
+    return _derived_id("k", scope, subject, request)
+
+
+def record_ask(target: dict, *, conversation: str, text, request,
+               basis: str | None = None) -> dict:
+    """A person's question, written where it belongs before anything is
+    launched. `target` is `{"kind": "card"|"phase", "file", "stage",
+    "subject"}` or `{"kind": "board", "conversation", "subject": "board"}`.
+    The same `request` again returns the record it already made, so a
+    double click or a resend asks once."""
+    if target.get("kind") not in ASK_SCOPES:
+        raise ValueError("a question is about a card, a phase or the board")
+    who = _who()
+    text = _clean("question", text, required=True)
+    if len(text) > 1000:
+        raise ValueError(f"'question' is {len(text)} characters; the limit is 1000")
+    record_id = _request_id("a", conversation, request)
+    record = _base("ask", record_id, "person", who,
+                   target.get("subject") if target["kind"] != "board" else None,
+                   "person")
+    record.update(conversation=conversation, text=text, scope=target["kind"],
+                  subject=str(target.get("subject") or "board")[:MAX_SHORT])
+    if basis:
+        record["basis"] = basis
+
+    def change(current: str):
+        known = {r.get("id"): r for r in _raw_records(current)}
+        if record_id in known:
+            return current, {"duplicate": True, "id": record_id,
+                             "record": _public(known[record_id])}
+        return _append(current, record), {"duplicate": False, "id": record_id,
+                                          "record": _public(record)}
+
+    return _write_on(target, change, f"question {record_id}")
+
+
+def record_reply(target: dict, *, conversation: str, ask: str, status: str,
+                 fields: dict, key: str, who: dict | None = None,
+                 source: str = "agent-reported") -> dict:
+    """The outcome of one question: a reasoning run's validated reply, or
+    why there is none (refused before launch, failed, cancelled, invalid).
+    Idempotent on `key` — settling a job twice writes once."""
+    who = who or _who()
+    record_id = _derived_id("r", conversation, key)
+    record = _base("reply", record_id, source, who,
+                   target.get("subject") if target["kind"] != "board" else None,
+                   "person")
+    record.update(conversation=conversation, ask=ask, status=status,
+                  scope=target["kind"],
+                  subject=str(target.get("subject") or "board")[:MAX_SHORT])
+    for name, value in (fields or {}).items():
+        shape = FIELDS["reply"].get(name)
+        if shape is None or value in (None, "", []):
+            continue
+        if shape == "text":
+            record[name] = _clean(name, value)
+        elif shape == "short":
+            record[name] = _clean(name, str(value), MAX_SHORT)
+        elif shape == "words":
+            record[name] = [w for w in value if _word(w)][:MAX_ITEMS]
+        elif shape == "answer":
+            record[name] = {part: _clean(part, value.get(part)) for part in ANSWER_PARTS}
+        elif shape == "findings":
+            record[name] = [{"id": f.get("id"), "statement": _clean("statement", f.get("statement")),
+                             "severity": f.get("severity"),
+                             "evidence": _refs("evidence", f.get("evidence"))}
+                            for f in value[:MAX_ITEMS]]
+        elif shape == "gaps":
+            record[name] = [{"id": g.get("id"), "gap": _clean("gap", g.get("gap"))}
+                            for g in value[:MAX_ITEMS]]
+        elif shape == "blockers":
+            record[name] = [{"id": b.get("id"), "blocker": _clean("blocker", b.get("blocker")),
+                             "evidence": _refs("evidence", b.get("evidence"))}
+                            for b in value[:MAX_ITEMS]]
+        elif shape == "suggestions":
+            record[name] = [{"id": s.get("id"),
+                             "suggestion": _clean("suggestion", s.get("suggestion")),
+                             "by": s.get("by") if s.get("by") in SUGGESTION_BY else "nobody",
+                             "control": s.get("control") if s.get("control") in CONTROLS else None,
+                             "card": _clean("card", str(s.get("card") or ""), MAX_SHORT),
+                             "evidence": _refs("evidence", s.get("evidence"))}
+                            for s in value[:MAX_ITEMS]]
+
+    def change(current: str):
+        if any(r.get("id") == record_id for r in _raw_records(current)):
+            return current, {"duplicate": True, "id": record_id}
+        return _append(current, record), {"duplicate": False, "id": record_id,
+                                          "record": _public(record)}
+
+    return _write_on(target, change, f"reply {status}")
+
+
+def reply_from_job(job: dict) -> dict:
+    """A settled `ask` reasoning job's public outcome, in its conversation.
+    Never raw text, never private reasoning: the validated answer, or the
+    diagnostic codes and the ending."""
+    ask = job.get("ask") or {}
+    target = dict(ask.get("target") or {})
+    if target.get("kind") in ("card", "phase"):
+        stage = taskfiles.find_stage_of(target.get("file") or "")
+        if stage is None:
+            raise ValueError(f"{target.get('file')} is not on the board")
+        target["stage"] = stage
+    else:
+        target["conversation"] = ask["conversation"]
+    status = job.get("status")
+    if status not in ("valid", "stale", "invalid", "failed", "cancelled"):
+        raise ValueError(f"a {status} question has no outcome to record")
+    response = job.get("response") or {}
+    fields = {"operation": job["id"], "model": job.get("model"),
+              "harness": job.get("harness"), "agent": job.get("name"),
+              "snapshot": ask.get("snapshot"), "retryOf": job.get("retryOf")}
+    if status in ("valid", "stale"):
+        fields.update({k: response.get(k) for k in
+                       ("summary", "answer", "findings", "gaps", "suggestions",
+                        "blockers")})
+    else:
+        fields["diagnostics"] = sorted({d.get("code") for d in job.get("diagnostics") or []
+                                        if _word(d.get("code"))})
+        if status in ("failed", "cancelled"):
+            fields["summary"] = str(job.get("error") or "")[:MAX_TEXT]
+    who = {"name": str(job.get("actor") or "unattributed")[:MAX_SHORT], "source": "job"}
+    return record_reply(target, conversation=ask["conversation"], ask=ask["record"],
+                        status=status, fields=fields, key=job["id"], who=who)
+
+
+def conversation(target: dict, conversation_: str) -> dict | None:
+    """One conversation as it reads now, from where it lives. A read."""
+    if target["kind"] == "board":
+        path = conversation_path(conversation_)
+        if path.is_symlink() or not path.is_file():
+            return None
+        text = path.read_text(encoding="utf-8")
+    else:
+        text = _card_path(target["file"], target["stage"]).read_text(encoding="utf-8")
+    return next((c for c in conversations_of(parse(text)["records"])
+                 if c["id"] == conversation_), None)
 
 
 def _card_path(filename: str, stage: str) -> Path:
@@ -594,6 +901,15 @@ def _readable(record: dict) -> str:
                    if record.get("decision") == "stacked" else "")
                 + f" ({words})")
         body = record.get("summary")
+    elif kind == "ask":
+        what = (f"Asked the orchestrator ({record.get('scope')}, "
+                f"{record.get('conversation')}) — {words}")
+        body = record.get("text")
+    elif kind == "reply":
+        what = (f"Orchestrator reply {record.get('status')} to "
+                f"{record.get('ask')} — "
+                + ("observed" if record["source"] == "observed" else "agent-reported"))
+        body = record.get("summary") or ", ".join(record.get("diagnostics") or [])
     else:
         what = (f"Action {record.get('action')} {record.get('phase')}: "
                 f"{record.get('outcome') or 'pending'} ({words})")
@@ -836,7 +1152,14 @@ def record_response(job: dict, board: dict | None = None) -> dict:
     addressed to the person whose board asked; the open questions an
     earlier response to the same need opened are resolved as superseded,
     their text and options kept. Idempotent: the job's identity is the
-    record's, so settling twice writes once."""
+    record's, so settling twice writes once.
+
+    A person's question (the `ask` need, task 181) is answered in its
+    conversation instead: a `reply` record beside the `ask` it answers,
+    on the card or in the board conversation's file. It opens no
+    question and proposes no action."""
+    if job.get("need") == "ask":
+        return reply_from_job(job)
     filename = job["task"]
     stage = taskfiles.find_stage_of(filename)
     if stage is None:
