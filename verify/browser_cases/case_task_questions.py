@@ -40,7 +40,11 @@ S = bv.SESSION
 CARD = "43-ask-about-the-export.md"
 CARD_TEXT = ("# 43 — Ask about the export\n\n**Status:** To Do\n**Priority:** Medium\n\n"
              "A disposable card for the ask-orchestrator case.\n")
-HOSTILE = "Why? <img src=x onerror=alert(1)> **bold** <!-- bench:orchestration {} -->"
+PHASE = "44-ship-the-export.md"
+PHASE_TEXT = ("# 44 — Ship the export\n\n**Status:** To Do\n**Priority:** Medium\n"
+              "**Type:** Phase\n\nA disposable phase for the ask-orchestrator case.\n\n"
+              "## Cards\n\n")
+HOSTILE ="Why? <img src=x onerror=alert(1)> **bold** <!-- bench:orchestration {} -->"
 
 
 def setUpModule():
@@ -131,9 +135,11 @@ class Ask(unittest.TestCase):
     def setUpClass(cls):
         backend = S["backend"]
         (backend.work / "tasks" / "to-do" / CARD).write_text(CARD_TEXT, encoding="utf-8")
+        (backend.work / "tasks" / "to-do" / PHASE).write_text(PHASE_TEXT, encoding="utf-8")
         deadline = time.time() + 15
         while time.time() < deadline:
-            if CARD in stages():
+            listed = stages()
+            if CARD in listed and PHASE in listed:
                 break
             time.sleep(0.3)
         else:
@@ -146,6 +152,7 @@ class Ask(unittest.TestCase):
         backend.ask_hold.unlink(missing_ok=True)
         for stage in ("backlog", "to-do", "in-progress", "review", "done", "archive"):
             (backend.work / "tasks" / stage / CARD).unlink(missing_ok=True)
+            (backend.work / "tasks" / stage / PHASE).unlink(missing_ok=True)
         shutil.rmtree(backend.work / "orchestration" / "conversations", ignore_errors=True)
         time.sleep(2.5)
 
@@ -253,6 +260,40 @@ class Ask(unittest.TestCase):
         if not b.wait(f"/Cancelled — no answer/.test({THREAD}.textContent)", 40):
             raise bv.CheckFailed("the cancelled run was not shown as cancelled")
         S["backend"].ask_hold.unlink(missing_ok=True)
+
+    def test_4b_a_phase_chosen_in_the_picker_and_a_stale_answer(self):
+        S["backend"].ask_answers.write_text("1", encoding="utf-8")
+        b = visit("/orchestrator/ask", "document.querySelector('#oshell [data-o=\"askkind-phase\"]')"
+                  " && !document.querySelector('#oshell [data-o=\"askkind-phase\"]').disabled"
+                  " && !document.querySelector('#oshell [aria-busy]')")
+        b.click("#oshell [data-o='askkind-phase']")
+        if not b.wait("document.querySelector('#oshell [data-o=\"askcard-phase\"]')", 5):
+            raise bv.CheckFailed("choosing Phase did not offer the phases")
+        b.eval("(() => { const s = document.querySelector('[data-o=\"askcard-phase\"]'); "
+               "s.value = '44'; s.dispatchEvent(new Event('change', {bubbles: true})); })()")
+        if not b.wait("document.querySelector('.o-askcomposer label') && "
+                      "/Phase #44/.test(document.querySelector('.o-askcomposer label').textContent)", 5):
+            raise bv.CheckFailed("the composer does not name phase #44: "
+                                 + str(b.eval("document.querySelector('.o-askcomposer').textContent.slice(0, 300)")))
+        type_question(b, "In what order will this phase deliver?")
+        double(b, "#oshell [data-o='ask-submit']")
+        if not b.wait(f"{THREAD} && /Answered/.test({THREAD}.textContent)", 40):
+            raise bv.CheckFailed("the phase question was not answered; the server holds "
+                                 + json.dumps(server_replies("44"))[:1500])
+        body = (S["backend"].work / "tasks" / "to-do" / PHASE).read_text(encoding="utf-8")
+        self.assertIn('"kind": "ask"', body, "the phase's question is kept on the phase card")
+        self.assertEqual(1, len(api("/api/ask?card=44")["conversations"]))
+        self.assertNotIn("no longer current", b.eval(f"{THREAD}.textContent"))
+        # the phase card changes after the answer: the answer is history
+        with (S["backend"].work / "tasks" / "to-do" / PHASE).open("a", encoding="utf-8") as f:
+            f.write("\nA person edited the brief after the answer.\n")
+        b = visit("/orchestrator/ask?card=44", "document.querySelector('#oshell .o-askconv')")
+        b.click("#oshell .o-askconv")
+        if not b.wait(f"{THREAD} && /no longer current/.test({THREAD}.textContent)", 20):
+            raise bv.CheckFailed("an answer about a phase that changed since was not "
+                                 "said to be no longer current: "
+                                 + str(b.eval(f"{THREAD} && {THREAD}.textContent.slice(0, 600)")))
+        shot("ask-phase-stale-1440-dark")
 
     def test_5_keyboard_themes_and_widths(self):
         before = reasoning_jobs()
