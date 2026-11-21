@@ -29,8 +29,10 @@ lives inside it.
 Built, not inherited. Every `BOARD_*`, `AGENT_*`, `BENCH_*`, `GIT_*`,
 `GH_*` and `GITHUB_*` name is removed, as is anything credential-shaped
 and anything that turns a browser sandbox off. `HOME`, the XDG
-directories, `TMPDIR` and the package caches point into a work directory
-made for this run, and git reads a configuration written there. That
+directories, `TMPDIR`, the package caches and Python's bytecode cache
+(`PYTHONPYCACHEPREFIX`, so no `__pycache__` lands in the checkout and a
+child process does not recompile what an earlier one already compiled)
+point into a work directory made for this run, and git reads a configuration written there. That
 *directs* where a well-behaved suite writes. It is not an OS sandbox: a
 test with a path can still read or write anywhere this user can.
 """
@@ -247,6 +249,15 @@ def child_env(work: Path, parent=None) -> tuple[dict, list[str]]:
             stripped.append(k)
             continue
         env[k] = v
+    # Bytecode goes to a cache this run owns, never into the checkout it
+    # judges (task 178). It used to be PYTHONDONTWRITEBYTECODE=1, which kept
+    # the checkout clean by writing nothing at all — so every Python process
+    # a test started (a board, a driver step, gate-compare) compiled
+    # manager/core from source again: 0.45s against 0.12s for `import board`
+    # in this environment, measured (develop/perf/178-backend-dead-time.md).
+    for k in ("PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX"):
+        if env.pop(k, None) is not None:
+            stripped.append(k)
     home, tmp, cache = work / "home", work / "tmp", work / "cache"
     for d in (home / ".config", home / ".local" / "share", home / ".local" / "state",
               tmp, cache):
@@ -261,7 +272,7 @@ def child_env(work: Path, parent=None) -> tuple[dict, list[str]]:
         "XDG_STATE_HOME": str(home / ".local" / "state"),
         "TMPDIR": str(tmp), "TMP": str(tmp), "TEMP": str(tmp),
         "PIP_CACHE_DIR": str(cache / "pip"), "npm_config_cache": str(cache / "npm"),
-        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPYCACHEPREFIX": str(cache / "pycache"),
         "GIT_CONFIG_GLOBAL": str(home / ".gitconfig"), "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_TERMINAL_PROMPT": "0",
     })
@@ -270,7 +281,7 @@ def child_env(work: Path, parent=None) -> tuple[dict, list[str]]:
 
 DIRECTED = ("HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME",
             "XDG_STATE_HOME", "TMPDIR", "PIP_CACHE_DIR", "npm_config_cache",
-            "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "PYTHONDONTWRITEBYTECODE")
+            "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "PYTHONPYCACHEPREFIX")
 
 
 # ── one run and its record ────────────────────────────────────────────
