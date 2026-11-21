@@ -33,6 +33,7 @@ import agentsettings
 import commands
 import completion
 import config
+import cycletime
 import decisions
 import delivery
 import doctor
@@ -1014,6 +1015,18 @@ def get_card_delivery(req) -> None:
     try:
         req.reply(200, {"delivery": delivery.for_card(
             name, stage, phases.public_state())})
+    except (ValueError, OSError) as exc:
+        req.reply(409, {"error": str(exc)})
+
+
+def get_card_timing(req) -> None:
+    # One card's cycle time (task 165): lead time, its stage timeline,
+    # each run, the checks' union and the waits, from records bench
+    # already keeps. Read-only — no fetch, no launch, no record written.
+    name = _q(req, "file")
+    stage = _q(req, "stage") or None
+    try:
+        req.reply(200, {"timing": cycletime.for_card(name, stage)})
     except (ValueError, OSError) as exc:
         req.reply(409, {"error": str(exc)})
 
@@ -2096,6 +2109,7 @@ ROUTES = (
     Route("GET", "/api/card/result", "read", get_card_result),
     Route("GET", "/api/artifact", "read", get_artifact),
     Route("GET", "/api/card/delivery", "read", get_card_delivery),
+    Route("GET", "/api/card/timing", "read", get_card_timing),
     Route("GET", "/api/settings/history", "read", get_settings_history),
     Route("GET", "/api/diff", "read", get_diff),
     Route("GET", "/api/stream", "read", get_stream),
