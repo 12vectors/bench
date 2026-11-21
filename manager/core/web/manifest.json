@@ -6,8 +6,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "app/state.js": {
-   "bytes": 6511,
-   "sha256": "f9cc9f3bde44a68ecac1bbe1d7aae37abb5ef12c6cb4306aa1d706a0a75e939b",
+   "bytes": 6600,
+   "sha256": "7828470ef26d4e8023dc3fef29290d446fcd7f61893e8f899ffa7b7fbfcb6a45",
    "type": "text/javascript; charset=utf-8"
   },
   "app/theme.js": {
@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 116893,
-   "sha256": "e02dd906247a8002ebaa5bf344ff22aeb93e9f54af53491fe77c76136768d82e",
+   "bytes": 118136,
+   "sha256": "724428fcd143c83dddc7797ea621a45aa5e7d1dce2e3054cb7b7c7247562e342",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -236,8 +236,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "lib/time.js": {
-   "bytes": 808,
-   "sha256": "6fbc78a577a3d1a3b457d893cde394653e7af33131b1f9e5caf3976282913d7e",
+   "bytes": 1325,
+   "sha256": "2ca806b2f1fdbc5c90fac64dbba32ece13c7275547420f1ada97394cc4d887e0",
    "type": "text/javascript; charset=utf-8"
   },
   "lib/toast.js": {
@@ -281,8 +281,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/sections.js": {
-   "bytes": 101690,
-   "sha256": "3cae2462b946598405f7c8ea65d3ede96ca5412578efc0fdb2ee6df22d97c42a",
+   "bytes": 112701,
+   "sha256": "72a50ca1c08149917b79f32fe1fa4aa7f061ed262b6179906f50e1033e9bb3b1",
    "type": "text/javascript; charset=utf-8"
   },
   "views/doctor.js": {
