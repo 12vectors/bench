@@ -260,6 +260,24 @@ def _classification(value) -> str:
     return value
 
 
+def check_fields(payload: dict) -> dict:
+    """The fields an entry's create or edit would write, normalised by the
+    very rules `write` holds them to — or `Refused` naming the field. For
+    a caller that must validate a proposed entry before anyone applies it
+    (the Brain drafting run's answer, task 175). Reads and writes nothing."""
+    if not isinstance(payload, dict):
+        raise Refused("the entry is a JSON object")
+    out = {"title": _title(payload.get("title")),
+           "kind": _kind(payload.get("kind")),
+           "summary": _line(payload.get("summary"), "summary", cap=brain.MAX_FIELD_CHARS),
+           "sources": _sources(payload.get("sources")),
+           "related": _ids(payload.get("related"), "related"),
+           "body": _body(payload.get("body"))}
+    if payload.get("classification") is not None:
+        out["classification"] = _classification(payload.get("classification"))
+    return out
+
+
 def _who() -> str:
     found = acceptance.actor()
     name = " ".join(re.sub(r"[·—<>]", " ", _CONTROL.sub("", found.get("name") or "")).split())

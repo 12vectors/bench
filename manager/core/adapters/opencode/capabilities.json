@@ -44,7 +44,8 @@
     "why": "the opencode adapter renders no exact read grant for a pinned input outside the worktree"
   },
   "refusedIntents": {
-    "reason": "orchestrator reasoning (task 139) is grounded in pinned context outside the checkout, and this adapter renders no exact read grant for it — so it does not list `reason` and bench refuses the launch by name rather than reasoning over inputs the run may not be able to read"
+    "reason": "orchestrator reasoning (task 139) is grounded in pinned context outside the checkout, and this adapter renders no exact read grant for it — so it does not list `reason` and bench refuses the launch by name rather than reasoning over inputs the run may not be able to read",
+    "brain": "Brain drafting (task 175) reads the work root's pinned sources outside the checkout and must not read bench's private state inside it; this adapter renders neither an exact read grant nor a read deny-rule, so it does not list `brain` and bench refuses the launch by name before anything is paid for"
   },
   "unsupported": {
     "filesystem-sandbox": "opencode's permission rules are globs over tool inputs and command lines; they cannot confine a run's reads to a named set of files.",

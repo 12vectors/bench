@@ -62,6 +62,7 @@ DOCTOR_DIR = STATE / "doctor"                      # fixtures a diagnosis makes 
 GATES_DIR = STATE / "gates"                        # Bench review verdicts and gate overrides
 REFINE_DIR = STATE / "refine"                      # card-refinement jobs and their proposals
 REASONING_DIR = STATE / "reasoning"                # orchestrator reasoning jobs, facts and responses
+BRAIN_DRAFTS_DIR = STATE / "brain" / "drafts"      # private Brain drafting requests, rounds and proposals
 # Agent-reported progress, one record per run. None = beside the agent
 # logs (`AGENT_DIR / "progress"`), so whatever relocates a run's log
 # relocates what it reported with it — see `progress._dir`.
@@ -460,6 +461,9 @@ AGENT_MODELS = {
     # reasoning and review ride the same configured model) where both run
     # through the same harness, else the default
     "reason": setting("BOARD_AGENT_MODEL_REASON", ""),
+    # a Brain drafting run (task 175): reads the application and pinned
+    # work-root sources, asks or proposes one entry. Unset, the default
+    "brain": setting("BOARD_AGENT_MODEL_BRAIN", ""),
 }
 
 
@@ -498,13 +502,14 @@ def agent_model(mode: str) -> str:
 # of its own) but does have a model setting, as it did before.
 AGENT_PURPOSES = ("work", "act-pr", "review")
 PURPOSE_SUFFIX = {"work": "_WORK", "act-pr": "_ACT_PR", "review": "_REVIEW",
-                  "refine": "_REFINE", "reason": "_REASON"}
+                  "refine": "_REFINE", "reason": "_REASON", "brain": "_BRAIN"}
 HARNESS_KEY = "BOARD_AGENT_ADAPTER"
 MODEL_KEY = "BOARD_AGENT_MODEL"
 HARNESS_KEYS = (HARNESS_KEY,) + tuple(HARNESS_KEY + PURPOSE_SUFFIX[p]
                                       for p in AGENT_PURPOSES)
 MODEL_KEYS = (MODEL_KEY,) + tuple(MODEL_KEY + PURPOSE_SUFFIX[p]
-                                  for p in (*AGENT_PURPOSES, "refine", "reason"))
+                                  for p in (*AGENT_PURPOSES, "refine", "reason",
+                                            "brain"))
 AGENT_KEYS = HARNESS_KEYS + MODEL_KEYS
 DEFAULT_HARNESS = "claude"
 
@@ -996,6 +1001,12 @@ BOARD_EVENTS_CAP = int(setting("BOARD_HISTORY_CAP", "300"))
 # the previous history entry rather than each becoming a line of their own.
 PROGRESS_REMIND = max(0.0, float(setting("BOARD_PROGRESS_REMIND", "600")))
 PROGRESS_MIN_GAP = max(0.0, float(setting("BOARD_PROGRESS_MIN_GAP", "20")))
+
+# Brain drafting (braindraft.py, task 175): one run's time limit, and how
+# many rounds one request may take. Reaching either is said, never
+# answered by a relaunch.
+BRAIN_DRAFT_TIMEOUT = max(30.0, float(setting("BOARD_BRAIN_DRAFT_TIMEOUT", "900")))
+BRAIN_DRAFT_ROUNDS = max(1, min(8, int(setting("BOARD_BRAIN_DRAFT_ROUNDS", "4") or 4)))
 
 # Card information readiness (inputs.py, task 132). Remote references in a
 # card's brief are retrieved only from hosts the operator listed here —

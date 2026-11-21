@@ -155,11 +155,20 @@ RUNNER_VERSION = 1
 # so it runs only through an adapter that grants a pinned file by an exact
 # read (`inputs.delivery: exact-read`). An adapter that cannot is refused
 # by name rather than launched with context it may not be able to read.
-INTENTS = ("work", "act-pr", "review", "refine", "reason")
+#
+# `brain` (task 175) is a Brain drafting run: a person asked for one
+# maintained entry to be written or updated, and the run reads the
+# application checkout it starts in plus a bounded, pinned selection of
+# the work root (Brain entries, cards, plans, reference documents), then
+# answers with follow-up questions or one proposal on stdout. It is the
+# `reason` stance — no worktree, no command, no shell, no edit tool, its
+# work-root context delivered by exact reads — and bench, never the run,
+# writes the entry, on a person's explicit Apply (`braindraft.py`).
+INTENTS = ("work", "act-pr", "review", "refine", "reason", "brain")
 
 # The intents with no worktree of their own: they read, and a card's
 # checkout is not made for them.
-READ_ONLY_INTENTS = ("review", "refine", "reason")
+READ_ONLY_INTENTS = ("review", "refine", "reason", "brain")
 
 # What an adapter must declare, as `enforced`, before a refinement may be
 # launched through it. Both are the vendor's own tool roster, which is the
@@ -170,7 +179,10 @@ REFINE_REQUIRES = ("read-only-tools", "shell-withheld")
 # The proposal-only intents: they read and propose on stdout, and bench
 # owns every write. Each is launched only where the adapter enforces
 # REFINE_REQUIRES, never with a command, a check or a preparation step.
-PROPOSAL_INTENTS = ("refine", "reason")
+PROPOSAL_INTENTS = ("refine", "reason", "brain")
+
+# The proposal intents whose context must be *delivered* by exact reads.
+DELIVERED_INTENTS = ("reason", "brain")
 
 # What reasoning additionally needs: its context delivered as pinned
 # copies granted by one exact read each. "The operator can read the file"
@@ -2341,6 +2353,17 @@ BASELINE = {
                 "inputs and answer with one public response; bench validates "
                 "it, and nothing it proposes is executed or granted by it"),
     },
+    "brain": {
+        "cwd": "app",
+        "writable": [],
+        "publication": {"commit": False, "push": False, "publish": False},
+        "deny": ["edit", "shell", "commit", "push", "publish", "force-push",
+                 "rebase", "reshape-lifecycle"],
+        "why": ("read the application checkout and the pinned work-root "
+                "sources, and answer with follow-up questions or one Brain "
+                "entry proposal; bench validates it, and only a person's "
+                "Apply writes the entry"),
+    },
 }
 
 # What each denied word means, so a refusal and a UI row read alike and an
@@ -2524,7 +2547,8 @@ def _resolve_now(intent: str, *, worktree: Path | str | None = None,
     # sentence: no edit tool, no shell.
     restricted = intent in PROPOSAL_INTENTS
     label = {"refine": "a refinement",
-             "reason": "an orchestrator reasoning run"}.get(intent)
+             "reason": "an orchestrator reasoning run",
+             "brain": "a Brain drafting run"}.get(intent)
     if not adapter.get("path"):
         # Before anything else about the adapter: a harness that is not
         # installed refuses here, in the reading every launch takes before
@@ -2556,10 +2580,12 @@ def _resolve_now(intent: str, *, worktree: Path | str | None = None,
                              f"not declare it — refused rather than run with a "
                              f"restriction that exists only in the prompt")
         delivery = (adapter.get("inputs") or {}).get("delivery") or "none"
-        if intent == "reason" and delivery != REASON_DELIVERY:
+        if intent in DELIVERED_INTENTS and delivery != REASON_DELIVERY:
             why = (adapter.get("inputs") or {}).get("why")
+            what = ("Brain drafting" if intent == "brain"
+                    else "orchestrator reasoning")
             blockers.add("intent-unsupported",
-                         f"orchestrator reasoning is grounded in pinned "
+                         f"{what} is grounded in pinned "
                          f"context the launched agent must be able to read, "
                          f"and the {adapter['name']} adapter declares no "
                          f"exact-read delivery route ({delivery}"
@@ -3202,6 +3228,11 @@ def adapter_policy(found: dict) -> dict:
         "deny": [d["capability"] for d in found["denied"]],
         "publication": found["publication"],
         "requires": found["requires"],
+        # absolute paths a Brain drafting run must not read inside the
+        # checkout it starts in (task 175): the tool's private runtime
+        # state and secrets. Rendered by an adapter as read deny-rules;
+        # absent for every other intent
+        **({"readDeny": list(found["readDeny"])} if found.get("readDeny") else {}),
     }
 
 
