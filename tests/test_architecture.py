@@ -794,6 +794,16 @@ ROUTES: dict[str, str] = {
     "POST /api/brain/override": "browser-mutation",
     "POST /api/brain/retire": "browser-mutation",
     "POST /api/brain/retry": "browser-mutation",
+    # drafting it with the Brain Agent (task 175): two reads, and a
+    # person's steps — Generate and Continue launch one bounded run each
+    "GET /api/brain/draft/preflight": "read",
+    "GET /api/brain/drafts": "read",
+    "POST /api/brain/draft/start": "browser-mutation",
+    "POST /api/brain/draft/continue": "browser-mutation",
+    "POST /api/brain/draft/cancel": "browser-mutation",
+    "POST /api/brain/draft/discard": "browser-mutation",
+    "POST /api/brain/draft/retarget": "browser-mutation",
+    "POST /api/brain/draft/apply": "browser-mutation",
     "GET /cards/*": "read",
     # the Orchestrator view (task 145), a page like the others
     "GET /orchestrator": "read",

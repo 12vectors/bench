@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate / braindraft < recovery < scheduler < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -377,6 +377,13 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   identity, scope, evidence references, bounds and binding — before it
   is kept. It executes nothing a response proposes (see "Orchestrator
   reasoning: launched agents, public responses")
+- `braindraft.py` — the Brain Agent (task 175): a person's request to
+  write or update one Brain entry, one bounded `brain`-intent run per
+  explicit Generate or Continue, its work-root sources pinned and granted
+  by exact reads, its follow-up questions or proposal validated and its
+  citations re-read, and the person's Apply written through `brainwrite`
+  under the destination's revision and the sources' bindings. It writes
+  no entry itself (see "Drafting with the Brain Agent")
 - `coordinate.py` — delivering a card in review (task 142; a phase
   scope's members and final head, task 143):
   its required checks, an independent review once the reviewer's
