@@ -68,22 +68,40 @@ class Result(unittest.TextTestResult):
         self.setup_errors: list[str] = []
         self.outcomes: list[dict] = []
 
+    def startTest(self, test):
+        self.mark = bv.harness_mark()
+        super().startTest(test)
+
+    def trail(self, outcome: dict) -> dict:
+        """What the harness did during a case that did not pass (task
+        176): clicks aimed again, presses that lost their click, waits
+        that never came true, a page that did not settle. Written into
+        cases.log beside the traceback and kept on the outcome."""
+        notes = bv.harness_since(getattr(self, "mark", 0))
+        if notes:
+            outcome["harness"] = notes[-20:]
+            self.stream.write("harness trail for " + outcome["case"] + ":\n")
+            for n in notes[-20:]:
+                self.stream.write("  " + json.dumps(n, sort_keys=True)[:600] + "\n")
+            self.stream.flush()
+        return outcome
+
     def addSuccess(self, test):
         super().addSuccess(test)
         self.outcomes.append({"case": test.id(), "outcome": "passed"})
 
     def addFailure(self, test, err):
         super().addFailure(test, err)
-        self.outcomes.append({"case": test.id(), "outcome": "failed",
-                              "detail": str(err[1])[:2000]})
+        self.outcomes.append(self.trail({"case": test.id(), "outcome": "failed",
+                                         "detail": str(err[1])[:2000]}))
 
     def addError(self, test, err):
         super().addError(test, err)
         kind = "failed" if issubclass(err[0], bv.CheckFailed) else "setup-error"
         if kind == "setup-error":
             self.setup_errors.append(f"{test.id()}: {err[0].__name__}: {err[1]}")
-        self.outcomes.append({"case": test.id(), "outcome": kind,
-                              "detail": f"{err[0].__name__}: {err[1]}"[:2000]})
+        self.outcomes.append(self.trail({"case": test.id(), "outcome": kind,
+                                         "detail": f"{err[0].__name__}: {err[1]}"[:2000]}))
 
     def addSubTest(self, test, subtest, err):
         # A sub-test's error never reaches addError/addFailure, so without
@@ -97,9 +115,9 @@ class Result(unittest.TextTestResult):
         failed = issubclass(err[0], (test.failureException, bv.CheckFailed))
         if not failed:
             self.setup_errors.append(f"{subtest.id()}: {err[0].__name__}: {err[1]}")
-        self.outcomes.append({"case": subtest.id(),
-                              "outcome": "failed" if failed else "setup-error",
-                              "detail": f"{err[0].__name__}: {err[1]}"[:2000]})
+        self.outcomes.append(self.trail({"case": subtest.id(),
+                                         "outcome": "failed" if failed else "setup-error",
+                                         "detail": f"{err[0].__name__}: {err[1]}"[:2000]}))
 
     def addSkip(self, test, reason):
         # a skipped browser case is not coverage

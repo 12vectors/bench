@@ -1,8 +1,8 @@
 {
  "assets": {
   "app/data.js": {
-   "bytes": 15611,
-   "sha256": "16131e7af61cd66ac9ab069d836681bbda5cb0efc2bcaf3d96cb68dd62cfb2d2",
+   "bytes": 19442,
+   "sha256": "970d937eedf3b1f1ed9da9a995a320ce30ed28715c4038fb4e0fa045bda5d605",
    "type": "text/javascript; charset=utf-8"
   },
   "app/state.js": {
@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 134258,
-   "sha256": "d0c2b950ec3fc61864310f96eae90a86cf3a2dfbbd3dc68881e4fe5036dfa532",
+   "bytes": 134384,
+   "sha256": "059cd58230507a40ae6ffc055d8877f0d155ec7a7175b9b91dd32535a5003698",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -251,8 +251,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "main.js": {
-   "bytes": 22813,
-   "sha256": "9f0ef3e992770d86f45cd7682d6a62b4d634cf58ef8fe563dc340a277267a51f",
+   "bytes": 22955,
+   "sha256": "e494397053f148a4b6ac17a5f4efecd62a315e7acbc1fe25815ebdd96be759f9",
    "type": "text/javascript; charset=utf-8"
   },
   "views/activity.js": {
@@ -276,8 +276,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/delivery.js": {
-   "bytes": 19137,
-   "sha256": "7b8f965e36ee803bdefb98d65fbfc49c4e216b0fe38a75268dc28d2f39165154",
+   "bytes": 19651,
+   "sha256": "a9c288ca14dd4b3e48a874ee4a98d128ef6776a2c086da8e8d48d8b2bf5dfd1c",
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/discussion.js": {
@@ -326,8 +326,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/orchestrator.js": {
-   "bytes": 86056,
-   "sha256": "2f4bbc5e27a452087701b691450423ce050ed749165a5062015be7947587646d",
+   "bytes": 96948,
+   "sha256": "67540273c5995dd9c5d21d889a8a06051975dba3562d7dab23515225a759668e",
    "type": "text/javascript; charset=utf-8"
   },
   "views/phases.js": {

@@ -48,7 +48,7 @@ L6  gatepolicy reviews inputs basechoice
 L7  evidence resultidentity artifacts
 L8  staleness
 L9  verify
-L10 progress
+L10 progress checkload
 L11 acceptance callers
 L12 gates
 L13 required orchestrator
@@ -370,7 +370,7 @@ L6  gatepolicy reviews inputs basechoice
 L7  evidence resultidentity artifacts
 L8  staleness
 L9  verify
-L10 progress
+L10 progress checkload
 L11 acceptance callers
 L12 gates
 L13 required doctor orchestrator
@@ -480,6 +480,7 @@ neither.
 | execution designation (portable), installation id | `execowner` | `execowner._LOCK`, interprocess; execution itself is the non-blocking `flock` on `execution.lock` | yes |
 | orchestrated launch ledger (append-only) | `orchestrator` | append | no |
 | orchestration operations: intent and receipt (task 141) | `operations` (`scheduler` and `coordinate` decide) | `operations._LOCK`, interprocess | yes |
+| the admission queue: who waits for capacity, first come first served (task 182) | `operations` (`scheduler` syncs, `orchestrator.admit` removes) | `operations._LOCK`, interprocess | yes |
 | recovery incidents and their attempts; the circuit breaker (task 144) | `recovery` | `recovery._LOCK`, interprocess | yes |
 | Brain entry files (portable) and their write journal (machine-local) (task 158) | `brainwrite` | `brainwrite.LOCK`, interprocess; each entry write is also held to the file's exact revision | yes |
 
@@ -488,6 +489,7 @@ to the code by `tests/test_records_adoption.py`:
 
 ```records durable
 agreements.apply
+agreements.migrate
 agreements.set_scope
 artifacts.ingest
 artifacts.ingest_report
@@ -504,6 +506,8 @@ execowner.ensure_installation_id
 gates.override
 gates.record_verdict
 operations.begin
+operations.queue_remove
+operations.queue_sync
 operations.update
 plans.record
 plans.restore
@@ -694,5 +698,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 153
+routes 154
 ```

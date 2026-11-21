@@ -112,8 +112,10 @@ CLOSED = frozenset({"resolved"})
 # person paused. The incident waits through them instead of being held —
 # and since `authorize` asks capacity last, a capacity refusal also
 # means every authority, eligibility and pause check before it passed.
-WAITING = ("slots-full", "daily-starts-exhausted", "paused")
-CAPACITY = ("slots-full", "daily-starts-exhausted")
+# (`queued-behind`, task 182: an older eligible request in the same pool
+# is admitted first — a diagnosis or a restart never jumps the queue.)
+WAITING = ("slots-full", "daily-starts-exhausted", "queued-behind", "paused")
+CAPACITY = ("slots-full", "daily-starts-exhausted", "queued-behind")
 
 # Markers in a failed run's own last words. Read as text, case-folded;
 # the first class whose marker appears wins, in this order. Nothing
@@ -666,9 +668,12 @@ def _diagnose(item: dict, board: dict, request=None) -> dict:
                 reason=f"diagnosis attempt {spent + 1} of {item['cap']}")
     _save(item)
     try:
-        result = request(item["file"], "recovery", via="orchestrator",
-                         action="recover", board=board,
-                         subject=_subject(item, n))
+        # the request authorizes its capacity and registers its run under
+        # the admission lock (task 182), so no other launch takes the slot
+        with orchestrator.ADMIT_LOCK:
+            result = request(item["file"], "recovery", via="orchestrator",
+                             action="recover", board=board,
+                             subject=_subject(item, n))
     except reasoning.Conflict as exc:
         attempt.update(status="not-launched", reason=str(exc)[:300])
         return _hold(item, "held", "diagnosis-refused", str(exc))
@@ -811,11 +816,17 @@ def _remediate(item: dict, board: dict, start=None, stop=None) -> dict:
     basis = _brief_basis(task)
     key = operations.key_for("implement", item["file"], f"recovery:{item['id']}", 1)
     try:
-        op = operations.begin(key, action="implement", card=item["file"],
-                              number=item.get("card"), scope=again["scope"],
-                              pool=orchestrator.LAUNCHES["implement"],
-                              basis=basis, attempt=1,
-                              note=f"recovery restart for {item['id']}")
+        # capacity and the reserving intent in one step (task 182)
+        admitted, op = orchestrator.admit(
+            "implement", item["file"], key, board=board,
+            number=item.get("card"), pool=orchestrator.LAUNCHES["implement"],
+            basis=basis, attempt=1, note=f"recovery restart for {item['id']}")
+        if op is None:
+            if admitted["code"] in WAITING:
+                item.update(code=admitted["code"], reason=admitted["reason"])
+                _save(item)
+                return item
+            return _hold(item, "held", admitted["code"], admitted["reason"])
     except operations.Exists as exists:
         item.update(remediation={**remedy, "operation": exists.op["key"]},
                     status="remediating", code="remediating",

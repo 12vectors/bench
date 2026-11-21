@@ -19,6 +19,8 @@ unittest`. Those two files now live here:
 | --- | --- |
 | `operator-local/AGENTS.md` | bench's definition of done, for an operator whose application is a bench checkout |
 | `operator-local/checks` | the Focus view's CHECKS matcher for bench's suite |
+| `operator-local/prompts/focused-first.md`, `compose.py` | the focused-first section for work and PR-fix prompt overrides, and the composer that appends it to the built-ins after the template contract check (task 177) |
+| `operator-local/focused_policy.py` | prepares — never applies — the batched policy change adding focused scopes, the browser report contract and `--probe`, for Settings' validate, preview and apply (task 177) |
 
 Bench's own repository tracks nothing in `manager/local/` but the
 `.gitkeep` placeholders. The neutral starters a fresh install gets are

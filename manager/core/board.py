@@ -63,6 +63,7 @@ import braindraft
 import brainwrite  # noqa: F401
 import callers  # noqa: F401
 import changes
+import checkload
 import commands  # noqa: F401
 import completion  # noqa: F401
 import config
@@ -281,6 +282,10 @@ def main() -> None:
     threading.Thread(target=changes.poller, daemon=True).start()
     threading.Thread(target=changes.reconcile, daemon=True).start()
     threading.Thread(target=phases.beat, daemon=True).start()
+    # What the host and the other checks were doing while each verification
+    # ran (task 179): a diagnostic sidecar beside the evidence, never part
+    # of a verdict. Silent while nothing is being verified.
+    threading.Thread(target=checkload.beat, daemon=True).start()
     # The orchestration beat (task 141): with no agreement in force, or one
     # whose Bench scope is not enabled, each pass reads one file and does
     # nothing. Its first pass waits one interval, so a restart never

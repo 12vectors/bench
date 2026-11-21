@@ -363,7 +363,74 @@ function authorityHtml(scope) {
     `</ul>`;
 }
 
+// Task 182: shared capacity in words — the global total, what is in use
+// on the board and free, and the scope's own ceiling and use. Nothing is
+// called allocated or kept, because nothing is set aside.
+function sharedCapacityHtml(scope) {
+  const r = orch().reading;
+  const usage = (r && r.usage) || {};
+  const mine = (usage.running || {})[scope.id] || {};
+  const totals = usage.totals || {};
+  const rows = ['implementation', 'review', 'reasoning'].map(pool => {
+    const cap = scope.capacity[pool] || {};
+    const board = totals[pool] || 0;
+    const free = Math.max(0, (cap.total || 0) - board);
+    const label = pool === 'implementation' ? 'implementation slots (repairs too)' : `${pool} slots`;
+    let words = `${board} of ${cap.total} in use on the board · ${free} available`;
+    if (scope.kind === 'phase') {
+      const from = cap.by === 'default' ? 'the default phase ceiling' : 'this phase’s own limit';
+      words = `${mine[pool] || 0} running here · at most ${cap.ceiling} at once (${from}) · ${words}`;
+    }
+    const note = pool === 'reasoning' && !cap.total ? ' · no reasoning pool: diagnoses take implementation slots' : '';
+    return `<div><dt>${esc(label)}</dt><dd>${esc(words + note)}</dd></div>`;
+  });
+  const daily = scope.capacity.dailyStarts || {};
+  const startsBoard = usage.startsTodayTotal || 0;
+  const startsHere = (usage.startsToday || {})[scope.id] || 0;
+  rows.push(`<div><dt>launches today</dt><dd>${esc(scope.kind === 'bench'
+    ? `${startsBoard} of ${daily.total} on the board`
+    : `${startsHere} here, at most ${daily.ceiling} · ${startsBoard} of ${daily.total} on the board`)}` +
+    ` <span class="o-dim">every launch counts once; a finished run refunds nothing</span></dd></div>`);
+  const ceil = Object.entries(scope.ceilings || {}).map(([k, c]) =>
+    `${k} ${c.value}${c.by !== scope.id ? ` (from ${scopeName(c.by)})` : ''}`).join(' · ');
+  rows.push(`<div><dt>ceilings</dt><dd>${esc(ceil)}</dd></div>`);
+  return `<dl class="o-kv">${rows.join('')}</dl>`;
+}
+
+// Which runs hold a slot now, whatever stage their card is in — a repair
+// of a card in Review holds an implementation slot until it ends.
+function holdersHtml() {
+  const usage = (orch().reading || {}).usage || {};
+  const list = usage.holders || [];
+  if (!list.length) return '<p class="o-dim">No run holds a slot now.</p>';
+  return `<ul class="o-list">${list.map(h => {
+    const t = taskByFile(h.card);
+    const what = h.kind === 'run' ? `${h.mode || 'work'} run${h.name ? ' ' + h.name : ''}` : `reserved by operation ${h.operation} (${h.status})`;
+    return `<li>${t ? cardLink(t) : esc(h.card || '')} — ${esc(what)} · ${esc(h.pool)} slot` +
+      `${h.stage ? ` · card in ${esc(h.stage)}` : ''}${h.scope ? ` · ${esc(scopeName(h.scope))}` : ' · no scope (a person’s or the phase runner’s run)'}</li>`;
+  }).join('')}</ul>`;
+}
+
+// The admission queue (task 182): who waits, in which order, since when,
+// and any hold that keeps a place without blocking anyone.
+function queueHtml() {
+  const r = orch().reading || {};
+  const q = r.queue || [];
+  const body = q.length
+    ? `<ol class="o-list">${q.map(e => {
+      const t = taskByFile(e.file);
+      const place = e.hold ? `on hold — ${e.hold} (keeps its place, blocks nobody)` : `#${e.position} in the ${e.pool} queue`;
+      return `<li>${t ? cardLink(t) : esc(e.file || '')} — ${esc(e.action)} · ${esc(place)} · waiting since ${esc(when(e.readyAt))}` +
+        `${e.scope ? ` · ${esc(scopeName(e.scope))}` : ''}</li>`;
+    }).join('')}</ol>`
+    : '<p class="o-dim">Nothing waits: every eligible request was admitted.</p>';
+  return `<article class="o-panel"><h3>Capacity — first come, first served</h3>` +
+    `<p class="o-dim">Implementation (repairs included), review and reasoning are each one pool for the whole board. An eligible request waits here from the moment it is ready and is admitted in that order, whatever its kind or priority, when its pool and its scope’s ceiling both have room. A request whose scope is full or on hold does not hold up the ones behind it.</p>` +
+    `<h4>Waiting</h4>${body}<h4>Runs holding a slot</h4>${holdersHtml()}</article>`;
+}
+
 function capacityHtml(scope) {
+  if (((scope.capacity || {}).implementation || {}).shared) return sharedCapacityHtml(scope);
   const r = orch().reading;
   const usage = (r && r.usage) || {};
   const mine = (usage.running || {})[scope.id] || {};
@@ -405,7 +472,10 @@ function scopeCardHtml(scope) {
     : `<a data-route href="${esc(orchHref('work'))}">Its managed work</a>`;
   return `<article class="o-panel o-scope" aria-label="${esc(head)}">` +
     `<h3>${esc(head)} ${badge(word, tone)}</h3>` +
-    (scope.kind === 'phase' ? `<p class="o-dim">Strategy ${esc(scope.strategy || 'sequential')}. Authority is the intersection with the Bench scope; capacity is allocated from its total, never duplicated.</p>` : '') +
+    (scope.kind === 'phase' ? `<p class="o-dim">Strategy ${esc(scope.strategy || 'sequential')}. Authority is the intersection with the Bench scope; ` +
+      (((scope.capacity || {}).implementation || {}).shared
+        ? 'capacity is the board’s shared pools — this phase uses a slot only while a run holds it, up to its ceiling.'
+        : 'capacity is allocated from its total, never duplicated (the reserved model — migrate it in the operating agreement).') + `</p>` : '') +
     `<details class="o-fold" data-okeep="auth-${esc(scope.id)}"${keepOpen('auth-' + scope.id)}><summary>Authority</summary>${authorityHtml(scope)}</details>` +
     capacityHtml(scope) + `<p>${link}</p></article>`;
 }
@@ -478,6 +548,8 @@ function overviewHtml() {
     facts_.map(([k, v, s]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)} · <a data-route href="${esc(orchHref(s))}">open</a></dd></div>`).join('') +
     `</dl>${(r.notes || []).map(n => `<p class="o-dim">${esc(n)}</p>`).join('')}` +
     `<p class="o-dim">${esc(r.grants || '')}</p></article>` +
+    (r.effective.migrationNeeded ? migrationNoticeHtml() : '') +
+    (r.effective.capacityModel === 'shared' ? queueHtml() : '') +
     r.effective.scopes.map(scopeCardHtml).join('') +
     mergeHtml() + installationHtml() + `</div>`;
 }
@@ -952,6 +1024,50 @@ const AUTHORITY_WORDS = {
   integrate: 'Integrate phase members', merge: 'Merge accepted work',
 };
 const POOLS = ['implementation', 'review', 'reasoning', 'dailyStarts'];
+const POOL_WORDS = {
+  implementation: 'implementation runs at once (repairs too)',
+  review: 'review runs at once',
+  reasoning: 'reasoning runs at once (0: diagnoses use implementation)',
+  dailyStarts: 'launches a day',
+};
+
+// Task 182: an agreement still written in the reserved model sets slots
+// aside for phases even while they are idle. The way out is one explicit,
+// revision-guarded step a person takes here; reading never migrates.
+function migrationNoticeHtml() {
+  const r = orch().reading;
+  const legacy = r.effective.legacyAllocations || {};
+  const rows = Object.entries(legacy).map(([n, a]) =>
+    `<li>Phase #${esc(n)} reserves ${esc(Object.entries(a).map(([k, v]) => `${v} ${k}`).join(', '))}</li>`).join('');
+  return `<article class="o-panel"><h3>Capacity is reserved per phase ${badge('migration available', 'alarm')}</h3>` +
+    `<p>This agreement sets slots aside for named phases even while they are idle, unadopted or delivered, so other work can wait on a full board that is not working. Shared capacity makes every pool one total used first come, first served.</p>` +
+    (rows ? `<ul class="o-list">${rows}</ul>` : '') +
+    `<p><a data-route href="${esc(orchHref('agreement'))}">Preview the migration in the operating agreement</a></p></article>`;
+}
+
+function migrationHtml() {
+  const o = orch();
+  const r = o.reading;
+  const eff = r.effective;
+  if (!eff.migrationNeeded) return '';
+  const m = o.migration && o.migration.base === eff.revision ? o.migration : null;
+  const phases = m && m.result && m.result.phases ? m.result.phases : [];
+  const list = phases.length ? `<ul class="o-list">${phases.map(p =>
+    `<li>Phase #${esc(p.phase)}: reserved ${esc(Object.entries(p.allocation || {}).map(([k, v]) => `${v} ${k}`).join(', ') || 'nothing')} → ` +
+    `${p.limits ? `its own limits ${esc(Object.entries(p.limits).map(([k, v]) => `${v} ${k}`).join(', '))} (reserve nothing)` : 'the default phase ceiling (reserves nothing)'}</li>`).join('')}</ul>` : '';
+  return `<article class="o-panel"><h3>Migrate to shared capacity</h3>` +
+    `<p>Keeps the global totals, every authority, pause, exclusion, hand-back, adoption, strategy, per-card ceiling, operation and today’s launch counts exactly as they are. Removes each phase’s reservation. Nothing is started, moved or adopted.</p>` +
+    `<label class="o-setting" for="ag-keeplimits"><span>Keep each phase’s old numbers as its own limit (a ceiling that reserves nothing) instead of the default ceiling</span>` +
+    `<input id="ag-keeplimits" type="checkbox" data-ofield="keeplimits" data-o="ag-keeplimits"${o.keepLimits ? ' checked' : ''}></label>` +
+    `<div class="o-steps"><div class="o-action">${btn('migrate-preview', 'Preview the migration', { act: 'migrate', data: { apply: '' } })}<p class="o-effect">Shows the old and new limits; writes nothing.</p></div>` +
+    `<div class="o-action">${btn('migrate-apply', 'Migrate to shared capacity', { act: 'migrate', data: { apply: '1' }, primary: true, disabled: !m, why: m ? '' : 'preview it first' })}` +
+    `<p class="o-effect">Writes the agreement once, bound to revision ${esc(eff.revision)}; refused if it changed since.</p></div></div>` +
+    (m ? `<section class="o-preview" role="status"><h4>Migration preview — nothing was written</h4>${list}` +
+      ((m.result.queue || []).length ? `<p>What it changes for the queue now:</p><ul class="o-list">${m.result.queue.map(q => `<li>${esc(q.summary)}</li>`).join('')}</ul>` : '') +
+      `${problemsHtml(m.result.problems)}` +
+      `<p class="o-dim">Default phase ceiling after migrating: ${esc(Object.entries((m.result.after || {}).scopeDefaults || {}).map(([k, v]) => `${v} ${k}`).join(', '))}.</p></section>` : '') +
+    `</article>`;
+}
 const CEILINGS = ['launchesPerCard', 'repairRounds', 'transientRetries', 'runAgeMinutes', 'recoveryAttempts', 'setupRetries'];
 
 function editState() {
@@ -994,7 +1110,14 @@ function benchFormHtml(doc) {
     `<h4>Authority</h4>` +
     Object.keys(AUTHORITY_WORDS).map(w => field(`bench.authority.${w}`, 'bool', auth[w], `${AUTHORITY_WORDS[w]} (${w})`)).join('') +
     `<p class="o-dim">Release and deployment are never delegated.</p>` +
-    `<h4>Capacity — one shared total</h4>` + POOLS.map(p => field(`bench.capacity.${p}`, 'int', cap[p], p)).join('') +
+    (b.capacityModel === 'shared'
+      ? `<h4>Global limits — shared, first come first served</h4>` +
+        `<p class="o-dim">The most runs at once on the whole board, per pool, and launches a day. Standalone and phase work draw on the same totals, and only while a run holds a slot.</p>` +
+        POOLS.map(p => field(`bench.capacity.${p}`, 'int', cap[p], POOL_WORDS[p])).join('') +
+        `<h4>Default phase ceiling — reserves nothing</h4>` +
+        `<p class="o-dim">Every phase scope inherits these as the most it may use at once (and launch in a day). A ceiling is a limit, not a share: an idle phase uses nothing. Give one phase its own limits below only where it needs them.</p>` +
+        POOLS.map(p => field(`bench.scopeDefaults.${p}`, 'int', (b.scopeDefaults || {})[p], POOL_WORDS[p])).join('')
+      : `<h4>Capacity — one shared total, allocated to phases (reserved model)</h4>` + POOLS.map(p => field(`bench.capacity.${p}`, 'int', cap[p], p)).join('')) +
     `<h4>Ceilings</h4>` + CEILINGS.map(c => field(`bench.capacity.${c}`, 'int', cap[c], c)).join('') +
     field('bench.exclusions', 'list', b.exclusions, 'Excluded cards (numbers)') +
     field('bench.handback', 'list', b.handback, 'Handed back to you (numbers)') +
@@ -1007,6 +1130,7 @@ function phaseFormHtml(doc, n) {
   const auth = p.authority || {};
   const alloc = p.allocation || {};
   const ceil = p.ceilings || {};
+  const shared = (doc.bench || {}).capacityModel === 'shared';
   return `<fieldset class="o-form"><legend>Phase #${esc(n)} — may only narrow</legend>` +
     field(`phases.${n}.enabled`, 'bool', p.enabled, 'Enabled') +
     field(`phases.${n}.paused`, 'bool', p.paused, 'Paused') +
@@ -1014,7 +1138,10 @@ function phaseFormHtml(doc, n) {
     `<h4>Authority (inherits the parent's; unchecking narrows)</h4>` +
     Object.keys(AUTHORITY_WORDS).map(w => field(`phases.${n}.authority.${w}`, 'pauth', parent[w] && auth[w] !== false,
       `${AUTHORITY_WORDS[w]}${parent[w] ? '' : ' — the parent does not grant it'}`, parent[w] ? '' : ' disabled')).join('') +
-    `<h4>Allocation from the Bench total</h4>` + POOLS.map(k => field(`phases.${n}.allocation.${k}`, 'int', alloc[k] || 0, k)).join('') +
+    (shared
+      ? `<h4>Limits (blank inherits the default ceiling; reserves nothing)</h4>` +
+        POOLS.map(k => field(`phases.${n}.limits.${k}`, 'intopt', (p.limits || {})[k], POOL_WORDS[k])).join('')
+      : `<h4>Allocation from the Bench total (reserved model)</h4>` + POOLS.map(k => field(`phases.${n}.allocation.${k}`, 'int', alloc[k] || 0, k)).join('')) +
     `<h4>Ceilings (blank inherits; may only be lower)</h4>` + CEILINGS.map(k => field(`phases.${n}.ceilings.${k}`, 'intopt', ceil[k], k)).join('') +
     `<div class="o-actions">${btn(`rmphase:${n}`, `Remove phase #${n} from the draft`, { act: 'rmphase', data: { phase: n } })}</div>` +
     `</fieldset>`;
@@ -1042,6 +1169,7 @@ function agreementHtml() {
     (eff.configured ? `<p>${esc(eff.scopes.map(s => `${scopeName(s.id)}: ${scopeStateWords(s)[0]}`).join(' · '))}</p>` : '<p>No agreement: orchestration is off and no card or run is touched.</p>') +
     problemsHtml(eff.problems) +
     `<p class="o-dim">Release and deployment are never delegated. Notifications: board only — there is no connector, chat or email.</p></article>`);
+  parts.push(migrationHtml());
   if (!draft) {
     parts.push(`<article class="o-panel"><h3>No draft</h3><p>Start a draft to change the agreement. A draft is only a draft: saving it changes nothing that runs.</p><div class="o-actions">` +
       (eff.document ? btn('start-draft-from', 'Start a draft from the agreement in force', { act: 'startDraft', data: { from: 'effective' }, primary: true }) : '') +
@@ -1183,12 +1311,34 @@ async function doAction(el) {
         if (res.ok) { o.edit = null; o.preview = null; return { said: 'draft discarded' }; }
         return res;
       });
+    case 'migrate': {
+      const body = { expected, keepLimits: !!o.keepLimits, apply: !!d.apply };
+      if (!d.apply) {
+        const res = await send('/api/orchestration/agreement/migrate', body, true);
+        if (!res.ok) { o.notice = { tone: 'alarm', text: res.error }; paintNow(); return; }
+        o.migration = { base: expected, keep: !!o.keepLimits, result: res.data.result };
+        paintNow();
+        return;
+      }
+      return armed(key, async () => {
+        const res = await send('/api/orchestration/agreement/migrate', body, true);
+        if (res.ok) { o.migration = null; return { said: `agreement ${res.data.result.revision} shares capacity — nothing was started, moved or adopted` }; }
+        return res;
+      });
+    }
     case 'revert': o.edit = null; o.preview = null; paintNow(); return;
     case 'addphase': {
       const n = String(parseInt(o.newPhase, 10));
       if (!o.edit || n === 'NaN' || +n <= 0) { o.notice = { tone: 'alarm', text: 'a phase is named by its card number' }; paintNow(); return; }
       o.edit.doc.phases = o.edit.doc.phases || {};
-      if (!o.edit.doc.phases[n]) o.edit.doc.phases[n] = { enabled: true, paused: false, strategy: 'sequential', allocation: {}, ceilings: {} };
+      if (!o.edit.doc.phases[n]) {
+        // shared capacity: a new phase inherits the default ceiling and
+        // reserves nothing (task 182); only the reserved model allocates
+        const shared = (o.edit.doc.bench || {}).capacityModel === 'shared';
+        o.edit.doc.phases[n] = shared
+          ? { enabled: true, paused: false, strategy: 'sequential', ceilings: {} }
+          : { enabled: true, paused: false, strategy: 'sequential', allocation: {}, ceilings: {} };
+      }
       o.edit.dirty = true;
       o.newPhase = '';
       paintNow();
@@ -1298,6 +1448,10 @@ function wire(root) {
       form.note = el.value;
     } else if (f === 'newphase') {
       o.newPhase = el.value;
+    } else if (f === 'keeplimits') {
+      o.keepLimits = !!el.checked;
+      o.migration = null;           // a new choice needs a new preview
+      if (e.type === 'change') paintNow();
     } else if (f === 'ag' && o.edit) {
       setPath(o.edit.doc, el.dataset.path, el.dataset.type, el.value, el.checked);
       o.edit.dirty = true;

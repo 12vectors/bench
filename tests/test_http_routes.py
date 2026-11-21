@@ -266,9 +266,10 @@ class EveryMutationRefusesAHostilePage(unittest.TestCase):
         # policy-mutation; task 158 six Brain writes (create, edit,
         # classify, override, retire, retry), browser-mutation; task 175
         # six Brain drafting steps (start, continue, cancel, discard,
-        # retarget, apply), browser-mutation
-        self.assertEqual(93, len(self.routes))
-        self.assertEqual(35, sum(1 for k in self.routes.values()
+        # retarget, apply), browser-mutation; task 182 one, migrating
+        # reserved capacity to shared, policy-mutation
+        self.assertEqual(94, len(self.routes))
+        self.assertEqual(36, sum(1 for k in self.routes.values()
                                  if k == "policy-mutation"))
 
     def test_a_cross_origin_form_is_refused(self):

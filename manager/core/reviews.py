@@ -770,7 +770,8 @@ def label(record: dict) -> str:
 # ── what ↻ act on PR must not do ───────────────────────────────────────
 
 
-def repair_problem(filename: str, task: dict | None = None) -> str | None:
+def repair_problem(filename: str, task: dict | None = None, *,
+                   found: dict | None = None) -> str | None:
     """Why acting on this PR's review is refused, or None.
 
     A merged or closed pull request is not a target a push repairs: the
@@ -781,7 +782,7 @@ def repair_problem(filename: str, task: dict | None = None) -> str | None:
     refusal names the integration head as the separate target it is rather
     than retargeting anything itself.
     """
-    found = identity(filename, task, fetch=False)
+    found = found or identity(filename, task, fetch=False)
     status = str(found.get("state") or "").upper()
     if status not in ("MERGED", "CLOSED"):
         return None
