@@ -175,6 +175,12 @@ class Conflict(ValueError):
     again is a deliberate retry."""
 
 
+class Busy(ValueError):
+    """Another reasoning run is in flight for the same card, or the same
+    board conversation — one at a time. A wait, not a refusal: the caller
+    may ask again once that run settles (task 181)."""
+
+
 # ── persistence ────────────────────────────────────────────────────────
 
 
@@ -1105,7 +1111,7 @@ def request(filename: str | None, need: str, *, via: str = "orchestrator",
             busy = [j for j in JOBS.values() if j.get("task") == filename
                     and j.get("status") in ACTIVE]
         if busy:
-            raise ValueError(f"a reasoning run is already in flight for "
+            raise Busy(f"a reasoning run is already in flight for "
                              f"{filename or 'this conversation'} "
                              f"({busy[0]['need']}); one at a time")
         label = filename or f"board-{ask['conversation']}"

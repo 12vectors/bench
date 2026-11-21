@@ -55,12 +55,16 @@ class FakeReasoning:
     def __init__(self):
         self.jobs: list[dict] = []
         self.calls: list[dict] = []
+        self.busy = False       # another reasoning run holds the card
 
     def request(self, filename, need, *, via="orchestrator", action="reason",
                 board=None, subject=None, **_):
         self.calls.append({"file": filename, "need": need, "action": action,
                            "subject": subject})
-        answer = orchestrator.authorize(action, filename, board=board)
+        if self.busy:           # as the real one: one reasoning run per card
+            raise reasoning.Busy(f"a reasoning run is already in flight for "
+                                 f"{filename} (ask); one at a time")
+        answer =orchestrator.authorize(action, filename, board=board)
         if not answer["allowed"]:
             raise ValueError(f"not authorized: {answer['reason']} "
                              f"({answer['code']})")
@@ -190,6 +194,27 @@ class QuietButActiveIsLeftAlone(RecoveryCase):
         self.assertEqual("alive", call["subject"]["signals"]["process"])
         self.assertEqual([], self.stops)                  # silence kills nothing
         self.assertEqual("running", state.AGENTS[run]["status"])
+
+    def test_a_question_in_flight_is_a_wait_not_a_hold(self):
+        # task 181: a person asking about the card while its incident
+        # waits for a diagnosis must not turn it into a held blocker
+        self.launched_and_aged()
+        self.reasoning.busy = True
+        for _ in range(3):
+            self.tick()
+        [item] = self.incidents()
+        self.assertEqual("reasoning-in-flight", item["code"])
+        self.assertNotIn(item["status"], ("held", "exhausted"))
+        self.assertEqual([], item.get("attempts") or [])
+        self.assertEqual([], self.reasoning.jobs)
+        self.assertFalse(any("diagnosis-refused" in (n.get("text") or "")
+                             for n in self.notes_of("blocker")))
+        self.reasoning.busy = False               # the question settled
+        self.tick()
+        [item] = self.incidents()
+        self.assertEqual("diagnosing", item["status"])
+        self.assertEqual(1, len(self.reasoning.jobs))
+        self.assertEqual(1, item["attempts"][0]["n"])
 
     def test_a_persons_own_run_is_observed_not_diagnosed(self):
         self.enable()

@@ -661,6 +661,7 @@ def _diagnose(item: dict, board: dict, request=None) -> dict:
     n = len(item.get("attempts") or []) + 1
     attempt = {"n": n, "status": "intent", "at": operations.now_iso(),
                "epoch": time.time()}
+    before = item["status"]
     item.setdefault("attempts", []).append(attempt)
     item.update(status="diagnosing", code="diagnosing",
                 reason=f"diagnosis attempt {spent + 1} of {item['cap']}")
@@ -669,6 +670,17 @@ def _diagnose(item: dict, board: dict, request=None) -> dict:
         result = request(item["file"], "recovery", via="orchestrator",
                          action="recover", board=board,
                          subject=_subject(item, n))
+    except reasoning.Busy as exc:
+        # Another reasoning run holds the card — a person's question, say
+        # (task 181). One run per card at a time, so this is a wait like
+        # slots-full, never a refusal: nothing launched, nothing is spent,
+        # and the next tick asks again. The intent is withdrawn rather than
+        # kept as not-launched, so a long wait does not grow the record.
+        item["attempts"].remove(attempt)
+        item.update(status=before, code="reasoning-in-flight",
+                    reason=f"waiting: {str(exc)[:300]}")
+        _save(item)
+        return item
     except reasoning.Conflict as exc:
         attempt.update(status="not-launched", reason=str(exc)[:300])
         return _hold(item, "held", "diagnosis-refused", str(exc))
