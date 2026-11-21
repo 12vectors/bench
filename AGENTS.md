@@ -7857,12 +7857,16 @@ exhausted`, `slots-full`, `not-eligible`, a refused launch), capacity and
 today's starts from the agreement in force, the runs in flight as
 observed processes beside their last *agent-reported* progress, recent
 operations with their outcomes, delivery steps, the circuit breaker and
-the last pass; for a card or phase, also its brief, phase, dependencies,
-eligibility and check evidence. A board question reads the cards in To
-Do, In Progress and Review. Every list is capped and says how many it
-left out, and the readings name what they exclude — above all that a
-past scheduler pass keeps no reason for a choice it did not make, so a
-cause no record holds is a gap, never a guess. Earlier exchanges of the
+the last pass; the newest five passes the decision trace recorded about
+the cards concerned (any pass, for the board), each decision with its
+code, its reason and what the side effect then came to (see "The
+decision trace: why it acted, and why it did not"); for a card or phase,
+also its brief, phase, dependencies, eligibility and check evidence. A
+board question reads the cards in To Do, In Progress and Review. Every
+list is capped and says how many it left out, and the readings name what
+they exclude — above all that a pass before the trace started, or older
+than the passes given, keeps no reason for its choice, so a cause no
+record holds is a gap, never a guess. Earlier exchanges of the
 conversation are given as history, beside freshly read facts: a
 follow-up never answers from a frozen snapshot.
 

@@ -45,6 +45,7 @@ import time
 import agreements
 import config
 import decisions
+import decisiontrace
 import operations
 import orchestrator
 import progress
@@ -57,6 +58,8 @@ MAX_QUESTION = 1000
 MAX_LIST = 40
 MAX_RUNS = 20
 MAX_OPS = 12
+MAX_PASSES = 5
+MAX_TRACE_DECISIONS = 12
 NO_DELEGATION = ("Asking needs no orchestration authority: it launches one "
                  "read-only reasoning run on your request. Whether the "
                  "orchestrator may act on a card is a separate grant in the "
@@ -209,6 +212,58 @@ def _capacity_facts(tasks: list[dict]) -> dict:
                     "recorded intent reserves its slot before it launches"}
 
 
+_TRACE_DECISION = ("number", "scope", "stage", "action", "state", "code",
+                   "reason", "outcome")
+
+
+def _trace(numbers: set[str] | None) -> dict:
+    """The newest scheduling passes the decision trace recorded (task
+    184) that concern the cards asked about — any pass, for the board —
+    each with the decisions it made about those cards: the reason a past
+    choice was made, where one was kept. Bounded, and honest about what
+    it covers: the trace is this installation's, starts when it was first
+    recorded, and a pass before that keeps no reason."""
+    try:
+        if numbers is None:
+            found = decisiontrace.page(limit=MAX_PASSES)
+        else:
+            entries, seen = [], set()
+            for number in sorted(numbers):
+                for e in decisiontrace.page(card=number, limit=MAX_PASSES)["entries"]:
+                    if e["id"] not in seen:
+                        seen.add(e["id"])
+                        entries.append(e)
+            entries.sort(key=lambda e: e.get("seq") or 0, reverse=True)
+            found = {"entries": entries[:MAX_PASSES],
+                     "next": bool(entries[MAX_PASSES:]) or None,
+                     "meta": decisiontrace.meta()}
+    except Exception:  # noqa: BLE001 — a trace we cannot read is said, not guessed
+        return {"readable": False, "passes": []}
+    passes = []
+    for e in found["entries"]:
+        decs = [d for d in e.get("decisions") or []
+                if numbers is None or str(d.get("number") or "") in numbers]
+        decs, left = _cut(decs, MAX_TRACE_DECISIONS)
+        occ = e.get("occurrences") or {}
+        passes.append({
+            "entry": e.get("id"), "status": e.get("status"),
+            "outcome": e.get("outcome"), "headline": e.get("headline"),
+            "first": occ.get("first"), "last": occ.get("last"),
+            "identicalPasses": occ.get("count"),
+            "decisions": [{k: d.get(k) for k in _TRACE_DECISION if d.get(k) is not None}
+                          | ({"then": (d.get("result") or {}).get("outcome")}
+                             if (d.get("result") or {}).get("outcome") else {})
+                          for d in decs],
+            "decisionsOmitted": left})
+    meta = found.get("meta") or {}
+    return {"readable": True, "started": meta.get("started"),
+            "lastPass": meta.get("lastPass"), "passes": passes,
+            "olderPassesOmitted": bool(found.get("next")),
+            "note": "recorded when each pass decided; this installation's "
+                    "only, never synced. A selection is not a launch: "
+                    "`then` is what the side effect came to"}
+
+
 def snapshot(target: dict, board: dict) -> dict:
     """Bench's readings for one question, at one moment: what the run is
     given as `ask.readings` in its facts, and what `facts_for` shows a
@@ -252,13 +307,15 @@ def snapshot(target: dict, board: dict) -> dict:
         "plan": plan, "delivery": delivery,
         "running": runs, "operations": ops,
         "capacity": _capacity_facts(tasks),
+        "trace": _trace(numbers),
         "omitted": {"cards": cards_left, "plan": plan_left,
                     "delivery": delivery_left, "running": runs_left,
                     "operations": ops_left},
         "exclusions": [
             "Backlog, Done and Archive cards are counted by stage, not listed",
-            "a past scheduler pass keeps no reason for a choice it did not "
-            "make; only the plan as it stands now is here",
+            "a scheduler pass before the decision trace started, or older "
+            "than its newest passes listed here, keeps no reason for a "
+            "choice; the plan is as it stands now",
             "agent-reported progress is labelled; it is not verified",
             "check evidence is listed for a card question only; ask about "
             "the card for it"],

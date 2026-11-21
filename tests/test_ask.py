@@ -44,6 +44,7 @@ import agreements  # noqa: E402
 import ask  # noqa: E402
 import config  # noqa: E402
 import decisions  # noqa: E402
+import decisiontrace  # noqa: E402
 import execowner  # noqa: E402
 import movements  # noqa: E402
 import operations  # noqa: E402
@@ -749,6 +750,37 @@ class Readings(Board):
         self.assertEqual([i["number"] for i in readings["plan"]], ["51"])
         self.assertEqual([o["key"] for o in readings["operations"]], ["op-1"])
         self.assertEqual(readings["operations"][0]["status"], "refused")
+
+    def test_the_decision_trace_gives_a_past_choice_its_recorded_reason(self):
+        """A pass the decision trace kept (task 184) reaches the readings
+        with its rule and reason for the cards asked about, and what the
+        side effect came to — the reason recorded when it decided, not one
+        made up now. Another card's decisions stay out of a card question."""
+        decisiontrace.append({"status": "ok", "headline": "1 waited",
+                              "decisions": [
+                                  {"card": "51-export-as-csv.md", "number": "51",
+                                   "scope": "bench", "action": "implement",
+                                   "state": "waiting", "code": "slots-full",
+                                   "reason": "2 of 2 implementation slots in use"},
+                                  {"card": "175-a-card-in-to-do.md", "number": "175",
+                                   "scope": "bench", "action": "implement",
+                                   "state": "selected", "code": "ready",
+                                   "result": {"outcome": "refused"}}]})
+        with self.plan([]):
+            target = ask.resolve_target({"kind": "card", "card": "51"}, taskfiles.collect())
+            card = ask.snapshot(target, taskfiles.collect())
+            board = ask.snapshot({"kind": "board", "subject": "board"},
+                                 taskfiles.collect())
+        self.assertTrue(card["trace"]["readable"])
+        [entry] = card["trace"]["passes"]
+        self.assertEqual(entry["decisions"], [{
+            "number": "51", "scope": "bench", "action": "implement",
+            "state": "waiting", "code": "slots-full",
+            "reason": "2 of 2 implementation slots in use"}])
+        decs = {d["number"]: d for d in board["trace"]["passes"][0]["decisions"]}
+        self.assertEqual(decs["175"]["then"], "refused", "a selection is not a launch")
+        self.assertTrue(any("keeps no reason" in e for e in card["exclusions"]),
+                        "a pass before the trace, or older than it lists, is a gap")
 
     def test_lists_are_bounded_and_say_what_they_left_out(self):
         items = [{"number": str(n), "code": "waiting", "state": "waiting"}
