@@ -1393,8 +1393,12 @@ an entry's address (`/brain/e/<id>`) opens it whatever the view — a
 Historical or Superseded entry says it is hidden from the default list
 and how to list it. A search or a combination that shows nothing says
 what matched and what is hidden, and offers **Reset to default view**
-and **New entry**; a kind with no entries says so in its own words.
-Below 760px the sidebar folds into one **Browse and filter** button
+and **New entry** — and, where the controls hide what matched, **Show
+hidden classifications**; the default view itself (a Brain holding only
+Historical and Superseded entries, say) offers that instead of a Reset
+to the view already shown. A kind with no entries says so in its own
+words. On a wide window the sidebar stays in view while the list
+scrolls. Below 760px the sidebar folds into one **Browse and filter** button
 above the list, naming the current view, rather than squeezing the
 entries beside it.
 

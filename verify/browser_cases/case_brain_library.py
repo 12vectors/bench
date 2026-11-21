@@ -370,6 +370,18 @@ class BrainLibrary(unittest.TestCase):
                                  f"{label}: no fold button on a wide window")
                 self.no_overflow(b, f"library {label}")
                 shot(f"brain-library-after-{label}-{'night' if dark else 'day'}")
+                # the sidebar stays in view while the list scrolls under it
+                self.assertEqual("sticky", b.eval("getComputedStyle(document.querySelector('#bshell .b-nav')).position"))
+                self.show(b, "Historical")
+                self.show(b, "Superseded")
+                b.eval("(() => { const s = document.querySelector('#bshell'); s.scrollTop = s.scrollHeight; })(); true")
+                time.sleep(0.2)
+                if b.eval("document.querySelector('#bshell').scrollTop > 0"):
+                    shell, nav = self.rect(b, "#bshell"), self.rect(b, "#bshell .b-nav")
+                    self.assertGreaterEqual(nav["top"], shell["top"] - 1, f"{label}: the sidebar scrolled away {nav}")
+                    self.assertLessEqual(nav["top"], shell["top"] + 40, f"{label}: the sidebar is held at the top {nav}")
+                b.eval("document.querySelector('#bshell').scrollTop = 0; true")
+                self.reset_view(b)
         for dark in (True, False):
             b = self.open("/brain", 390, 844, dark)
             self.reset_view(b)
@@ -397,3 +409,66 @@ class BrainLibrary(unittest.TestCase):
             b.click(toggle)
             b.wait(f"document.querySelector('{toggle}').getAttribute('aria-expanded') === 'false'", 5)
         self.passive("the layout at three widths")
+
+
+class BrainAllHistory(unittest.TestCase):
+    """A Brain whose every entry is Historical or Superseded: the default
+    view shows nothing, and its way on is to show the hidden
+    classifications — not a Reset to the view already shown (task 183's
+    review)."""
+
+    @classmethod
+    def setUpClass(cls):
+        shared = S["backend"]
+        base = shared.base.parent / "brain-library-history-fixture"
+        shutil.rmtree(base, ignore_errors=True)
+        cls.watch = Watch()
+        env = dict(shared.env)
+        env["BOARD_ALLOWED_ORIGINS"] = ",".join(
+            o for o in (env.get("BOARD_ALLOWED_ORIGINS", "").strip(), cls.watch.url) if o)
+        cls.backend = bv.Backend(shared.tool, base, env, shared.python)
+        brain = cls.backend.work / "brain"
+        brain.mkdir()
+        for eid, title, kind, klass, summary, *extra in (
+                ("e-hist-dec", "Merging on origin, first attempt", "Decision", "Historical", "Before the policy"),
+                ("e-hist-guide", "Starting the board by hand", "Guide", "Superseded", "Replaced",
+                 "**Invalidated:** start.sh replaced it\n")):
+            (brain / f"{eid}.md").write_text(entry(eid, title, kind, klass, summary, *extra), encoding="utf-8")
+        cls.backend.start()
+        cls.origin = S["browser"].origin
+        cls.watch.start(cls.backend.port)
+
+    @classmethod
+    def tearDownClass(cls):
+        S["browser"].origin = cls.origin
+        cls.watch.stop()
+        cls.backend.stop()
+        shutil.rmtree(cls.backend.base, ignore_errors=True)
+
+    def test_the_default_view_of_history_alone_offers_to_show_it(self):
+        mark, before = self.watch.mark(), tree(self.backend.work)
+        b = S["browser"]
+        b.origin = self.watch.url
+        b.viewport(1280, 860)
+        b.goto("/brain")
+        if not b.wait("!!document.querySelector('#bshell .b-empty')", 15):
+            raise bv.CheckFailed("the default view of a Brain of history alone: "
+                                 + str(b.eval("document.querySelector('#bshell')?.innerText")))
+        acts = b.eval("[...document.querySelectorAll('#bshell .b-empty [data-bact]')].map(x => x.dataset.bact)")
+        self.assertEqual(["show-hidden", "ag-new"], acts, "no Reset to the view already shown")
+        said = b.eval("document.querySelector('#bshell .b-empty').innerText")
+        self.assertIn("1 Historical, 1 Superseded", said)
+        self.assertIn("This is the default view", said)
+        b.click('#bshell .b-empty [data-bact="show-hidden"]')
+        if not b.wait("document.querySelectorAll('#bshell .b-results a[data-brain-id]').length === 2", 5):
+            raise bv.CheckFailed("Show hidden classifications drew no entry")
+        self.assertTrue(b.eval("document.querySelector('#bshell [data-bshow=\"Historical\"]').checked"
+                               " && document.querySelector('#bshell [data-bshow=\"Superseded\"]').checked"))
+        self.assertTrue(b.eval("!!document.activeElement?.dataset?.brainId"), "focus lands on an entry it drew")
+        shot("brain-library-history-alone-shown")
+        # and Reset is now a real step back to the default; nothing written
+        b.click('#bshell .b-navreset [data-bact="clear-find"]')
+        if not b.wait("!!document.querySelector('#bshell .b-empty [data-bact=\"show-hidden\"]')", 5):
+            raise bv.CheckFailed("Reset did not return to the default view")
+        self.assertEqual([], self.watch.since(mark), "browsing sent a write")
+        self.assertEqual(before, tree(self.backend.work), "the work root changed")

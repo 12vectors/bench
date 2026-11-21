@@ -356,10 +356,17 @@ function noResults(index, t) {
       'but the classification controls hide ' + (hiddenHere.length === 1 ? 'it' : 'them') + '.</p>'
     : `<p>Search looks at each entry's title, summary, id, kind, file name, sources and related ids. ` +
       `${index.diagnostics && index.diagnostics.length ? 'A file listed below as not shown cannot match until it is fixed.' : ''}</p>`;
+  // the default view has nothing to reset to: where the controls hide every
+  // match (a Brain of history alone, say) the way on is to show them
+  const actions = [
+    hiddenHere.length ? button('show-hidden', 'Show hidden classifications') : '',
+    finding() ? button('clear-find', 'Reset to default view') : '',
+    button('ag-new', 'New entry')].filter(Boolean).join(' ');
   return `<div class="b-panel b-empty" role="status"><p><strong>No entry matches</strong>` +
     `${said ? ' ' + esc(said) : ' the classifications chosen'}.</p>${why}` +
-    `<p>Reset to the default view of the ${entries(index.entries.length)}, or write the entry you were looking for.</p>` +
-    `<p>${button('clear-find', 'Reset to default view')} ${button('ag-new', 'New entry')}</p></div>`;
+    (finding() ? `<p>Reset to the default view of the ${entries(index.entries.length)}, or write the entry you were looking for.</p>`
+      : '<p>This is the default view. Show the hidden classifications, or write the entry you were looking for.</p>') +
+    `<p>${actions}</p></div>`;
 }
 
 function listHtml(slot) {
@@ -1303,6 +1310,15 @@ function act(name, arg) {
     navOpen = !navOpen;
     renderBrain(true);
     $('#bshell [data-bact="toggle-nav"]')?.focus();
+    return;
+  }
+  if (name === 'show-hidden') {
+    // shows every classification the current view hides — a view change,
+    // never an entry's; Reset to default view is the way back
+    for (const c of LIB_ORDER) find.show[c] = true;
+    renderBrain(true);
+    // focus lands on the first entry it brought into view
+    $('#bshell .b-results [data-brain-id]')?.focus();
     return;
   }
   if (name === 'new') {

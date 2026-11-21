@@ -2124,6 +2124,12 @@
   .b-results{grid-area:list;display:flex;flex-direction:column;gap:12px;min-width:0}
   .b-nav{grid-area:nav;background:var(--surface);border:1px solid var(--border-soft);border-radius:var(--radius);
     padding:12px 14px;min-width:0}
+  /* the controls stay in view while a long list scrolls under them (the
+     shell is the scroller); a window too short for them scrolls them */
+  @media (min-width:761px){
+    .b-nav{position:sticky;top:0;max-height:calc(100vh - 120px);max-height:calc(100dvh - 120px);
+      overflow-y:auto;overscroll-behavior:contain}
+  }
   .b-navbody{display:flex;flex-direction:column;gap:14px}
   .b-navtoggle{display:none}
   .b-navh{display:block;margin:0 0 6px;font-size:12px;font-weight:600;color:var(--text);
