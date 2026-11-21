@@ -277,8 +277,9 @@ class Persistence(unittest.TestCase):
         if not b.wait("document.querySelector('#drawer').classList.contains('open')", 5):
             raise bv.CheckFailed("a card's detail view did not open")
         b.key("Escape")
-        b.wait("!document.querySelector('#drawer').classList.contains('open')", 5)
-        time.sleep(0.5)
+        if not b.wait("!document.querySelector('#drawer').classList.contains('open')", 5):
+            raise bv.CheckFailed("Escape did not close the card's detail view")
+        b.settled()
 
     def test_an_explicit_choice_survives_events_repaints_navigation_and_rotation(self):
         b = S["browser"]
@@ -292,14 +293,14 @@ class Persistence(unittest.TestCase):
         found["closed-after-churn"] = g
         self.assertFalse(g["open"], "live updates or navigation opened a closed panel")
         b.viewport(*SIDEWAYS)
-        time.sleep(0.4)
+        b.settled()    # the rotation's repaint and resize have run
         g = geometry()
         found["closed-sideways"] = g
         shot("mobile-rotated-closed-844x390")
         self.assertFalse(g["open"], "a rotation opened a closed panel")
         fits(self, g, "closed, sideways")
         b.viewport(390, 844)
-        time.sleep(0.4)
+        b.settled()    # the rotation's repaint and resize have run
         self.assertFalse(geometry()["open"], "rotating back opened a closed panel")
 
         b.click("#actbtn")
@@ -310,7 +311,7 @@ class Persistence(unittest.TestCase):
         self.assertTrue(g["open"], "live updates or navigation closed an open panel")
         fits(self, g, "open, after updates")
         b.viewport(*SIDEWAYS)
-        time.sleep(0.4)
+        b.settled()    # the rotation's repaint and resize have run
         g = geometry()
         found["open-sideways"] = g
         shot("mobile-rotated-open-844x390")
@@ -318,7 +319,7 @@ class Persistence(unittest.TestCase):
         fits(self, g, "open, sideways")
         self.assertGreaterEqual(g["board"]["h"], 100, f"sideways the board has {g['board']['h']}px")
         b.viewport(390, 844)
-        time.sleep(0.4)
+        b.settled()    # the rotation's repaint and resize have run
         g = geometry()
         self.assertTrue(g["open"])
         fits(self, g, "open, back upright")
@@ -407,10 +408,13 @@ class CardStates(unittest.TestCase):
         }
         for stem, (stage, pill) in expect.items():
             b.click(f'#stagenav [data-stage="{stage}"]')
-            time.sleep(0.6)
+            # the strip marks the stage, then the board scrolls to it
+            b.wait(f"document.querySelector('#stagenav [aria-current=\"true\"]')?.dataset.stage"
+                   f" === '{stage}'", 5)
+            b.settled()
             sel = self.card(stem)
             b.eval(f"document.querySelector('{sel}').scrollIntoView({{block: 'nearest'}})")
-            time.sleep(0.2)
+            b.settled()
             m = b.eval(f"""(() => {{
               const c = document.querySelector('{sel}'), r = c.getBoundingClientRect();
               const col = c.closest('.kcol'), h = col.querySelector('h2').getBoundingClientRect();
@@ -443,7 +447,8 @@ class CardStates(unittest.TestCase):
                       " return [s.outlineStyle, s.outlineWidth]; })()")
         self.assertNotEqual("none", ring[0], f"a focused stage button shows no focus ring: {ring}")
         b.key("Enter")
-        time.sleep(0.6)
+        b.wait("document.querySelector('#stagenav [aria-current=\"true\"]')?.dataset.stage === 'review'", 5)
+        b.settled()    # the board's scroll to the stage has come to rest
         self.assertEqual("review", b.eval("document.querySelector('#stagenav [aria-current=\"true\"]')?.dataset.stage"))
         left = b.eval("document.querySelector('#board').scrollLeft")
         self.assertGreater(left, 0, "Enter on the Review stage did not move the board")
