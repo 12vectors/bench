@@ -7898,7 +7898,7 @@ where they look like a credential — pattern matching, not a promise.
 
 ### The decision trace: why it acted, and why it did not
 
-A busy person asks three questions of an orchestrator: *why did it
+A busy person asks an orchestrator the same things again and again: *why did it
 start this?*, *why not that card?* and *why is nothing happening?*
 **Orchestrator → Decision trace** answers them in one place (task 184),
 from a record of every scheduling pass — not by piecing together the

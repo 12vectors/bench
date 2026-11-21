@@ -508,6 +508,8 @@ brainwrite._journal_put
 brainwrite._write
 completion._record_delivered
 completion._remember
+decisiontrace._append
+decisiontrace._prune
 evidence.store
 execowner._write_designation
 execowner.ensure_installation_id
