@@ -1310,8 +1310,10 @@ def repair_target(filename: str, stage: str, *,
                       f"{proposed['ref']}, not {branch} — bench repairs the "
                       f"phase's own branch only; fix the PR or the card's "
                       f"**PR:** line by hand")
+    # a base read from the plan is the plan's own answer, so any other
+    # value is the host's — and it must be the base the board recorded
     said_base = (found.get("base") or {})
-    if said_base.get("authority") not in (None, "plan", "local") \
+    if said_base.get("authority") != "plan" \
             and said_base.get("ref") and said_base["ref"] != out["base"]:
         return refuse("base-drift",
                       f"the integration PR targets {said_base['ref']}, and the "
