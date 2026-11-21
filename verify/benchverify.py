@@ -828,7 +828,10 @@ class PageOps:
         click navigated the page, or the guard is not there)."""
         try:
             seen = self.eval(CLICK_SEEN_JS)
-        except CheckFailed:
+        except (CheckFailed, SetupError):
+            # a click that navigated destroys the page it was read from:
+            # local CDP says so as a protocol error, Playwright as a page
+            # error. A transport that is really gone fails the next call.
             return None
         return seen if isinstance(seen, dict) else None
 
