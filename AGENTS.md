@@ -7864,7 +7864,14 @@ switched:
 | `foreign-checkout`, `wrong-branch` | something else sits where the worktree goes, or it is on another branch | settle it by hand; bench never switches it |
 | `dirty`, `conflicting` | the worktree has uncommitted changes, or a merge or rebase in progress | commit, remove or finish it by hand |
 | `busy` | a run is on the phase or a member, or a repair is already being started | **‖ hold** it, or wait for it to end |
-| `operation-pending`, `operation-unknown` | an orchestrator operation on the phase or a member has no settled receipt | wait for it, or settle it in Orchestrator → Recovery |
+| `operation-pending`, `operation-unknown` | an orchestrator operation on the phase or a member has no settled receipt (an `unobserved` run a restarted board never saw end included) | wait for it, or settle it in Orchestrator → Recovery |
+
+**When the host cannot be read.** Without an answer from the hosting
+provider the target is the phase's own branch in this checkout, as it is
+for an ordinary card, and the launch check says the PR's head and base
+were not compared. The repair's push is a plain one, so a remote branch
+that moved on without this checkout refuses it and nothing is forced over
+it; the run fails, the commit stays here, and the card stays in Review.
 
 **What stays where it is.** The phase and every member stay in
 `review/`; the member list, the phase log's integration lines and the
@@ -7890,10 +7897,14 @@ for changes at the integrated head is repaired where the agreement
 delegates `repair`, within `repairRounds` and the phase's daily starts,
 as an operation in the ledger like any repair; without the word, the
 card reads `repair-not-delegated` and **↻ act on PR** is yours. Its own
-operation is not counted as a competitor; anything else unsettled on the
-phase or a member refuses the launch, and a refusal for a run or an
-operation still in flight is answered afresh on the next pass rather
-than held.
+operation is not counted as a competitor. A run on the phase or a member,
+or an operation on one still in flight, is read by the plan itself
+through the launch's own check (`agents.phase_repair_wait`): the card
+reads `repair-waiting` (or `repair-held`, for an unknown outcome) and no
+repair operation is opened — so nothing is refused and recorded on the
+card pass after pass. A launch that still loses that race is refused
+`busy` or `operation-pending`, and that refusal is answered afresh on the
+next pass rather than held.
 
 ### Relevance reviews: comment, then update the card from one
 

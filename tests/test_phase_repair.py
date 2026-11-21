@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import sys
 import threading
@@ -135,7 +136,24 @@ class PhaseRepairCase(PhaseCase):
         self.addCleanup(os.environ.pop, "REPAIR_WAIT", None)
         self.patch(GH_BIN=str(gh))
         self.adapter_is(REPAIRS)
+        if self.LAYOUT == "vendored":
+            self.vendor()
         self.build()
+
+    # The cases here run source-hosted by default — the tool at the top of
+    # the repository it manages, the cards at `tasks/` inside it — which is
+    # PhaseCase's own shape. VENDORED moves the cards under
+    # `.task-manager/`, inside the application; the browser case covers the
+    # external split.
+    LAYOUT = "source-hosted"
+
+    def vendor(self) -> None:
+        tm = self.repo / ".task-manager"
+        tm.mkdir()
+        # the stage directories are empty and so untracked: moved on disk
+        shutil.move(str(self.tasks), str(tm / "tasks"))
+        self.tasks = tm / "tasks"
+        self.patch(TASKS=self.tasks, TM_ROOT=tm)
 
     # — the world —
 
@@ -495,6 +513,29 @@ class WhenTheHostOrALaterRunIsInTheWay(PhaseRepairCase):
         operations.update(op["key"], "launched")
         operations.update(op["key"], "unobserved")
         self.assertIn("unobserved", str(self.refused("operation-pending")))
+
+
+class AVendoredInstallRepairsTheSameWay(PhaseRepairCase):
+    """The cards inside the application, under `.task-manager/`: the same
+    branch, the same PR, nothing created, and the same refusals."""
+
+    LAYOUT = "vendored"
+
+    def test_the_repair_updates_the_same_branch_and_pr(self):
+        self.assertTrue(str(self.tasks).endswith(".task-manager/tasks"))
+        agents.start_pr_fix(PHASE, "review")
+        self.settle()
+        [run] = self.seen()
+        self.assertEqual(("act-pr", PHASE_BRANCH), (run["mode"], run["branch"]))
+        self.assertEqual(self.tip(PHASE_BRANCH), self.origin_tip(PHASE_BRANCH))
+        self.assertNotEqual(self.integrated, self.tip(PHASE_BRANCH))
+        self.assertEqual("review", self.stage_of(PHASE))
+        self.assertIn("## PR update", self.text(PHASE))
+        self.assertFalse(self.branch_exists(f"task/{PHASE[:-3]}"))
+
+    def test_a_merged_integration_pr_is_refused(self):
+        self.prs(phase_state="MERGED")
+        self.refused("pr-merged")
 
 
 class OrdinaryCardsAreUnchanged(PhaseRepairCase):
