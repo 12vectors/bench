@@ -120,12 +120,32 @@ DISALLOWED_TOOLS = {
     # reads its pinned context through exact Read grants and answers on
     # stdout; it has no tool that writes and no shell
     "reason": READ_ONLY_TOOLS + ["Bash"],
+    # Brain drafting (task 175): the reason stance, and no network
+    # retrieval either — it researches the checkout and its pinned inputs,
+    # never the web
+    "brain": READ_ONLY_TOOLS + ["Bash", "WebFetch", "WebSearch"],
 }
 # The intents this adapter launches. Anything else is refused by `run`
 # rather than guessed into one of these stances.
-INTENTS = ("work", "act-pr", "review", "refine", "reason")
+INTENTS = ("work", "act-pr", "review", "refine", "reason", "brain")
 # The proposal-only intents: no allow-rule of any kind but exact reads.
-NO_RULE_MODES = {"refine", "reason"}
+NO_RULE_MODES = {"refine", "reason", "brain"}
+# What a Brain drafting run may not read inside the checkout it starts in,
+# whatever the profile says: credential-shaped files, relative to that
+# working directory. The profile's `readDeny` adds the tool's own private
+# runtime paths by absolute path. Deny beats allow; these are permission
+# rules the vendor applies to its file-reading tools, not an OS sandbox.
+BRAIN_READ_DENY = ["**/.env", "**/.env.*", "**/*.pem", "**/*.key",
+                   "**/id_rsa*", "**/id_ed25519*", "**/*.p12", "**/*.pfx",
+                   "**/.git/**", "**/.netrc", "**/.npmrc", "**/.pypirc",
+                   # the shapes bench refuses to cite (braindraft.SECRET_NAME),
+                   # denied as reads too, so what cannot be cited cannot be
+                   # read either. A glob cannot say "token as a word", so
+                   # these err towards denying: `secrets.yaml`,
+                   # `credentials.json`, `api_token.txt`, `passwords.csv`
+                   "**/*secret*", "**/*credential*", "**/*password*",
+                   "**/token", "**/tokens", "**/token.*", "**/tokens.*",
+                   "**/*_token*", "**/*-token*", "**/*.token*"]
 # History must never rewrite under a public PR: deny the canonical force
 # and rebase spellings even though nothing allows them — `git push` alone
 # would otherwise cover `git push --force` by prefix. (Prefix rules can't
@@ -386,6 +406,25 @@ def edit_deny_rule(path: str) -> str:
     return f"Edit(/{path})"
 
 
+def brain_read_denies(profile: dict | None) -> list[str]:
+    """Read deny-rules for a Brain drafting run: the credential patterns
+    every such run carries, then each absolute path the profile names
+    (`readDeny`) as the path itself and everything under it. A path this
+    adapter would not put in a rule (not absolute, not canonical, a
+    wildcard character) is refused rather than dropped — a narrowing that
+    silently went missing would widen what the run may read."""
+    rules = [f"Read({pattern})" for pattern in BRAIN_READ_DENY]
+    for path in (profile or {}).get("readDeny") or []:
+        if not isinstance(path, str) or not path.startswith("/") \
+                or not _SAFE_PATH.fullmatch(path) or "//" in path \
+                or any(p in ("", ".", "..") for p in path.split("/")[1:]):
+            raise ReadRefused(f"readDeny names {str(path)[:80]!r}, which is not "
+                              f"a canonical absolute path this adapter can put "
+                              f"in a deny rule")
+        rules += [read_rule(path), f"Read(/{path}/**)"]
+    return rules
+
+
 def settings(mode: str, commands: list[str],
              profile: dict | None = None, progress: str | None = None,
              reads: list[dict] | None = None) -> dict:
@@ -408,6 +447,8 @@ def settings(mode: str, commands: list[str],
     denies = deny_rules(mode, profile)
     if mode in INTENTS:
         denies += [edit_deny_rule(r["path"]) for r in reads or []]
+    if mode == "brain":
+        denies += brain_read_denies(profile)
     if denies:
         perms["deny"] = denies
     if perms:
@@ -434,11 +475,12 @@ if __name__ == "__main__":
     try:
         reads = approved_reads(os.environ.get("AGENT_CONTEXT"),
                                os.environ.get("AGENT_GUIDANCE"))
+        document = settings(mode, commands,
+                            load_profile(os.environ.get("AGENT_PROFILE")),
+                            os.environ.get("AGENT_PROGRESS"), reads)
     except ReadRefused as exc:
         print(f"claude adapter: refusing the launch — {exc}. An approved "
               f"input that cannot be granted exactly is not granted more "
               f"broadly, and is not silently dropped.", file=sys.stderr)
         sys.exit(CONTEXT_EXIT)
-    print(json.dumps(settings(mode, commands,
-                              load_profile(os.environ.get("AGENT_PROFILE")),
-                              os.environ.get("AGENT_PROGRESS"), reads)))
+    print(json.dumps(document))

@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 133120,
-   "sha256": "9b3685eec533294cb68685df14a04d02c82df1238ab91fbb4970405f8eaf4df8",
+   "bytes": 134258,
+   "sha256": "d0c2b950ec3fc61864310f96eae90a86cf3a2dfbbd3dc68881e4fe5036dfa532",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -266,8 +266,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/brain.js": {
-   "bytes": 49922,
-   "sha256": "600a74fde8ea15ff535842bdd8e9a8279ad1125b1d998a0da78bc34f438f2637",
+   "bytes": 81065,
+   "sha256": "18e92c0878c18a11f3d9dc2ac85c519cc3747dde3097e5c5889a721c8f9c7347",
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {
@@ -361,8 +361,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/settings/agents.js": {
-   "bytes": 34288,
-   "sha256": "bf5ae2360677af717709df47361e44530bd106b9c58068a5084323d781429244",
+   "bytes": 34342,
+   "sha256": "ed166463eafa2d93e1d914b7cf98bddbedc6a1b8a76d5ef1f0474aa0bf7e7321",
    "type": "text/javascript; charset=utf-8"
   },
   "views/settings/checks.js": {
@@ -386,8 +386,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/settings/policy.js": {
-   "bytes": 20100,
-   "sha256": "a8a52346c986c146ec15bb9271768df8bf1dd905034a5d9831d67e1e8dd8c8e2",
+   "bytes": 20443,
+   "sha256": "1031bb1b7b82ed792132ad817127ae0cda9f280c09f17ebc56bd26541903712d",
    "type": "text/javascript; charset=utf-8"
   },
   "views/settings/preview.js": {

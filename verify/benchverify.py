@@ -1312,6 +1312,11 @@ class Backend:
         # minute) before answering, so a case can see a run in flight.
         self.refine_reply = base / "refine-reply.txt"
         self.refine_hold = base / "refine-hold"
+        # A Brain drafting round (task 175) is answered with `brain_reply`,
+        # its __DRAFT__ and __ROUND__ filled from the prompt the board sent
+        # ($2, after -p), and waits while `brain_hold` exists.
+        self.brain_reply = base / "brain-reply.txt"
+        self.brain_hold = base / "brain-hold"
         claude = bindir / "claude"
         claude.write_text(
             "#!/bin/sh\n"
@@ -1320,6 +1325,13 @@ class Backend:
             "fi\n"
             f"if [ \"$AGENT_MODE\" = refine ] && [ -f '{self.refine_reply}' ]; then\n"
             f"  cat '{self.refine_reply}'; exit 0\nfi\n"
+            f"if [ \"$AGENT_MODE\" = brain ]; then\n"
+            f"  n=0; while [ -f '{self.brain_hold}' ] && [ $n -lt 600 ]; do sleep 0.1; n=$((n+1)); done\n"
+            "fi\n"
+            f"if [ \"$AGENT_MODE\" = brain ] && [ -f '{self.brain_reply}' ]; then\n"
+            "  draft=$(printf '%s' \"$2\" | grep -o '\"draft\": \"bd-[0-9a-f]*\"' | head -n 1 | cut -d'\"' -f4)\n"
+            "  round=$(printf '%s' \"$2\" | grep -o '\"round\": [0-9]*' | head -n 1 | grep -o '[0-9]*$')\n"
+            f"  sed -e \"s/__DRAFT__/$draft/g\" -e \"s/__ROUND__/$round/g\" '{self.brain_reply}'; exit 0\nfi\n"
             "echo 'bench-verify claude stub: no model here' >&2\nexit 1\n")
         claude.chmod(0o755)
         self.env = dict(env)

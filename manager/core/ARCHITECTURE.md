@@ -66,7 +66,7 @@ L24 setuptasks
 L25 setupguide
 L26 phases
 L27 phasescope
-L28 refine reasoning coordinate
+L28 refine reasoning coordinate braindraft
 L29 recovery
 L30 scheduler
 L31 routes watch
@@ -107,7 +107,15 @@ itself (parent, children, loops) is derived once by
 the Brain's one writer, kept apart from `brain` (L5, the reader) because
 a write needs the actor (`acceptance`), the scoped work-state commit
 (`taskfiles.commit_work_file`) and sync's status and push (`sync`), all
-above the reader. Only `routes` imports it.
+above the reader. Only `routes` and `braindraft` import it.
+
+`braindraft` (task 175) sits beside `refine` and `reasoning` (L28): a
+person's Brain drafting request, one bounded `brain`-intent run per
+explicit Generate or Continue through `agents.launch`, its work-root
+sources pinned by `profiles.pin` and granted by exact reads, its answer
+validated against what that round was given, and the person's Apply
+written through `brainwrite.write` — the Brain's one writer. It writes no
+entry itself, and only `routes` (and `board`, for `recover`) import it.
 
 `stackactions` (task 119, WP10b) sits beside `delivery`, directly above
 `stacks`, and neither imports the other: it performs the three explicit,
@@ -379,7 +387,7 @@ L23 setuptasks
 L24 setupguide
 L25 phases
 L26 phasescope
-L27 refine reasoning coordinate
+L27 refine reasoning coordinate braindraft
 L28 recovery
 L29 scheduler
 L30 watch routes
@@ -422,7 +430,7 @@ One owner per question; `AGENTS.md` describes each module in full.
 | stack maintenance | `stackactions` | the three confirmed stack actions — retarget, update from parent, clean up after proven delivery — each bound to the identities its sheet showed |
 | setup base | `setupbase`, `appinspect` | the setup decisions record, its journal, request identity and revision guards, and the agent area; the read-only inspection of the application's files |
 | surfaces | `agentsettings`, `settings`, `setupguide`, `setuptasks`, `readiness`, `previews` | configuration pages and the setup guide's areas (`setupguide` composes the other three) |
-| runs | `agents`, `phases`, `refine`, `reasoning`, `coordinate`, `scheduler` | headless launches; the phase beat; refinement jobs; orchestrator reasoning jobs and their validated responses; a review card's checks, independent review, repair and delegated merge; the orchestration beat |
+| runs | `agents`, `phases`, `refine`, `reasoning`, `coordinate`, `braindraft`, `scheduler` | headless launches; the phase beat; refinement jobs; orchestrator reasoning jobs and their validated responses; a review card's checks, independent review, repair and delegated merge; Brain drafting requests and their validated proposals; the orchestration beat |
 | composition | `watch`, `routes`, `httpd`, `board` | the disk poller; every route with its request class and handler; the socket, the class doors and the body checks; startup wiring |
 
 Standalone programs — `adapters/*/` and the `bench-verify` and
@@ -460,6 +468,7 @@ neither.
 | required-check batches, review-entry record | `required` | `required._LOCK`, `_ON_REVIEW_LOCK` | no |
 | refinement jobs | `refine` | the refine registry | no |
 | orchestrator reasoning jobs, facts documents, retained responses (task 139) | `reasoning` | `reasoning.LOCK` | no |
+| Brain drafting requests: conversation, rounds, validated proposal, source bindings (task 175) | `braindraft` (the entry itself is `brainwrite`'s) | `braindraft.LOCK` | no |
 | drive record, scrubbed drive log | `drive` | the one drive | no |
 | preview configuration and records, scrubbed logs | `previews` | `previews.LOCK` | no |
 | session identity | `state` | per session | no |
@@ -484,6 +493,7 @@ artifacts.ingest
 artifacts.ingest_report
 artifacts.sweep
 artifacts.withhold
+braindraft._save
 brainwrite._journal_put
 brainwrite._write
 completion._record_delivered
@@ -684,5 +694,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 145
+routes 153
 ```

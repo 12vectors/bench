@@ -266,7 +266,8 @@ function settingsAgents(page) {
       `<span class="sval">${esc(a.rows.refine.effective.selection.harness.name)} · ` +
       `${esc(a.rows.refine.effective.selection.model.value || 'harness default')}` +
       `<span class="shelp">${esc(a.rows.refine.why)}</span></span></div>` +
-      (a.rows.reason ? reasonRow(a.rows.reason) : '')) +
+      (a.rows.reason ? reasonRow(a.rows.reason) : '') +
+      (a.rows.brain ? reasonRow(a.rows.brain) : '')) +
     spanel('Prompt templates', 'local overrides only — the built-ins are never edited',
       a.templates.filter(t => t.group !== 'orchestration').map(t => agentTemplate(a, d, t)).join('')) +
     (a.templates.some(t => t.group === 'orchestration')

@@ -31,6 +31,7 @@ import artifacts
 import assets
 import agentsettings
 import brain
+import braindraft
 import brainwrite
 import commands
 import completion
@@ -1119,6 +1120,53 @@ def post_brain_write(req) -> None:
     req.reply(200, {"operation": result})
 
 
+def get_brain_draft_preflight(req) -> None:
+    # What a Brain drafting Generate would launch and read (task 175): the
+    # roots, the harness, model and profile, the source selection and its
+    # exclusions, the budget. A read: it hashes and resolves; it pins,
+    # launches and writes nothing.
+    target = _q(req, "target") or None
+    text = _q(req, "text")[:braindraft.MAX_REQUEST] or None
+    try:
+        req.reply(200, {"preflight": braindraft.preflight(target, text)})
+    except brain.NotAnId as exc:
+        req.reply(400, {"error": str(exc), "code": "not-an-id"})
+
+
+def get_brain_drafts(req) -> None:
+    # The Brain drafting requests this board holds, or one by id — public
+    # state only: no log, no pinned path, no prompt. Reading launches nothing.
+    draft_id = _q(req, "id")
+    try:
+        if draft_id:
+            req.reply(200, {"draft": braindraft.get(draft_id)})
+        else:
+            req.reply(200, braindraft.listing())
+    except braindraft.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+
+
+BRAIN_DRAFT_STEPS = {"start": braindraft.start, "continue": braindraft.continue_,
+                     "cancel": braindraft.cancel, "discard": braindraft.discard,
+                     "retarget": braindraft.retarget, "apply": braindraft.apply}
+
+
+def post_brain_draft(req) -> None:
+    # A person's Brain drafting step (task 175): Generate and Continue each
+    # launch one bounded `brain` round; Cancel, Discard and Retarget launch
+    # nothing; Apply writes one entry through brainwrite, held to the
+    # destination revision and the cited sources. Each is bound to what the
+    # page read and to a request identity.
+    step = req.path.rsplit("/", 1)[-1]
+    try:
+        result = BRAIN_DRAFT_STEPS[step](req.body)
+    except braindraft.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+        return
+    state.broadcast({"type": "brain"})
+    req.reply(200, result)
+
+
 # ── POST: the board's own writes ───────────────────────────────────────
 
 
@@ -2188,6 +2236,8 @@ ROUTES = (
     Route("GET", "/api/brain/entry", "read", get_brain_entry),
     Route("GET", "/api/brain/revisions", "read", get_brain_revisions),
     Route("GET", "/api/brain/operation", "read", get_brain_operation),
+    Route("GET", "/api/brain/draft/preflight", "read", get_brain_draft_preflight),
+    Route("GET", "/api/brain/drafts", "read", get_brain_drafts),
 
     Route("POST", "/api/move", "browser-mutation", post_move),
     Route("POST", "/api/events", "event-ingest", post_events),
@@ -2274,6 +2324,12 @@ ROUTES = (
     Route("POST", "/api/brain/override", "browser-mutation", post_brain_write),
     Route("POST", "/api/brain/retire", "browser-mutation", post_brain_write),
     Route("POST", "/api/brain/retry", "browser-mutation", post_brain_write),
+    Route("POST", "/api/brain/draft/start", "browser-mutation", post_brain_draft),
+    Route("POST", "/api/brain/draft/continue", "browser-mutation", post_brain_draft),
+    Route("POST", "/api/brain/draft/cancel", "browser-mutation", post_brain_draft),
+    Route("POST", "/api/brain/draft/discard", "browser-mutation", post_brain_draft),
+    Route("POST", "/api/brain/draft/retarget", "browser-mutation", post_brain_draft),
+    Route("POST", "/api/brain/draft/apply", "browser-mutation", post_brain_draft),
     Route("POST", "/api/card/comment", "browser-mutation", post_card_comment),
     Route("POST", "/api/card/refine", "browser-mutation", post_card_refine),
     Route("POST", "/api/card/refine/apply", "browser-mutation", post_card_refine_decision),

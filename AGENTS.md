@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate / braindraft < recovery < scheduler < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -377,6 +377,13 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   identity, scope, evidence references, bounds and binding — before it
   is kept. It executes nothing a response proposes (see "Orchestrator
   reasoning: launched agents, public responses")
+- `braindraft.py` — the Brain Agent (task 175): a person's request to
+  write or update one Brain entry, one bounded `brain`-intent run per
+  explicit Generate or Continue, its work-root sources pinned and granted
+  by exact reads, its follow-up questions or proposal validated and its
+  citations re-read, and the person's Apply written through `brainwrite`
+  under the destination's revision and the sources' bindings. It writes
+  no entry itself (see "Drafting with the Brain Agent")
 - `coordinate.py` — delivering a card in review (task 142; a phase
   scope's members and final head, task 143):
   its required checks, an independent review once the reviewer's
@@ -1684,7 +1691,9 @@ it: reviews appearing in the Brain, a
 curated handbook, seeding a Brain from an application, adopting
 `reference/` files, and any agent classification. A run is given no
 Brain entry because it exists: being in the Brain is not being approved
-context.
+context. The one agent that reads the Brain is the **Brain Agent**, which
+a person asks to draft one entry and whose draft a person applies (task
+175, "Drafting with the Brain Agent").
 
 ### Where entries live
 
@@ -1922,6 +1931,190 @@ failed commit: the file is saved; fix what git said (a held
 push: fix the remote, then **Retry push**, or let sync's next beat do it.
 A restart mid-write: send the same request again — the page does — and
 the journal finishes it.
+
+### Drafting with the Brain Agent
+
+Nobody should have to write the Brain's articles by hand (task 175).
+**New entry** asks what the entry should capture — *Explain how
+verification works*, *Capture this architecture decision* — and an
+existing entry offers **Ask Brain Agent** beside **Edit**: what to
+correct or add. A launched, read-only coding agent reads the project,
+asks follow-up questions only when it must, and proposes **one** entry.
+A person reviews it, edits it and applies it. Writing the entry yourself
+stays one click away (**Write it yourself instead**), and **Edit** works
+exactly as before.
+
+**The journey, and what each step costs.**
+
+| step | what happens | launches | writes |
+| --- | --- | --- | --- |
+| open the composer, type | the request and the preflight below | nothing | nothing |
+| **Generate** (armed) | round 1: one bounded `brain` run | one run | the private request |
+| the agent asks | *Waiting for your answers* — a waiting state, never a running or failed one | — | — |
+| type answers | kept on the page | nothing | nothing |
+| **Continue** (armed) | the next round, with your answers or what to revise | one run | the private request |
+| review | the draft rendered, its exact changes against the entry it read, its sources with their revisions, its claims, what stays uncertain | nothing | nothing |
+| edit | title, kind, summary, sources, related entries, body; for a new entry, the classification (the agent's is only a suggestion) | nothing | nothing |
+| **Apply** (armed) | the final, human-edited entry through the Brain's own write | nothing | one entry |
+| **Discard**, **Cancel** | the request closes; the Brain is unchanged | nothing | the private request |
+
+A request is at most `BOARD_BRAIN_DRAFT_ROUNDS` rounds (4), each at most
+`BOARD_BRAIN_DRAFT_TIMEOUT` seconds (900); on the last round the agent
+must propose. Reaching a limit is said — *the round reached its limit*,
+*this request has used its rounds* — and nothing is relaunched by
+itself. A board that restarts closes a round in flight as failed, naming
+the restart; **Continue** is the person's way on. A round that fails
+after an earlier round proposed a draft — a revision that hit its time
+limit, crashed, declined, answered invalidly or was cut by a restart —
+does not take that draft away: the request stays *Draft ready*, the
+failure is shown above the draft, and the draft (with any edits on the
+page) can still be applied, revised again or discarded, at the round
+limit too. Only a request with no draft yet reads *Failed*.
+
+**What it reads.** Before Generate, the composer's fold says exactly what
+the run would use (`GET /api/brain/draft/preflight`, a read):
+
+- **The application checkout**, the one `BOARD_APP_ROOT` names (else the
+  repository the install sits in) and its commit. The run starts in it
+  and reads it with the vendor's read-only tools. One application root is
+  configured on a board; bench reads no other directory as the
+  application, and says so.
+- **The work root**, as a bounded, deterministic selection: Brain entries
+  (60), cards in the five stages, newest first (80), `plans/` (30) and
+  `reference/` text (20), at most 512 KiB each and 6 MiB in all — each
+  copied read-only and granted by one exact read, so the run reads the
+  bytes bench hashed. A link, a file resolving outside the work root, one
+  over a bound, one that is not UTF-8 text and a credential-shaped name
+  (`.env`, `*.pem`, `*token*`, `*secret*`, …) are left out, and the
+  preflight lists each with why. Archived cards are not pinned.
+  **Where the work root sits inside the checkout** — a vendored or
+  source-hosted install — the run can also read it through the
+  application, so this selection bounds what is pinned and what may be
+  cited (`work:`), not what is readable; there the deny rules below are
+  the boundary, and they add the work root's `tasks/archive/`. The
+  preflight says so.
+- **Never**: credential-shaped paths in the checkout (`**/.env`,
+  `**/.env.*`, keys, `.git/`, `.netrc`, `.npmrc`, `.pypirc`, and the
+  shapes bench refuses to cite — `*secret*`, `*credential*`,
+  `*password*`, `token`/`tokens` and `*_token*`-style names; a glob errs
+  towards denying, so `secretscan.py` is unreadable too), the tool's
+  `manager/local/.env` and preview secrets, and every directory of
+  `manager/local/state/` but `state/brain-context/`, where a drafting
+  round's own copies are pinned. `state/context/`, where every other run
+  pins, is denied as one directory, so a bundle another run makes while
+  the round reads is denied too; other drafting rounds' bundles (which
+  hold only work-root text a drafting run may read) are denied one by
+  one. A deny path the adapter cannot write as a rule — an install under
+  a path with a space, say — refuses the preflight and the launch; no
+  rule is ever dropped. These are read deny-rules the adapter renders;
+  **an operator's ability to read a file is not proof the run can, and a
+  permission rule is not an operating-system sandbox**.
+
+**What it may do.** The `brain` intent is the `reason` stance: no
+worktree, no command grant, no check, no shell, no edit tool — and no web
+access (`WebFetch` and `WebSearch` are withheld too). A profile document
+that gives it commands, checks or preparation steps is refused
+(`intent-restricted`), and an adapter that cannot deliver pinned context
+by exact reads — opencode — refuses it by name (`intent-unsupported`)
+before anything is written or paid for. Its model is
+`BOARD_AGENT_MODEL_BRAIN`, else the default; Settings → Agents shows the
+effective harness and model, and the prompt is the **Brain drafting**
+template (`brain.md`), editable there like the others. The Configuration
+check lists it as **Brain drafting**.
+
+**What it answers, and what bench does with it.** One JSON object between
+`<<<BRAIN` and `BRAIN>>>` (or `BRAIN DECLINED:`): `questions` (at most
+five), or one `proposal` — title, kind, summary, body, a suggested
+classification (`Current`, `Historical` or `Unclassified`) and why, the
+sources it cites, its claims each marked `implemented`, `deployed`,
+`agreed-future`, `unresolved` or `unknown`, and what stays uncertain.
+Bench validates it, field by field, against the round it was launched
+for:
+
+- every citation is re-read and bound now: `work:<path>` must be one of
+  the sources the round was given (its pinned hash), `entry:<id>` a Brain
+  entry the round was given, `app:<path>` a regular file inside the
+  checkout — never a credential-shaped path, never bench's private state,
+  never one that climbs out — hashed with the checkout's commit;
+- `implemented` and `deployed` claims cite a bound source; deployment
+  nobody recorded stays `unknown`;
+- an update is about the entry asked for and no other; a new entry may
+  only *suggest* an existing one (`suggestTarget`), which a person
+  confirms with **Update … instead** before the next round drafts the
+  update;
+- the entry itself passes the Brain's own write rules
+  (`brainwrite.check_fields`); an unknown field, an HTML comment and a
+  `## Classification history` heading are refused.
+
+A proposal that fails any of these reads **Failed**, with each problem,
+and nothing was written. A valid one gets a **Sources and claims**
+section appended to its body by bench — each claim with its status, each
+source with the commit and hash read — which a person may edit like the
+rest. Everything a source says is data: an instruction inside a card or a
+file grants no tool and cannot reach Apply.
+
+**Apply is the only writer.** It sends the person's final fields, bound
+to the newest draft round and to a request identity, and bench:
+
+1. reads every cited source again — one that changed or went is a
+   **conflict** (`source-drift`), nothing written: ask for a revised
+   draft so the agent reads them again, or discard it;
+2. validates the edited fields by the Brain's own rules;
+3. writes through `brainwrite.write` — `create`, or `edit` held to the
+   revision the round read, so a hand edit, another person's save or a
+   synced change since is a conflict (`destination-changed`), never an
+   overwrite. An update keeps the entry's id, classification, override
+   and history; change the classification afterwards with **Classify**;
+4. reuses the Brain's request journal, so a double click, a lost reply
+   or a restart part way writes one entry and one history line. An Apply
+   whose outcome was not recorded is settled from that journal at the
+   next Apply and at start-up.
+
+Saved, committed and shared are then shown on the entry exactly as for a
+person's own write ("Writing the Brain").
+
+**Progress, and what is kept.** While a round runs, the request shows
+what is done (sources pinned, the run launched, its model), what is
+happening now, what remains and what it waits on — bench's observations —
+and, apart from them, the run's last tool activity (*activity, not
+progress*; the run has no shell to report with). The request, its public
+conversation (your request, answers and revisions, the agent's questions
+and summaries, the board's outcomes), the validated proposal and its
+bindings are kept under `manager/local/state/brain/drafts/` —
+machine-local and never committed — so a reload or a restart resumes the
+request. The run's log, manifest, prompt and pinned copies stay in the
+run's own records and are never sent to the page. **Brain Agent
+requests** on the Brain's list reopens one.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/brain/draft/preflight?target=&text=` | what a Generate would read and launch; reads only |
+| `GET /api/brain/drafts[?id=]` | the requests, or one, as the page reads them |
+| `POST /api/brain/draft/start` | `{request, text, target?, expected?}` — Generate |
+| `POST /api/brain/draft/continue` | `{id, request, round, answers?, note?}` — Continue, Revise, Try again |
+| `POST /api/brain/draft/retarget` | `{id, round, target}` — switch a new entry to an update; launches nothing |
+| `POST /api/brain/draft/apply` | `{id, request, round, title, kind, summary, body, sources, related, classification?, reason?}` |
+| `POST /api/brain/draft/cancel`, `/discard` | `{id}` |
+
+They sit behind the browser-mutation door. **What is proved, and what is
+not:** `tests/test_braindraft.py` runs the whole lifecycle through the
+Claude adapter's real `run` against a stub vendor, on a split fixture
+(an application repository, a work root and the tool's state apart) and
+on a vendored one (all three inside the checkout), and holds the
+generated permission text. Whether the installed CLI honours those rules
+with a real model is the opt-in, billable
+`develop/brain-agent-probe.py --approve-real-agent`, which nothing runs
+by itself; a passing stub run is not that proof. The probe reads the
+vendor's own tool events (its PostToolUse hook, posted to a listener in
+the board's place) and fails on any successful Read of a withheld file.
+It cannot tell a Read the vendor denied from one the model never
+attempted — a denied call fires no hook — and says so in its report.
+
+**Not in v1:** background or card-triggered curation, seeding a Brain,
+automatic classification, handbook membership, adopting legacy files,
+review projections, more than one entry per Apply, and any edit of code,
+cards, configuration or policy. A proposal is one person-requested
+update of one entry, never a claim that the whole Brain is fresh.
 
 ## Addresses: a link to every view and card
 
