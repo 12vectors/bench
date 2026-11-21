@@ -531,7 +531,7 @@ def assess(task: dict, reading: dict, ops: list[dict],
         else:
             if not task.get("pr"):
                 return _set(item, "no-pr", "the card has no pull request to "
-                            "review — ↑ open PR first")
+                            "review" + _no_pr_cause(filename))
             if any(o["status"] == "ended" for o in _same(mine, "review", head)):
                 return _set(item, "review-ended-without-verdict", "a review of "
                             f"{head[:12]} ended without a verdict that counts; "
@@ -735,9 +735,20 @@ def _repair(item: dict, task: dict, here: dict, head: str, mine: list[dict],
                     f"repair rounds are spent — the next step is yours", **extra)
     if not task.get("pr"):
         return _set(item, "no-pr", f"{reason}; there is no pull request to act "
-                    f"on", **extra)
+                    f"on" + _no_pr_cause(filename), **extra)
     return _set(item, "repair", f"{reason}; repair round {spent + 1} of "
                 f"{ceiling}", **extra)
+
+
+def _no_pr_cause(filename: str) -> str:
+    """Why a card in review has no pull request, when opening one failed
+    (task 166): the actual cause, kept by `changes`, rather than a generic
+    "no PR". Nothing here retries it; ↑ open PR is the person's."""
+    failed = changes.open_failure(filename)
+    if not failed:
+        return " — ↑ open PR first"
+    return (f" — opening it failed: {failed['detail']}. Settle that, then "
+            f"↑ open PR")
 
 
 def plan(board: dict | None = None) -> dict:
@@ -994,7 +1005,9 @@ def _merge(op: dict, filename: str, head: str, task: dict,
     if rname:
         held, _tip, _why = completion.remote_holds(rname, target, head)
         if held is True:
-            result = completion.complete_delivered(filename, STAGE, head)
+            result = completion.complete_delivered(
+                filename, STAGE, head, source="orchestrator",
+                verified_actor=taskfiles.actor_name() or None)
             if not result.get("moved"):
                 return _merged(op, result, "partial", f"{rname}/{target} holds "
                                f"{head[:12]}, and the card could not be "
@@ -1002,8 +1015,14 @@ def _merge(op: dict, filename: str, head: str, task: dict,
             return _merged(op, result, "reconciled",
                            f"{rname}/{target} already held {head[:12]}; "
                            f"cleaned up without merging again")
+    # The orchestrator acts as this board's git identity — the one its
+    # records already carry — so the completion's provenance names it;
+    # the endpoint's "you" is never recorded as a person (task 166).
     result = completion.complete_task(filename, STAGE, expect_head=head,
-                                      actor="orchestrator")
+                                      actor="orchestrator",
+                                      source="orchestrator",
+                                      verified_actor=taskfiles.actor_name()
+                                      or None)
     if result.get("moved"):
         return _merged(op, result, "merged", f"merged {head[:12]} into "
                        f"{target} — {answer.get('label') or ''}".strip(" —"))

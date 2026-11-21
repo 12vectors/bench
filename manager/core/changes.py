@@ -47,6 +47,7 @@ import gates
 import githost
 import plans
 import records
+import redact
 import reports
 import reviews
 import state
@@ -205,12 +206,53 @@ def _write_pr_line(filename: str, url: str) -> None:
     else:
         text = f"**PR:** {url}\n\n" + text
     records.write_text(path, text, mkdir=False)
+    _forget_open_failure(filename)
     commit_edit(filename, stage, "PR opened")
 
 
 class _Quiet(ValueError):
     """A reason not worth the ticker: no branch, or a PR already open. The
     automatic path swallows these; the explicit action still shows them."""
+
+
+# ── why a card's PR could not be opened (task 166) ─────────────────────
+
+
+def _open_failure_path(filename: str) -> Path:
+    return _snapshot_path(filename, "pr-open")
+
+
+def _remember_open_failure(filename: str, detail: str) -> None:
+    """Keep the actual reason the last attempt to open this card's PR
+    failed — the base ahead of its remote, a push refused — so the card,
+    its delivery status and an orchestration blocker can say it, rather
+    than a generic "no pull request". Machine-local beside the PR
+    snapshot; scrubbed; overwritten whole; cleared once a PR is opened."""
+    try:
+        records.write_json(_open_failure_path(filename), {
+            "v": 1, "task": filename, "at": time.time(),
+            "detail": redact.scrub(str(detail), "[redacted]")[:400]})
+    except OSError:
+        pass
+
+
+def _forget_open_failure(filename: str) -> None:
+    try:
+        _open_failure_path(filename).unlink()
+    except OSError:
+        pass
+
+
+def open_failure(filename: str) -> dict | None:
+    """`{at, detail}` of the last failed attempt to open this card's PR,
+    or None. A read: nothing is retried, asked or fetched."""
+    try:
+        data = json.loads(_open_failure_path(filename).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict) or not data.get("detail"):
+        return None
+    return {"at": data.get("at"), "detail": str(data["detail"])}
 
 
 def maybe_open_pr(filename: str) -> None:
@@ -226,9 +268,13 @@ def maybe_open_pr(filename: str) -> None:
     _OPENING.add(filename)
     try:
         _open_pr(filename)
+        _forget_open_failure(filename)
     except _Quiet:
-        pass
+        # No branch, or a PR already on the card: an earlier failure's
+        # reason no longer describes this card, so it is not kept showing.
+        _forget_open_failure(filename)
     except ValueError as exc:
+        _remember_open_failure(filename, str(exc))
         state.record_board_event({
             "kind": "agent", "actor": "board", "file": filename,
             "summary": str(exc)})
@@ -245,7 +291,15 @@ def open_pr_now(filename: str) -> str:
         raise ValueError(f"a PR for {filename} is already being opened")
     _OPENING.add(filename)
     try:
-        return _open_pr(filename)
+        url = _open_pr(filename)
+        _forget_open_failure(filename)
+        return url
+    except _Quiet:
+        _forget_open_failure(filename)
+        raise
+    except ValueError as exc:
+        _remember_open_failure(filename, str(exc))
+        raise
     finally:
         _OPENING.discard(filename)
 
@@ -297,8 +351,11 @@ def _open_pr(filename: str) -> str:
                       f"{rname}/{base}..{base}"]).stdout.strip()
         if ahead.isdigit() and int(ahead) > 0:
             raise ValueError(f"won't open a PR for {filename}: {base} is {ahead} "
-                             f"commits ahead of {rname} — push {base} first, then "
-                             f"move the card again")
+                             f"commits ahead of {rname} — push {base} first (or, "
+                             f"if they duplicate work {rname} already has, keep "
+                             f"them under a ref of your own and bring {base} "
+                             f"back to {rname}/{base}), then ↑ open PR on the "
+                             f"card")
     elif _another_cards(filename, task, base):
         # Stacked on another card's work branch (task 117). That branch is
         # its own card's to publish — through that card's change request —
