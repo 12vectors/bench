@@ -545,6 +545,115 @@ test('connectStream: a reconnect reads the state again once, and a burst coalesc
   }
 });
 
+// ── app/data.js: a test's hold on readings, and settled (task 176) ──────
+
+test('holdReadings: a board a test painted is not replaced by a live reading, and release reads once', async () => {
+  const data = await load('app/data.js');
+  const { S } = await load('app/state.js');
+  const net = controlledFetch();
+  const real = globalThis.fetch;
+  globalThis.fetch = net.fetch;
+  try {
+    S.state = STATE('synthetic');
+    data.holdReadings('benchmark');
+    assert.throws(() => data.holdReadings('another'), /already held \(benchmark\)/);
+    // the stream, the safety net and the window's focus all ask
+    for (let i = 0; i < 5; i++) await data.loadState();
+    await data.boardChanged(10_000);
+    await settle();
+    assert.equal(net.asked.length, 0, 'nothing is read while held');
+    assert.equal(S.state.tag, 'synthetic');
+    assert.deepEqual(data.readingsHeld(), { held: 'benchmark', deferred: true });
+    assert.equal(data.pageSettled().settled, true, 'a held page with nothing out is settled');
+    const released = data.releaseReadings();
+    await settle();
+    assert.equal(net.asked.length, 1, 'one reading for every ask made meanwhile');
+    net.reply(0, 200, STATE('live')); const r = await released;
+    assert.deepEqual(r, { held: 'benchmark', read: true });
+    assert.equal(S.state.tag, 'live');
+    assert.deepEqual(data.readingsHeld(), { held: null, deferred: false });
+  } finally {
+    globalThis.fetch = real;
+    data.releaseReadings();
+  }
+});
+
+test('holdReadings: a reading already out when the hold began is set aside when it lands', async () => {
+  const data = await load('app/data.js');
+  const { S } = await load('app/state.js');
+  const net = controlledFetch();
+  const real = globalThis.fetch;
+  globalThis.fetch = net.fetch;
+  try {
+    S.state = STATE('before');
+    const out = data.loadState();
+    await settle();
+    assert.equal(net.asked.length, 1);
+    assert.equal(data.pageSettled().settled, false);
+    assert.deepEqual(data.pageSettled().unsettled, ['a board reading is in flight']);
+    data.holdReadings('benchmark');
+    S.state = STATE('synthetic');
+    net.reply(0, 200, STATE('stale live')); await out;
+    assert.equal(S.state.tag, 'synthetic', 'the reading that landed in the hold did not replace the board');
+    const released = data.releaseReadings();
+    await settle();
+    assert.equal(net.asked.length, 2, 'the release reads the board afresh');
+    net.reply(1, 200, STATE('fresh')); await released;
+    assert.equal(S.state.tag, 'fresh');
+  } finally {
+    globalThis.fetch = real;
+    data.releaseReadings();
+  }
+});
+
+test('holdReadings: a release with nothing asked meanwhile reads nothing', async () => {
+  const data = await load('app/data.js');
+  const net = controlledFetch();
+  const real = globalThis.fetch;
+  globalThis.fetch = net.fetch;
+  try {
+    data.holdReadings('quiet');
+    assert.deepEqual(await data.releaseReadings(), { held: 'quiet', read: false });
+    assert.deepEqual(await data.releaseReadings(), { held: null, read: false }, 'releasing twice is harmless');
+    assert.equal(net.asked.length, 0);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test('whenSettled: waits out a reading and a scheduled paint, and names what never settled', async () => {
+  const data = await load('app/data.js');
+  const sched = await load('lib/schedule.js');
+  sched.onRender(() => {});
+  const net = controlledFetch();
+  const real = globalThis.fetch;
+  globalThis.fetch = net.fetch;
+  try {
+    data.loadState();
+    sched.scheduleRender();
+    let answer = null;
+    data.whenSettled(5000).then((r) => { answer = r; });
+    for (let i = 0; i < 3; i++) { stepFrames(); await settle(); }
+    assert.equal(answer, null, 'not settled while a reading is out');
+    net.reply(0, 200, STATE('landed'));
+    const pause = () => new Promise((r) => setTimeout(r, 2));
+    for (let i = 0; i < 50 && !answer; i++) { stepFrames(); await pause(); }
+    assert.deepEqual(answer, { settled: true, unsettled: [], held: null });
+    // a reading that never answers: bounded, and named
+    data.loadState();
+    const late = await (async () => {
+      const p = data.whenSettled(30);
+      const spin = setInterval(stepFrames, 5);
+      try { return await p; } finally { clearInterval(spin); }
+    })();
+    assert.equal(late.settled, false);
+    assert.deepEqual(late.unsettled, ['a board reading is in flight']);
+    net.reply(1, 200, STATE('late')); await settle();
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 // ── lib/toast.js: the live regions ─────────────────────────────────────
 
 test('toast: news goes to the status region, a refusal to the alert region, every time', async () => {
