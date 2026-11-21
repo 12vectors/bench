@@ -253,6 +253,151 @@ class UpdateFromRelease(unittest.TestCase):
         self.assertIn(f"Updated core from v{self.version}", result.stdout,
                       result.stdout + result.stderr)
 
+    # ── the Brain survives updates (task 173) ──
+    #
+    # brain/ is work state: it lives in the work root, which is the install
+    # itself vendored or source-hosted and BOARD_WORK_ROOT externally.
+    # update.sh replaces manager/core/ and the manifest's top-level files,
+    # and the documented install.py that follows re-wires; neither may
+    # change a byte, a mode, a time or an inode of an existing entry — or
+    # of anything else a person keeps there. Each layout runs the real
+    # updater twice from an older install (old → new, then new → new) with
+    # install.py after each, as the update's own output tells a person to.
+
+    def install_env(self) -> dict:
+        return {k: v for k, v in os.environ.items()
+                if not k.startswith(("BOARD_", "BENCH_", "STUB_"))}
+
+    def git(self, repo: Path, *args: str) -> str:
+        env = {**self.install_env(), "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
+        result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True,
+                                text=True, env=env)
+        if result.returncode != 0:
+            raise RuntimeError(f"git {args}: {result.stderr}")
+        return result.stdout
+
+    def run_install(self, tm: Path, *args: str) -> subprocess.CompletedProcess:
+        result = subprocess.run(
+            [sys.executable, str(tm / "install.py"), *args], cwd=tm,
+            capture_output=True, text=True, stdin=subprocess.DEVNULL,
+            env=self.install_env())
+        self.assertEqual(result.returncode, 0,
+                         f"install.py {args} failed:\n{result.stdout}{result.stderr}")
+        return result
+
+    def layout(self, kind: str):
+        """An installed tool in one layout, and the work root holding its
+        brain/. The installs are real unpacks of the artifact."""
+        top = Path(tempfile.mkdtemp(prefix=f"brain-{kind}-", dir=self.scratch))
+        if kind == "external":
+            app, work, tm = top / "app", top / "work", top / "bench"
+            for repo in (app, work):
+                repo.mkdir()
+                self.git(repo, "init", "-q", "-b", "main")
+            (app / "README.md").write_text("the application\n", encoding="utf-8")
+            self.git(app, "add", "-A")
+            self.git(app, "commit", "-qm", "app")
+            tm.mkdir()
+            with tarfile.open(self.tarball) as tar:
+                tar.extractall(tm)
+            self.run_install(tm, "--app", str(app), "--work", str(work))
+            return tm, work, {"app": app}
+        host = top / "host"
+        host.mkdir()
+        self.git(host, "init", "-q", "-b", "main")
+        (host / ".claude").mkdir()     # a project the claude adapter can wire
+        tm = host / ".task-manager" if kind == "vendored" else host
+        tm.mkdir(exist_ok=True)
+        with tarfile.open(self.tarball) as tar:
+            tar.extractall(tm)
+        self.run_install(tm)
+        return tm, tm, {}
+
+    def write_brain(self, work: Path) -> Path:
+        brain = work / "brain"
+        brain.mkdir()
+        entries = {
+            "routing.md": "# Report routing\n\n**Brain:** 1\n**Id:** e-report-routing\n"
+                          "**Kind:** Guide\n**Classification:** Current\n"
+                          "**Summary:** Filed on its own card.\n\nThe body.\n\n"
+                          "## Classification history\n\n- 2026-11-19 · Current · ron — shipped\n",
+            "old.md": "# Old notes\n\n**Brain:** 1\n**Id:** e-old\n**Kind:** Decision\n"
+                      "**Classification:** Superseded\n**Superseded by:** e-report-routing\n\nOld.\n",
+            "future.md": "# From a newer bench\n\n**Brain:** 2\n**Id:** e-future\n\nKept as is.\n",
+            "notes.txt": "not an entry; reserved for later versions\n",
+            ".draft.md": "a hidden draft somebody keeps here\n",
+        }
+        for i, (name, text) in enumerate(entries.items()):
+            path = brain / name
+            path.write_bytes(text.encode("utf-8"))
+            path.chmod(0o640 if i % 2 else 0o600)
+            os.utime(path, ns=(1_700_000_000_000_000_000 + i, 1_700_000_000_000_000_000 + i))
+        (brain / "routing-link.md").symlink_to("routing.md")
+        return brain
+
+    def brain_state(self, brain: Path) -> dict:
+        """Everything a person could notice about brain/: every name, its
+        type, bytes or link target, mode, size, mtime and inode — and the
+        directory's own."""
+        def facts(p: Path):
+            st = p.lstat()
+            if p.is_symlink():
+                content = ("link", os.readlink(p))
+            elif p.is_dir():
+                content = ("dir", None)
+            else:
+                content = ("file", p.read_bytes())
+            return content, st.st_mode, st.st_size, st.st_mtime_ns, st.st_ino
+        state = {".": facts(brain)[1:]}
+        for p in sorted(brain.rglob("*")):
+            state[p.relative_to(brain).as_posix()] = facts(p)
+        return state
+
+    def assert_brain_survives_updates(self, kind: str):
+        tm, work, roots = self.layout(kind)
+        brain = self.write_brain(work)
+        if kind == "external":
+            # the work state's own repository holds it, as the board's
+            # commits would
+            self.git(work, "add", "brain")
+            self.git(work, "commit", "-qm", "board: brain entries")
+        head = self.git(work, "rev-parse", "HEAD").strip() if kind == "external" else None
+        status = self.git(work, "status", "--porcelain", "--", "brain") if kind == "external" else None
+        before = self.brain_state(brain)
+        self.assertEqual(len(before), 7, before.keys())
+        app_before = snapshot(roots["app"]) if "app" in roots else None
+        # an older install: the release must actually replace its core
+        (tm / "manager" / "core" / "VERSION").write_text("0\n")
+
+        for round_, since in (("old → new", "0"), ("repeat", self.version)):
+            result = self.run_update(tm)
+            self.assertEqual(result.returncode, 0, f"{kind} {round_}: " + result.stdout + result.stderr)
+            self.assertIn(f"version {since} → {self.version}", result.stdout, f"{kind} {round_}")
+            self.assertEqual((tm / "manager" / "core" / "VERSION").read_text().strip(), self.version)
+            self.assertEqual(self.brain_state(brain), before,
+                             f"{kind} {round_}: update.sh changed brain/")
+            self.run_install(tm)
+            self.assertEqual(self.brain_state(brain), before,
+                             f"{kind} {round_}: install.py after the update changed brain/")
+        if kind == "external":
+            self.assertEqual(self.git(work, "rev-parse", "HEAD").strip(), head)
+            self.assertEqual(self.git(work, "status", "--porcelain", "--", "brain"), status)
+            # the tool root has no brain/ of its own, before or after
+            self.assertFalse((tm / "brain").exists(), "an update created brain/ beside the tool")
+            self.assertEqual(snapshot(roots["app"]), app_before, "the application changed")
+        else:
+            self.assertEqual(work, tm)
+
+    def test_brain_survives_updates_vendored(self):
+        self.assert_brain_survives_updates("vendored")
+
+    def test_brain_survives_updates_source_hosted(self):
+        self.assert_brain_survives_updates("source")
+
+    def test_brain_survives_updates_external(self):
+        self.assert_brain_survives_updates("external")
+
     def test_env_beats_stamp_and_dev_checkout_has_no_source(self):
         # The repo's own update.sh is unstamped: with no BENCH_SOURCE
         # anywhere it must refuse and say how to configure one.
