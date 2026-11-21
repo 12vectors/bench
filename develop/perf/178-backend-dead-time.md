@@ -110,11 +110,36 @@ developer shell already run the suite (`python3 -m unittest` writes
 `__pycache__`), so no test can depend on the old no-cache behaviour
 without already failing there.
 
-The whole-suite effect under bench's runner is the evidence recorded with
-this card's closing report, not a claim here: one serial run cannot be
-separated from 175–300s of run-to-run stall, so a speed-up is claimed only
-if `verify/timing-report --baseline … --candidate …` over several runs at
-the same test ids shows one.
+**The first run under bench's runner (measured).** `bench-backend` at
+`c2f1b16a5ccf`, evidence `ev:verification@83b015cde84c`, 2026-11-21 11:43
+UTC, serial, on the shared host:
+
+| | card 163 baseline `464f1fa` | card 163 candidate `ab83b88` | this candidate `c2f1b16` |
+| --- | --- | --- | --- |
+| tests | 4657 | 4657 | 4911 |
+| check took | 1573.0s | 1565.9s | 1142.8s |
+| elapsed / tests / fixtures | 1568.5 / 1531.2 / 35.9s | 1561.4 / 1527.3 / 32.7s | 1137.8 / 1100.3 / 35.7s |
+| mean test | 0.33s | 0.33s | 0.22s |
+| slowest single test | 86.6s (a stall) | 169.6s (a stall) | 12.2s (a journey) |
+
+What it does and does not show:
+
+- No test stalled in this run: the slowest is a journey at 12.2s, and
+  `test_orchestration_journey.FailureWindows` and
+  `test_failed_move_commit.External`, which held the 163 candidate's
+  140.6s and 169.6s stalls, took 27.0s and 15.0s in total.
+- The runner's test time (1100.3s) is now within about 5% of the clean
+  shell's (1045.2s, §2), for nearly the same suite (4911 against 4909
+  tests; the two are this task's regressions).
+- **Not separated:** how much of the 425s drop is the bytecode cache and
+  how much is the absence of the 175–300s of stalls. The test ids differ
+  (4911 against 4657; the suite grew), the heads differ, and this is one
+  run. `verify/timing-report` refuses to compare different id sets, rightly.
+  Subtracting the stalls from card 163's runs leaves about 1270–1390s, so
+  the cache's share is plausibly 130–250s — an estimate, not a
+  measurement. A same-ids comparison needs serial runs of `87f4065`
+  (before) and this head's parent-equivalent with only the
+  `benchverify.py` change, several each, on a quiet host.
 
 ## 4. Sharding: deferred (decision)
 
