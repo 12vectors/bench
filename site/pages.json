@@ -307,8 +307,8 @@
       "title": "The Orchestrator view",
       "layout": "article",
       "section": "Concepts",
-      "description": "One place to read and steer orchestration — work, decisions, phases, recovery, activity and the agreement — and what the end-to-end tests prove about all of it, and what stays yours.",
-      "lede": "Where a person reads and acts on everything orchestration does: the seven sections and their actions, the ways in from the Board and a card, then what the cross-layout journeys prove, what they cannot, and the maintenance acts that stay a person's.",
+      "description": "One place to read and steer orchestration — the decision trace, work, decisions, phases, recovery, activity and the agreement — and what the end-to-end tests prove about all of it, and what stays yours.",
+      "lede": "Where a person reads and acts on everything orchestration does: the eight sections and their actions, the decision trace that says why it acted or waited, the ways in from the Board and a card, then what the cross-layout journeys prove, what they cannot, and the maintenance acts that stay a person's.",
       "source": "AGENTS.md",
       "from": "### The Orchestrator view",
       "to": "## Pull requests"

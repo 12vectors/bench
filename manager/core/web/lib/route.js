@@ -38,8 +38,10 @@ const VIEWS = ['board', 'brain', 'orchestrator', 'phases', 'flight', 'focus', 's
 const VIEW_PATHS = { board: 'board', brain: 'brain', orchestrator: 'orchestrator', phases: 'phases',
   flight: 'sessions', focus: 'focus', settings: 'settings' };
 // the Orchestrator's sections (task 145), in the order its navigation lists
-const ORCH_SECTIONS = ['overview', 'work', 'decisions', 'phases', 'recovery',
+const ORCH_SECTIONS = ['overview', 'trace', 'work', 'decisions', 'phases', 'recovery',
   'activity', 'agreement'];
+// a decision-trace entry's id (task 184): the server's `decisiontrace.ID_RE`
+const TRACE_RE = /^[0-9a-f]{8}-\d{1,12}$/;
 const CARD_TABS = ['overview', 'brief', 'inputs', 'acceptance', 'reviews', 'activity'];
 // a card's background on direct entry is the Board; history remembers
 // which of the two card-drawing views a card was opened over
@@ -183,6 +185,12 @@ function parseRoute(where) {
           if (id !== item) route.alias = true;
         }
       }
+      // one decision-trace entry (task 184), by its stable id
+      const entry = params.get('entry');
+      if (entry !== null && route.section === 'trace') {
+        if (TRACE_RE.test(entry)) route.entry = entry;
+        else if (!route.invalid) { route.invalid = 'entry'; route.raw = entry; }
+      }
       return route;
     }
     default:
@@ -211,7 +219,9 @@ function formatRoute(route) {
   if (view === 'settings' && r.section && r.section !== 'overview') return `${base}/${enc(r.section)}`;
   if (view === 'orchestrator') {
     const path = r.section && r.section !== 'overview' ? `${base}/${enc(r.section)}` : base;
-    return r.item ? `${path}?card=${enc(r.item)}` : path;
+    const query = [r.item ? `card=${enc(r.item)}` : '',
+      r.entry && r.section === 'trace' ? `entry=${enc(r.entry)}` : ''].filter(Boolean).join('&');
+    return query ? `${path}?${query}` : path;
   }
   return base;
 }
@@ -299,6 +309,7 @@ function routeOf(S) {
     case 'orchestrator': {
       const route = { view, section: S.orchSection || 'overview' };
       if (S.orchItem) route.item = S.orchItem;
+      if (S.orchEntry && route.section === 'trace') route.entry = S.orchEntry;
       return route;
     }
     default: return { view: 'board' };

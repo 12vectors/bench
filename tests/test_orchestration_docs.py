@@ -39,7 +39,10 @@ PAGES = {
     "/concepts/orchestration-delivery/": ("Independent means a different model",
                                           "Phase scopes: one scheduler per phase",
                                           "in the phase branch, not delivered"),
-    "/concepts/orchestrator-view/": ("Seven sections",
+    "/concepts/orchestrator-view/": ("Eight sections",
+                                     # task 184
+                                     "The decision trace: why it acted",
+                                     "Repeated waits are folded, never dropped",
                                      "What is proved end to end",
                                      "Maintenance boundaries"),
 }

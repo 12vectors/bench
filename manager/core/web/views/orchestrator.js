@@ -30,6 +30,7 @@ import { cardId, findCard, ORCH_SECTIONS } from '../lib/route.js';
 import { scheduleRender } from '../lib/schedule.js';
 import { ago } from '../lib/time.js';
 import { toast } from '../lib/toast.js';
+import { nextStepHtml, OUTCOME_TONE, OUTCOME_WORDS } from '../lib/tracewords.js';
 
 // how long a reading is fresh enough not to be asked again on a repaint
 const FRESH_MS = 5000;
@@ -338,6 +339,7 @@ function sectionHtml(section) {
     case 'decisions': return decisionsHtml();
     case 'phases': return phasesHtml();
     case 'recovery': return recoveryHtml();
+    case 'trace': return traceHtml();
     case 'activity': return activityHtml();
     case 'agreement': return agreementHtml();
     default:
@@ -1003,7 +1005,8 @@ function activityHtml() {
     .filter(e => /orchestration|question|answered|withdrawn/.test(String(e.summary || '')))
     .slice(-30).reverse();
   return `<article class="o-panel"><h3>Operations, newest first</h3>` +
-    `<p class="o-dim">Each side effect has an intent written before it and a receipt after; the same records are on the card they are about.</p>` +
+    `<p class="o-dim">Each side effect has an intent written before it and a receipt after; the same records are on the card they are about. ` +
+    `Why each was chosen — and why other work waited — is in the <a data-route href="${esc(orchHref('trace'))}">Decision trace</a>.</p>` +
     (ops.length ? `<ul class="o-rows">${ops.map(op => {
       const t = taskByFile(op.file);
       return `<li class="o-row"><span class="o-src">${esc(op.updatedAt || op.intentAt || '')}</span>` +
@@ -1013,6 +1016,379 @@ function activityHtml() {
     `<article class="o-panel"><h3>People’s changes on this board</h3>` +
     (events.length ? `<ul class="o-rows">${events.map(e => `<li class="o-row"><span class="o-src">${esc(e.ts ? ago(e.ts) + ' ago' : '')}</span>` +
       `<span>${esc(e.summary || '')}</span></li>`).join('')}</ul>` : '<p class="o-dim">Nothing this session.</p>') + `</article>`;
+}
+
+/* ── the decision trace (task 184) ───────────────────────────────────── */
+
+/* Every scheduling pass this installation evaluated, newest first: what
+   each candidate was read as, the rule and reason, what was selected and
+   what became of it. Read from `GET /api/orchestration/trace` and, for an
+   opened entry, `…/trace/entry` — reads only: opening, filtering,
+   expanding and paging launch, reserve and write nothing. */
+
+const NO_FILTERS = { card: '', scope: '', outcome: '', action: '', since: '', until: '' };
+const TRACE_ACTIONS = ['implement', 'review', 'repair', 'verify', 'merge', 'integrate', 'phase', 'recover'];
+const TRACE_OUTCOMES = ['action', 'no-action', 'launched', 'refused', 'unknown', 'waiting', 'blocked',
+  'held', 'skipped', 'error'];
+
+function traceState() {
+  const o = orch();
+  if (!o.trace) {
+    o.trace = { filters: { ...NO_FILTERS }, draft: { ...NO_FILTERS }, key: null, entries: [],
+                next: null, meta: null, total: 0, error: null, errorAt: 0, at: 0,
+                fetching: false, entry: {} };
+  }
+  return o.trace;
+}
+
+function traceParams(t, before) {
+  const f = t.filters;
+  const q = new URLSearchParams();
+  const card = S.orchItem || f.card;
+  if (card) q.set('card', String(card).replace(/^#/, ''));
+  for (const k of ['scope', 'outcome', 'action', 'since']) if (f[k]) q.set(k, f[k]);
+  // a date alone means the whole of that day
+  if (f.until) q.set('until', /^\d{4}-\d{2}-\d{2}$/.test(f.until) ? `${f.until}T23:59:59Z` : f.until);
+  if (before) q.set('before', String(before));
+  q.set('limit', '25');
+  return q.toString();
+}
+
+async function loadTrace(force, older) {
+  const t = traceState();
+  const key = traceParams(t);
+  if (t.fetching) return;
+  if (!older && !force && t.key === key && (t.error ? Date.now() - t.errorAt < FRESH_MS
+                                                    : Date.now() - t.at < FRESH_MS)) return;
+  t.fetching = true;
+  const same = t.key === key;
+  try {
+    const body = await getJson('/api/orchestration/trace?' + traceParams(t, older ? t.next : null));
+    const tr = body.trace || {};
+    const got = tr.entries || [];
+    if (older && same) {
+      t.entries = t.entries.concat(got);
+      t.next = tr.next;
+    } else if (same && t.entries.length) {
+      // a refresh keeps the older pages already read: newer entries are
+      // merged in by id, so nothing a person paged to disappears
+      const byId = new Map(t.entries.map(e => [e.id, e]));
+      for (const e of got) byId.set(e.id, e);
+      t.entries = [...byId.values()].sort((a, b) => b.seq - a.seq);
+      if (t.next === null || t.next === undefined) t.next = tr.next;
+    } else {
+      t.entries = got;
+      t.next = tr.next;
+    }
+    t.meta = tr.meta || null;
+    t.total = tr.total || 0;
+    t.key = key;
+    t.error = null;
+    t.at = Date.now();
+  } catch (e) {
+    t.error = (e && e.message) || 'the trace could not be read';
+    t.errorAt = Date.now();
+    t.key = key;
+  } finally {
+    t.fetching = false;
+  }
+  scheduleRender();
+}
+
+async function loadTraceEntry(id) {
+  const t = traceState();
+  const have = t.entry[id];
+  if (have && (have.fetching || (have.at && Date.now() - have.at < FRESH_MS) ||
+               (have.error && Date.now() - have.errorAt < FRESH_MS))) return;
+  t.entry[id] = { ...(have || {}), fetching: true };
+  try {
+    const res = await fetch(`/api/orchestration/trace/entry?id=${encodeURIComponent(id)}`);
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 404) t.entry[id] = { missing: true, error: body.error, at: Date.now() };
+    else if (!res.ok) throw new Error(body.error || `the board answered ${res.status}`);
+    else t.entry[id] = { data: body.entry, links: body.links || {}, at: Date.now() };
+  } catch (e) {
+    t.entry[id] = { ...(have || {}), fetching: false, error: (e && e.message) || 'not read',
+                    errorAt: Date.now() };
+  }
+  scheduleRender();
+}
+
+function utc(iso) {
+  if (!iso) return 'time not recorded';
+  return `${String(iso).replace('T', ' ').replace('Z', '')} UTC`;
+}
+function stamp(iso) {
+  return `<time datetime="${esc(iso || '')}" title="${esc(utc(iso))}">${esc(utc(iso))}` +
+    `${iso ? ` <span class="o-dim">(${when(iso)})</span>` : ''}</time>`;
+}
+function durationWords(s) {
+  if (s === null || s === undefined) return '';
+  if (s < 90) return `${s}s`;
+  if (s < 5400) return `${Math.round(s / 60)} min`;
+  if (s < 172800) return `${Math.round(s / 3600)} h`;
+  return `${Math.round(s / 86400)} days`;
+}
+function outcomeBadge(word) {
+  return badge(OUTCOME_WORDS[word] || word || 'recorded', OUTCOME_TONE[word] || 'neutral');
+}
+function decCard(d) {
+  const t = d.card ? taskByFile(d.card) : null;
+  if (t) return cardLink(t);
+  return d.number ? `#${esc(d.number)}` : esc(d.card || (d.kind === 'recovery' ? 'recovery' : 'the board'));
+}
+function factValue(v) {
+  if (v === null || v === undefined || v === '') return '<span class="o-dim">not recorded</span>';
+  if (typeof v === 'object') return `<code>${esc(JSON.stringify(v))}</code>`;
+  return esc(String(v));
+}
+
+const FACT_WORDS = {
+  basis: 'brief revision decided on', head: 'commit (candidate head)', priority: 'priority',
+  dependsOn: 'depends on', touches: 'declared Touches', queue: 'admission queue',
+  workBase: 'work base', overlap: 'Touches overlap', overlapUnknownWith: 'overlap unknown with',
+  request: 'request id', title: 'title at this pass', unit: 'delivery unit', authority: 'authority',
+  admitted: 'admitted',
+};
+
+function factsHtml(d) {
+  const f = d.facts || {};
+  const rows = [['scope', scopeName(d.scope)], ['stage', d.stage || null],
+                ...Object.entries(f).filter(([k]) => k !== 'title')];
+  if (!rows.length) return '<p class="o-dim">No facts were captured for this decision.</p>';
+  return `<dl class="o-kv">${rows.map(([k, v]) =>
+    `<div><dt>${esc(FACT_WORDS[k] || k)}</dt><dd>${factValue(v)}</dd></div>`).join('')}</dl>` +
+    `<p class="o-dim">Read when the pass decided. A fact not listed was not captured — unknown, not absent.</p>`;
+}
+
+function linkHtml(d, links) {
+  const out = [];
+  const t = d.card ? taskByFile(d.card) : null;
+  if (t) {
+    const id = idOf(t);
+    out.push(`<a data-route href="/cards/${esc(encodeURIComponent(id))}?tab=activity">Card history (the shared record)</a>`);
+    out.push(`<a data-route href="${esc(orchHref('trace', id))}">Every decision about ${esc(num(t))}</a>`);
+  }
+  const r = d.result || {};
+  const key = r.key || r.operation;
+  if (key) {
+    const op = links && links.operations ? links.operations[key] : undefined;
+    const now = op === undefined ? 'open the entry to read its status now'
+      : op === null ? 'not in the ledger now (retention, or another board)'
+        : `${op.status}${op.outcome ? ' · ' + op.outcome : ''} now`;
+    out.push(`operation <code>${esc(key)}</code> — <span class="o-dim">ledger: ${esc(now)}</span>`);
+    if (r.agent) out.push(`run <code>${esc(r.agent)}</code> <a data-route href="/focus/${esc(encodeURIComponent(r.agent))}">Focus</a>`);
+  }
+  if (r.incident) {
+    const inc = links && links.incidents ? links.incidents[r.incident] : undefined;
+    const jobs = inc && inc.attempts ? inc.attempts.filter(a => a.job) : [];
+    out.push(`incident <code>${esc(r.incident)}</code>${inc ? ` — ${esc(inc.status)} now` : ''} · ` +
+      `<a data-route href="${esc(orchHref('recovery'))}">Recovery</a>`);
+    for (const a of jobs) {
+      out.push(`diagnosis ${esc(a.n)}: reasoning job <code>${esc(a.job)}</code> (${esc(a.status || '')}) — ` +
+        `its response is <strong>agent-reported</strong>, a recommendation bench validated, not an observed result`);
+    }
+  }
+  return out.length ? `<ul class="o-list">${out.map(x => `<li>${x}</li>`).join('')}</ul>`
+    : '<p class="o-dim">No linked operation, run or incident.</p>';
+}
+
+function decisionHtml(d, entry, links) {
+  const same = (entry.decisions || []).filter(x => x !== d && x.pool && x.pool === d.pool);
+  const title = d.facts && d.facts.title ? ` <span class="o-dim">${esc(String(d.facts.title).replace(/^#?\d+\s*[—–-]\s*/, ''))}</span>` : '';
+  const head = `<h4>${decCard(d)}${title} — ${esc(d.action || '')} ${outcomeBadge(d.outcome)}</h4>`;
+  let what;
+  if (d.selected) {
+    const r = d.result;
+    what = `<p><strong>Selected this pass</strong> (${esc(d.state || 'chosen')}). ` +
+      (r ? `Then: ${outcomeBadge(d.outcome)}${r.reason ? ' — ' + esc(r.reason) : ''}` +
+           `${d.outcome === 'refused' ? ' <span class="o-dim">(revalidated at execution; the selection above is what planning decided)</span>' : ''}`
+         : d.heldBy ? `Not executed: held by ${esc(d.heldBy)}.` : 'No side effect followed in this pass.') + `</p>`;
+  } else {
+    what = `<p><strong>${esc(OUTCOME_WORDS[d.outcome] || 'Not selected')}</strong>: ${esc(d.reason || 'no reason recorded')}</p>`;
+  }
+  const alternatives = d.selected
+    ? same.filter(x => !x.selected)
+    : same.filter(x => x.selected);
+  const altHtml = !d.pool ? ''
+    : `<details class="o-fold"><summary>${d.selected ? 'Alternatives skipped' : 'Selected instead'} (${alternatives.length})</summary>` +
+      (alternatives.length ? `<ul class="o-list">${alternatives.map(x =>
+        `<li>${decCard(x)} — ${esc(x.action)} · ${outcomeBadge(x.outcome)} <code>${esc(x.code || '')}</code>: ${esc(x.reason || '')}</li>`).join('')}</ul>`
+        : `<p class="o-dim">${d.selected ? 'No other candidate for this pool was evaluated this pass.' : 'Nothing in this pool was selected this pass.'}</p>`) +
+      `</details>`;
+  return `<article class="o-tdec${d.selected ? ' selected' : ''}">${head}${what}` +
+    nextStepHtml(d, (s) => orchHref(s)) +
+    `<details class="o-fold"><summary>Facts considered</summary>${factsHtml(d)}</details>` +
+    altHtml +
+    `<details class="o-fold"><summary>Rule or limit</summary><p><code>${esc(d.code || 'none recorded')}</code>` +
+    `${d.state ? ` · state <code>${esc(d.state)}</code>` : ''} — ${esc(d.reason || '')}</p></details>` +
+    `<details class="o-fold"><summary>Evidence and links</summary>${linkHtml(d, links)}</details>` +
+    `</article>`;
+}
+
+function entrySummary(e) {
+  const decs = e.decisions || [];
+  const acted = decs.filter(d => d.result);
+  const cards = [...new Set((acted.length ? acted : decs).map(d => d.number ? `#${parseInt(d.number, 10)}` : null)
+    .filter(Boolean))].slice(0, 4);
+  const scopes = [...new Set(decs.map(d => d.scope).filter(Boolean))].map(scopeName);
+  const what = e.status === 'skipped' ? 'Not evaluated'
+    : e.status === 'error' ? 'Error — partial pass'
+      : acted.length ? acted.slice(0, 2).map(d => `${d.action} ${d.number ? '#' + parseInt(d.number, 10) : ''}`).join(', ')
+        : 'Wait / No action';
+  const occ = e.occurrences || {};
+  const times = occ.count > 1 ? ` <span class="o-badge neutral">×${esc(occ.count)} identical passes</span>` : '';
+  return `<span class="o-src">${stamp(occ.last || e.at)}</span> ` +
+    `<span class="o-tscope">${esc(scopes.join(', ') || 'no scope')}${cards.length ? ' · ' + esc(cards.join(' ')) : ''}</span> ` +
+    `<strong>${esc(what)}</strong> — <span>${esc(e.headline || e.reason || '')}</span> ${outcomeBadge(e.outcome)}${times}`;
+}
+
+function entryBody(e, cached) {
+  const links = cached && cached.links;
+  const full = (cached && cached.data) || e;
+  const occ = full.occurrences || {};
+  const notes = [];
+  if (e.restartBefore) notes.push('The board restarted before this pass.');
+  if (e.quietBefore) notes.push(`No pass was recorded for ${durationWords(e.quietBefore)} before this one: the board was stopped, orchestration was off, or no agreement was in force.`);
+  if (e.seqGapBefore) notes.push(`${e.seqGapBefore} pass record(s) are missing before this one — a recording gap, not a quiet board.`);
+  if (e.gapBefore) notes.push(`${e.gapBefore.failures} pass(es) since ${utc(e.gapBefore.since)} could not be recorded (${e.gapBefore.error || 'no detail'}): the trace has a gap there.`);
+  if (e.truncated) notes.push(`This record was bounded: ${JSON.stringify(e.truncated)} left out.`);
+  const occHtml = occ.count > 1
+    ? `<p>This exact decision was made on <strong>${esc(occ.count)} consecutive passes</strong>, from ${stamp(occ.first)} to ${stamp(occ.last)} (passes ${esc(occ.firstSeq)}–${esc(occ.lastSeq)}). Repeats are folded, never dropped.</p>` +
+      (occ.passes ? `<details class="o-fold"><summary>Every pass</summary><ul class="o-list">${occ.passes.map(p =>
+        `<li><code>${esc(p.id)}</code> · ${esc(utc(p.at))}</li>`).join('')}</ul>` +
+        `${occ.passesOmitted ? `<p class="o-dim">${esc(occ.passesOmitted)} older pass ids are counted above and not listed.</p>` : ''}</details>` : '')
+    : '';
+  const decs = (full.decisions || []).slice().sort((a, b) =>
+    (b.result ? 2 : b.selected ? 1 : 0) - (a.result ? 2 : a.selected ? 1 : 0));
+  const want = S.orchItem;
+  const shown = want ? decs.filter(d => String(d.number || '').replace(/^0+/, '') === String(want).replace(/^0+/, '') ||
+                                         d.card === want || String(d.card || '').startsWith(`${want}-`)) : decs;
+  const rest = decs.length - shown.length;
+  const observed = (full.observed || []).concat(full.reconciled || []);
+  return `<div class="o-tbody">` +
+    (notes.length ? `<ul class="o-list o-tnotes">${notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : '') +
+    `<p class="o-dim">Pass <code>${esc(full.id)}</code>${full.seconds !== undefined ? ` · ran ${esc(full.seconds)}s` : ''}` +
+    `${full.owner && full.owner.role ? ` · installation ${esc(full.owner.role)}` : ''}` +
+    `${full.agreement && full.agreement.revision ? ` · agreement ${esc(full.agreement.revision)}` : ''}` +
+    ` · <a data-route data-o="entry-link" href="${esc(orchHref('trace', S.orchItem, full.id))}">Link to this entry</a></p>` +
+    occHtml +
+    (full.status === 'skipped' ? `<p><strong>Not evaluated:</strong> ${esc(full.reason || full.why || '')}. ` +
+      `No card was read and nothing was decided on this pass.</p>` : '') +
+    (full.status === 'error' ? `<p role="alert"><strong>The pass stopped with an error:</strong> ${esc(full.error || '')}. ` +
+      `What it had read before is below; nothing after the error happened in this pass.</p>` : '') +
+    (full.breaker && full.breaker.open ? `<p>The circuit breaker was open: no launch was attempted.</p>` : '') +
+    (observed.length ? `<details class="o-fold"><summary>Observed this pass (${observed.length})</summary><ul class="o-list">${observed.map(o =>
+      `<li><code>${esc(o.key || '')}</code> ${esc(o.action || '')} ${esc(o.file || o.card || '')} → ${esc(o.status || '')}${o.outcome ? ' · ' + esc(o.outcome) : ''}</li>`).join('')}</ul></details>` : '') +
+    (full.capacity && full.capacity.limits ? `<details class="o-fold"><summary>Capacity as read</summary>${factValue(full.capacity)}</details>` : '') +
+    (shown.length ? shown.map(d => decisionHtml(d, full, links)).join('')
+      : full.status === 'evaluated' ? `<p class="o-dim">${want ? `Card #${esc(want)} was not a candidate in this pass.` : 'No card in To Do, In Progress or Review was under an orchestrator scope on this pass.'}</p>` : '') +
+    (rest > 0 ? `<p class="o-dim">${rest} other decision(s) in this pass are about other cards. <a data-route href="${esc(orchHref('trace', null, full.id))}">Show the whole pass</a></p>` : '') +
+    (cached && cached.fetching ? '<p class="o-dim" aria-busy="true">Reading what its operations say now…</p>' : '') +
+    (cached && cached.error && !cached.missing ? `<p class="o-dim" role="alert">Its links could not be read now: ${esc(cached.error)}</p>` : '') +
+    `</div>`;
+}
+
+function traceEntryHtml(e) {
+  const t = traceState();
+  const okey = `tr-${e.id}`;
+  const open = orch().open[okey] || S.orchEntry === e.id;
+  if (open) loadTraceEntry(e.id);
+  return `<li class="o-trace-item"><details class="o-tentry" data-okeep="${esc(okey)}" data-o="${esc(okey)}"${open ? ' open' : ''}>` +
+    `<summary>${entrySummary(e)}</summary>${open ? entryBody(e, t.entry[e.id]) : ''}</details></li>`;
+}
+
+function traceFiltersHtml() {
+  const t = traceState();
+  const d = t.draft;
+  const r = orch().reading;
+  const scopes = r && r.effective ? (r.effective.scopes || []).map(s => s.id) : [];
+  const opt = (v, label, cur) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(label)}</option>`;
+  const ctx = S.orchItem ? findCard(S.orchItem, S.state) : null;
+  const ctxTask = ctx && ctx.task;
+  const cardCtx = S.orchItem
+    ? `<p class="o-tctx">Showing the decisions about card #${esc(S.orchItem)}. ` +
+      (ctxTask ? `<a data-route href="/cards/${esc(encodeURIComponent(idOf(ctxTask)))}">Back to ${esc(num(ctxTask))}</a> · ` +
+        `<a data-route href="/cards/${esc(encodeURIComponent(idOf(ctxTask)))}?tab=activity">Its history</a> · ` : '') +
+      `<a data-route data-o="trace-all-cards" href="${esc(orchHref('trace'))}">Every card</a></p>` : '';
+  return `<div class="o-tfilters" role="group" aria-label="Filter the decision trace">` +
+    (S.orchItem ? '' : `<label>Card <input type="text" inputmode="numeric" data-ofield="tf" data-k="card" value="${esc(d.card)}" placeholder="any" size="6"></label>`) +
+    `<label>Scope <select data-ofield="tf" data-k="scope">${opt('', 'any scope', d.scope)}` +
+    `${scopes.map(s => opt(s, scopeName(s), d.scope)).join('')}</select></label>` +
+    `<label>Outcome <select data-ofield="tf" data-k="outcome">${opt('', 'any outcome', d.outcome)}` +
+    `${TRACE_OUTCOMES.map(w => opt(w, OUTCOME_WORDS[w] || w, d.outcome)).join('')}</select></label>` +
+    `<label>Action <select data-ofield="tf" data-k="action">${opt('', 'any action', d.action)}` +
+    `${TRACE_ACTIONS.map(w => opt(w, w, d.action)).join('')}</select></label>` +
+    `<label>From <input type="date" data-ofield="tf" data-k="since" value="${esc(d.since)}"></label>` +
+    `<label>To <input type="date" data-ofield="tf" data-k="until" value="${esc(d.until)}"></label>` +
+    `<span class="o-acts"><button type="button" class="o-btn primary" data-oact="trace-apply" data-o="trace-apply">Apply filters</button>` +
+    `<button type="button" class="o-btn" data-oact="trace-clear" data-o="trace-clear">Clear</button>` +
+    `<button type="button" class="o-btn" data-oact="trace-reload" data-o="trace-reload">Refresh</button></span>` +
+    `</div>` + cardCtx;
+}
+
+function traceMetaHtml(meta) {
+  const m = meta || {};
+  const lp = m.lastPass;
+  const la = m.lastAction;
+  const integ = m.integrity || {};
+  const rec = m.recording || {};
+  const rows = [
+    ['Last pass evaluated', lp ? `${stamp(lp.at)} · ${esc(OUTCOME_WORDS[lp.outcome] || lp.outcome)}` : 'none recorded yet'],
+    ['Last pass that acted', la ? stamp(la.at) : 'none recorded'],
+    ['Scheduler', m.interval ? `a pass every ${esc(m.interval)}s while an agreement is in force and this installation executes` : 'interval unknown'],
+    ['Kept', 'on this installation only — never committed or synced. The shared record of an action is the card’s own history.'],
+    ['Covers', m.started ? `from ${stamp(m.started)}; nothing earlier was recorded, and nothing is reconstructed` : 'nothing yet'],
+  ];
+  if (m.boundary) rows.push(['Retention', `older passes (through pass ${esc(m.boundary.throughSeq)}${m.boundary.throughAt ? ', ' + esc(utc(m.boundary.throughAt)) : ''}) were pruned: the trace keeps the newest ${esc((m.retention || {}).keep)} segments`]);
+  const warn = [];
+  if (integ.malformedCount) warn.push(`${integ.malformedCount} unreadable line(s) were skipped (${(integ.malformed || []).slice(0, 3).map(x => `${x.segment}:${x.line}`).join(', ')}).`);
+  if ((integ.gaps || []).length) warn.push(`${integ.gaps.reduce((n, g) => n + g.missing, 0)} pass record(s) are missing in ${integ.gaps.length} place(s).`);
+  if (integ.orphanedRepeats) warn.push(`${integ.orphanedRepeats} repeat(s) name a record no longer kept.`);
+  if (rec.failures) warn.push(`${rec.failures} pass(es) could not be recorded since ${utc(rec.since)}: ${rec.lastError || ''}. Scheduling was not affected.`);
+  return `<article class="o-panel"><h3>What the trace records</h3>` +
+    `<p>Every scheduling pass, as it was decided: the candidates the scheduler read, the rule and reason for each, what it selected and what then happened. ` +
+    `A pass is <strong>deterministic</strong> and asks no model. Where a pass asked for a bounded reasoning job (a recovery diagnosis), its public response is linked and labelled <strong>agent-reported</strong> — a recommendation, never an observed result. ` +
+    `What actually ran is the operation ledger’s and the card’s, linked from each decision.</p>` +
+    `<dl class="o-kv">${rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join('')}</dl>` +
+    (warn.length ? `<div class="o-twarn" role="status"><strong>The trace is incomplete here:</strong><ul class="o-list">${warn.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>` : '') +
+    `</article>`;
+}
+
+function traceHtml() {
+  const t = traceState();
+  loadTrace(false);
+  if (S.orchEntry) loadTraceEntry(S.orchEntry);
+  const linked = S.orchEntry ? t.entry[S.orchEntry] : null;
+  let linkedHtml = '';
+  if (S.orchEntry) {
+    const e = linked && linked.data;
+    linkedHtml = `<article class="o-panel" aria-labelledby="o-tlinked"><h3 id="o-tlinked">Linked entry</h3>` +
+      (e ? `<ul class="o-trace">${traceEntryHtml(e)}</ul>`
+        : linked && linked.missing ? `<p role="alert">No entry <code>${esc(S.orchEntry)}</code> on this installation — it may have been pruned by retention, or recorded by another board.</p>`
+          : linked && linked.error ? `<p role="alert">The entry could not be read: ${esc(linked.error)}.</p>`
+            : `<p class="o-dim" aria-busy="true">Reading the entry…</p>`) +
+      `<p><a data-route href="${esc(orchHref('trace', S.orchItem))}">Close the linked entry</a></p></article>`;
+  }
+  let list;
+  if (!t.at && !t.error) list = `<p class="o-empty" aria-busy="true">Reading the decision trace…</p>`;
+  else if (t.error && !t.entries.length) {
+    list = `<p class="o-empty" role="alert">The decision trace could not be read: ${esc(t.error)}. ` +
+      `<button type="button" class="o-link" data-oact="trace-reload" data-o="trace-retry">Try again</button></p>`;
+  } else if (!t.entries.length) {
+    const started = t.meta && t.meta.started;
+    const filtered = S.orchItem || Object.values(t.filters).some(Boolean);
+    list = `<p class="o-empty">${filtered && started ? 'No recorded pass matches these filters.'
+      : started ? 'No pass is recorded.'
+        : 'No pass has been recorded on this installation yet. The trace starts when the scheduler first evaluates a pass with an operating agreement in force; nothing earlier is invented.'}</p>`;
+  } else {
+    list = `<ol class="o-trace" aria-label="Scheduling passes, newest first">${t.entries.map(traceEntryHtml).join('')}</ol>` +
+      (t.next ? `<p><button type="button" class="o-btn" data-oact="trace-older" data-o="trace-older"${t.fetching ? ' disabled' : ''}>Show older passes</button></p>`
+        : `<p class="o-dim">That is every recorded pass${t.meta && t.meta.boundary ? ' still kept' : ''}.</p>`);
+    if (t.error) list = `<p class="o-dim" role="alert">The newest reading failed (${esc(t.error)}); these are from the last one.</p>` + list;
+  }
+  return linkedHtml + traceMetaHtml(t.meta) + `<article class="o-panel"><h3>Passes, newest first</h3>` +
+    traceFiltersHtml() + list + `</article>`;
 }
 
 /* ── the operating agreement ─────────────────────────────────────────── */
@@ -1241,6 +1617,23 @@ async function doAction(el) {
   const expected = r && r.effective.revision;
   switch (d.oact) {
     case 'reload': loadOrch(true); return;
+    case 'trace-apply': {
+      const t = traceState();
+      t.filters = { ...t.draft };
+      loadTrace(true);
+      paintNow();
+      return;
+    }
+    case 'trace-clear': {
+      const t = traceState();
+      t.filters = { ...NO_FILTERS };
+      t.draft = { ...NO_FILTERS };
+      loadTrace(true);
+      paintNow();
+      return;
+    }
+    case 'trace-reload': loadTrace(true); return;
+    case 'trace-older': loadTrace(false, true); return;
     case 'dismiss': o.notice = null; paintNow(); return;
     case 'scope':
       return armed(key, async () => {
@@ -1446,6 +1839,9 @@ function wire(root) {
     } else if (f === 'note') {
       const form = o.forms[el.dataset.q] || (o.forms[el.dataset.q] = { choice: null, note: '' });
       form.note = el.value;
+    } else if (f === 'tf') {
+      // a filter is a draft until Apply: typing reads nothing
+      traceState().draft[el.dataset.k] = el.value;
     } else if (f === 'newphase') {
       o.newPhase = el.value;
     } else if (f === 'keeplimits') {
@@ -1465,6 +1861,8 @@ function wire(root) {
   root.addEventListener('toggle', (e) => {
     const k = e.target && e.target.dataset && e.target.dataset.okeep;
     if (k) o.open[k] = e.target.open;
+    // a trace entry opened: its body is drawn, and its links read, now
+    if (k && k.startsWith('tr-') && e.target.open) scheduleRender();
   }, true);
   // a field left: the repaint it held may run now. Only a field holds
   // one, so focus moving between links and buttons asks for nothing

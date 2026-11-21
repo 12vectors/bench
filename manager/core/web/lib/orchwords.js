@@ -13,6 +13,7 @@ import { formatRoute } from './route.js';
 /* The sections, with the words the navigation uses. */
 const SECTION_WORDS = {
   overview: 'Overview',
+  trace: 'Decision trace',
   work: 'Work',
   decisions: 'Decisions',
   phases: 'Phases',
@@ -145,9 +146,9 @@ function stepHere(word, section) {
   return step.section && !step.href && step.section === (section || 'overview') ? null : step;
 }
 
-function orchHref(section, item) {
+function orchHref(section, item, entry) {
   return formatRoute({ view: 'orchestrator', section: section || 'overview',
-                       ...(item ? { item } : {}) });
+                       ...(item ? { item } : {}), ...(entry ? { entry } : {}) });
 }
 
 /* `bench` → "the Bench scope", `phase:53` → "phase #53". */
@@ -214,8 +215,11 @@ function cardEntryHtml(task, state, id) {
   if (dec && dec.openBlockers) words.push(`${dec.openBlockers} open blocker${dec.openBlockers === 1 ? '' : 's'}`);
   const section = dec && (dec.open || dec.reevaluate) ? 'decisions'
     : task.isPhase ? 'phases' : 'work';
+  // the card's own decisions, newest first, in the trace (task 184)
+  const trace = held ? ` · <a data-route data-o="card-trace" href="${esc(orchHref('trace', id))}">` +
+    `Decision trace</a>` : '';
   return `${esc(words.join(' · '))} · <a data-route href="${esc(orchHref(section, id))}">` +
-    `Open in Orchestrator</a>`;
+    `Open in Orchestrator</a>${trace}`;
 }
 
 /* `n of m` for one pool, or the honest words when nothing is allotted. */

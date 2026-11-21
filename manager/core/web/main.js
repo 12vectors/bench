@@ -180,6 +180,8 @@ function applyRoute(route, background) {
       // another (the view draws the words)
       S.orchSection = route.invalid === 'section' ? route.raw : route.section || 'overview';
       S.orchItem = route.item || null;
+      S.orchEntry = route.entry || null;
+      if (route.invalid === 'entry') toast(`“${clip(route.raw, 30)}” is not a decision-trace entry — showing the trace`, true);
       if (route.invalid === 'item') toast(`“${clip(route.raw, 30)}” does not name a card — showing the section`, true);
     }
     setView(route.view);
