@@ -151,7 +151,13 @@ class BrainAgent(unittest.TestCase):
         cond = " && ".join(f"document.querySelector('#bshell').innerText.includes({json.dumps(w)})"
                            for w in words)
         if not b.wait(cond, timeout):
-            raise bv.CheckFailed(f"never showed {words}: {self.text(b)[:1500]}")
+            # the agent's panel first, on one line: a cut message must still
+            # say what state the request was in and what it said
+            panel = b.eval("(document.querySelector('#bshell .b-agent') || {}).innerText || ''")
+            state = json.dumps([{k: d.get(k) for k in ("status", "round", "error", "mode")}
+                                for d in self.drafts()[:2]])
+            raise bv.CheckFailed(f"never showed {words}; requests {state}; panel: "
+                                 + " | ".join(panel.split("\n"))[:1200])
 
     def armed_click(self, b, act):
         sel = f'#bshell [data-bact="{act}"]'
