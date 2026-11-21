@@ -558,6 +558,38 @@ class UnsafeRecoveryIsRefused(RecoveryCase):
         self.assertEqual(1, len(self.launch.calls))
         self.assertEqual("running", state.AGENTS[run]["status"])
 
+    def test_a_question_in_flight_makes_the_restart_wait_not_hold(self):
+        # task 181, review of 10062880: a person's question about the card
+        # between the diagnosis and the restart is a reasoning run on the
+        # card — no worktree, no worker — so the restart waits for it
+        run = self.diagnosed()
+        state.AGENTS["question"] = {"task": "1-card.md", "mode": "reason",
+                                    "status": "running", "started": time.time()}
+        self.tick()
+        self.tick()
+        [item] = self.incidents()
+        self.assertEqual("reasoning-in-flight", item["code"])
+        self.assertNotIn(item["status"], ("held", "exhausted"))
+        self.assertEqual([], self.stops)
+        self.assertEqual(1, len(self.launch.calls))
+        self.assertFalse(any("worktree-active" in (n.get("text") or "")
+                             for n in self.notes_of("blocker")))
+        # the question settles: the restart carries on, stop first
+        state.AGENTS["question"]["status"] = "done"
+        self.tick()
+        self.assertEqual([run], self.stops)
+        state.AGENTS[run]["status"] = "stopped"
+        # and one asked while the stop is under way waits too
+        state.AGENTS["question-2"] = {"task": "1-card.md", "mode": "reason",
+                                      "status": "running", "started": time.time()}
+        self.tick()
+        self.assertEqual(1, len(self.launch.calls))
+        self.assertEqual("reasoning-in-flight", self.incidents()[0]["code"])
+        state.AGENTS["question-2"]["status"] = "done"
+        self.tick()
+        self.assertEqual(2, len(self.launch.calls))
+        self.assertEqual("remediating", self.incidents()[0]["status"])
+
     def test_a_restart_waits_for_an_observed_stop(self):
         run = self.diagnosed()
         self.tick()
@@ -586,7 +618,7 @@ class UnsafeRecoveryIsRefused(RecoveryCase):
                                     "status": "running", "started": time.time()}
         self.assertEqual("slots-full", orchestrator.authorize(
             "recover", "1-card.md")["code"])
-        with mock.patch.object(recovery, "_others", lambda item: []):
+        with mock.patch.object(recovery, "_others", lambda item, *a: []):
             self.tick()
         self.assertEqual([run], self.stops)
         state.AGENTS.pop("thinking")

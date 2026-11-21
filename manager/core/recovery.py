@@ -741,11 +741,15 @@ def _brief_basis(task: dict) -> str:
     return taskfiles.brief_sha(taskfiles.card_parts(body)["brief"])[:16]
 
 
-def _others(item: dict) -> list[str]:
+def _others(item: dict, reasoning_: bool | None = None) -> list[str]:
+    """The other runs on the incident's card: all of them, only the
+    read-only reasoning runs (`True`), or every run but those (`False`)."""
     with state.LOCK:
         return [k for k, r in state.AGENTS.items()
                 if r.get("task") == item["file"] and r.get("status") == "running"
-                and k != item.get("run")]
+                and k != item.get("run")
+                and (reasoning_ is None
+                     or (r.get("mode") == "reason") == reasoning_)]
 
 
 def _remediate(item: dict, board: dict, start=None, stop=None) -> dict:
@@ -765,11 +769,27 @@ def _remediate(item: dict, board: dict, start=None, stop=None) -> dict:
         return _hold(item, "held", "remediation-unavailable",
                      f"a restart is implementation work, and the card is in "
                      f"{task['stage']}/; a review card's repair is a repair round")
-    others = _others(item)
+    others = _others(item, False)
     if others:
         return _hold(item, "held", "worktree-active",
                      f"another run ({others[0]}) is working on this card; "
                      f"recovery never competes with an active worker")
+    thinking = _others(item, True)
+    if thinking:
+        # A reasoning run — a person's question about this card, say
+        # (task 181) — has no worktree and competes with no worker, but a
+        # launch on the card waits for it (one agent per card). So this is
+        # a wait, never a hold: the incident stays on the restart path, so
+        # the next pass carries on from here rather than diagnosing again,
+        # and a stop already asked stays asked.
+        if item["status"] not in ("stopping", "remediating"):
+            item["status"] = "remediating"
+        item.update(code="reasoning-in-flight",
+                    reason=f"waiting: a reasoning run ({thinking[0]}) is in "
+                           f"flight on this card; the restart carries on once "
+                           f"it ends")
+        _save(item)
+        return item
     # the authority to recover, asked again; a stop is not a launch, so a
     # full pool does not refuse it — the stop is what frees the slot
     answer = orchestrator.authorize("recover", item["file"], board=board)
