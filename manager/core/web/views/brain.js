@@ -88,7 +88,8 @@ async function load(k) {
     if (S.view === 'brain' && key() === k) renderBrain(true);
     return;
   }
-  if (S.view === 'brain' && key() === k) renderBrain();
+  // an entry read for the Brain Agent's diff repaints its panel wherever it is
+  if (S.view === 'brain' && (key() === k || ag)) renderBrain();
 }
 
 /* The reading asked for by "Use the current version" has landed: the
