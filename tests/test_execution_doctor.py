@@ -463,9 +463,11 @@ class DescribeMatchesWhatRunActuallyPasses(unittest.TestCase):
     def test_opencode_describe_is_the_argv_run_passes(self):
         with tempfile.TemporaryDirectory() as tmp:
             cwd = Path(tmp)
-            # opencode does not launch `reason` (task 139): its `run`
-            # refuses the mode, which tests/test_reasoning.py holds
-            for intent in (i for i in profiles.INTENTS if i != "reason"):
+            # opencode does not launch `reason` (task 139) or `brain`
+            # (task 175): its `run` refuses the mode, which
+            # tests/test_reasoning.py and tests/test_braindraft.py hold
+            for intent in (i for i in profiles.INTENTS
+                           if i not in ("reason", "brain")):
                 found = profiles.resolve(intent, worktree=cwd)
                 policy = profiles.adapter_policy(found)
                 described = self._described("opencode", intent, policy, cwd)

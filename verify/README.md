@@ -9,7 +9,7 @@ checkout it is pointed at** and leaves a record of what it ran:
 | --- | --- | --- |
 | `verify/backend` | `python3 -m unittest discover -s tests -t . -v` — the whole suite, as CI runs it, timed per test and fixture (see "Where the backend suite's time goes"); **any skipped test is a setup error** | `node` on PATH and markdown-it-py, or their tests skip and the check refuses |
 | `verify/docs` | `site/build.py --out <artifacts>/site`, then requires a written file for every route in `site/pages.json` | markdown-it-py (`site/requirements.txt`) |
-| `verify/preflight` | `docs`: the docs interpreter imports markdown-it; `backend`: `node --version` runs on the check's PATH and markdown-it imports; `browser`: a Chromium starts with its sandbox. A profile's required `prepare` step | as the check it prepares |
+| `verify/preflight` | `docs`: the docs interpreter imports markdown-it; `backend`: `node --version` runs on the check's PATH, `lsof` is on it, and markdown-it imports; `browser`: a Chromium starts with its sandbox. A profile's required `prepare` step | as the check it prepares |
 | `verify/browser` | the board UI in a sandboxed Chromium against a real disposable bench backend: stages and cards drawn, layout at 1440/1280/1024 px, the six views, keyboard reach and focus ring on the ⚕ Configuration check, its dialog inside the viewport at 1440×900, 1280×800, 1024×768 and 640×400, accessible names; the Configuration check (task 79) from the header and from Settings → Diagnostics — one specific result and one scope sentence, successful and untested rows folded apart and never read as passed, purposes switched with focus kept, paths one per left-aligned row with a working Copy, partial / unsupported / blocked / stale / not-completed / execution-failed states, controlled execution changing the scope sentence, no narrow columns or overflow at 390 px and at 200 % zoom; the card's launch check — Implementation, Review and the review card's default purpose, branch, PR target, harness and model from the resolvers, a stacked card showing its own branches at 1440, 390 and 200 %, a blocked launch with its fix and no button, and a sheet opened before the policy changed refused by the launch's own preflight with nothing started; and the Settings view — every section at 1440/1024/640×400/390 px, the empty, refused and configured states read from the backend's own resolution, the draft→validate→preview→apply round trip, Check configuration reporting `ran == ['inspect']`, and accessible names in all eight sections; Settings → Agents — the compact harness/model rows and their inheritance, a per-purpose override applied and read back from the backend, a prompt rendered, diffed, saved, reset and recoverable, a broken template refused with nothing written, a stale draft refused as a conflict, and keyboard reach at 1440 and 390 px; filed reports read as Markdown — a review round in both themes beside a rebuilt "before" at the same viewport, prose/code typefaces and contrast measured, hostile HTML and links inert, nothing posted or fetched off the board, wide code and tables scrolling in place at 390 px and real 200% zoom, the reading place kept across a live update; the setup guide's application preview — a disposable web app with a disposable fixture configured with an acknowledged call-out, prepared and started by armed clicks, its ready URL serving the fixture, shown stale after a later commit in the card's worktree, its log free of the secret it was given, Check readiness and Stop fired from the keyboard with no process of its group left behind, both themes and 390 px; one delivery status per card (task 99) — the card face, the Overview, the detail head and the merge dialog reading the backend's word and primary action for the #94 fixtures F1/F3/F7/F9/F13/F16/F18/F23/F30, the status before its action and the action full width at 390 px, Enter arming without firing and Escape returning focus, no alarm for a check that lies ahead on an in-progress card, nothing written by reading, and folds, scroll and a focused action kept across a live update; relevance reviews in Reviews (task 84) — a card-79-shaped card opened from Activity's link onto its exact review beside a PR-review empty state, in both themes beside a rebuilt "before", a comment saved against the review and kept across a reload, a draft and its focus kept while a new review arrives live, Update card from this review failing on the stub, retried, proposing a diff and applied with nothing else launched, then discarded, keyboard order and 390 px; the page's own writes (task 112) on loopback, through an isolated loopback proxy whose origin is the backend's one `BOARD_ALLOWED_ORIGINS` entry, and refused with nothing changed through one whose origin is not; reference files (task 113) — an HTML and an SVG file under `reference/` whose scripts would read `/api/state`, first proved to run in a same-origin frame against a recording sink, then opened at their `/files/` URLs where each still renders and the sink hears nothing, and Settings → Installation's "Who calls this board" panel in report mode; the Orchestrator (task 145) — every section read with no run, check, worktree or ledger entry made, an agreement drafted, previewed and applied through the page with a delegated ungated merge said to be unverified, a Bench pause reaching the phase scope and a phase pause not reaching the Bench scope, a refused phase adoption said in words, an answer refused on a stale basis by the server, not offered where the page may not answer, then recorded on the card and in the resolved history, a manual takeover and reclaim, one named run cancelled after a confirmation stating its effects, recovery exhaustion and an unknown outcome shown and settled, the board strip and a card's Overview reaching the exact section and card, untrusted text inert and a token masked, typed text and open folds kept across a repaint, both themes at 1440 and 390 px; screenshots required | a Chromium that can start its sandbox |
 
 The plain command still works and still needs nothing:
@@ -240,6 +240,100 @@ would add load to a host whose stalls may be load. That document says what
 would have to be measured before it is reconsidered. The runner stays
 serial.
 
+## Continuous integration (task 180)
+
+`.github/workflows/tests.yml` runs two legs on every pull request and
+every push to `main`. They are deliberately different, and neither is a
+substitute for the other or for bench's own checks.
+
+| leg | Python | what runs | what it proves |
+| --- | --- | --- | --- |
+| `tests (3.11)` | oldest supported | `python3 -m unittest discover -s tests -v`, nothing installed | the suite imports and passes with the standard library alone. Skips are allowed and read as OK, so it is **not** full coverage |
+| `tests (3.13)` | newest supported | node 22 and `site/requirements.txt` prepared, then `verify/preflight backend`, then `verify/backend --require-timing`, then `verify/ci-summary` | the whole suite ran at this commit (on a pull request, the PR's head commit) with nothing skipped, and how long it took on a clean machine |
+
+The strict leg is held to the same contract as `bench-backend`: zero
+tests discovered, a module that will not import, any skipped test or a
+missing prerequisite is a setup error (exit 2), never a pass. Two things
+are added for CI:
+
+- `verify/backend --require-timing` makes the timing file part of the
+  pass. It must have been written by this run, be readable, and name
+  exactly as many distinct test ids as unittest says ran; otherwise the
+  run is a setup error. Every timed run (required or not) records
+  `testSet`: the count and a sha256 of the sorted test ids, so two runs
+  can be shown to have covered the same tests.
+- `verify/ci-summary <base>` reads the one record under the directory
+  given to `--artifacts` and checks it against what the job expected:
+  the revision is the candidate commit (`$CANDIDATE_SHA`, below) and the
+  checkout clean, the suite's own
+  interpreter (the timing file's runtime) is the matrix Python, the
+  outcome `passed`, coverage `full`, no skips, timing collected and the
+  test set counting what ran. It exits 0, 1 (the suite failed) or 2 (no
+  record, two records, mismatched provenance, or anything less than a
+  complete pass), and on every path appends a markdown summary to the
+  job's step summary. `--write-context` adds `ci-context.json` holding an
+  allowlist of the run's own identifiers (the candidate commit, a pull
+  request's head and base commits, GitHub's own `GITHUB_SHA`, the ref,
+  run id and attempt, workflow, job, runner image) and no other variable.
+
+**Which commit a run is about.** On a pull request, GitHub's default
+checkout and `$GITHUB_SHA` are a merge commit it makes for the run
+(`refs/pull/<n>/merge`), which nothing else names. So the workflow sets
+`CANDIDATE_SHA` to the PR's head commit (the pushed commit on a push),
+checks that commit out, expects it in the record and names the artifact
+after it. A PR artifact is therefore about the same commit as the card,
+Bench's evidence and a dev-box run. The cost is that CI does not test the
+PR merged into its base. `ci-context.json` keeps the head and base
+commits and GitHub's merge commit side by side, so the artifact also says
+which base the head was proposed against at the time.
+
+**What is kept.** The attestation and the upload run with `if: always()`,
+so a failing or skipping run keeps its outputs too. A hung suite is
+stopped by `verify/backend --timeout 3600` (60 minutes), inside the job's
+90-minute limit, so it ends as a setup error with its record and log
+written and kept. A run the runner kills itself (the job limit reached
+during preparation, a cancelled workflow, a lost runner) writes no
+`result.json`, and `ci-summary` says so rather than reading anything
+else as its record. Everything
+under `$RUNNER_TEMP/bench-ci/` is uploaded as
+`bench-backend-strict-py<version>-<candidate sha>-<run id>-<attempt>`, kept 30 days:
+the preflight record, the backend's `result.json`, `unittest.log` and
+`timings.json`, and `ci-context.json`. Each run writes into a fresh
+directory on a fresh runner, and `ci-summary` refuses a base holding more
+than one record, so no earlier run's output can be read as this one's.
+The checkout is made with `persist-credentials: false`, the job's token
+is read-only, the suite's environment is built by `benchverify.child_env`
+(credential-shaped names removed, listed by name only), and nothing
+under `secrets.` is referenced.
+
+**Run the same thing locally.** The commands are the workflow's, with a
+directory of your own outside the checkout:
+
+    python3 verify/preflight backend --artifacts /tmp/ci-like/preflight
+    python3 verify/backend --require-timing --artifacts /tmp/ci-like/backend
+    python3 verify/ci-summary /tmp/ci-like/backend \
+        --expect-revision "$(git rev-parse HEAD)" --expect-python 3.13
+
+Use a fresh `/tmp/ci-like/backend` per run: `ci-summary` reads exactly
+one record.
+
+**Comparing CI with the dev box.** Download the artifact and rank or
+compare it with `verify/timing-report`, which refuses a comparison of
+runs that executed different test ids or did not fully pass. A CI time
+and a dev-box time are measurements of **different machines** — CPU
+count, disk, interpreter build and whatever else was running all differ,
+and the dev box usually shares its CPUs with agents and other checks. A
+difference between them is not a speedup and not a controlled
+comparison: compare CI runs with CI runs, and dev-box runs with dev-box
+runs, at the same `testSet` digest. What CI gives is a quiet-machine
+reference point, useful for telling contention on the dev box from time
+the tests themselves take.
+
+**What CI does not cover.** No browser (`verify/browser`), no docs build
+(`verify/docs`), no focused scopes, and no gate: a green CI run is
+external CI on the board, never a Bench check, and it satisfies no merge
+rule. The bench checks stay the acceptance path.
+
 ## Waiting, executing and what else was running (task 179)
 
 A slow or failed run on a shared machine is easy to blame on load and
@@ -335,9 +429,10 @@ Playwright's download cache (`PLAYWRIGHT_BROWSERS_PATH` or
 
 ## Preparing dependencies
 
-- backend: `node` on the PATH bench runs checks with, and markdown-it-py
-  for the interpreter (`--python`). `verify/preflight backend` checks
-  both; the examples declare it as `backend-deps`.
+- backend: `node` and `lsof` on the PATH bench runs checks with, and
+  markdown-it-py for the interpreter (`--python`). `verify/preflight
+  backend` checks all three (`--tool` names other programs instead of
+  `lsof`); the examples declare it as `backend-deps`.
 - docs: a virtualenv you own, outside the checkout (a venv inside it would
   make the checkout dirty, and dirty evidence satisfies no gate):
 

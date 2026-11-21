@@ -212,7 +212,8 @@ class BrainReading(unittest.TestCase):
         # the list's own action comes first (task 158), then its search and
         # its two filters (task 159), then its entries
         b.key("Tab")
-        self.assertEqual(b.eval("document.activeElement?.dataset?.bact || null"), "new")
+        # New entry asks the Brain Agent first (task 175)
+        self.assertEqual(b.eval("document.activeElement?.dataset?.bact || null"), "ag-new")
         for control in ("q", "cls", "kind"):
             b.key("Tab")
             self.assertEqual(b.eval("document.activeElement?.dataset?.bfind || null"), control)
@@ -242,7 +243,7 @@ class BrainReading(unittest.TestCase):
         self.assertIn("the first entry you save does", text)
         # the one control is the one that fills it (task 158); reading made nothing
         self.assertEqual(b.eval("[...document.querySelectorAll('#bshell button')]"
-                                ".map(x => x.dataset.bact)"), ["new"],
+                                ".map(x => x.dataset.bact)"), ["ag-new"],
                          "the empty Brain offers exactly one control: New entry")
         shot("brain-empty")
 

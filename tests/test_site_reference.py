@@ -179,7 +179,8 @@ class TheSettingsPageIsTheEnvFile(BuiltSite):
         self.assertIn("BOARD_CLAUDE_BIN, BOARD_OPENCODE_BIN", headings)
         self.assertIn("BOARD_AGENT_MODEL, BOARD_AGENT_MODEL_WORK, "
                       "BOARD_AGENT_MODEL_ACT_PR, BOARD_AGENT_MODEL_REVIEW, "
-                      "BOARD_AGENT_MODEL_REFINE, BOARD_AGENT_MODEL_REASON",
+                      "BOARD_AGENT_MODEL_REFINE, BOARD_AGENT_MODEL_REASON, "
+                      "BOARD_AGENT_MODEL_BRAIN",
                       headings)
 
     def test_a_default_is_the_files_own_line_and_says_it_is_one(self):

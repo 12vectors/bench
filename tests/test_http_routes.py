@@ -264,10 +264,12 @@ class EveryMutationRefusesAHostilePage(unittest.TestCase):
         # task 143 one, adopting or releasing a phase, policy-mutation;
         # task 144 one, resolving an incident or resetting the breaker,
         # policy-mutation; task 158 six Brain writes (create, edit,
-        # classify, override, retire, retry), browser-mutation; task 181
-        # three (ask, retry, cancel a question), browser-mutation; task 182
-        # one, migrating reserved capacity to shared, policy-mutation
-        self.assertEqual(91, len(self.routes))
+        # classify, override, retire, retry), browser-mutation; task 175
+        # six Brain drafting steps (start, continue, cancel, discard,
+        # retarget, apply), browser-mutation; task 181 three (ask, retry,
+        # cancel a question), browser-mutation; task 182 one, migrating
+        # reserved capacity to shared, policy-mutation
+        self.assertEqual(97, len(self.routes))
         self.assertEqual(36, sum(1 for k in self.routes.values()
                                  if k == "policy-mutation"))
 

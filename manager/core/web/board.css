@@ -2085,6 +2085,23 @@
   .b-override{color:var(--accent);border-color:var(--accent)}
   .b-revs summary{cursor:pointer;font-weight:600}
   .b-revs h3{font-size:13px;margin:10px 0 4px}
+  /* the Brain Agent (task 175): its request, progress, draft and diff */
+  .b-agent h3{font-size:13px;margin:12px 0 4px}
+  .b-request{margin:8px 0;padding:6px 10px;border-left:3px solid var(--accent);background:var(--sunken);
+    white-space:pre-wrap;overflow-wrap:anywhere}
+  .b-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+  .b-cols ul{margin:0;padding-left:18px}
+  .b-diff{white-space:pre-wrap;overflow-wrap:anywhere;max-height:420px;overflow:auto;background:var(--sunken);
+    padding:8px 10px;border-radius:6px;font:12px/1.5 var(--mono);margin:0}
+  .b-diff-add{color:var(--calm)}
+  .b-diff-del{color:var(--alarm);text-decoration:line-through}
+  .b-diff-gap{color:var(--idle)}
+  .b-agdraft{overflow-wrap:anywhere}
+  .b-claim{text-transform:none}
+  .b-claim-unknown,.b-claim-unresolved{color:var(--alarm);border-color:var(--alarm)}
+  .b-link{background:none;border:0;padding:0;color:var(--accent);text-decoration:underline;cursor:pointer;font:inherit}
+  .b-scope summary,.b-agent details summary{cursor:pointer;font-weight:600}
+  @media (max-width:760px){.b-cols{grid-template-columns:minmax(0,1fr)}}
   .b-main button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   @media (pointer:coarse){.b-btn,.b-tab,.b-radio,.b-revs summary,.b-main input[type="text"],.b-main select{min-height:44px}}
   @media (max-width:760px){

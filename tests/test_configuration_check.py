@@ -215,7 +215,7 @@ class NothingUntestedReadsAsPassed(unittest.TestCase):
         self.assertEqual(doctor.PURPOSES, {
             "work": "Implementation", "act-pr": "PR fixes",
             "review": "Reviews", "refine": "Card refinement",
-            "reason": "Orchestrator reasoning"})
+            "reason": "Orchestrator reasoning", "brain": "Brain drafting"})
 
 
 class EachProblemOnce(unittest.TestCase):

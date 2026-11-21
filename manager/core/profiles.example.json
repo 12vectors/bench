@@ -530,6 +530,24 @@
         {"name": "orchestration-guide",
          "path": "work:reference/orchestration-guide.md", "required": false}
       ]
+    },
+    "brain": {
+      "_doc": [
+        "Brain drafting (task 175): a person asks the Brain Agent to write",
+        "or update one Brain entry. The reason stance, and no web access:",
+        "no worktree, no command, no check, no edit tool, no shell, so",
+        "`commands`, `verify` and `prepare` are refused here by name",
+        "(intent-restricted). It starts in the application checkout and",
+        "reads it with the vendor's read-only tools; bench pins a bounded",
+        "selection of the work root itself and denies credential paths and",
+        "its own private state by read rules. Approved context here is",
+        "added to that — a house style for entries, say. Only a person's",
+        "Apply writes the entry."
+      ],
+      "context": [
+        {"name": "brain-style", "path": "work:reference/brain-style.md",
+         "required": false}
+      ]
     }
   }
 }
