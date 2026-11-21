@@ -795,6 +795,7 @@ ROUTES: dict[str, str] = {
     "GET /api/card/acceptance": "read",
     "GET /api/card/decisions": "read",
     "GET /api/card/delivery": "read",
+    "GET /api/card/timing": "read",
     "GET /api/card/discussion": "read",
     "GET /api/card/inputs": "read",
     "GET /api/card/result": "read",

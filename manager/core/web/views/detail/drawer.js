@@ -186,8 +186,11 @@ function renderDrawer() {
   wireReviews(t);
   const ov = $('#dsec-overview');
   wireDeliveryButtons(ov, t, deliveryActions(dl, 'ov'));
-  ov.querySelectorAll('[data-dview="evidence"]').forEach(b =>
-    b.addEventListener('click', () => verifySheet(t)));
+  // delegated, so a block that redraws itself in place (Time on this
+  // card, task 165) keeps its evidence links working
+  ov.addEventListener('click', (e) => {
+    if (e.target.closest('[data-dview="evidence"]')) verifySheet(t);
+  });
   // every tool and action the card has, built by the card's own builder
   // and wired by it — so the detail view cannot offer a tool the card
   // would not, or wire one differently. Placed before focus is restored,

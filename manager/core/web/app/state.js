@@ -28,6 +28,7 @@ const S = {
   acc: {},               // file -> {data, stamp, error}: acceptance, findings, reports
   inputs: {},            // file -> {data, key, error}: the card's Inputs and required tools (task 132)
   result: {},            // file -> {data, key, error}: the card's Show the result reading (task 133)
+  timing: {},            // file -> {data, key, error}: the card's cycle time (task 165)
   // file -> {data, key, error, loading}: the card's text, read on opening
   // it (task 129) — the board list carries every field but the text
   detail: {},
