@@ -257,8 +257,10 @@ def _fold(obs: dict, reading: dict, runs: dict, me: str, *, step: float) -> None
             if len(obs["_peers"]) >= MAX_PEERS:
                 obs["_omitted"].add(eid)
                 continue
-            peer = obs["_peers"][eid] = {"evidence": eid, "check": run["check"],
-                                         "together": 0.0, "executing": 0.0}
+            # first seen now: the time before this reading was not observed
+            obs["_peers"][eid] = {"evidence": eid, "check": run["check"],
+                                  "together": 0.0, "executing": 0.0}
+            continue
         peer["together"] += step
         if mine_exec and run["phase"] != "waiting":
             peer["executing"] += step
