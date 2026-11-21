@@ -183,6 +183,16 @@ class Sandbox(unittest.TestCase):
         return {"duplicate": False, "id": key}
 
     def put_in_force(self, doc: dict) -> str:
+        # a document whose phases carry an `allocation` is the reserved
+        # model that predates task 182, held to the behaviour it keeps
+        if any(isinstance(p, dict) and "allocation" in p
+               for p in (doc.get("phases") or {}).values()):
+            doc["bench"]["capacityModel"] = agreements.RESERVED
+            doc["bench"].pop("scopeDefaults", None)
+            if agreements.effective().get("capacityModel") == agreements.SHARED:
+                # setting up a legacy board, not migrating one back: a
+                # shared agreement refuses a reserved draft (task 182)
+                agreements.document_path().unlink()
         agreements.save_draft(doc, agreements.revision(agreements.draft_document()[0]))
         return agreements.apply(agreements.effective()["revision"],
                                 agreements.revision(doc))["revision"]
@@ -267,14 +277,17 @@ class FiveReadyUnderTwoSlots(Sandbox):
                    if i["code"] == "slots-full"]
         self.assertEqual(3, len(waiting))
 
-    def test_priority_then_number_decides_who_goes_first(self):
+    def test_requests_ready_together_go_by_card_number_not_priority(self):
+        # task 182: first come, first served. Four requests that became
+        # ready in one pass share their time, and the tie is broken by card
+        # number — never by priority
         self.enable()
         self.board.add("1", priority="Low")
         self.board.add("2")
         self.board.add("3", priority="High")
         self.board.add("4")
         self.tick()
-        self.assertEqual(["2-card.md", "3-card.md"], self.running())
+        self.assertEqual(["1-card.md", "2-card.md"], self.running())
 
     def test_declared_conflicts_and_cycles_block_while_independent_work_runs(self):
         self.enable(capacity={"implementation": 4})

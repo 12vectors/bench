@@ -169,6 +169,10 @@ class Board(unittest.TestCase):
         doc["bench"]["authority"] = {w: True for w in agreements.AUTHORITIES}
         if phases:
             doc["phases"] = phases
+            if any("allocation" in p for p in phases.values()):
+                # the reserved model that predates task 182
+                doc["bench"]["capacityModel"] = agreements.RESERVED
+                doc["bench"].pop("scopeDefaults", None)
         agreements.save_draft(doc, agreements.revision(agreements.draft_document()[0]))
         agreements.apply(agreements.effective()["revision"], agreements.revision(doc))
         execowner.designate("none")

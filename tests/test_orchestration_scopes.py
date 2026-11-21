@@ -65,6 +65,17 @@ def board(*tasks: dict) -> dict:
     return {"stages": [{"slug": "all", "tasks": list(tasks)}]}
 
 
+def legacy(doc: dict) -> dict:
+    """A document whose phases still carry an `allocation` is written in
+    the reserved model that predates task 182: these cases hold that model
+    to the behaviour it always had, which it keeps until migrated."""
+    phases = doc.get("phases") or {}
+    if any(isinstance(p, dict) and "allocation" in p for p in phases.values()):
+        doc["bench"]["capacityModel"] = agreements.RESERVED
+        doc["bench"].pop("scopeDefaults", None)
+    return doc
+
+
 def agreement(**bench) -> dict:
     doc = agreements.new_draft()
     doc["bench"].update(enabled=True)
@@ -108,6 +119,7 @@ class Sandbox(unittest.TestCase):
         self.addCleanup(lambda: (state.AGENTS.clear(), state.AGENTS.update(saved)))
 
     def put_in_force(self, doc: dict) -> str:
+        doc = legacy(doc)
         agreements.save_draft(doc, agreements.revision(agreements.draft_document()[0]))
         draft = agreements.revision(doc)
         return agreements.apply(agreements.effective()["revision"], draft)["revision"]
@@ -175,7 +187,7 @@ class PhaseScopesOnlyNarrow(Sandbox):
     def with_phase(self, **phase) -> dict:
         doc = agreement()
         doc["phases"] = {"136": {"enabled": True, **phase}}
-        return doc
+        return legacy(doc)
 
     def test_authority_is_the_intersection_with_provenance(self):
         doc = self.with_phase(authority={"merge": False})
@@ -224,7 +236,7 @@ class PhaseScopesOnlyNarrow(Sandbox):
         bench = agreements.scope(resolved, "bench")
         phase = agreements.scope(resolved, "phase:136")
         self.assertEqual(bench["capacity"]["implementation"],
-                         {"total": 2, "allocated": 1, "own": 1})
+                         {"total": 2, "allocated": 1, "own": 1, "shared": False})
         self.assertEqual(phase["capacity"]["implementation"]["own"], 1)
         self.assertEqual(bench["capacity"]["dailyStarts"]["own"], 12)
         self.assertEqual(sum(s["capacity"]["implementation"]["own"]

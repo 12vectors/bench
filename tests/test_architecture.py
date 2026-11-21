@@ -912,6 +912,8 @@ ROUTES: dict[str, str] = {
     "POST /api/orchestration/agreement/preview": "policy-mutation",
     "POST /api/orchestration/agreement/discard": "policy-mutation",
     "POST /api/orchestration/agreement/apply": "policy-mutation",
+    # reserved phase allocations to shared capacity (task 182)
+    "POST /api/orchestration/agreement/migrate": "policy-mutation",
     "POST /api/orchestration/scope": "policy-mutation",
     "POST /api/orchestration/installation": "policy-mutation",
     # a person settles an operation the scheduler held (task 141)

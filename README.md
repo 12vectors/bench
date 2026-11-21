@@ -30,7 +30,11 @@ a different model, sending failures back for repair, and merging only
 where and how you allowed. It is off until you apply an operating
 agreement, it never takes a card someone else moved, and everything it
 does is written on the card ("Delegate work to an orchestrator" in the
-docs).
+docs). Its limits are a few global numbers — say eight implementation
+runs at once for the whole board, and at most two for any one phase —
+shared first come, first served: a phase uses a slot only while a run
+of its own holds one, so an idle or finished phase never keeps
+standalone work waiting ("Shared capacity, first come first served").
 
 **Docs: [bench.12vectors.com](https://bench.12vectors.com)** — guides,
 concepts, and a settings reference, every page of it generated from this

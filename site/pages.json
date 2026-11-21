@@ -285,7 +285,7 @@
       "title": "Scheduling and recovery",
       "layout": "article",
       "section": "Concepts",
-      "description": "Bounded passes over a durable operation ledger: dependencies, priority and declared overlap, capacity reserved before a launch, crash windows reconciled, failures classified — and stalled work diagnosed, never killed for silence.",
+      "description": "Bounded passes over a durable operation ledger: dependencies, first-come-first-served admission and declared overlap, capacity reserved before a launch, crash windows reconciled, failures classified — and stalled work diagnosed, never killed for silence.",
       "lede": "What a pass does and what it never does twice: how work is chosen, how an intent and a receipt make a restart safe, what is retried and what is held for you, and how a stalled or failed run is diagnosed within a fixed number of attempts.",
       "source": "AGENTS.md",
       "from": "### Scheduling: bounded passes, durable operations",

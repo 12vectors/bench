@@ -85,6 +85,10 @@ def open_detail():
     b.key("Enter")
     if not b.wait(f"!!document.querySelector('{OVERVIEW} .dstatus')", 10):
         raise bv.CheckFailed("the Overview drew no status")
+    # a click while the drawer is still sliding in can land beside the
+    # button it aims at
+    b.wait("document.querySelector('#drawer').getAnimations()"
+           ".every(a => a.playState === 'finished')", 5)
     return b
 
 
@@ -218,10 +222,17 @@ class SignoffIsOptIn(unittest.TestCase):
         b = load()
         wait_for_word("signoff-needed")
         open_detail()
+        opened = ("!!document.querySelector('#drawer.open #dsec-acceptance #accSignoff')"
+                  " && document.querySelector('#drawer.open #dtab-acceptance')"
+                  ".getAttribute('aria-selected') === 'true'")
         b.click(f"{OVERVIEW} .dstatus .dsacts [data-dslot]")
-        if not b.wait("!!document.querySelector('#drawer.open #dsec-acceptance #accSignoff')"
-                      " && document.querySelector('#drawer.open #dtab-acceptance')"
-                      ".getAttribute('aria-selected') === 'true'", 15):
+        # the Overview's status block is redrawn when its full reading
+        # arrives; a click that landed on the button being replaced is
+        # lost, so it is given once more (the action only opens a section)
+        if not b.wait(opened, 5) and b.eval(
+                f"!!document.querySelector('{OVERVIEW} .dstatus .dsacts [data-dslot]')"):
+            b.click(f"{OVERVIEW} .dstatus .dsacts [data-dslot]")
+        if not b.wait(opened, 15):
             raise bv.CheckFailed("Track acceptance did not open the Acceptance section "
                                  "with its sign-off line")
         line = b.eval("document.querySelector('#accSignoff').innerText")

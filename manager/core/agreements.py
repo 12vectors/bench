@@ -22,11 +22,30 @@ applied agreement whose Bench scope is enabled can authorize launches.
 its parent's, and a phase asking for something its parent does not grant
 is *refused* (`authority-expansion`), not quietly intersected away, so the
 person who wrote it sees that it would not have happened. Per-card and
-per-incident ceilings may only be lowered (`ceiling-expansion`). Pooled
-capacity — slots and daily starts — is **allocated** from the parent's
-total: the phases' allocations may not sum past it
-(`capacity-overcommitted`), and the Bench scope's own share is what is
-left, so a slot is never counted twice.
+per-incident ceilings may only be lowered (`ceiling-expansion`).
+
+**Capacity is shared, first come first served (task 182).** An agreement
+names its capacity model on the Bench scope (`capacityModel`):
+
+- `shared` — what every new draft writes. `bench.capacity` holds the
+  *global* totals: implementation (repairs included), review and
+  reasoning slots and daily starts, one pool each, used by standalone
+  and phase work alike and only while a run actually holds a slot.
+  `bench.scopeDefaults` is the default **ceiling** every phase scope
+  inherits — the most it may use at once (and launch in a day), never a
+  slice set aside — and a phase's own `limits` replace it for that phase
+  alone. The global total always wins. Nothing is reserved: an idle,
+  unadopted, paused or delivered phase holds no slot, and the Bench
+  scope's ceiling is the global total. A phase entry carrying the old
+  `allocation` key is refused (`allocation-retired`), so an old field
+  cannot quietly bring reservations back after a restart or an upgrade.
+- `reserved` — the model before task 182, and what a document naming no
+  model means, so an agreement already in force reads exactly as it did
+  until a person migrates it (`migration_preview`, `migrate`): phases are
+  **allocated** slots and daily starts from the parent's total
+  (`capacity-overcommitted` when they sum past it) and the Bench scope
+  keeps only what is left. Nothing migrates on a read, a restart or an
+  install.
 
 **Fail closed.** A document that does not parse, declares another version,
 or carries any refusal resolves every scope off, with the problems listed.
@@ -45,6 +64,7 @@ or a run.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import re
 import time
@@ -77,8 +97,18 @@ SCOPE_KINDS = ("bench", "phase")
 AUTHORITIES = ("readiness", "reasoning", "implement", "review", "repair",
                "recovery", "integrate", "merge")
 
-# Pooled capacity: one total, allocated between scopes, never duplicated.
+# Pooled capacity: one global total per pool. Under the shared model a
+# scope's ceiling limits what it may use at once and reserves nothing;
+# under the legacy reserved model a phase is allocated part of the total.
 POOLED = ("implementation", "review", "reasoning", "dailyStarts")
+SLOT_POOLS = ("implementation", "review", "reasoning")
+MODELS = ("shared", "reserved")
+SHARED, RESERVED = MODELS
+# The default ceiling a phase scope inherits under the shared model: the
+# most one phase may use at once (and launch in a day), never reserved.
+# Starting values a person edits; the global totals always win.
+SCOPE_DEFAULTS = {"implementation": 2, "review": 1, "reasoning": 1,
+                  "dailyStarts": 20}
 # Ceilings: limits per card or per incident, which a child may only lower.
 CEILINGS = ("launchesPerCard", "repairRounds", "transientRetries",
             "runAgeMinutes", "recoveryAttempts", "setupRetries")
@@ -112,9 +142,9 @@ DEFAULTS = {
 LIMITS = {key: (0, 1440 if key == "runAgeMinutes" else 1000) for key in DEFAULTS}
 
 SCOPE_KEYS = {"enabled", "paused", "authority", "capacity", "exclusions",
-              "handback", "note"}
-PHASE_KEYS = {"enabled", "paused", "authority", "allocation", "ceilings",
-              "exclusions", "handback", "note", "strategy"}
+              "handback", "note", "capacityModel", "scopeDefaults"}
+PHASE_KEYS = {"enabled", "paused", "authority", "allocation", "limits",
+              "ceilings", "exclusions", "handback", "note", "strategy"}
 # How a phase scope orders its members (task 143). `sequential` is the
 # phase runner's own semantics — one member at a time, in the order the
 # phase card lists them — and the default; `dependencies` lets members
@@ -137,6 +167,9 @@ PROBLEMS = {
     "ceiling-expansion": "a phase raises a ceiling above its parent's",
     "capacity-overcommitted": "the phases' allocations exceed the parent's total",
     "strategy-unknown": "a phase names an execution strategy this bench does not run",
+    "capacity-model-unknown": "the Bench scope names a capacity model this bench does not read",
+    "allocation-retired": "a phase reserves an allocation, which shared capacity does not have",
+    "capacity-model-mismatch": "a key only the other capacity model reads",
 }
 
 _LOCK = records.InterprocessLock(lambda: state_dir() / "agreement.lock")
@@ -209,7 +242,9 @@ def new_draft() -> dict:
         "v": VERSION, "kind": KIND,
         "bench": {"enabled": False, "paused": False,
                   "authority": {word: False for word in AUTHORITIES},
+                  "capacityModel": SHARED,
                   "capacity": dict(DEFAULTS),
+                  "scopeDefaults": dict(SCOPE_DEFAULTS),
                   "exclusions": [], "handback": []},
         "phases": {},
     }
@@ -322,7 +357,7 @@ def parse(doc) -> dict:
     found: list[dict] = []
     if not isinstance(doc, dict):
         _problem(found, "agreement-unreadable", "", PROBLEMS["agreement-unreadable"])
-        return {"problems": found, "bench": None, "phases": {}}
+        return {"problems": found, "bench": None, "phases": {}, "model": RESERVED}
     if doc.get("v") != VERSION:
         _problem(found, "agreement-version", "v",
                  f"the agreement declares version {doc.get('v')!r}; this bench "
@@ -338,6 +373,20 @@ def parse(doc) -> dict:
                  "the agreement names its Bench scope under \"bench\"")
         raw = {}
     _unknown(raw, SCOPE_KEYS, "bench", found)
+    model = raw.get("capacityModel", RESERVED)
+    if model not in MODELS:
+        _problem(found, "capacity-model-unknown", "bench.capacityModel",
+                 "bench.capacityModel is one of " + ", ".join(MODELS))
+        model = RESERVED
+    defaults = dict(SCOPE_DEFAULTS)
+    if model == SHARED:
+        defaults.update(_counts(raw.get("scopeDefaults"), "bench.scopeDefaults",
+                                found, POOLED))
+    elif "scopeDefaults" in raw:
+        _problem(found, "capacity-model-mismatch", "bench.scopeDefaults",
+                 "bench.scopeDefaults is read only under shared capacity; this "
+                 "agreement reserves capacity per phase. Migrate it first "
+                 "(Orchestrator → Operating agreement)")
     capacity = dict(DEFAULTS)
     capacity.update(_counts(raw.get("capacity"), "bench.capacity", found,
                             tuple(DEFAULTS)))
@@ -348,6 +397,8 @@ def parse(doc) -> dict:
         "authority": {w: False for w in AUTHORITIES}
         | _bools(raw.get("authority"), "bench.authority", found, AUTHORITIES),
         "capacity": capacity,
+        "model": model,
+        "scopeDefaults": defaults,
         "exclusions": _cards(raw.get("exclusions"), "bench.exclusions", found),
         "handback": _cards(raw.get("handback"), "bench.handback", found),
         "note": _note(raw, "bench", found),
@@ -386,6 +437,25 @@ def parse(doc) -> dict:
                 _problem(found, "ceiling-expansion", f"{where}.ceilings.{name}",
                          f"phase {number} sets {name} to {value}, above the "
                          f"Bench scope's {capacity[name]}")
+        allocation, limits = {}, {}
+        if model == SHARED:
+            if "allocation" in entry:
+                _problem(found, "allocation-retired", f"{where}.allocation",
+                         f"phase {number} reserves an allocation, but capacity "
+                         f"is shared: nothing is set aside for a phase. Remove "
+                         f"{where}.allocation; to cap what this phase may use "
+                         f"at once, set {where}.limits (a ceiling that reserves "
+                         f"nothing), or rely on bench.scopeDefaults")
+            limits = _counts(entry.get("limits"), f"{where}.limits", found,
+                             POOLED)
+        else:
+            allocation = _counts(entry.get("allocation"), f"{where}.allocation",
+                                 found, POOLED)
+            if "limits" in entry:
+                _problem(found, "capacity-model-mismatch", f"{where}.limits",
+                         f"{where}.limits is read only under shared capacity; "
+                         f"this agreement reserves an allocation per phase. "
+                         f"Migrate it first (Orchestrator → Operating agreement)")
         strategy = entry.get("strategy", STRATEGIES[0])
         if strategy not in STRATEGIES:
             _problem(found, "strategy-unknown", f"{where}.strategy",
@@ -397,14 +467,14 @@ def parse(doc) -> dict:
             "enabled": _flag(entry, "enabled", where, found),
             "paused": _flag(entry, "paused", where, found),
             "authority": authority,
-            "allocation": _counts(entry.get("allocation"), f"{where}.allocation",
-                                  found, POOLED),
+            "allocation": allocation,
+            "limits": limits,
             "ceilings": ceilings,
             "exclusions": _cards(entry.get("exclusions"), f"{where}.exclusions", found),
             "handback": _cards(entry.get("handback"), f"{where}.handback", found),
             "note": _note(entry, where, found),
         }
-    for pool in POOLED:
+    for pool in POOLED if model == RESERVED else ():
         allocated = sum(p["allocation"].get(pool, 0) for p in phases.values())
         if allocated > capacity[pool]:
             _problem(found, "capacity-overcommitted", f"phases.*.allocation.{pool}",
@@ -412,7 +482,7 @@ def parse(doc) -> dict:
                      f"more than the Bench scope's total of {capacity[pool]}; "
                      f"allocations share the parent's total rather than adding "
                      f"to it")
-    return {"problems": found, "bench": bench, "phases": phases}
+    return {"problems": found, "bench": bench, "phases": phases, "model": model}
 
 
 def validate(doc) -> dict:
@@ -431,18 +501,47 @@ def resolve(doc, problem: str | None = None) -> dict:
     every scope is off too — the problems say why."""
     if doc is None and problem is None:
         return {"configured": False, "valid": True, "problems": [],
-                "revision": "none", "scopes": []}
+                "revision": "none", "scopes": [], "capacityModel": None,
+                "scopeDefaults": None, "legacyAllocations": {}}
     parsed = parse(doc) if problem is None else {
         "problems": [{"code": "agreement-unreadable", "path": "",
-                      "message": problem}], "bench": None, "phases": {}}
+                      "message": problem}], "bench": None, "phases": {},
+        "model": RESERVED}
     valid = not parsed["problems"]
     bench = parsed["bench"]
+    model = parsed.get("model") or RESERVED
+    shared = model == SHARED
     scopes = []
     if bench is not None:
         bench_on = valid and bench["enabled"]
         allocated = {pool: sum(p["allocation"].get(pool, 0)
                                for p in parsed["phases"].values())
                      for pool in POOLED}
+        defaults = bench["scopeDefaults"]
+
+        def bench_capacity(pool: str) -> dict:
+            total = bench["capacity"][pool]
+            if shared:
+                # the Bench scope's ceiling is the global total: standalone
+                # work uses the same pools, never a leftover partition
+                return {"total": total, "ceiling": total, "own": total,
+                        "allocated": 0, "shared": True, "by": "global"}
+            return {"total": total, "allocated": allocated[pool],
+                    "own": max(0, total - allocated[pool]), "shared": False}
+
+        def phase_capacity(phase: dict, pool: str) -> dict:
+            total = bench["capacity"][pool]
+            if shared:
+                own_limit = phase["limits"].get(pool)
+                limit = own_limit if own_limit is not None else defaults[pool]
+                ceiling = min(limit, total)
+                return {"total": total, "ceiling": ceiling, "own": ceiling,
+                        "allocated": 0, "shared": True, "limit": limit,
+                        "by": (phase["id"] if own_limit is not None
+                               else "default"), "from": BENCH}
+            value = phase["allocation"].get(pool, 0)
+            return {"total": value, "allocated": 0, "own": value,
+                    "from": BENCH, "shared": False}
         scopes.append({
             "id": BENCH, "kind": "bench", "parent": None, "card": None,
             "strategy": None, "enabled": bench["enabled"], "active": bench_on and not bench["paused"],
@@ -450,10 +549,7 @@ def resolve(doc, problem: str | None = None) -> dict:
             "off": None if bench_on else ("invalid" if not valid else "disabled"),
             "authority": {w: {"allowed": valid and bench["authority"][w], "by": BENCH}
                           for w in AUTHORITIES},
-            "capacity": {pool: {"total": bench["capacity"][pool],
-                                "allocated": allocated[pool],
-                                "own": max(0, bench["capacity"][pool] - allocated[pool])}
-                         for pool in POOLED},
+            "capacity": {pool: bench_capacity(pool) for pool in POOLED},
             "ceilings": {c: {"value": bench["capacity"][c], "by": BENCH}
                          for c in CEILINGS},
             "exclusions": bench["exclusions"], "handback": bench["handback"],
@@ -482,11 +578,7 @@ def resolve(doc, problem: str | None = None) -> dict:
                                         "parent-disabled" if not bench_on
                                         else "disabled"),
                 "authority": authority,
-                "capacity": {pool: {"total": phase["allocation"].get(pool, 0),
-                                    "allocated": 0,
-                                    "own": phase["allocation"].get(pool, 0),
-                                    "from": BENCH}
-                             for pool in POOLED},
+                "capacity": {pool: phase_capacity(phase, pool) for pool in POOLED},
                 "ceilings": {c: ({"value": phase["ceilings"][c], "by": phase["id"]}
                                  if c in phase["ceilings"] else
                                  {"value": bench["capacity"][c], "by": BENCH})
@@ -494,8 +586,17 @@ def resolve(doc, problem: str | None = None) -> dict:
                 "exclusions": phase["exclusions"], "handback": phase["handback"],
                 "note": phase["note"],
             })
+    legacy = {}
+    if bench is not None and not shared:
+        legacy = {number: dict(phase["allocation"])
+                  for number, phase in parsed["phases"].items()
+                  if phase["allocation"]}
     return {"configured": True, "valid": valid, "problems": parsed["problems"],
-            "revision": revision(doc), "scopes": scopes}
+            "revision": revision(doc), "scopes": scopes,
+            "capacityModel": model if bench is not None else None,
+            "scopeDefaults": (dict(bench["scopeDefaults"])
+                              if bench is not None and shared else None),
+            "legacyAllocations": legacy}
 
 
 def effective() -> dict:
@@ -537,6 +638,14 @@ def compare(before: dict, after: dict) -> list[dict]:
     if before["valid"] != after["valid"]:
         changes.append({"scope": None, "what": "validity",
                         "before": before["valid"], "after": after["valid"]})
+    if before.get("capacityModel") != after.get("capacityModel"):
+        changes.append({"scope": None, "what": "capacityModel",
+                        "before": before.get("capacityModel"),
+                        "after": after.get("capacityModel")})
+    if before.get("scopeDefaults") != after.get("scopeDefaults"):
+        changes.append({"scope": None, "what": "scopeDefaults",
+                        "before": before.get("scopeDefaults"),
+                        "after": after.get("scopeDefaults")})
     old = {s["id"]: s for s in before["scopes"]}
     new = {s["id"]: s for s in after["scopes"]}
     for sid in sorted(set(old) | set(new)):
@@ -645,6 +754,14 @@ def apply(expected_effective: str | None, expected_draft: str | None,
             raise Refused("the draft has problems, so it is not applied", 409,
                           problems=checked["problems"])
         before = resolve(current) if current is not None else resolve(None)
+        if before.get("capacityModel") == SHARED and \
+                parse(draft).get("model") != SHARED:
+            # an old draft (or a page from before task 182) must never put
+            # phase reservations back over a migrated agreement
+            raise Refused("the agreement in force shares capacity and this "
+                          "draft reserves it per phase; it is not applied. "
+                          "Start a new draft from the agreement in force",
+                          409, code="capacity-model-downgrade")
         path = document_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         records.write_json(path, draft, durable=True)
@@ -655,6 +772,100 @@ def apply(expected_effective: str | None, expected_draft: str | None,
                   "after": after["revision"], "actor": actor or "unknown",
                   "changed": sorted({c["what"] for c in changes})})
     return {"revision": after["revision"], "changes": changes}
+
+
+# ── migrating reserved capacity to shared capacity (task 182) ─────────
+
+def migrated(doc: dict, keep_limits: bool = False,
+             defaults: dict | None = None) -> tuple[dict, list[dict]]:
+    """The document under shared capacity, and what became of each value.
+
+    The global totals, every authority word, pause, exclusion, hand-back,
+    strategy, note and per-card ceiling are carried byte for byte. Each
+    phase's `allocation` is removed. With `keep_limits`, every allocated
+    value is carried as that phase's `limits` — a ceiling that reserves
+    nothing, a 0 included (a 0 stops the phase from using that pool,
+    exactly as it did) — otherwise the phase inherits `scopeDefaults`.
+    Nothing else changes, and nothing is written here."""
+
+    out = copy.deepcopy(doc)
+    bench = out.setdefault("bench", {})
+    bench["capacityModel"] = SHARED
+    chosen = dict(SCOPE_DEFAULTS)
+    if isinstance(defaults, dict):
+        chosen.update({k: v for k, v in defaults.items() if k in POOLED})
+    bench["scopeDefaults"] = chosen
+    notes = []
+    phases = out.get("phases") if isinstance(out.get("phases"), dict) else {}
+    for number in sorted(phases, key=lambda n: int(n) if str(n).isdigit() else 0):
+        entry = phases[number]
+        if not isinstance(entry, dict) or "allocation" not in entry:
+            continue
+        old = entry.pop("allocation") or {}
+        old = {k: v for k, v in old.items() if k in POOLED} \
+            if isinstance(old, dict) else {}
+        if keep_limits and old:
+            entry["limits"] = dict(old)
+        notes.append({"phase": str(number), "allocation": old,
+                      "limits": dict(old) if keep_limits and old else None,
+                      "inherits": None if keep_limits and old else dict(chosen)})
+    return out, notes
+
+
+def migration_preview(keep_limits: bool = False,
+                      defaults: dict | None = None) -> dict:
+    """What migrating the agreement in force would do: its revision, the
+    old and new reading side by side, each phase's allocation and what it
+    becomes. Writes nothing; a passive read never migrates."""
+    current, problem = effective_document()
+    if current is None or problem:
+        raise Refused("no agreement is in force to migrate", 404)
+    before = resolve(current)
+    if before.get("capacityModel") == SHARED:
+        return {"effective": before["revision"], "needed": False,
+                "reason": "the agreement in force already shares capacity"}
+    doc, notes = migrated(current, keep_limits, defaults)
+    after = resolve(doc)
+    return {"effective": before["revision"], "needed": True,
+            "keepLimits": bool(keep_limits), "valid": after["valid"],
+            "problems": after["problems"], "phases": notes,
+            "before": {"scopes": before["scopes"]},
+            "after": {"scopes": after["scopes"],
+                      "scopeDefaults": after.get("scopeDefaults")},
+            "changes": compare(before, after), "revision": after["revision"]}
+
+
+def migrate(expected: str | None, keep_limits: bool = False,
+            defaults: dict | None = None, actor: str | None = None) -> dict:
+    """Put the migrated agreement in force, bound to the revision the
+    page previewed. Refused, with nothing written, when the agreement
+    moved, is already shared, or the result would be invalid. A draft
+    still written in the reserved model is kept, and `apply` refuses it.
+    Writes one file and one history line: no card, run, operation, launch
+    ledger or adoption is touched, so usage and budgets carry over."""
+    with _LOCK:
+        current, problem = effective_document()
+        if current is None or problem:
+            raise Refused("no agreement is in force to migrate", 404)
+        _guard(current, expected, "agreement")
+        before = resolve(current)
+        if before.get("capacityModel") == SHARED:
+            raise Refused("the agreement in force already shares capacity",
+                          409, code="already-shared")
+        doc, notes = migrated(current, keep_limits, defaults)
+        checked = validate(doc)
+        if not checked["ok"]:
+            raise Refused("the migrated agreement would have problems, so "
+                          "nothing was written", 409,
+                          problems=checked["problems"])
+        records.write_json(document_path(), doc, durable=True)
+        after = resolve(doc)
+        _history({"action": "migrate-shared-capacity",
+                  "before": before["revision"], "after": after["revision"],
+                  "actor": actor or "unknown", "keepLimits": bool(keep_limits),
+                  "phases": [n["phase"] for n in notes]})
+    return {"revision": after["revision"], "phases": notes,
+            "changes": compare(before, after)}
 
 
 SCOPE_ACTIONS = ("pause", "resume", "exclude", "include", "handback", "reclaim")

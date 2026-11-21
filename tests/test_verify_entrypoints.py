@@ -557,6 +557,44 @@ class Classification(unittest.TestCase):
         self.assertNotIn("PLAYWRIGHT_CHROMIUM_NO_SANDBOX", env)
 
 
+class BytecodeCache(unittest.TestCase):
+    """Task 178: a child compiles once into a cache the run owns, and the
+    checkout it judges still gets no `__pycache__`."""
+
+    def setUp(self):
+        self.work = Path(tempfile.mkdtemp(prefix="bv-pyc-"))
+        self.addCleanup(shutil.rmtree, self.work, True)
+        self.tree = self.work / "checkout"
+        (self.tree / "pkg").mkdir(parents=True)
+        (self.tree / "pkg" / "__init__.py").write_text("")
+        (self.tree / "pkg" / "mod.py").write_text("VALUE = 7\n")
+
+    def env(self, parent=None):
+        return benchverify.child_env(self.work / "run", parent or {"PATH": os.environ["PATH"]})
+
+    def test_the_cache_is_the_runs_own_and_bytecode_is_written(self):
+        env, stripped = self.env({"PATH": os.environ["PATH"],
+                                  "PYTHONDONTWRITEBYTECODE": "1",
+                                  "PYTHONPYCACHEPREFIX": str(self.tree)})
+        self.assertNotIn("PYTHONDONTWRITEBYTECODE", env)
+        prefix = Path(env["PYTHONPYCACHEPREFIX"])
+        self.assertEqual(prefix, self.work / "run" / "cache" / "pycache")
+        self.assertIn("PYTHONDONTWRITEBYTECODE", stripped)
+        self.assertIn("PYTHONPYCACHEPREFIX", stripped)
+        self.assertIn("PYTHONPYCACHEPREFIX", benchverify.DIRECTED)
+
+    def test_a_child_import_compiles_into_the_prefix_never_into_the_checkout(self):
+        env, _ = self.env()
+        for _ in range(2):
+            done = subprocess.run([sys.executable, "-c", "import pkg.mod as m; print(m.VALUE)"],
+                                  cwd=self.tree, env=env, capture_output=True, text=True)
+            self.assertEqual((done.returncode, done.stdout.strip()), (0, "7"), done.stderr)
+        self.assertEqual([p for p in self.tree.rglob("*") if "pycache" in p.name
+                          or p.suffix == ".pyc"], [])
+        cached = list(Path(env["PYTHONPYCACHEPREFIX"]).rglob("mod.*.pyc"))
+        self.assertEqual(len(cached), 1, cached)
+
+
 class BrowserSetup(Fixture):
     def test_no_browser_is_a_setup_error_not_a_skip(self):
         r, data = self.run_entry("browser", "--cases", str(VERIFY / "browser_cases"),
