@@ -23,6 +23,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import time
 import unittest
 
 import benchverify as bv
@@ -163,7 +164,8 @@ class BrainAgent(unittest.TestCase):
         sel = f'#bshell [data-bact="{act}"]'
         b.click(sel)
         if not b.wait(f"document.querySelector({json.dumps(sel)})?.classList.contains('armed')", 5):
-            raise bv.CheckFailed(f"{act} did not arm: {self.text(b)[:600]}")
+            panel = b.eval("(document.querySelector('#bshell .b-agent') || {}).innerText || ''")
+            raise bv.CheckFailed(f"{act} did not arm; panel: " + " | ".join(panel.split("\n"))[:900])
         b.click(sel)
 
     def drafts(self):
@@ -238,7 +240,18 @@ class BrainAgent(unittest.TestCase):
             raise bv.CheckFailed("Ask Brain Agent opened no composer")
         self.type(b, "data-ag", "text", "Add that new contributors should ask in review.")
         self.answer_with(block(reply("proposal", action="update", target=entry)))
-        self.armed_click(b, "ag-generate")
+        # leaving the request field is usually a press on Generate, and the
+        # repaint that follows (the field's change, the preflight read it
+        # asks for) must not replace the button under the pressed pointer
+        sel = '#bshell [data-bact="ag-generate"]'
+        hit = b.press(sel)
+        b.eval("document.querySelector('#bshell [data-ag=\"text\"]')"
+               ".dispatchEvent(new Event('change', {bubbles: true})); true")
+        time.sleep(0.6)
+        b.release(hit)
+        if not b.wait(f"document.querySelector({json.dumps(sel)})?.classList.contains('armed')", 5):
+            raise bv.CheckFailed("a repaint under the pressed Generate lost the click")
+        b.click(sel)
         self.wait_text(b, ["Draft ready for review", "Updating"])
         b.click('#bshell [data-bact="ag-view"][data-barg="changes"]')
         self.wait_text(b, ["+ - ask in review"])

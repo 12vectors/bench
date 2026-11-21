@@ -684,7 +684,10 @@ async function loadPreflight() {
     if (ag) ag.preflight = { error: 'the board could not be asked' };
   }
   inflight.delete('pf');
-  renderBrain(true);
+  // a reading arriving, not a person's act: it never replaces the button
+  // under a pressed pointer (the release repaints), and it paints under
+  // the person's typing with their caret kept
+  renderBrain('live');
 }
 
 function openComposer(target, revision, title) {
@@ -1239,10 +1242,12 @@ function wire(el) {
       else if (f.dataset.agq) ag.answers[f.dataset.agq] = f.value;
       else if (f.dataset.age && ag.edit) ag.edit[f.dataset.age] = f.value;
       // Generate becomes available once there is a request; the preflight
-      // is asked again for the words typed (a read) when the field is left
+      // is asked again for the words typed (a read) when the field is left.
+      // Leaving it is usually a press on Generate, so nothing is forced:
+      // the repaint waits for that click to be dispatched
       if (ev.type === 'change' && f.dataset.ag === 'text' && ag.mode === 'compose') {
         if (!ag.target) loadPreflight();
-        renderBrain(true);
+        renderBrain();
       } else if (ev.type === 'input' && f.dataset.ag === 'text') {
         const gen = el.querySelector('[data-bact="ag-generate"]');
         const blocked = ag.preflight && ag.preflight.blockers && ag.preflight.blockers.length;
@@ -1326,8 +1331,10 @@ function renderBrain(force) {
   // draft away (navigation never writes, and never carries a draft along)
   if (ed && ((ed.mode === 'create') !== (k === 'index') || (ed.id && k !== 'e:' + ed.id))) ed = null;
   // held while a person types, and while a pointer is down on the view
-  if (!force && ((isField(document.activeElement) && el.contains(document.activeElement))
-      || pressing().held())) return;
+  // `live` (the Brain Agent's preflight arriving) paints under a person's
+  // typing — the caret is kept below — but never under a pressed pointer
+  const typing = isField(document.activeElement) && el.contains(document.activeElement);
+  if (force === 'live' ? pressing().held() : !force && (typing || pressing().held())) return;
   let html;
   // a destination has not arrived until its reading has: an entry's own
   // markup may hold other loading notes (its Revisions fold), so this is
