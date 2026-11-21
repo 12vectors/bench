@@ -545,6 +545,12 @@ def _woven(filename: str, stage: str) -> dict:
     return taskfiles.read_task(config.TASKS / stage / filename, stage)
 
 
+def woven(filename: str, stage: str) -> dict:
+    """The card as the board shows it, phase membership included — the
+    public name `agents.repair_target` asks it by (task 174)."""
+    return _woven(filename, stage)
+
+
 def _foreign_worktree(path: Path) -> str | None:
     """Is something already sitting where this card's worktree goes, and is
     it ours? A directory git does not know as a worktree of this repository

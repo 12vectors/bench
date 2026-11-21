@@ -224,8 +224,10 @@ class Sandbox(unittest.TestCase):
         self.calls["review"].append((filename, stage))
         return self._run(filename, "review")
 
-    def _repair(self, filename, stage):
+    def _repair(self, filename, stage, *, operation=None):
+        # task 174: the delegated repair names its own ledger entry
         self.calls["repair"].append((filename, stage))
+        self.operations_named = getattr(self, "operations_named", []) + [operation]
         return self._run(filename, "repair")
 
     def _holds(self, rname, target, commit):
