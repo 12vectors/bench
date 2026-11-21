@@ -664,10 +664,12 @@ const timingRes = resource({
 });
 
 function timingStamp(t) {
+  // asked again when the card or its latest run changes — never on a
+  // clock, so a timer cannot redraw the drawer under a reader; the block
+  // says the time it was read, and a running interval is "so far" as of then
   const p = (S.state.progress || {})[t.file];
-  // running intervals grow: a reading is asked again at most every 30s
-  return `${t.stage}:${t.mtime}:${p ? p.agent + ':' + (p.lastReport || '') + ':' + p.active : '-'}:` +
-    `${Math.floor(Date.now() / 30000)}`;
+  const live = (S.state.agents || []).filter(a => a.task === t.file).map(a => a.id + a.status).join(',');
+  return `${t.stage}:${t.mtime}:${p ? p.agent + ':' + (p.lastReport || '') + ':' + p.active : '-'}:${live}`;
 }
 
 function loadTiming(t, force) {
@@ -785,8 +787,9 @@ function timingHtml(t) {
     ctFold(t, 'ct-runs', `Runs (${esc((d.runs || []).length)})`, runs) +
     ctFold(t, 'ct-checks', `Checks and attempts (${esc((v.records || []).length)})`, checks) +
     `<p class="ctsrc">Read from this board's own records: stage moves (git and the move journal), each run's ` +
-    `opening and the ending the board observed, and Bench's evidence records. Local to this board; ` +
-    `reading it ran and wrote nothing.</p></section>`;
+    `opening and the ending the board observed, and Bench's evidence records, as of ` +
+    `${esc(ctAt(d.now))}. Local to this board; reading it ran and wrote nothing. ` +
+    `<button class="dlink" id="ctRefresh">Read again</button></p></section>`;
 }
 
 /* The one-line Time fact under "Where it stands": the lead time and
@@ -1040,6 +1043,8 @@ function wireTiming(t) {
   const body = $('#drawerbody');
   const retry = body.querySelector('#ctRetry');
   if (retry) retry.addEventListener('click', () => { loadTiming(t, true); renderDrawer(); });
+  const again = body.querySelector('#ctRefresh');
+  if (again) again.addEventListener('click', () => loadTiming(t, true));
   body.querySelectorAll('[data-ct-open]').forEach(b => b.addEventListener('click', () => {
     const h = body.querySelector('#ct-h');
     if (h) h.scrollIntoView({ block: 'start' });
