@@ -376,13 +376,25 @@ def plan(board: dict | None = None, delivery: dict | None = None,
         if d.get("state") == "ready" and d.get("action") in QUEUED \
                 and d.get("head") and d["card"] in by_file:
             d["request"] = operations.request_id(d["action"], d["card"], d["head"])
+            # the same eligibility read implementation work gets above,
+            # capacity read but the queue not: a step that can never be
+            # admitted (its card at the launch ceiling, its word withdrawn)
+            # is not queued, so it can hold up nobody behind it
+            answer = orchestrator.authorize(d["action"], d["card"], board=board,
+                                            queue=False)
+            if not answer["allowed"]:
+                waiting = answer["code"] in WAITING
+                d.update(state="waiting" if waiting else "blocked",
+                         code=answer["code"], reason=answer["reason"])
+                if not waiting:
+                    continue
             launches.append((by_file[d["card"]], d))
     entries = {e["id"]: e for e in operations.queue_entries()}
     chosen = _choose(launches, reading, tasks, running, entries)
     if sync:
         # after the choice, so an overlap found this pass is written as the
         # hold it is and blocks nobody behind it
-        _sync_queue(items, (delivery or {}).get("items") or [])
+        _sync_queue(items, (delivery or {}).get("items") or [], reading)
         entries = {e["id"]: e for e in operations.queue_entries()}
     _positions(items + [i for t, i in launches if t.get("stage") == "review"],
                entries)
@@ -402,12 +414,15 @@ def _wanted(item: dict, action: str) -> dict:
             "basis": item.get("basis") or item.get("head")}
 
 
-def _sync_queue(items: list[dict], delivery: list[dict]) -> None:
+def _sync_queue(items: list[dict], delivery: list[dict],
+                reading: dict | None = None) -> None:
     """Write who waits, durably (task 182). An implementation request is
     wanted once it is eligible but for capacity (ready, or waiting on a
     slot, a launch or an older request); one on a temporary hold keeps the
     place it already has; anything else leaves. Delivery's reviews and
-    repairs are wanted while delivery says that step is next."""
+    repairs are wanted while delivery says that step is next; one whose
+    scope is paused — delivery does not plan for a paused scope — keeps
+    its place with the hold `paused`, as implementation work does."""
     wanted, held = [], {}
     for item in items:
         if not item.get("request"):
@@ -419,11 +434,20 @@ def _sync_queue(items: list[dict], delivery: list[dict]) -> None:
                 str(item.get("code") or "").startswith("base-"):
             held[item["request"]] = item["code"]
     operations.queue_sync("implement", wanted, held)
-    operations.queue_sync("delivery", [
-        _wanted(d, d["action"]) for d in delivery
-        if d.get("action") in QUEUED and d.get("request")
-        and (d.get("state") == "ready" or
-             (d.get("state") == "waiting" and d.get("code") in WAITING))])
+    wanted = [_wanted(d, d["action"]) for d in delivery
+              if d.get("action") in QUEUED and d.get("request")
+              and (d.get("state") == "ready" or
+                   (d.get("state") == "waiting" and d.get("code") in WAITING))]
+    paused = {}
+    if reading is not None:
+        named = {w["id"] for w in wanted}
+        for entry in operations.queue_entries():
+            if entry.get("source") != "delivery" or entry["id"] in named:
+                continue
+            here = agreements.scope(reading, entry.get("scope") or "")
+            if here is not None and here.get("pausedBy"):
+                paused[entry["id"]] = "paused"
+    operations.queue_sync("delivery", wanted, paused)
 
 
 def _positions(items: list[dict], entries: dict) -> None:
@@ -457,7 +481,7 @@ def _order_key(item: dict, entries: dict) -> tuple:
            item.get("action") or ACTION)
     if entry is not None:
         return (0,) + operations.queue_key(entry) + tie
-    return (1, 0, 0, "") + tie
+    return (1, 0, "") + tie
 
 
 def _choose(launches: list, reading: dict, tasks: list[dict], running: set[str],

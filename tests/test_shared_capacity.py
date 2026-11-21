@@ -62,8 +62,8 @@ class Case(Sandbox):
         return agreements.apply(agreements.effective()["revision"],
                                 agreements.revision(doc))["revision"]
 
-    def shared(self, capacity=None, defaults=None, phases=None) -> str:
-        doc = agreement(capacity=capacity or {"implementation": 2})
+    def shared(self, capacity=None, defaults=None, phases=None, **bench) -> str:
+        doc = agreement(capacity=capacity or {"implementation": 2}, **bench)
         if defaults:
             doc["bench"]["scopeDefaults"].update(defaults)
         doc["phases"] = phases or {}
@@ -157,6 +157,20 @@ class EightTotalSevenReserved(Case):
         self.assertTrue(reading["effective"]["migrationNeeded"])
         self.assertEqual({"implementation": 3, "review": 3, "reasoning": 2},
                          reading["effective"]["legacyAllocations"]["156"])
+
+    def test_the_preview_names_its_queue_consequences(self):
+        self.tick()                      # 176–178 wait on the stranded slot
+        raw = agreements.document_path().read_bytes()
+        preview = agreements.migration_preview()
+        queue = {q["pool"]: q for q in
+                 orchestrator.migration_queue(preview, self.board.collect())}
+        implementation = queue["implementation"]
+        self.assertEqual((3, 1, 8), (implementation["waiting"],
+                                     implementation["inUse"],
+                                     implementation["total"]))
+        self.assertEqual((0, 7), (implementation["benchRoomBefore"],
+                                  implementation["benchRoomAfter"]))
+        self.assertEqual(raw, agreements.document_path().read_bytes())
 
     def test_migrated_shared_capacity_admits_unrelated_work(self):
         before = agreements.effective()["revision"]
@@ -352,6 +366,102 @@ class FirstComeFirstServed(Case):
         self.assertEqual(["4-card.md", "3-card.md"],
                          [e["file"] for e in operations.queue_entries()])
 
+    def review(self, name: str, action: str = "review") -> dict:
+        number = name.split("-")[0]
+        return {"card": name, "number": number, "stage": "review",
+                "scope": "bench", "state": "ready", "action": action,
+                "code": action, "head": number * 40}
+
+    def test_a_review_at_its_launch_ceiling_blocks_nobody(self):
+        """PR #181 review: a delivery step that can never be admitted —
+        its card has spent its launches — used to sit at the head of its
+        pool's queue and refuse every newer request `queued-behind`."""
+        self.shared(capacity={"implementation": 2, "review": 1,
+                              "launchesPerCard": 1})
+        self.own_execution()
+        older, newer = self.board.add("2", stage="review"), \
+            self.board.add("3", stage="review")
+        orchestrator.record_launch("bench", "2", "implement", "op-earlier")
+        stuck, fresh = self.review(older), self.review(newer)
+        # a queue an earlier board left with the stuck request first
+        operations.queue_sync("delivery", [scheduler._wanted(
+            {**stuck, "request": operations.request_id("review", older, stuck["head"])},
+            "review")])
+        found = scheduler.plan(self.board.collect(),
+                               {"items": [stuck, fresh]}, sync=True)
+        self.assertEqual([{"card": newer, "action": "review"}], found["admitted"])
+        self.assertEqual(("blocked", "card-launches-exhausted"),
+                         (stuck["state"], stuck["code"]))
+        queued = [e["file"] for e in operations.queue_entries()]
+        self.assertNotIn(older, queued, "a step that cannot be admitted leaves")
+        answer = orchestrator.authorize(
+            "review", newer,
+            request=operations.request_id("review", newer, fresh["head"]))
+        self.assertTrue(answer["allowed"], answer)
+
+    def test_queued_ahead_skips_a_card_at_its_launch_ceiling(self):
+        self.shared(capacity={"implementation": 2, "launchesPerCard": 1})
+        self.own_execution()
+        older, newer = self.board.add("2", stage="review"), self.board.add("3")
+        orchestrator.record_launch("bench", "2", "implement", "op-earlier")
+        operations.queue_sync("delivery", [scheduler._wanted(
+            {**self.review(older, "repair"),
+             "request": operations.request_id("repair", older, "x")}, "repair")])
+        self.assertTrue(orchestrator.authorize("implement", newer)["allowed"],
+                        "a repair that can never launch holds no one back")
+
+    def test_a_paused_review_keeps_its_place(self):
+        revision = self.shared(capacity={"implementation": 2, "review": 1})
+        self.own_execution()
+        name = self.board.add("2", stage="review")
+        self.run_agent(self.board.add("9", stage="review"), mode="review")
+        item = self.review(name)
+        scheduler.plan(self.board.collect(), {"items": [item]}, sync=True)
+        (entry,) = operations.queue_entries()
+        revision = agreements.set_scope("bench", "pause", revision)["revision"]
+        # delivery does not plan for a paused scope: the step is not offered
+        scheduler.plan(self.board.collect(), {"items": []}, sync=True)
+        (held,) = operations.queue_entries()
+        self.assertEqual((entry["id"], entry["seq"], "paused"),
+                         (held["id"], held["seq"], held["hold"]))
+        agreements.set_scope("bench", "resume", revision)
+        scheduler.plan(self.board.collect(), {"items": [self.review(name)]},
+                       sync=True)
+        (back,) = operations.queue_entries()
+        self.assertEqual((entry["seq"], None), (back["seq"], back["hold"]))
+
+    def test_the_order_is_the_ledger_count_not_the_clock(self):
+        self.shared(capacity={"implementation": 1})
+        operations.queue_sync("implement", [
+            {"id": operations.request_id("implement", "5-card.md", "b"),
+             "action": "implement", "file": "5-card.md", "card": "5",
+             "scope": "bench", "pool": "implementation"}])
+        later = {"id": operations.request_id("implement", "2-card.md", "b"),
+                 "action": "implement", "file": "2-card.md", "card": "2",
+                 "scope": "bench", "pool": "implementation"}
+        real = operations.time.time
+        operations.time.time = lambda: real() - 3600   # the clock steps back
+        try:
+            operations.queue_sync("implement", [
+                {"id": operations.request_id("implement", "5-card.md", "b"),
+                 "action": "implement", "file": "5-card.md", "card": "5",
+                 "scope": "bench", "pool": "implementation"}, later])
+        finally:
+            operations.time.time = real
+        self.assertEqual(["5-card.md", "2-card.md"],
+                         [e["file"] for e in operations.queue_entries()])
+
+    def test_ties_within_one_pass_go_by_number_not_by_insertion(self):
+        self.shared(capacity={"implementation": 1})
+        wanted = [{"id": operations.request_id("implement", f, "b"),
+                   "action": "implement", "file": f, "card": n,
+                   "scope": "bench", "pool": "implementation"}
+                  for n, f in (("12", "12-card.md"), ("3", "3-card.md"),
+                               ("7", "7-card.md"))]
+        operations.queue_sync("implement", wanted)
+        self.assertEqual(["3-card.md", "7-card.md", "12-card.md"],
+                         [e["file"] for e in operations.queue_entries()])
+
     def test_positions_are_shown_on_the_schedule(self):
         self.shared(capacity={"implementation": 1})
         self.own_execution()
@@ -413,6 +523,47 @@ class AtomicAdmission(Case):
         for t in threads:
             t.join()
         self.assertEqual(1, sum(results))
+
+    def race(self, launches: list[tuple[str, str]]) -> list[str]:
+        """Admit every (action, card) at once; the actions admitted."""
+        admitted, barrier = [], threading.Barrier(len(launches))
+
+        def go(action, name):
+            barrier.wait()
+            _answer, op = orchestrator.admit(
+                action, name, operations.key_for(action, name, "b", 1),
+                number=name.split("-")[0], pool=orchestrator.LAUNCHES[action],
+                basis="b", attempt=1)
+            if op is not None:
+                admitted.append(action)
+
+        threads = [threading.Thread(target=go, args=pair) for pair in launches]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        return admitted
+
+    def test_reviews_race_for_the_review_pool(self):
+        self.shared(capacity={"implementation": 4, "review": 1})
+        self.own_execution()
+        names = [self.board.add(str(n), stage="review") for n in range(20, 26)]
+        self.assertEqual(["review"], self.race([("review", n) for n in names]))
+
+    def test_repairs_and_new_work_race_for_one_implementation_pool(self):
+        self.shared(capacity={"implementation": 2, "review": 4})
+        self.own_execution()
+        repairs = [("repair", self.board.add(str(n), stage="review"))
+                   for n in range(30, 34)]
+        new = [("implement", self.board.add(str(n))) for n in range(40, 44)]
+        self.assertEqual(2, len(self.race(repairs + new)))
+        self.assertEqual(2, len(self.ops("intent")))
+
+    def test_reasoning_races_for_the_reasoning_pool(self):
+        self.shared(capacity={"implementation": 4, "reasoning": 1})
+        self.own_execution()
+        names = [self.board.add(str(n)) for n in range(50, 55)]
+        self.assertEqual(["reason"], self.race([("reason", n) for n in names]))
 
     def test_one_request_is_never_admitted_twice(self):
         self.shared()

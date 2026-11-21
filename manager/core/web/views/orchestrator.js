@@ -1062,7 +1062,9 @@ function migrationHtml() {
     `<div class="o-steps"><div class="o-action">${btn('migrate-preview', 'Preview the migration', { act: 'migrate', data: { apply: '' } })}<p class="o-effect">Shows the old and new limits; writes nothing.</p></div>` +
     `<div class="o-action">${btn('migrate-apply', 'Migrate to shared capacity', { act: 'migrate', data: { apply: '1' }, primary: true, disabled: !m, why: m ? '' : 'preview it first' })}` +
     `<p class="o-effect">Writes the agreement once, bound to revision ${esc(eff.revision)}; refused if it changed since.</p></div></div>` +
-    (m ? `<section class="o-preview" role="status"><h4>Migration preview — nothing was written</h4>${list}${problemsHtml(m.result.problems)}` +
+    (m ? `<section class="o-preview" role="status"><h4>Migration preview — nothing was written</h4>${list}` +
+      ((m.result.queue || []).length ? `<p>What it changes for the queue now:</p><ul class="o-list">${m.result.queue.map(q => `<li>${esc(q.summary)}</li>`).join('')}</ul>` : '') +
+      `${problemsHtml(m.result.problems)}` +
       `<p class="o-dim">Default phase ceiling after migrating: ${esc(Object.entries((m.result.after || {}).scopeDefaults || {}).map(([k, v]) => `${v} ${k}`).join(', '))}.</p></section>` : '') +
     `</article>`;
 }

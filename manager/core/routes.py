@@ -1543,6 +1543,7 @@ def post_orchestration_agreement(req) -> None:
             defaults = body.get("scopeDefaults")
             if not body.get("apply"):
                 result = agreements.migration_preview(keep, defaults)
+                result["queue"] = orchestrator.migration_queue(result)
             else:
                 result = agreements.migrate(body.get("expected"), keep,
                                             defaults, actor)

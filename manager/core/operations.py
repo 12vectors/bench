@@ -208,8 +208,8 @@ def consumed(ops: list[dict]) -> list[dict]:
 # of one head — waits here, durably, from the first pass that finds it
 # eligible but for capacity, until it is admitted (its operation begun) or
 # stops being wanted. Admission is first come, first served per pool:
-# `readyEpoch`, then `seq` (the order this ledger assigned, ties within one
-# pass broken by card number, file and action), then the id. A restart,
+# `seq`, the order this ledger assigned (ties within one pass broken by
+# card number, file and action), then the id — never the wall clock. A restart,
 # a poll or the order scopes are read in never moves a request forward.
 #
 # A request on an explicit **hold** (its scope paused, a dependency that
@@ -253,8 +253,9 @@ def queue_entries() -> list[dict]:
 
 
 def queue_key(entry: dict) -> tuple:
-    return (entry.get("readyEpoch") or 0, entry.get("seq") or 0,
-            entry.get("id") or "")
+    # `seq` alone orders: it is this ledger's own monotonic count, while
+    # `readyEpoch` is a wall clock that can step backwards (shown, not sorted)
+    return (entry.get("seq") or 0, entry.get("id") or "")
 
 
 def queue_order(entries: list[dict]) -> list[dict]:

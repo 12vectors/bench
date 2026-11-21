@@ -508,16 +508,17 @@ def queued_ahead(pool: str, request: str | None, reading: dict,
     """The oldest waiting request in `pool` that is older than `request`,
     on no hold, and whose scope has room now — the one first come, first
     served admits before this one (task 182). A request on a hold, one
-    whose scope is saturated or paused, one whose card is gone or already
-    running blocks nobody, so nothing waits behind work that cannot move.
+    whose scope is saturated or paused, one whose card is gone, already
+    running or at its launch ceiling blocks nobody, so nothing waits behind work that cannot move.
     A launch that is not itself queued (a recovery restart, a diagnosis)
     waits behind every such request."""
     entries = operations.queue_entries()
     if not entries:
         return None
     mine = next((e for e in entries if e.get("id") == request), None)
-    files = {t["file"] for t in tasks}
+    files = {t["file"]: t for t in tasks}
     busy = {h.get("card") for h in used.get("holders") or []}
+    per_card = used.get("launchesPerCard") or {}
     for entry in entries:
         if entry.get("id") == request:
             return None
@@ -533,9 +534,54 @@ def queued_ahead(pool: str, request: str | None, reading: dict,
             continue
         if pool_for(LAUNCHES[entry["action"]], other) != pool:
             continue
+        # a card that has spent its launches can never be admitted: it
+        # must not hold up anyone behind it (task 182, review of #181)
+        number = _number(files[entry["file"]])
+        if number and per_card.get(number, 0) >= \
+                other["ceilings"]["launchesPerCard"]["value"]:
+            continue
         if scope_room(other, pool, used):
             return entry
     return None
+
+
+def migration_queue(preview: dict, board: dict | None = None) -> list[dict]:
+    """The queue consequences of a migration preview (task 182), per pool:
+    how many requests wait now, what is in use of the global total, and
+    how many more the Bench scope could admit now before and after — the
+    room the reservations were stranding. A read: nothing is written."""
+    if not preview.get("needed"):
+        return []
+    effective = agreements.effective()
+    used = usage(effective, _tasks(board))
+    by_scope = {when: {s["id"]: s for s in (preview.get(when) or {}).get("scopes") or []}
+                for when in ("before", "after")}
+    waiting = {}
+    for entry in operations.queue_entries():
+        if not entry.get("hold"):
+            pool = entry.get("pool") or "implementation"
+            waiting[pool] = waiting.get(pool, 0) + 1
+    out = []
+    for pool in ("implementation", "review", "reasoning"):
+        bench = {when: (by_scope[when].get(agreements.BENCH) or {})
+                 .get("capacity", {}).get(pool) or {}
+                 for when in ("before", "after")}
+        total = bench["after"].get("total") or bench["before"].get("total") or 0
+        in_use = used["totals"].get(pool, 0)
+        mine = used["running"].get(agreements.BENCH, {}).get(pool, 0)
+        free = max(0, total - in_use)
+        room = {when: min(free, max(0, (bench[when].get("own") or 0) - mine))
+                for when in ("before", "after")}
+        out.append({"pool": pool, "waiting": waiting.get(pool, 0),
+                    "inUse": in_use, "total": total,
+                    "benchRoomBefore": room["before"],
+                    "benchRoomAfter": room["after"],
+                    "summary": (f"{waiting.get(pool, 0)} request(s) wait for "
+                                f"{pool}; {in_use} of {total} slots in use. "
+                                f"Standalone work could start {room['before']} "
+                                f"more now, and {room['after']} after the "
+                                f"migration")})
+    return out
 
 
 # ── the public reading ────────────────────────────────────────────────

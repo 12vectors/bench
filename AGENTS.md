@@ -6425,9 +6425,10 @@ implementation work, a review, a repair — waits in one durable queue
 finds it eligible but for capacity: authorized, its dependencies met, its
 phase's strategy allowing it, nothing in the ledger holding it. Each
 pool is admitted **first come, first served** across the Bench scope and
-every phase scope: by the time the request became ready, then the order
-the queue assigned it (requests that became ready in the same pass are
-ordered by card number, file and action). Priority, kind (a repair is not
+every phase scope, in the order the queue assigned each request when it
+became ready — the queue's own count, never the wall clock, so a clock
+stepped backwards moves nobody (requests that became ready in the same
+pass are ordered by card number, file and action). Priority, kind (a repair is not
 ahead of older new work) and the order scopes are read in decide
 nothing, and a poll, a restart or a re-read never moves a request
 forward. A request whose scope is at its ceiling, or whose declared
@@ -6439,7 +6440,7 @@ shows each request's position, since when it has waited, and any hold.
 | --- | --- |
 | a temporary hold: its scope paused, a dependency that went back, a declared overlap, a transient backoff, the circuit breaker, its work base | kept, marked with the hold; it blocks nobody until the hold clears |
 | admitted (its operation's intent written) | it leaves the queue |
-| no longer wanted: its brief or head changed, its card left the stage or its scope, it was excluded or handed back, someone else moved it, the ledger settled it (ran, refused, unknown, retries spent) | it leaves; if it comes back it joins at the back |
+| no longer wanted: its brief or head changed, its card left the stage or its scope, it was excluded or handed back, someone else moved it, the ledger settled it (ran, refused, unknown, retries spent), its card has had its `launchesPerCard` | it leaves; if it comes back it joins at the back |
 | a card moves from implementation to review | the review is a new request (its head), queued when delivery says a review is next; a repair after it is another |
 
 Dependencies and a phase's sequential order are unchanged: they decide
@@ -6474,7 +6475,9 @@ keeps the rest — which is how a board with 8 slots, 7 of them allocated
 to idle phases, left standalone work waiting on `slots-full (1 of 1)`.
 Nothing migrates on a read, a restart, an install or an update. In
 **Orchestrator → Operating agreement**, **Preview the migration** shows
-each phase's old allocation and what it becomes, and **Migrate to shared
+each phase's old allocation and what it becomes, and per pool how many
+requests wait, how many slots are in use and how many more standalone
+work could start now and after migrating; **Migrate to shared
 capacity** (`POST /api/orchestration/agreement/migrate`, `"apply": true`
 with the revision the page read) writes the agreement once: the global
 totals, every authority word, pause, exclusion, hand-back, strategy, note
