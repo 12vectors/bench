@@ -112,7 +112,11 @@ CARD_LEVEL_OK = ("not-authorized",)
 # Refusals the plan itself re-reads every pass, so a refused operation
 # with one of these codes does not hold the head: authority, and the
 # reviewer's independence, are asked again before anything acts.
-ANSWERED_AFRESH = ("authority-revoked", "review-not-independent")
+ANSWERED_AFRESH = ("authority-revoked", "review-not-independent",
+                   # task 174: a phase repair refused because something else
+                   # was still working on the phase or a member is a
+                   # transient wait, not a verdict on the head
+                   "busy", "operation-pending")
 
 # Every code an item can carry, with the state it puts the card in. The
 # words are what the page and the card's record say.
@@ -715,12 +719,21 @@ def _checks_needed(item: dict, filename: str, head: str,
 def _repair(item: dict, task: dict, here: dict, head: str, mine: list[dict],
             ops: list[dict], why: str, reason: str, **extra) -> dict:
     item["finding"] = why
+    # task 174: a phase card's integrated head is repaired through the same
+    # ↻ act on PR, on its own integration branch and PR — the same target
+    # contract a person's click rides (`agents.repair_target`), asked again
+    # immediately before the launch. What the plan reads here is only the
+    # cheap half: a pull request already merged or closed, from the
+    # snapshot the poll keeps.
     if task.get("isPhase"):
-        # ↻ act on PR refuses a phase card by design: its work belongs to
-        # its members' cards, so a failing integrated head is a person's
-        return _set(item, "repair-unavailable", f"{reason}; a phase's "
-                    f"integrated head is not repaired as a card — the fix "
-                    f"belongs on a member, and that decision is yours", **extra)
+        item["repairTarget"] = {"kind": "phase",
+                                "branch": agents.phase_branch(task["file"])}
+        seen = changes.pr_snapshot(task["file"])
+        ended = str((seen or {}).get("prState") or "").upper()
+        if ended in ("MERGED", "CLOSED") or (seen or {}).get("merged"):
+            return _set(item, "repair-unavailable", f"{reason}; the "
+                        f"integration PR is {ended.lower() or 'merged'}, so "
+                        f"there is nothing to push a repair to", **extra)
     if not here["authority"]["repair"]["allowed"]:
         return _set(item, "repair-not-delegated", f"{reason}; the agreement "
                     f"does not delegate repair, so ↻ act on PR is yours", **extra)
@@ -988,7 +1001,9 @@ def _repair_now(op: dict, filename: str, head: str, task: dict) -> dict:
     if spent >= ceiling:
         return _refused(op, "repair-exhausted", f"{spent} of {ceiling} repair "
                         f"rounds are spent")
-    record = agents.start_pr_fix(filename, STAGE)
+    # the same target contract a person's click rides; this operation's
+    # own intent is not a competing one (task 174)
+    record = agents.start_pr_fix(filename, STAGE, operation=op["key"])
     _note(filename, "attempt", {
         "incident": f"repair-{head[:12]}", "attempt": spent + 1, "of": ceiling,
         "outcome": "started", "operation": op["key"],

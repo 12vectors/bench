@@ -267,18 +267,22 @@ class WhichKindsAPhaseCardMayHost(LaunchCase):
         self.assertFalse((config.REVIEWS_DIR / "src").exists(),
                          "and nothing was checked out")
 
-    def test_acting_on_a_phase_pr_is_refused_and_says_where_it_belongs(self):
-        """↻ act on PR is the same work agent with a push, and a phase's PR
-        carries its members' commits."""
+    def test_acting_on_a_phase_pr_targets_the_integration_branch(self):
+        """Task 174: ↻ act on PR is allowed on a phase card, on its own
+        integration branch — so with no `phase/<stem>` here it is refused
+        naming that prerequisite, never by a blanket "phase card" rule, and
+        nothing is created (no task branch, no worktree, no run)."""
         self.with_pr(PHASE, "40 — Ship the site", "review", kind="Phase",
                      cards="- 31 — Stand up site/\n")
 
         with self.assertRaises(ValueError) as caught:
             agents.start_pr_fix(PHASE, "review")
 
-        self.assertIn("phase card", str(caught.exception))
-        self.assertIn("member", str(caught.exception))
+        self.assertNotIn("is a phase card", str(caught.exception))
+        self.assertIn(PHASE_BRANCH, str(caught.exception))
+        self.assertEqual(getattr(caught.exception, "code", None), "no-branch")
         self.assertFalse((config.WORKTREES / PHASE[:-3]).exists())
+        self.assertFalse(self.branch_exists(f"task/{PHASE[:-3]}"))
         self.assertEqual(state.AGENTS, {})
 
 
