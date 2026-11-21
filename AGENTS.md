@@ -1954,14 +1954,24 @@ and its time is in no total:
 - a move made by hand with no record (the card is not where its last
   recorded move put it), a card whose creation is older than the history
   bench reads, or a work state in no repository;
-- **clock and order anomalies**: a move, run or check dated after the
-  reading, ending before it started, or committed out of order (a
-  replayed or rebased board commit carries the replay's date). That
+- a phase member that arrived in Review inside the minute the phase log
+  dates its merge: the merge could be either side of that arrival, so
+  its wait for integration (under a minute) is unknown;
+- **clock and order anomalies**: a move, run, check, merge into the
+  phase branch or phase delivery dated after the reading, ending before
+  it started, or committed out of order (a replayed or rebased board
+  commit carries the replay's date); a merge the phase log dates before
+  the card ever reached Review; a delivery dated before the merge. That
   interval is given no duration rather than a negative or invented one.
 
 A row with nothing recorded reads *none recorded*, never `0s`. A phase
-log line is written to the minute in this board's local time, and its
-precision is said with it.
+log line is written to the minute in this board's local time, truncated,
+and its precision is said with it: the wait for integration is measured
+from the last arrival in Review at or before the logged minute.
+
+The route answers about the card where it is: naming a `stage` the card
+has left is `409` with `moved` and the stage it is in now, and the page,
+which asks again whenever the card's stage changes, reads that instead.
 
 **Provenance.** Every run is named by its agent id and every check by its
 evidence id, attempt, commit and who asked, each linking to the ◫

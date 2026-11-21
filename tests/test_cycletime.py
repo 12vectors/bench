@@ -21,6 +21,7 @@ import subprocess
 import threading
 import time
 import unittest
+import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -201,6 +202,64 @@ class OverlappingChecksRetriesAndConcurrentRuns(unittest.TestCase):
         self.assertEqual(self.r["anomalies"], [])
 
 
+# Two implementation runs side by side, and a repair overlapping the second;
+# read at 3000.
+#   work A 1100–2100 (1000); work D 1600–2600 (1000) — shared 1600–2100
+#   act-pr R 2400–2800 (400) — shared 2400–2600 with D
+#   checks: eA unit (A) 1800–2000 (200), inside the shared stretch
+#           eD unit (D) 1900–2300 (400)
+#   implementation union 1100–2600 = 1500, not 2000
+#   implementation ∪ repair = 1100–2800 = 1700
+#   verification union 1800–2300 = 500; summed 600; overlapped 100
+#   time outside checks: 1700 − 500 = 1200; per run 800, 600 and 400,
+#   whose sum (1800) counts the shared minutes twice — so it is no total
+def concurrent_fixture():
+    return {
+        "card": {"file": "9-x.md", "stage": "in-progress"},
+        "moves": moves(move(1000, "in-progress", kind="created")),
+        "runs": [run("A", "work", 1100, 2100, "finished"),
+                 run("D", "work", 1600, 2600, "finished"),
+                 run("R", "act-pr", 2400, 2800, "finished")],
+        "evidence": [check("eA", "unit", "A", 1800, 2000),
+                     check("eD", "unit", "D", 1900, 2300)],
+    }
+
+
+class ConcurrentRuns(unittest.TestCase):
+
+    def setUp(self):
+        self.r = cycletime.build(concurrent_fixture(), 3000.0)
+
+    def test_overlapping_runs_count_their_shared_time_once(self):
+        self.assertEqual(cat(self.r, "implementation")["seconds"], 1500)
+        self.assertEqual(cat(self.r, "repair")["seconds"], 400)
+        self.assertEqual(cat(self.r, "outside-checks")["seconds"], 1200)
+
+    def test_overlapping_checks_of_two_runs_are_a_union(self):
+        v = self.r["verification"]
+        self.assertEqual(v["seconds"], 500)
+        self.assertEqual(v["summed"], 600)
+        self.assertEqual(v["overlapped"], 100)
+        self.assertEqual(v["execution"], 600)
+        self.assertEqual(v["attempts"], {"unit": 2})
+
+    def test_each_run_keeps_its_own_span_and_its_own_checks(self):
+        runs = {r["agent"]: r for r in self.r["runs"]}
+        self.assertEqual(runs["A"]["seconds"], 1000)
+        self.assertEqual(runs["A"]["checks"], {"count": 1, "seconds": 200})
+        self.assertEqual(runs["A"]["outsideChecks"], 800)
+        self.assertEqual(runs["D"]["seconds"], 1000)
+        self.assertEqual(runs["D"]["checks"], {"count": 1, "seconds": 400})
+        self.assertEqual(runs["D"]["outsideChecks"], 600)
+        self.assertEqual(runs["R"]["outsideChecks"], 400)
+        per_run = sum(r["outsideChecks"] for r in self.r["runs"])
+        self.assertEqual(per_run, 1800)
+        self.assertGreater(per_run, cat(self.r, "outside-checks")["seconds"],
+                           "per-run time is not ticket time")
+        self.assertEqual(self.r["anomalies"], [])
+        self.assertEqual(self.r["unknown"], [])
+
+
 class QueuedAndReopened(unittest.TestCase):
 
     def test_every_visit_is_summed_and_lead_ends_at_the_last_done(self):
@@ -269,6 +328,63 @@ class PhaseIntegration(unittest.TestCase):
         r = self.member(integrated=2600.0, delivered=2900.0)
         self.assertEqual(cat(r, "delivery-wait")["seconds"], 300)
         self.assertFalse(cat(r, "delivery-wait")["open"])
+
+    def visits(self, integrated, *reviews, delivered=None, now=3000.0):
+        """A member that entered Review at each of `reviews`, going back to
+        In progress 100s after each but the last."""
+        seq = [move(1000, "to-do", kind="created"), move(1200, "in-progress", "to-do")]
+        for i, at in enumerate(reviews):
+            seq.append(move(at, "review", "in-progress"))
+            if i < len(reviews) - 1:
+                seq.append(move(at + 100, "in-progress", "review"))
+        return cycletime.build({
+            "card": {"file": "9-x.md", "stage": "review", "number": "9",
+                     "phase": {"file": "8-p.md", "number": "8"}},
+            "moves": moves(*seq),
+            "integration": {"integratedAt": integrated, "deliveredAt": delivered,
+                            "logRead": True},
+        }, now)
+
+    def test_merged_in_the_minute_it_entered_review_is_unknown_not_dropped(self):
+        # the log says 1980 (truncated); the merge was in [1980, 2040), and
+        # the card arrived in Review at 2000, inside that minute
+        r = self.visits(1980.0, 2000)
+        self.assertIsNone(cat(r, "integration-wait")["seconds"])
+        self.assertTrue(r["integration"]["sameMinute"])
+        self.assertEqual(r["anomalies"], [])
+        self.assertIn("same minute",
+                      " ".join(u["why"] for u in r["unknown"]
+                               if u["what"] == "waiting for integration"))
+        # the delivery wait is still measured from the log's minute
+        self.assertEqual(cat(r, "delivery-wait")["seconds"], 1020)
+
+    def test_a_second_visit_in_the_merge_minute_is_not_measured_from_the_first(self):
+        r = self.visits(1980.0, 1500, 2000)
+        self.assertIsNone(cat(r, "integration-wait")["seconds"])
+        self.assertTrue(r["integration"]["sameMinute"])
+
+    def test_the_last_visit_before_the_merge_minute_is_the_one_measured(self):
+        r = self.visits(2600.0, 1500, 2000)
+        self.assertEqual(cat(r, "integration-wait")["seconds"], 600)
+        self.assertFalse(r["integration"]["sameMinute"])
+
+    def test_a_merge_dated_before_any_arrival_in_review_is_an_anomaly(self):
+        r = self.visits(1900.0, 2000)   # 2000 is past the minute 1900–1960
+        self.assertIn("integration-order", [a["code"] for a in r["anomalies"]])
+        self.assertIsNone(cat(r, "integration-wait")["seconds"])
+
+    def test_a_delivery_before_the_merge_is_an_anomaly(self):
+        r = self.visits(2600.0, 2000, delivered=2500.0)
+        self.assertIn("delivery-order", [a["code"] for a in r["anomalies"]])
+        self.assertIsNone(cat(r, "delivery-wait")["seconds"])
+
+    def test_a_future_merge_or_delivery_is_an_anomaly(self):
+        r = self.visits(9000.0, 2000)
+        self.assertIn("future-time", [a["code"] for a in r["anomalies"]])
+        self.assertIsNone(r["integration"]["integratedAt"])
+        r = self.visits(2600.0, 2000, delivered=9000.0)
+        self.assertIn("future-time", [a["code"] for a in r["anomalies"]])
+        self.assertIsNone(r["integration"]["deliveredAt"])
 
     def test_a_card_in_no_phase_has_no_integration_rows(self):
         r = cycletime.build(main_fixture(), NOW)
@@ -340,6 +456,15 @@ class MissingDataAndClockAnomalies(unittest.TestCase):
         }, 2000.0)
         self.assertIn("future-time", [a["code"] for a in r["anomalies"]])
         self.assertIsNone(r["runs"][0]["seconds"])
+
+    def test_a_check_ending_in_the_future_is_an_anomaly(self):
+        r = cycletime.build({
+            "card": {"file": "9-x.md", "stage": "in-progress"},
+            "moves": moves(move(1000, "in-progress", kind="created")),
+            "evidence": [check("e1", "unit", None, 1500, 9000)],
+        }, 2000.0)
+        self.assertIn("future-time", [a["code"] for a in r["anomalies"]])
+        self.assertIsNone(r["verification"]["seconds"])
 
     def test_a_check_ending_before_its_request(self):
         r = cycletime.build({
@@ -424,7 +549,10 @@ class ThePassiveRead(GateCase):
         self.assertEqual(self.fingerprint(), before, "no state or card byte changed")
         for cmd in calls:
             self.assertEqual(Path(cmd[0]).name, "git", f"{cmd}: only git reads")
-            self.assertNotIn(cmd[-1] if cmd else "", ("commit", "push", "fetch"))
+            writes = {"commit", "push", "fetch", "pull", "merge", "add", "rm", "mv",
+                      "reset", "checkout", "switch", "worktree", "update-ref",
+                      "branch", "tag", "gc", "stash", "rebase", "cherry-pick"}
+            self.assertFalse(writes & set(cmd[1:]), f"{cmd}: a git write")
         t = body["timing"]
         direct = cycletime.build(cycletime.gather(CARD), t["now"])
         self.assertEqual(t["categories"], direct["categories"])
@@ -435,6 +563,24 @@ class ThePassiveRead(GateCase):
         self.assertEqual([s["stage"] for s in t["stages"]], ["to-do", "in-progress"])
         self.assertTrue(t["read"]["local"])
         self.assertFalse(t["read"]["writes"])
+
+    def test_a_card_asked_about_in_another_stage_is_refused_as_moved(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), httpd.Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        port = server.server_address[1]
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/api/card/timing"
+                                   f"?file={CARD}&stage=review")
+        self.assertEqual(caught.exception.code, 409)
+        self.addCleanup(caught.exception.close)
+        body = json.loads(caught.exception.read())
+        self.assertTrue(body["moved"])
+        self.assertEqual(body["stage"], "in-progress")
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/card/timing"
+                                    f"?file={CARD}&stage=in-progress") as reply:
+            self.assertEqual(json.loads(reply.read())["timing"]["stage"], "in-progress")
 
     def test_an_unknown_card_is_refused(self):
         with self.assertRaises(ValueError):

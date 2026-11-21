@@ -1027,6 +1027,8 @@ def get_card_timing(req) -> None:
     stage = _q(req, "stage") or None
     try:
         req.reply(200, {"timing": cycletime.for_card(name, stage)})
+    except cycletime.Moved as exc:
+        req.reply(409, {"error": str(exc), "moved": True, "stage": exc.stage})
     except (ValueError, OSError) as exc:
         req.reply(409, {"error": str(exc)})
 

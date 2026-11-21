@@ -58,6 +58,9 @@ VERSION = 1
 # A record dated this far after `now` is a clock anomaly, not the future.
 CLOCK_SKEW = 5.0
 
+# A phase log line is stamped to the minute, truncated (phases._write_log).
+LOG_PRECISION = 60.0
+
 STAGES = ("backlog", "to-do", "in-progress", "review", "done", "archive")
 QUEUE_STAGES = ("backlog", "to-do")
 
@@ -379,7 +382,7 @@ def _window(e: dict, notes: _Notes, quiet: bool = False) -> tuple[float, float] 
         end = ts(e.get("ended"))
     if start is None or end is None:
         return None
-    if start > notes.now + CLOCK_SKEW or end < start:
+    if max(start, end) > notes.now + CLOCK_SKEW or end < start:
         return None
     return (start, end)
 
@@ -401,7 +404,7 @@ def _verification(records: list, reuses: list, notes: _Notes) -> dict:
             if start is not None and end is not None and end < start:
                 notes.anomaly("check-order", f"check {name} ({e.get('id')}) is recorded "
                                              f"ending before it was requested")
-            elif start is not None and start > notes.now + CLOCK_SKEW:
+            elif max(start or 0.0, end or 0.0) > notes.now + CLOCK_SKEW:
                 notes.anomaly("future-time", f"check {name} ({e.get('id')}) is dated after "
                                              f"this reading")
             else:
@@ -535,34 +538,58 @@ def _integration(card: dict, inputs: dict, segments: list, notes: _Notes) -> dic
     if not phase:
         return None
     facts = inputs.get("integration") or {}
-    integrated = facts.get("integratedAt")
-    delivered = facts.get("deliveredAt")
-    entered = None
-    for s in segments:
-        if s["stage"] == "review" and s["from"] is not None and \
-                (integrated is None or s["from"] <= integrated):
-            entered = s["from"]
+    # The phase log stamps the merge to the minute, truncated: the merge
+    # happened somewhere in [integrated, integrated + 60s). A Review
+    # arrival inside that minute may be before or after it.
+    integrated = notes.when(facts.get("integratedAt"), "the merge into the phase branch")
+    delivered = notes.when(facts.get("deliveredAt"), "the phase's delivery")
+    reviews = [s["from"] for s in segments
+               if s["stage"] == "review" and s["from"] is not None]
     wait_i = wait_d = None
-    if entered is not None:
-        end = integrated if integrated is not None else (
-            notes.now if card.get("stage") == "review" else None)
-        if end is not None and end >= entered:
-            wait_i = _secs(end - entered)
-        elif end is not None:
+    same_minute = False
+    if integrated is None:
+        # still waiting: measured from the newest arrival in Review
+        if reviews and card.get("stage") == "review":
+            wait_i = _secs(notes.now - reviews[-1])
+    else:
+        window = integrated + LOG_PRECISION
+        before = [r for r in reviews if r < window]
+        if before:
+            entered = before[-1]
+            if entered <= integrated:
+                wait_i = _secs(integrated - entered)
+            else:
+                same_minute = True
+                notes.missing("waiting for integration",
+                              "the card arrived in Review in the same minute the phase "
+                              "log dates its merge into the phase branch; the log is "
+                              "written to the minute, so the wait (under a minute) is "
+                              "unknown and in no total")
+        elif reviews:
             notes.anomaly("integration-order",
                           "the phase log dates the merge into the phase branch before "
-                          "the card's arrival in Review (minute-precision local time)")
-    if integrated is not None:
+                          "the card's first recorded arrival in Review (minute-precision "
+                          "local time), so the wait for integration is left out")
+        else:
+            notes.missing("waiting for integration",
+                          "no arrival in Review is on record before the merge into the "
+                          "phase branch")
         end = delivered if delivered is not None else notes.now
         if end >= integrated:
             wait_d = _secs(end - integrated)
-    elif facts.get("logRead") is False:
+        elif delivered is not None:
+            notes.anomaly("delivery-order",
+                          "the phase's delivery is recorded before the minute the phase "
+                          "log dates this card's merge into the phase branch, so the "
+                          "wait for delivery is left out")
+    if integrated is None and facts.get("logRead") is False:
         notes.missing("integration", "the phase card's log could not be read")
     return {"phase": phase.get("number") or phase.get("file"),
             "phaseFile": phase.get("file"),
             "integratedAt": integrated, "integratedHow": facts.get("integratedHow"),
             "deliveredAt": delivered, "deliveredHow": facts.get("deliveredHow"),
             "precision": "minute" if integrated is not None else None,
+            "sameMinute": same_minute,
             "waitIntegration": wait_i, "waitDelivery": wait_d,
             "note": "In the phase branch is not delivered: the card reaches the "
                     "application base only when its phase does."}
@@ -662,6 +689,16 @@ def _phase_facts(task: dict, board: dict, snap: dict) -> dict:
     return facts
 
 
+class Moved(ValueError):
+    """The card asked about is in another stage than the asker named: the
+    reading is about the card where it is, so the asker reads the board
+    again rather than being answered about a card it is not showing."""
+
+    def __init__(self, filename: str, stage: str):
+        super().__init__(f"card {filename!r} has moved to {stage}")
+        self.stage = stage
+
+
 def gather(filename: str, stage: str | None = None) -> dict:
     """Every input `build` reads, for one card on this board."""
     if not isinstance(filename, str) or not filename.endswith(".md") or "/" in filename:
@@ -670,6 +707,8 @@ def gather(filename: str, stage: str | None = None) -> dict:
     task = next((t for g in board["stages"] for t in g["tasks"] if t["file"] == filename), None)
     if task is None:
         raise ValueError(f"no card {filename!r} on this board")
+    if stage and task["stage"] != stage:
+        raise Moved(filename, task["stage"])
     snap = movements.snapshot()
     runs = []
     for agent_id, rec in list(progress.RUNS.items()):
