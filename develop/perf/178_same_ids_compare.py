@@ -34,7 +34,9 @@ ID = re.compile(r"^(\w+) \(([\w.]+)\)(?: \.\.\.|$)", re.M)
 
 
 def host() -> dict:
-    p = subprocess.run(["pgrep", "-fc", "verify/(backend|browser|docs)"],
+    # anchored on the interpreter, so a process whose arguments merely
+    # mention a verifier (an agent's prompt, say) is not counted
+    p = subprocess.run(["pgrep", "-fc", r"^\S*python3?\S* verify/(backend|browser|docs)"],
                        capture_output=True, text=True)
     return {"loadavg": [round(x, 2) for x in os.getloadavg()],
             "verifiers": int((p.stdout or "0").strip() or 0)}

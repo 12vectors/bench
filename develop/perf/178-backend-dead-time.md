@@ -153,9 +153,59 @@ What it does and does not show:
   run. `verify/timing-report` refuses to compare different id sets, rightly.
   Subtracting the stalls from card 163's runs leaves about 1270–1390s, so
   the cache's share is plausibly 130–250s — an estimate, not a
-  measurement. A same-ids comparison needs serial runs of `87f4065`
-  (before) and this head's parent-equivalent with only the
-  `benchverify.py` change, several each, on a quiet host.
+  measurement. The same-ids comparison below separates the cache's
+  effect for the subprocess-heavy modules; the whole suite under the old
+  environment was not re-run.
+
+**Same test ids, old versus new environment (measured).**
+`178_same_ids_compare.py` runs four subprocess-heavy modules serially in a
+cold copy of the candidate (`425d484`/`d14553a`: this card's code; the
+two differ only in the measurement script) under the environment
+`child_env` built before this task (*old*: `PYTHONDONTWRITEBYTECODE=1`)
+and the one it builds now (*new*: a run-owned `PYTHONPYCACHEPREFIX`,
+empty at the start of each repetition, so each *new* reading pays its own
+first compile, standard library included). Old and new run back to back
+in each repetition, the order alternating (old first, new first, old
+first) so host drift falls on both. Each child ran `-v`, and the test ids
+the two reported were compared and equal in every module and repetition:
+139 ids (41 + 60 + 2 + 36), every run exit 0, nothing skipped, and no
+`__pycache__` written into the copied checkout. No load was added. The
+host was the shared devbox, 8 CPUs, Python 3.14.4, 2026-11-21 between
+about 12:40 and 13:30 UTC, with other agent sessions working: the one-minute
+load average read 1.9–8.2 across the runs (3.3–8.2 in repetitions 1–2,
+1.9–4.3 in repetition 3), with one bench backend and one bench browser
+verification in flight during repetitions 1–2 and 0–2 during repetition
+3. (The script's `verifiers` count over-counted in repetitions 1–2 by
+matching agent prompts that mention a verifier; it is anchored on the
+interpreter now, and the in-flight count above was read by hand.)
+
+Seconds per module, repetitions 1, 2, 3:
+
+| module (tests) | old | new | mean old → new |
+| --- | --- | --- | --- |
+| `test_orchestration_journey` (41) | 320.4, 352.0, 351.9 | 218.1, 232.9, 257.5 | 341.4 → 236.1 (−105.3s, −31%) |
+| `test_failed_move_commit` (60) | 45.0, 45.4, 45.7 | 45.2, 45.5, 46.0 | 45.3 → 45.6 (no change) |
+| `test_setup_preservation` (2, 48 sub-tests) | 12.5, 12.6, 13.1 | 10.6, 10.2, 10.6 | 12.7 → 10.4 (−2.3s) |
+| `test_reasoning` (36) | 11.6, 10.9, 12.1 | 11.7, 11.1, 12.5 | 11.5 → 11.8 (no change) |
+| **all four** | 389.4, 420.8, 422.8 | 285.6, 299.6, 326.5 | 411.0 → 303.9 (−107.1s, −26%) |
+
+What it establishes, and what it does not:
+
+- **Measured, beyond the variance seen here:** for the journeys and the
+  setup-preservation module the slowest *new* reading is faster than the
+  fastest *old* one (257.5 < 320.4; 10.6 < 12.5), in all three
+  repetitions, whichever ran first. The spread within one environment
+  (32s old, 39s new for the journeys) is a third of the difference
+  between them.
+- **No effect** where the child processes are git and shell rather than
+  Python importing `manager/core` (`test_failed_move_commit`), or few
+  (`test_reasoning`): the differences there (+0.3s) are inside the spread.
+- **Not measured:** the whole suite. The other modules were not run under
+  both environments, so the 130–250s whole-suite estimate above stays an
+  estimate; what is measured is 107s across these four modules, and that
+  none of the four got slower beyond the spread.
+- **Not established:** anything about the historical stalls; none occurred
+  in these runs, under either environment.
 
 ## 4. Sharding: deferred (decision)
 
